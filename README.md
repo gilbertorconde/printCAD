@@ -6,6 +6,8 @@ A parametric CAD application focused on designing parts for FDM/SLA 3D printing,
 ![Rust](https://img.shields.io/badge/rust-1.79%2B-orange)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
+> ⚠️ **Early Development** - This project is in early development and is not yet usable for actual CAD work. Core features like sketch constraints, part operations, and file I/O are still being implemented.
+
 ## Overview
 
 printCAD is a Linux-native, Wayland-first CAD application designed for creating parametric 3D models optimized for 3D printing workflows. It features a modular architecture with clean abstractions for future extensibility.
@@ -47,12 +49,7 @@ cargo run -p app_shell --release
 
 ### GPU Selection (Hybrid Systems)
 
-For systems with multiple GPUs, you can select the preferred GPU in Settings > Rendering, or use environment variables:
-
-```bash
-# Force NVIDIA GPU on hybrid systems
-__NV_PRIME_RENDER_OFFLOAD=1 __VK_LAYER_NV_optimus=NVIDIA_only cargo run -p app_shell
-```
+For systems with multiple GPUs, you can select the preferred GPU in Settings > Rendering.
 
 ## Project Structure
 
