@@ -55,6 +55,7 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new().context("failed to create event loop")?;
     let mut render_settings = RenderSettings::default();
     render_settings.preferred_gpu = user_settings.preferred_gpu.clone();
+    render_settings.msaa_samples = user_settings.rendering.msaa_samples;
     let mut app = PrintCadApp::new(render_settings, settings_store, user_settings);
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())

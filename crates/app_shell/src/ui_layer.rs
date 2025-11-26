@@ -514,6 +514,32 @@ impl UiLayer {
             }
         });
 
+        ui.add_space(12.0);
+        ui.separator();
+        ui.label("Anti-aliasing");
+
+        let msaa_options = [(1, "Off"), (2, "2x MSAA"), (4, "4x MSAA"), (8, "8x MSAA")];
+        let current_msaa = settings.rendering.msaa_samples;
+        let current_label = msaa_options
+            .iter()
+            .find(|(v, _)| *v == current_msaa)
+            .map(|(_, l)| *l)
+            .unwrap_or("4x MSAA");
+
+        ui.horizontal(|ui| {
+            ui.label("MSAA (requires restart):");
+            egui::ComboBox::from_id_salt("msaa_combo")
+                .selected_text(current_label)
+                .show_ui(ui, |ui| {
+                    for (value, label) in msaa_options {
+                        if ui.selectable_label(current_msaa == value, label).clicked() {
+                            settings.rendering.msaa_samples = value;
+                            changed = true;
+                        }
+                    }
+                });
+        });
+
         changed
     }
 

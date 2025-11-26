@@ -26,6 +26,7 @@ pub enum SettingsError {
 pub struct UserSettings {
     pub camera: CameraSettings,
     pub lighting: LightingSettings,
+    pub rendering: RenderingSettings,
     /// Preferred GPU name substring for Vulkan device selection (None = automatic)
     pub preferred_gpu: Option<String>,
     /// Optional FPS cap. 0.0 = uncapped (driven by vsync / driver).
@@ -37,8 +38,24 @@ impl Default for UserSettings {
         Self {
             camera: CameraSettings::default(),
             lighting: LightingSettings::default(),
+            rendering: RenderingSettings::default(),
             preferred_gpu: None,
             fps_cap: 0.0,
+        }
+    }
+}
+
+/// Rendering quality settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenderingSettings {
+    /// MSAA sample count (1 = disabled, 2, 4, or 8)
+    pub msaa_samples: u8,
+}
+
+impl Default for RenderingSettings {
+    fn default() -> Self {
+        Self {
+            msaa_samples: 4, // 4x MSAA by default
         }
     }
 }

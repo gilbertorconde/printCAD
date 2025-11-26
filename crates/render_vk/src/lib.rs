@@ -48,6 +48,74 @@ fn identity_matrix() -> [[f32; 4]; 4] {
     ]
 }
 
+fn msaa_samples_to_vk(samples: u8) -> vk::SampleCountFlags {
+    match samples {
+        1 => vk::SampleCountFlags::TYPE_1,
+        2 => vk::SampleCountFlags::TYPE_2,
+        4 => vk::SampleCountFlags::TYPE_4,
+        8 => vk::SampleCountFlags::TYPE_8,
+        _ => vk::SampleCountFlags::TYPE_4, // Default to 4x
+    }
+}
+
+fn find_supported_format(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    candidates: &[vk::Format],
+    tiling: vk::ImageTiling,
+    features: vk::FormatFeatureFlags,
+) -> Option<vk::Format> {
+    for &format in candidates {
+        let props =
+            unsafe { instance.get_physical_device_format_properties(physical_device, format) };
+        let supported = match tiling {
+            vk::ImageTiling::LINEAR => props.linear_tiling_features.contains(features),
+            vk::ImageTiling::OPTIMAL => props.optimal_tiling_features.contains(features),
+            _ => false,
+        };
+        if supported {
+            return Some(format);
+        }
+    }
+    None
+}
+
+fn find_depth_format(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+) -> Option<vk::Format> {
+    find_supported_format(
+        instance,
+        physical_device,
+        &[
+            vk::Format::D32_SFLOAT,
+            vk::Format::D32_SFLOAT_S8_UINT,
+            vk::Format::D24_UNORM_S8_UINT,
+        ],
+        vk::ImageTiling::OPTIMAL,
+        vk::FormatFeatureFlags::DEPTH_STENCIL_ATTACHMENT,
+    )
+}
+
+fn get_max_usable_sample_count(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+) -> vk::SampleCountFlags {
+    let props = unsafe { instance.get_physical_device_properties(physical_device) };
+    let counts =
+        props.limits.framebuffer_color_sample_counts & props.limits.framebuffer_depth_sample_counts;
+
+    if counts.contains(vk::SampleCountFlags::TYPE_8) {
+        vk::SampleCountFlags::TYPE_8
+    } else if counts.contains(vk::SampleCountFlags::TYPE_4) {
+        vk::SampleCountFlags::TYPE_4
+    } else if counts.contains(vk::SampleCountFlags::TYPE_2) {
+        vk::SampleCountFlags::TYPE_2
+    } else {
+        vk::SampleCountFlags::TYPE_1
+    }
+}
+
 /// Trait used by the app shell to talk to any renderer implementation.
 pub trait RenderBackend {
     fn initialize(&mut self, window: &Window) -> Result<(), RenderError>;
@@ -61,6 +129,8 @@ pub struct RenderSettings {
     pub prefer_validation_layers: bool,
     /// Preferred GPU name substring; None = automatic first suitable device
     pub preferred_gpu: Option<String>,
+    /// MSAA sample count (1, 2, 4, or 8)
+    pub msaa_samples: u8,
 }
 
 impl Default for RenderSettings {
@@ -68,6 +138,7 @@ impl Default for RenderSettings {
         Self {
             prefer_validation_layers: true,
             preferred_gpu: None,
+            msaa_samples: 4,
         }
     }
 }
@@ -267,6 +338,9 @@ struct RendererCore {
     swapchain_image_views: Vec<vk::ImageView>,
     render_pass: vk::RenderPass,
     framebuffers: Vec<vk::Framebuffer>,
+    // Separate render pass for UI (no MSAA, renders on top of resolved image)
+    ui_render_pass: vk::RenderPass,
+    ui_framebuffers: Vec<vk::Framebuffer>,
     command_pool: vk::CommandPool,
     command_buffers: Vec<vk::CommandBuffer>,
     image_available_semaphores: Vec<vk::Semaphore>,
@@ -279,6 +353,17 @@ struct RendererCore {
     mesh_renderer: Option<MeshRenderer>,
     gpu_name: String,
     available_gpus: Vec<String>,
+    // Depth buffer resources
+    depth_image: vk::Image,
+    depth_image_memory: vk::DeviceMemory,
+    depth_image_view: vk::ImageView,
+    depth_format: vk::Format,
+    // MSAA resources
+    msaa_samples: vk::SampleCountFlags,
+    color_image: vk::Image,
+    color_image_memory: vk::DeviceMemory,
+    color_image_view: vk::ImageView,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
 }
 
 impl RendererCore {
@@ -344,6 +429,32 @@ impl RendererCore {
             create_logical_device(&instance, physical_device, &queue_family_indices)?;
         let swapchain_loader = SwapchainLoader::new(&instance, &device);
 
+        // Determine MSAA sample count (clamp to device max)
+        let requested_samples = msaa_samples_to_vk(settings.msaa_samples);
+        let max_samples = get_max_usable_sample_count(&instance, physical_device);
+        let msaa_samples = if requested_samples.as_raw() <= max_samples.as_raw() {
+            requested_samples
+        } else {
+            info!(
+                "Requested MSAA {}x not supported, falling back to {}x",
+                settings.msaa_samples,
+                max_samples.as_raw().trailing_zeros() + 1
+            );
+            max_samples
+        };
+        info!(
+            "Using MSAA: {}x",
+            msaa_samples.as_raw().trailing_zeros() + 1
+        );
+
+        // Find depth format
+        let depth_format = find_depth_format(&instance, physical_device)
+            .ok_or_else(|| RenderError::Initialization("No suitable depth format found".into()))?;
+        info!("Using depth format: {}", depth_format.as_raw());
+
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
         let mut core = RendererCore {
             instance,
             surface_loader,
@@ -361,6 +472,8 @@ impl RendererCore {
             swapchain_image_views: Vec::new(),
             render_pass: vk::RenderPass::null(),
             framebuffers: Vec::new(),
+            ui_render_pass: vk::RenderPass::null(),
+            ui_framebuffers: Vec::new(),
             command_pool: vk::CommandPool::null(),
             command_buffers: Vec::new(),
             image_available_semaphores: Vec::new(),
@@ -373,15 +486,29 @@ impl RendererCore {
             mesh_renderer: None,
             gpu_name,
             available_gpus,
+            depth_image: vk::Image::null(),
+            depth_image_memory: vk::DeviceMemory::null(),
+            depth_image_view: vk::ImageView::null(),
+            depth_format,
+            msaa_samples,
+            color_image: vk::Image::null(),
+            color_image_memory: vk::DeviceMemory::null(),
+            color_image_view: vk::ImageView::null(),
+            memory_properties,
         };
 
         core.create_swapchain(extent)?;
+        core.create_depth_resources()?;
+        core.create_color_resources()?;
         core.create_render_pass()?;
+        core.create_ui_render_pass()?;
         core.create_framebuffers()?;
+        core.create_ui_framebuffers()?;
         core.create_command_pool()?;
         core.create_command_buffers()?;
         core.create_sync_objects()?;
 
+        // egui uses the UI render pass (no MSAA, loads existing content)
         let egui_options = EguiRendererOptions {
             in_flight_frames: MAX_FRAMES_IN_FLIGHT,
             srgb_framebuffer: is_srgb_format(core.swapchain_format),
@@ -391,7 +518,7 @@ impl RendererCore {
             &core.instance,
             core.physical_device,
             core.device.clone(),
-            core.render_pass,
+            core.ui_render_pass,
             egui_options,
         )
         .map_err(map_egui_err)?;
@@ -402,6 +529,7 @@ impl RendererCore {
             core.physical_device,
             &core.device,
             core.render_pass,
+            core.msaa_samples,
         )?);
 
         Ok(core)
@@ -413,16 +541,20 @@ impl RendererCore {
         }
         self.cleanup_swapchain();
         self.create_swapchain(extent)?;
+        self.create_depth_resources()?;
+        self.create_color_resources()?;
         self.create_render_pass()?;
+        self.create_ui_render_pass()?;
         self.create_framebuffers()?;
+        self.create_ui_framebuffers()?;
         self.create_command_buffers()?;
         if let Some(renderer) = self.egui_renderer.as_mut() {
             renderer
-                .set_render_pass(self.render_pass)
+                .set_render_pass(self.ui_render_pass)
                 .map_err(map_egui_err)?;
         }
         if let Some(renderer) = self.mesh_renderer.as_mut() {
-            renderer.set_render_pass(self.render_pass)?;
+            renderer.set_render_pass(self.render_pass, self.msaa_samples)?;
         }
         Ok(())
     }
@@ -624,19 +756,311 @@ impl RendererCore {
         Ok(())
     }
 
+    fn create_depth_resources(&mut self) -> Result<(), RenderError> {
+        self.cleanup_depth_resources();
+
+        let (image, memory) = self.create_image(
+            self.swapchain_extent.width,
+            self.swapchain_extent.height,
+            self.depth_format,
+            vk::ImageTiling::OPTIMAL,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            self.msaa_samples,
+        )?;
+
+        let subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+
+        let view_info = vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(self.depth_format)
+            .subresource_range(subresource_range);
+
+        let view = unsafe { self.device.create_image_view(&view_info, None) }
+            .map_err(RenderError::from)?;
+
+        self.depth_image = image;
+        self.depth_image_memory = memory;
+        self.depth_image_view = view;
+        Ok(())
+    }
+
+    fn create_color_resources(&mut self) -> Result<(), RenderError> {
+        self.cleanup_color_resources();
+
+        // Only create MSAA color buffer if samples > 1
+        if self.msaa_samples == vk::SampleCountFlags::TYPE_1 {
+            return Ok(());
+        }
+
+        let (image, memory) = self.create_image(
+            self.swapchain_extent.width,
+            self.swapchain_extent.height,
+            self.swapchain_format,
+            vk::ImageTiling::OPTIMAL,
+            vk::ImageUsageFlags::TRANSIENT_ATTACHMENT | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            self.msaa_samples,
+        )?;
+
+        let subresource_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
+
+        let view_info = vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(self.swapchain_format)
+            .subresource_range(subresource_range);
+
+        let view = unsafe { self.device.create_image_view(&view_info, None) }
+            .map_err(RenderError::from)?;
+
+        self.color_image = image;
+        self.color_image_memory = memory;
+        self.color_image_view = view;
+        Ok(())
+    }
+
+    fn create_image(
+        &self,
+        width: u32,
+        height: u32,
+        format: vk::Format,
+        tiling: vk::ImageTiling,
+        usage: vk::ImageUsageFlags,
+        properties: vk::MemoryPropertyFlags,
+        samples: vk::SampleCountFlags,
+    ) -> Result<(vk::Image, vk::DeviceMemory), RenderError> {
+        let image_info = vk::ImageCreateInfo::default()
+            .image_type(vk::ImageType::TYPE_2D)
+            .extent(vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            })
+            .mip_levels(1)
+            .array_layers(1)
+            .format(format)
+            .tiling(tiling)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .usage(usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .samples(samples);
+
+        let image =
+            unsafe { self.device.create_image(&image_info, None) }.map_err(RenderError::from)?;
+
+        let mem_requirements = unsafe { self.device.get_image_memory_requirements(image) };
+
+        let memory_type = find_memory_type(
+            mem_requirements.memory_type_bits,
+            properties,
+            &self.memory_properties,
+        )
+        .ok_or_else(|| RenderError::Initialization("Failed to find suitable memory type".into()))?;
+
+        let alloc_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(mem_requirements.size)
+            .memory_type_index(memory_type);
+
+        let memory =
+            unsafe { self.device.allocate_memory(&alloc_info, None) }.map_err(RenderError::from)?;
+
+        unsafe {
+            self.device
+                .bind_image_memory(image, memory, 0)
+                .map_err(RenderError::from)?;
+        }
+
+        Ok((image, memory))
+    }
+
     fn create_render_pass(&mut self) -> Result<(), RenderError> {
         self.cleanup_render_pass();
 
+        let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
+
+        if using_msaa {
+            // MSAA render pass with resolve
+            // Attachment 0: MSAA color (multisampled)
+            let color_attachment = vk::AttachmentDescription::default()
+                .format(self.swapchain_format)
+                .samples(self.msaa_samples)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+            // Attachment 1: Depth (multisampled)
+            let depth_attachment = vk::AttachmentDescription::default()
+                .format(self.depth_format)
+                .samples(self.msaa_samples)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+            // Attachment 2: Resolve target (swapchain image)
+            // Final layout is COLOR_ATTACHMENT_OPTIMAL so UI pass can render on top
+            let color_resolve_attachment = vk::AttachmentDescription::default()
+                .format(self.swapchain_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+            let attachments = [color_attachment, depth_attachment, color_resolve_attachment];
+
+            let color_attachment_ref = vk::AttachmentReference::default()
+                .attachment(0)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            let color_attachment_refs = [color_attachment_ref];
+
+            let depth_attachment_ref = vk::AttachmentReference::default()
+                .attachment(1)
+                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+            let resolve_attachment_ref = vk::AttachmentReference::default()
+                .attachment(2)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            let resolve_attachment_refs = [resolve_attachment_ref];
+
+            let subpass = vk::SubpassDescription::default()
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .color_attachments(&color_attachment_refs)
+                .depth_stencil_attachment(&depth_attachment_ref)
+                .resolve_attachments(&resolve_attachment_refs);
+            let subpasses = [subpass];
+
+            let dependency = vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                )
+                .dst_stage_mask(
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                )
+                .dst_access_mask(
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                );
+            let dependencies = [dependency];
+
+            let render_pass_info = vk::RenderPassCreateInfo::default()
+                .attachments(&attachments)
+                .subpasses(&subpasses)
+                .dependencies(&dependencies);
+
+            self.render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }
+                .map_err(RenderError::from)?;
+        } else {
+            // Non-MSAA render pass with depth
+            // Final layout is COLOR_ATTACHMENT_OPTIMAL so UI pass can render on top
+            let color_attachment = vk::AttachmentDescription::default()
+                .format(self.swapchain_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::STORE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+
+            let depth_attachment = vk::AttachmentDescription::default()
+                .format(self.depth_format)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .load_op(vk::AttachmentLoadOp::CLEAR)
+                .store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+                .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+            let attachments = [color_attachment, depth_attachment];
+
+            let color_attachment_ref = vk::AttachmentReference::default()
+                .attachment(0)
+                .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+            let color_attachment_refs = [color_attachment_ref];
+
+            let depth_attachment_ref = vk::AttachmentReference::default()
+                .attachment(1)
+                .layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
+
+            let subpass = vk::SubpassDescription::default()
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+                .color_attachments(&color_attachment_refs)
+                .depth_stencil_attachment(&depth_attachment_ref);
+            let subpasses = [subpass];
+
+            let dependency = vk::SubpassDependency::default()
+                .src_subpass(vk::SUBPASS_EXTERNAL)
+                .dst_subpass(0)
+                .src_stage_mask(
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                )
+                .dst_stage_mask(
+                    vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                        | vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                )
+                .dst_access_mask(
+                    vk::AccessFlags::COLOR_ATTACHMENT_WRITE
+                        | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                );
+            let dependencies = [dependency];
+
+            let render_pass_info = vk::RenderPassCreateInfo::default()
+                .attachments(&attachments)
+                .subpasses(&subpasses)
+                .dependencies(&dependencies);
+
+            self.render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }
+                .map_err(RenderError::from)?;
+        }
+
+        Ok(())
+    }
+
+    /// Create a separate render pass for UI that loads the existing color content
+    /// and renders on top without MSAA
+    fn create_ui_render_pass(&mut self) -> Result<(), RenderError> {
+        self.cleanup_ui_render_pass();
+
+        // Single color attachment that loads existing content
         let color_attachment = vk::AttachmentDescription::default()
             .format(self.swapchain_format)
             .samples(vk::SampleCountFlags::TYPE_1)
-            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .load_op(vk::AttachmentLoadOp::LOAD) // Load existing content from 3D pass
             .store_op(vk::AttachmentStoreOp::STORE)
             .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
             .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
-            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .initial_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
             .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-        let color_attachments = [color_attachment];
+
+        let attachments = [color_attachment];
 
         let color_attachment_ref = vk::AttachmentReference::default()
             .attachment(0)
@@ -653,27 +1077,35 @@ impl RendererCore {
             .dst_subpass(0)
             .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
             .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
-            .dst_access_mask(
-                vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
-            );
+            .dst_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE);
         let dependencies = [dependency];
 
         let render_pass_info = vk::RenderPassCreateInfo::default()
-            .attachments(&color_attachments)
+            .attachments(&attachments)
             .subpasses(&subpasses)
             .dependencies(&dependencies);
 
-        let render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }
+        self.ui_render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }
             .map_err(RenderError::from)?;
-        self.render_pass = render_pass;
+
         Ok(())
     }
 
     fn create_framebuffers(&mut self) -> Result<(), RenderError> {
         self.cleanup_framebuffers();
+
+        let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
         let mut framebuffers = Vec::with_capacity(self.swapchain_image_views.len());
-        for &view in &self.swapchain_image_views {
-            let attachments = [view];
+
+        for &swapchain_view in &self.swapchain_image_views {
+            let attachments = if using_msaa {
+                // MSAA: [color_msaa, depth, resolve_target]
+                vec![self.color_image_view, self.depth_image_view, swapchain_view]
+            } else {
+                // No MSAA: [color, depth]
+                vec![swapchain_view, self.depth_image_view]
+            };
+
             let framebuffer_info = vk::FramebufferCreateInfo::default()
                 .render_pass(self.render_pass)
                 .attachments(&attachments)
@@ -685,6 +1117,28 @@ impl RendererCore {
             framebuffers.push(framebuffer);
         }
         self.framebuffers = framebuffers;
+        Ok(())
+    }
+
+    fn create_ui_framebuffers(&mut self) -> Result<(), RenderError> {
+        self.cleanup_ui_framebuffers();
+
+        let mut framebuffers = Vec::with_capacity(self.swapchain_image_views.len());
+
+        for &swapchain_view in &self.swapchain_image_views {
+            let attachments = [swapchain_view];
+
+            let framebuffer_info = vk::FramebufferCreateInfo::default()
+                .render_pass(self.ui_render_pass)
+                .attachments(&attachments)
+                .width(self.swapchain_extent.width)
+                .height(self.swapchain_extent.height)
+                .layers(1);
+            let framebuffer = unsafe { self.device.create_framebuffer(&framebuffer_info, None) }
+                .map_err(RenderError::from)?;
+            framebuffers.push(framebuffer);
+        }
+        self.ui_framebuffers = framebuffers;
         Ok(())
     }
 
@@ -760,11 +1214,43 @@ impl RendererCore {
                 .map_err(RenderError::from)?;
         }
 
-        let clear_values = [vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [0.05, 0.08, 0.12, 1.0],
-            },
-        }];
+        let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
+        let clear_values = if using_msaa {
+            // MSAA: [color, depth, resolve]
+            vec![
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.05, 0.08, 0.12, 1.0],
+                    },
+                },
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 1.0,
+                        stencil: 0,
+                    },
+                },
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.05, 0.08, 0.12, 1.0],
+                    },
+                },
+            ]
+        } else {
+            // No MSAA: [color, depth]
+            vec![
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.05, 0.08, 0.12, 1.0],
+                    },
+                },
+                vk::ClearValue {
+                    depth_stencil: vk::ClearDepthStencilValue {
+                        depth: 1.0,
+                        stencil: 0,
+                    },
+                },
+            ]
+        };
 
         let render_area = vk::Rect2D {
             offset: vk::Offset2D { x: 0, y: 0 },
@@ -795,7 +1281,30 @@ impl RendererCore {
                 &frame.lighting,
             )?;
         }
+
+        unsafe {
+            self.device.cmd_end_render_pass(command_buffer);
+        }
+
+        // Second render pass for UI (loads existing content, no MSAA)
         if let (Some(ui), Some(renderer)) = (&frame.egui, self.egui_renderer.as_mut()) {
+            let ui_render_area = vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: self.swapchain_extent,
+            };
+            let ui_render_pass_info = vk::RenderPassBeginInfo::default()
+                .render_pass(self.ui_render_pass)
+                .framebuffer(self.ui_framebuffers[image_index as usize])
+                .render_area(ui_render_area);
+
+            unsafe {
+                self.device.cmd_begin_render_pass(
+                    command_buffer,
+                    &ui_render_pass_info,
+                    vk::SubpassContents::INLINE,
+                );
+            }
+
             renderer
                 .cmd_draw(
                     command_buffer,
@@ -804,10 +1313,13 @@ impl RendererCore {
                     &ui.primitives,
                 )
                 .map_err(map_egui_err)?;
+
+            unsafe {
+                self.device.cmd_end_render_pass(command_buffer);
+            }
         }
 
         unsafe {
-            self.device.cmd_end_render_pass(command_buffer);
             self.device
                 .end_command_buffer(command_buffer)
                 .map_err(RenderError::from)?;
@@ -817,8 +1329,12 @@ impl RendererCore {
     }
 
     fn cleanup_swapchain(&mut self) {
+        self.cleanup_ui_framebuffers();
         self.cleanup_framebuffers();
+        self.cleanup_ui_render_pass();
         self.cleanup_render_pass();
+        self.cleanup_depth_resources();
+        self.cleanup_color_resources();
         self.cleanup_image_views();
         if self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
@@ -835,6 +1351,12 @@ impl RendererCore {
         }
     }
 
+    fn cleanup_ui_framebuffers(&mut self) {
+        for framebuffer in self.ui_framebuffers.drain(..) {
+            unsafe { self.device.destroy_framebuffer(framebuffer, None) };
+        }
+    }
+
     fn cleanup_render_pass(&mut self) {
         if self.render_pass != vk::RenderPass::null() {
             unsafe {
@@ -844,11 +1366,62 @@ impl RendererCore {
         }
     }
 
+    fn cleanup_ui_render_pass(&mut self) {
+        if self.ui_render_pass != vk::RenderPass::null() {
+            unsafe {
+                self.device.destroy_render_pass(self.ui_render_pass, None);
+            }
+            self.ui_render_pass = vk::RenderPass::null();
+        }
+    }
+
     fn cleanup_image_views(&mut self) {
         for view in self.swapchain_image_views.drain(..) {
             unsafe {
                 self.device.destroy_image_view(view, None);
             }
+        }
+    }
+
+    fn cleanup_depth_resources(&mut self) {
+        if self.depth_image_view != vk::ImageView::null() {
+            unsafe {
+                self.device.destroy_image_view(self.depth_image_view, None);
+            }
+            self.depth_image_view = vk::ImageView::null();
+        }
+        if self.depth_image != vk::Image::null() {
+            unsafe {
+                self.device.destroy_image(self.depth_image, None);
+            }
+            self.depth_image = vk::Image::null();
+        }
+        if self.depth_image_memory != vk::DeviceMemory::null() {
+            unsafe {
+                self.device.free_memory(self.depth_image_memory, None);
+            }
+            self.depth_image_memory = vk::DeviceMemory::null();
+        }
+    }
+
+    fn cleanup_color_resources(&mut self) {
+        if self.color_image_view != vk::ImageView::null() {
+            unsafe {
+                self.device.destroy_image_view(self.color_image_view, None);
+            }
+            self.color_image_view = vk::ImageView::null();
+        }
+        if self.color_image != vk::Image::null() {
+            unsafe {
+                self.device.destroy_image(self.color_image, None);
+            }
+            self.color_image = vk::Image::null();
+        }
+        if self.color_image_memory != vk::DeviceMemory::null() {
+            unsafe {
+                self.device.free_memory(self.color_image_memory, None);
+            }
+            self.color_image_memory = vk::DeviceMemory::null();
         }
     }
 
@@ -980,6 +1553,7 @@ struct MeshRenderer {
     index_capacity: usize,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    msaa_samples: vk::SampleCountFlags,
 }
 
 impl MeshRenderer {
@@ -988,13 +1562,14 @@ impl MeshRenderer {
         physical_device: vk::PhysicalDevice,
         device: &ash::Device,
         render_pass: vk::RenderPass,
+        msaa_samples: vk::SampleCountFlags,
     ) -> Result<Self, RenderError> {
         let device = device.clone();
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
         let pipeline_layout = create_mesh_pipeline_layout(&device)?;
-        let pipeline = create_mesh_pipeline(&device, render_pass, pipeline_layout)?;
+        let pipeline = create_mesh_pipeline(&device, render_pass, pipeline_layout, msaa_samples)?;
 
         Ok(Self {
             device,
@@ -1007,14 +1582,25 @@ impl MeshRenderer {
             index_capacity: 0,
             pipeline_layout,
             pipeline,
+            msaa_samples,
         })
     }
 
-    fn set_render_pass(&mut self, render_pass: vk::RenderPass) -> Result<(), RenderError> {
+    fn set_render_pass(
+        &mut self,
+        render_pass: vk::RenderPass,
+        msaa_samples: vk::SampleCountFlags,
+    ) -> Result<(), RenderError> {
         unsafe {
             self.device.destroy_pipeline(self.pipeline, None);
         }
-        self.pipeline = create_mesh_pipeline(&self.device, render_pass, self.pipeline_layout)?;
+        self.msaa_samples = msaa_samples;
+        self.pipeline = create_mesh_pipeline(
+            &self.device,
+            render_pass,
+            self.pipeline_layout,
+            msaa_samples,
+        )?;
         Ok(())
     }
 
@@ -1297,6 +1883,7 @@ fn create_mesh_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
     pipeline_layout: vk::PipelineLayout,
+    msaa_samples: vk::SampleCountFlags,
 ) -> Result<vk::Pipeline, RenderError> {
     let vert_module = create_shader_module(device, MESH_VERT_SPV)?;
     let frag_module = create_shader_module(device, MESH_FRAG_SPV)?;
@@ -1348,12 +1935,21 @@ fn create_mesh_pipeline(
 
     let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
         .polygon_mode(vk::PolygonMode::FILL)
-        .cull_mode(vk::CullModeFlags::BACK) // Disable culling for now to debug
+        .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .line_width(1.0);
 
     let multisample = vk::PipelineMultisampleStateCreateInfo::default()
-        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        .rasterization_samples(msaa_samples)
+        .sample_shading_enable(false);
+
+    // Enable depth testing
+    let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
+        .depth_test_enable(true)
+        .depth_write_enable(true)
+        .depth_compare_op(vk::CompareOp::LESS)
+        .depth_bounds_test_enable(false)
+        .stencil_test_enable(false);
 
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default().color_write_mask(
         vk::ColorComponentFlags::R
@@ -1376,6 +1972,7 @@ fn create_mesh_pipeline(
         .viewport_state(&viewport_state)
         .rasterization_state(&rasterization)
         .multisample_state(&multisample)
+        .depth_stencil_state(&depth_stencil)
         .color_blend_state(&color_blend)
         .dynamic_state(&dynamic_state)
         .layout(pipeline_layout)
