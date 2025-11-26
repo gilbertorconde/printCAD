@@ -1,0 +1,22 @@
+[package]
+name = "app_shell"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+core_document = { path = "../core_document" }
+render_vk = { path = "../render_vk" }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+winit.workspace = true
+egui.workspace = true
+egui-winit.workspace = true
+wb_part = { path = "../wb_part" }
+wb_sketch = { path = "../wb_sketch" }
+kernel_api = { path = "../kernel_api" }
+settings = { path = "../settings" }
+glam.workspace = true
+uuid.workspace = true

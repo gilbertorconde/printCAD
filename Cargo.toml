@@ -1,0 +1,38 @@
+[workspace]
+members = [
+  "crates/app_shell",
+  "crates/core_document",
+  "crates/kernel_api",
+  "crates/kernel_occt",
+  "crates/render_vk",
+  "crates/wb_part",
+  "crates/wb_sketch",
+  "crates/settings",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+rust-version = "1.79"
+
+[workspace.metadata]
+description = "Workspace for the printCAD parametric CAD application."
+
+[workspace.dependencies]
+anyhow = "1.0.100"
+ash = { version = "0.38", default-features = false, features = ["linked"] }
+serde_json = "1.0.145"
+serde = { version = "1.0.228", features = ["derive"] }
+thiserror = "2.0.17"
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
+uuid = { version = "1.18.1", features = ["serde", "v4"] }
+winit = "0.30.12"
+raw-window-handle = "0.6.2"
+egui = "0.33.2"
+egui-winit = "0.33.2"
+egui-ash-renderer = "0.10"
+bytemuck = "1.14"
+directories = "6.0"
+glam = { version = "0.30.9", features = ["std"] }

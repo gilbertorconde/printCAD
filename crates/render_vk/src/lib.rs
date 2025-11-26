@@ -1,0 +1,1708 @@
+mod surface;
+
+use ash::{
+    khr::{surface::Instance as SurfaceLoader, swapchain::Device as SwapchainLoader},
+    vk, Entry,
+};
+use egui::{ClippedPrimitive, TextureId, TexturesDelta};
+use egui_ash_renderer::{Options as EguiRendererOptions, Renderer as EguiRenderer};
+use kernel_api::TriMesh;
+use std::{
+    collections::HashSet,
+    ffi::{CStr, CString},
+    fmt,
+    mem::size_of,
+};
+use thiserror::Error;
+use tracing::{debug, info, warn};
+use uuid::Uuid;
+use winit::{dpi::PhysicalSize, window::Window};
+
+const MAX_FRAMES_IN_FLIGHT: usize = 2;
+const VALIDATION_LAYER: &str = "VK_LAYER_KHRONOS_validation";
+const MESH_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mesh.vert.spv"));
+const MESH_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mesh.frag.spv"));
+
+fn map_egui_err(err: egui_ash_renderer::RendererError) -> RenderError {
+    RenderError::Initialization(format!("egui renderer error: {err}"))
+}
+
+fn is_srgb_format(format: vk::Format) -> bool {
+    matches!(
+        format,
+        vk::Format::B8G8R8A8_SRGB
+            | vk::Format::R8G8B8A8_SRGB
+            | vk::Format::A8B8G8R8_SRGB_PACK32
+            | vk::Format::BC1_RGBA_SRGB_BLOCK
+            | vk::Format::BC2_SRGB_BLOCK
+            | vk::Format::BC3_SRGB_BLOCK
+    )
+}
+
+fn identity_matrix() -> [[f32; 4]; 4] {
+    [
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ]
+}
+
+/// Trait used by the app shell to talk to any renderer implementation.
+pub trait RenderBackend {
+    fn initialize(&mut self, window: &Window) -> Result<(), RenderError>;
+    fn render(&mut self, frame: &FrameSubmission) -> Result<(), RenderError>;
+    fn resize(&mut self, new_size: PhysicalSize<u32>);
+}
+
+/// Basic configuration knobs for the renderer.
+#[derive(Debug, Clone)]
+pub struct RenderSettings {
+    pub prefer_validation_layers: bool,
+    /// Preferred GPU name substring; None = automatic first suitable device
+    pub preferred_gpu: Option<String>,
+}
+
+impl Default for RenderSettings {
+    fn default() -> Self {
+        Self {
+            prefer_validation_layers: true,
+            preferred_gpu: None,
+        }
+    }
+}
+
+/// Render-ready body (mesh + unique identifier for future picking).
+#[derive(Clone)]
+pub struct BodySubmission {
+    pub id: Uuid,
+    pub mesh: TriMesh,
+    pub color: [f32; 3],
+}
+
+impl fmt::Debug for BodySubmission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BodySubmission")
+            .field("id", &self.id)
+            .field("vertex_count", &self.mesh.positions.len())
+            .field("color", &self.color)
+            .finish()
+    }
+}
+
+/// Rectangle defining the 3D viewport area (in physical pixels)
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ViewportRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Minimal scene data required to emit a frame.
+pub struct FrameSubmission {
+    pub bodies: Vec<BodySubmission>,
+    pub view_proj: [[f32; 4]; 4],
+    pub camera_pos: [f32; 3],
+    pub lighting: LightingData,
+    pub egui: Option<EguiSubmission>,
+    /// The 3D viewport rect (area where mesh should be rendered)
+    pub viewport_rect: Option<ViewportRect>,
+}
+
+impl Default for FrameSubmission {
+    fn default() -> Self {
+        Self {
+            bodies: Vec::new(),
+            view_proj: identity_matrix(),
+            camera_pos: [0.0, 0.0, 5.0],
+            lighting: LightingData::default(),
+            egui: None,
+            viewport_rect: None,
+        }
+    }
+}
+
+impl fmt::Debug for FrameSubmission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("FrameSubmission")
+            .field("body_count", &self.bodies.len())
+            .field("view_proj", &self.view_proj)
+            .field("camera_pos", &self.camera_pos)
+            .field(
+                "egui",
+                if self.egui.is_some() {
+                    &"Some"
+                } else {
+                    &"None"
+                },
+            )
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct EguiSubmission {
+    pub pixels_per_point: f32,
+    pub textures_delta: TexturesDelta,
+    pub primitives: Vec<ClippedPrimitive>,
+}
+
+impl fmt::Debug for EguiSubmission {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EguiSubmission")
+            .field("pixels_per_point", &self.pixels_per_point)
+            .field("primitive_count", &self.primitives.len())
+            .field("textures_set", &self.textures_delta.set.len())
+            .field("textures_free", &self.textures_delta.free.len())
+            .finish()
+    }
+}
+
+/// Vulkan-backed renderer that owns the full GPU stack.
+pub struct VulkanRenderer {
+    settings: RenderSettings,
+    core: Option<RendererCore>,
+    pending_extent: Option<vk::Extent2D>,
+}
+
+impl VulkanRenderer {
+    pub fn new(settings: RenderSettings) -> Self {
+        Self {
+            settings,
+            core: None,
+            pending_extent: None,
+        }
+    }
+
+    pub fn gpu_name(&self) -> Option<&str> {
+        self.core.as_ref().map(|c| c.gpu_name.as_str())
+    }
+
+    pub fn available_gpus(&self) -> Option<&[String]> {
+        self.core.as_ref().map(|c| c.available_gpus.as_slice())
+    }
+
+    fn ensure_swapchain(&mut self) -> Result<(), RenderError> {
+        let core = self.core.as_mut().ok_or(RenderError::NotReady)?;
+        if let Some(extent) = self.pending_extent {
+            if extent.width == 0 || extent.height == 0 {
+                // Wayland can report zero-sized surfaces when minimized.
+                return Ok(());
+            }
+            core.recreate_swapchain(extent)?;
+            self.pending_extent = None;
+        }
+        Ok(())
+    }
+}
+
+impl RenderBackend for VulkanRenderer {
+    fn initialize(&mut self, window: &Window) -> Result<(), RenderError> {
+        if self.core.is_some() {
+            return Ok(());
+        }
+
+        let extent = to_extent(window.inner_size()).ok_or(RenderError::SurfaceTooSmall)?;
+        info!(
+            "Initializing Vulkan renderer (validation_layers={})",
+            self.settings.prefer_validation_layers
+        );
+        let core = RendererCore::new(window, extent, self.settings.clone())?;
+        self.core = Some(core);
+        Ok(())
+    }
+
+    fn render(&mut self, frame: &FrameSubmission) -> Result<(), RenderError> {
+        if let Some(ui) = &frame.egui {
+            let texture_ops = ui.textures_delta.set.len() + ui.textures_delta.free.len();
+            debug!(
+                "egui output: {} primitives, {} texture ops",
+                ui.primitives.len(),
+                texture_ops
+            );
+        }
+        self.ensure_swapchain()?;
+        let core = self.core.as_mut().ok_or(RenderError::NotReady)?;
+        match core.draw_frame(frame) {
+            Err(RenderError::SwapchainOutOfDate) => {
+                self.pending_extent = Some(core.swapchain_extent);
+                Ok(())
+            }
+            Err(RenderError::SurfaceTooSmall) => Ok(()),
+            other => other,
+        }
+    }
+
+    fn resize(&mut self, new_size: PhysicalSize<u32>) {
+        self.pending_extent = to_extent(new_size);
+    }
+}
+
+fn to_extent(size: PhysicalSize<u32>) -> Option<vk::Extent2D> {
+    if size.width == 0 || size.height == 0 {
+        None
+    } else {
+        Some(vk::Extent2D {
+            width: size.width,
+            height: size.height,
+        })
+    }
+}
+
+struct RendererCore {
+    instance: ash::Instance,
+    surface_loader: SurfaceLoader,
+    surface: vk::SurfaceKHR,
+    device: ash::Device,
+    physical_device: vk::PhysicalDevice,
+    queue_family_indices: QueueFamilyIndices,
+    graphics_queue: vk::Queue,
+    present_queue: vk::Queue,
+    swapchain_loader: SwapchainLoader,
+    swapchain: vk::SwapchainKHR,
+    swapchain_images: Vec<vk::Image>,
+    swapchain_format: vk::Format,
+    swapchain_extent: vk::Extent2D,
+    swapchain_image_views: Vec<vk::ImageView>,
+    render_pass: vk::RenderPass,
+    framebuffers: Vec<vk::Framebuffer>,
+    command_pool: vk::CommandPool,
+    command_buffers: Vec<vk::CommandBuffer>,
+    image_available_semaphores: Vec<vk::Semaphore>,
+    render_finished_semaphores: Vec<vk::Semaphore>,
+    in_flight_fences: Vec<vk::Fence>,
+    images_in_flight: Vec<vk::Fence>,
+    current_frame: usize,
+    egui_renderer: Option<EguiRenderer>,
+    textures_to_free: Vec<Vec<TextureId>>,
+    mesh_renderer: Option<MeshRenderer>,
+    gpu_name: String,
+    available_gpus: Vec<String>,
+}
+
+impl RendererCore {
+    fn new(
+        window: &Window,
+        extent: vk::Extent2D,
+        settings: RenderSettings,
+    ) -> Result<Self, RenderError> {
+        let entry = Entry::linked();
+        let available_layers: HashSet<String> = unsafe {
+            entry
+                .enumerate_instance_layer_properties()
+                .map_err(|e| RenderError::Initialization(e.to_string()))?
+                .into_iter()
+                .map(|layer| {
+                    let cstr = CStr::from_ptr(layer.layer_name.as_ptr());
+                    cstr.to_string_lossy().into_owned()
+                })
+                .collect()
+        };
+
+        let validation_enabled =
+            settings.prefer_validation_layers && available_layers.contains(VALIDATION_LAYER);
+        if validation_enabled {
+            info!("Enabling Vulkan validation layers");
+        }
+
+        let instance = create_instance(&entry, window, validation_enabled)?;
+
+        let surface = surface::create_surface(&entry, &instance, window)?;
+
+        // Construct extension loaders
+        let surface_loader = SurfaceLoader::new(&entry, &instance);
+
+        let candidates = enumerate_suitable_devices(&instance, &surface_loader, surface)?;
+        if candidates.is_empty() {
+            return Err(RenderError::Initialization(
+                "No suitable Vulkan physical device found".into(),
+            ));
+        }
+
+        let mut chosen_index = 0usize;
+        if let Some(pref) = settings.preferred_gpu.as_deref() {
+            if let Some(idx) = candidates
+                .iter()
+                .position(|c| c.name.to_lowercase().contains(&pref.to_lowercase()))
+            {
+                chosen_index = idx;
+            } else {
+                warn!(
+                    "Preferred GPU '{}' not found, falling back to '{}'",
+                    pref, candidates[0].name
+                );
+            }
+        }
+
+        let chosen = &candidates[chosen_index];
+        let physical_device = chosen.device;
+        let queue_family_indices = chosen.indices;
+        let gpu_name = chosen.name.clone();
+        let available_gpus: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
+        let (device, graphics_queue, present_queue) =
+            create_logical_device(&instance, physical_device, &queue_family_indices)?;
+        let swapchain_loader = SwapchainLoader::new(&instance, &device);
+
+        let mut core = RendererCore {
+            instance,
+            surface_loader,
+            surface,
+            device,
+            physical_device,
+            queue_family_indices,
+            graphics_queue,
+            present_queue,
+            swapchain_loader,
+            swapchain: vk::SwapchainKHR::null(),
+            swapchain_images: Vec::new(),
+            swapchain_format: vk::Format::UNDEFINED,
+            swapchain_extent: extent,
+            swapchain_image_views: Vec::new(),
+            render_pass: vk::RenderPass::null(),
+            framebuffers: Vec::new(),
+            command_pool: vk::CommandPool::null(),
+            command_buffers: Vec::new(),
+            image_available_semaphores: Vec::new(),
+            render_finished_semaphores: Vec::new(),
+            in_flight_fences: Vec::new(),
+            images_in_flight: Vec::new(),
+            current_frame: 0,
+            egui_renderer: None,
+            textures_to_free: vec![Vec::new(); MAX_FRAMES_IN_FLIGHT],
+            mesh_renderer: None,
+            gpu_name,
+            available_gpus,
+        };
+
+        core.create_swapchain(extent)?;
+        core.create_render_pass()?;
+        core.create_framebuffers()?;
+        core.create_command_pool()?;
+        core.create_command_buffers()?;
+        core.create_sync_objects()?;
+
+        let egui_options = EguiRendererOptions {
+            in_flight_frames: MAX_FRAMES_IN_FLIGHT,
+            srgb_framebuffer: is_srgb_format(core.swapchain_format),
+            ..Default::default()
+        };
+        let egui_renderer = EguiRenderer::with_default_allocator(
+            &core.instance,
+            core.physical_device,
+            core.device.clone(),
+            core.render_pass,
+            egui_options,
+        )
+        .map_err(map_egui_err)?;
+        core.egui_renderer = Some(egui_renderer);
+
+        core.mesh_renderer = Some(MeshRenderer::new(
+            &core.instance,
+            core.physical_device,
+            &core.device,
+            core.render_pass,
+        )?);
+
+        Ok(core)
+    }
+
+    fn recreate_swapchain(&mut self, extent: vk::Extent2D) -> Result<(), RenderError> {
+        unsafe {
+            self.device.device_wait_idle().map_err(RenderError::from)?;
+        }
+        self.cleanup_swapchain();
+        self.create_swapchain(extent)?;
+        self.create_render_pass()?;
+        self.create_framebuffers()?;
+        self.create_command_buffers()?;
+        if let Some(renderer) = self.egui_renderer.as_mut() {
+            renderer
+                .set_render_pass(self.render_pass)
+                .map_err(map_egui_err)?;
+        }
+        if let Some(renderer) = self.mesh_renderer.as_mut() {
+            renderer.set_render_pass(self.render_pass)?;
+        }
+        Ok(())
+    }
+
+    fn draw_frame(&mut self, frame: &FrameSubmission) -> Result<(), RenderError> {
+        unsafe {
+            self.device
+                .wait_for_fences(&[self.in_flight_fences[self.current_frame]], true, u64::MAX)
+                .map_err(RenderError::from)?;
+        }
+
+        if let Some(renderer) = self.egui_renderer.as_mut() {
+            let pending = &mut self.textures_to_free[self.current_frame];
+            if !pending.is_empty() {
+                renderer
+                    .free_textures(pending.as_slice())
+                    .map_err(map_egui_err)?;
+                pending.clear();
+            }
+        }
+
+        let (image_index, suboptimal) = unsafe {
+            match self.swapchain_loader.acquire_next_image(
+                self.swapchain,
+                u64::MAX,
+                self.image_available_semaphores[self.current_frame],
+                vk::Fence::null(),
+            ) {
+                Ok(result) => result,
+                Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                    return Err(RenderError::SwapchainOutOfDate)
+                }
+                Err(err) => return Err(RenderError::from(err)),
+            }
+        };
+
+        if suboptimal {
+            return Err(RenderError::SwapchainOutOfDate);
+        }
+
+        let fence = self.images_in_flight[image_index as usize];
+        if fence != vk::Fence::null() {
+            unsafe {
+                self.device
+                    .wait_for_fences(&[fence], true, u64::MAX)
+                    .map_err(RenderError::from)?;
+            }
+        }
+        self.images_in_flight[image_index as usize] = self.in_flight_fences[self.current_frame];
+
+        if let (Some(ui), Some(renderer)) = (&frame.egui, self.egui_renderer.as_mut()) {
+            renderer
+                .set_textures(
+                    self.graphics_queue,
+                    self.command_pool,
+                    ui.textures_delta.set.as_slice(),
+                )
+                .map_err(map_egui_err)?;
+        }
+
+        self.record_command_buffer(self.command_buffers[self.current_frame], image_index, frame)?;
+
+        let signal_semaphores = [self.render_finished_semaphores[self.current_frame]];
+        let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
+        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+
+        let command_buffers = [self.command_buffers[self.current_frame]];
+        let submit_info = vk::SubmitInfo::default()
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
+            .command_buffers(&command_buffers)
+            .signal_semaphores(&signal_semaphores);
+
+        unsafe {
+            self.device
+                .reset_fences(&[self.in_flight_fences[self.current_frame]])
+                .map_err(RenderError::from)?;
+            self.device
+                .queue_submit(
+                    self.graphics_queue,
+                    &[submit_info],
+                    self.in_flight_fences[self.current_frame],
+                )
+                .map_err(RenderError::from)?;
+        }
+
+        let swapchains = [self.swapchain];
+        let image_indices = [image_index];
+        let present_info = vk::PresentInfoKHR::default()
+            .wait_semaphores(&signal_semaphores)
+            .swapchains(&swapchains)
+            .image_indices(&image_indices);
+
+        match unsafe {
+            self.swapchain_loader
+                .queue_present(self.present_queue, &present_info)
+        } {
+            Ok(true) => return Err(RenderError::SwapchainOutOfDate),
+            Ok(false) => {}
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(RenderError::SwapchainOutOfDate),
+            Err(vk::Result::SUBOPTIMAL_KHR) => return Err(RenderError::SwapchainOutOfDate),
+            Err(err) => return Err(RenderError::from(err)),
+        }
+
+        if let Some(ui) = &frame.egui {
+            self.textures_to_free[self.current_frame] = ui.textures_delta.free.clone();
+        } else {
+            self.textures_to_free[self.current_frame].clear();
+        }
+
+        self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+        Ok(())
+    }
+
+    fn create_swapchain(&mut self, target_extent: vk::Extent2D) -> Result<(), RenderError> {
+        let support =
+            query_swapchain_support(self.physical_device, &self.surface_loader, self.surface)?;
+        let surface_format = choose_surface_format(&support.formats);
+        let present_mode = choose_present_mode(&support.present_modes);
+        let extent = choose_extent(&support.capabilities, target_extent);
+
+        let mut image_count = support.capabilities.min_image_count + 1;
+        if support.capabilities.max_image_count > 0
+            && image_count > support.capabilities.max_image_count
+        {
+            image_count = support.capabilities.max_image_count;
+        }
+
+        let indices = self.queue_family_indices;
+        let queue_family_indices = [indices.graphics_family, indices.present_family];
+        let (image_sharing_mode, p_queue_family_indices): (vk::SharingMode, &[u32]) =
+            if indices.graphics_family != indices.present_family {
+                (vk::SharingMode::CONCURRENT, &queue_family_indices)
+            } else {
+                (vk::SharingMode::EXCLUSIVE, &queue_family_indices[..1])
+            };
+
+        let swapchain_info = vk::SwapchainCreateInfoKHR::default()
+            .surface(self.surface)
+            .min_image_count(image_count)
+            .image_format(surface_format.format)
+            .image_color_space(surface_format.color_space)
+            .image_extent(extent)
+            .image_array_layers(1)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_sharing_mode(image_sharing_mode)
+            .queue_family_indices(p_queue_family_indices)
+            .pre_transform(support.capabilities.current_transform)
+            .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
+            .present_mode(present_mode)
+            .clipped(true)
+            .old_swapchain(self.swapchain);
+
+        unsafe {
+            if self.swapchain != vk::SwapchainKHR::null() {
+                self.swapchain_loader
+                    .destroy_swapchain(self.swapchain, None);
+            }
+
+            self.swapchain = self
+                .swapchain_loader
+                .create_swapchain(&swapchain_info, None)
+                .map_err(RenderError::from)?;
+            self.swapchain_images = self
+                .swapchain_loader
+                .get_swapchain_images(self.swapchain)
+                .map_err(RenderError::from)?;
+        }
+
+        self.swapchain_format = surface_format.format;
+        self.swapchain_extent = extent;
+        self.create_image_views()?;
+        self.images_in_flight = vec![vk::Fence::null(); self.swapchain_images.len()];
+        Ok(())
+    }
+
+    fn create_image_views(&mut self) -> Result<(), RenderError> {
+        self.cleanup_image_views();
+        let mut views = Vec::with_capacity(self.swapchain_images.len());
+        for &image in &self.swapchain_images {
+            let subresource_range = vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+
+            let view_info = vk::ImageViewCreateInfo::default()
+                .image(image)
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(self.swapchain_format)
+                .subresource_range(subresource_range);
+            let view = unsafe { self.device.create_image_view(&view_info, None) }
+                .map_err(RenderError::from)?;
+            views.push(view);
+        }
+        self.swapchain_image_views = views;
+        Ok(())
+    }
+
+    fn create_render_pass(&mut self) -> Result<(), RenderError> {
+        self.cleanup_render_pass();
+
+        let color_attachment = vk::AttachmentDescription::default()
+            .format(self.swapchain_format)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .load_op(vk::AttachmentLoadOp::CLEAR)
+            .store_op(vk::AttachmentStoreOp::STORE)
+            .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
+            .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
+            .initial_layout(vk::ImageLayout::UNDEFINED)
+            .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
+        let color_attachments = [color_attachment];
+
+        let color_attachment_ref = vk::AttachmentReference::default()
+            .attachment(0)
+            .layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+        let color_attachment_refs = [color_attachment_ref];
+
+        let subpass = vk::SubpassDescription::default()
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)
+            .color_attachments(&color_attachment_refs);
+        let subpasses = [subpass];
+
+        let dependency = vk::SubpassDependency::default()
+            .src_subpass(vk::SUBPASS_EXTERNAL)
+            .dst_subpass(0)
+            .src_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_stage_mask(vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT)
+            .dst_access_mask(
+                vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            );
+        let dependencies = [dependency];
+
+        let render_pass_info = vk::RenderPassCreateInfo::default()
+            .attachments(&color_attachments)
+            .subpasses(&subpasses)
+            .dependencies(&dependencies);
+
+        let render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }
+            .map_err(RenderError::from)?;
+        self.render_pass = render_pass;
+        Ok(())
+    }
+
+    fn create_framebuffers(&mut self) -> Result<(), RenderError> {
+        self.cleanup_framebuffers();
+        let mut framebuffers = Vec::with_capacity(self.swapchain_image_views.len());
+        for &view in &self.swapchain_image_views {
+            let attachments = [view];
+            let framebuffer_info = vk::FramebufferCreateInfo::default()
+                .render_pass(self.render_pass)
+                .attachments(&attachments)
+                .width(self.swapchain_extent.width)
+                .height(self.swapchain_extent.height)
+                .layers(1);
+            let framebuffer = unsafe { self.device.create_framebuffer(&framebuffer_info, None) }
+                .map_err(RenderError::from)?;
+            framebuffers.push(framebuffer);
+        }
+        self.framebuffers = framebuffers;
+        Ok(())
+    }
+
+    fn create_command_pool(&mut self) -> Result<(), RenderError> {
+        if self.command_pool != vk::CommandPool::null() {
+            unsafe {
+                self.device.destroy_command_pool(self.command_pool, None);
+            }
+        }
+
+        let pool_info = vk::CommandPoolCreateInfo::default()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(self.queue_family_indices.graphics_family);
+        let pool = unsafe { self.device.create_command_pool(&pool_info, None) }
+            .map_err(RenderError::from)?;
+        self.command_pool = pool;
+        Ok(())
+    }
+
+    fn create_command_buffers(&mut self) -> Result<(), RenderError> {
+        if !self.command_buffers.is_empty() {
+            unsafe {
+                self.device
+                    .free_command_buffers(self.command_pool, &self.command_buffers);
+            }
+            self.command_buffers.clear();
+        }
+
+        let alloc_info = vk::CommandBufferAllocateInfo::default()
+            .command_pool(self.command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(MAX_FRAMES_IN_FLIGHT as u32);
+        let buffers = unsafe { self.device.allocate_command_buffers(&alloc_info) }
+            .map_err(RenderError::from)?;
+        self.command_buffers = buffers;
+        Ok(())
+    }
+
+    fn create_sync_objects(&mut self) -> Result<(), RenderError> {
+        self.cleanup_sync_objects();
+        let semaphore_info = vk::SemaphoreCreateInfo::default();
+        let fence_info = vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED);
+
+        for _ in 0..MAX_FRAMES_IN_FLIGHT {
+            let image_available = unsafe { self.device.create_semaphore(&semaphore_info, None) }
+                .map_err(RenderError::from)?;
+            let render_finished = unsafe { self.device.create_semaphore(&semaphore_info, None) }
+                .map_err(RenderError::from)?;
+            let fence = unsafe { self.device.create_fence(&fence_info, None) }
+                .map_err(RenderError::from)?;
+            self.image_available_semaphores.push(image_available);
+            self.render_finished_semaphores.push(render_finished);
+            self.in_flight_fences.push(fence);
+        }
+        self.images_in_flight = vec![vk::Fence::null(); self.swapchain_images.len()];
+        self.current_frame = 0;
+        Ok(())
+    }
+
+    fn record_command_buffer(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        image_index: u32,
+        frame: &FrameSubmission,
+    ) -> Result<(), RenderError> {
+        let begin_info = vk::CommandBufferBeginInfo::default();
+        unsafe {
+            self.device
+                .reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::empty())
+                .map_err(RenderError::from)?;
+            self.device
+                .begin_command_buffer(command_buffer, &begin_info)
+                .map_err(RenderError::from)?;
+        }
+
+        let clear_values = [vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [0.05, 0.08, 0.12, 1.0],
+            },
+        }];
+
+        let render_area = vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: self.swapchain_extent,
+        };
+        let render_pass_info = vk::RenderPassBeginInfo::default()
+            .render_pass(self.render_pass)
+            .framebuffer(self.framebuffers[image_index as usize])
+            .render_area(render_area)
+            .clear_values(&clear_values);
+
+        unsafe {
+            self.device.cmd_begin_render_pass(
+                command_buffer,
+                &render_pass_info,
+                vk::SubpassContents::INLINE,
+            );
+        }
+
+        if let Some(mesh_renderer) = self.mesh_renderer.as_mut() {
+            mesh_renderer.draw(
+                command_buffer,
+                self.swapchain_extent,
+                frame.viewport_rect.as_ref(),
+                &frame.bodies,
+                frame.view_proj,
+                frame.camera_pos,
+                &frame.lighting,
+            )?;
+        }
+        if let (Some(ui), Some(renderer)) = (&frame.egui, self.egui_renderer.as_mut()) {
+            renderer
+                .cmd_draw(
+                    command_buffer,
+                    self.swapchain_extent,
+                    ui.pixels_per_point,
+                    &ui.primitives,
+                )
+                .map_err(map_egui_err)?;
+        }
+
+        unsafe {
+            self.device.cmd_end_render_pass(command_buffer);
+            self.device
+                .end_command_buffer(command_buffer)
+                .map_err(RenderError::from)?;
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_swapchain(&mut self) {
+        self.cleanup_framebuffers();
+        self.cleanup_render_pass();
+        self.cleanup_image_views();
+        if self.swapchain != vk::SwapchainKHR::null() {
+            unsafe {
+                self.swapchain_loader
+                    .destroy_swapchain(self.swapchain, None);
+            }
+            self.swapchain = vk::SwapchainKHR::null();
+        }
+    }
+
+    fn cleanup_framebuffers(&mut self) {
+        for framebuffer in self.framebuffers.drain(..) {
+            unsafe { self.device.destroy_framebuffer(framebuffer, None) };
+        }
+    }
+
+    fn cleanup_render_pass(&mut self) {
+        if self.render_pass != vk::RenderPass::null() {
+            unsafe {
+                self.device.destroy_render_pass(self.render_pass, None);
+            }
+            self.render_pass = vk::RenderPass::null();
+        }
+    }
+
+    fn cleanup_image_views(&mut self) {
+        for view in self.swapchain_image_views.drain(..) {
+            unsafe {
+                self.device.destroy_image_view(view, None);
+            }
+        }
+    }
+
+    fn cleanup_sync_objects(&mut self) {
+        for semaphore in self.image_available_semaphores.drain(..) {
+            unsafe { self.device.destroy_semaphore(semaphore, None) };
+        }
+        for semaphore in self.render_finished_semaphores.drain(..) {
+            unsafe { self.device.destroy_semaphore(semaphore, None) };
+        }
+        for fence in self.in_flight_fences.drain(..) {
+            unsafe { self.device.destroy_fence(fence, None) };
+        }
+        self.images_in_flight.clear();
+    }
+}
+
+impl Drop for RendererCore {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.device_wait_idle().ok();
+        }
+        self.cleanup_swapchain();
+        self.cleanup_sync_objects();
+        if self.command_pool != vk::CommandPool::null() {
+            unsafe {
+                self.device.destroy_command_pool(self.command_pool, None);
+            }
+        }
+        if let Some(renderer) = self.mesh_renderer.take() {
+            renderer.destroy();
+        }
+        unsafe {
+            self.device.destroy_device(None);
+            self.surface_loader.destroy_surface(self.surface, None);
+            self.instance.destroy_instance(None);
+        }
+    }
+}
+
+#[repr(C)]
+struct MeshVertex {
+    position: [f32; 3],
+    normal: [f32; 3],
+    color: [f32; 3],
+}
+
+impl MeshVertex {
+    fn new(position: [f32; 3], normal: [f32; 3], color: [f32; 3]) -> Self {
+        Self {
+            position,
+            normal,
+            color,
+        }
+    }
+}
+
+/// Light data packed for GPU (16 bytes each for alignment)
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct GpuLight {
+    /// xyz = direction, w = intensity
+    pub direction_intensity: [f32; 4],
+    /// rgb = color, a = enabled (1.0 or 0.0)
+    pub color_enabled: [f32; 4],
+}
+
+impl GpuLight {
+    pub fn new(direction: [f32; 3], color: [f32; 3], intensity: f32, enabled: bool) -> Self {
+        Self {
+            direction_intensity: [direction[0], direction[1], direction[2], intensity],
+            color_enabled: [
+                color[0],
+                color[1],
+                color[2],
+                if enabled { 1.0 } else { 0.0 },
+            ],
+        }
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct MeshPushConstants {
+    view_proj: [[f32; 4]; 4], // 64 bytes
+    camera_pos: [f32; 4],     // 16 bytes - xyz = position, w = unused
+    light_main: GpuLight,     // 32 bytes
+    light_back: GpuLight,     // 32 bytes
+    light_fill: GpuLight,     // 32 bytes
+    ambient: [f32; 4],        // 16 bytes - rgb = color * intensity, a = unused
+} // Total: 192 bytes
+
+impl MeshPushConstants {
+    fn new(view_proj: [[f32; 4]; 4], camera_pos: [f32; 3], lights: &LightingData) -> Self {
+        Self {
+            view_proj,
+            camera_pos: [camera_pos[0], camera_pos[1], camera_pos[2], 1.0],
+            light_main: lights.main_light,
+            light_back: lights.backlight,
+            light_fill: lights.fill_light,
+            ambient: [
+                lights.ambient_color[0] * lights.ambient_intensity,
+                lights.ambient_color[1] * lights.ambient_intensity,
+                lights.ambient_color[2] * lights.ambient_intensity,
+                1.0,
+            ],
+        }
+    }
+}
+
+/// Lighting data to pass to the renderer each frame
+#[derive(Clone, Copy, Default)]
+pub struct LightingData {
+    pub main_light: GpuLight,
+    pub backlight: GpuLight,
+    pub fill_light: GpuLight,
+    pub ambient_color: [f32; 3],
+    pub ambient_intensity: f32,
+}
+
+struct MeshRenderer {
+    device: ash::Device,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    vertex_buffer: vk::Buffer,
+    vertex_memory: vk::DeviceMemory,
+    vertex_capacity: usize,
+    index_buffer: vk::Buffer,
+    index_memory: vk::DeviceMemory,
+    index_capacity: usize,
+    pipeline_layout: vk::PipelineLayout,
+    pipeline: vk::Pipeline,
+}
+
+impl MeshRenderer {
+    fn new(
+        instance: &ash::Instance,
+        physical_device: vk::PhysicalDevice,
+        device: &ash::Device,
+        render_pass: vk::RenderPass,
+    ) -> Result<Self, RenderError> {
+        let device = device.clone();
+        let memory_properties =
+            unsafe { instance.get_physical_device_memory_properties(physical_device) };
+
+        let pipeline_layout = create_mesh_pipeline_layout(&device)?;
+        let pipeline = create_mesh_pipeline(&device, render_pass, pipeline_layout)?;
+
+        Ok(Self {
+            device,
+            memory_properties,
+            vertex_buffer: vk::Buffer::null(),
+            vertex_memory: vk::DeviceMemory::null(),
+            vertex_capacity: 0,
+            index_buffer: vk::Buffer::null(),
+            index_memory: vk::DeviceMemory::null(),
+            index_capacity: 0,
+            pipeline_layout,
+            pipeline,
+        })
+    }
+
+    fn set_render_pass(&mut self, render_pass: vk::RenderPass) -> Result<(), RenderError> {
+        unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
+        }
+        self.pipeline = create_mesh_pipeline(&self.device, render_pass, self.pipeline_layout)?;
+        Ok(())
+    }
+
+    fn draw(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        swapchain_extent: vk::Extent2D,
+        viewport_rect: Option<&ViewportRect>,
+        bodies: &[BodySubmission],
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        lighting: &LightingData,
+    ) -> Result<(), RenderError> {
+        let index_count = self.upload_meshes(bodies)?;
+        if index_count == 0 {
+            return Ok(());
+        }
+
+        // Use provided viewport rect or fall back to full swapchain extent
+        let (vp_x, vp_y, vp_width, vp_height) = match viewport_rect {
+            Some(rect) => (
+                rect.x as f32,
+                rect.y as f32,
+                rect.width as f32,
+                rect.height as f32,
+            ),
+            None => (
+                0.0,
+                0.0,
+                swapchain_extent.width as f32,
+                swapchain_extent.height as f32,
+            ),
+        };
+
+        let viewport = vk::Viewport {
+            x: vp_x,
+            y: vp_y,
+            width: vp_width,
+            height: vp_height,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D {
+                x: vp_x as i32,
+                y: vp_y as i32,
+            },
+            extent: vk::Extent2D {
+                width: vp_width as u32,
+                height: vp_height as u32,
+            },
+        };
+
+        unsafe {
+            self.device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline,
+            );
+            self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+            self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+            self.device
+                .cmd_bind_vertex_buffers(command_buffer, 0, &[self.vertex_buffer], &[0]);
+            self.device.cmd_bind_index_buffer(
+                command_buffer,
+                self.index_buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+            let push = MeshPushConstants::new(view_proj, camera_pos, lighting);
+            let push_bytes = std::slice::from_raw_parts(
+                &push as *const _ as *const u8,
+                size_of::<MeshPushConstants>(),
+            );
+            self.device.cmd_push_constants(
+                command_buffer,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                push_bytes,
+            );
+            self.device
+                .cmd_draw_indexed(command_buffer, index_count, 1, 0, 0, 0);
+        }
+
+        Ok(())
+    }
+
+    fn upload_meshes(&mut self, bodies: &[BodySubmission]) -> Result<u32, RenderError> {
+        let vertex_count: usize = bodies.iter().map(|b| b.mesh.positions.len()).sum();
+        if vertex_count == 0 {
+            return Ok(0);
+        }
+        let index_count: usize = bodies
+            .iter()
+            .map(|body| {
+                let mesh = &body.mesh;
+                if mesh.indices.is_empty() {
+                    (mesh.positions.len() / 3) * 3
+                } else {
+                    mesh.indices.len()
+                }
+            })
+            .sum();
+
+        let vertex_bytes = vertex_count * size_of::<MeshVertex>();
+        let index_bytes = index_count * size_of::<u32>();
+
+        self.ensure_vertex_capacity(vertex_bytes)?;
+        self.ensure_index_capacity(index_bytes)?;
+
+        unsafe {
+            let vertex_ptr = self
+                .device
+                .map_memory(
+                    self.vertex_memory,
+                    0,
+                    vertex_bytes as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .map_err(RenderError::from)? as *mut MeshVertex;
+            let vertex_slice = std::slice::from_raw_parts_mut(vertex_ptr, vertex_count);
+
+            let mut v_offset = 0;
+            for body in bodies {
+                let mesh = &body.mesh;
+                for (i, position) in mesh.positions.iter().enumerate() {
+                    let normal = mesh.normals.get(i).cloned().unwrap_or([0.0, 1.0, 0.0]);
+                    vertex_slice[v_offset] = MeshVertex::new(*position, normal, body.color);
+                    v_offset += 1;
+                }
+            }
+            self.device.unmap_memory(self.vertex_memory);
+
+            let index_ptr = self
+                .device
+                .map_memory(
+                    self.index_memory,
+                    0,
+                    index_bytes as u64,
+                    vk::MemoryMapFlags::empty(),
+                )
+                .map_err(RenderError::from)? as *mut u32;
+            let index_slice = std::slice::from_raw_parts_mut(index_ptr, index_count);
+
+            let mut index_offset = 0;
+            let mut vertex_base = 0u32;
+            for body in bodies {
+                let mesh = &body.mesh;
+                if mesh.indices.is_empty() {
+                    let tris = mesh.positions.len() / 3;
+                    for tri in 0..tris {
+                        index_slice[index_offset] = vertex_base + (tri * 3) as u32;
+                        index_slice[index_offset + 1] = vertex_base + (tri * 3 + 1) as u32;
+                        index_slice[index_offset + 2] = vertex_base + (tri * 3 + 2) as u32;
+                        index_offset += 3;
+                    }
+                } else {
+                    for &idx in &mesh.indices {
+                        index_slice[index_offset] = vertex_base + idx;
+                        index_offset += 1;
+                    }
+                }
+                vertex_base += mesh.positions.len() as u32;
+            }
+            self.device.unmap_memory(self.index_memory);
+        }
+
+        Ok(index_count as u32)
+    }
+
+    fn ensure_vertex_capacity(&mut self, required: usize) -> Result<(), RenderError> {
+        if required <= self.vertex_capacity {
+            return Ok(());
+        }
+        self.destroy_vertex_buffer();
+        let size = required.next_power_of_two() as vk::DeviceSize;
+        let (buffer, memory) = self.create_buffer(
+            size,
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )?;
+        self.vertex_buffer = buffer;
+        self.vertex_memory = memory;
+        self.vertex_capacity = size as usize;
+        Ok(())
+    }
+
+    fn ensure_index_capacity(&mut self, required: usize) -> Result<(), RenderError> {
+        if required <= self.index_capacity {
+            return Ok(());
+        }
+        self.destroy_index_buffer();
+        let size = required.next_power_of_two() as vk::DeviceSize;
+        let (buffer, memory) = self.create_buffer(
+            size,
+            vk::BufferUsageFlags::INDEX_BUFFER,
+            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
+        )?;
+        self.index_buffer = buffer;
+        self.index_memory = memory;
+        self.index_capacity = size as usize;
+        Ok(())
+    }
+
+    fn create_buffer(
+        &self,
+        size: vk::DeviceSize,
+        usage: vk::BufferUsageFlags,
+        properties: vk::MemoryPropertyFlags,
+    ) -> Result<(vk::Buffer, vk::DeviceMemory), RenderError> {
+        let buffer_info = vk::BufferCreateInfo::default()
+            .size(size)
+            .usage(usage)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE);
+        let buffer =
+            unsafe { self.device.create_buffer(&buffer_info, None) }.map_err(RenderError::from)?;
+        let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
+        let memory_type = find_memory_type(
+            requirements.memory_type_bits,
+            properties,
+            &self.memory_properties,
+        )
+        .ok_or_else(|| RenderError::Initialization("Failed to find suitable memory type".into()))?;
+        let alloc_info = vk::MemoryAllocateInfo::default()
+            .allocation_size(requirements.size)
+            .memory_type_index(memory_type);
+        let memory =
+            unsafe { self.device.allocate_memory(&alloc_info, None) }.map_err(RenderError::from)?;
+        unsafe {
+            self.device.bind_buffer_memory(buffer, memory, 0)?;
+        }
+        Ok((buffer, memory))
+    }
+
+    fn destroy_vertex_buffer(&mut self) {
+        if self.vertex_buffer != vk::Buffer::null() {
+            unsafe {
+                self.device.destroy_buffer(self.vertex_buffer, None);
+            }
+            self.vertex_buffer = vk::Buffer::null();
+        }
+        if self.vertex_memory != vk::DeviceMemory::null() {
+            unsafe {
+                self.device.free_memory(self.vertex_memory, None);
+            }
+            self.vertex_memory = vk::DeviceMemory::null();
+        }
+        self.vertex_capacity = 0;
+    }
+
+    fn destroy_index_buffer(&mut self) {
+        if self.index_buffer != vk::Buffer::null() {
+            unsafe {
+                self.device.destroy_buffer(self.index_buffer, None);
+            }
+            self.index_buffer = vk::Buffer::null();
+        }
+        if self.index_memory != vk::DeviceMemory::null() {
+            unsafe {
+                self.device.free_memory(self.index_memory, None);
+            }
+            self.index_memory = vk::DeviceMemory::null();
+        }
+        self.index_capacity = 0;
+    }
+
+    fn destroy(mut self) {
+        self.destroy_vertex_buffer();
+        self.destroy_index_buffer();
+        unsafe {
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+        }
+    }
+}
+
+fn create_mesh_pipeline(
+    device: &ash::Device,
+    render_pass: vk::RenderPass,
+    pipeline_layout: vk::PipelineLayout,
+) -> Result<vk::Pipeline, RenderError> {
+    let vert_module = create_shader_module(device, MESH_VERT_SPV)?;
+    let frag_module = create_shader_module(device, MESH_FRAG_SPV)?;
+
+    let stages = [
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::VERTEX)
+            .module(vert_module)
+            .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
+        vk::PipelineShaderStageCreateInfo::default()
+            .stage(vk::ShaderStageFlags::FRAGMENT)
+            .module(frag_module)
+            .name(CStr::from_bytes_with_nul(b"main\0").unwrap()),
+    ];
+
+    let binding = vk::VertexInputBindingDescription::default()
+        .binding(0)
+        .stride(size_of::<MeshVertex>() as u32)
+        .input_rate(vk::VertexInputRate::VERTEX);
+    let bindings = [binding];
+    let attributes = [
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(0)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(0),
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(1)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(12),
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(2)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(24),
+    ];
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
+        .vertex_binding_descriptions(&bindings)
+        .vertex_attribute_descriptions(&attributes);
+
+    let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST);
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::default()
+        .viewport_count(1)
+        .scissor_count(1);
+
+    let rasterization = vk::PipelineRasterizationStateCreateInfo::default()
+        .polygon_mode(vk::PolygonMode::FILL)
+        .cull_mode(vk::CullModeFlags::BACK) // Disable culling for now to debug
+        .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
+        .line_width(1.0);
+
+    let multisample = vk::PipelineMultisampleStateCreateInfo::default()
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default().color_write_mask(
+        vk::ColorComponentFlags::R
+            | vk::ColorComponentFlags::G
+            | vk::ColorComponentFlags::B
+            | vk::ColorComponentFlags::A,
+    );
+    let color_blend_attachments = [color_blend_attachment];
+    let color_blend =
+        vk::PipelineColorBlendStateCreateInfo::default().attachments(&color_blend_attachments);
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state =
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+
+    let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
+        .stages(&stages)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&input_assembly)
+        .viewport_state(&viewport_state)
+        .rasterization_state(&rasterization)
+        .multisample_state(&multisample)
+        .color_blend_state(&color_blend)
+        .dynamic_state(&dynamic_state)
+        .layout(pipeline_layout)
+        .render_pass(render_pass);
+
+    let pipeline = unsafe {
+        device.create_graphics_pipelines(vk::PipelineCache::null(), &[pipeline_info], None)
+    }
+    .map_err(|(_, err)| RenderError::from(err))?[0];
+
+    unsafe {
+        device.destroy_shader_module(vert_module, None);
+        device.destroy_shader_module(frag_module, None);
+    }
+
+    Ok(pipeline)
+}
+
+fn create_mesh_pipeline_layout(device: &ash::Device) -> Result<vk::PipelineLayout, RenderError> {
+    let push_constant_range = vk::PushConstantRange::default()
+        .stage_flags(vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT)
+        .offset(0)
+        .size(size_of::<MeshPushConstants>() as u32);
+    let push_ranges = [push_constant_range];
+    let layout_info = vk::PipelineLayoutCreateInfo::default().push_constant_ranges(&push_ranges);
+    let layout =
+        unsafe { device.create_pipeline_layout(&layout_info, None) }.map_err(RenderError::from)?;
+    Ok(layout)
+}
+
+fn create_shader_module(
+    device: &ash::Device,
+    bytes: &[u8],
+) -> Result<vk::ShaderModule, RenderError> {
+    // SPIR-V is a stream of 32-bit words, but our `bytes` may not be
+    // properly aligned for a direct bytemuck cast on all platforms.
+    // To avoid `cast_slice` panics, manually assemble a Vec<u32>.
+    if bytes.len() % 4 != 0 {
+        return Err(RenderError::Initialization(
+            "SPIR-V bytecode length is not a multiple of 4".into(),
+        ));
+    }
+
+    let mut words = Vec::with_capacity(bytes.len() / 4);
+    for chunk in bytes.chunks_exact(4) {
+        words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+
+    let info = vk::ShaderModuleCreateInfo::default().code(&words);
+    let module = unsafe { device.create_shader_module(&info, None) }.map_err(RenderError::from)?;
+    Ok(module)
+}
+
+fn find_memory_type(
+    type_filter: u32,
+    properties: vk::MemoryPropertyFlags,
+    memory_properties: &vk::PhysicalDeviceMemoryProperties,
+) -> Option<u32> {
+    for i in 0..memory_properties.memory_type_count {
+        let suitable = (type_filter & (1 << i)) != 0;
+        let supported = memory_properties.memory_types[i as usize]
+            .property_flags
+            .contains(properties);
+        if suitable && supported {
+            return Some(i);
+        }
+    }
+    None
+}
+
+fn create_instance(
+    entry: &Entry,
+    window: &Window,
+    enable_validation: bool,
+) -> Result<ash::Instance, RenderError> {
+    let app_name = CString::new("printCAD").unwrap();
+
+    let app_info = vk::ApplicationInfo::default()
+        .application_name(&app_name)
+        .application_version(vk::make_api_version(0, 0, 1, 0))
+        .engine_name(&app_name)
+        .engine_version(vk::make_api_version(0, 0, 1, 0))
+        .api_version(vk::API_VERSION_1_2);
+
+    let extensions_vec = surface::required_extensions(window, enable_validation)?;
+
+    let validation_layers_cstr: Vec<CString> = if enable_validation {
+        vec![CString::new(VALIDATION_LAYER).unwrap()]
+    } else {
+        Vec::new()
+    };
+    let validation_layers: Vec<*const i8> = validation_layers_cstr
+        .iter()
+        .map(|layer| layer.as_ptr())
+        .collect();
+
+    let create_info = vk::InstanceCreateInfo::default()
+        .application_info(&app_info)
+        .enabled_extension_names(&extensions_vec)
+        .enabled_layer_names(&validation_layers);
+
+    unsafe { entry.create_instance(&create_info, None) }.map_err(RenderError::from)
+}
+
+struct GpuCandidate {
+    device: vk::PhysicalDevice,
+    name: String,
+    indices: QueueFamilyIndices,
+}
+
+fn enumerate_suitable_devices(
+    instance: &ash::Instance,
+    surface_loader: &SurfaceLoader,
+    surface: vk::SurfaceKHR,
+) -> Result<Vec<GpuCandidate>, RenderError> {
+    let devices = unsafe { instance.enumerate_physical_devices() }.map_err(RenderError::from)?;
+    let mut candidates = Vec::new();
+    for device in devices {
+        if let Some(indices) = find_queue_families(instance, device, surface_loader, surface)? {
+            if check_device_extension_support(instance, device)? {
+                let swapchain_support = query_swapchain_support(device, surface_loader, surface)?;
+                let format_supported = !swapchain_support.formats.is_empty();
+                let present_supported = !swapchain_support.present_modes.is_empty();
+                if format_supported && present_supported {
+                    let props = unsafe { instance.get_physical_device_properties(device) };
+                    let raw_name = &props.device_name;
+                    let cstr = unsafe { CStr::from_ptr(raw_name.as_ptr()) };
+                    let name = cstr.to_string_lossy().into_owned();
+                    candidates.push(GpuCandidate {
+                        device,
+                        name,
+                        indices,
+                    });
+                }
+            }
+        }
+    }
+    Ok(candidates)
+}
+
+fn create_logical_device(
+    instance: &ash::Instance,
+    physical_device: vk::PhysicalDevice,
+    indices: &QueueFamilyIndices,
+) -> Result<(ash::Device, vk::Queue, vk::Queue), RenderError> {
+    let mut unique_indices = vec![indices.graphics_family];
+    if indices.graphics_family != indices.present_family {
+        unique_indices.push(indices.present_family);
+    }
+
+    unique_indices.sort();
+    unique_indices.dedup();
+
+    let queue_priority = [1.0f32];
+    let queue_info: Vec<_> = unique_indices
+        .iter()
+        .map(|&queue_family| {
+            vk::DeviceQueueCreateInfo::default()
+                .queue_family_index(queue_family)
+                .queue_priorities(&queue_priority)
+        })
+        .collect();
+
+    let device_features = vk::PhysicalDeviceFeatures::default();
+    let device_extensions = [ash::khr::swapchain::NAME.as_ptr()];
+
+    let create_info = vk::DeviceCreateInfo::default()
+        .queue_create_infos(&queue_info)
+        .enabled_extension_names(&device_extensions)
+        .enabled_features(&device_features);
+
+    let device = unsafe { instance.create_device(physical_device, &create_info, None) }
+        .map_err(RenderError::from)?;
+    let graphics_queue = unsafe { device.get_device_queue(indices.graphics_family, 0) };
+    let present_queue = unsafe { device.get_device_queue(indices.present_family, 0) };
+
+    Ok((device, graphics_queue, present_queue))
+}
+
+fn find_queue_families(
+    instance: &ash::Instance,
+    device: vk::PhysicalDevice,
+    surface_loader: &SurfaceLoader,
+    surface: vk::SurfaceKHR,
+) -> Result<Option<QueueFamilyIndices>, RenderError> {
+    let queue_families = unsafe { instance.get_physical_device_queue_family_properties(device) };
+    let mut indices = QueueFamilyIndices {
+        graphics_family: u32::MAX,
+        present_family: u32::MAX,
+    };
+
+    for (i, queue_family) in queue_families.iter().enumerate() {
+        if queue_family.queue_flags.contains(vk::QueueFlags::GRAPHICS) {
+            indices.graphics_family = i as u32;
+        }
+
+        let present_support = unsafe {
+            surface_loader.get_physical_device_surface_support(device, i as u32, surface)
+        }
+        .map_err(RenderError::from)?;
+        if present_support {
+            indices.present_family = i as u32;
+        }
+
+        if indices.is_complete() {
+            break;
+        }
+    }
+
+    if indices.is_complete() {
+        Ok(Some(indices))
+    } else {
+        Ok(None)
+    }
+}
+
+fn check_device_extension_support(
+    instance: &ash::Instance,
+    device: vk::PhysicalDevice,
+) -> Result<bool, RenderError> {
+    let extensions = unsafe { instance.enumerate_device_extension_properties(device) }
+        .map_err(RenderError::from)?;
+    let mut required_extensions: HashSet<&'static std::ffi::CStr> = HashSet::new();
+    required_extensions.insert(ash::khr::swapchain::NAME);
+
+    for ext in extensions {
+        let name = unsafe { CStr::from_ptr(ext.extension_name.as_ptr()) };
+        required_extensions.remove(name);
+    }
+
+    Ok(required_extensions.is_empty())
+}
+
+struct SwapchainSupportDetails {
+    capabilities: vk::SurfaceCapabilitiesKHR,
+    formats: Vec<vk::SurfaceFormatKHR>,
+    present_modes: Vec<vk::PresentModeKHR>,
+}
+
+fn query_swapchain_support(
+    device: vk::PhysicalDevice,
+    surface_loader: &SurfaceLoader,
+    surface: vk::SurfaceKHR,
+) -> Result<SwapchainSupportDetails, RenderError> {
+    let capabilities =
+        unsafe { surface_loader.get_physical_device_surface_capabilities(device, surface) }
+            .map_err(RenderError::from)?;
+    let formats = unsafe { surface_loader.get_physical_device_surface_formats(device, surface) }
+        .map_err(RenderError::from)?;
+    let present_modes =
+        unsafe { surface_loader.get_physical_device_surface_present_modes(device, surface) }
+            .map_err(RenderError::from)?;
+    Ok(SwapchainSupportDetails {
+        capabilities,
+        formats,
+        present_modes,
+    })
+}
+
+fn choose_surface_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::SurfaceFormatKHR {
+    *available_formats
+        .iter()
+        .find(|format| {
+            format.format == vk::Format::B8G8R8A8_SRGB
+                && format.color_space == vk::ColorSpaceKHR::SRGB_NONLINEAR
+        })
+        .unwrap_or(&available_formats[0])
+}
+
+fn choose_present_mode(available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
+    if available_present_modes
+        .iter()
+        .any(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+    {
+        vk::PresentModeKHR::MAILBOX
+    } else {
+        vk::PresentModeKHR::FIFO
+    }
+}
+
+fn choose_extent(capabilities: &vk::SurfaceCapabilitiesKHR, target: vk::Extent2D) -> vk::Extent2D {
+    if capabilities.current_extent.width != u32::MAX {
+        capabilities.current_extent
+    } else {
+        vk::Extent2D {
+            width: target.width.clamp(
+                capabilities.min_image_extent.width,
+                capabilities.max_image_extent.width,
+            ),
+            height: target.height.clamp(
+                capabilities.min_image_extent.height,
+                capabilities.max_image_extent.height,
+            ),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct QueueFamilyIndices {
+    graphics_family: u32,
+    present_family: u32,
+}
+
+impl QueueFamilyIndices {
+    fn is_complete(&self) -> bool {
+        self.graphics_family != u32::MAX && self.present_family != u32::MAX
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum RenderError {
+    #[error("renderer has not been initialized")]
+    NotReady,
+    #[error("surface is too small to create a swapchain")]
+    SurfaceTooSmall,
+    #[error("swapchain out of date")]
+    SwapchainOutOfDate,
+    #[error("surface creation not supported: {0}")]
+    UnsupportedPlatform(String),
+    #[error("initialization failed: {0}")]
+    Initialization(String),
+    #[error("vulkan error: {0:?}")]
+    Vk(vk::Result),
+}
+
+impl From<vk::Result> for RenderError {
+    fn from(err: vk::Result) -> Self {
+        RenderError::Vk(err)
+    }
+}

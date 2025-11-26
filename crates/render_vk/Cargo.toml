@@ -1,0 +1,22 @@
+[package]
+name = "render_vk"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+ash.workspace = true
+kernel_api = { path = "../kernel_api" }
+raw-window-handle.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+winit.workspace = true
+egui.workspace = true
+egui-ash-renderer.workspace = true
+bytemuck.workspace = true
+uuid.workspace = true
+
+[build-dependencies]
+shaderc = "0.10.1"
