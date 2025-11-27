@@ -1,6 +1,6 @@
 mod camera;
 mod orientation_cube;
-mod ui_layer;
+mod ui;
 
 use anyhow::{Context, Result};
 use camera::CameraController;
@@ -15,7 +15,7 @@ use render_vk::{
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
-use ui_layer::{ActiveTool, UiLayer};
+use ui::{ActiveTool, UiLayer};
 use uuid::Uuid;
 use wb_part::PartDesignWorkbench;
 use wb_sketch::SketchWorkbench;
