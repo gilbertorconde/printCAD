@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg
+  width="256"
+  height="256"
+  viewBox="0 0 256 256"
+  xmlns="http://www.w3.org/2000/svg"
+  xmlns:xlink="http://www.w3.org/1999/xlink">
+
+  <!-- Background rectangle -->
+  <rect
+    x="0"
+    y="0"
+    width="256"
+    height="256"
+    fill="{{BACKGROUND_COLOR}}" />
+
+  <!-- Light gradient overlay (optional) -->
+  <linearGradient id="faceGrad" x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"  stop-color="#FFFFFF" stop-opacity="0.08"/>
+    <stop offset="50%" stop-color="#FFFFFF" stop-opacity="0.00"/>
+    <stop offset="100%" stop-color="#000000" stop-opacity="0.10"/>
+  </linearGradient>
+  <rect
+    x="0"
+    y="0"
+    width="256"
+    height="256"
+    fill="url(#faceGrad)" />
+
+  <!-- Centered label text -->
+  <text
+    x="50%"
+    y="50%"
+    text-anchor="middle"
+    dominant-baseline="central"
+    font-family="DejaVu Sans, Arial, Helvetica, Sans"
+    font-size="40"
+    font-weight="bold"
+    fill="{{TEXT_COLOR}}">
+    {{LABEL}}
+  </text>
+</svg>

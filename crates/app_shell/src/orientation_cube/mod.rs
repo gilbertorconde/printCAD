@@ -6,9 +6,20 @@
 //!
 //! The cube is interactive: clicking faces snaps to that view, clicking arrows rotates 45°.
 
+use std::collections::HashMap;
+
 use axes::AxisSystem;
-use egui::{Color32, Context, Pos2, Response, Sense, Stroke, Ui};
+use egui::{
+    epaint::{Mesh as EguiMesh, Vertex as EguiVertex},
+    Color32, ColorImage, Context, Id, Pos2, Response, Sense, Stroke, TextureHandle, TextureOptions,
+    Ui,
+};
 use glam::{Mat3, Quat, Vec3};
+use resvg::render;
+use tiny_skia::Pixmap;
+use usvg::{fontdb, Options};
+
+const FACE_TEMPLATE_SVG: &str = include_str!("face_template.svg");
 
 /// Configuration for the orientation cube appearance
 #[derive(Debug, Clone)]
@@ -273,6 +284,8 @@ struct CubePolygon {
     label: Option<&'static str>,
     /// Optional snap view (only for main faces)
     snap_view: Option<CameraSnapView>,
+    /// Optional per-vertex UVs for textured faces
+    uvs: Option<Vec<[f32; 2]>>,
 }
 
 /// Draws the 3D chamfered cube with labeled faces and handles clicks
@@ -284,12 +297,11 @@ fn draw_cube_interactive(
     rot: &Mat3,
     response: &Response,
 ) -> Option<CameraSnapView> {
+    let ctx = ui.ctx();
     let mut clicked_face: Option<CameraSnapView> = None;
 
-    // Chamfer amount - matches FreeCAD's default of 0.12
     let m = 0.12_f32;
 
-    // Following FreeCAD's NaviCube.cpp geometry exactly:
     // - Main faces are 8-sided polygons (octagons with cut corners)
     // - Edge bevels are quads
     // - Corner bevels are hexagons
@@ -305,12 +317,6 @@ fn draw_cube_interactive(
     let bottom_color = Color32::from_rgb(120, 120, 140);
     let edge_color = Color32::from_rgb(160, 165, 175);
     let corner_color = Color32::from_rgb(145, 150, 160);
-
-    // FreeCAD's addCubeFace for ShapeId::Main creates an 8-vertex polygon:
-    // x2 = x * (1 - m*2), y2 = y * (1 - m*2)
-    // x4 = x * (1 - m*4), y4 = y * (1 - m*4)
-    // Vertices: z - x2 - y4, z - x4 - y2, z + x4 - y2, z + x2 - y4,
-    //           z + x2 + y4, z + x4 + y2, z - x4 + y2, z - x2 + y4
 
     // Helper to create main face vertices (8-sided polygon)
     // x_dir and y_dir are the face's local X and Y axes, z_dir is the normal (pointing outward)
@@ -332,7 +338,7 @@ fn draw_cube_interactive(
     };
 
     // Helper to create edge bevel vertices (4-sided polygon)
-    // Following FreeCAD: x_dir is along the edge, z_dir is the edge normal direction
+    // Following x_dir is along the edge, z_dir is the edge normal direction
     // y_dir is computed as x_dir.cross(-z_dir)
     let make_edge_face = |x_dir: Vec3, z_dir: Vec3| -> Vec<Vec3> {
         let y_dir = x_dir.cross(-z_dir);
@@ -348,8 +354,6 @@ fn draw_cube_interactive(
     };
 
     // Helper to create corner bevel vertices (6-sided polygon / hexagon)
-    // Following FreeCAD exactly: x_dir is passed, z_dir points toward corner
-    // y_dir is computed as x_dir.cross(-z_dir)
     let make_corner_face = |x_dir: Vec3, z_dir: Vec3| -> Vec<Vec3> {
         let y_dir = x_dir.cross(-z_dir);
         let x_c = x_dir * m;
@@ -365,16 +369,10 @@ fn draw_cube_interactive(
         ]
     };
 
-    // FreeCAD coordinate system: Front=-Y, Top=+Z, Right=+X
-    // Our coordinate system:      Front=+Z, Top=+Y, Right=+X
-    // Mapping: FreeCAD (x,y,z) -> Ours (x, -z, y)
-    // So: fc_x = x, fc_y = -z, fc_z = y
-
     let x = Vec3::X;
     let y = Vec3::Y;
     let z = Vec3::Z;
 
-    // FreeCAD vectors mapped to our system
     let fc_x = x;
     let fc_y = -z;
     let fc_z = y;
@@ -383,8 +381,10 @@ fn draw_cube_interactive(
     // These were working before - using our coordinate system directly
 
     // Top (+Y)
+    let verts_top = make_main_face(x, z, y);
     polygons.push(CubePolygon {
-        verts: make_main_face(x, z, y),
+        uvs: Some(face_uvs(&verts_top, x, z, true, true)),
+        verts: verts_top,
         normal: Vec3::Y,
         color: top_color,
         label: Some("TOP"),
@@ -392,8 +392,10 @@ fn draw_cube_interactive(
     });
 
     // Bottom (-Y)
+    let verts_bottom = make_main_face(x, -z, -y);
     polygons.push(CubePolygon {
-        verts: make_main_face(x, -z, -y),
+        uvs: Some(face_uvs(&verts_bottom, x, -z, true, true)),
+        verts: verts_bottom,
         normal: Vec3::NEG_Y,
         color: bottom_color,
         label: Some("BOTTOM"),
@@ -401,8 +403,10 @@ fn draw_cube_interactive(
     });
 
     // Front (+Z)
+    let verts_front = make_main_face(x, y, z);
     polygons.push(CubePolygon {
-        verts: make_main_face(x, y, z),
+        uvs: Some(face_uvs(&verts_front, x, y, true, false)),
+        verts: verts_front,
         normal: Vec3::Z,
         color: front_color,
         label: Some("FRONT"),
@@ -410,8 +414,10 @@ fn draw_cube_interactive(
     });
 
     // Rear (-Z)
+    let verts_rear = make_main_face(-x, y, -z);
     polygons.push(CubePolygon {
-        verts: make_main_face(-x, y, -z),
+        uvs: Some(face_uvs(&verts_rear, -x, y, true, false)),
+        verts: verts_rear,
         normal: Vec3::NEG_Z,
         color: rear_color,
         label: Some("REAR"),
@@ -419,8 +425,10 @@ fn draw_cube_interactive(
     });
 
     // Right (+X)
+    let verts_right = make_main_face(-z, y, x);
     polygons.push(CubePolygon {
-        verts: make_main_face(-z, y, x),
+        uvs: Some(face_uvs(&verts_right, -z, y, true, false)),
+        verts: verts_right,
         normal: Vec3::X,
         color: right_color,
         label: Some("RIGHT"),
@@ -428,8 +436,10 @@ fn draw_cube_interactive(
     });
 
     // Left (-X)
+    let verts_left = make_main_face(z, y, -x);
     polygons.push(CubePolygon {
-        verts: make_main_face(z, y, -x),
+        uvs: Some(face_uvs(&verts_left, z, y, true, false)),
+        verts: verts_left,
         normal: Vec3::NEG_X,
         color: left_color,
         label: Some("LEFT"),
@@ -437,189 +447,207 @@ fn draw_cube_interactive(
     });
 
     // ===== EDGE BEVELS (12 quads) =====
-    // Using FreeCAD's exact calls with coordinate mapping (like corners)
-
-    // FreeCAD: addCubeFace(x, z - y, Edge, FrontTop)
+    // addCubeFace(x, z - y, Edge, FrontTop)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, fc_z - fc_y),
         normal: (Vec3::Y + Vec3::Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontTop),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x, -z - y, Edge, FrontBottom)
+    // addCubeFace(x, -z - y, Edge, FrontBottom)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, -fc_z - fc_y),
         normal: (Vec3::NEG_Y + Vec3::Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontBottom),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x, y - z, Edge, RearBottom)
+    // addCubeFace(x, y - z, Edge, RearBottom)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, fc_y - fc_z),
         normal: (Vec3::NEG_Y + Vec3::NEG_Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::RearBottom),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x, y + z, Edge, RearTop)
+    // addCubeFace(x, y + z, Edge, RearTop)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_x, fc_y + fc_z),
         normal: (Vec3::Y + Vec3::NEG_Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::RearTop),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(z, x + y, Edge, RearRight)
+    // addCubeFace(z, x + y, Edge, RearRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, fc_x + fc_y),
         normal: (Vec3::X + Vec3::NEG_Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::RearRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(z, x - y, Edge, FrontRight)
+    // addCubeFace(z, x - y, Edge, FrontRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, fc_x - fc_y),
         normal: (Vec3::X + Vec3::Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(z, -x - y, Edge, FrontLeft)
+    // addCubeFace(z, -x - y, Edge, FrontLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, -fc_x - fc_y),
         normal: (Vec3::NEG_X + Vec3::Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontLeft),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(z, y - x, Edge, RearLeft)
+    // addCubeFace(z, y - x, Edge, RearLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_z, fc_y - fc_x),
         normal: (Vec3::NEG_X + Vec3::NEG_Z).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::RearLeft),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(y, z - x, Edge, TopLeft)
+    // addCubeFace(y, z - x, Edge, TopLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, fc_z - fc_x),
         normal: (Vec3::NEG_X + Vec3::Y).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::TopLeft),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(y, x + z, Edge, TopRight)
+    // addCubeFace(y, x + z, Edge, TopRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, fc_x + fc_z),
         normal: (Vec3::X + Vec3::Y).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::TopRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(y, x - z, Edge, BottomRight)
+    // addCubeFace(y, x - z, Edge, BottomRight)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, fc_x - fc_z),
         normal: (Vec3::X + Vec3::NEG_Y).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::BottomRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(y, -z - x, Edge, BottomLeft)
+    // addCubeFace(y, -z - x, Edge, BottomLeft)
     polygons.push(CubePolygon {
         verts: make_edge_face(fc_y, -fc_z - fc_x),
         normal: (Vec3::NEG_X + Vec3::NEG_Y).normalize(),
         color: edge_color,
         label: None,
         snap_view: Some(CameraSnapView::BottomLeft),
+        uvs: None,
     });
 
     // ===== CORNER BEVELS (8 hexagons) =====
-    // FreeCAD's prepare() calls with exact parameters
+    // prepare() calls with exact parameters
 
-    // FreeCAD: addCubeFace(-x - y, x - y + z, Corner, FrontTopRight)
+    // addCubeFace(-x - y, x - y + z, Corner, FrontTopRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x - fc_y, fc_x - fc_y + fc_z),
         normal: (Vec3::X + Vec3::Y + Vec3::Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontTopRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(-x + y, -x - y + z, Corner, FrontTopLeft)
+    // addCubeFace(-x + y, -x - y + z, Corner, FrontTopLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x + fc_y, -fc_x - fc_y + fc_z),
         normal: (Vec3::NEG_X + Vec3::Y + Vec3::Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontTopLeft),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x + y, x - y - z, Corner, FrontBottomRight)
+    // addCubeFace(x + y, x - y - z, Corner, FrontBottomRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x + fc_y, fc_x - fc_y - fc_z),
         normal: (Vec3::X + Vec3::NEG_Y + Vec3::Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontBottomRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x - y, -x - y - z, Corner, FrontBottomLeft)
+    // addCubeFace(x - y, -x - y - z, Corner, FrontBottomLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x - fc_y, -fc_x - fc_y - fc_z),
         normal: (Vec3::NEG_X + Vec3::NEG_Y + Vec3::Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::FrontBottomLeft),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x - y, x + y + z, Corner, RearTopRight)
+    // addCubeFace(x - y, x + y + z, Corner, RearTopRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x - fc_y, fc_x + fc_y + fc_z),
         normal: (Vec3::X + Vec3::Y + Vec3::NEG_Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::RearTopRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(x + y, -x + y + z, Corner, RearTopLeft)
+    // addCubeFace(x + y, -x + y + z, Corner, RearTopLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(fc_x + fc_y, -fc_x + fc_y + fc_z),
         normal: (Vec3::NEG_X + Vec3::Y + Vec3::NEG_Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::RearTopLeft),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(-x + y, x + y - z, Corner, RearBottomRight)
+    // addCubeFace(-x + y, x + y - z, Corner, RearBottomRight)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x + fc_y, fc_x + fc_y - fc_z),
         normal: (Vec3::X + Vec3::NEG_Y + Vec3::NEG_Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::RearBottomRight),
+        uvs: None,
     });
 
-    // FreeCAD: addCubeFace(-x - y, -x + y - z, Corner, RearBottomLeft)
+    // addCubeFace(-x - y, -x + y - z, Corner, RearBottomLeft)
     polygons.push(CubePolygon {
         verts: make_corner_face(-fc_x - fc_y, -fc_x + fc_y - fc_z),
         normal: (Vec3::NEG_X + Vec3::NEG_Y + Vec3::NEG_Z).normalize(),
         color: corner_color,
         label: None,
         snap_view: Some(CameraSnapView::RearBottomLeft),
+        uvs: None,
     });
 
     // Project to 2D (simple orthographic)
@@ -707,66 +735,23 @@ fn draw_cube_interactive(
             Stroke::new(0.5, stroke_color),
         ));
 
-        // Draw label on main faces - rotated to follow the face
-        if let Some(label) = poly.label {
-            if normal.z > 0.3 {
-                let face_center_2d = Pos2::new(
-                    points.iter().map(|p| p.x).sum::<f32>() / points.len() as f32,
-                    points.iter().map(|p| p.y).sum::<f32>() / points.len() as f32,
-                );
-                let text_color = Color32::from_rgba_unmultiplied(220, 220, 230, 255);
-
-                // Calculate the face's local X axis (text direction) from the polygon vertices
-                // For an 8-vertex octagon, vertices 0-3 are along the bottom, 4-7 along the top
-                // Use the direction from left to right edge
-                if transformed_verts.len() >= 4 {
-                    // Get the face's local X direction from projected 2D positions
-                    let left_bottom = transformed_verts[0];
-                    let right_bottom = transformed_verts[3];
-                    let left_2d = project(left_bottom);
-                    let right_2d = project(right_bottom);
-
-                    // Direction from left to right in screen space
-                    let dir = right_2d - left_2d;
-                    // Add PI to flip the text right-side up
-                    let angle = dir.y.atan2(dir.x) + std::f32::consts::PI;
-
-                    // Calculate text scale based on face size
-                    let face_width = (right_2d - left_2d).length();
-                    let font_size = (face_width * 0.22).clamp(6.0, 14.0);
-
-                    // Draw rotated text using galley
-                    let galley = painter.layout_no_wrap(
-                        label.to_string(),
-                        egui::FontId::proportional(font_size),
-                        text_color,
-                    );
-
-                    // Calculate offset to center the text
-                    // The text is drawn from pos, so we need to offset by half width/height
-                    // But since the text is rotated, we need to rotate the offset too
-                    let text_width = galley.size().x;
-                    let text_height = galley.size().y;
-                    let cos_a = angle.cos();
-                    let sin_a = angle.sin();
-                    // Offset in text-local space: (-width/2, -height/2)
-                    // Rotate to screen space
-                    let offset_x = -text_width / 2.0 * cos_a + text_height / 2.0 * sin_a;
-                    let offset_y = -text_width / 2.0 * sin_a - text_height / 2.0 * cos_a;
-                    let centered_pos =
-                        Pos2::new(face_center_2d.x + offset_x, face_center_2d.y + offset_y);
-
-                    // Create a rotated text shape
-                    let text_shape = egui::Shape::Text(egui::epaint::TextShape {
-                        pos: centered_pos,
-                        galley,
-                        underline: egui::Stroke::NONE,
-                        fallback_color: text_color,
-                        override_text_color: Some(text_color),
-                        opacity_factor: 1.0,
-                        angle,
-                    });
-                    painter.add(text_shape);
+        if let (Some(label), Some(uvs)) = (poly.label, &poly.uvs) {
+            if normal.z > 0.3 && points.len() >= 3 {
+                let text_color = auto_text_color(poly.color);
+                if let Some(texture) = get_face_texture(ctx, label, poly.color, text_color) {
+                    let mut mesh = EguiMesh::with_texture(texture.id());
+                    for (pos, uv) in points.iter().zip(uvs.iter()) {
+                        mesh.vertices.push(EguiVertex {
+                            pos: *pos,
+                            uv: Pos2::new(uv[0], uv[1]),
+                            color: Color32::WHITE,
+                        });
+                    }
+                    for idx in 1..(points.len() - 1) {
+                        mesh.indices
+                            .extend_from_slice(&[0, idx as u32, (idx as u32 + 1)]);
+                    }
+                    painter.add(egui::Shape::mesh(mesh));
                 }
             }
         }
@@ -921,15 +906,13 @@ fn draw_rotation_arrows_interactive(
 
         let triangle_pts = vec![tip, p1, p2];
 
-        // Hit testing
-        let hit_center = tip - outward * (triangle_size / 2.0);
-        let hit_radius = 10.0;
+        // Hit testing: use actual triangle shape
         let is_hovered = hover_pos
-            .map(|p| (p - hit_center).length() < hit_radius)
+            .map(|p| point_in_polygon(p, &triangle_pts))
             .unwrap_or(false);
 
         let is_clicked = click_pos
-            .map(|p| (p - hit_center).length() < hit_radius)
+            .map(|p| point_in_polygon(p, &triangle_pts))
             .unwrap_or(false);
 
         if is_clicked {
@@ -993,6 +976,205 @@ fn draw_rotation_arrows_interactive(
     result
 }
 
+fn face_uvs(
+    verts: &[Vec3],
+    x_axis: Vec3,
+    y_axis: Vec3,
+    flip_u: bool,
+    flip_v: bool,
+) -> Vec<[f32; 2]> {
+    let x_axis = x_axis.normalize();
+    let y_axis = y_axis.normalize();
+    verts
+        .iter()
+        .map(|v| {
+            let mut u = 0.5 + v.dot(x_axis) * 0.5;
+            let mut v_coord = 0.5 - v.dot(y_axis) * 0.5;
+            if flip_u {
+                u = 1.0 - u;
+            }
+            if flip_v {
+                v_coord = 1.0 - v_coord;
+            }
+            [u, v_coord]
+        })
+        .collect()
+}
+
+fn auto_text_color(bg: Color32) -> Color32 {
+    let r = bg.r() as f32 / 255.0;
+    let g = bg.g() as f32 / 255.0;
+    let b = bg.b() as f32 / 255.0;
+    let luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+    if luminance > 0.6 {
+        Color32::from_rgb(30, 30, 30)
+    } else {
+        Color32::from_rgb(240, 240, 240)
+    }
+}
+
+#[derive(Clone, Hash, PartialEq, Eq)]
+struct FaceKey {
+    label: &'static str,
+    background: [u8; 3],
+    text: [u8; 3],
+}
+
+impl FaceKey {
+    fn new(label: &'static str, background: Color32, text: Color32) -> Self {
+        Self {
+            label,
+            background: [background.r(), background.g(), background.b()],
+            text: [text.r(), text.g(), text.b()],
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct FaceTextureCache {
+    handles: HashMap<FaceKey, TextureHandle>,
+}
+
+fn get_face_texture(
+    ctx: &Context,
+    label: &'static str,
+    background: Color32,
+    text: Color32,
+) -> Option<TextureHandle> {
+    let key = FaceKey::new(label, background, text);
+    let cache_id = Id::new("orientation_cube_face_textures");
+
+    if let Some(handle) = ctx.data(|data| {
+        data.get_temp::<FaceTextureCache>(cache_id)
+            .and_then(|cache| cache.handles.get(&key).cloned())
+    }) {
+        return Some(handle);
+    }
+
+    let texture = create_face_texture(ctx, &key)?;
+
+    ctx.data_mut(|data| {
+        let cache = data.get_temp_mut_or_insert_with(cache_id, FaceTextureCache::default);
+        cache.handles.insert(key.clone(), texture.clone());
+    });
+
+    Some(texture)
+}
+
+fn create_face_texture(ctx: &Context, key: &FaceKey) -> Option<TextureHandle> {
+    let svg = FACE_TEMPLATE_SVG
+        .replace("{{BACKGROUND_COLOR}}", &rgb_to_hex(key.background))
+        .replace("{{TEXT_COLOR}}", &rgb_to_hex(key.text))
+        .replace("{{LABEL}}", key.label);
+    let image = rasterize_svg(&svg)?;
+    let name = format!(
+        "orientation_cube_face_{}_{}_{}",
+        key.label,
+        rgb_to_hex(key.background),
+        rgb_to_hex(key.text)
+    );
+    Some(ctx.load_texture(name, image, TextureOptions::LINEAR))
+}
+
+fn rgb_to_hex(rgb: [u8; 3]) -> String {
+    format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
+}
+
+fn rasterize_svg(svg: &str) -> Option<ColorImage> {
+    let mut opt = Options::default();
+    opt.font_family = "DejaVu Sans".into();
+    opt.languages = vec!["en".into()];
+    opt.font_size = 44.0;
+    let mut fontdb = fontdb::Database::new();
+    fontdb.load_system_fonts();
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &opt, &fontdb).ok()?;
+    let size = tree.size().to_int_size();
+    let (width, height) = (size.width(), size.height());
+    let mut pixmap = Pixmap::new(width, height)?;
+    let mut pixmap_mut = pixmap.as_mut();
+    render(&tree, tiny_skia::Transform::identity(), &mut pixmap_mut);
+    let data = pixmap.data().to_vec();
+    Some(ColorImage::from_rgba_premultiplied(
+        [width as usize, height as usize],
+        &data,
+    ))
+}
+
+fn angle_in_range(theta: f32, start: f32, end: f32) -> bool {
+    let mut t = theta;
+    let mut s = start;
+    let mut e = end;
+    // Normalize to [0, 2π)
+    let two_pi = std::f32::consts::TAU;
+    let norm = |a: f32| {
+        let mut v = a % two_pi;
+        if v < 0.0 {
+            v += two_pi;
+        }
+        v
+    };
+    t = norm(t);
+    s = norm(s);
+    e = norm(e);
+    if s <= e {
+        t >= s && t <= e
+    } else {
+        // Wrapped around 2π
+        t >= s || t <= e
+    }
+}
+
+fn hit_test_arc_arrow(
+    p: Pos2,
+    center: Pos2,
+    radius: f32,
+    width: f32,
+    start_angle: f32,
+    end_angle: f32,
+    arrow_at_start: bool,
+) -> bool {
+    let v = p - center;
+    let r = v.length();
+    if r == 0.0 {
+        return false;
+    }
+    let theta = v.y.atan2(v.x);
+
+    // Check hit against the circular band of the arc
+    let half_w = width * 0.5 + 1.5;
+    let in_radius = (r >= radius - half_w) && (r <= radius + half_w);
+    let in_angle = angle_in_range(theta, start_angle, end_angle);
+    if in_radius && in_angle {
+        return true;
+    }
+
+    // Also include the arrow head triangle at the start or end of the arc
+    let delta_angle = width / radius;
+    let arrow_angle = if arrow_at_start {
+        start_angle - delta_angle
+    } else {
+        end_angle + delta_angle
+    };
+
+    let arrow_tip = Pos2::new(
+        center.x + arrow_angle.cos() * radius,
+        center.y + arrow_angle.sin() * radius,
+    );
+
+    // Tangent direction (perpendicular to radius)
+    let tangent_dir = if arrow_at_start { -1.0 } else { 1.0 };
+    let tangent = egui::Vec2::new(-arrow_angle.sin(), arrow_angle.cos()) * tangent_dir;
+    let normal = egui::Vec2::new(arrow_angle.cos(), arrow_angle.sin());
+
+    let arrow_pts = vec![
+        arrow_tip,
+        arrow_tip - tangent * (width + 2.5) + normal * (width + 0.5),
+        arrow_tip - tangent * (width + 2.5) - normal * (width + 0.5),
+    ];
+
+    point_in_polygon(p, &arrow_pts)
+}
+
 /// Helper to draw an arc arrow with interaction
 #[allow(clippy::too_many_arguments)]
 fn draw_arc_arrow(
@@ -1012,20 +1194,33 @@ fn draw_arc_arrow(
     hover_pos: &Option<Pos2>,
     result: &mut Option<RotateDelta>,
 ) {
-    // Calculate arc midpoint for hit testing
-    let mid_angle = (start_angle + end_angle) / 2.0;
-    let arc_mid = Pos2::new(
-        center.x + mid_angle.cos() * radius,
-        center.y + mid_angle.sin() * radius,
-    );
-
-    let hit_radius = 12.0;
+    // Hit testing: match the visual arc band + arrow head more closely
     let is_hovered = hover_pos
-        .map(|p| (p - arc_mid).length() < hit_radius)
+        .map(|p| {
+            hit_test_arc_arrow(
+                p,
+                center,
+                radius,
+                width,
+                start_angle,
+                end_angle,
+                arrow_at_start,
+            )
+        })
         .unwrap_or(false);
 
     let is_clicked = click_pos
-        .map(|p| (p - arc_mid).length() < hit_radius)
+        .map(|p| {
+            hit_test_arc_arrow(
+                p,
+                center,
+                radius,
+                width,
+                start_angle,
+                end_angle,
+                arrow_at_start,
+            )
+        })
         .unwrap_or(false);
 
     if is_clicked {

@@ -21,3 +21,6 @@ settings = { path = "../settings" }
 glam.workspace = true
 uuid.workspace = true
 axes = { path = "../axes" }
+resvg = "0.41"
+usvg = "0.41"
+tiny-skia = "0.11"
