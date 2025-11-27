@@ -9,14 +9,14 @@ use crate::{
 use crate::create_shader_module;
 
 #[repr(C)]
-pub(super) struct MeshVertex {
+pub(crate) struct MeshVertex {
     position: [f32; 3],
     normal: [f32; 3],
     color: [f32; 3],
 }
 
 impl MeshVertex {
-    fn new(position: [f32; 3], normal: [f32; 3], color: [f32; 3]) -> Self {
+    pub(crate) fn new(position: [f32; 3], normal: [f32; 3], color: [f32; 3]) -> Self {
         Self {
             position,
             normal,
@@ -105,7 +105,7 @@ impl MeshPushConstants {
     }
 }
 
-pub(super) struct MeshRenderer {
+pub(crate) struct MeshRenderer {
     device: ash::Device,
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     vertex_buffer: vk::Buffer,
@@ -437,8 +437,9 @@ fn create_mesh_pipeline(
             .offset(24),
     ];
 
+    let binding_descs = [binding_desc];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
-        .vertex_binding_descriptions(&[binding_desc])
+        .vertex_binding_descriptions(&binding_descs)
         .vertex_attribute_descriptions(&attr_descs);
 
     let input_assembly = vk::PipelineInputAssemblyStateCreateInfo::default()
@@ -473,9 +474,10 @@ fn create_mesh_pipeline(
         .color_write_mask(vk::ColorComponentFlags::RGBA)
         .blend_enable(false);
 
+    let color_blend_attachments = [color_blend_attachment];
     let color_blending = vk::PipelineColorBlendStateCreateInfo::default()
         .logic_op_enable(false)
-        .attachments(&[color_blend_attachment]);
+        .attachments(&color_blend_attachments);
 
     let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic_state =

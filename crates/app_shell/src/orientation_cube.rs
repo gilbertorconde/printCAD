@@ -31,7 +31,7 @@ impl Default for OrientationCubeConfig {
     fn default() -> Self {
         Self {
             widget_size: 150.0,
-            cube_scale: 35.0,
+            cube_scale: 40.0,
             background_color: Color32::from_rgba_unmultiplied(40, 40, 45, 220),
             border_color: Color32::from_gray(80),
             show_rotation_arrows: true,
@@ -169,11 +169,11 @@ pub fn draw(
     let mut result = OrientationCubeResult::default();
 
     // Extra space at the top for arc arrows
-    let arc_arrow_padding = 30.0;
+    let arc_arrow_padding = 50.0;
     let total_height = config.widget_size + arc_arrow_padding;
     let total_width = config.widget_size + arc_arrow_padding;
 
-    let y_offset: f32 = 5.5;
+    let y_offset: f32 = 10.0;
 
     // Get the available central rect (the viewport area between panels)
     let available = ctx.available_rect();
@@ -217,7 +217,16 @@ pub fn draw(
             let q_world = Quat::from_array(input.camera_orientation).inverse();
             let world_rot = Mat3::from_quat(q_world);
             let basis = input.axis_system.canonical_basis();
-            let rot = basis.transpose() * world_rot * basis;
+            let mut rot = basis.transpose() * world_rot * basis;
+
+            let right = input.axis_system.horizontal().vector();
+            let up = input.axis_system.vertical().vector();
+            let depth = input.axis_system.depth().vector();
+            let parity = right.cross(up).dot(depth);
+            if parity < 0.0 {
+                let adjust = Mat3::from_diagonal(Vec3::new(-1.0, 1.0, 1.0));
+                rot = adjust * rot * adjust;
+            }
 
             // Draw and handle cube face clicks
             if let Some(snap) = draw_cube_interactive(
@@ -936,7 +945,8 @@ fn draw_rotation_arrows_interactive(
     }
 
     // === Arc arrows at the top (for horizontal rotation) ===
-    let arc_radius = widget_size / 2.0 + 8.0; // Slightly outside the circle
+    let arc_width = 10.0;
+    let arc_radius = widget_size / 2.0 + arc_width + 4.0; // Slightly outside the circle
     let arc_y_offset = -widget_size / 2.0 - 2.0 - y_offset; // Above the top of the circle
     let arc_center = Pos2::new(center.x, center.y + arc_y_offset + arc_radius);
 
@@ -947,6 +957,7 @@ fn draw_rotation_arrows_interactive(
         painter,
         arc_center,
         arc_radius,
+        arc_width,
         std::f32::consts::PI - 0.3, // End angle
         std::f32::consts::PI + 0.3, // Start angle (left side, going up)
         true,                       // Arrow points left (counter-clockwise)
@@ -966,6 +977,7 @@ fn draw_rotation_arrows_interactive(
         painter,
         arc_center,
         arc_radius,
+        arc_width,
         -0.3,  // Start angle (right side)
         0.3,   // End angle
         false, // Arrow points right (clockwise)
@@ -988,6 +1000,7 @@ fn draw_arc_arrow(
     painter: &egui::Painter,
     center: Pos2,
     radius: f32,
+    width: f32,
     start_angle: f32,
     end_angle: f32,
     arrow_at_start: bool, // If true, arrow head at start; if false, at end
@@ -1020,7 +1033,7 @@ fn draw_arc_arrow(
     }
 
     let color = if is_hovered { hover_color } else { base_color };
-    let stroke_width = if is_hovered { 2.5 } else { 1.5 };
+    let stroke_width = if is_hovered { width + 1.0 } else { width };
 
     // Draw arc
     let segments = 12;
@@ -1038,11 +1051,14 @@ fn draw_arc_arrow(
     }
 
     // Arrow head
+    let delta_angle = stroke_width / radius;
+
     let arrow_angle = if arrow_at_start {
-        start_angle
+        start_angle - delta_angle
     } else {
-        end_angle
+        end_angle + delta_angle
     };
+
     let arrow_tip = Pos2::new(
         center.x + arrow_angle.cos() * radius,
         center.y + arrow_angle.sin() * radius,
@@ -1055,8 +1071,8 @@ fn draw_arc_arrow(
 
     let arrow_pts = vec![
         arrow_tip,
-        arrow_tip - tangent * 5.0 + normal * 3.0,
-        arrow_tip - tangent * 5.0 - normal * 3.0,
+        arrow_tip - tangent * (stroke_width + 2.5) + normal * (stroke_width + 0.5),
+        arrow_tip - tangent * (stroke_width + 2.5) - normal * (stroke_width + 0.5),
     ];
     painter.add(egui::Shape::convex_polygon(arrow_pts, color, Stroke::NONE));
 }
