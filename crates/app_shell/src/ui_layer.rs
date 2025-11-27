@@ -36,14 +36,16 @@ enum SettingsTab {
     Lighting,
     Input,
     Rendering,
+    About,
 }
 
 impl SettingsTab {
-    const ALL: [SettingsTab; 4] = [
+    const ALL: [SettingsTab; 5] = [
         SettingsTab::Camera,
         SettingsTab::Lighting,
         SettingsTab::Input,
         SettingsTab::Rendering,
+        SettingsTab::About,
     ];
 
     fn label(&self) -> &'static str {
@@ -52,6 +54,7 @@ impl SettingsTab {
             SettingsTab::Lighting => "Lighting",
             SettingsTab::Input => "Input",
             SettingsTab::Rendering => "Rendering",
+            SettingsTab::About => "About",
         }
     }
 }
@@ -121,6 +124,7 @@ impl UiLayer {
         fps: f32,
         gpu_name: Option<&str>,
         gpus: &[String],
+        hovered_point: Option<[f32; 3]>,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let mut active_workbench = self.active_workbench;
@@ -143,8 +147,9 @@ impl UiLayer {
                 &mut show_settings,
                 &mut settings_tab,
                 gpus,
+                gpu_name,
             );
-            Self::draw_bottom_panel(ctx, fps, gpu_name);
+            Self::draw_bottom_panel(ctx, fps, hovered_point);
 
             viewport_rect_logical = ctx.available_rect();
 
@@ -277,6 +282,7 @@ impl UiLayer {
         show_settings: &mut bool,
         settings_tab: &mut SettingsTab,
         gpus: &[String],
+        gpu_name: Option<&str>,
     ) -> bool {
         if !*show_settings {
             return false;
@@ -315,6 +321,9 @@ impl UiLayer {
                         }
                         SettingsTab::Rendering => {
                             changed |= Self::render_settings_ui(right, settings, gpus);
+                        }
+                        SettingsTab::About => {
+                            Self::about_ui(right, gpu_name);
                         }
                     }
                 });
@@ -596,7 +605,7 @@ impl UiLayer {
         changed
     }
 
-    fn draw_bottom_panel(ctx: &Context, fps: f32, gpu_name: Option<&str>) {
+    fn draw_bottom_panel(ctx: &Context, fps: f32, hovered_point: Option<[f32; 3]>) {
         egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 let fps_text = if fps > 0.0 {
@@ -606,12 +615,32 @@ impl UiLayer {
                 };
                 ui.label(fps_text);
                 ui.separator();
-                if let Some(name) = gpu_name {
-                    ui.label(format!("GPU: {}", name));
+                if let Some(pos) = hovered_point {
+                    ui.label(format!(
+                        "X: {:.3}  Y: {:.3}  Z: {:.3}",
+                        pos[0], pos[1], pos[2]
+                    ));
                 } else {
-                    ui.label("GPU: Unknown");
+                    ui.label("X: —  Y: —  Z: —");
                 }
             });
         });
+    }
+
+    fn about_ui(ui: &mut Ui, gpu_name: Option<&str>) {
+        ui.label("printCAD");
+        ui.label("A parametric 3D CAD application");
+        ui.add_space(12.0);
+        ui.separator();
+        ui.label("System Information");
+        ui.add_space(4.0);
+        if let Some(name) = gpu_name {
+            ui.label(format!("GPU: {}", name));
+        } else {
+            ui.label("GPU: Unknown");
+        }
+        ui.add_space(12.0);
+        ui.separator();
+        ui.label("Version: 0.1.0 (pre-alpha)");
     }
 }

@@ -9,8 +9,8 @@ use glam::Vec3;
 use kernel_api::TriMesh;
 use orientation_cube::OrientationCubeInput;
 use render_vk::{
-    BodySubmission, FrameSubmission, GpuLight, LightingData, RenderBackend, RenderSettings,
-    ViewportRect as RenderViewportRect, VulkanRenderer,
+    BodySubmission, FrameSubmission, GpuLight, HighlightState, LightingData, RenderBackend,
+    RenderSettings, ViewportRect as RenderViewportRect, VulkanRenderer,
 };
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::time::{Duration, Instant};
@@ -79,6 +79,14 @@ struct PrintCadApp {
     available_gpus: Vec<String>,
     fps_accum_time: f32,
     fps_frame_count: u32,
+    // Selected body ID
+    selected_body: Option<Uuid>,
+    // Hovered body ID (for highlighting)
+    hovered_body: Option<Uuid>,
+    // Hovered world position (for status bar display)
+    hovered_world_pos: Option<[f32; 3]>,
+    // Current cursor position in viewport
+    cursor_in_viewport: Option<(f32, f32)>,
 }
 
 impl PrintCadApp {
@@ -92,6 +100,7 @@ impl PrintCadApp {
         if let Some((center, radius)) = bodies_bounds(&demo_bodies) {
             camera.reset_to_fit(center, radius);
         }
+
         Self {
             settings,
             renderer: None,
@@ -110,6 +119,10 @@ impl PrintCadApp {
             available_gpus: Vec::new(),
             fps_accum_time: 0.0,
             fps_frame_count: 0,
+            selected_body: None,
+            hovered_body: None,
+            hovered_world_pos: None,
+            cursor_in_viewport: None,
         }
     }
 }
@@ -169,6 +182,33 @@ impl ApplicationHandler for PrintCadApp {
             }
             if response.consumed {
                 return;
+            }
+        }
+
+        // Track cursor position for picking
+        if let WindowEvent::CursorMoved { position, .. } = &event {
+            // Store cursor position in window coordinates
+            let x = position.x as u32;
+            let y = position.y as u32;
+
+            // Request GPU picking at cursor position
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.request_pick(x, y);
+            }
+
+            // Store cursor position relative to viewport for other uses
+            let vp = self.camera.viewport_info();
+            let cursor_x = position.x as f32 - vp.0;
+            let cursor_y = position.y as f32 - vp.1;
+
+            if cursor_x >= 0.0
+                && cursor_y >= 0.0
+                && cursor_x < vp.2 as f32
+                && cursor_y < vp.3 as f32
+            {
+                self.cursor_in_viewport = Some((cursor_x, cursor_y));
+            } else {
+                self.cursor_in_viewport = None;
             }
         }
 
@@ -263,7 +303,25 @@ impl ApplicationHandler for PrintCadApp {
         // Update camera animation
         self.camera.update(dt_secs);
 
-        self.frame_submission.bodies = self.demo_bodies.clone();
+        // Apply highlight states to bodies
+        self.frame_submission.bodies = self
+            .demo_bodies
+            .iter()
+            .map(|body| {
+                let is_hovered = self.hovered_body == Some(body.id);
+                let is_selected = self.selected_body == Some(body.id);
+                let highlight = match (is_hovered, is_selected) {
+                    (true, true) => HighlightState::HoveredAndSelected,
+                    (true, false) => HighlightState::Hovered,
+                    (false, true) => HighlightState::Selected,
+                    (false, false) => HighlightState::None,
+                };
+                BodySubmission {
+                    highlight,
+                    ..body.clone()
+                }
+            })
+            .collect();
         self.frame_submission.view_proj = self.camera.view_projection();
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
@@ -279,6 +337,7 @@ impl ApplicationHandler for PrintCadApp {
                 self.current_fps,
                 self.gpu_name.as_deref(),
                 &self.available_gpus,
+                self.hovered_world_pos,
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
@@ -322,7 +381,13 @@ impl ApplicationHandler for PrintCadApp {
         if let Err(err) = renderer.render(&self.frame_submission) {
             error!("render failure: {err}");
             event_loop.exit();
+            return;
         }
+
+        // Retrieve pick result from GPU picking (processed during render)
+        let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
+        self.hovered_body = pick_result.body_id;
+        self.hovered_world_pos = pick_result.world_position;
     }
 }
 
@@ -338,20 +403,29 @@ impl PrintCadApp {
     fn handle_select_tool(&mut self, event: &WindowEvent) -> bool {
         match event {
             WindowEvent::MouseInput {
-                state: ElementState::Pressed,
-                button: MouseButton::Left,
-                ..
-            } => {
-                info!("Select tool: left press");
-                false
-            }
-            WindowEvent::MouseInput {
                 state: ElementState::Released,
                 button: MouseButton::Left,
                 ..
             } => {
-                info!("Select tool: left release");
-                false
+                // Select the hovered body, or deselect if clicking empty space
+                if let Some(hovered) = self.hovered_body {
+                    if self.selected_body == Some(hovered) {
+                        // Clicking on already selected body - deselect
+                        self.selected_body = None;
+                        info!("Deselected body");
+                    } else {
+                        // Select the new body
+                        self.selected_body = Some(hovered);
+                        info!("Selected body: {:?}", hovered);
+                    }
+                } else {
+                    // Clicked on empty space - deselect
+                    if self.selected_body.is_some() {
+                        self.selected_body = None;
+                        info!("Deselected (clicked empty space)");
+                    }
+                }
+                true // Request redraw
             }
             _ => false,
         }
@@ -389,6 +463,7 @@ fn demo_bodies() -> Vec<BodySubmission> {
         id: Uuid::new_v4(),
         mesh: pyramid_mesh(),
         color: [0.85, 0.55, 0.3],
+        highlight: HighlightState::None,
     }]
 }
 

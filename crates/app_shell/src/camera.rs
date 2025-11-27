@@ -319,6 +319,32 @@ impl CameraController {
         self.view_proj(aspect).to_cols_array_2d()
     }
 
+    /// Get the inverse view-projection matrix for unprojecting screen coords to world
+    pub fn inverse_view_projection(&self) -> Mat4 {
+        let (w, h) = self.viewport_size;
+        let aspect = if w == 0 || h == 0 {
+            1.0
+        } else {
+            w as f32 / h as f32
+        };
+        self.view_proj(aspect).inverse()
+    }
+
+    /// Get the current target point
+    pub fn target(&self) -> Vec3 {
+        self.target
+    }
+
+    /// Get viewport info: (origin_x, origin_y, width, height)
+    pub fn viewport_info(&self) -> (f32, f32, u32, u32) {
+        (
+            self.viewport_origin.0,
+            self.viewport_origin.1,
+            self.viewport_size.0,
+            self.viewport_size.1,
+        )
+    }
+
     fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = self.view_matrix();
         let fov_persp_rad = self.fov_y_deg * DEG_TO_RAD;

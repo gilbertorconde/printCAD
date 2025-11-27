@@ -3,12 +3,16 @@ use std::{env, fs, path::PathBuf};
 fn main() {
     println!("cargo:rerun-if-changed=shaders/mesh.vert");
     println!("cargo:rerun-if-changed=shaders/mesh.frag");
+    println!("cargo:rerun-if-changed=shaders/pick.vert");
+    println!("cargo:rerun-if-changed=shaders/pick.frag");
 
     let out_dir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR not set"));
     fs::create_dir_all(&out_dir).expect("failed to create OUT_DIR");
 
     compile_shader("mesh.vert", shaderc::ShaderKind::Vertex, &out_dir);
     compile_shader("mesh.frag", shaderc::ShaderKind::Fragment, &out_dir);
+    compile_shader("pick.vert", shaderc::ShaderKind::Vertex, &out_dir);
+    compile_shader("pick.frag", shaderc::ShaderKind::Fragment, &out_dir);
 }
 
 fn compile_shader(name: &str, kind: shaderc::ShaderKind, out_dir: &PathBuf) {
