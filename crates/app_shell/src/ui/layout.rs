@@ -1,4 +1,6 @@
+use axes::AxisSystem;
 use egui::{self, Color32, Context};
+use glam::Vec3;
 
 use super::{ActiveTool, ActiveWorkbench};
 
@@ -84,7 +86,12 @@ pub fn draw_right_panel(ctx: &Context) {
         });
 }
 
-pub fn draw_bottom_panel(ctx: &Context, fps: f32, hovered_point: Option<[f32; 3]>) {
+pub fn draw_bottom_panel(
+    ctx: &Context,
+    fps: f32,
+    hovered_point: Option<[f32; 3]>,
+    axis_system: AxisSystem,
+) {
     egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
             let fps_text = if fps > 0.0 {
@@ -94,13 +101,30 @@ pub fn draw_bottom_panel(ctx: &Context, fps: f32, hovered_point: Option<[f32; 3]
             };
             ui.label(fps_text);
             ui.separator();
+            let axes = [
+                ("H", axis_system.horizontal()),
+                ("V", axis_system.vertical()),
+                ("D", axis_system.depth()),
+            ];
             if let Some(pos) = hovered_point {
-                ui.label(format!(
-                    "X: {:.3}  Y: {:.3}  Z: {:.3}",
-                    pos[0], pos[1], pos[2]
-                ));
+                let canonical = axis_system.world_to_canonical(Vec3::from_array(pos));
+                let values = canonical.to_array();
+                let mut parts = Vec::with_capacity(3);
+                for (idx, (role, axis)) in axes.iter().enumerate() {
+                    parts.push(format!(
+                        "{}({}): {:.3}",
+                        role,
+                        axis.signed_label(),
+                        values[idx]
+                    ));
+                }
+                ui.label(parts.join("  "));
             } else {
-                ui.label("X: —  Y: —  Z: —");
+                let mut parts = Vec::with_capacity(3);
+                for (role, axis) in axes {
+                    parts.push(format!("{}({}): —", role, axis.signed_label()));
+                }
+                ui.label(parts.join("  "));
             }
         });
     });

@@ -1,3 +1,4 @@
+use axes::AxisPreset;
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -139,6 +140,7 @@ pub struct CameraSettings {
     pub max_distance: f32,
     pub projection: ProjectionMode,
     pub fov_degrees: f32,
+    pub axis_preset: AxisPreset,
 }
 
 impl Default for CameraSettings {
@@ -153,6 +155,7 @@ impl Default for CameraSettings {
             max_distance: 500.0,
             projection: ProjectionMode::Perspective,
             fov_degrees: 50.0,
+            axis_preset: AxisPreset::default(),
         }
     }
 }

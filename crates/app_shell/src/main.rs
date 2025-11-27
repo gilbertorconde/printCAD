@@ -329,6 +329,7 @@ impl ApplicationHandler for PrintCadApp {
         if let Some(ui_layer) = self.ui_layer.as_mut() {
             let orientation_input = OrientationCubeInput {
                 camera_orientation: self.camera.orientation(),
+                axis_system: self.camera.axis_system(),
             };
 
             // Get pivot screen position for visual indicator
@@ -346,6 +347,7 @@ impl ApplicationHandler for PrintCadApp {
                 &self.available_gpus,
                 self.hovered_world_pos,
                 pivot_screen_pos,
+                self.camera.axis_system(),
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;

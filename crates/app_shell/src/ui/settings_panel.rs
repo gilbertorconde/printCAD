@@ -1,3 +1,4 @@
+use axes::AxisPreset;
 use egui::{self, Color32, Context, Ui};
 use settings::{LightSource, ProjectionMode, UserSettings};
 
@@ -104,6 +105,23 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     changed |= ui
         .add(egui::Slider::new(&mut camera.max_distance, 5.0..=2000.0).text("Max distance"))
         .changed();
+
+    ui.separator();
+    ui.label("Axis preset");
+    egui::ComboBox::from_id_salt("axis_preset_combo")
+        .width(260.0)
+        .selected_text(camera.axis_preset.label())
+        .show_ui(ui, |ui| {
+            for preset in AxisPreset::ALL {
+                if ui
+                    .selectable_value(&mut camera.axis_preset, preset, preset.label())
+                    .changed()
+                {
+                    changed = true;
+                }
+            }
+        });
+    ui.weak(camera.axis_preset.description());
 
     ui.separator();
     ui.label("Projection");

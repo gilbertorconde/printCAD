@@ -6,6 +6,7 @@
 //!
 //! The cube is interactive: clicking faces snaps to that view, clicking arrows rotates 45°.
 
+use axes::AxisSystem;
 use egui::{Color32, Context, Pos2, Response, Sense, Stroke, Ui};
 use glam::{Mat3, Quat, Vec3};
 
@@ -43,6 +44,8 @@ impl Default for OrientationCubeConfig {
 pub struct OrientationCubeInput {
     /// Camera orientation as quaternion [x, y, z, w]
     pub camera_orientation: [f32; 4],
+    /// Axis configuration used across the viewport
+    pub axis_system: AxisSystem,
 }
 
 /// Result of orientation cube interaction
@@ -91,6 +94,7 @@ pub enum CameraSnapView {
 impl CameraSnapView {
     /// Get the yaw and pitch angles (in degrees) for this view.
     /// Used by the turntable camera system.
+
     pub fn yaw_pitch(&self) -> (f32, f32) {
         match self {
             // Main faces
@@ -210,8 +214,10 @@ pub fn draw(
             // Get camera orientation quaternion. We invert so cube shows world axes
             // relative to the camera, then flip X/Z to match the camera's screen axes
             // (so that X/Z rotations appear with the expected handedness).
-            let q = Quat::from_array(input.camera_orientation).inverse();
-            let rot = Mat3::from_quat(q);
+            let q_world = Quat::from_array(input.camera_orientation).inverse();
+            let world_rot = Mat3::from_quat(q_world);
+            let basis = input.axis_system.canonical_basis();
+            let rot = basis.transpose() * world_rot * basis;
 
             // Draw and handle cube face clicks
             if let Some(snap) = draw_cube_interactive(
@@ -226,7 +232,7 @@ pub fn draw(
             }
 
             if config.show_axis_arrows {
-                draw_axis_arrows(&painter, local_center, &rot);
+                draw_axis_arrows(&painter, local_center, &rot, input.axis_system);
             }
 
             if config.show_rotation_arrows {
@@ -768,27 +774,36 @@ fn draw_cube_interactive(
 }
 
 /// Draws the colored axis arrows (X=red, Y=green, Z=blue)
-fn draw_axis_arrows(painter: &egui::Painter, center: Pos2, rot: &Mat3) {
+fn draw_axis_arrows(painter: &egui::Painter, center: Pos2, rot: &Mat3, axis_system: AxisSystem) {
     let axis_origin = Pos2::new(center.x - 35.0, center.y + 35.0);
     let axis_len = 18.0;
 
-    let axes = [
-        (Vec3::X, Color32::from_rgb(220, 80, 80), "X"),  // Red
-        (Vec3::Y, Color32::from_rgb(80, 200, 80), "Y"),  // Green
-        (Vec3::Z, Color32::from_rgb(80, 120, 220), "Z"), // Blue
-    ];
-
-    // Sort axes by depth
-    let mut axis_data: Vec<_> = axes
-        .iter()
-        .map(|(dir, color, label)| {
-            let rotated = *rot * *dir;
-            (rotated, *color, *label)
-        })
-        .collect();
+    let mut axis_data: Vec<_> = [
+        (
+            Vec3::X,
+            Color32::from_rgb(220, 80, 80),
+            axis_system.horizontal(),
+        ),
+        (
+            Vec3::Y,
+            Color32::from_rgb(80, 200, 80),
+            axis_system.vertical(),
+        ),
+        (
+            Vec3::Z,
+            Color32::from_rgb(80, 120, 220),
+            axis_system.depth(),
+        ),
+    ]
+    .into_iter()
+    .map(|(dir, color, axis)| {
+        let rotated = *rot * dir;
+        (rotated, color, axis)
+    })
+    .collect();
     axis_data.sort_by(|a, b| a.0.z.partial_cmp(&b.0.z).unwrap());
 
-    for (rotated, color, label) in &axis_data {
+    for (rotated, color, axis) in &axis_data {
         let end = Pos2::new(
             axis_origin.x + rotated.x * axis_len,
             axis_origin.y - rotated.y * axis_len,
@@ -827,7 +842,7 @@ fn draw_axis_arrows(painter: &egui::Painter, center: Pos2, rot: &Mat3) {
             painter.text(
                 label_pos,
                 egui::Align2::CENTER_CENTER,
-                label,
+                axis.signed_label(),
                 egui::FontId::proportional(10.0),
                 faded,
             );

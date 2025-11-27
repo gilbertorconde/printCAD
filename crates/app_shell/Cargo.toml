@@ -20,3 +20,4 @@ kernel_api = { path = "../kernel_api" }
 settings = { path = "../settings" }
 glam.workspace = true
 uuid.workspace = true
+axes = { path = "../axes" }

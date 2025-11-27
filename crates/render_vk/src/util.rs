@@ -117,4 +117,3 @@ pub(crate) fn find_memory_type(
     }
     None
 }
-

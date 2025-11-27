@@ -1,10 +1,10 @@
 use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
-use glam::{Mat4, Quat, Vec3};
+use axes::{AxisPreset, AxisSystem};
+use glam::{Mat3, Mat4, Quat, Vec3};
 use settings::{CameraSettings, ProjectionMode};
 use winit::dpi::PhysicalPosition;
 
 pub(super) const DEG_TO_RAD: f32 = std::f32::consts::PI / 180.0;
-pub(super) const WORLD_UP: Vec3 = Vec3::Y;
 pub(super) const MAX_PITCH_RAD: f32 = 1.570796; // ~90 degrees
 
 /// Simple animation helper so camera snaps remain smooth when requested.
@@ -44,6 +44,8 @@ impl CameraAnimation {
 pub struct CameraController {
     pub(super) target: Vec3,
     pub(super) radius: f32,
+    axes: AxisSystem,
+    axis_preset: AxisPreset,
 
     // Optional turntable state (used for snaps/animation rebasing if desired)
     pub(super) yaw: f32,   // around WORLD_UP
@@ -77,6 +79,7 @@ impl CameraController {
     pub fn new(settings: &CameraSettings, initial_viewport: (u32, u32)) -> Self {
         let yaw = 45.0_f32.to_radians();
         let pitch = 35.0_f32.to_radians();
+        let axes = AxisSystem::from(settings.axis_preset);
 
         let fov_degrees = match settings.projection {
             ProjectionMode::Perspective => settings.fov_degrees,
@@ -101,6 +104,8 @@ impl CameraController {
             animation: None,
             orbit_pivot: None,
             active_pivot: None,
+            axes,
+            axis_preset: settings.axis_preset,
         };
 
         controller.rebuild_orientation_from_yaw_pitch();
@@ -123,8 +128,10 @@ impl CameraController {
     }
 
     fn rebuild_orientation_from_yaw_pitch(&mut self) {
-        let yaw_q = Quat::from_axis_angle(WORLD_UP, self.yaw);
-        let right = yaw_q * Vec3::X;
+        let up_axis = self.axis_vertical_vec().normalize();
+        let yaw_q = Quat::from_axis_angle(up_axis, self.yaw);
+        let right_axis = (self.axis_horizontal_vec()).normalize();
+        let right = yaw_q * right_axis;
 
         let pitch_q = if right.length_squared() > 0.0 {
             Quat::from_axis_angle(right.normalize(), self.pitch)
@@ -237,12 +244,12 @@ impl CameraController {
 
     fn view_matrix(&self) -> Mat4 {
         let eye = self.position_vec();
-        let up = self.orientation * Vec3::Y;
+        let up = self.orientation * self.axis_vertical_vec();
         Mat4::look_at_rh(eye, self.target, up)
     }
 
     pub(super) fn position_vec(&self) -> Vec3 {
-        let forward = self.orientation * Vec3::NEG_Z;
+        let forward = self.orientation * (-self.axis_depth_vec());
         self.target - forward * self.radius
     }
 
@@ -254,6 +261,60 @@ impl CameraController {
         self.orientation.to_array()
     }
 
+    pub fn axis_system(&self) -> AxisSystem {
+        self.axes
+    }
+
+    pub(super) fn axis_horizontal_vec(&self) -> Vec3 {
+        self.axes.horizontal().vector()
+    }
+
+    pub(super) fn axis_vertical_vec(&self) -> Vec3 {
+        self.axes.vertical().vector()
+    }
+
+    pub(super) fn axis_depth_vec(&self) -> Vec3 {
+        self.axes.depth().vector()
+    }
+
+    fn axis_parity(&self) -> f32 {
+        let h = self.axis_horizontal_vec();
+        let v = self.axis_vertical_vec();
+        let d = self.axis_depth_vec();
+        let triple = h.cross(v).dot(d);
+        if triple < 0.0 {
+            -1.0
+        } else {
+            1.0
+        }
+    }
+
+    pub(super) fn control_horizontal_vec(&self) -> Vec3 {
+        let mut h = self.axis_horizontal_vec();
+        if self.axis_parity() < 0.0 {
+            h = -h;
+        }
+        h
+    }
+
+    fn axis_basis(&self) -> Mat3 {
+        Mat3::from_cols(
+            self.axis_horizontal_vec(),
+            self.axis_vertical_vec(),
+            self.axis_depth_vec(),
+        )
+    }
+
+    pub(super) fn world_to_axis_local(&self, world: Vec3) -> Vec3 {
+        self.axis_basis().transpose() * world
+    }
+
+    fn canonical_quat_to_world(&self, quat: Quat) -> Quat {
+        let basis = self.axis_basis();
+        let mat = basis * Mat3::from_quat(quat) * basis.transpose();
+        Quat::from_mat3(&mat)
+    }
+
     pub fn sync_with_settings(&mut self, settings: &CameraSettings) {
         self.radius = self
             .radius
@@ -263,6 +324,11 @@ impl CameraController {
         self.last_cursor = None;
         self.orbiting = false;
         self.panning = false;
+        if self.axis_preset != settings.axis_preset {
+            self.axis_preset = settings.axis_preset;
+            self.axes = AxisSystem::from(self.axis_preset);
+            self.sync_yaw_pitch_from_orientation();
+        }
     }
 
     /// Set a dynamic orbit pivot point.
@@ -275,7 +341,7 @@ impl CameraController {
     }
 
     pub fn snap_to_view(&mut self, view: CameraSnapView) {
-        let target = view.orientation();
+        let target = self.canonical_quat_to_world(view.orientation());
         self.animation = Some(CameraAnimation::new(self.orientation, target, 0.25));
     }
 
@@ -283,9 +349,9 @@ impl CameraController {
         let angle_rad = delta.degrees * DEG_TO_RAD;
         let current = self.orientation;
         let axis = match delta.axis {
-            RotateAxis::ScreenX => current * Vec3::NEG_X,
-            RotateAxis::ScreenY => current * Vec3::NEG_Y,
-            RotateAxis::ScreenZ => current * Vec3::Z,
+            RotateAxis::ScreenX => current * (-self.control_horizontal_vec()),
+            RotateAxis::ScreenY => current * (-self.axis_vertical_vec()),
+            RotateAxis::ScreenZ => current * self.axis_depth_vec(),
         };
         if axis.length_squared() <= 0.0 {
             return;
@@ -296,7 +362,8 @@ impl CameraController {
     }
 
     pub(super) fn sync_yaw_pitch_from_orientation(&mut self) {
-        let forward = (self.orientation * Vec3::NEG_Z).normalize();
+        let forward_world = (self.orientation * -self.axis_depth_vec()).normalize_or_zero();
+        let forward = self.world_to_axis_local(forward_world);
         let horiz = Vec3::new(forward.x, 0.0, forward.z);
         let horiz_len = horiz.length();
 

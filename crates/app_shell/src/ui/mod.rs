@@ -1,6 +1,7 @@
 mod layout;
 mod settings_panel;
 
+use axes::AxisSystem;
 use egui::Context;
 use egui_winit::{egui as egui_core, State};
 use render_vk::EguiSubmission;
@@ -102,6 +103,7 @@ impl UiLayer {
         gpus: &[String],
         hovered_point: Option<[f32; 3]>,
         pivot_screen_pos: Option<(f32, f32)>,
+        axis_system: AxisSystem,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let mut active_workbench = self.active_workbench;
@@ -126,7 +128,7 @@ impl UiLayer {
                 gpus,
                 gpu_name,
             );
-            layout::draw_bottom_panel(ctx, fps, hovered_point);
+            layout::draw_bottom_panel(ctx, fps, hovered_point, axis_system);
 
             viewport_rect_logical = ctx.available_rect();
 
