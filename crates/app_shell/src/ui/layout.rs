@@ -1,5 +1,7 @@
 use axes::AxisSystem;
 use egui::{self, Color32, Context};
+
+use crate::log_panel;
 use glam::Vec3;
 
 use super::{ActiveTool, ActiveWorkbench};
@@ -79,10 +81,53 @@ pub fn draw_right_panel(ctx: &Context) {
             ui.heading("Inspector");
             ui.label("Nothing selected.");
             ui.separator();
-            ui.heading("Log");
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.label("Events will appear here.");
+        });
+}
+
+pub fn draw_log_panel(ctx: &Context, show: bool) {
+    if !show {
+        return;
+    }
+
+    let entries = log_panel::entries();
+    if entries.is_empty() {
+        return;
+    }
+
+    egui::TopBottomPanel::bottom("log_panel")
+        .resizable(true)
+        .default_height(160.0)
+        .min_height(80.0)
+        .show(ctx, |ui| {
+            ui.horizontal(|ui| {
+                ui.heading("Log");
+                ui.add_space(8.0);
+                if ui.button("Clear").clicked() {
+                    log_panel::clear();
+                }
             });
+            ui.separator();
+
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for entry in entries {
+                        let secs = entry.timestamp_secs % 86_400;
+                        let h = secs / 3600;
+                        let m = (secs % 3600) / 60;
+                        let s = secs % 60;
+                        let time_str = format!("{h:02}:{m:02}:{s:02}");
+                        let (label, color) = match entry.level {
+                            log_panel::LogLevel::Info => ("INFO", Color32::from_rgb(180, 220, 255)),
+                            log_panel::LogLevel::Warn => ("WARN", Color32::from_rgb(255, 210, 120)),
+                            log_panel::LogLevel::Error => {
+                                ("ERROR", Color32::from_rgb(255, 140, 140))
+                            }
+                        };
+                        ui.colored_label(color, format!("[{time_str}] {label}: {}", entry.message));
+                    }
+                });
         });
 }
 

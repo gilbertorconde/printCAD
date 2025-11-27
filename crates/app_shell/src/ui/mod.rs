@@ -128,6 +128,7 @@ impl UiLayer {
                 gpus,
                 gpu_name,
             );
+            layout::draw_log_panel(ctx, settings.rendering.show_log_panel);
             layout::draw_bottom_panel(ctx, fps, hovered_point, axis_system);
 
             viewport_rect_logical = ctx.available_rect();

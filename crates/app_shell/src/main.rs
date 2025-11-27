@@ -1,4 +1,5 @@
 mod camera;
+mod log_panel;
 mod orientation_cube;
 mod ui;
 
@@ -7,6 +8,7 @@ use camera::CameraController;
 use core_document::{Document, DocumentService};
 use glam::Vec3;
 use kernel_api::TriMesh;
+use log_panel as app_log;
 use orientation_cube::OrientationCubeInput;
 use render_vk::{
     BodySubmission, FrameSubmission, GpuLight, HighlightState, LightingData, RenderBackend,
@@ -14,7 +16,7 @@ use render_vk::{
 };
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::time::{Duration, Instant};
-use tracing::{error, info, warn};
+use tracing::error;
 use ui::{ActiveTool, UiLayer};
 use uuid::Uuid;
 use wb_part::PartDesignWorkbench;
@@ -37,17 +39,21 @@ fn main() -> Result<()> {
     let mut registry = DocumentService::default();
     registry.register_workbench(Box::new(SketchWorkbench::default()))?;
     registry.register_workbench(Box::new(PartDesignWorkbench::default()))?;
-    info!(
+    app_log::info(format!(
         "Registered {} workbenches",
         registry.workbench_descriptors().count()
-    );
-    info!("Loaded document `{}` ({})", document.name(), document.id());
+    ));
+    app_log::info(format!(
+        "Loaded document `{}` ({})",
+        document.name(),
+        document.id()
+    ));
 
     let settings_store = SettingsStore::new().context("settings store init failed")?;
     let user_settings = match settings_store.load() {
         Ok(settings) => settings,
         Err(err) => {
-            warn!("using default settings: {err}");
+            app_log::warn(format!("Using default settings (failed to load): {err}"));
             UserSettings::default()
         }
     };
@@ -378,7 +384,7 @@ impl ApplicationHandler for PrintCadApp {
             if ui_result.settings_changed {
                 self.camera.sync_with_settings(&self.user_settings.camera);
                 if let Err(err) = self.settings_store.save(&self.user_settings) {
-                    warn!("failed to save settings: {err}");
+                    app_log::warn(format!("Failed to save settings: {err}"));
                 }
             }
         } else {
@@ -389,7 +395,7 @@ impl ApplicationHandler for PrintCadApp {
         window.request_redraw();
 
         if let Err(err) = renderer.render(&self.frame_submission) {
-            error!("render failure: {err}");
+            app_log::error(format!("Render failure: {err}"));
             event_loop.exit();
             return;
         }
@@ -431,17 +437,17 @@ impl PrintCadApp {
                     if self.selected_body == Some(hovered) {
                         // Clicking on already selected body - deselect
                         self.selected_body = None;
-                        info!("Deselected body");
+                        app_log::info("Deselected body");
                     } else {
                         // Select the new body
                         self.selected_body = Some(hovered);
-                        info!("Selected body: {:?}", hovered);
+                        app_log::info(format!("Selected body: {hovered:?}"));
                     }
                 } else {
                     // Clicked on empty space - deselect
                     if self.selected_body.is_some() {
                         self.selected_body = None;
-                        info!("Deselected (clicked empty space)");
+                        app_log::info("Deselected (clicked empty space)");
                     }
                 }
                 true // Request redraw
@@ -457,7 +463,7 @@ impl PrintCadApp {
             ..
         } = event
         {
-            info!("Sketch tool click captured");
+            app_log::info("Sketch tool click captured");
             return true;
         }
         false
@@ -470,7 +476,7 @@ impl PrintCadApp {
             ..
         } = event
         {
-            info!("Part tool click captured");
+            app_log::info("Part tool click captured");
             return true;
         }
         false

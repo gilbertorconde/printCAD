@@ -94,6 +94,8 @@ Settings are stored in `~/.config/printCAD/settings.json` and include:
 - FPS cap (0 = uncapped)
 - Camera projection (Perspective/Orthographic)
 - Field of view
+- Rendering quality (MSAA sample count)
+- Debug options such as the in-app log panel
 
 ## Roadmap
 
@@ -105,7 +107,7 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 - [x] Camera controller with turntable navigation
 - [x] Interactive orientation cube (FreeCAD-style NaviCube)
 - [x] Settings persistence
-- [x] GPU selection for hybrid systems
+- [x] GPU selection for hybrid or multi gpu systems
 - [ ] Sketch workbench with constraint solver
 - [ ] Part Design workbench (pad, pocket, revolve)
 - [ ] STEP import/export via OpenCASCADE

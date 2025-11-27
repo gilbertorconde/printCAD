@@ -266,7 +266,13 @@ fn render_settings_ui(ui: &mut Ui, settings: &mut UserSettings, gpus: &[String])
 
     ui.add_space(12.0);
     ui.separator();
-    ui.label("Anti-aliasing");
+    ui.label("Debugging");
+    changed |= ui
+        .checkbox(
+            &mut settings.rendering.show_log_panel,
+            "Show in-app log panel at bottom",
+        )
+        .changed();
 
     let msaa_options = [(1, "Off"), (2, "2x MSAA"), (4, "4x MSAA"), (8, "8x MSAA")];
     let current_msaa = settings.rendering.msaa_samples;

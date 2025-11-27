@@ -51,12 +51,15 @@ impl Default for UserSettings {
 pub struct RenderingSettings {
     /// MSAA sample count (1 = disabled, 2, 4, or 8)
     pub msaa_samples: u8,
+    /// Whether to show the in-app log panel at the bottom of the viewport
+    pub show_log_panel: bool,
 }
 
 impl Default for RenderingSettings {
     fn default() -> Self {
         Self {
             msaa_samples: 4, // 4x MSAA by default
+            show_log_panel: false,
         }
     }
 }
