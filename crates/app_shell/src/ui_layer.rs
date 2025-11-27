@@ -125,6 +125,7 @@ impl UiLayer {
         gpu_name: Option<&str>,
         gpus: &[String],
         hovered_point: Option<[f32; 3]>,
+        pivot_screen_pos: Option<(f32, f32)>,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let mut active_workbench = self.active_workbench;
@@ -155,6 +156,11 @@ impl UiLayer {
 
             if let Some(input) = orientation_input {
                 cube_result = orientation_cube::draw(ctx, input, &cube_config);
+            }
+
+            // Draw orbit pivot indicator
+            if let Some((px, py)) = pivot_screen_pos {
+                Self::draw_pivot_indicator(ctx, px, py);
             }
         });
 
@@ -625,6 +631,48 @@ impl UiLayer {
                 }
             });
         });
+    }
+
+    /// Draw a pivot indicator (red circle with 50% alpha) at the given screen position
+    fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {
+        let painter = ctx.layer_painter(egui::LayerId::new(
+            egui::Order::Foreground,
+            egui::Id::new("pivot_indicator"),
+        ));
+
+        // Convert physical pixels to logical points
+        let ppp = ctx.pixels_per_point();
+        let pos = egui::pos2(x / ppp, y / ppp);
+
+        let radius = 8.0; // Logical points
+        let fill_color = Color32::from_rgba_unmultiplied(255, 0, 0, 128); // Red with 50% alpha
+        let stroke_color = Color32::from_rgba_unmultiplied(200, 0, 0, 200);
+
+        // Draw filled circle
+        painter.circle(
+            pos,
+            radius,
+            fill_color,
+            egui::Stroke::new(2.0, stroke_color),
+        );
+
+        // Draw crosshair inside
+        let cross_size = 4.0;
+        let cross_color = Color32::from_rgba_unmultiplied(255, 255, 255, 180);
+        painter.line_segment(
+            [
+                egui::pos2(pos.x - cross_size, pos.y),
+                egui::pos2(pos.x + cross_size, pos.y),
+            ],
+            egui::Stroke::new(1.5, cross_color),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(pos.x, pos.y - cross_size),
+                egui::pos2(pos.x, pos.y + cross_size),
+            ],
+            egui::Stroke::new(1.5, cross_color),
+        );
     }
 
     fn about_ui(ui: &mut Ui, gpu_name: Option<&str>) {

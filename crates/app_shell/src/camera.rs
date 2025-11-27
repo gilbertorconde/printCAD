@@ -68,6 +68,12 @@ pub struct CameraController {
     viewport_size: (u32, u32),
 
     animation: Option<CameraAnimation>,
+
+    // Dynamic orbit pivot support
+    /// When set, orbit will use this point instead of target during drag
+    orbit_pivot: Option<Vec3>,
+    /// The pivot point we're actually using for this orbit session (captured at mouse down)
+    active_pivot: Option<Vec3>,
 }
 
 impl CameraController {
@@ -96,6 +102,8 @@ impl CameraController {
             viewport_origin: (0.0, 0.0),
             viewport_size: initial_viewport,
             animation: None,
+            orbit_pivot: None,
+            active_pivot: None,
         };
 
         controller.rebuild_orientation_from_yaw_pitch();
@@ -160,13 +168,14 @@ impl CameraController {
                     (b, true) if *b == orbit_button => {
                         self.orbiting = true;
                         self.animation = None; // user input overrides animation
+                                               // Capture the current pivot point for this orbit session
+                        self.active_pivot = self.orbit_pivot;
                         true
                     }
                     (b, false) if *b == orbit_button => {
                         self.orbiting = false;
-                        // If you want to "rebase" to no-roll here, we can add it:
-                        // self.rebase_orientation_remove_roll();
                         self.last_cursor = None;
+                        self.active_pivot = None;
                         true
                     }
                     (b, true) if *b == pan_button => {
@@ -237,6 +246,8 @@ impl CameraController {
     /// - Horizontal drag: yaw around camera up.
     /// - Vertical drag: pitch around camera right.
     /// Full freedom (can roll, spin over 180°).
+    ///
+    /// If active_pivot is set, orbits around that point instead of target.
     fn orbit_trackball(&mut self, delta: Vec2, settings: &CameraSettings) {
         let sens = settings.orbit_sensitivity * 0.005;
         let dx = -delta.x * sens;
@@ -255,9 +266,38 @@ impl CameraController {
         // Drag up   => rotate around right (pitch)
         let pitch_q = Quat::from_axis_angle(right, -dy);
 
-        // Apply pitch then yaw (you can swap order if you prefer)
+        // Combined rotation
         let delta_q = yaw_q * pitch_q;
-        self.orientation = (delta_q * self.orientation).normalize();
+
+        if let Some(pivot) = self.active_pivot {
+            // Orbit around the pivot point instead of target
+            //
+            // Current eye position
+            let eye = self.position_vec();
+
+            // Vector from pivot to eye
+            let pivot_to_eye = eye - pivot;
+
+            // Rotate this vector
+            let new_pivot_to_eye = delta_q * pivot_to_eye;
+
+            // New eye position
+            let new_eye = pivot + new_pivot_to_eye;
+
+            // Update orientation (camera rotates with the orbit)
+            self.orientation = (delta_q * self.orientation).normalize();
+
+            // Now we need to update target and radius so that position_vec() returns new_eye
+            // position_vec() = target - forward * radius
+            // new_eye = target - new_forward * radius
+            //
+            // We keep the same radius to target, but move target so eye ends up at new_eye
+            let new_forward = self.orientation * Vec3::NEG_Z;
+            self.target = new_eye + new_forward * self.radius;
+        } else {
+            // Normal orbit around target - just rotate orientation
+            self.orientation = (delta_q * self.orientation).normalize();
+        }
     }
 
     fn pan(&mut self, delta: Vec2) {
@@ -319,22 +359,6 @@ impl CameraController {
         self.view_proj(aspect).to_cols_array_2d()
     }
 
-    /// Get the inverse view-projection matrix for unprojecting screen coords to world
-    pub fn inverse_view_projection(&self) -> Mat4 {
-        let (w, h) = self.viewport_size;
-        let aspect = if w == 0 || h == 0 {
-            1.0
-        } else {
-            w as f32 / h as f32
-        };
-        self.view_proj(aspect).inverse()
-    }
-
-    /// Get the current target point
-    pub fn target(&self) -> Vec3 {
-        self.target
-    }
-
     /// Get viewport info: (origin_x, origin_y, width, height)
     pub fn viewport_info(&self) -> (f32, f32, u32, u32) {
         (
@@ -345,23 +369,60 @@ impl CameraController {
         )
     }
 
+    /// Get the active orbit pivot point (only set while orbiting with a pivot)
+    pub fn active_pivot(&self) -> Option<Vec3> {
+        self.active_pivot
+    }
+
+    /// Project a world position to screen coordinates
+    /// Returns (x, y) in pixels relative to viewport, or None if behind camera
+    pub fn world_to_screen(&self, world_pos: Vec3) -> Option<(f32, f32)> {
+        let (w, h) = self.viewport_size;
+        let aspect = if w == 0 || h == 0 {
+            1.0
+        } else {
+            w as f32 / h as f32
+        };
+        let view_proj = self.view_proj(aspect);
+
+        // Transform to clip space
+        let clip = view_proj * world_pos.extend(1.0);
+
+        // Check if behind camera
+        if clip.w <= 0.0 {
+            return None;
+        }
+
+        // Perspective divide to NDC
+        let ndc = clip.truncate() / clip.w;
+
+        // Convert NDC to screen coordinates
+        // Note: Vulkan has Y=0 at top, and glam's perspective_rh handles this internally
+        let screen_x = (ndc.x + 1.0) * 0.5 * w as f32 + self.viewport_origin.0;
+        let screen_y = (ndc.y + 1.0) * 0.5 * h as f32 + self.viewport_origin.1;
+
+        Some((screen_x, screen_y))
+    }
+
     fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = self.view_matrix();
         let fov_persp_rad = self.fov_y_deg * DEG_TO_RAD;
         let fov_ortho_rad = 50.0_f32.to_radians();
         let proj = match self.projection {
             ProjectionMode::Perspective => {
-                Mat4::perspective_rh_gl(fov_persp_rad, aspect.max(0.001), self.near, self.far)
+                // Use Vulkan-compatible projection (depth 0-1 instead of OpenGL's -1 to 1)
+                Mat4::perspective_rh(fov_persp_rad, aspect.max(0.001), self.near, self.far)
             }
             ProjectionMode::Orthographic => {
                 let half_height = self.radius * (fov_ortho_rad * 0.5).tan();
                 let half_width = half_height * aspect;
-                Mat4::orthographic_rh_gl(
+                // Use Vulkan-compatible orthographic (depth 0-1)
+                Mat4::orthographic_rh(
                     -half_width,
                     half_width,
                     -half_height,
                     half_height,
-                    -self.far,
+                    self.near,
                     self.far,
                 )
             }
@@ -397,6 +458,17 @@ impl CameraController {
         self.last_cursor = None;
         self.orbiting = false;
         self.panning = false;
+    }
+
+    /// Set a dynamic orbit pivot point.
+    /// When orbiting starts, the camera will orbit around this point instead of target.
+    /// Call with None to clear the pivot (orbit around target).
+    pub fn set_orbit_pivot(&mut self, pivot: Option<Vec3>) {
+        // Only update if we're not currently orbiting
+        // (don't change pivot mid-orbit)
+        if !self.orbiting {
+            self.orbit_pivot = pivot;
+        }
     }
 
     pub fn snap_to_view(&mut self, view: CameraSnapView) {

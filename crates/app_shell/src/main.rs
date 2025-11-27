@@ -330,6 +330,13 @@ impl ApplicationHandler for PrintCadApp {
             let orientation_input = OrientationCubeInput {
                 camera_orientation: self.camera.orientation(),
             };
+
+            // Get pivot screen position for visual indicator
+            let pivot_screen_pos = self
+                .camera
+                .active_pivot()
+                .and_then(|pivot| self.camera.world_to_screen(pivot));
+
             let ui_result = ui_layer.run(
                 window,
                 &mut self.user_settings,
@@ -338,6 +345,7 @@ impl ApplicationHandler for PrintCadApp {
                 self.gpu_name.as_deref(),
                 &self.available_gpus,
                 self.hovered_world_pos,
+                pivot_screen_pos,
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
@@ -388,6 +396,15 @@ impl ApplicationHandler for PrintCadApp {
         let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
         self.hovered_body = pick_result.body_id;
         self.hovered_world_pos = pick_result.world_position;
+
+        // Set orbit pivot based on what's under the cursor
+        // If hovering over geometry, orbit around that point; otherwise use default target
+        if let Some(world_pos) = pick_result.world_position {
+            self.camera
+                .set_orbit_pivot(Some(Vec3::from_array(world_pos)));
+        } else {
+            self.camera.set_orbit_pivot(None);
+        }
     }
 }
 

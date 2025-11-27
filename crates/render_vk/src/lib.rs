@@ -335,7 +335,7 @@ impl RenderBackend for VulkanRenderer {
         self.pending_extent = to_extent(new_size);
     }
 
-    fn pick_at(&self, x: u32, y: u32) -> PickResult {
+    fn pick_at(&self, _x: u32, _y: u32) -> PickResult {
         // Return the last pick result - the actual picking happens in draw_frame
         // after the pending_pick is set
         self.core
@@ -415,9 +415,10 @@ struct RendererCore {
     // Cached pick result (updated after each frame)
     pending_pick: Option<(u32, u32)>,
     last_pick_result: PickResult,
-    // Last frame's view-projection matrix for unprojection
-    last_view_proj: [[f32; 4]; 4],
-    last_camera_pos: [f32; 3],
+    // View-projection and viewport used for the last picking pass that was submitted
+    // (used for unprojection when reading back the pick result)
+    pending_pick_view_proj: [[f32; 4]; 4],
+    pending_pick_viewport_rect: ViewportRect,
 }
 
 impl RendererCore {
@@ -553,8 +554,8 @@ impl RendererCore {
             last_frame_bodies: Vec::new(),
             pending_pick: None,
             last_pick_result: PickResult::default(),
-            last_view_proj: identity_matrix(),
-            last_camera_pos: [0.0, 0.0, 5.0],
+            pending_pick_view_proj: identity_matrix(),
+            pending_pick_viewport_rect: ViewportRect::default(),
         };
 
         core.create_swapchain(extent)?;
@@ -743,15 +744,14 @@ impl RendererCore {
             self.textures_to_free[self.current_frame].clear();
         }
 
-        // Store body IDs and matrices for picking
+        // Store body IDs for picking
         self.last_frame_bodies = frame.bodies.iter().map(|b| b.id).collect();
-        self.last_view_proj = frame.view_proj;
-        self.last_camera_pos = frame.camera_pos;
 
-        // Process pending pick request - we need to wait for the frame to complete first
+        // Process pending pick request - we need to wait for the previous frame to complete first
+        // The pick result we read was rendered with pick_view_proj/pick_viewport_rect
         if let Some((x, y)) = self.pending_pick.take() {
             if let Some(pick_renderer) = &self.pick_renderer {
-                // Wait for the current frame's fence to ensure picking pass is complete
+                // Wait for the current frame's fence to ensure the previous picking pass is complete
                 unsafe {
                     let _ = self.device.wait_for_fences(
                         &[self.in_flight_fences[self.current_frame]],
@@ -760,14 +760,17 @@ impl RendererCore {
                     );
                 }
 
-                // Run picking readback
+                // The picking pass we're reading from was rendered with pending_pick_* matrices
+                // (set during the frame that just completed)
+                // Use those matrices for unprojection
                 match pick_renderer.read_pick_result(
                     &self.device,
                     self.command_pool,
                     self.graphics_queue,
                     x,
                     y,
-                    self.last_view_proj,
+                    self.pending_pick_view_proj,
+                    &self.pending_pick_viewport_rect,
                 ) {
                     Ok(result) => {
                         if result.body_id.is_some() {
@@ -1341,6 +1344,16 @@ impl RendererCore {
                 frame.viewport_rect.as_ref(),
                 &self.memory_properties,
             )?;
+
+            // Store the view_proj used for this picking pass
+            // When this frame completes, these become the "current" pick matrices
+            self.pending_pick_view_proj = frame.view_proj;
+            self.pending_pick_viewport_rect = frame.viewport_rect.unwrap_or(ViewportRect {
+                x: 0,
+                y: 0,
+                width: self.swapchain_extent.width,
+                height: self.swapchain_extent.height,
+            });
         }
 
         let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
@@ -2665,8 +2678,8 @@ impl PickRenderer {
         let framebuffer = unsafe { device.create_framebuffer(&framebuffer_info, None) }
             .map_err(RenderError::from)?;
 
-        // Create staging buffer for readback (16 bytes for ID + 4 bytes for depth)
-        let staging_size = 32u64; // 16 bytes for ID + 4 bytes for depth + padding
+        // Create staging buffer for readback (16 bytes for ID + padding + 4 bytes for depth)
+        let staging_size = 64u64; // 16 bytes for ID + 16 bytes padding + 4 bytes for depth + extra
         let (staging_buffer, staging_memory) = create_buffer(
             device,
             staging_size,
@@ -3061,6 +3074,7 @@ impl PickRenderer {
         x: u32,
         y: u32,
         view_proj: [[f32; 4]; 4],
+        viewport: &ViewportRect,
     ) -> Result<PickResult, RenderError> {
         if x >= self.extent.width || y >= self.extent.height {
             return Ok(PickResult::default());
@@ -3113,9 +3127,9 @@ impl PickRenderer {
                 &[id_region],
             );
 
-            // Copy single pixel from depth image to staging buffer (offset 16)
+            // Copy single pixel from depth image to staging buffer (offset 32 for alignment)
             let depth_region = vk::BufferImageCopy::default()
-                .buffer_offset(16)
+                .buffer_offset(32)
                 .buffer_row_length(0)
                 .buffer_image_height(0)
                 .image_subresource(vk::ImageSubresourceLayers {
@@ -3157,9 +3171,9 @@ impl PickRenderer {
 
             device.free_command_buffers(command_pool, &[command_buffer]);
 
-            // Read back the data
+            // Read back the data (ID at offset 0, depth at offset 32)
             let data_ptr = device
-                .map_memory(self.staging_memory, 0, 20, vk::MemoryMapFlags::empty())
+                .map_memory(self.staging_memory, 0, 36, vk::MemoryMapFlags::empty())
                 .map_err(RenderError::from)? as *const u32;
 
             let id_values = [
@@ -3168,7 +3182,9 @@ impl PickRenderer {
                 *data_ptr.add(2),
                 *data_ptr.add(3),
             ];
-            let depth = *(data_ptr.add(4) as *const f32);
+
+            // Read depth at offset 32 (8 u32s from start)
+            let depth = *((data_ptr.add(8)) as *const f32);
 
             device.unmap_memory(self.staging_memory);
 
@@ -3180,14 +3196,8 @@ impl PickRenderer {
             let uuid = Self::u32s_to_uuid(id_values);
 
             // Compute world position by unprojecting the screen coordinates with depth
-            let world_pos = Self::unproject(
-                x as f32,
-                y as f32,
-                depth,
-                self.extent.width as f32,
-                self.extent.height as f32,
-                view_proj,
-            );
+            // The screen coordinates are in window space, we need to convert to viewport-relative
+            let world_pos = Self::unproject(x as f32, y as f32, depth, viewport, view_proj);
 
             Ok(PickResult {
                 body_id: Some(uuid),
@@ -3198,17 +3208,27 @@ impl PickRenderer {
     }
 
     /// Unproject screen coordinates + depth to world position
+    ///
+    /// screen_x and screen_y are in window coordinates (full window, not viewport-relative).
+    /// The viewport defines where the 3D view is rendered within the window.
     fn unproject(
         screen_x: f32,
         screen_y: f32,
         depth: f32,
-        width: f32,
-        height: f32,
+        viewport: &ViewportRect,
         view_proj: [[f32; 4]; 4],
     ) -> [f32; 3] {
-        // Convert to NDC (-1 to 1)
-        let ndc_x = (screen_x / width) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (screen_y / height) * 2.0; // Flip Y
+        // Convert window coordinates to viewport-relative coordinates
+        let vp_x = screen_x - viewport.x as f32;
+        let vp_y = screen_y - viewport.y as f32;
+        let vp_width = viewport.width as f32;
+        let vp_height = viewport.height as f32;
+
+        // Convert to NDC (-1 to 1) within the viewport
+        // Note: Vulkan has Y=0 at top, NDC has Y=+1 at top
+        // But glam's perspective_rh already handles this, so we DON'T flip Y here
+        let ndc_x = (vp_x / vp_width) * 2.0 - 1.0;
+        let ndc_y = (vp_y / vp_height) * 2.0 - 1.0; // No flip - Vulkan convention
         let ndc_z = depth; // Vulkan depth is 0 to 1
 
         // Build inverse view-projection matrix
