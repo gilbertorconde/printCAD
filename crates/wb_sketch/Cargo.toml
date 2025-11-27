@@ -5,5 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
+[features]
+default = ["egui"]
+egui = ["core_document/egui", "dep:egui"]
+
 [dependencies]
 core_document = { path = "../core_document" }
+egui = { workspace = true, optional = true }

@@ -1,8 +1,15 @@
+pub mod runtime;
+
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+
+pub use runtime::{
+    InputResult, KeyCode, LogEntry, LogLevel, MouseButton, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
+};
 
 type DocumentResult<T> = std::result::Result<T, DocumentError>;
 
@@ -120,9 +127,52 @@ impl WorkbenchDescriptor {
 }
 
 /// Trait implemented by all workbench plugins.
+///
+/// Workbenches declare their tools/commands via `configure`, and can optionally
+/// implement runtime hooks for input handling, per-frame updates, and custom UI.
 pub trait Workbench: Send {
+    /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
+
+    /// Called once at registration to declare tools and commands.
     fn configure(&self, context: &mut WorkbenchContext);
+
+    /// Called when this workbench becomes active.
+    fn on_activate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Called when this workbench is deactivated (another WB becomes active).
+    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Called every frame while this workbench is active.
+    fn on_frame(&mut self, _dt: f32, _ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Called when an input event occurs while this workbench is active.
+    /// Return `InputResult::consumed()` to prevent further event propagation.
+    fn on_input(
+        &mut self,
+        _event: &WorkbenchInputEvent,
+        _active_tool: Option<&str>,
+        _ctx: &mut WorkbenchRuntimeContext,
+    ) -> InputResult {
+        InputResult::ignored()
+    }
+
+    /// Draw custom UI in the left panel (below the tool list).
+    /// Called every frame while this workbench is active.
+    #[cfg(feature = "egui")]
+    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {}
+
+    /// Draw custom UI in the right panel (properties/inspector area).
+    /// Called every frame while this workbench is active.
+    #[cfg(feature = "egui")]
+    fn ui_right_panel(&mut self, _ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {}
+
+    /// Draw custom settings UI in the Settings window.
+    /// Called when the Settings window is open and this workbench's tab is selected.
+    #[cfg(feature = "egui")]
+    fn ui_settings(&mut self, _ui: &mut egui::Ui) -> bool {
+        false // Return true if settings changed
+    }
 }
 
 /// Registry used by workbenches to declare the tools/commands they expose.
@@ -254,6 +304,14 @@ impl DocumentService {
             .get(id.as_str())
             .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
         Ok(entry.workbench.as_ref())
+    }
+
+    pub fn workbench_mut(&mut self, id: &WorkbenchId) -> DocumentResult<&mut Box<dyn Workbench>> {
+        let entry = self
+            .workbenches
+            .get_mut(id.as_str())
+            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
+        Ok(&mut entry.workbench)
     }
 }
 

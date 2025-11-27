@@ -5,7 +5,10 @@ mod ui;
 
 use anyhow::{Context, Result};
 use camera::CameraController;
-use core_document::{Document, DocumentService};
+use core_document::{
+    Document, DocumentService, LogLevel, MouseButton as WbMouseButton, ToolDescriptor, WorkbenchId,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
+};
 use glam::Vec3;
 use kernel_api::TriMesh;
 use log_panel as app_log;
@@ -17,7 +20,7 @@ use render_vk::{
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::time::{Duration, Instant};
 use tracing::error;
-use ui::{ActiveTool, UiLayer};
+use ui::{ActiveTool, ActiveWorkbench, UiLayer};
 use uuid::Uuid;
 use wb_part::PartDesignWorkbench;
 use wb_sketch::SketchWorkbench;
@@ -39,6 +42,19 @@ fn main() -> Result<()> {
     let mut registry = DocumentService::default();
     registry.register_workbench(Box::new(SketchWorkbench::default()))?;
     registry.register_workbench(Box::new(PartDesignWorkbench::default()))?;
+
+    // Cache tool descriptors for built-in workbenches (used by UI layer).
+    let sketch_id = WorkbenchId::from("wb.sketch");
+    let part_id = WorkbenchId::from("wb.part-design");
+    let sketch_tools = registry
+        .tools_for(&sketch_id)
+        .map(|t| t.to_vec())
+        .unwrap_or_default();
+    let part_tools = registry
+        .tools_for(&part_id)
+        .map(|t| t.to_vec())
+        .unwrap_or_default();
+
     app_log::info(format!(
         "Registered {} workbenches",
         registry.workbench_descriptors().count()
@@ -62,7 +78,15 @@ fn main() -> Result<()> {
     let mut render_settings = RenderSettings::default();
     render_settings.preferred_gpu = user_settings.preferred_gpu.clone();
     render_settings.msaa_samples = user_settings.rendering.msaa_samples;
-    let mut app = PrintCadApp::new(render_settings, settings_store, user_settings);
+    let mut app = PrintCadApp::new(
+        render_settings,
+        settings_store,
+        user_settings,
+        sketch_tools,
+        part_tools,
+        document,
+        registry,
+    );
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())
 }
@@ -93,6 +117,14 @@ struct PrintCadApp {
     hovered_world_pos: Option<[f32; 3]>,
     // Current cursor position in viewport
     cursor_in_viewport: Option<(f32, f32)>,
+    // Tools registered by built-in workbenches
+    sketch_tools: Vec<ToolDescriptor>,
+    part_tools: Vec<ToolDescriptor>,
+    // Document and workbench registry
+    document: Document,
+    registry: DocumentService,
+    // Currently active workbench
+    active_workbench: ActiveWorkbench,
 }
 
 impl PrintCadApp {
@@ -100,6 +132,10 @@ impl PrintCadApp {
         settings: RenderSettings,
         settings_store: SettingsStore,
         user_settings: UserSettings,
+        sketch_tools: Vec<ToolDescriptor>,
+        part_tools: Vec<ToolDescriptor>,
+        document: Document,
+        registry: DocumentService,
     ) -> Self {
         let mut camera = CameraController::new(&user_settings.camera, (1, 1));
         let demo_bodies = demo_bodies();
@@ -118,7 +154,7 @@ impl PrintCadApp {
             settings_store,
             user_settings,
             camera,
-            active_tool: ActiveTool::Select,
+            active_tool: ActiveTool::default(),
             last_frame_time: None,
             current_fps: 0.0,
             gpu_name: None,
@@ -129,6 +165,93 @@ impl PrintCadApp {
             hovered_body: None,
             hovered_world_pos: None,
             cursor_in_viewport: None,
+            sketch_tools,
+            part_tools,
+            document,
+            registry,
+            active_workbench: ActiveWorkbench::Sketch,
+        }
+    }
+
+    /// Get the workbench ID for a given ActiveWorkbench.
+    fn workbench_id_for(wb: ActiveWorkbench) -> WorkbenchId {
+        match wb {
+            ActiveWorkbench::Sketch => WorkbenchId::from("wb.sketch"),
+            ActiveWorkbench::PartDesign => WorkbenchId::from("wb.part-design"),
+        }
+    }
+
+    /// Get the workbench ID for the currently active workbench.
+    fn active_workbench_id(&self) -> WorkbenchId {
+        Self::workbench_id_for(self.active_workbench)
+    }
+
+    /// Flush log entries to the app log panel.
+    fn flush_logs(logs: Vec<core_document::LogEntry>) {
+        for entry in logs {
+            match entry.level {
+                LogLevel::Info => app_log::info(entry.message),
+                LogLevel::Warn => app_log::warn(entry.message),
+                LogLevel::Error => app_log::error(entry.message),
+            }
+        }
+    }
+
+    /// Call on_deactivate on a workbench.
+    fn call_workbench_deactivate(&mut self, wb_id: &WorkbenchId) {
+        // Collect camera/viewport info first
+        let cam_pos = self.camera.position();
+        let cam_target = self.camera.target();
+        let vp = self.camera.viewport_info();
+        let hovered_world_pos = self.hovered_world_pos;
+        let hovered_body_id = self.hovered_body;
+        let selected_body_id = self.selected_body;
+        let cursor_viewport_pos = self.cursor_in_viewport;
+
+        // Get workbench and call hook
+        if let Ok(wb) = self.registry.workbench_mut(wb_id) {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut self.document,
+                cam_pos,
+                cam_target,
+                (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            );
+            ctx.hovered_world_pos = hovered_world_pos;
+            ctx.hovered_body_id = hovered_body_id;
+            ctx.selected_body_id = selected_body_id;
+            ctx.cursor_viewport_pos = cursor_viewport_pos;
+
+            wb.on_deactivate(&mut ctx);
+            Self::flush_logs(ctx.drain_logs());
+        }
+    }
+
+    /// Call on_activate on a workbench.
+    fn call_workbench_activate(&mut self, wb_id: &WorkbenchId) {
+        // Collect camera/viewport info first
+        let cam_pos = self.camera.position();
+        let cam_target = self.camera.target();
+        let vp = self.camera.viewport_info();
+        let hovered_world_pos = self.hovered_world_pos;
+        let hovered_body_id = self.hovered_body;
+        let selected_body_id = self.selected_body;
+        let cursor_viewport_pos = self.cursor_in_viewport;
+
+        // Get workbench and call hook
+        if let Ok(wb) = self.registry.workbench_mut(wb_id) {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut self.document,
+                cam_pos,
+                cam_target,
+                (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            );
+            ctx.hovered_world_pos = hovered_world_pos;
+            ctx.hovered_body_id = hovered_body_id;
+            ctx.selected_body_id = selected_body_id;
+            ctx.cursor_viewport_pos = cursor_viewport_pos;
+
+            wb.on_activate(&mut ctx);
+            Self::flush_logs(ctx.drain_logs());
         }
     }
 }
@@ -332,6 +455,9 @@ impl ApplicationHandler for PrintCadApp {
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
 
+        // Track workbench change for deferred handling (after renderer borrow ends)
+        let mut workbench_change: Option<(ActiveWorkbench, ActiveWorkbench)> = None;
+
         if let Some(ui_layer) = self.ui_layer.as_mut() {
             let orientation_input = OrientationCubeInput {
                 camera_orientation: self.camera.orientation(),
@@ -347,6 +473,8 @@ impl ApplicationHandler for PrintCadApp {
             let ui_result = ui_layer.run(
                 window,
                 &mut self.user_settings,
+                &self.sketch_tools,
+                &self.part_tools,
                 Some(&orientation_input),
                 self.current_fps,
                 self.gpu_name.as_deref(),
@@ -357,6 +485,12 @@ impl ApplicationHandler for PrintCadApp {
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
+
+            // Track workbench change
+            if ui_result.workbench_changed {
+                workbench_change = Some((self.active_workbench, ui_result.active_workbench));
+            }
+            self.active_workbench = ui_result.active_workbench;
 
             self.frame_submission.viewport_rect = Some(RenderViewportRect {
                 x: ui_result.viewport.x,
@@ -413,15 +547,159 @@ impl ApplicationHandler for PrintCadApp {
         } else {
             self.camera.set_orbit_pivot(None);
         }
+
+        // Now handle workbench change (after renderer borrow ends)
+        if let Some((old_wb, new_wb)) = workbench_change {
+            let old_id = Self::workbench_id_for(old_wb);
+            self.call_workbench_deactivate(&old_id);
+
+            let new_id = Self::workbench_id_for(new_wb);
+            self.call_workbench_activate(&new_id);
+        }
     }
 }
 
 impl PrintCadApp {
     fn handle_tool_input(&mut self, event: &WindowEvent) -> bool {
-        match self.active_tool {
-            ActiveTool::Select => self.handle_select_tool(event),
-            ActiveTool::SketchLine | ActiveTool::SketchCircle => self.handle_sketch_tool(event),
-            ActiveTool::Pad | ActiveTool::Pocket => self.handle_part_tool(event),
+        // Convert winit event to workbench input event
+        let wb_event = match self.convert_to_wb_event(event) {
+            Some(e) => e,
+            None => return false,
+        };
+
+        // First, let the active workbench handle the event
+        let wb_id = self.active_workbench_id();
+        let active_tool = self.active_tool.id.clone();
+        let result = self.call_workbench_input(&wb_id, &wb_event, active_tool.as_deref());
+
+        if result.consumed {
+            return result.redraw;
+        }
+
+        // If workbench didn't consume, handle with default behavior (select tool)
+        self.handle_select_tool(event)
+    }
+
+    /// Call on_input on a workbench.
+    fn call_workbench_input(
+        &mut self,
+        wb_id: &WorkbenchId,
+        event: &WorkbenchInputEvent,
+        active_tool: Option<&str>,
+    ) -> core_document::InputResult {
+        // Collect camera/viewport info first
+        let cam_pos = self.camera.position();
+        let cam_target = self.camera.target();
+        let vp = self.camera.viewport_info();
+        let hovered_world_pos = self.hovered_world_pos;
+        let hovered_body_id = self.hovered_body;
+        let selected_body_id = self.selected_body;
+        let cursor_viewport_pos = self.cursor_in_viewport;
+
+        // Get workbench and call hook
+        if let Ok(wb) = self.registry.workbench_mut(wb_id) {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut self.document,
+                cam_pos,
+                cam_target,
+                (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            );
+            ctx.hovered_world_pos = hovered_world_pos;
+            ctx.hovered_body_id = hovered_body_id;
+            ctx.selected_body_id = selected_body_id;
+            ctx.cursor_viewport_pos = cursor_viewport_pos;
+
+            let result = wb.on_input(event, active_tool, &mut ctx);
+            Self::flush_logs(ctx.drain_logs());
+            result
+        } else {
+            core_document::InputResult::ignored()
+        }
+    }
+
+    /// Convert a winit WindowEvent to a WorkbenchInputEvent.
+    fn convert_to_wb_event(&self, event: &WindowEvent) -> Option<WorkbenchInputEvent> {
+        match event {
+            WindowEvent::MouseInput { state, button, .. } => {
+                let wb_button = match button {
+                    MouseButton::Left => WbMouseButton::Left,
+                    MouseButton::Middle => WbMouseButton::Middle,
+                    MouseButton::Right => WbMouseButton::Right,
+                    MouseButton::Other(n) => WbMouseButton::Other(*n),
+                    _ => return None,
+                };
+                let viewport_pos = self.cursor_in_viewport.unwrap_or((0.0, 0.0));
+                match state {
+                    ElementState::Pressed => Some(WorkbenchInputEvent::MousePress {
+                        button: wb_button,
+                        viewport_pos,
+                    }),
+                    ElementState::Released => Some(WorkbenchInputEvent::MouseRelease {
+                        button: wb_button,
+                        viewport_pos,
+                    }),
+                }
+            }
+            WindowEvent::CursorMoved { .. } => {
+                let viewport_pos = self.cursor_in_viewport?;
+                Some(WorkbenchInputEvent::MouseMove { viewport_pos })
+            }
+            WindowEvent::KeyboardInput { event, .. } => {
+                use winit::keyboard::{Key, NamedKey};
+                let key = match &event.logical_key {
+                    Key::Named(NamedKey::Escape) => core_document::KeyCode::Escape,
+                    Key::Named(NamedKey::Enter) => core_document::KeyCode::Enter,
+                    Key::Named(NamedKey::Space) => core_document::KeyCode::Space,
+                    Key::Named(NamedKey::Delete) => core_document::KeyCode::Delete,
+                    Key::Named(NamedKey::Backspace) => core_document::KeyCode::Backspace,
+                    Key::Named(NamedKey::Tab) => core_document::KeyCode::Tab,
+                    Key::Character(c) => match c.as_str() {
+                        "a" | "A" => core_document::KeyCode::A,
+                        "b" | "B" => core_document::KeyCode::B,
+                        "c" | "C" => core_document::KeyCode::C,
+                        "d" | "D" => core_document::KeyCode::D,
+                        "e" | "E" => core_document::KeyCode::E,
+                        "f" | "F" => core_document::KeyCode::F,
+                        "g" | "G" => core_document::KeyCode::G,
+                        "h" | "H" => core_document::KeyCode::H,
+                        "i" | "I" => core_document::KeyCode::I,
+                        "j" | "J" => core_document::KeyCode::J,
+                        "k" | "K" => core_document::KeyCode::K,
+                        "l" | "L" => core_document::KeyCode::L,
+                        "m" | "M" => core_document::KeyCode::M,
+                        "n" | "N" => core_document::KeyCode::N,
+                        "o" | "O" => core_document::KeyCode::O,
+                        "p" | "P" => core_document::KeyCode::P,
+                        "q" | "Q" => core_document::KeyCode::Q,
+                        "r" | "R" => core_document::KeyCode::R,
+                        "s" | "S" => core_document::KeyCode::S,
+                        "t" | "T" => core_document::KeyCode::T,
+                        "u" | "U" => core_document::KeyCode::U,
+                        "v" | "V" => core_document::KeyCode::V,
+                        "w" | "W" => core_document::KeyCode::W,
+                        "x" | "X" => core_document::KeyCode::X,
+                        "y" | "Y" => core_document::KeyCode::Y,
+                        "z" | "Z" => core_document::KeyCode::Z,
+                        "0" => core_document::KeyCode::Key0,
+                        "1" => core_document::KeyCode::Key1,
+                        "2" => core_document::KeyCode::Key2,
+                        "3" => core_document::KeyCode::Key3,
+                        "4" => core_document::KeyCode::Key4,
+                        "5" => core_document::KeyCode::Key5,
+                        "6" => core_document::KeyCode::Key6,
+                        "7" => core_document::KeyCode::Key7,
+                        "8" => core_document::KeyCode::Key8,
+                        "9" => core_document::KeyCode::Key9,
+                        _ => core_document::KeyCode::Unknown,
+                    },
+                    _ => core_document::KeyCode::Unknown,
+                };
+                match event.state {
+                    ElementState::Pressed => Some(WorkbenchInputEvent::KeyPress { key }),
+                    ElementState::Released => Some(WorkbenchInputEvent::KeyRelease { key }),
+                }
+            }
+            _ => None,
         }
     }
 
@@ -454,32 +732,6 @@ impl PrintCadApp {
             }
             _ => false,
         }
-    }
-
-    fn handle_sketch_tool(&mut self, event: &WindowEvent) -> bool {
-        if let WindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Left,
-            ..
-        } = event
-        {
-            app_log::info("Sketch tool click captured");
-            return true;
-        }
-        false
-    }
-
-    fn handle_part_tool(&mut self, event: &WindowEvent) -> bool {
-        if let WindowEvent::MouseInput {
-            state: ElementState::Pressed,
-            button: MouseButton::Left,
-            ..
-        } = event
-        {
-            app_log::info("Part tool click captured");
-            return true;
-        }
-        false
     }
 }
 

@@ -2,6 +2,7 @@ mod layout;
 mod settings_panel;
 
 use axes::AxisSystem;
+use core_document::ToolDescriptor;
 use egui::Context;
 use egui_winit::{egui as egui_core, State};
 use render_vk::EguiSubmission;
@@ -14,24 +15,15 @@ use crate::orientation_cube::{
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ActiveWorkbench {
+pub enum ActiveWorkbench {
     Sketch,
     PartDesign,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActiveTool {
-    Select,
-    SketchLine,
-    SketchCircle,
-    Pad,
-    Pocket,
-}
-
-impl Default for ActiveTool {
-    fn default() -> Self {
-        ActiveTool::Select
-    }
+#[derive(Debug, Clone, Default)]
+pub struct ActiveTool {
+    /// Currently active tool id for the active workbench (None = Select)
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -46,6 +38,8 @@ pub struct UiFrameResult {
     pub submission: EguiSubmission,
     pub settings_changed: bool,
     pub active_tool: ActiveTool,
+    pub active_workbench: ActiveWorkbench,
+    pub workbench_changed: bool,
     pub snap_to_view: Option<CameraSnapView>,
     pub rotate_delta: Option<RotateDelta>,
     pub viewport: ViewportRect,
@@ -97,6 +91,8 @@ impl UiLayer {
         &mut self,
         window: &Window,
         settings: &mut UserSettings,
+        sketch_tools: &[ToolDescriptor],
+        part_tools: &[ToolDescriptor],
         orientation_input: Option<&OrientationCubeInput>,
         fps: f32,
         gpu_name: Option<&str>,
@@ -106,8 +102,9 @@ impl UiLayer {
         axis_system: AxisSystem,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
+        let prev_workbench = self.active_workbench;
         let mut active_workbench = self.active_workbench;
-        let mut active_tool = self.active_tool;
+        let mut active_tool = self.active_tool.clone();
         let mut show_settings = self.show_settings;
         let mut settings_tab = self.settings_tab;
 
@@ -118,7 +115,11 @@ impl UiLayer {
 
         let full_output = self.ctx.run(raw_input, |ctx| {
             layout::draw_top_panel(ctx, &mut active_workbench, &mut show_settings);
-            layout::draw_left_panel(ctx, active_workbench, &mut active_tool);
+            let tools = match active_workbench {
+                ActiveWorkbench::Sketch => sketch_tools,
+                ActiveWorkbench::PartDesign => part_tools,
+            };
+            layout::draw_left_panel(ctx, active_workbench, &mut active_tool, tools);
             layout::draw_right_panel(ctx);
             settings_changed |= settings_panel::draw_settings_window(
                 ctx,
@@ -142,8 +143,15 @@ impl UiLayer {
             }
         });
 
+        // Detect workbench change
+        let workbench_changed = active_workbench != prev_workbench;
+        if workbench_changed {
+            // Reset tool when switching workbenches
+            active_tool = ActiveTool::default();
+        }
+
         self.active_workbench = active_workbench;
-        self.active_tool = active_tool;
+        self.active_tool = active_tool.clone();
         self.show_settings = show_settings;
         self.settings_tab = settings_tab;
         self.state
@@ -168,6 +176,8 @@ impl UiLayer {
             },
             settings_changed,
             active_tool,
+            active_workbench,
+            workbench_changed,
             snap_to_view: cube_result.snap_to_view,
             rotate_delta: cube_result.rotate_delta,
             viewport,

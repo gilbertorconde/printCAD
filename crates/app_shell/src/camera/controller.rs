@@ -257,6 +257,10 @@ impl CameraController {
         self.position_vec().to_array()
     }
 
+    pub fn target(&self) -> [f32; 3] {
+        self.target.to_array()
+    }
+
     pub fn orientation(&self) -> [f32; 4] {
         self.orientation.to_array()
     }

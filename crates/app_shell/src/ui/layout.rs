@@ -4,6 +4,8 @@ use egui::{self, Color32, Context};
 use crate::log_panel;
 use glam::Vec3;
 
+use core_document::ToolDescriptor;
+
 use super::{ActiveTool, ActiveWorkbench};
 
 pub fn draw_top_panel(
@@ -34,8 +36,9 @@ pub fn draw_top_panel(
 
 pub fn draw_left_panel(
     ctx: &Context,
-    active_workbench: ActiveWorkbench,
+    _active_workbench: ActiveWorkbench,
     active_tool: &mut ActiveTool,
+    tools: &[ToolDescriptor],
 ) {
     egui::SidePanel::left("left_panel")
         .resizable(true)
@@ -43,16 +46,22 @@ pub fn draw_left_panel(
         .show(ctx, |ui| {
             ui.heading("Tools");
             ui.separator();
-            match active_workbench {
-                ActiveWorkbench::Sketch => {
-                    ui.radio_value(active_tool, ActiveTool::Select, "Select");
-                    ui.radio_value(active_tool, ActiveTool::SketchLine, "Line");
-                    ui.radio_value(active_tool, ActiveTool::SketchCircle, "Circle");
-                }
-                ActiveWorkbench::PartDesign => {
-                    ui.radio_value(active_tool, ActiveTool::Select, "Select");
-                    ui.radio_value(active_tool, ActiveTool::Pad, "Pad");
-                    ui.radio_value(active_tool, ActiveTool::Pocket, "Pocket");
+
+            // Select tool (built-in)
+            let is_select = active_tool.id.is_none();
+            if ui.radio(is_select, "Select").clicked() {
+                active_tool.id = None;
+            }
+
+            // Tools contributed by the active workbench
+            for tool in tools {
+                let is_active = active_tool
+                    .id
+                    .as_deref()
+                    .map(|id| id == tool.id)
+                    .unwrap_or(false);
+                if ui.radio(is_active, &tool.label).clicked() {
+                    active_tool.id = Some(tool.id.clone());
                 }
             }
 

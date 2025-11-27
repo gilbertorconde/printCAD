@@ -7,15 +7,15 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-core_document = { path = "../core_document" }
+core_document = { path = "../core_document", features = ["egui"] }
 render_vk = { path = "../render_vk" }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 winit.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
-wb_part = { path = "../wb_part" }
-wb_sketch = { path = "../wb_sketch" }
+wb_part = { path = "../wb_part", features = ["egui"] }
+wb_sketch = { path = "../wb_sketch", features = ["egui"] }
 kernel_api = { path = "../kernel_api" }
 settings = { path = "../settings" }
 glam.workspace = true

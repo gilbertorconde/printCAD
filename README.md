@@ -65,7 +65,8 @@ printCAD/
 │   ├── wb_part/         # Part Design workbench
 │   └── wb_sketch/       # Sketch workbench
 └── docs/
-    └── plan.md          # Detailed architecture and roadmap
+    ├── plan.md          # Detailed architecture and roadmap
+    └── WORKBENCH_GUIDE.md # Guide for creating custom workbenches
 ```
 
 ## Controls
@@ -96,6 +97,11 @@ Settings are stored in `~/.config/printCAD/settings.json` and include:
 - Field of view
 - Rendering quality (MSAA sample count)
 - Debug options such as the in-app log panel
+
+## Documentation
+
+- **[Development Plan](docs/plan.md)** - Detailed architecture and roadmap
+- **[Workbench Development Guide](docs/WORKBENCH_GUIDE.md)** - Guide for creating custom workbenches
 
 ## Roadmap
 
