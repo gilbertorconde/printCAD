@@ -8,6 +8,13 @@ use core_document::ToolDescriptor;
 
 use super::{feature_tree, ActiveTool, ActiveWorkbench};
 
+pub struct TopBarResult {
+    pub open_requested: bool,
+    pub save_requested: bool,
+    pub save_as_requested: bool,
+    pub new_body_requested: bool,
+}
+
 pub fn draw_top_panel(
     ctx: &Context,
     active_workbench: &mut ActiveWorkbench,
@@ -16,8 +23,13 @@ pub fn draw_top_panel(
     tools: &[ToolDescriptor],
     has_active_sketch: bool,
     has_body: bool,
-) -> bool {
-    let mut new_body_requested = false;
+) -> TopBarResult {
+    let mut result = TopBarResult {
+        open_requested: false,
+        save_requested: false,
+        save_as_requested: false,
+        new_body_requested: false,
+    };
     egui::TopBottomPanel::top("top_bar")
         .frame(
             egui::Frame::default()
@@ -45,11 +57,21 @@ pub fn draw_top_panel(
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
+                    if ui.button("Open").clicked() {
+                        result.open_requested = true;
+                    }
+                    if ui.button("Save").clicked() {
+                        result.save_requested = true;
+                    }
+                    if ui.button("Save As").clicked() {
+                        result.save_as_requested = true;
+                    }
+                    ui.separator();
                     if ui
                         .add(egui::Button::new("New Body").min_size(egui::vec2(80.0, 0.0)))
                         .clicked()
                     {
-                        new_body_requested = true;
+                        result.new_body_requested = true;
                     }
                     // Future general actions will be add here (like zoom, measure, etc.)
                 });
@@ -97,7 +119,7 @@ pub fn draw_top_panel(
                 });
             });
         });
-    new_body_requested
+    result
 }
 
 pub struct LeftPanelResult {
@@ -130,7 +152,7 @@ pub fn draw_left_panel(
         .resizable(true)
         .default_width(260.0)
         .show(ctx, |ui| {
-            ui.heading("Feature Tree");
+            ui.heading("Model");
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let tree_model = feature_tree::DocumentTree::build(document);
                 let selected_id = active_tree_selection

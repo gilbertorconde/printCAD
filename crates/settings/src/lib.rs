@@ -12,6 +12,7 @@ const QUALIFIER: &str = "com";
 const ORGANIZATION: &str = "printcad";
 const APPLICATION: &str = "printcad";
 const SETTINGS_FILE: &str = "settings.json";
+const RECENT_FILE_INFO: &str = "recent.json";
 
 #[derive(Debug, Error)]
 pub enum SettingsError {
@@ -211,6 +212,14 @@ impl SettingsStore {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn recent_file_path() -> Result<PathBuf, SettingsError> {
+        let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+            .ok_or(SettingsError::MissingProjectDirs)?;
+        let config_dir = dirs.config_dir();
+        fs::create_dir_all(config_dir)?;
+        Ok(config_dir.join(RECENT_FILE_INFO))
     }
 }
 

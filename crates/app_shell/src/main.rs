@@ -18,6 +18,7 @@ use render_vk::{
     RenderSettings, ViewportRect as RenderViewportRect, VulkanRenderer,
 };
 use settings::{LightingSettings, SettingsStore, UserSettings};
+use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::error;
 use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
@@ -129,6 +130,21 @@ struct PrintCadApp {
     active_document_object: Option<core_document::FeatureId>,
     active_body_id: Option<BodyId>,
     tree_selection: Option<TreeItemId>,
+    // Current file on disk (if any).
+    current_file: Option<PathBuf>,
+    // Pending file dialog result from background thread.
+    file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
+}
+
+enum FileDialogKind {
+    Open,
+    Save,
+    SaveAs,
+}
+
+struct FileDialogResult {
+    kind: FileDialogKind,
+    path: Option<PathBuf>,
 }
 
 impl PrintCadApp {
@@ -177,6 +193,8 @@ impl PrintCadApp {
             active_document_object: None,
             active_body_id: None,
             tree_selection: Some(TreeItemId::DocumentRoot),
+            current_file: None,
+            file_dialog_rx: None,
         }
     }
 
@@ -434,228 +452,259 @@ impl ApplicationHandler for PrintCadApp {
         let mut new_body_requested_flag = false;
         let mut workbench_change: Option<(ActiveWorkbench, ActiveWorkbench)> = None;
 
-        {
-            let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
-                (Some(window), Some(renderer)) => (window, renderer),
-                _ => return,
+        let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
+            (Some(window), Some(renderer)) => (window, renderer),
+            _ => return,
+        };
+
+        // Update camera animation
+        self.camera.update(dt_secs);
+
+        // Collect sketch features from document and convert to meshes
+        let sketch_meshes: Vec<BodySubmission> = self
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter_map(|(feature_id, node)| {
+                // Only process sketch features
+                if node.workbench_id.as_str() != "wb.sketch" {
+                    return None;
+                }
+
+                // Deserialize sketch feature
+                let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
+
+                // Convert to mesh
+                let mesh = wb_sketch::render::sketch_to_mesh(
+                    &sketch_feature.sketch,
+                    &sketch_feature.plane,
+                );
+
+                // Create body submission for sketch (use feature ID UUID as body ID)
+                Some(BodySubmission {
+                    id: feature_id.0,
+                    mesh,
+                    color: [0.2, 0.8, 0.2], // Green color for sketches
+                    highlight: HighlightState::None,
+                })
+            })
+            .collect();
+
+        // Apply highlight states to bodies
+        let mut bodies: Vec<BodySubmission> = self
+            .demo_bodies
+            .iter()
+            .map(|body| {
+                let is_hovered = self.hovered_body == Some(body.id);
+                let is_selected = self.selected_body == Some(body.id);
+                let highlight = match (is_hovered, is_selected) {
+                    (true, true) => HighlightState::HoveredAndSelected,
+                    (true, false) => HighlightState::Hovered,
+                    (false, true) => HighlightState::Selected,
+                    (false, false) => HighlightState::None,
+                };
+                BodySubmission {
+                    highlight,
+                    ..body.clone()
+                }
+            })
+            .collect();
+
+        // Add sketch meshes to bodies
+        bodies.extend(sketch_meshes);
+        self.frame_submission.bodies = bodies;
+        self.frame_submission.view_proj = self.camera.view_projection();
+        self.frame_submission.camera_pos = self.camera.position();
+        self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
+
+        let mut ui_result_open = false;
+        let mut ui_result_save = false;
+        let mut ui_result_save_as = false;
+
+        if let Some(ui_layer) = self.ui_layer.as_mut() {
+            let orientation_input = OrientationCubeInput {
+                camera_orientation: self.camera.orientation(),
+                axis_system: self.camera.axis_system(),
             };
 
-            // Update camera animation
-            self.camera.update(dt_secs);
+            // Get pivot screen position for visual indicator
+            let pivot_screen_pos = self
+                .camera
+                .active_pivot()
+                .and_then(|pivot| self.camera.world_to_screen(pivot));
 
-            // Collect sketch features from document and convert to meshes
-            let sketch_meshes: Vec<BodySubmission> = self
-                .document
-                .feature_tree()
-                .all_nodes()
-                .filter_map(|(feature_id, node)| {
-                    // Only process sketch features
-                    if node.workbench_id.as_str() != "wb.sketch" {
-                        return None;
-                    }
-
-                    // Deserialize sketch feature
-                    let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
-
-                    // Convert to mesh
-                    let mesh = wb_sketch::render::sketch_to_mesh(
-                        &sketch_feature.sketch,
-                        &sketch_feature.plane,
-                    );
-
-                    // Create body submission for sketch (use feature ID UUID as body ID)
-                    Some(BodySubmission {
-                        id: feature_id.0,
-                        mesh,
-                        color: [0.2, 0.8, 0.2], // Green color for sketches
-                        highlight: HighlightState::None,
-                    })
-                })
-                .collect();
-
-            // Apply highlight states to bodies
-            let mut bodies: Vec<BodySubmission> = self
-                .demo_bodies
-                .iter()
-                .map(|body| {
-                    let is_hovered = self.hovered_body == Some(body.id);
-                    let is_selected = self.selected_body == Some(body.id);
-                    let highlight = match (is_hovered, is_selected) {
-                        (true, true) => HighlightState::HoveredAndSelected,
-                        (true, false) => HighlightState::Hovered,
-                        (false, true) => HighlightState::Selected,
-                        (false, false) => HighlightState::None,
-                    };
-                    BodySubmission {
-                        highlight,
-                        ..body.clone()
-                    }
-                })
-                .collect();
-
-            // Add sketch meshes to bodies
-            bodies.extend(sketch_meshes);
-            self.frame_submission.bodies = bodies;
-            self.frame_submission.view_proj = self.camera.view_projection();
-            self.frame_submission.camera_pos = self.camera.position();
-            self.frame_submission.lighting =
-                lighting_data_from_settings(&self.user_settings.lighting);
-
-            if let Some(ui_layer) = self.ui_layer.as_mut() {
-                let orientation_input = OrientationCubeInput {
-                    camera_orientation: self.camera.orientation(),
-                    axis_system: self.camera.axis_system(),
-                };
-
-                // Get pivot screen position for visual indicator
-                let pivot_screen_pos = self
-                    .camera
-                    .active_pivot()
-                    .and_then(|pivot| self.camera.world_to_screen(pivot));
-
-                // Check if sketch workbench has an active sketch
-                let has_active_sketch = if self.active_workbench == ActiveWorkbench::Sketch {
-                    // Check document for sketch features
-                    self.document
-                        .feature_tree()
-                        .all_nodes()
-                        .any(|(_, node)| node.workbench_id.as_str() == "wb.sketch")
-                } else {
-                    true // Part Design always has tools enabled
-                };
-
-                let has_body = self.document.has_bodies();
-
-                let ui_result = ui_layer.run(
-                    window,
-                    &mut self.user_settings,
-                    &self.sketch_tools,
-                    &self.part_tools,
-                    Some(&orientation_input),
-                    self.current_fps,
-                    self.gpu_name.as_deref(),
-                    &self.available_gpus,
-                    self.hovered_world_pos,
-                    pivot_screen_pos,
-                    self.camera.axis_system(),
-                    has_active_sketch,
-                    has_body,
-                    &mut self.document,
-                    &mut self.registry,
-                    self.tree_selection,
-                    self.active_document_object,
-                );
-                self.frame_submission.egui = Some(ui_result.submission);
-                self.active_tool = ui_result.active_tool;
-
-                // Track workbench change
-                if ui_result.workbench_changed {
-                    workbench_change = Some((self.active_workbench, ui_result.active_workbench));
-                }
-                self.active_workbench = ui_result.active_workbench;
-
-                self.frame_submission.viewport_rect = Some(RenderViewportRect {
-                    x: ui_result.viewport.x,
-                    y: ui_result.viewport.y,
-                    width: ui_result.viewport.width,
-                    height: ui_result.viewport.height,
-                });
-                self.camera.update_viewport(
-                    (ui_result.viewport.x, ui_result.viewport.y),
-                    (
-                        ui_result.viewport.width.max(1),
-                        ui_result.viewport.height.max(1),
-                    ),
-                );
-
-                // Handle orientation cube interactions
-                if let Some(snap_view) = ui_result.snap_to_view {
-                    self.camera.snap_to_view(snap_view);
-                }
-                if let Some(ref rotate_delta) = ui_result.rotate_delta {
-                    self.camera
-                        .apply_rotate_delta(rotate_delta, &self.user_settings.camera);
-                }
-
-                if ui_result.settings_changed {
-                    self.camera.sync_with_settings(&self.user_settings.camera);
-                    if let Err(err) = self.settings_store.save(&self.user_settings) {
-                        app_log::warn(format!("Failed to save settings: {err}"));
-                    }
-                }
-
-                if ui_result.new_body_requested {
-                    new_body_requested_flag = true;
-                }
-
-                if ui_result.finish_sketch_requested {
-                    app_log::info("Finish sketch requested (not wired yet)");
-                }
-
-                if let Some(selection) = ui_result.tree_selection {
-                    self.tree_selection = Some(selection);
-                    match selection {
-                        TreeItemId::DocumentRoot => {
-                            self.active_document_object = None;
-                            self.active_body_id = None;
-                            self.selected_body = None;
-                        }
-                        TreeItemId::Body(id) => {
-                            self.active_body_id = Some(id);
-                            self.active_document_object = None;
-                            self.selected_body = Some(id.0);
-                        }
-                        TreeItemId::Feature(id) => {
-                            if self.active_document_object != Some(id) {
-                                app_log::info(format!("Selected feature {:?}", id));
-                            }
-                            self.active_document_object = Some(id);
-                        }
-                    }
-                }
-
-                if let Some(item) = ui_result.tree_activation {
-                    match item {
-                        TreeItemId::Feature(id) => {
-                            app_log::info(format!(
-                                "Activated feature {:?} (double-click in tree)",
-                                id
-                            ));
-                        }
-                        TreeItemId::Body(id) => {
-                            app_log::info(format!(
-                                "Activated body {:?} (double-click in tree)",
-                                id
-                            ));
-                        }
-                        TreeItemId::DocumentRoot => {}
-                    }
-                }
+            // Check if sketch workbench has an active sketch
+            let has_active_sketch = if self.active_workbench == ActiveWorkbench::Sketch {
+                // Check document for sketch features
+                self.document
+                    .feature_tree()
+                    .all_nodes()
+                    .any(|(_, node)| node.workbench_id.as_str() == "wb.sketch")
             } else {
-                self.frame_submission.egui = None;
-                self.frame_submission.viewport_rect = None;
+                true // Part Design always has tools enabled
+            };
+
+            let has_body = self.document.has_bodies();
+
+            let ui_result = ui_layer.run(
+                window,
+                &mut self.user_settings,
+                &self.sketch_tools,
+                &self.part_tools,
+                Some(&orientation_input),
+                self.current_fps,
+                self.gpu_name.as_deref(),
+                &self.available_gpus,
+                self.hovered_world_pos,
+                pivot_screen_pos,
+                self.camera.axis_system(),
+                has_active_sketch,
+                has_body,
+                &mut self.document,
+                &mut self.registry,
+                self.tree_selection,
+                self.active_document_object,
+            );
+            self.frame_submission.egui = Some(ui_result.submission);
+            self.active_tool = ui_result.active_tool;
+
+            // Track workbench change
+            if ui_result.workbench_changed {
+                workbench_change = Some((self.active_workbench, ui_result.active_workbench));
             }
+            self.active_workbench = ui_result.active_workbench;
 
-            window.request_redraw();
+            self.frame_submission.viewport_rect = Some(RenderViewportRect {
+                x: ui_result.viewport.x,
+                y: ui_result.viewport.y,
+                width: ui_result.viewport.width,
+                height: ui_result.viewport.height,
+            });
+            self.camera.update_viewport(
+                (ui_result.viewport.x, ui_result.viewport.y),
+                (
+                    ui_result.viewport.width.max(1),
+                    ui_result.viewport.height.max(1),
+                ),
+            );
 
-            if let Err(err) = renderer.render(&self.frame_submission) {
-                app_log::error(format!("Render failure: {err}"));
-                event_loop.exit();
-                return;
+            // Handle orientation cube interactions
+            if let Some(snap_view) = ui_result.snap_to_view {
+                self.camera.snap_to_view(snap_view);
             }
-
-            // Retrieve pick result from GPU picking (processed during render)
-            let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
-            self.hovered_body = pick_result.body_id;
-            self.hovered_world_pos = pick_result.world_position;
-
-            // Set orbit pivot based on what's under the cursor
-            // If hovering over geometry, orbit around that point; otherwise use default target
-            if let Some(world_pos) = pick_result.world_position {
+            if let Some(ref rotate_delta) = ui_result.rotate_delta {
                 self.camera
-                    .set_orbit_pivot(Some(Vec3::from_array(world_pos)));
-            } else {
-                self.camera.set_orbit_pivot(None);
+                    .apply_rotate_delta(rotate_delta, &self.user_settings.camera);
+            }
+
+            if ui_result.settings_changed {
+                self.camera.sync_with_settings(&self.user_settings.camera);
+                if let Err(err) = self.settings_store.save(&self.user_settings) {
+                    app_log::warn(format!("Failed to save settings: {err}"));
+                }
+            }
+
+            if ui_result.new_body_requested {
+                new_body_requested_flag = true;
+            }
+            ui_result_open = ui_result.open_requested;
+            ui_result_save = ui_result.save_requested;
+            ui_result_save_as = ui_result.save_as_requested;
+
+            if ui_result.finish_sketch_requested {
+                app_log::info("Finish sketch requested (not wired yet)");
+            }
+
+            if let Some(selection) = ui_result.tree_selection {
+                self.tree_selection = Some(selection);
+                match selection {
+                    TreeItemId::DocumentRoot => {
+                        self.active_document_object = None;
+                        self.active_body_id = None;
+                        self.selected_body = None;
+                    }
+                    TreeItemId::Body(id) => {
+                        self.active_body_id = Some(id);
+                        self.active_document_object = None;
+                        self.selected_body = Some(id.0);
+                    }
+                    TreeItemId::Feature(id) => {
+                        if self.active_document_object != Some(id) {
+                            app_log::info(format!("Selected feature {:?}", id));
+                        }
+                        self.active_document_object = Some(id);
+                    }
+                }
+            }
+
+            if let Some(item) = ui_result.tree_activation {
+                match item {
+                    TreeItemId::Feature(id) => {
+                        app_log::info(format!("Activated feature {:?} (double-click in tree)", id));
+                    }
+                    TreeItemId::Body(id) => {
+                        app_log::info(format!("Activated body {:?} (double-click in tree)", id));
+                    }
+                    TreeItemId::DocumentRoot => {}
+                }
+            }
+        } else {
+            self.frame_submission.egui = None;
+            self.frame_submission.viewport_rect = None;
+        }
+
+        window.request_redraw();
+
+        if let Err(err) = renderer.render(&self.frame_submission) {
+            app_log::error(format!("Render failure: {err}"));
+            event_loop.exit();
+            return;
+        }
+
+        // Retrieve pick result from GPU picking (processed during render)
+        let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
+        self.hovered_body = pick_result.body_id;
+        self.hovered_world_pos = pick_result.world_position;
+
+        // Set orbit pivot based on what's under the cursor
+        // If hovering over geometry, orbit around that point; otherwise use default target
+        if let Some(world_pos) = pick_result.world_position {
+            self.camera
+                .set_orbit_pivot(Some(Vec3::from_array(world_pos)));
+        } else {
+            self.camera.set_orbit_pivot(None);
+        }
+
+        if ui_result_open || ui_result_save || ui_result_save_as {
+            self.start_file_dialog(ui_result_open, ui_result_save, ui_result_save_as);
+        }
+
+        if let Some(rx) = &self.file_dialog_rx {
+            if let Ok(result) = rx.try_recv() {
+                match result.kind {
+                    FileDialogKind::Open => {
+                        if let Some(path) = result.path {
+                            if let Err(err) = self.open_document_at(&path) {
+                                app_log::error(format!("Failed to open document: {err}"));
+                            }
+                        }
+                    }
+                    FileDialogKind::Save => {
+                        if let Some(path) = result.path {
+                            if let Err(err) = self.save_document_at(&path) {
+                                app_log::error(format!("Failed to save document: {err}"));
+                            }
+                        }
+                    }
+                    FileDialogKind::SaveAs => {
+                        if let Some(path) = result.path {
+                            if let Err(err) = self.save_document_at(&path) {
+                                app_log::error(format!("Failed to save document: {err}"));
+                            }
+                        }
+                    }
+                }
+                self.file_dialog_rx = None;
             }
         }
 
@@ -686,6 +735,108 @@ impl PrintCadApp {
         self.active_document_object = None;
         self.tree_selection = Some(TreeItemId::Body(body_id));
         self.selected_body = Some(body_id.0);
+    }
+
+    fn open_document_at(&mut self, path: &PathBuf) -> Result<()> {
+        let file = std::fs::File::open(path)
+            .with_context(|| format!("Failed to open document file {}", path.display()))?;
+        let document: Document =
+            serde_json::from_reader(file).with_context(|| "Failed to parse document JSON")?;
+
+        self.document = document;
+        self.current_file = Some(path.clone());
+        self.document.set_name(
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled"),
+        );
+        self.active_document_object = None;
+        self.active_body_id = None;
+        self.tree_selection = Some(TreeItemId::DocumentRoot);
+        self.selected_body = None;
+
+        Self::write_recent_dir(path);
+        app_log::info(format!("Opened document from {}", path.display()));
+        Ok(())
+    }
+
+    fn save_document_at(&mut self, path: &PathBuf) -> Result<()> {
+        self.document.set_name(
+            path.file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("Untitled"),
+        );
+        let file = std::fs::File::create(path)
+            .with_context(|| format!("Failed to create document file {}", path.display()))?;
+        serde_json::to_writer_pretty(file, &self.document)
+            .with_context(|| "Failed to serialize document")?;
+
+        self.current_file = Some(path.clone());
+        Self::write_recent_dir(path);
+        app_log::info(format!("Saved document to {}", path.display()));
+        Ok(())
+    }
+
+    fn start_file_dialog(&mut self, open: bool, _save: bool, save_as: bool) {
+        use std::sync::mpsc;
+        if self.file_dialog_rx.is_some() {
+            return;
+        }
+
+        let (tx, rx) = mpsc::channel::<FileDialogResult>();
+        self.file_dialog_rx = Some(rx);
+
+        let kind = if open {
+            FileDialogKind::Open
+        } else if save_as {
+            FileDialogKind::SaveAs
+        } else {
+            FileDialogKind::Save
+        };
+
+        let current_path = self.current_file.clone();
+
+        std::thread::spawn(move || {
+            let mut dialog =
+                rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
+
+            if let Ok(recent_path) = settings::SettingsStore::recent_file_path() {
+                if let Ok(file) = std::fs::File::open(&recent_path) {
+                    if let Ok(saved_dir_str) = serde_json::from_reader::<_, String>(file) {
+                        let saved_dir = std::path::PathBuf::from(saved_dir_str);
+                        dialog = dialog.set_directory(saved_dir);
+                    }
+                }
+            }
+
+            let path = match kind {
+                FileDialogKind::Open => dialog.pick_file(),
+                FileDialogKind::Save => {
+                    if let Some(existing) = current_path {
+                        Some(existing)
+                    } else {
+                        dialog.set_file_name("untitled.prtcad").save_file()
+                    }
+                }
+                FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
+            };
+
+            let _ = tx.send(FileDialogResult { kind, path });
+        });
+    }
+
+    fn write_recent_dir(path: &PathBuf) {
+        if let Ok(recent_path) = settings::SettingsStore::recent_file_path() {
+            if let Some(dir) = path.parent() {
+                if let Ok(file) = std::fs::File::create(&recent_path) {
+                    let mut s = dir.to_string_lossy().to_string();
+                    if !s.ends_with(std::path::MAIN_SEPARATOR) {
+                        s.push(std::path::MAIN_SEPARATOR);
+                    }
+                    let _ = serde_json::to_writer(file, &s);
+                }
+            }
+        }
     }
 
     fn handle_tool_input(&mut self, event: &WindowEvent) -> bool {
@@ -768,6 +919,7 @@ impl PrintCadApp {
             ctx.hovered_body_id = hovered_body_id;
             ctx.selected_body_id = selected_body_id;
             ctx.cursor_viewport_pos = cursor_viewport_pos;
+            ctx.active_document_object = self.active_document_object;
 
             let result = wb.on_input(event, active_tool, &mut ctx);
 

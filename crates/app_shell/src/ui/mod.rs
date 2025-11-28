@@ -48,6 +48,9 @@ pub struct UiFrameResult {
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
     pub new_body_requested: bool,
+    pub open_requested: bool,
+    pub save_requested: bool,
+    pub save_as_requested: bool,
 }
 
 pub struct UiLayer {
@@ -130,6 +133,9 @@ impl UiLayer {
         let mut tree_selection = None;
         let mut tree_activation = None;
         let mut new_body_requested = false;
+        let mut open_requested = false;
+        let mut save_requested = false;
+        let mut save_as_requested = false;
 
         let full_output = self.ctx.run(raw_input, |ctx| {
             let tools = match active_workbench {
@@ -137,7 +143,7 @@ impl UiLayer {
                 ActiveWorkbench::PartDesign => part_tools,
             };
 
-            new_body_requested = layout::draw_top_panel(
+            let top = layout::draw_top_panel(
                 ctx,
                 &mut active_workbench,
                 &mut show_settings,
@@ -146,6 +152,10 @@ impl UiLayer {
                 has_active_sketch,
                 has_body,
             );
+            new_body_requested = top.new_body_requested;
+            open_requested = top.open_requested;
+            save_requested = top.save_requested;
+            save_as_requested = top.save_as_requested;
             let left_panel = layout::draw_left_panel(
                 ctx,
                 active_workbench,
@@ -228,6 +238,9 @@ impl UiLayer {
             tree_selection,
             tree_activation,
             new_body_requested,
+            open_requested,
+            save_requested,
+            save_as_requested,
         }
     }
 }

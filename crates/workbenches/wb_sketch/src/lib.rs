@@ -8,7 +8,7 @@ use core_document::{
     WorkbenchRuntimeContext,
 };
 pub use feature::SketchFeature;
-use sketch::{GeometryElement, Line, Point, Sketch};
+use sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
 use uuid::Uuid;
 
 /// Sketch workbench: 2D drawing with constraints.
@@ -72,6 +72,49 @@ impl SketchWorkbench {
             false
         }
     }
+
+    fn sync_active_sketch_from_ctx(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(feature_id) = ctx.active_document_object {
+            if self.is_sketch_feature(ctx, feature_id) && self.active_sketch_id != Some(feature_id)
+            {
+                self.active_sketch_id = Some(feature_id);
+                self.line_tool_state = None;
+                self.circle_tool_state = None;
+                self.arc_tool_state = None;
+
+                if let Some(sketch_feature) = self.get_active_sketch(ctx) {
+                    let plane = sketch_feature.plane;
+                    ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
+                        plane_origin: plane.origin,
+                        plane_normal: plane.normal,
+                        plane_up: plane.y_axis,
+                    });
+                }
+            }
+        }
+    }
+
+    fn is_sketch_feature(&self, ctx: &WorkbenchRuntimeContext, feature_id: FeatureId) -> bool {
+        ctx.document
+            .get_feature_meta(feature_id)
+            .map(|meta| meta.workbench_id.as_str() == "wb.sketch")
+            .unwrap_or(false)
+    }
+
+    fn next_sketch_name(document: &core_document::Document) -> String {
+        let mut max_index = None::<u32>;
+        for (_, node) in document.feature_tree().all_nodes() {
+            if node.workbench_id.as_str() == "wb.sketch" {
+                if let Some(idx) = parse_sketch_index(&node.name) {
+                    max_index = Some(max_index.map_or(idx, |m| m.max(idx)));
+                }
+            }
+        }
+        match max_index {
+            None => "sketch".to_string(),
+            Some(m) => format!("sketch_{}", m.saturating_add(1)),
+        }
+    }
 }
 
 impl Workbench for SketchWorkbench {
@@ -120,6 +163,8 @@ impl Workbench for SketchWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        self.sync_active_sketch_from_ctx(ctx);
+
         // Handle "Finish Sketch" action
         if active_tool == Some("sketch.finish") {
             if self.active_sketch_id.is_some() {
@@ -137,40 +182,40 @@ impl Workbench for SketchWorkbench {
 
         // Handle "Create Sketch" action
         if active_tool == Some("sketch.create") {
-            // For now, create sketch with default plane
-            // TODO: Show dialog to select plane/face
-            if self.active_sketch_id.is_none() {
-                let sketch = Sketch::new("Sketch.001");
-                let sketch_feature = SketchFeature::from_sketch(sketch.clone());
-
-                match ctx
-                    .document
-                    .add_feature(sketch_feature, sketch.name.clone())
-                {
-                    Ok(feature_id) => {
-                        self.active_sketch_id = Some(feature_id);
-                        ctx.log_info(format!("Created new sketch: {}", sketch.name));
-
-                        // Request camera orientation to sketch plane
-                        let plane = sketch::SketchPlane::default();
-                        ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
-                            plane_origin: plane.origin,
-                            plane_normal: plane.normal,
-                            plane_up: plane.y_axis,
-                        });
-
-                        // Deactivate the create tool after creation
-                        return InputResult::consumed();
-                    }
-                    Err(e) => {
-                        ctx.log_error(format!("Failed to create sketch: {}", e));
-                        return InputResult::consumed();
-                    }
-                }
-            } else {
-                ctx.log_warn("A sketch already exists. Please finish or delete it first.");
-                return InputResult::consumed();
+            // Only create a new sketch on the first use after entering sketch mode.
+            // Subsequent input events while this action is still selected are ignored
+            // so we don't spam new sketches.
+            if self.active_sketch_id.is_some() {
+                return InputResult::ignored();
             }
+
+            let sketch_name = Self::next_sketch_name(&ctx.document);
+            let sketch = Sketch::new(sketch_name.clone());
+            let plane = sketch.plane;
+            let sketch_feature = SketchFeature::new(sketch, plane);
+
+            match ctx
+                .document
+                .add_feature(sketch_feature, sketch_name.clone())
+            {
+                Ok(feature_id) => {
+                    self.active_sketch_id = Some(feature_id);
+                    self.line_tool_state = None;
+                    self.circle_tool_state = None;
+                    self.arc_tool_state = None;
+                    ctx.active_document_object = Some(feature_id);
+                    ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
+                        plane_origin: plane.origin,
+                        plane_normal: plane.normal,
+                        plane_up: plane.y_axis,
+                    });
+                    ctx.log_info(format!("Created new sketch: {}", sketch_name));
+                }
+                Err(e) => {
+                    ctx.log_error(format!("Failed to create sketch: {}", e));
+                }
+            }
+            return InputResult::consumed();
         }
 
         // Only handle input if a sketch tool is active
@@ -469,10 +514,37 @@ impl Workbench for SketchWorkbench {
     }
 
     #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
+    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        self.sync_active_sketch_from_ctx(ctx);
+
+        ui.heading("Sketcher");
+        if let Some(sketch_feature) = self.get_active_sketch(ctx) {
+            let sketch = &sketch_feature.sketch;
+            ui.label(format!("Editing {}", sketch.name));
+            ui.separator();
+            ui.label(format!("Geometry: {}", sketch.geometry.len()));
+            ui.label(format!("Constraints: {}", sketch.constraints.len()));
+            ui.separator();
+            ui.heading("Geometry Elements");
+            if sketch.geometry.is_empty() {
+                ui.label("No geometry yet. Use the toolbar to add lines, arcs, or circles.");
+            } else {
+                egui::ScrollArea::vertical()
+                    .max_height(240.0)
+                    .show(ui, |ui| {
+                        for (idx, geom) in sketch.geometry.iter().enumerate() {
+                            ui.label(describe_geometry(idx + 1, sketch, geom));
+                        }
+                    });
+            }
+        } else {
+            ui.label("Select a sketch in the tree or create a new one to begin editing.");
+        }
+    }
 
     #[cfg(feature = "egui")]
     fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        self.sync_active_sketch_from_ctx(ctx);
         if let Some(sketch_feature) = self.get_active_sketch(ctx) {
             ui.heading("Sketch Info");
             ui.label(format!("Active sketch: {}", sketch_feature.sketch.name));
@@ -507,6 +579,9 @@ impl Workbench for SketchWorkbench {
             if ui.button("Exit Sketch Mode").clicked() {
                 ctx.finish_sketch_requested = true;
             }
+        } else {
+            ui.heading("Sketch Info");
+            ui.label("No sketch selected. Select one in the tree or create a new sketch.");
         }
     }
 
@@ -536,5 +611,74 @@ impl Workbench for SketchWorkbench {
         } else {
             ctx.log_warn("Not in sketch editing mode");
         }
+    }
+}
+
+fn parse_sketch_index(name: &str) -> Option<u32> {
+    let lower = name.to_ascii_lowercase();
+    let rest = if let Some(r) = lower.strip_prefix("sketch_") {
+        r
+    } else if let Some(r) = lower.strip_prefix("sketch") {
+        r
+    } else {
+        return None;
+    };
+
+    let trimmed = rest.trim_start_matches(&['_', '.', ' '][..]);
+    if trimmed.is_empty() {
+        Some(0)
+    } else {
+        trimmed.parse().ok()
+    }
+}
+
+#[cfg(feature = "egui")]
+fn describe_geometry(index: usize, sketch: &Sketch, element: &GeometryElement) -> String {
+    match element {
+        GeometryElement::Point(point) => format!(
+            "{}. Point ({:.2}, {:.2})",
+            index, point.position.x, point.position.y
+        ),
+        GeometryElement::Line(line) => {
+            let start = point_coords(sketch, line.start);
+            let end = point_coords(sketch, line.end);
+            match (start, end) {
+                (Some(s), Some(e)) => format!(
+                    "{}. Line ({:.2}, {:.2}) → ({:.2}, {:.2})",
+                    index, s.x, s.y, e.x, e.y
+                ),
+                _ => format!("{}. Line (incomplete)", index),
+            }
+        }
+        GeometryElement::Circle(circle) => {
+            let center = point_coords(sketch, circle.center);
+            match center {
+                Some(c) => format!(
+                    "{}. Circle center ({:.2}, {:.2}) radius {:.2}",
+                    index, c.x, c.y, circle.radius
+                ),
+                None => format!("{}. Circle radius {:.2}", index, circle.radius),
+            }
+        }
+        GeometryElement::Arc(arc) => {
+            let center = point_coords(sketch, arc.center);
+            let start = point_coords(sketch, arc.start);
+            let end = point_coords(sketch, arc.end);
+            match (center, start, end) {
+                (Some(c), Some(s), Some(e)) => format!(
+                    "{}. Arc center ({:.2}, {:.2}) start ({:.2}, {:.2}) end ({:.2}, {:.2})",
+                    index, c.x, c.y, s.x, s.y, e.x, e.y
+                ),
+                _ => format!("{}. Arc radius {:.2}", index, arc.radius),
+            }
+        }
+    }
+}
+
+#[cfg(feature = "egui")]
+fn point_coords(sketch: &Sketch, id: Uuid) -> Option<Vec2D> {
+    match sketch.get_geometry(id)? {
+        GeometryElement::Point(point) => Some(point.position),
+        _ => None,
     }
 }

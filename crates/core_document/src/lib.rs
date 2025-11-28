@@ -79,6 +79,10 @@ impl Document {
         &self.metadata.name
     }
 
+    pub fn set_name(&mut self, name: impl Into<String>) {
+        self.metadata.name = name.into();
+    }
+
     pub fn metadata(&self) -> &DocumentMetadata {
         &self.metadata
     }
@@ -221,8 +225,11 @@ impl Document {
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let ordinal = self.bodies.len() + 1;
-        let body_name = name.unwrap_or_else(|| format!("Body {ordinal}"));
+
+        let body_name = match name {
+            Some(explicit) => explicit,
+            None => next_indexed_name("body", self.bodies.iter().map(|b| b.name.as_str())),
+        };
         let body = Body {
             id,
             name: body_name,
@@ -254,6 +261,34 @@ impl Document {
     /// Get all assets.
     pub fn assets(&self) -> impl Iterator<Item = &AssetReference> {
         self.assets.values()
+    }
+}
+
+fn next_indexed_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> String {
+    let mut max_suffix: Option<u32> = None;
+
+    for name in existing {
+        if name.eq_ignore_ascii_case(base) {
+            max_suffix = Some(max_suffix.map_or(0, |m| m.max(0)));
+        } else if let Some(rest) = name
+            .to_ascii_lowercase()
+            .strip_prefix(&(base.to_ascii_lowercase() + "_"))
+        {
+            if let Ok(n) = rest.parse::<u32>() {
+                max_suffix = Some(max_suffix.map_or(n, |m| m.max(n)));
+            }
+        }
+    }
+
+    let new_suffix = match max_suffix {
+        None => 0,
+        Some(m) => m.saturating_add(1),
+    };
+
+    if new_suffix == 0 {
+        base.to_string()
+    } else {
+        format!("{base}_{new_suffix}")
     }
 }
 

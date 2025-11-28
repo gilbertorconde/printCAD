@@ -247,8 +247,8 @@ impl CameraController {
         let far_clip = Vec3::new(ndc_x, ndc_y, 1.0).extend(1.0);
 
         // Transform to world space
-        let near_world = (inv_view_proj * near_clip);
-        let far_world = (inv_view_proj * far_clip);
+        let near_world = inv_view_proj * near_clip;
+        let far_world = inv_view_proj * far_clip;
 
         if near_world.w == 0.0 || far_world.w == 0.0 {
             return None;
