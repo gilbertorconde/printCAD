@@ -5,10 +5,10 @@ members = [
   "crates/kernel_api",
   "crates/kernel_occt",
   "crates/render_vk",
-  "crates/wb_part",
-  "crates/wb_sketch",
-"crates/settings",
-"crates/axes",
+  "crates/workbenches/wb_part",
+  "crates/workbenches/wb_sketch",
+  "crates/settings",
+  "crates/axes",
 ]
 resolver = "2"
 
