@@ -59,7 +59,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                         &mut vertex_offset,
                         start_pos,
                         end_pos,
-                        0.002,
+                        0.1,
                     );
                 }
             }
@@ -86,7 +86,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                         &mut vertex_offset,
                         start_world,
                         end_world,
-                        0.002,
+                        0.1,
                     );
                 }
             }
@@ -116,7 +116,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                                 &mut vertex_offset,
                                 prev,
                                 point_world,
-                                0.002,
+                                0.1,
                             );
                         }
                         prev_point = Some(point_world);
@@ -170,7 +170,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                                 &mut vertex_offset,
                                 prev,
                                 point_world,
-                                0.002,
+                                0.1,
                             );
                         }
                         prev_point = Some(point_world);

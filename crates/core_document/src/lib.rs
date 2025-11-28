@@ -463,6 +463,35 @@ impl From<&str> for WorkbenchId {
     }
 }
 
+/// A screen-space overlay line segment for constant-thickness visualization.
+///
+/// Screen-space overlays are rendered as 2D lines in screen coordinates, maintaining
+/// constant thickness regardless of zoom or camera rotation. Ideal for grid lines,
+/// guides, and reference geometry.
+#[derive(Debug, Clone)]
+pub struct ScreenSpaceOverlay {
+    /// Starting point in screen coordinates (x, y) in pixels, relative to viewport origin.
+    pub start: [f32; 2],
+    /// Ending point in screen coordinates (x, y) in pixels, relative to viewport origin.
+    pub end: [f32; 2],
+    /// RGB color [r, g, b] in range 0.0-1.0.
+    pub color: [f32; 3],
+    /// Line thickness in pixels (constant screen-space).
+    pub thickness: f32,
+}
+
+impl ScreenSpaceOverlay {
+    /// Create a new screen-space overlay line.
+    pub fn new(start: [f32; 2], end: [f32; 2], color: [f32; 3], thickness: f32) -> Self {
+        Self {
+            start,
+            end,
+            color,
+            thickness,
+        }
+    }
+}
+
 /// User-facing description provided by workbenches to populate menus.
 #[derive(Debug, Clone)]
 pub struct WorkbenchDescriptor {
@@ -569,6 +598,46 @@ pub trait Workbench: Send {
         _data: &serde_json::Value,
     ) -> Vec<FeatureId> {
         Vec::new() // Default: no dependencies
+    }
+
+    /// Get additional render meshes for overlay/helper visualization.
+    /// Called every frame to allow workbenches to contribute visual aids (grid lines, guides, etc.).
+    /// Returns a vector of (mesh, color) tuples where:
+    /// - mesh: The triangular mesh to render
+    /// - color: RGB color [r, g, b] in range 0.0-1.0
+    ///
+    /// These meshes are rendered in 3D world space and will scale with zoom and rotate with the camera.
+    /// For constant-thickness lines that don't change with zoom/rotation, use `get_screen_space_overlays` instead.
+    /// Default implementation returns empty vector.
+    fn get_overlay_meshes(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+        Vec::new()
+    }
+
+    /// Get screen-space overlays for constant-thickness visualization.
+    /// Called every frame to allow workbenches to contribute visual aids that maintain
+    /// constant screen-space thickness regardless of zoom or camera rotation.
+    ///
+    /// Screen-space overlays are rendered as 2D lines in screen coordinates, making them
+    /// ideal for grid lines, guides, and other reference geometry that should remain visible
+    /// and maintain consistent appearance regardless of camera position.
+    ///
+    /// Returns a vector of screen-space line segments where:
+    /// - start: Starting point in screen coordinates (x, y) in pixels, relative to viewport origin
+    /// - end: Ending point in screen coordinates (x, y) in pixels, relative to viewport origin
+    /// - color: RGB color [r, g, b] in range 0.0-1.0
+    /// - thickness: Line thickness in pixels (constant screen-space)
+    ///
+    /// Default implementation returns empty vector.
+    fn get_screen_space_overlays(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceOverlay> {
+        Vec::new()
     }
 }
 

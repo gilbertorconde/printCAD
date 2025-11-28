@@ -171,6 +171,38 @@ pub trait Workbench: Send {
     /// Finish/close the current editing session (e.g., finish sketch).
     /// Called when the user requests to finish editing (e.g., via UI button).
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Get additional overlay meshes for visualization aids (grid lines, guides, etc.).
+    /// Called every frame to allow workbenches to contribute visual overlays.
+    /// Returns a vector of (mesh, color) tuples.
+    /// These meshes are rendered in 3D world space and will scale with zoom and rotate with the camera.
+    fn get_overlay_meshes(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+        Vec::new()
+    }
+
+    /// Get screen-space overlays for constant-thickness visualization.
+    /// Called every frame to allow workbenches to contribute visual aids that maintain
+    /// constant screen-space thickness regardless of zoom or camera rotation.
+    /// Returns a vector of screen-space line segments.
+    fn get_screen_space_overlays(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceOverlay> {
+        Vec::new()
+    }
+
+    fn get_screen_space_overlays(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceOverlay> {
+        Vec::new()
+    }
 }
 ```
 
@@ -595,6 +627,51 @@ fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
 }
 ```
 
+### Overlay Meshes
+
+Workbenches can provide overlay meshes for visual aids like grid lines, guides, or helper geometry. These are rendered on top of regular geometry:
+
+```rust
+fn get_overlay_meshes(
+    &self,
+    ctx: &WorkbenchRuntimeContext,
+    active_feature: Option<FeatureId>,
+) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+    // Only show overlays for active sketch
+    if let Some(feature_id) = active_feature {
+        if let Some(node) = ctx.document.get_feature_meta(feature_id) {
+            if node.workbench_id.as_str() == "wb.sketch" {
+                if let Some(sketch_data) = ctx.document.get_feature_data(feature_id) {
+                    if let Ok(sketch_feature) = SketchFeature::from_json(sketch_data) {
+                        // Create grid lines (red horizontal, green vertical)
+                        let (x_mesh, y_mesh) =
+                            render::create_grid_lines(&sketch_feature.plane);
+
+                        return vec![
+                            (x_mesh, [1.0, 0.0, 0.0]), // Red
+                            (y_mesh, [0.0, 1.0, 0.0]), // Green
+                        ];
+                    }
+                }
+            }
+        }
+    }
+    Vec::new()
+}
+```
+
+The method returns a vector of `(mesh, color)` tuples where:
+
+- `mesh`: A `TriMesh` from `kernel_api` containing the geometry to render
+- `color`: RGB color `[r, g, b]` in range 0.0-1.0
+
+Overlay meshes are rendered every frame and are useful for:
+
+- Grid lines and axes
+- Construction geometry
+- Visual guides and helpers
+- Temporary preview geometry
+
 ---
 
 ## Custom UI Panels
@@ -759,6 +836,8 @@ impl Workbench for CounterWorkbench {
 6. **Clean up on deactivation**: Use `on_deactivate()` to clean up temporary state.
 
 7. **Use the egui feature flag**: Wrap UI methods with `#[cfg(feature = "egui")]` to allow building without UI.
+
+8. **Use overlay meshes for visual aids**: Implement `get_overlay_meshes()` for 3D geometry that scales with the scene, or `get_screen_space_overlays()` for constant-thickness lines that maintain screen-space appearance regardless of zoom/rotation.
 
 ---
 

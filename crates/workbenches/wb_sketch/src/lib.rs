@@ -543,7 +543,7 @@ viewport_pos = ({:.1}, {:.1})",
                 ui.label("No geometry yet. Use the toolbar to add lines, arcs, or circles.");
             } else {
                 egui::ScrollArea::vertical()
-                    .id_source("sketch_geometry_elements")
+                    .id_salt("sketch_geometry_elements")
                     .max_height(240.0)
                     .show(ui, |ui| {
                         for (idx, geom) in sketch.geometry.iter().enumerate() {
@@ -621,7 +621,6 @@ viewport_pos = ({:.1}, {:.1})",
     fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
         ui.label("Sketch workbench settings");
         ui.separator();
-        ui.label("Grid snap: (coming soon)");
         ui.label("Constraint display: (coming soon)");
         false
     }
@@ -638,6 +637,22 @@ viewport_pos = ({:.1}, {:.1})",
         } else {
             ctx.log_warn("Not in sketch editing mode");
         }
+    }
+
+    fn get_overlay_meshes(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+        Vec::new()
+    }
+
+    fn get_screen_space_overlays(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceOverlay> {
+        Vec::new()
     }
 }
 

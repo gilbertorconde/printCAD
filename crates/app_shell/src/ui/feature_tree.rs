@@ -216,8 +216,6 @@ fn draw_node(
         ui.horizontal(|ui| {
             ui.add_space(indent);
             let label = compose_label(node);
-            let is_selected = selected == Some(node.id);
-
             let collapsing = egui::CollapsingHeader::new(label)
                 .id_salt(format!("tree_node_{:?}", node.id))
                 .show(ui, |ui| {

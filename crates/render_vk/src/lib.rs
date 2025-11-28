@@ -7,6 +7,7 @@ mod util;
 pub use mesh::{GpuLight, LightingData};
 
 use ash::vk;
+use core_document::ScreenSpaceOverlay;
 use egui::{ClippedPrimitive, TexturesDelta};
 use kernel_api::TriMesh;
 use std::fmt;
@@ -204,6 +205,8 @@ pub struct FrameSubmission {
     pub egui: Option<EguiSubmission>,
     /// The 3D viewport rect (area where mesh should be rendered)
     pub viewport_rect: Option<ViewportRect>,
+    /// Screen-space overlays (constant-thickness lines rendered in 2D screen coordinates)
+    pub screen_space_overlays: Vec<ScreenSpaceOverlay>,
 }
 
 impl Default for FrameSubmission {
@@ -215,6 +218,7 @@ impl Default for FrameSubmission {
             lighting: LightingData::default(),
             egui: None,
             viewport_rect: None,
+            screen_space_overlays: Vec::new(),
         }
     }
 }

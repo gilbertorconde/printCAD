@@ -118,6 +118,7 @@ impl UiLayer {
         active_tree_selection: Option<feature_tree::TreeItemId>,
         active_document_object: Option<core_document::FeatureId>,
         selected_body_id: Option<core_document::BodyId>,
+        screen_space_overlays: &[core_document::ScreenSpaceOverlay],
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let prev_workbench = self.active_workbench.clone();
@@ -194,6 +195,9 @@ impl UiLayer {
             if let Some((px, py)) = pivot_screen_pos {
                 layout::draw_pivot_indicator(ctx, px, py);
             }
+
+            // Draw screen-space overlays in the viewport area
+            layout::draw_screen_space_overlays(ctx, screen_space_overlays);
         });
 
         // Detect workbench change

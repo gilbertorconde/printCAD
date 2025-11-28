@@ -399,3 +399,45 @@ pub fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {
         egui::Stroke::new(1.5, cross_color),
     );
 }
+
+/// Draw screen-space overlays in the viewport area.
+/// These are rendered as 2D lines in screen coordinates, maintaining constant thickness.
+pub fn draw_screen_space_overlays(
+    ctx: &egui::Context,
+    overlays: &[core_document::ScreenSpaceOverlay],
+) {
+    if overlays.is_empty() {
+        return;
+    }
+
+    let painter = ctx.layer_painter(egui::LayerId::new(
+        egui::Order::Foreground, // Draw on top of 3D scene
+        egui::Id::new("screen_space_overlays"),
+    ));
+
+    let ppp = ctx.pixels_per_point();
+    let viewport_rect = ctx.available_rect();
+
+    for overlay in overlays {
+        // Screen coordinates are already in pixels relative to the viewport origin (0,0)
+        // We need to convert them to egui logical coordinates and add the viewport offset
+        // The viewport_rect gives us the logical position of the viewport in the UI
+        let start_x = viewport_rect.min.x + (overlay.start[0] / ppp);
+        let start_y = viewport_rect.min.y + (overlay.start[1] / ppp);
+        let end_x = viewport_rect.min.x + (overlay.end[0] / ppp);
+        let end_y = viewport_rect.min.y + (overlay.end[1] / ppp);
+
+        let start = egui::pos2(start_x, start_y);
+        let end = egui::pos2(end_x, end_y);
+
+        // Convert RGB [0.0-1.0] to egui Color32
+        let r = (overlay.color[0] * 255.0) as u8;
+        let g = (overlay.color[1] * 255.0) as u8;
+        let b = (overlay.color[2] * 255.0) as u8;
+        let color = Color32::from_rgb(r, g, b);
+
+        // Draw line with constant screen-space thickness (convert pixels to logical points)
+        let stroke_width = overlay.thickness / ppp;
+        painter.line_segment([start, end], egui::Stroke::new(stroke_width, color));
+    }
+}

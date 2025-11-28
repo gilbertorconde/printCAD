@@ -46,6 +46,10 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Viewport dimensions (x, y, width, height) in pixels.
     pub viewport: (u32, u32, u32, u32),
 
+    /// View-projection matrix for transforming 3D world coordinates to clip space.
+    /// Used for projecting 3D points to screen coordinates.
+    pub view_proj: Option<[[f32; 4]; 4]>,
+
     /// World position under the cursor (if any geometry is hovered).
     pub hovered_world_pos: Option<[f32; 3]>,
 
@@ -97,6 +101,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             camera_orient_request: None,
             finish_sketch_requested: false,
             active_document_object: None,
+            view_proj: None,
         }
     }
 

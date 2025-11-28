@@ -458,11 +458,67 @@ impl ApplicationHandler for PrintCadApp {
             })
             .collect();
 
+        // Get overlay meshes from the active workbench (grid lines, guides, etc.)
+        let mut overlay_meshes: Vec<BodySubmission> =
+            if let Ok(wb) = self.registry.workbench_mut(&self.active_workbench.0) {
+                // Build runtime context for overlay generation
+                let cam_pos = self.camera.position();
+                let cam_target = self.camera.target();
+                let viewport = if let Some(rect) = self.frame_submission.viewport_rect {
+                    (rect.x, rect.y, rect.width, rect.height)
+                } else {
+                    (0, 0, 1920, 1080) // Fallback
+                };
+                let mut wb_ctx =
+                    WorkbenchRuntimeContext::new(&mut self.document, cam_pos, cam_target, viewport);
+                wb_ctx.active_document_object = self.active_document_object;
+                wb_ctx.selected_body_id = self.active_body_id.map(|id| id.0);
+
+                wb.get_overlay_meshes(&wb_ctx, self.active_document_object)
+                    .into_iter()
+                    .map(|(mesh, color)| BodySubmission {
+                        id: Uuid::new_v4(), // Unique ID for overlay meshes
+                        mesh,
+                        color,
+                        highlight: HighlightState::None,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+        // Get screen-space overlays from the active workbench (constant-thickness lines)
+        let screen_space_overlays: Vec<core_document::ScreenSpaceOverlay> =
+            if let Ok(wb) = self.registry.workbench_mut(&self.active_workbench.0) {
+                // Build runtime context for overlay generation
+                let cam_pos = self.camera.position();
+                let cam_target = self.camera.target();
+                let viewport = if let Some(rect) = self.frame_submission.viewport_rect {
+                    (rect.x, rect.y, rect.width, rect.height)
+                } else {
+                    (0, 0, 1920, 1080) // Fallback
+                };
+                let mut wb_ctx =
+                    WorkbenchRuntimeContext::new(&mut self.document, cam_pos, cam_target, viewport);
+                wb_ctx.active_document_object = self.active_document_object;
+                wb_ctx.selected_body_id = self.active_body_id.map(|id| id.0);
+                wb_ctx.view_proj = Some(self.camera.view_projection());
+
+                wb.get_screen_space_overlays(&wb_ctx, self.active_document_object)
+            } else {
+                Vec::new()
+            };
+
+        // Combine sketch meshes and overlay meshes
+        let mut all_meshes = sketch_meshes;
+        all_meshes.append(&mut overlay_meshes);
+
         // For now, only render sketch meshes (no demo bodies).
-        self.frame_submission.bodies = sketch_meshes;
+        self.frame_submission.bodies = all_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
+        self.frame_submission.screen_space_overlays = screen_space_overlays;
 
         let mut ui_result_open = false;
         let mut ui_result_save = false;
@@ -495,6 +551,7 @@ impl ApplicationHandler for PrintCadApp {
                 self.tree_selection,
                 self.active_document_object,
                 self.active_body_id,
+                &self.frame_submission.screen_space_overlays,
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
@@ -945,6 +1002,11 @@ impl PrintCadApp {
             ctx.active_document_object = self.active_document_object;
 
             let result = wb.on_input(event, active_tool, &mut ctx);
+
+            // Sync active_document_object from context (workbench may have set it)
+            if ctx.active_document_object != self.active_document_object {
+                self.active_document_object = ctx.active_document_object;
+            }
 
             // Handle camera orientation request
             if let Some(orient_req) = ctx.camera_orient_request.take() {
