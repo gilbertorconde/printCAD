@@ -15,3 +15,6 @@ thiserror.workspace = true
 serde_json.workspace = true
 uuid.workspace = true
 egui = { workspace = true, optional = true }
+tar.workspace = true
+flate2.workspace = true
+zstd.workspace = true

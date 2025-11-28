@@ -3,9 +3,13 @@ pub mod feature;
 pub mod runtime;
 
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::{Read, Seek, Write};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json;
+use tar::{Archive, Builder, Header};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -261,6 +265,110 @@ impl Document {
     /// Get all assets.
     pub fn assets(&self) -> impl Iterator<Item = &AssetReference> {
         self.assets.values()
+    }
+
+    /// Save document to a .prtcad file (tar archive, optionally compressed).
+    pub fn save_to_file(&self, path: &Path, compression: Compression) -> DocumentResult<()> {
+        let file = File::create(path)?;
+
+        match compression {
+            Compression::None => {
+                let mut builder = Builder::new(file);
+                Self::write_archive(&mut builder, self)?;
+                builder.finish()?;
+            }
+            Compression::Gzip => {
+                let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+                let mut builder = Builder::new(encoder);
+                Self::write_archive(&mut builder, self)?;
+                let encoder = builder.into_inner().map_err(|e| {
+                    DocumentError::Compression(format!("gzip encoder finalize failed: {e}"))
+                })?;
+                encoder.finish()?;
+            }
+            Compression::Zstd => {
+                let mut encoder = zstd::Encoder::new(file, 0)
+                    .map_err(|e| DocumentError::Compression(e.to_string()))?;
+                {
+                    let mut builder = Builder::new(&mut encoder);
+                    Self::write_archive(&mut builder, self)?;
+                    builder.finish()?;
+                }
+                encoder
+                    .finish()
+                    .map_err(|e| DocumentError::Compression(e.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Load document from a .prtcad file (auto-detects compression).
+    pub fn load_from_file(path: &Path) -> DocumentResult<Self> {
+        let mut file = File::open(path)?;
+
+        // Detect compression via extension and magic bytes.
+        let mut magic = [0u8; 4];
+        let _n = file.read(&mut magic)?;
+        file.rewind()?;
+
+        // Decide compression based on file name and magic bytes.
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let compression = if file_name.ends_with(".gz")
+            || file_name.ends_with(".prtcad.gz")
+            || magic.starts_with(&[0x1f, 0x8b])
+        {
+            Compression::Gzip
+        } else if file_name.ends_with(".zst") || file_name.ends_with(".prtcad.zst") {
+            Compression::Zstd
+        } else {
+            Compression::None
+        };
+
+        let mut archive: Archive<Box<dyn Read>> = match compression {
+            Compression::None => Archive::new(Box::new(file)),
+            Compression::Gzip => {
+                let decoder = flate2::read::GzDecoder::new(file);
+                Archive::new(Box::new(decoder))
+            }
+            Compression::Zstd => {
+                let decoder = zstd::Decoder::new(file)
+                    .map_err(|e| DocumentError::Compression(e.to_string()))?;
+                Archive::new(Box::new(decoder))
+            }
+        };
+
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?;
+            if path == Path::new("document.json") {
+                let mut buf = String::new();
+                entry.read_to_string(&mut buf)?;
+                let doc: Document = serde_json::from_str(&buf)?;
+                return Ok(doc);
+            }
+        }
+
+        Err(DocumentError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "document.json not found in archive",
+        )))
+    }
+
+    fn write_archive<W: Write>(builder: &mut Builder<W>, doc: &Document) -> DocumentResult<()> {
+        let json = serde_json::to_vec_pretty(doc)?;
+        let mut header = Header::new_gnu();
+        header.set_path("document.json")?;
+        header.set_size(json.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append(&header, &json[..])?;
+        Ok(())
     }
 }
 
@@ -599,4 +707,15 @@ pub enum DocumentError {
     FeatureNotFound(FeatureId),
     #[error("feature error: {0}")]
     Feature(#[from] FeatureError),
+    #[error("io error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("compression error: {0}")]
+    Compression(String),
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum Compression {
+    None,
+    Gzip,
+    Zstd,
 }

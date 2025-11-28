@@ -158,10 +158,6 @@ impl PrintCadApp {
         registry: DocumentService,
     ) -> Self {
         let mut camera = CameraController::new(&user_settings.camera, (1, 1));
-        let demo_bodies = demo_bodies();
-        if let Some((center, radius)) = bodies_bounds(&demo_bodies) {
-            camera.reset_to_fit(center, radius);
-        }
 
         Self {
             settings,
@@ -170,7 +166,7 @@ impl PrintCadApp {
             window: None,
             window_id: None,
             ui_layer: None,
-            demo_bodies,
+            demo_bodies: Vec::new(),
             settings_store,
             user_settings,
             camera,
@@ -612,7 +608,8 @@ impl ApplicationHandler for PrintCadApp {
             ui_result_save_as = ui_result.save_as_requested;
 
             if ui_result.finish_sketch_requested {
-                app_log::info("Finish sketch requested (not wired yet)");
+                // Defer handling until after rendering to avoid borrow conflicts.
+                // We'll process this flag once we exit the UI closure.
             }
 
             if let Some(selection) = ui_result.tree_selection {
@@ -738,18 +735,41 @@ impl PrintCadApp {
     }
 
     fn open_document_at(&mut self, path: &PathBuf) -> Result<()> {
-        let file = std::fs::File::open(path)
-            .with_context(|| format!("Failed to open document file {}", path.display()))?;
-        let document: Document =
-            serde_json::from_reader(file).with_context(|| "Failed to parse document JSON")?;
+        // Support legacy .json files directly, otherwise use the .prtcad tar-based format.
+        let document = match path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+        {
+            Some(ext) if ext == "json" => {
+                let file = std::fs::File::open(path)
+                    .with_context(|| format!("Failed to open document file {}", path.display()))?;
+                serde_json::from_reader(file).with_context(|| "Failed to parse document JSON")?
+            }
+            _ => Document::load_from_file(path)
+                .with_context(|| format!("Failed to open .prtcad document {}", path.display()))?,
+        };
 
         self.document = document;
         self.current_file = Some(path.clone());
-        self.document.set_name(
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Untitled"),
-        );
+        // Derive a user-facing document name from the file name (strip known extensions).
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Untitled");
+        let lowered = file_name.to_ascii_lowercase();
+        let name = if let Some(stripped) = lowered.strip_suffix(".prtcad.zst") {
+            &file_name[..stripped.len()]
+        } else if let Some(stripped) = lowered.strip_suffix(".prtcad.gz") {
+            &file_name[..stripped.len()]
+        } else if let Some(stripped) = lowered.strip_suffix(".prtcad") {
+            &file_name[..stripped.len()]
+        } else if let Some(stripped) = lowered.strip_suffix(".json") {
+            &file_name[..stripped.len()]
+        } else {
+            file_name
+        };
+        self.document.set_name(name);
         self.active_document_object = None;
         self.active_body_id = None;
         self.tree_selection = Some(TreeItemId::DocumentRoot);
@@ -761,15 +781,56 @@ impl PrintCadApp {
     }
 
     fn save_document_at(&mut self, path: &PathBuf) -> Result<()> {
-        self.document.set_name(
-            path.file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("Untitled"),
-        );
-        let file = std::fs::File::create(path)
-            .with_context(|| format!("Failed to create document file {}", path.display()))?;
-        serde_json::to_writer_pretty(file, &self.document)
-            .with_context(|| "Failed to serialize document")?;
+        // Derive a user-facing document name from the file name (strip known extensions).
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Untitled");
+        let lowered = file_name.to_ascii_lowercase();
+        let name = if let Some(stripped) = lowered.strip_suffix(".prtcad.zst") {
+            &file_name[..stripped.len()]
+        } else if let Some(stripped) = lowered.strip_suffix(".prtcad.gz") {
+            &file_name[..stripped.len()]
+        } else if let Some(stripped) = lowered.strip_suffix(".prtcad") {
+            &file_name[..stripped.len()]
+        } else if let Some(stripped) = lowered.strip_suffix(".json") {
+            &file_name[..stripped.len()]
+        } else {
+            file_name
+        };
+        self.document.set_name(name);
+
+        // For legacy .json files, keep writing plain JSON.
+        // For everything else, use the .prtcad tar-based container with optional compression.
+        match path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+        {
+            Some(ext) if ext == "json" => {
+                let file = std::fs::File::create(path).with_context(|| {
+                    format!("Failed to create document file {}", path.display())
+                })?;
+                serde_json::to_writer_pretty(file, &self.document)
+                    .with_context(|| "Failed to serialize document")?;
+            }
+            _ => {
+                // Choose compression based on the full file name suffix.
+                let compression = if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
+                    core_document::Compression::Gzip
+                } else if lowered.ends_with(".prtcad.zst") || lowered.ends_with(".zst") {
+                    core_document::Compression::Zstd
+                } else {
+                    core_document::Compression::None
+                };
+
+                self.document
+                    .save_to_file(path, compression)
+                    .with_context(|| {
+                        format!("Failed to save .prtcad document {}", path.display())
+                    })?;
+            }
+        }
 
         self.current_file = Some(path.clone());
         Self::write_recent_dir(path);
@@ -850,6 +911,13 @@ impl PrintCadApp {
         let wb_id = self.active_workbench_id();
         let active_tool = self.active_tool.id.clone();
         let result = self.call_workbench_input(&wb_id, &wb_event, active_tool.as_deref());
+
+        // Treat "sketch.create" like a momentary action button:
+        // once the workbench has consumed the event, clear the active tool so
+        // subsequent input events don't keep re-triggering the action.
+        if matches!(active_tool.as_deref(), Some("sketch.create")) && result.consumed {
+            self.active_tool.id = None;
+        }
 
         if result.consumed {
             return result.redraw;
@@ -1057,15 +1125,6 @@ impl PrintCadApp {
     }
 }
 
-fn demo_bodies() -> Vec<BodySubmission> {
-    vec![BodySubmission {
-        id: Uuid::new_v4(),
-        mesh: pyramid_mesh(),
-        color: [0.85, 0.55, 0.3],
-        highlight: HighlightState::None,
-    }]
-}
-
 fn bodies_bounds(bodies: &[BodySubmission]) -> Option<(Vec3, f32)> {
     let mut min = Vec3::splat(f32::INFINITY);
     let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -1094,38 +1153,6 @@ fn bodies_bounds(bodies: &[BodySubmission]) -> Option<(Vec3, f32)> {
     }
 
     Some((center, radius))
-}
-
-fn pyramid_mesh() -> TriMesh {
-    // Pyramid with base on XY plane, apex pointing up (+Z)
-    let bl = [-0.4, -0.4, 0.0];
-    let br = [0.4, -0.4, 0.0];
-    let tr = [0.4, 0.4, 0.0];
-    let tl = [-0.4, 0.4, 0.0];
-    let apex = [0.0, 0.0, 0.7];
-
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-
-    // Side faces: CCW winding when viewed from OUTSIDE (normal points outward)
-    // Front face (normal points toward -Y)
-    add_triangle(&mut positions, &mut normals, &mut indices, [br, apex, bl]);
-    // Right face (normal points toward +X)
-    add_triangle(&mut positions, &mut normals, &mut indices, [tr, apex, br]);
-    // Back face (normal points toward +Y)
-    add_triangle(&mut positions, &mut normals, &mut indices, [tl, apex, tr]);
-    // Left face (normal points toward -X)
-    add_triangle(&mut positions, &mut normals, &mut indices, [bl, apex, tl]);
-    // Bottom face (normal points toward -Z): CCW when viewed from below
-    add_triangle(&mut positions, &mut normals, &mut indices, [tr, br, bl]);
-    add_triangle(&mut positions, &mut normals, &mut indices, [tl, tr, bl]);
-
-    TriMesh {
-        positions,
-        normals,
-        indices,
-    }
 }
 
 fn add_triangle(
