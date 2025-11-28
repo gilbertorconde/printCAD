@@ -1,29 +1,72 @@
+pub mod asset;
+pub mod feature;
 pub mod runtime;
 
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json;
 use thiserror::Error;
 use uuid::Uuid;
 
+pub use asset::{AssetReference, AssetType};
+pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use runtime::{
-    InputResult, KeyCode, LogEntry, LogLevel, MouseButton, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    CameraOrientRequest, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
+    WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
-type DocumentResult<T> = std::result::Result<T, DocumentError>;
+/// Result type for document operations.
+pub type DocumentResult<T> = std::result::Result<T, DocumentError>;
+
+/// Type-erased storage for workbench-specific data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WorkbenchStorage {
+    /// Workbench ID this storage belongs to.
+    pub workbench_id: WorkbenchId,
+    /// Arbitrary JSON data (workbench-specific).
+    pub data: serde_json::Value,
+}
+
+impl WorkbenchStorage {
+    pub fn new(workbench_id: WorkbenchId, data: serde_json::Value) -> Self {
+        Self { workbench_id, data }
+    }
+}
 
 /// Primary data structure persisted by the application.
+///
+/// The document is saved as a `.prtcad` file, which is a ZIP archive containing:
+/// - `document.json` - This document structure (serialized)
+/// - `assets/` - External files (STEP, STL, etc.) referenced by the document
+/// - `cache/` - Optional cached computed data (meshes, tessellations)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     metadata: DocumentMetadata,
+    feature_tree: FeatureTree,
+    bodies: Vec<Body>,
+    /// Workbench-specific data storage (type-erased).
+    workbench_storage: HashMap<String, WorkbenchStorage>,
+    /// References to external files stored in the .prtcad archive.
+    assets: HashMap<Uuid, AssetReference>,
     history: Vec<DocumentRevision>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Body {
+    pub id: BodyId,
+    pub name: String,
+    pub created_at: i64,
 }
 
 impl Document {
     pub fn new(name: impl Into<String>) -> Self {
         Self {
             metadata: DocumentMetadata::new(name),
+            feature_tree: FeatureTree::new(),
+            bodies: Vec::new(),
+            workbench_storage: HashMap::new(),
+            assets: HashMap::new(),
             history: Vec::new(),
         }
     }
@@ -51,6 +94,166 @@ impl Document {
     pub fn push_revision(&mut self, revision: DocumentRevision) {
         self.history.push(revision);
         self.metadata.revision += 1;
+    }
+
+    /// Add a feature to the tree (generic, works with any WorkbenchFeature).
+    pub fn add_feature<F: WorkbenchFeature>(
+        &mut self,
+        feature: F,
+        name: String,
+    ) -> DocumentResult<FeatureId> {
+        let id = FeatureId::new();
+        let deps = feature.dependencies();
+
+        let node = FeatureNode {
+            id,
+            workbench_id: F::workbench_id(),
+            name,
+            visible: true,
+            suppressed: false,
+            dirty: false,
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_millis() as i64,
+            data: feature.to_json(),
+        };
+
+        self.feature_tree.add_node(node);
+
+        // Add dependencies
+        for dep in deps {
+            self.feature_tree.add_dependency(id, dep);
+        }
+
+        self.mark_dirty();
+        Ok(id)
+    }
+
+    /// Get feature data (returns JSON, workbench must deserialize).
+    pub fn get_feature_data(&self, id: FeatureId) -> Option<&serde_json::Value> {
+        self.feature_tree.get_node(id).map(|n| &n.data)
+    }
+
+    /// Get feature metadata (id, name, dirty, etc.).
+    pub fn get_feature_meta(&self, id: FeatureId) -> Option<&FeatureNode> {
+        self.feature_tree.get_node(id)
+    }
+
+    /// Update feature data (workbench provides serialized JSON).
+    pub fn update_feature_data(
+        &mut self,
+        id: FeatureId,
+        data: serde_json::Value,
+    ) -> DocumentResult<()> {
+        if let Some(node) = self.feature_tree.get_node_mut(id) {
+            node.data = data;
+            self.mark_dirty();
+            Ok(())
+        } else {
+            Err(DocumentError::FeatureNotFound(id))
+        }
+    }
+
+    /// Mark feature dirty (triggers recomputation).
+    pub fn mark_feature_dirty(&mut self, feature_id: FeatureId) {
+        self.feature_tree.mark_dirty(feature_id);
+        self.mark_dirty();
+    }
+
+    /// Get all dirty features.
+    pub fn dirty_features(&self) -> Vec<FeatureId> {
+        self.feature_tree.dirty_features()
+    }
+
+    /// Get recomputation order for dirty features.
+    pub fn recompute_order(&self) -> Vec<FeatureId> {
+        let dirty = self.dirty_features();
+        self.feature_tree.recompute_order(&dirty)
+    }
+
+    /// Get workbench storage.
+    pub fn get_workbench_storage(&self, wb_id: &WorkbenchId) -> Option<&WorkbenchStorage> {
+        self.workbench_storage.get(wb_id.as_str())
+    }
+
+    /// Get mutable workbench storage.
+    pub fn get_workbench_storage_mut(
+        &mut self,
+        wb_id: &WorkbenchId,
+    ) -> Option<&mut WorkbenchStorage> {
+        self.workbench_storage.get_mut(wb_id.as_str())
+    }
+
+    /// Set workbench storage.
+    pub fn set_workbench_storage(&mut self, wb_id: WorkbenchId, data: serde_json::Value) {
+        self.workbench_storage.insert(
+            wb_id.as_str().to_string(),
+            WorkbenchStorage::new(wb_id, data),
+        );
+        self.mark_dirty();
+    }
+
+    /// Get the feature tree.
+    pub fn feature_tree(&self) -> &FeatureTree {
+        &self.feature_tree
+    }
+
+    /// Get mutable feature tree.
+    pub fn feature_tree_mut(&mut self) -> &mut FeatureTree {
+        &mut self.feature_tree
+    }
+
+    /// All document bodies.
+    pub fn bodies(&self) -> &[Body] {
+        &self.bodies
+    }
+
+    /// Returns true if the document contains at least one body.
+    pub fn has_bodies(&self) -> bool {
+        !self.bodies.is_empty()
+    }
+
+    /// Create a new body entry in the document.
+    pub fn create_body(&mut self, name: Option<String>) -> BodyId {
+        let id = BodyId::new();
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let ordinal = self.bodies.len() + 1;
+        let body_name = name.unwrap_or_else(|| format!("Body {ordinal}"));
+        let body = Body {
+            id,
+            name: body_name,
+            created_at,
+        };
+        self.bodies.push(body);
+        self.mark_dirty();
+        id
+    }
+
+    /// Add an asset reference to the document.
+    pub fn add_asset(&mut self, asset: AssetReference) -> Uuid {
+        let id = asset.id;
+        self.assets.insert(id, asset);
+        self.mark_dirty();
+        id
+    }
+
+    /// Get an asset reference by ID.
+    pub fn get_asset(&self, asset_id: Uuid) -> Option<&AssetReference> {
+        self.assets.get(&asset_id)
+    }
+
+    /// Get asset path within the archive.
+    pub fn get_asset_path(&self, asset_id: Uuid) -> Option<&str> {
+        self.assets.get(&asset_id).map(|a| a.path.as_str())
+    }
+
+    /// Get all assets.
+    pub fn assets(&self) -> impl Iterator<Item = &AssetReference> {
+        self.assets.values()
     }
 }
 
@@ -160,18 +363,49 @@ pub trait Workbench: Send {
     /// Draw custom UI in the left panel (below the tool list).
     /// Called every frame while this workbench is active.
     #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {}
+    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
 
     /// Draw custom UI in the right panel (properties/inspector area).
     /// Called every frame while this workbench is active.
     #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, _ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {}
+    fn ui_right_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Whether this workbench exposes right-panel UI.
+    #[cfg(feature = "egui")]
+    fn wants_right_panel(&self) -> bool {
+        false
+    }
 
     /// Draw custom settings UI in the Settings window.
     /// Called when the Settings window is open and this workbench's tab is selected.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, _ui: &mut egui::Ui) -> bool {
         false // Return true if settings changed
+    }
+
+    /// Finish/close the current editing session (e.g., finish sketch).
+    /// Called when the user requests to finish editing (e.g., via UI button).
+    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Deserialize a feature of this workbench's type from JSON.
+    /// Called by the document when loading features from storage.
+    /// Returns None if the feature type doesn't belong to this workbench.
+    fn deserialize_feature(
+        &self,
+        _workbench_id: &WorkbenchId,
+        _data: &serde_json::Value,
+    ) -> Option<Box<dyn std::any::Any>> {
+        None // Default: no feature deserialization
+    }
+
+    /// Get feature dependencies from serialized feature data.
+    /// Used by the document to build the dependency graph.
+    fn feature_dependencies(
+        &self,
+        _workbench_id: &WorkbenchId,
+        _data: &serde_json::Value,
+    ) -> Vec<FeatureId> {
+        Vec::new() // Default: no dependencies
     }
 }
 
@@ -240,6 +474,8 @@ pub enum ToolKind {
     Sketch,
     PartDesign,
     Utility,
+    /// Action button (checkbox-like: stays active when clicked)
+    Action,
 }
 
 /// Central registry tracking workbenches and their declared capabilities.
@@ -324,4 +560,8 @@ pub enum DocumentError {
     WorkbenchMissing(String),
     #[error("document serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("feature not found: {0:?}")]
+    FeatureNotFound(FeatureId),
+    #[error("feature error: {0}")]
+    Feature(#[from] FeatureError),
 }

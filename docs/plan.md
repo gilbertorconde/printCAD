@@ -45,7 +45,7 @@
 
 ## File Format Strategy
 
-- **Native format**: `.prtcad`, a printCAD-exclusive package that stores the document graph, feature tree, workbench state, macro bindings, and cached tessellations. Implementation detail: compressed archive (ZIP/zstd) bundling JSON metadata and binary blobs.
+- **Native format**: `.prtcad`, a printCAD-exclusive package that stores the document graph, feature tree, workbench state, macro bindings, and cached tessellations. Implementation detail: tar archive (optionally compressed with gzip or zstd) bundling JSON metadata and binary blobs.
 - **STEP interoperability**: OCCT-powered STEP import/export remains primary for exchanging models. Optionally emit/refresh a `.step` snapshot on every project save.
 - **Round-trip behavior**: Loading `.prtcad` restores full parametric fidelity; importing `.step` creates base bodies without historical features, mirroring other CAD workflows.
 

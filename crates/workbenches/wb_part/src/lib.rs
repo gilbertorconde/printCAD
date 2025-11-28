@@ -94,14 +94,14 @@ impl Workbench for PartDesignWorkbench {
     }
 
     #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {
+    fn ui_left_panel(&mut self, ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {
         ui.separator();
         ui.heading("Part Info");
         ui.label(format!("Features: {}", self.feature_count));
     }
 
     #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {
+    fn ui_right_panel(&mut self, ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {
         ui.heading("Feature Properties");
         ui.label("Select a feature to edit its parameters.");
         ui.separator();

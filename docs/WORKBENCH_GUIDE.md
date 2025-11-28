@@ -5,6 +5,7 @@ This guide explains how to create custom workbenches for printCAD. Workbenches a
 ## Overview
 
 A workbench in printCAD is a self-contained module that provides:
+
 - **Tools**: Interactive operations (e.g., Line, Circle, Pad, Fillet)
 - **Commands**: Non-interactive actions (e.g., Solve Constraints, Recompute)
 - **UI Panels**: Custom content in the left panel, right panel, and settings
@@ -69,7 +70,7 @@ impl Workbench for MyWorkbench {
             "Tool One",
             ToolKind::Utility,
         ));
-        
+
         // Register commands
         context.register_command(CommandDescriptor::new(
             "my.do_something",
@@ -158,6 +159,7 @@ fn configure(&self, context: &mut WorkbenchContext) {
 ```
 
 **Tool Kinds:**
+
 - `ToolKind::Sketch` - 2D sketching tools
 - `ToolKind::PartDesign` - 3D modeling tools
 - `ToolKind::Utility` - General utilities
@@ -286,6 +288,180 @@ ctx.document.mark_dirty();  // Mark document as modified
 
 ---
 
+## Feature Management
+
+The document provides a **generic, extensible feature tree** that allows workbenches to define their own feature types. Features are stored in a directed acyclic graph (DAG) with dependency tracking.
+
+### Defining Feature Types
+
+To create a feature type, implement the `WorkbenchFeature` trait:
+
+```rust
+use core_document::{FeatureId, WorkbenchFeature, WorkbenchId, DocumentResult, FeatureError};
+use serde::{Serialize, Deserialize};
+use serde_json;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MyFeature {
+    pub name: String,
+    pub value: f32,
+    pub depends_on: Option<FeatureId>, // Optional dependency
+}
+
+impl WorkbenchFeature for MyFeature {
+    fn workbench_id() -> WorkbenchId {
+        WorkbenchId::from("wb.my-workbench")
+    }
+
+    fn to_json(&self) -> serde_json::Value {
+        serde_json::to_value(self).unwrap()
+    }
+
+    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
+        serde_json::from_value(value.clone())
+            .map_err(|e| FeatureError::Deserialization(e.to_string()))
+    }
+
+    fn dependencies(&self) -> Vec<FeatureId> {
+        self.depends_on.into_iter().collect()
+    }
+
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+```
+
+### Adding Features to the Document
+
+Use the runtime context to add features:
+
+```rust
+fn on_input(
+    &mut self,
+    event: &WorkbenchInputEvent,
+    active_tool: Option<&str>,
+    ctx: &mut WorkbenchRuntimeContext,
+) -> InputResult {
+    match event {
+        WorkbenchInputEvent::MousePress { .. } => {
+            let feature = MyFeature {
+                name: "My Feature".to_string(),
+                value: 42.0,
+                depends_on: None,
+            };
+
+            match ctx.document.add_feature(feature, "My Feature".to_string()) {
+                Ok(feature_id) => {
+                    ctx.log_info(format!("Created feature: {:?}", feature_id));
+                    ctx.document.mark_dirty();
+                    InputResult::consumed()
+                }
+                Err(e) => {
+                    ctx.log_error(format!("Failed to create feature: {}", e));
+                    InputResult::consumed()
+                }
+            }
+        }
+        _ => InputResult::ignored(),
+    }
+}
+```
+
+### Reading Features
+
+Retrieve feature data from the document:
+
+```rust
+// Get feature data as JSON
+if let Some(data) = ctx.document.get_feature_data(feature_id) {
+    // Deserialize to your feature type
+    if let Ok(feature) = MyFeature::from_json(data) {
+        ctx.log_info(format!("Feature value: {}", feature.value));
+    }
+}
+
+// Get feature metadata (name, dirty flag, etc.)
+if let Some(meta) = ctx.document.get_feature_meta(feature_id) {
+    ctx.log_info(format!("Feature name: {}, dirty: {}", meta.name, meta.dirty));
+}
+```
+
+### Updating Features
+
+Update feature data:
+
+```rust
+let updated_feature = MyFeature {
+    name: "Updated Feature".to_string(),
+    value: 100.0,
+    depends_on: None,
+};
+
+if let Err(e) = ctx.document.update_feature_data(feature_id, updated_feature.to_json()) {
+    ctx.log_error(format!("Failed to update feature: {}", e));
+}
+```
+
+### Feature Dependencies
+
+Features can depend on other features. The document automatically tracks dependencies:
+
+```rust
+// Create a dependent feature
+let dependent = MyFeature {
+    name: "Dependent".to_string(),
+    value: 10.0,
+    depends_on: Some(base_feature_id), // Depends on base feature
+};
+
+let dependent_id = ctx.document.add_feature(dependent, "Dependent".to_string())?;
+
+// When base feature is marked dirty, dependent is automatically marked dirty too
+ctx.document.mark_feature_dirty(base_feature_id);
+// dependent_id is now also dirty
+```
+
+### Workbench Storage
+
+Store additional workbench-specific data outside the feature tree:
+
+```rust
+// Store workbench data
+let data = serde_json::json!({
+    "settings": {
+        "grid_snap": true,
+        "snap_distance": 1.0,
+    }
+});
+
+ctx.document.set_workbench_storage(
+    WorkbenchId::from("wb.my-workbench"),
+    data,
+);
+
+// Retrieve workbench data
+if let Some(storage) = ctx.document.get_workbench_storage(&WorkbenchId::from("wb.my-workbench")) {
+    // Use storage.data (serde_json::Value)
+}
+```
+
+### Feature API Summary
+
+| Method                                            | Description                                |
+| ------------------------------------------------- | ------------------------------------------ |
+| `add_feature<F: WorkbenchFeature>(feature, name)` | Add a feature to the document              |
+| `get_feature_data(id)`                            | Get feature data as JSON                   |
+| `get_feature_meta(id)`                            | Get feature metadata (name, dirty, etc.)   |
+| `update_feature_data(id, data)`                   | Update feature data                        |
+| `mark_feature_dirty(id)`                          | Mark feature and dependents as dirty       |
+| `dirty_features()`                                | Get all dirty features                     |
+| `recompute_order()`                               | Get recomputation order (topological sort) |
+| `get_workbench_storage(wb_id)`                    | Get workbench-specific storage             |
+| `set_workbench_storage(wb_id, data)`              | Set workbench-specific storage             |
+
+---
+
 ## Lifecycle Hooks
 
 ### Activation/Deactivation
@@ -325,7 +501,7 @@ fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
     ui.separator();
     ui.heading("My Workbench Info");
     ui.label(format!("Counter: {}", self.counter));
-    
+
     if ui.button("Increment").clicked() {
         self.counter += 1;
     }
@@ -338,7 +514,7 @@ fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
 #[cfg(feature = "egui")]
 fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
     ui.heading("Properties");
-    
+
     if let Some(body_id) = ctx.selected_body_id {
         ui.label(format!("Selected: {:?}", body_id));
     } else {
@@ -353,9 +529,9 @@ fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
 #[cfg(feature = "egui")]
 fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
     let mut changed = false;
-    
+
     ui.heading("My Workbench Settings");
-    
+
     // Return true if any settings were modified
     changed
 }
@@ -469,20 +645,21 @@ impl Workbench for CounterWorkbench {
 
 ### Types
 
-| Type | Description |
-|------|-------------|
-| `Workbench` | Main trait for workbench plugins |
-| `WorkbenchDescriptor` | Metadata (id, label, description) |
-| `WorkbenchContext` | Registration context for tools/commands |
-| `WorkbenchRuntimeContext` | Runtime access to app state |
-| `ToolDescriptor` | Tool metadata (id, label, kind) |
-| `CommandDescriptor` | Command metadata (id, label) |
-| `WorkbenchInputEvent` | Input event types |
-| `InputResult` | Input handling result |
+| Type                      | Description                             |
+| ------------------------- | --------------------------------------- |
+| `Workbench`               | Main trait for workbench plugins        |
+| `WorkbenchDescriptor`     | Metadata (id, label, description)       |
+| `WorkbenchContext`        | Registration context for tools/commands |
+| `WorkbenchRuntimeContext` | Runtime access to app state             |
+| `ToolDescriptor`          | Tool metadata (id, label, kind)         |
+| `CommandDescriptor`       | Command metadata (id, label)            |
+| `WorkbenchInputEvent`     | Input event types                       |
+| `InputResult`             | Input handling result                   |
 
 ### Key Codes
 
 Common key codes available in `KeyCode`:
+
 - Letters: `A` through `Z`
 - Numbers: `Key0` through `Key9`
 - Function keys: `F1` through `F12`
@@ -499,4 +676,3 @@ pub enum MouseButton {
     Other(u16),
 }
 ```
-

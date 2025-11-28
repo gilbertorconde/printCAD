@@ -218,6 +218,65 @@ impl CameraController {
         Some((screen_x, screen_y))
     }
 
+    /// Convert screen coordinates to a world position on a plane.
+    /// Returns the intersection point of the camera ray with the plane.
+    pub fn screen_to_plane(
+        &self,
+        screen_x: f32,
+        screen_y: f32,
+        plane_origin: Vec3,
+        plane_normal: Vec3,
+    ) -> Option<Vec3> {
+        let (w, h) = self.viewport_size;
+        let aspect = if w == 0 || h == 0 {
+            1.0
+        } else {
+            w as f32 / h as f32
+        };
+
+        // Convert screen to NDC
+        let ndc_x = (screen_x - self.viewport_origin.0) / w as f32 * 2.0 - 1.0;
+        let ndc_y = 1.0 - (screen_y - self.viewport_origin.1) / h as f32 * 2.0; // Flip Y
+
+        // Get inverse view-projection
+        let view_proj = self.view_proj(aspect);
+        let inv_view_proj = view_proj.inverse();
+
+        // Create ray in clip space
+        let near_clip = Vec3::new(ndc_x, ndc_y, 0.0).extend(1.0);
+        let far_clip = Vec3::new(ndc_x, ndc_y, 1.0).extend(1.0);
+
+        // Transform to world space
+        let near_world = (inv_view_proj * near_clip);
+        let far_world = (inv_view_proj * far_clip);
+
+        if near_world.w == 0.0 || far_world.w == 0.0 {
+            return None;
+        }
+
+        let near = near_world.truncate() / near_world.w;
+        let far = far_world.truncate() / far_world.w;
+
+        // Ray direction
+        let ray_dir = (far - near).normalize();
+        let ray_origin = self.position_vec();
+
+        // Ray-plane intersection
+        let normal = plane_normal.normalize();
+        let denom = ray_dir.dot(normal);
+
+        if denom.abs() < 1e-6 {
+            return None; // Ray parallel to plane
+        }
+
+        let t = (plane_origin - ray_origin).dot(normal) / denom;
+        if t < 0.0 {
+            return None; // Plane behind ray
+        }
+
+        Some(ray_origin + ray_dir * t)
+    }
+
     fn view_proj(&self, aspect: f32) -> Mat4 {
         let view = self.view_matrix();
         let fov_persp_rad = self.fov_y_deg * DEG_TO_RAD;
@@ -347,6 +406,40 @@ impl CameraController {
     pub fn snap_to_view(&mut self, view: CameraSnapView) {
         let target = self.canonical_quat_to_world(view.orientation());
         self.animation = Some(CameraAnimation::new(self.orientation, target, 0.25));
+    }
+
+    /// Orient camera to look at a plane defined by origin, normal, and up direction.
+    /// The camera will be positioned to look directly at the plane (normal pointing at camera).
+    pub fn orient_to_plane(&mut self, plane_origin: Vec3, plane_normal: Vec3, plane_up: Vec3) {
+        let normal = plane_normal.normalize();
+        let up = plane_up.normalize();
+
+        // Position camera looking at the plane from the normal direction
+        // Camera should be at plane_origin + normal * distance
+        let distance = self.radius.max(2.0);
+        let _camera_pos = plane_origin + normal * distance;
+
+        // Create orientation that looks at the plane
+        // Forward is -normal (looking towards plane)
+        // Right is cross(up, -normal)
+        // Up is cross(-normal, right)
+        let forward = -normal;
+        let right = up.cross(forward).normalize();
+        let camera_up = forward.cross(right).normalize();
+
+        // Build rotation matrix from these vectors
+        let rotation_mat = Mat3::from_cols(right, camera_up, forward);
+        let target_orientation = Quat::from_mat3(&rotation_mat);
+
+        // Update target to plane origin
+        self.target = plane_origin;
+
+        // Animate to new orientation
+        self.animation = Some(CameraAnimation::new(
+            self.orientation,
+            target_orientation,
+            0.3,
+        ));
     }
 
     pub fn apply_rotate_delta(&mut self, delta: &RotateDelta, _settings: &CameraSettings) {

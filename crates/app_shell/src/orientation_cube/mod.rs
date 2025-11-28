@@ -1080,6 +1080,24 @@ fn rgb_to_hex(rgb: [u8; 3]) -> String {
     format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
 }
 
+/// Pre-render all face textures so the first cube draw doesn't block on SVG rasterization.
+pub fn warm_face_textures(ctx: &Context) {
+    for (label, color) in face_texture_palette() {
+        let _ = get_face_texture(ctx, label, color, auto_text_color(color));
+    }
+}
+
+fn face_texture_palette() -> [(&'static str, Color32); 6] {
+    [
+        ("FRONT", Color32::from_rgb(100, 130, 170)),
+        ("REAR", Color32::from_rgb(100, 130, 170)),
+        ("RIGHT", Color32::from_rgb(170, 100, 100)),
+        ("LEFT", Color32::from_rgb(100, 170, 100)),
+        ("TOP", Color32::from_rgb(150, 150, 170)),
+        ("BOTTOM", Color32::from_rgb(120, 120, 140)),
+    ]
+}
+
 fn rasterize_svg(svg: &str) -> Option<ColorImage> {
     let mut opt = Options::default();
     opt.font_family = "DejaVu Sans".into();

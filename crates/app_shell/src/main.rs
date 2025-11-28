@@ -6,8 +6,8 @@ mod ui;
 use anyhow::{Context, Result};
 use camera::CameraController;
 use core_document::{
-    Document, DocumentService, LogLevel, MouseButton as WbMouseButton, ToolDescriptor, WorkbenchId,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BodyId, Document, DocumentService, LogLevel, MouseButton as WbMouseButton, ToolDescriptor,
+    WorkbenchFeature, WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::Vec3;
 use kernel_api::TriMesh;
@@ -20,7 +20,7 @@ use render_vk::{
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::time::{Duration, Instant};
 use tracing::error;
-use ui::{ActiveTool, ActiveWorkbench, UiLayer};
+use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
 use uuid::Uuid;
 use wb_part::PartDesignWorkbench;
 use wb_sketch::SketchWorkbench;
@@ -109,7 +109,7 @@ struct PrintCadApp {
     available_gpus: Vec<String>,
     fps_accum_time: f32,
     fps_frame_count: u32,
-    // Selected body ID
+    // Selected body ID (for highlighting/selection)
     selected_body: Option<Uuid>,
     // Hovered body ID (for highlighting)
     hovered_body: Option<Uuid>,
@@ -123,8 +123,12 @@ struct PrintCadApp {
     // Document and workbench registry
     document: Document,
     registry: DocumentService,
-    // Currently active workbench
+    // Currently active workbench (determines which tools are visible)
     active_workbench: ActiveWorkbench,
+    // Active document object (selected feature in tree - separate from editing mode)
+    active_document_object: Option<core_document::FeatureId>,
+    active_body_id: Option<BodyId>,
+    tree_selection: Option<TreeItemId>,
 }
 
 impl PrintCadApp {
@@ -170,6 +174,9 @@ impl PrintCadApp {
             document,
             registry,
             active_workbench: ActiveWorkbench::Sketch,
+            active_document_object: None,
+            active_body_id: None,
+            tree_selection: Some(TreeItemId::DocumentRoot),
         }
     }
 
@@ -424,128 +431,236 @@ impl ApplicationHandler for PrintCadApp {
 
         self.last_frame_time = Some(now);
 
-        let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
-            (Some(window), Some(renderer)) => (window, renderer),
-            _ => return,
-        };
-
-        // Update camera animation
-        self.camera.update(dt_secs);
-
-        // Apply highlight states to bodies
-        self.frame_submission.bodies = self
-            .demo_bodies
-            .iter()
-            .map(|body| {
-                let is_hovered = self.hovered_body == Some(body.id);
-                let is_selected = self.selected_body == Some(body.id);
-                let highlight = match (is_hovered, is_selected) {
-                    (true, true) => HighlightState::HoveredAndSelected,
-                    (true, false) => HighlightState::Hovered,
-                    (false, true) => HighlightState::Selected,
-                    (false, false) => HighlightState::None,
-                };
-                BodySubmission {
-                    highlight,
-                    ..body.clone()
-                }
-            })
-            .collect();
-        self.frame_submission.view_proj = self.camera.view_projection();
-        self.frame_submission.camera_pos = self.camera.position();
-        self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
-
-        // Track workbench change for deferred handling (after renderer borrow ends)
+        let mut new_body_requested_flag = false;
         let mut workbench_change: Option<(ActiveWorkbench, ActiveWorkbench)> = None;
 
-        if let Some(ui_layer) = self.ui_layer.as_mut() {
-            let orientation_input = OrientationCubeInput {
-                camera_orientation: self.camera.orientation(),
-                axis_system: self.camera.axis_system(),
+        {
+            let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
+                (Some(window), Some(renderer)) => (window, renderer),
+                _ => return,
             };
 
-            // Get pivot screen position for visual indicator
-            let pivot_screen_pos = self
-                .camera
-                .active_pivot()
-                .and_then(|pivot| self.camera.world_to_screen(pivot));
+            // Update camera animation
+            self.camera.update(dt_secs);
 
-            let ui_result = ui_layer.run(
-                window,
-                &mut self.user_settings,
-                &self.sketch_tools,
-                &self.part_tools,
-                Some(&orientation_input),
-                self.current_fps,
-                self.gpu_name.as_deref(),
-                &self.available_gpus,
-                self.hovered_world_pos,
-                pivot_screen_pos,
-                self.camera.axis_system(),
-            );
-            self.frame_submission.egui = Some(ui_result.submission);
-            self.active_tool = ui_result.active_tool;
+            // Collect sketch features from document and convert to meshes
+            let sketch_meshes: Vec<BodySubmission> = self
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter_map(|(feature_id, node)| {
+                    // Only process sketch features
+                    if node.workbench_id.as_str() != "wb.sketch" {
+                        return None;
+                    }
 
-            // Track workbench change
-            if ui_result.workbench_changed {
-                workbench_change = Some((self.active_workbench, ui_result.active_workbench));
-            }
-            self.active_workbench = ui_result.active_workbench;
+                    // Deserialize sketch feature
+                    let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
 
-            self.frame_submission.viewport_rect = Some(RenderViewportRect {
-                x: ui_result.viewport.x,
-                y: ui_result.viewport.y,
-                width: ui_result.viewport.width,
-                height: ui_result.viewport.height,
-            });
-            self.camera.update_viewport(
-                (ui_result.viewport.x, ui_result.viewport.y),
-                (
-                    ui_result.viewport.width.max(1),
-                    ui_result.viewport.height.max(1),
-                ),
-            );
+                    // Convert to mesh
+                    let mesh = wb_sketch::render::sketch_to_mesh(
+                        &sketch_feature.sketch,
+                        &sketch_feature.plane,
+                    );
 
-            // Handle orientation cube interactions
-            if let Some(snap_view) = ui_result.snap_to_view {
-                self.camera.snap_to_view(snap_view);
-            }
-            if let Some(ref rotate_delta) = ui_result.rotate_delta {
-                self.camera
-                    .apply_rotate_delta(rotate_delta, &self.user_settings.camera);
-            }
+                    // Create body submission for sketch (use feature ID UUID as body ID)
+                    Some(BodySubmission {
+                        id: feature_id.0,
+                        mesh,
+                        color: [0.2, 0.8, 0.2], // Green color for sketches
+                        highlight: HighlightState::None,
+                    })
+                })
+                .collect();
 
-            if ui_result.settings_changed {
-                self.camera.sync_with_settings(&self.user_settings.camera);
-                if let Err(err) = self.settings_store.save(&self.user_settings) {
-                    app_log::warn(format!("Failed to save settings: {err}"));
+            // Apply highlight states to bodies
+            let mut bodies: Vec<BodySubmission> = self
+                .demo_bodies
+                .iter()
+                .map(|body| {
+                    let is_hovered = self.hovered_body == Some(body.id);
+                    let is_selected = self.selected_body == Some(body.id);
+                    let highlight = match (is_hovered, is_selected) {
+                        (true, true) => HighlightState::HoveredAndSelected,
+                        (true, false) => HighlightState::Hovered,
+                        (false, true) => HighlightState::Selected,
+                        (false, false) => HighlightState::None,
+                    };
+                    BodySubmission {
+                        highlight,
+                        ..body.clone()
+                    }
+                })
+                .collect();
+
+            // Add sketch meshes to bodies
+            bodies.extend(sketch_meshes);
+            self.frame_submission.bodies = bodies;
+            self.frame_submission.view_proj = self.camera.view_projection();
+            self.frame_submission.camera_pos = self.camera.position();
+            self.frame_submission.lighting =
+                lighting_data_from_settings(&self.user_settings.lighting);
+
+            if let Some(ui_layer) = self.ui_layer.as_mut() {
+                let orientation_input = OrientationCubeInput {
+                    camera_orientation: self.camera.orientation(),
+                    axis_system: self.camera.axis_system(),
+                };
+
+                // Get pivot screen position for visual indicator
+                let pivot_screen_pos = self
+                    .camera
+                    .active_pivot()
+                    .and_then(|pivot| self.camera.world_to_screen(pivot));
+
+                // Check if sketch workbench has an active sketch
+                let has_active_sketch = if self.active_workbench == ActiveWorkbench::Sketch {
+                    // Check document for sketch features
+                    self.document
+                        .feature_tree()
+                        .all_nodes()
+                        .any(|(_, node)| node.workbench_id.as_str() == "wb.sketch")
+                } else {
+                    true // Part Design always has tools enabled
+                };
+
+                let has_body = self.document.has_bodies();
+
+                let ui_result = ui_layer.run(
+                    window,
+                    &mut self.user_settings,
+                    &self.sketch_tools,
+                    &self.part_tools,
+                    Some(&orientation_input),
+                    self.current_fps,
+                    self.gpu_name.as_deref(),
+                    &self.available_gpus,
+                    self.hovered_world_pos,
+                    pivot_screen_pos,
+                    self.camera.axis_system(),
+                    has_active_sketch,
+                    has_body,
+                    &mut self.document,
+                    &mut self.registry,
+                    self.tree_selection,
+                    self.active_document_object,
+                );
+                self.frame_submission.egui = Some(ui_result.submission);
+                self.active_tool = ui_result.active_tool;
+
+                // Track workbench change
+                if ui_result.workbench_changed {
+                    workbench_change = Some((self.active_workbench, ui_result.active_workbench));
                 }
+                self.active_workbench = ui_result.active_workbench;
+
+                self.frame_submission.viewport_rect = Some(RenderViewportRect {
+                    x: ui_result.viewport.x,
+                    y: ui_result.viewport.y,
+                    width: ui_result.viewport.width,
+                    height: ui_result.viewport.height,
+                });
+                self.camera.update_viewport(
+                    (ui_result.viewport.x, ui_result.viewport.y),
+                    (
+                        ui_result.viewport.width.max(1),
+                        ui_result.viewport.height.max(1),
+                    ),
+                );
+
+                // Handle orientation cube interactions
+                if let Some(snap_view) = ui_result.snap_to_view {
+                    self.camera.snap_to_view(snap_view);
+                }
+                if let Some(ref rotate_delta) = ui_result.rotate_delta {
+                    self.camera
+                        .apply_rotate_delta(rotate_delta, &self.user_settings.camera);
+                }
+
+                if ui_result.settings_changed {
+                    self.camera.sync_with_settings(&self.user_settings.camera);
+                    if let Err(err) = self.settings_store.save(&self.user_settings) {
+                        app_log::warn(format!("Failed to save settings: {err}"));
+                    }
+                }
+
+                if ui_result.new_body_requested {
+                    new_body_requested_flag = true;
+                }
+
+                if ui_result.finish_sketch_requested {
+                    app_log::info("Finish sketch requested (not wired yet)");
+                }
+
+                if let Some(selection) = ui_result.tree_selection {
+                    self.tree_selection = Some(selection);
+                    match selection {
+                        TreeItemId::DocumentRoot => {
+                            self.active_document_object = None;
+                            self.active_body_id = None;
+                            self.selected_body = None;
+                        }
+                        TreeItemId::Body(id) => {
+                            self.active_body_id = Some(id);
+                            self.active_document_object = None;
+                            self.selected_body = Some(id.0);
+                        }
+                        TreeItemId::Feature(id) => {
+                            if self.active_document_object != Some(id) {
+                                app_log::info(format!("Selected feature {:?}", id));
+                            }
+                            self.active_document_object = Some(id);
+                        }
+                    }
+                }
+
+                if let Some(item) = ui_result.tree_activation {
+                    match item {
+                        TreeItemId::Feature(id) => {
+                            app_log::info(format!(
+                                "Activated feature {:?} (double-click in tree)",
+                                id
+                            ));
+                        }
+                        TreeItemId::Body(id) => {
+                            app_log::info(format!(
+                                "Activated body {:?} (double-click in tree)",
+                                id
+                            ));
+                        }
+                        TreeItemId::DocumentRoot => {}
+                    }
+                }
+            } else {
+                self.frame_submission.egui = None;
+                self.frame_submission.viewport_rect = None;
             }
-        } else {
-            self.frame_submission.egui = None;
-            self.frame_submission.viewport_rect = None;
+
+            window.request_redraw();
+
+            if let Err(err) = renderer.render(&self.frame_submission) {
+                app_log::error(format!("Render failure: {err}"));
+                event_loop.exit();
+                return;
+            }
+
+            // Retrieve pick result from GPU picking (processed during render)
+            let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
+            self.hovered_body = pick_result.body_id;
+            self.hovered_world_pos = pick_result.world_position;
+
+            // Set orbit pivot based on what's under the cursor
+            // If hovering over geometry, orbit around that point; otherwise use default target
+            if let Some(world_pos) = pick_result.world_position {
+                self.camera
+                    .set_orbit_pivot(Some(Vec3::from_array(world_pos)));
+            } else {
+                self.camera.set_orbit_pivot(None);
+            }
         }
 
-        window.request_redraw();
-
-        if let Err(err) = renderer.render(&self.frame_submission) {
-            app_log::error(format!("Render failure: {err}"));
-            event_loop.exit();
-            return;
-        }
-
-        // Retrieve pick result from GPU picking (processed during render)
-        let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
-        self.hovered_body = pick_result.body_id;
-        self.hovered_world_pos = pick_result.world_position;
-
-        // Set orbit pivot based on what's under the cursor
-        // If hovering over geometry, orbit around that point; otherwise use default target
-        if let Some(world_pos) = pick_result.world_position {
-            self.camera
-                .set_orbit_pivot(Some(Vec3::from_array(world_pos)));
-        } else {
-            self.camera.set_orbit_pivot(None);
+        if new_body_requested_flag {
+            self.create_new_body();
         }
 
         // Now handle workbench change (after renderer borrow ends)
@@ -560,6 +675,19 @@ impl ApplicationHandler for PrintCadApp {
 }
 
 impl PrintCadApp {
+    fn create_new_body(&mut self) {
+        let body_id = self.document.create_body(None);
+        if let Some(body) = self.document.bodies().iter().find(|b| b.id == body_id) {
+            app_log::info(format!("Created {}", body.name));
+        } else {
+            app_log::info(format!("Created body {:?}", body_id));
+        }
+        self.active_body_id = Some(body_id);
+        self.active_document_object = None;
+        self.tree_selection = Some(TreeItemId::Body(body_id));
+        self.selected_body = Some(body_id.0);
+    }
+
     fn handle_tool_input(&mut self, event: &WindowEvent) -> bool {
         // Convert winit event to workbench input event
         let wb_event = match self.convert_to_wb_event(event) {
@@ -591,10 +719,42 @@ impl PrintCadApp {
         let cam_pos = self.camera.position();
         let cam_target = self.camera.target();
         let vp = self.camera.viewport_info();
-        let hovered_world_pos = self.hovered_world_pos;
+        let mut hovered_world_pos = self.hovered_world_pos;
         let hovered_body_id = self.hovered_body;
         let selected_body_id = self.selected_body;
         let cursor_viewport_pos = self.cursor_in_viewport;
+
+        // For sketch workbench, if we have a mouse event with viewport coordinates
+        // and no hovered world position, try to project onto the active sketch plane
+        if wb_id.as_str() == "wb.sketch" {
+            if let WorkbenchInputEvent::MousePress { viewport_pos, .. } = event {
+                if hovered_world_pos.is_none() {
+                    // Try to get active sketch plane from document
+                    if let Some((_, node)) = self
+                        .document
+                        .feature_tree()
+                        .all_nodes()
+                        .find(|(_, n)| n.workbench_id.as_str() == "wb.sketch")
+                    {
+                        if let Ok(sketch_feature) = wb_sketch::SketchFeature::from_json(&node.data)
+                        {
+                            let plane_origin = glam::Vec3::from_array(sketch_feature.plane.origin);
+                            let plane_normal = glam::Vec3::from_array(sketch_feature.plane.normal);
+
+                            // Use camera controller to project viewport to plane
+                            if let Some(world_pos) = self.camera.screen_to_plane(
+                                viewport_pos.0,
+                                viewport_pos.1,
+                                plane_origin,
+                                plane_normal,
+                            ) {
+                                hovered_world_pos = Some(world_pos.to_array());
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Get workbench and call hook
         if let Ok(wb) = self.registry.workbench_mut(wb_id) {
@@ -610,6 +770,16 @@ impl PrintCadApp {
             ctx.cursor_viewport_pos = cursor_viewport_pos;
 
             let result = wb.on_input(event, active_tool, &mut ctx);
+
+            // Handle camera orientation request
+            if let Some(orient_req) = ctx.camera_orient_request.take() {
+                self.camera.orient_to_plane(
+                    glam::Vec3::from_array(orient_req.plane_origin),
+                    glam::Vec3::from_array(orient_req.plane_normal),
+                    glam::Vec3::from_array(orient_req.plane_up),
+                );
+            }
+
             Self::flush_logs(ctx.drain_logs());
             result
         } else {

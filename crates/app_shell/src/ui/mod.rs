@@ -1,3 +1,4 @@
+mod feature_tree;
 mod layout;
 mod settings_panel;
 
@@ -43,6 +44,10 @@ pub struct UiFrameResult {
     pub snap_to_view: Option<CameraSnapView>,
     pub rotate_delta: Option<RotateDelta>,
     pub viewport: ViewportRect,
+    pub finish_sketch_requested: bool,
+    pub tree_selection: Option<feature_tree::TreeItemId>,
+    pub tree_activation: Option<feature_tree::TreeItemId>,
+    pub new_body_requested: bool,
 }
 
 pub struct UiLayer {
@@ -66,6 +71,8 @@ impl UiLayer {
             window.theme(),
             None,
         );
+
+        orientation_cube::warm_face_textures(&ctx);
 
         Self {
             ctx,
@@ -100,6 +107,12 @@ impl UiLayer {
         hovered_point: Option<[f32; 3]>,
         pivot_screen_pos: Option<(f32, f32)>,
         axis_system: AxisSystem,
+        has_active_sketch: bool,
+        has_body: bool,
+        document: &mut core_document::Document,
+        registry: &mut core_document::DocumentService,
+        active_tree_selection: Option<feature_tree::TreeItemId>,
+        active_document_object: Option<core_document::FeatureId>,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let prev_workbench = self.active_workbench;
@@ -112,15 +125,45 @@ impl UiLayer {
         let mut settings_changed = false;
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
+        let mut finish_requested = false;
+
+        let mut tree_selection = None;
+        let mut tree_activation = None;
+        let mut new_body_requested = false;
 
         let full_output = self.ctx.run(raw_input, |ctx| {
-            layout::draw_top_panel(ctx, &mut active_workbench, &mut show_settings);
             let tools = match active_workbench {
                 ActiveWorkbench::Sketch => sketch_tools,
                 ActiveWorkbench::PartDesign => part_tools,
             };
-            layout::draw_left_panel(ctx, active_workbench, &mut active_tool, tools);
-            layout::draw_right_panel(ctx);
+
+            new_body_requested = layout::draw_top_panel(
+                ctx,
+                &mut active_workbench,
+                &mut show_settings,
+                &mut active_tool,
+                tools,
+                has_active_sketch,
+                has_body,
+            );
+            let left_panel = layout::draw_left_panel(
+                ctx,
+                active_workbench,
+                document,
+                registry,
+                active_tree_selection,
+                active_document_object,
+            );
+            finish_requested = left_panel.finish_sketch_requested;
+            tree_selection = left_panel.tree_selection;
+            tree_activation = left_panel.tree_activation;
+            layout::draw_right_panel(
+                ctx,
+                active_workbench,
+                document,
+                registry,
+                active_document_object,
+            );
             settings_changed |= settings_panel::draw_settings_window(
                 ctx,
                 settings,
@@ -181,6 +224,12 @@ impl UiLayer {
             snap_to_view: cube_result.snap_to_view,
             rotate_delta: cube_result.rotate_delta,
             viewport,
+            finish_sketch_requested: finish_requested,
+            tree_selection,
+            tree_activation,
+            new_body_requested,
         }
     }
 }
+
+pub use feature_tree::TreeItemId;

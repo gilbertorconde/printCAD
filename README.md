@@ -62,8 +62,9 @@ printCAD/
 │   ├── kernel_occt/     # OpenCASCADE kernel implementation
 │   ├── render_vk/       # Vulkan rendering backend
 │   ├── settings/        # Application settings persistence
-│   ├── wb_part/         # Part Design workbench
-│   └── wb_sketch/       # Sketch workbench
+│   └── workbenches/
+│       ├── wb_part/     # Part Design workbench
+│       └── wb_sketch/   # Sketch workbench
 └── docs/
     ├── plan.md          # Detailed architecture and roadmap
     └── WORKBENCH_GUIDE.md # Guide for creating custom workbenches

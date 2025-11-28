@@ -4,7 +4,7 @@
 //! the application shell: logging, document access, camera/picking info, and
 //! overlay drawing.
 
-use crate::Document;
+use crate::{Document, FeatureId};
 
 /// Log levels for workbench messages.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,8 +55,25 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// ID of the currently selected body (if any).
     pub selected_body_id: Option<uuid::Uuid>,
 
+    /// Active document object (selected feature in tree - separate from editing mode).
+    pub active_document_object: Option<FeatureId>,
+
     /// Current cursor position in viewport-local coordinates (if inside viewport).
     pub cursor_viewport_pos: Option<(f32, f32)>,
+
+    /// Request camera orientation to a plane (set by workbench, read by host).
+    pub camera_orient_request: Option<CameraOrientRequest>,
+
+    /// Request to exit sketch mode (set by workbench UI, read by host).
+    pub finish_sketch_requested: bool,
+}
+
+/// Request to orient camera to a specific plane.
+#[derive(Debug, Clone)]
+pub struct CameraOrientRequest {
+    pub plane_origin: [f32; 3],
+    pub plane_normal: [f32; 3],
+    pub plane_up: [f32; 3],
 }
 
 impl<'a> WorkbenchRuntimeContext<'a> {
@@ -77,6 +94,9 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             hovered_body_id: None,
             selected_body_id: None,
             cursor_viewport_pos: None,
+            camera_orient_request: None,
+            finish_sketch_requested: false,
+            active_document_object: None,
         }
     }
 
@@ -125,6 +145,20 @@ impl<'a> WorkbenchRuntimeContext<'a> {
         let origin = self.camera_position;
         let direction = [0.0, 0.0, -1.0];
         (origin, direction)
+    }
+
+    /// Convert viewport coordinates to a point on a plane in world space.
+    /// Returns the intersection point of the camera ray with the plane.
+    /// (Stub: actual implementation requires inverse view-projection from host.)
+    pub fn viewport_to_plane(
+        &self,
+        _viewport_pos: (f32, f32),
+        _plane_origin: [f32; 3],
+        _plane_normal: [f32; 3],
+    ) -> Option<[f32; 3]> {
+        // TODO: Host should provide the actual transform
+        // For now, return None - host will need to implement this
+        None
     }
 }
 

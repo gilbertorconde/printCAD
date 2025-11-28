@@ -10,5 +10,10 @@ default = ["egui"]
 egui = ["core_document/egui", "dep:egui"]
 
 [dependencies]
-core_document = { path = "../core_document" }
+core_document = { path = "../../core_document" }
 egui = { workspace = true, optional = true }
+glam.workspace = true
+uuid.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+kernel_api = { path = "../../kernel_api" }
