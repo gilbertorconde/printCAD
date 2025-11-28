@@ -50,12 +50,11 @@ impl DocumentTree {
         let mut roots_by_body: HashMap<Option<BodyId>, Vec<TreeNode>> = HashMap::new();
 
         // Helper to group feature roots under their owning body (or None for document-level).
-        let mut push_root =
-            |body: Option<BodyId>,
-             node: TreeNode,
-             map: &mut HashMap<Option<BodyId>, Vec<TreeNode>>| {
-                map.entry(body).or_default().push(node);
-            };
+        let push_root = |body: Option<BodyId>,
+                         node: TreeNode,
+                         map: &mut HashMap<Option<BodyId>, Vec<TreeNode>>| {
+            map.entry(body).or_default().push(node);
+        };
 
         // First, build subtrees for all root features.
         for &root_id in feature_tree.roots() {
@@ -173,7 +172,6 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>
     let mut result = TreeUiResult::default();
 
     // Document root behaves like a top-level collapsible item.
-    let is_doc_selected = selected == Some(TreeItemId::DocumentRoot);
     let header_text = format!("Document: {}", model.document_label());
     let collapsing = egui::CollapsingHeader::new(header_text)
         .id_salt("document_root")

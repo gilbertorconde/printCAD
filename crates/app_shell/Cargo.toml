@@ -14,6 +14,7 @@ tracing-subscriber.workspace = true
 winit.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
+workbenches = { path = "../workbenches" }
 wb_part = { path = "../workbenches/wb_part", features = ["egui"] }
 wb_sketch = { path = "../workbenches/wb_sketch", features = ["egui"] }
 kernel_api = { path = "../kernel_api" }

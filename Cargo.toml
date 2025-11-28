@@ -5,8 +5,7 @@ members = [
   "crates/kernel_api",
   "crates/kernel_occt",
   "crates/render_vk",
-  "crates/workbenches/wb_part",
-  "crates/workbenches/wb_sketch",
+  "crates/workbenches",
   "crates/settings",
   "crates/axes",
 ]
@@ -40,3 +39,4 @@ glam = { version = "0.30.9", features = ["std"] }
 tar = "0.4.44"
 flate2 = "1.1.5"
 zstd = "0.13.3"
+once_cell = "1.19"

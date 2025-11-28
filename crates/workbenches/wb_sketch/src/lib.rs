@@ -3,9 +3,8 @@ pub mod render;
 mod sketch;
 
 use core_document::{
-    BodyId, CommandDescriptor, FeatureId, InputResult, ToolDescriptor, ToolKind, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BodyId, CommandDescriptor, FeatureId, InputResult, ToolDescriptor, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use feature::SketchFeature;
 use sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
@@ -127,19 +126,19 @@ impl Workbench for SketchWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
-        // Register "Create Sketch" as an action (checkbox-like behavior)
-        context.register_tool(ToolDescriptor::new(
+        // Register "Create Sketch" as an action (fire-and-forget button)
+        context.register_tool(ToolDescriptor::new_action(
             "sketch.create",
             "Create Sketch",
-            ToolKind::Action,
+            Some("sketch"),
         ));
-        // Register sketch tools (radio-like behavior)
-        context.register_tool(ToolDescriptor::new("sketch.line", "Line", ToolKind::Sketch));
-        context.register_tool(ToolDescriptor::new("sketch.arc", "Arc", ToolKind::Sketch));
+        // Register sketch tools (radio button behavior - only one active at a time)
+        context.register_tool(ToolDescriptor::new("sketch.line", "Line", Some("sketch")));
+        context.register_tool(ToolDescriptor::new("sketch.arc", "Arc", Some("sketch")));
         context.register_tool(ToolDescriptor::new(
             "sketch.circle",
             "Circle",
-            ToolKind::Sketch,
+            Some("sketch"),
         ));
         context.register_command(CommandDescriptor::new(
             "sketch.constraints.solve",
@@ -230,7 +229,7 @@ impl Workbench for SketchWorkbench {
         match event {
             WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Left,
-                viewport_pos: _,
+                viewport_pos,
             } => {
                 // Get active sketch to access its plane
                 let sketch_feature = match self.get_active_sketch(ctx) {
@@ -241,19 +240,19 @@ impl Workbench for SketchWorkbench {
                     }
                 };
 
-                // Convert viewport position to sketch coordinates
-                // Use hovered_world_pos if available (from picking), otherwise project onto plane
-                let world_pos = if let Some(hovered) = ctx.hovered_world_pos {
-                    hovered
-                } else {
-                    // Project viewport coordinates onto sketch plane
-                    // For now, use a simple approach: if we can't get world pos, use viewport center
-                    // TODO: Implement proper viewport-to-plane projection using camera controller
-                    let plane_origin = glam::Vec3::from_array(sketch_feature.plane.origin);
-                    let _plane_normal = glam::Vec3::from_array(sketch_feature.plane.normal);
-
-                    // Simple fallback: use plane origin if we can't project
-                    plane_origin.to_array()
+                // Convert viewport position to sketch coordinates.
+                // If we don't have a projected world position, don't fall back to the
+                // plane origin (that would always give (0, 0) in sketch space).
+                let world_pos = match ctx.hovered_world_pos {
+                    Some(p) => p,
+                    None => {
+                        ctx.log_error(format!(
+                            "Failed to project cursor onto sketch plane (no hovered_world_pos). \
+viewport_pos = ({:.1}, {:.1})",
+                            viewport_pos.0, viewport_pos.1
+                        ));
+                        return InputResult::consumed();
+                    }
                 };
 
                 // Convert world position to sketch 2D coordinates
@@ -264,6 +263,17 @@ impl Workbench for SketchWorkbench {
                 let sketch_x = world_vec.dot(plane_x);
                 let sketch_y = world_vec.dot(plane_y);
                 let sketch_pos = sketch::Vec2D::new(sketch_x, sketch_y);
+
+                ctx.log_info(format!(
+                    "Sketch click: viewport=({:.1}, {:.1}) world=({:.2}, {:.2}, {:.2}) sketch=({:.2}, {:.2})",
+                    viewport_pos.0,
+                    viewport_pos.1,
+                    world_pos[0],
+                    world_pos[1],
+                    world_pos[2],
+                    sketch_x,
+                    sketch_y
+                ));
 
                 match tool {
                     "sketch.line" => {
@@ -533,6 +543,7 @@ impl Workbench for SketchWorkbench {
                 ui.label("No geometry yet. Use the toolbar to add lines, arcs, or circles.");
             } else {
                 egui::ScrollArea::vertical()
+                    .id_source("sketch_geometry_elements")
                     .max_height(240.0)
                     .show(ui, |ui| {
                         for (idx, geom) in sketch.geometry.iter().enumerate() {
@@ -591,6 +602,19 @@ impl Workbench for SketchWorkbench {
     #[cfg(feature = "egui")]
     fn wants_right_panel(&self) -> bool {
         self.active_sketch_id.is_some()
+    }
+
+    fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        match tool_id {
+            "sketch.create" => {
+                // "Create Sketch" requires a body to attach the sketch to
+                ctx.selected_body_id.is_some()
+            }
+            _ => {
+                // Other sketch tools (line, arc, circle) require an active sketch
+                self.active_sketch_id.is_some()
+            }
+        }
     }
 
     #[cfg(feature = "egui")]

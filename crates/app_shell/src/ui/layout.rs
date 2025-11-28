@@ -1,10 +1,10 @@
 use axes::AxisSystem;
+use core_document::{DocumentService, WorkbenchId};
 use egui::{self, Color32, Context};
 
 use crate::log_panel;
 use glam::Vec3;
-
-use core_document::ToolDescriptor;
+use workbenches::REGISTERED_WORKBENCHES;
 
 use super::{feature_tree, ActiveTool, ActiveWorkbench};
 
@@ -21,9 +21,10 @@ pub fn draw_top_panel(
     active_workbench: &mut ActiveWorkbench,
     show_settings: &mut bool,
     active_tool: &mut ActiveTool,
-    tools: &[ToolDescriptor],
-    has_active_sketch: bool,
-    has_body: bool,
+    registry: &mut DocumentService,
+    document: &mut core_document::Document,
+    active_document_object: Option<core_document::FeatureId>,
+    selected_body_id: Option<core_document::BodyId>,
 ) -> TopBarResult {
     let mut result = TopBarResult {
         open_requested: false,
@@ -48,12 +49,12 @@ pub fn draw_top_panel(
                     }
                     ui.separator();
                     ui.label("Workbench:");
-                    ui.selectable_value(active_workbench, ActiveWorkbench::Sketch, "Sketch");
-                    ui.selectable_value(
-                        active_workbench,
-                        ActiveWorkbench::PartDesign,
-                        "Part Design",
-                    );
+                    let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+                    for wb in workbenches.iter() {
+                        let wb_id = WorkbenchId::from(wb.id.as_str());
+                        let wb_active = ActiveWorkbench(wb_id.clone());
+                        ui.selectable_value(active_workbench, wb_active, &wb.label);
+                    }
                 });
 
                 ui.add_space(6.0);
@@ -83,27 +84,41 @@ pub fn draw_top_panel(
                 ui.add_space(6.0);
 
                 ui.horizontal_wrapped(|ui| {
-                    for tool in tools {
+                    // Collect tools into Vec first to release the immutable borrow
+                    let tools: Vec<_> = match registry.tools_for(&active_workbench.0) {
+                        Ok(t) => t.to_vec(),
+                        Err(_) => return,
+                    };
+
+                    // Build a minimal runtime context for tool enabling checks
+                    let cam_pos = [0.0, 0.0, 5.0]; // Placeholder
+                    let cam_target = [0.0, 0.0, 0.0]; // Placeholder
+                    let viewport = (0, 0, 1920, 1080); // Placeholder
+                    let mut wb_ctx = core_document::WorkbenchRuntimeContext::new(
+                        document, cam_pos, cam_target, viewport,
+                    );
+                    wb_ctx.active_document_object = active_document_object;
+                    wb_ctx.selected_body_id = selected_body_id.map(|id| id.0);
+
+                    // Get workbench once for tool enabling checks (now we can get mutable borrow)
+                    let workbench = match registry.workbench_mut(&active_workbench.0) {
+                        Ok(wb) => wb,
+                        Err(_) => return,
+                    };
+
+                    for tool in &tools {
                         let is_active = active_tool
                             .id
                             .as_deref()
                             .map(|id| id == tool.id)
                             .unwrap_or(false);
 
-                        let enabled = match tool.kind {
-                            core_document::ToolKind::Action => {
-                                if tool.id == "sketch.create" {
-                                    has_body
-                                } else {
-                                    true
-                                }
-                            }
-                            _ => has_active_sketch,
-                        };
+                        // Check with workbench if tool is enabled
+                        let enabled = workbench.is_tool_enabled(&tool.id, &wb_ctx);
 
-                        // Actions (like "Create Sketch") should behave like simple buttons,
-                        // not toggle/radio tools.
-                        let button = if tool.kind == core_document::ToolKind::Action {
+                        // Action tools behave like simple buttons (fire-and-forget),
+                        // Radio tools behave like toggle buttons (only one active at a time).
+                        let button = if tool.behavior == core_document::ToolBehavior::Action {
                             ui.add_enabled(enabled, egui::Button::new(&tool.label))
                         } else {
                             ui.add_enabled(
@@ -113,13 +128,15 @@ pub fn draw_top_panel(
                         };
 
                         if button.clicked() && enabled {
-                            if tool.kind == core_document::ToolKind::Action {
+                            if tool.behavior == core_document::ToolBehavior::Action {
                                 // Fire-and-forget: always select the action tool for this frame.
                                 // The host will clear it after handling the input.
                                 active_tool.id = Some(tool.id.clone());
                             } else if is_active {
+                                // Radio behavior: clicking an active tool deactivates it
                                 active_tool.id = None;
                             } else {
+                                // Radio behavior: clicking an inactive tool activates it
                                 active_tool.id = Some(tool.id.clone());
                             }
                         }
@@ -174,12 +191,7 @@ pub fn draw_left_panel(
             ui.separator();
 
             // Call workbench's ui_left_panel hook
-            let wb_id = match active_workbench {
-                ActiveWorkbench::Sketch => core_document::WorkbenchId::from("wb.sketch"),
-                ActiveWorkbench::PartDesign => core_document::WorkbenchId::from("wb.part-design"),
-            };
-
-            if let Ok(wb) = registry.workbench_mut(&wb_id) {
+            if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
                 // Build a minimal runtime context for UI hooks
                 let cam_pos = [0.0, 0.0, 5.0]; // Placeholder
                 let cam_target = [0.0, 0.0, 0.0]; // Placeholder
@@ -208,13 +220,8 @@ pub fn draw_right_panel(
     registry: &mut core_document::DocumentService,
     active_document_object: Option<core_document::FeatureId>,
 ) {
-    let wb_id = match active_workbench {
-        ActiveWorkbench::Sketch => core_document::WorkbenchId::from("wb.sketch"),
-        ActiveWorkbench::PartDesign => core_document::WorkbenchId::from("wb.part-design"),
-    };
-
     let wants_panel = registry
-        .workbench_mut(&wb_id)
+        .workbench_mut(&active_workbench.0)
         .map(|wb| wb.wants_right_panel())
         .unwrap_or(false);
 
@@ -226,7 +233,7 @@ pub fn draw_right_panel(
         .resizable(true)
         .default_width(280.0)
         .show(ctx, |ui| {
-            if let Ok(wb) = registry.workbench_mut(&wb_id) {
+            if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
                 let cam_pos = [0.0, 0.0, 5.0];
                 let cam_target = [0.0, 0.0, 0.0];
                 let viewport = (0, 0, 1920, 1080);

@@ -6,8 +6,8 @@ mod ui;
 use anyhow::{Context, Result};
 use camera::CameraController;
 use core_document::{
-    BodyId, Document, DocumentService, LogLevel, MouseButton as WbMouseButton, ToolDescriptor,
-    WorkbenchFeature, WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BodyId, Document, DocumentService, LogLevel, MouseButton as WbMouseButton, WorkbenchFeature,
+    WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::Vec3;
 use log_panel as app_log;
@@ -22,14 +22,13 @@ use std::time::{Duration, Instant};
 use tracing::error;
 use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
 use uuid::Uuid;
-use wb_part::PartDesignWorkbench;
-use wb_sketch::SketchWorkbench;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     window::{Window, WindowAttributes, WindowId},
 };
+use workbenches::register_all_workbenches;
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -40,20 +39,7 @@ fn main() -> Result<()> {
 
     let document = Document::new("Untitled");
     let mut registry = DocumentService::default();
-    registry.register_workbench(Box::new(SketchWorkbench::default()))?;
-    registry.register_workbench(Box::new(PartDesignWorkbench::default()))?;
-
-    // Cache tool descriptors for built-in workbenches (used by UI layer).
-    let sketch_id = WorkbenchId::from("wb.sketch");
-    let part_id = WorkbenchId::from("wb.part-design");
-    let sketch_tools = registry
-        .tools_for(&sketch_id)
-        .map(|t| t.to_vec())
-        .unwrap_or_default();
-    let part_tools = registry
-        .tools_for(&part_id)
-        .map(|t| t.to_vec())
-        .unwrap_or_default();
+    register_all_workbenches(&mut registry)?;
 
     app_log::info(format!(
         "Registered {} workbenches",
@@ -82,8 +68,6 @@ fn main() -> Result<()> {
         render_settings,
         settings_store,
         user_settings,
-        sketch_tools,
-        part_tools,
         document,
         registry,
     );
@@ -116,9 +100,6 @@ struct PrintCadApp {
     hovered_world_pos: Option<[f32; 3]>,
     // Current cursor position in viewport
     cursor_in_viewport: Option<(f32, f32)>,
-    // Tools registered by built-in workbenches
-    sketch_tools: Vec<ToolDescriptor>,
-    part_tools: Vec<ToolDescriptor>,
     // Document and workbench registry
     document: Document,
     registry: DocumentService,
@@ -150,8 +131,6 @@ impl PrintCadApp {
         settings: RenderSettings,
         settings_store: SettingsStore,
         user_settings: UserSettings,
-        sketch_tools: Vec<ToolDescriptor>,
-        part_tools: Vec<ToolDescriptor>,
         document: Document,
         registry: DocumentService,
     ) -> Self {
@@ -178,11 +157,9 @@ impl PrintCadApp {
             hovered_body: None,
             hovered_world_pos: None,
             cursor_in_viewport: None,
-            sketch_tools,
-            part_tools,
             document,
             registry,
-            active_workbench: ActiveWorkbench::Sketch,
+            active_workbench: ActiveWorkbench::default(),
             active_document_object: None,
             active_body_id: None,
             tree_selection: Some(TreeItemId::DocumentRoot),
@@ -191,17 +168,9 @@ impl PrintCadApp {
         }
     }
 
-    /// Get the workbench ID for a given ActiveWorkbench.
-    fn workbench_id_for(wb: ActiveWorkbench) -> WorkbenchId {
-        match wb {
-            ActiveWorkbench::Sketch => WorkbenchId::from("wb.sketch"),
-            ActiveWorkbench::PartDesign => WorkbenchId::from("wb.part-design"),
-        }
-    }
-
     /// Get the workbench ID for the currently active workbench.
     fn active_workbench_id(&self) -> WorkbenchId {
-        Self::workbench_id_for(self.active_workbench)
+        self.active_workbench.0.clone()
     }
 
     /// Flush log entries to the app log panel.
@@ -332,21 +301,27 @@ impl ApplicationHandler for PrintCadApp {
             }
         }
 
-        // Track cursor position for picking
+        // Track cursor position for picking (in physical/surface coordinates)
         if let WindowEvent::CursorMoved { position, .. } = &event {
-            // Store cursor position in window coordinates
-            let x = position.x as u32;
-            let y = position.y as u32;
+            // Convert logical window coordinates to physical pixels to match the
+            // viewport and renderer coordinate spaces.
+            let scale = self
+                .window
+                .as_ref()
+                .map(|w| w.scale_factor() as f32)
+                .unwrap_or(1.0);
+            let phys_x = (position.x as f32 * scale).round() as u32;
+            let phys_y = (position.y as f32 * scale).round() as u32;
 
             // Request GPU picking at cursor position
             if let Some(renderer) = self.renderer.as_mut() {
-                renderer.request_pick(x, y);
+                renderer.request_pick(phys_x, phys_y);
             }
 
             // Store cursor position relative to viewport for other uses
             let vp = self.camera.viewport_info();
-            let cursor_x = position.x as f32 - vp.0;
-            let cursor_y = position.y as f32 - vp.1;
+            let cursor_x = phys_x as f32 - vp.0;
+            let cursor_y = phys_y as f32 - vp.1;
 
             if cursor_x >= 0.0
                 && cursor_y >= 0.0
@@ -505,24 +480,9 @@ impl ApplicationHandler for PrintCadApp {
                 .active_pivot()
                 .and_then(|pivot| self.camera.world_to_screen(pivot));
 
-            // Check if sketch workbench has an active sketch
-            let has_active_sketch = if self.active_workbench == ActiveWorkbench::Sketch {
-                // Check document for sketch features
-                self.document
-                    .feature_tree()
-                    .all_nodes()
-                    .any(|(_, node)| node.workbench_id.as_str() == "wb.sketch")
-            } else {
-                true // Part Design always has tools enabled
-            };
-
-            let has_body = self.document.has_bodies();
-
             let ui_result = ui_layer.run(
                 window,
                 &mut self.user_settings,
-                &self.sketch_tools,
-                &self.part_tools,
                 Some(&orientation_input),
                 self.current_fps,
                 self.gpu_name.as_deref(),
@@ -530,19 +490,21 @@ impl ApplicationHandler for PrintCadApp {
                 self.hovered_world_pos,
                 pivot_screen_pos,
                 self.camera.axis_system(),
-                has_active_sketch,
-                has_body,
                 &mut self.document,
                 &mut self.registry,
                 self.tree_selection,
                 self.active_document_object,
+                self.active_body_id,
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
 
             // Track workbench change
             if ui_result.workbench_changed {
-                workbench_change = Some((self.active_workbench, ui_result.active_workbench));
+                workbench_change = Some((
+                    self.active_workbench.clone(),
+                    ui_result.active_workbench.clone(),
+                ));
             }
             self.active_workbench = ui_result.active_workbench;
 
@@ -695,11 +657,9 @@ impl ApplicationHandler for PrintCadApp {
 
         // Now handle workbench change (after renderer borrow ends)
         if let Some((old_wb, new_wb)) = workbench_change {
-            let old_id = Self::workbench_id_for(old_wb);
-            self.call_workbench_deactivate(&old_id);
+            self.call_workbench_deactivate(&old_wb.0);
 
-            let new_id = Self::workbench_id_for(new_wb);
-            self.call_workbench_activate(&new_id);
+            self.call_workbench_activate(&new_wb.0);
         }
     }
 }
@@ -944,13 +904,21 @@ impl PrintCadApp {
                             let plane_origin = glam::Vec3::from_array(sketch_feature.plane.origin);
                             let plane_normal = glam::Vec3::from_array(sketch_feature.plane.normal);
 
-                            // Use camera controller to project viewport to plane
-                            if let Some(world_pos) = self.camera.screen_to_plane(
+                            // Use viewport-local coordinates directly to project onto the sketch plane.
+                            if let Some(world_pos) = self.camera.viewport_to_plane(
                                 viewport_pos.0,
                                 viewport_pos.1,
                                 plane_origin,
                                 plane_normal,
                             ) {
+                                app_log::info(format!(
+                                    "Sketch raycast: viewport=({:.1}, {:.1}) -> world=({:.3}, {:.3}, {:.3})",
+                                    viewport_pos.0,
+                                    viewport_pos.1,
+                                    world_pos.x,
+                                    world_pos.y,
+                                    world_pos.z
+                                ));
                                 hovered_world_pos = Some(world_pos.to_array());
                             }
                         }

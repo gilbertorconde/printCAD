@@ -1,5 +1,5 @@
 use core_document::{
-    CommandDescriptor, InputResult, ToolDescriptor, ToolKind, Workbench, WorkbenchContext,
+    CommandDescriptor, InputResult, ToolDescriptor, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
@@ -23,17 +23,17 @@ impl Workbench for PartDesignWorkbench {
         context.register_tool(ToolDescriptor::new(
             "part.pad",
             "Pad (Extrude)",
-            ToolKind::PartDesign,
+            Some("modeling"),
         ));
         context.register_tool(ToolDescriptor::new(
             "part.pocket",
             "Pocket (Cut)",
-            ToolKind::PartDesign,
+            Some("modeling"),
         ));
         context.register_tool(ToolDescriptor::new(
             "part.fillet",
             "Fillet",
-            ToolKind::PartDesign,
+            Some("modeling"),
         ));
         context.register_command(CommandDescriptor::new(
             "part.recompute",

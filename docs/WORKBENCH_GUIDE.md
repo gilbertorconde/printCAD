@@ -2,6 +2,22 @@
 
 This guide explains how to create custom workbenches for printCAD. Workbenches are modular plugins that extend the application with new tools, commands, and UI panels.
 
+## Architecture Note: Why is the Workbench Trait in `core_document`?
+
+The `Workbench` trait is defined in the `core_document` crate, which may seem unusual at first glance. Here's why this organization makes sense:
+
+1. **Tight Coupling to Document Model**: Workbenches are the primary mechanism for creating and managing document features. The `WorkbenchRuntimeContext` provides mutable access to the document, and workbenches directly call document methods like `add_feature()`, `update_feature_data()`, etc.
+
+2. **Document Service Registry**: The `DocumentService` (which manages workbenches) lives in `core_document`. The registry needs to know about the `Workbench` trait to store and invoke workbenches.
+
+3. **Feature Serialization**: The document needs to know about workbenches to properly serialize/deserialize features. Methods like `deserialize_feature()` and `feature_dependencies()` are part of the workbench interface.
+
+4. **Workbench Storage**: The document stores workbench-specific data (`WorkbenchStorage`), creating a bidirectional relationship between documents and workbenches.
+
+5. **Dependency Direction**: Currently, workbenches depend on `core_document` (not the other way around). This keeps the dependency graph clean: workbenches are extensions of the document system, not separate systems.
+
+While the trait includes UI-related methods (`ui_left_panel`, `ui_right_panel`), these are optional and feature-gated. The core relationship is between workbenches and the document model, which justifies placing the trait in `core_document`.
+
 ## Overview
 
 A workbench in printCAD is a self-contained module that provides:
@@ -42,7 +58,7 @@ egui = { workspace = true, optional = true }
 
 ```rust
 use core_document::{
-    CommandDescriptor, InputResult, ToolDescriptor, ToolKind, Workbench,
+    CommandDescriptor, InputResult, ToolDescriptor, Workbench,
     WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
@@ -64,11 +80,11 @@ impl Workbench for MyWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
-        // Register tools
+        // Register tools (radio button behavior by default)
         context.register_tool(ToolDescriptor::new(
             "my.tool1",
             "Tool One",
-            ToolKind::Utility,
+            Some("utility"),  // Optional category
         ));
 
         // Register commands
@@ -130,13 +146,31 @@ pub trait Workbench: Send {
 
     // UI hooks (require "egui" feature)
     #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {}
+    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {}
 
     #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {}
+    fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {}
+
+    /// Whether this workbench exposes right-panel UI.
+    /// Called by the host to determine if the right panel should be shown.
+    #[cfg(feature = "egui")]
+    fn wants_right_panel(&self) -> bool {
+        false
+    }
+
+    /// Check if a tool is enabled given the current runtime context.
+    /// Called by the UI to determine if a tool button should be enabled/disabled.
+    /// Default implementation returns true for all tools.
+    fn is_tool_enabled(&self, _tool_id: &str, _ctx: &WorkbenchRuntimeContext) -> bool {
+        true
+    }
 
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool { false }
+
+    /// Finish/close the current editing session (e.g., finish sketch).
+    /// Called when the user requests to finish editing (e.g., via UI button).
+    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
 }
 ```
 
@@ -150,19 +184,30 @@ Tools are interactive operations that respond to user input. Register them in `c
 
 ```rust
 fn configure(&self, context: &mut WorkbenchContext) {
+    // Action tools (fire-and-forget buttons, not toggles)
+    context.register_tool(ToolDescriptor::new_action(
+        "sketch.create",    // Unique tool ID
+        "Create Sketch",    // Display label
+        Some("sketch"),     // Optional category for grouping
+    ));
+
+    // Regular tools (radio button behavior - only one active at a time)
     context.register_tool(ToolDescriptor::new(
         "sketch.line",      // Unique tool ID
         "Line",             // Display label
-        ToolKind::Sketch,   // Category
+        Some("sketch"),     // Optional category for grouping
     ));
 }
 ```
 
-**Tool Kinds:**
+**Tool Behavior:**
 
-- `ToolKind::Sketch` - 2D sketching tools
-- `ToolKind::PartDesign` - 3D modeling tools
-- `ToolKind::Utility` - General utilities
+- `ToolBehavior::Radio` (default) - Radio button behavior: only one tool can be active at a time. Clicking an active tool deactivates it. This is the default for `ToolDescriptor::new()`.
+- `ToolBehavior::Action` - Action button behavior: fire-and-forget. Clicking triggers the action but doesn't keep the tool "active". Use `ToolDescriptor::new_action()` to create action tools.
+
+**Tool Categories:**
+
+The `category` parameter is optional and purely informational. It can be used for grouping/organization (e.g., `"sketch"`, `"modeling"`, `"utility"`). It doesn't affect tool behavior - that's controlled by the `behavior` field.
 
 ### Commands
 
@@ -263,8 +308,17 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// ID of the currently selected body
     pub selected_body_id: Option<Uuid>,
 
+    /// Active document object (selected feature in tree - separate from editing mode)
+    pub active_document_object: Option<FeatureId>,
+
     /// Cursor position in viewport coordinates
     pub cursor_viewport_pos: Option<(f32, f32)>,
+
+    /// Request camera orientation to a plane (set by workbench, read by host)
+    pub camera_orient_request: Option<CameraOrientRequest>,
+
+    /// Request to exit sketch mode (set by workbench UI, read by host)
+    pub finish_sketch_requested: bool,
 }
 ```
 
@@ -510,15 +564,28 @@ fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
 
 ### Right Panel (Properties)
 
+The right panel is shown only when `wants_right_panel()` returns `true`. This allows workbenches to dynamically show/hide the panel based on their state:
+
 ```rust
 #[cfg(feature = "egui")]
-fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
+fn wants_right_panel(&self) -> bool {
+    // Only show right panel when editing a sketch
+    self.active_sketch_id.is_some()
+}
+
+#[cfg(feature = "egui")]
+fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
     ui.heading("Properties");
 
     if let Some(body_id) = ctx.selected_body_id {
         ui.label(format!("Selected: {:?}", body_id));
     } else {
         ui.label("Nothing selected");
+    }
+
+    // Request to exit editing mode
+    if ui.button("Exit Sketch Mode").clicked() {
+        ctx.finish_sketch_requested = true;
     }
 }
 ```
@@ -546,7 +613,7 @@ Here's a complete example of a minimal workbench:
 ```rust
 use core_document::{
     CommandDescriptor, InputResult, MouseButton, KeyCode, ToolDescriptor,
-    ToolKind, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
@@ -568,7 +635,7 @@ impl Workbench for CounterWorkbench {
         context.register_tool(ToolDescriptor::new(
             "counter.click",
             "Click Counter",
-            ToolKind::Utility,
+            Some("utility"),
         ));
         context.register_command(CommandDescriptor::new(
             "counter.reset",

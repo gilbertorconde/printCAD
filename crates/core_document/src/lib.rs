@@ -1,5 +1,6 @@
 pub mod asset;
 pub mod feature;
+pub mod registration;
 pub mod runtime;
 
 use std::collections::HashMap;
@@ -531,6 +532,13 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Check if a tool is enabled given the current runtime context.
+    /// Called by the UI to determine if a tool button should be enabled/disabled.
+    /// Default implementation returns true for all tools.
+    fn is_tool_enabled(&self, _tool_id: &str, _ctx: &WorkbenchRuntimeContext) -> bool {
+        true
+    }
+
     /// Draw custom settings UI in the Settings window.
     /// Called when the Settings window is open and this workbench's tab is selected.
     #[cfg(feature = "egui")]
@@ -589,20 +597,56 @@ impl WorkbenchContext {
     }
 }
 
+/// Describes how a tool button should behave in the UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolBehavior {
+    /// Radio button behavior: only one tool of this type can be active at a time.
+    /// Clicking an active tool deactivates it. This is the default.
+    #[default]
+    Radio,
+    /// Action button behavior: fire-and-forget. Clicking triggers the action
+    /// but doesn't keep the tool "active". The tool is cleared after handling.
+    Action,
+}
+
 /// Describes an interactive tool contributed by a workbench.
 #[derive(Debug, Clone)]
 pub struct ToolDescriptor {
     pub id: String,
     pub label: String,
-    pub kind: ToolKind,
+    /// Optional category for grouping/organization (e.g., "drawing", "modeling", "utility").
+    /// This is informational and doesn't affect behavior.
+    pub category: Option<String>,
+    /// How the tool button should behave in the UI.
+    pub behavior: ToolBehavior,
 }
 
 impl ToolDescriptor {
-    pub fn new(id: impl Into<String>, label: impl Into<String>, kind: ToolKind) -> Self {
+    /// Create a new tool descriptor with radio button behavior (default).
+    pub fn new(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        category: Option<impl Into<String>>,
+    ) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
-            kind,
+            category: category.map(|c| c.into()),
+            behavior: ToolBehavior::Radio,
+        }
+    }
+
+    /// Create a new tool descriptor with action button behavior.
+    pub fn new_action(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        category: Option<impl Into<String>>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            category: category.map(|c| c.into()),
+            behavior: ToolBehavior::Action,
         }
     }
 }
@@ -621,16 +665,6 @@ impl CommandDescriptor {
             label: label.into(),
         }
     }
-}
-
-/// Top-level categories of tools. This will expand as more workbenches land.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToolKind {
-    Sketch,
-    PartDesign,
-    Utility,
-    /// Action button (checkbox-like: stays active when clicked)
-    Action,
 }
 
 /// Central registry tracking workbenches and their declared capabilities.

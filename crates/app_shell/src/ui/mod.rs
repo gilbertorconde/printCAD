@@ -3,7 +3,7 @@ mod layout;
 mod settings_panel;
 
 use axes::AxisSystem;
-use core_document::ToolDescriptor;
+use core_document::WorkbenchId;
 use egui::Context;
 use egui_winit::{egui as egui_core, State};
 use render_vk::EguiSubmission;
@@ -15,10 +15,13 @@ use crate::orientation_cube::{
     RotateDelta,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActiveWorkbench {
-    Sketch,
-    PartDesign,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveWorkbench(pub WorkbenchId);
+
+impl Default for ActiveWorkbench {
+    fn default() -> Self {
+        Self(WorkbenchId::from("wb.sketch"))
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -81,7 +84,7 @@ impl UiLayer {
         Self {
             ctx,
             state,
-            active_workbench: ActiveWorkbench::Sketch,
+            active_workbench: ActiveWorkbench::default(),
             active_tool: ActiveTool::default(),
             settings_tab: settings_panel::SettingsTab::Camera,
             show_settings: false,
@@ -102,8 +105,6 @@ impl UiLayer {
         &mut self,
         window: &Window,
         settings: &mut UserSettings,
-        sketch_tools: &[ToolDescriptor],
-        part_tools: &[ToolDescriptor],
         orientation_input: Option<&OrientationCubeInput>,
         fps: f32,
         gpu_name: Option<&str>,
@@ -111,16 +112,15 @@ impl UiLayer {
         hovered_point: Option<[f32; 3]>,
         pivot_screen_pos: Option<(f32, f32)>,
         axis_system: AxisSystem,
-        has_active_sketch: bool,
-        has_body: bool,
         document: &mut core_document::Document,
         registry: &mut core_document::DocumentService,
         active_tree_selection: Option<feature_tree::TreeItemId>,
         active_document_object: Option<core_document::FeatureId>,
+        selected_body_id: Option<core_document::BodyId>,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
-        let prev_workbench = self.active_workbench;
-        let mut active_workbench = self.active_workbench;
+        let prev_workbench = self.active_workbench.clone();
+        let mut active_workbench = self.active_workbench.clone();
         let mut active_tool = self.active_tool.clone();
         let mut show_settings = self.show_settings;
         let mut settings_tab = self.settings_tab;
@@ -140,19 +140,15 @@ impl UiLayer {
         let mut reset_view_requested = false;
 
         let full_output = self.ctx.run(raw_input, |ctx| {
-            let tools = match active_workbench {
-                ActiveWorkbench::Sketch => sketch_tools,
-                ActiveWorkbench::PartDesign => part_tools,
-            };
-
             let top = layout::draw_top_panel(
                 ctx,
                 &mut active_workbench,
                 &mut show_settings,
                 &mut active_tool,
-                tools,
-                has_active_sketch,
-                has_body,
+                registry,
+                document,
+                active_document_object,
+                selected_body_id,
             );
             new_body_requested = top.new_body_requested;
             open_requested = top.open_requested;
@@ -161,7 +157,7 @@ impl UiLayer {
             reset_view_requested = top.reset_view_requested;
             let left_panel = layout::draw_left_panel(
                 ctx,
-                active_workbench,
+                active_workbench.clone(),
                 document,
                 registry,
                 active_tree_selection,
@@ -172,7 +168,7 @@ impl UiLayer {
             tree_activation = left_panel.tree_activation;
             layout::draw_right_panel(
                 ctx,
-                active_workbench,
+                active_workbench.clone(),
                 document,
                 registry,
                 active_document_object,
@@ -206,7 +202,7 @@ impl UiLayer {
             active_tool = ActiveTool::default();
         }
 
-        self.active_workbench = active_workbench;
+        self.active_workbench = active_workbench.clone();
         self.active_tool = active_tool.clone();
         self.show_settings = show_settings;
         self.settings_tab = settings_tab;
