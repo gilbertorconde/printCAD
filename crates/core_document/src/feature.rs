@@ -75,6 +75,9 @@ pub struct FeatureNode {
     pub id: FeatureId,
     pub workbench_id: WorkbenchId,
     pub name: String,
+    /// Owning body for this feature (if any). Used for tree hierarchy / grouping.
+    #[serde(default)]
+    pub body: Option<BodyId>,
     pub visible: bool,
     pub suppressed: bool,
     pub dirty: bool,
@@ -89,6 +92,7 @@ impl FeatureNode {
             id,
             workbench_id: F::workbench_id(),
             name: feature.name().to_string(),
+            body: None,
             visible: true,
             suppressed: false,
             dirty: false,

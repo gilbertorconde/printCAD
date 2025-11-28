@@ -104,11 +104,22 @@ impl Document {
         self.metadata.revision += 1;
     }
 
-    /// Add a feature to the tree (generic, works with any WorkbenchFeature).
+    /// Add a feature to the tree without attaching it to a body.
+    /// For body-scoped features, prefer `add_feature_in_body`.
     pub fn add_feature<F: WorkbenchFeature>(
         &mut self,
         feature: F,
         name: String,
+    ) -> DocumentResult<FeatureId> {
+        self.add_feature_in_body(feature, name, None)
+    }
+
+    /// Add a feature to the tree and optionally attach it to a body for hierarchy purposes.
+    pub fn add_feature_in_body<F: WorkbenchFeature>(
+        &mut self,
+        feature: F,
+        name: String,
+        body: Option<BodyId>,
     ) -> DocumentResult<FeatureId> {
         let id = FeatureId::new();
         let deps = feature.dependencies();
@@ -117,6 +128,7 @@ impl Document {
             id,
             workbench_id: F::workbench_id(),
             name,
+            body,
             visible: true,
             suppressed: false,
             dirty: false,

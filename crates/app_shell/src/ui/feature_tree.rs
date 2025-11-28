@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use core_document::{Body, BodyId, Document, FeatureId, FeatureNode, FeatureTree};
 use egui::{Color32, Response, RichText, Ui};
@@ -47,25 +47,60 @@ impl DocumentTree {
     pub fn build(document: &Document) -> Self {
         let feature_tree = document.feature_tree();
         let mut visited = HashSet::new();
+        let mut roots_by_body: HashMap<Option<BodyId>, Vec<TreeNode>> = HashMap::new();
 
-        let mut body_nodes: Vec<TreeNode> = document.bodies().iter().map(build_body_node).collect();
-        body_nodes.sort_by_key(|n| n.created_at_ms);
+        // Helper to group feature roots under their owning body (or None for document-level).
+        let mut push_root =
+            |body: Option<BodyId>,
+             node: TreeNode,
+             map: &mut HashMap<Option<BodyId>, Vec<TreeNode>>| {
+                map.entry(body).or_default().push(node);
+            };
 
-        let mut feature_nodes = Vec::new();
+        // First, build subtrees for all root features.
         for &root_id in feature_tree.roots() {
             if let Some(node) = feature_tree.get_node(root_id) {
-                feature_nodes.push(build_feature_node(feature_tree, node, &mut visited));
+                let body = node.body;
+                let tree_node = build_feature_node(feature_tree, node, &mut visited);
+                push_root(body, tree_node, &mut roots_by_body);
             }
         }
 
+        // Then, include any remaining nodes that weren't reachable from roots
+        // (defensive: should be rare in a well-formed DAG).
         for (&id, node) in feature_tree.all_nodes() {
             if !visited.contains(&id) {
-                feature_nodes.push(build_feature_node(feature_tree, node, &mut visited));
+                let body = node.body;
+                let tree_node = build_feature_node(feature_tree, node, &mut visited);
+                push_root(body, tree_node, &mut roots_by_body);
             }
         }
-        feature_nodes.sort_by_key(|n| n.created_at_ms);
 
-        body_nodes.extend(feature_nodes);
+        // Sort feature roots within each body group by creation time.
+        for nodes in roots_by_body.values_mut() {
+            nodes.sort_by_key(|n| n.created_at_ms);
+        }
+
+        // Build body nodes and attach their feature subtrees.
+        let mut body_nodes: Vec<TreeNode> = document
+            .bodies()
+            .iter()
+            .map(|body| {
+                let mut node = build_body_node(body);
+                if let Some(children) = roots_by_body.remove(&Some(body.id)) {
+                    node.children = children;
+                }
+                node
+            })
+            .collect();
+
+        // Any remaining roots without a body (or with unknown body IDs) are appended at the end.
+        if let Some(mut doc_level) = roots_by_body.remove(&None) {
+            body_nodes.append(&mut doc_level);
+        }
+        for (_key, mut nodes) in roots_by_body {
+            body_nodes.append(&mut nodes);
+        }
 
         Self {
             document_label: document.name().to_string(),
@@ -137,17 +172,21 @@ fn format_workbench_tag(raw: &str) -> String {
 pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>) -> TreeUiResult {
     let mut result = TreeUiResult::default();
 
-    let doc_response = ui.selectable_label(
-        selected == Some(TreeItemId::DocumentRoot),
-        format!("Document: {}", model.document_label()),
+    // Document root behaves like a top-level collapsible item.
+    let is_doc_selected = selected == Some(TreeItemId::DocumentRoot);
+    let header_text = format!("Document: {}", model.document_label());
+    let collapsing = egui::CollapsingHeader::new(header_text)
+        .id_salt("document_root")
+        .show(ui, |ui| {
+            for node in model.nodes() {
+                draw_node(ui, node, 0, selected, &mut result);
+            }
+        });
+    handle_response(
+        collapsing.header_response,
+        TreeItemId::DocumentRoot,
+        &mut result,
     );
-    handle_response(doc_response, TreeItemId::DocumentRoot, &mut result);
-
-    ui.separator();
-
-    for node in model.nodes() {
-        draw_node(ui, node, 0, selected, &mut result);
-    }
 
     result
 }
@@ -159,21 +198,38 @@ fn draw_node(
     selected: Option<TreeItemId>,
     result: &mut TreeUiResult,
 ) {
-    ui.horizontal(|ui| {
-        ui.add_space((depth as f32) * 14.0);
-        let label = compose_label(node);
-        let is_selected = selected == Some(node.id);
-        let response = if let Some(tooltip) = &node.tooltip {
-            ui.selectable_label(is_selected, label)
-                .on_hover_text(tooltip)
-        } else {
-            ui.selectable_label(is_selected, label)
-        };
-        handle_response(response, node.id, result);
-    });
+    let indent = (depth as f32) * 14.0;
 
-    for child in &node.children {
-        draw_node(ui, child, depth + 1, selected, result);
+    // Nodes with children are rendered as collapsible tree branches; leaves as simple rows.
+    if node.children.is_empty() {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            let label = compose_label(node);
+            let is_selected = selected == Some(node.id);
+            let response = if let Some(tooltip) = &node.tooltip {
+                ui.selectable_label(is_selected, label)
+                    .on_hover_text(tooltip)
+            } else {
+                ui.selectable_label(is_selected, label)
+            };
+            handle_response(response, node.id, result);
+        });
+    } else {
+        ui.horizontal(|ui| {
+            ui.add_space(indent);
+            let label = compose_label(node);
+            let is_selected = selected == Some(node.id);
+
+            let collapsing = egui::CollapsingHeader::new(label)
+                .id_salt(format!("tree_node_{:?}", node.id))
+                .show(ui, |ui| {
+                    for child in &node.children {
+                        draw_node(ui, child, depth + 1, selected, result);
+                    }
+                });
+
+            handle_response(collapsing.header_response, node.id, result);
+        });
     }
 }
 

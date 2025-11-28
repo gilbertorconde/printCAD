@@ -3,7 +3,7 @@ pub mod render;
 mod sketch;
 
 use core_document::{
-    CommandDescriptor, FeatureId, InputResult, ToolDescriptor, ToolKind, Workbench,
+    BodyId, CommandDescriptor, FeatureId, InputResult, ToolDescriptor, ToolKind, Workbench,
     WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
@@ -193,10 +193,13 @@ impl Workbench for SketchWorkbench {
             let sketch = Sketch::new(sketch_name.clone());
             let plane = sketch.plane;
             let sketch_feature = SketchFeature::new(sketch, plane);
+            // Attach sketch to currently selected body if available so it appears
+            // under that body in the feature tree.
+            let owning_body = ctx.selected_body_id.map(BodyId);
 
             match ctx
                 .document
-                .add_feature(sketch_feature, sketch_name.clone())
+                .add_feature_in_body(sketch_feature, sketch_name.clone(), owning_body)
             {
                 Ok(feature_id) => {
                     self.active_sketch_id = Some(feature_id);
