@@ -257,6 +257,66 @@ impl CameraController {
         let near = near_world.truncate() / near_world.w;
         let far = far_world.truncate() / far_world.w;
 
+        // Ray direction from the near point into the scene.
+        let ray_origin = near;
+        let ray_dir = (far - near).normalize();
+
+        // Ray-plane intersection
+        let normal = plane_normal.normalize();
+        let denom = ray_dir.dot(normal);
+
+        if denom.abs() < 1e-6 {
+            return None; // Ray parallel to plane
+        }
+
+        let t = (plane_origin - ray_origin).dot(normal) / denom;
+        if t < 0.0 {
+            return None; // Plane behind ray
+        }
+
+        Some(ray_origin + ray_dir * t)
+    }
+
+    /// Convert viewport-local coordinates (relative to the viewport origin) to a
+    /// world position on a plane. This is useful when we already have cursor
+    /// coordinates expressed in the viewport's local space.
+    pub fn viewport_to_plane(
+        &self,
+        viewport_x: f32,
+        viewport_y: f32,
+        plane_origin: Vec3,
+        plane_normal: Vec3,
+    ) -> Option<Vec3> {
+        let (w, h) = self.viewport_size;
+        let aspect = if w == 0 || h == 0 {
+            1.0
+        } else {
+            w as f32 / h as f32
+        };
+
+        // Convert viewport-local coordinates to NDC in the range [-1, 1].
+        let ndc_x = (viewport_x / w as f32) * 2.0 - 1.0;
+        let ndc_y = 1.0 - (viewport_y / h as f32) * 2.0; // Flip Y
+
+        // Get inverse view-projection
+        let view_proj = self.view_proj(aspect);
+        let inv_view_proj = view_proj.inverse();
+
+        // Create ray in clip space
+        let near_clip = Vec3::new(ndc_x, ndc_y, 0.0).extend(1.0);
+        let far_clip = Vec3::new(ndc_x, ndc_y, 1.0).extend(1.0);
+
+        // Transform to world space
+        let near_world = inv_view_proj * near_clip;
+        let far_world = inv_view_proj * far_clip;
+
+        if near_world.w == 0.0 || far_world.w == 0.0 {
+            return None;
+        }
+
+        let near = near_world.truncate() / near_world.w;
+        let far = far_world.truncate() / far_world.w;
+
         // Ray direction
         let ray_dir = (far - near).normalize();
         let ray_origin = self.position_vec();

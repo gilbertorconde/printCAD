@@ -600,10 +600,14 @@ impl WorkbenchContext {
 /// Describes how a tool button should behave in the UI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ToolBehavior {
-    /// Radio button behavior: only one tool of this type can be active at a time.
-    /// Clicking an active tool deactivates it. This is the default.
+    /// Radio button behavior: only one tool in the same group can be active at a time.
+    /// Clicking an active tool deactivates it. Tools in different groups are independent.
+    /// This is the default.
     #[default]
     Radio,
+    /// Check button behavior: independent toggle. Each tool can be on or off independently.
+    /// Multiple check tools can be active simultaneously.
+    Check,
     /// Action button behavior: fire-and-forget. Clicking triggers the action
     /// but doesn't keep the tool "active". The tool is cleared after handling.
     Action,
@@ -619,10 +623,15 @@ pub struct ToolDescriptor {
     pub category: Option<String>,
     /// How the tool button should behave in the UI.
     pub behavior: ToolBehavior,
+    /// Optional group name for Radio tools. Tools in the same group are mutually exclusive.
+    /// Only one tool per group can be active at a time. If None, each tool is its own group.
+    /// Ignored for Check and Action tools.
+    pub group: Option<String>,
 }
 
 impl ToolDescriptor {
     /// Create a new tool descriptor with radio button behavior (default).
+    /// Tools in the same group are mutually exclusive.
     pub fn new(
         id: impl Into<String>,
         label: impl Into<String>,
@@ -633,6 +642,40 @@ impl ToolDescriptor {
             label: label.into(),
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Radio,
+            group: None, // Each tool is its own group by default
+        }
+    }
+
+    /// Create a new tool descriptor with radio button behavior in a specific group.
+    /// Tools in the same group are mutually exclusive.
+    pub fn new_radio_group(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        category: Option<impl Into<String>>,
+        group: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            category: category.map(|c| c.into()),
+            behavior: ToolBehavior::Radio,
+            group: Some(group.into()),
+        }
+    }
+
+    /// Create a new tool descriptor with check button behavior.
+    /// Check tools are independent - multiple can be active simultaneously.
+    pub fn new_check(
+        id: impl Into<String>,
+        label: impl Into<String>,
+        category: Option<impl Into<String>>,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            category: category.map(|c| c.into()),
+            behavior: ToolBehavior::Check,
+            group: None, // Groups don't apply to Check tools
         }
     }
 
@@ -647,6 +690,7 @@ impl ToolDescriptor {
             label: label.into(),
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Action,
+            group: None, // Groups don't apply to Action tools
         }
     }
 }

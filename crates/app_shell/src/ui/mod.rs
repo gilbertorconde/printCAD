@@ -26,8 +26,9 @@ impl Default for ActiveWorkbench {
 
 #[derive(Debug, Clone, Default)]
 pub struct ActiveTool {
-    /// Currently active tool id for the active workbench (None = Select)
-    pub id: Option<String>,
+    /// Set of active tool IDs. For Radio tools, only one per group is active.
+    /// For Check tools, multiple can be active. For Action tools, this is cleared after handling.
+    pub active_ids: std::collections::HashSet<String>,
 }
 
 #[derive(Debug, Clone, Copy)]

@@ -853,14 +853,17 @@ impl PrintCadApp {
 
         // First, let the active workbench handle the event
         let wb_id = self.active_workbench_id();
-        let active_tool = self.active_tool.id.clone();
-        let result = self.call_workbench_input(&wb_id, &wb_event, active_tool.as_deref());
+        // For input handling, we pass the first active tool (or None if no tools active)
+        // This maintains compatibility with the existing on_input API
+        let active_tool_id = self.active_tool.active_ids.iter().next().cloned();
+        let active_tool_str = active_tool_id.as_deref();
+        let result = self.call_workbench_input(&wb_id, &wb_event, active_tool_str);
 
-        // Treat "sketch.create" like a momentary action button:
-        // once the workbench has consumed the event, clear the active tool so
-        // subsequent input events don't keep re-triggering the action.
-        if matches!(active_tool.as_deref(), Some("sketch.create")) && result.consumed {
-            self.active_tool.id = None;
+        // Clear action tools after they're handled
+        if let Some(tool_id) = active_tool_id {
+            if tool_id == "sketch.create" && result.consumed {
+                self.active_tool.active_ids.remove(&tool_id);
+            }
         }
 
         if result.consumed {

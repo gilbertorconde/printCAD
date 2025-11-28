@@ -191,23 +191,77 @@ fn configure(&self, context: &mut WorkbenchContext) {
         Some("sketch"),     // Optional category for grouping
     ));
 
-    // Regular tools (radio button behavior - only one active at a time)
-    context.register_tool(ToolDescriptor::new(
+    // Radio tools in a group (only one per group active at a time)
+    context.register_tool(ToolDescriptor::new_radio_group(
         "sketch.line",      // Unique tool ID
         "Line",             // Display label
-        Some("sketch"),     // Optional category for grouping
+        Some("sketch"),     // Optional category
+        "drawing",          // Group name - tools in same group are mutually exclusive
+    ));
+    context.register_tool(ToolDescriptor::new_radio_group(
+        "sketch.arc",
+        "Arc",
+        Some("sketch"),
+        "drawing",          // Same group as Line
+    ));
+
+    // Check tools (independent toggles - multiple can be active)
+    context.register_tool(ToolDescriptor::new_check(
+        "view.grid",
+        "Show Grid",
+        Some("view"),
+    ));
+    context.register_tool(ToolDescriptor::new_check(
+        "view.snap",
+        "Snap to Grid",
+        Some("view"),
     ));
 }
 ```
 
 **Tool Behavior:**
 
-- `ToolBehavior::Radio` (default) - Radio button behavior: only one tool can be active at a time. Clicking an active tool deactivates it. This is the default for `ToolDescriptor::new()`.
+- `ToolBehavior::Radio` (default) - Radio button behavior: only one tool per group can be active at a time. Clicking an active tool deactivates it. Tools in different groups are independent. Use `ToolDescriptor::new()` for single-tool groups or `ToolDescriptor::new_radio_group()` for grouped tools.
+- `ToolBehavior::Check` - Check button behavior: independent toggle. Each tool can be on or off independently. Multiple check tools can be active simultaneously. Use `ToolDescriptor::new_check()` to create check tools.
 - `ToolBehavior::Action` - Action button behavior: fire-and-forget. Clicking triggers the action but doesn't keep the tool "active". Use `ToolDescriptor::new_action()` to create action tools.
+
+**Radio Groups:**
+
+Radio tools can be organized into groups. Only one tool per group can be active at a time, but tools in different groups are independent:
+
+```rust
+// Tools in the same group are mutually exclusive
+context.register_tool(ToolDescriptor::new_radio_group(
+    "sketch.line",
+    "Line",
+    Some("sketch"),
+    "drawing",  // Group name
+));
+context.register_tool(ToolDescriptor::new_radio_group(
+    "sketch.arc",
+    "Arc",
+    Some("sketch"),
+    "drawing",  // Same group - only one can be active
+));
+context.register_tool(ToolDescriptor::new_radio_group(
+    "sketch.circle",
+    "Circle",
+    Some("sketch"),
+    "drawing",  // Same group
+));
+
+// Different group - independent from drawing tools
+context.register_tool(ToolDescriptor::new_radio_group(
+    "sketch.constraint.distance",
+    "Distance Constraint",
+    Some("sketch"),
+    "constraints",  // Different group
+));
+```
 
 **Tool Categories:**
 
-The `category` parameter is optional and purely informational. It can be used for grouping/organization (e.g., `"sketch"`, `"modeling"`, `"utility"`). It doesn't affect tool behavior - that's controlled by the `behavior` field.
+The `category` parameter is optional and purely informational. It can be used for grouping/organization (e.g., `"sketch"`, `"modeling"`, `"utility"`). It doesn't affect tool behavior - that's controlled by the `behavior` and `group` fields.
 
 ### Commands
 

@@ -107,17 +107,13 @@ pub fn draw_top_panel(
                     };
 
                     for tool in &tools {
-                        let is_active = active_tool
-                            .id
-                            .as_deref()
-                            .map(|id| id == tool.id)
-                            .unwrap_or(false);
+                        let is_active = active_tool.active_ids.contains(&tool.id);
 
                         // Check with workbench if tool is enabled
                         let enabled = workbench.is_tool_enabled(&tool.id, &wb_ctx);
 
                         // Action tools behave like simple buttons (fire-and-forget),
-                        // Radio tools behave like toggle buttons (only one active at a time).
+                        // Radio and Check tools show selected state.
                         let button = if tool.behavior == core_document::ToolBehavior::Action {
                             ui.add_enabled(enabled, egui::Button::new(&tool.label))
                         } else {
@@ -128,16 +124,45 @@ pub fn draw_top_panel(
                         };
 
                         if button.clicked() && enabled {
-                            if tool.behavior == core_document::ToolBehavior::Action {
-                                // Fire-and-forget: always select the action tool for this frame.
-                                // The host will clear it after handling the input.
-                                active_tool.id = Some(tool.id.clone());
-                            } else if is_active {
-                                // Radio behavior: clicking an active tool deactivates it
-                                active_tool.id = None;
-                            } else {
-                                // Radio behavior: clicking an inactive tool activates it
-                                active_tool.id = Some(tool.id.clone());
+                            match tool.behavior {
+                                core_document::ToolBehavior::Action => {
+                                    // Fire-and-forget: always select the action tool for this frame.
+                                    // The host will clear it after handling the input.
+                                    active_tool.active_ids.insert(tool.id.clone());
+                                }
+                                core_document::ToolBehavior::Check => {
+                                    // Check behavior: toggle independently
+                                    if is_active {
+                                        active_tool.active_ids.remove(&tool.id);
+                                    } else {
+                                        active_tool.active_ids.insert(tool.id.clone());
+                                    }
+                                }
+                                core_document::ToolBehavior::Radio => {
+                                    // Radio behavior: only one tool per group can be active
+                                    if is_active {
+                                        // Clicking an active tool deactivates it
+                                        active_tool.active_ids.remove(&tool.id);
+                                    } else {
+                                        // Deactivate other tools in the same group
+                                        if let Some(group) = &tool.group {
+                                            // Remove all tools in this group
+                                            active_tool.active_ids.retain(|active_id| {
+                                                // Find the tool descriptor to check its group
+                                                tools
+                                                    .iter()
+                                                    .find(|t| &t.id == active_id)
+                                                    .map(|t| t.group.as_deref() != Some(group))
+                                                    .unwrap_or(true)
+                                            });
+                                        } else {
+                                            // No group: this tool is its own group, so just clear all
+                                            active_tool.active_ids.clear();
+                                        }
+                                        // Activate this tool
+                                        active_tool.active_ids.insert(tool.id.clone());
+                                    }
+                                }
                             }
                         }
                     }
