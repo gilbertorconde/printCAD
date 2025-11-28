@@ -13,6 +13,7 @@ pub struct TopBarResult {
     pub save_requested: bool,
     pub save_as_requested: bool,
     pub new_body_requested: bool,
+    pub reset_view_requested: bool,
 }
 
 pub fn draw_top_panel(
@@ -29,6 +30,7 @@ pub fn draw_top_panel(
         save_requested: false,
         save_as_requested: false,
         new_body_requested: false,
+        reset_view_requested: false,
     };
     egui::TopBottomPanel::top("top_bar")
         .frame(
@@ -73,7 +75,9 @@ pub fn draw_top_panel(
                     {
                         result.new_body_requested = true;
                     }
-                    // Future general actions will be add here (like zoom, measure, etc.)
+                    if ui.button("Fit View").clicked() {
+                        result.reset_view_requested = true;
+                    }
                 });
 
                 ui.add_space(6.0);
@@ -97,18 +101,22 @@ pub fn draw_top_panel(
                             _ => has_active_sketch,
                         };
 
-                        let button = ui.add_enabled(
-                            enabled,
-                            egui::Button::new(&tool.label).selected(is_active),
-                        );
+                        // Actions (like "Create Sketch") should behave like simple buttons,
+                        // not toggle/radio tools.
+                        let button = if tool.kind == core_document::ToolKind::Action {
+                            ui.add_enabled(enabled, egui::Button::new(&tool.label))
+                        } else {
+                            ui.add_enabled(
+                                enabled,
+                                egui::Button::new(&tool.label).selected(is_active),
+                            )
+                        };
 
                         if button.clicked() && enabled {
                             if tool.kind == core_document::ToolKind::Action {
-                                if is_active {
-                                    active_tool.id = None;
-                                } else {
-                                    active_tool.id = Some(tool.id.clone());
-                                }
+                                // Fire-and-forget: always select the action tool for this frame.
+                                // The host will clear it after handling the input.
+                                active_tool.id = Some(tool.id.clone());
                             } else if is_active {
                                 active_tool.id = None;
                             } else {

@@ -51,6 +51,7 @@ pub struct UiFrameResult {
     pub open_requested: bool,
     pub save_requested: bool,
     pub save_as_requested: bool,
+    pub reset_view_requested: bool,
 }
 
 pub struct UiLayer {
@@ -136,6 +137,7 @@ impl UiLayer {
         let mut open_requested = false;
         let mut save_requested = false;
         let mut save_as_requested = false;
+        let mut reset_view_requested = false;
 
         let full_output = self.ctx.run(raw_input, |ctx| {
             let tools = match active_workbench {
@@ -156,6 +158,7 @@ impl UiLayer {
             open_requested = top.open_requested;
             save_requested = top.save_requested;
             save_as_requested = top.save_as_requested;
+            reset_view_requested = top.reset_view_requested;
             let left_panel = layout::draw_left_panel(
                 ctx,
                 active_workbench,
@@ -241,6 +244,7 @@ impl UiLayer {
             open_requested,
             save_requested,
             save_as_requested,
+            reset_view_requested,
         }
     }
 }

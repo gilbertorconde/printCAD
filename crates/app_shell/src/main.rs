@@ -10,7 +10,6 @@ use core_document::{
     WorkbenchFeature, WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::Vec3;
-use kernel_api::TriMesh;
 use log_panel as app_log;
 use orientation_cube::OrientationCubeInput;
 use render_vk::{
@@ -99,7 +98,6 @@ struct PrintCadApp {
     window: Option<Window>,
     window_id: Option<WindowId>,
     ui_layer: Option<UiLayer>,
-    demo_bodies: Vec<BodySubmission>,
     settings_store: SettingsStore,
     user_settings: UserSettings,
     camera: CameraController,
@@ -157,7 +155,7 @@ impl PrintCadApp {
         document: Document,
         registry: DocumentService,
     ) -> Self {
-        let mut camera = CameraController::new(&user_settings.camera, (1, 1));
+        let camera = CameraController::new(&user_settings.camera, (1, 1));
 
         Self {
             settings,
@@ -166,7 +164,6 @@ impl PrintCadApp {
             window: None,
             window_id: None,
             ui_layer: None,
-            demo_bodies: Vec::new(),
             settings_store,
             user_settings,
             camera,
@@ -486,29 +483,8 @@ impl ApplicationHandler for PrintCadApp {
             })
             .collect();
 
-        // Apply highlight states to bodies
-        let mut bodies: Vec<BodySubmission> = self
-            .demo_bodies
-            .iter()
-            .map(|body| {
-                let is_hovered = self.hovered_body == Some(body.id);
-                let is_selected = self.selected_body == Some(body.id);
-                let highlight = match (is_hovered, is_selected) {
-                    (true, true) => HighlightState::HoveredAndSelected,
-                    (true, false) => HighlightState::Hovered,
-                    (false, true) => HighlightState::Selected,
-                    (false, false) => HighlightState::None,
-                };
-                BodySubmission {
-                    highlight,
-                    ..body.clone()
-                }
-            })
-            .collect();
-
-        // Add sketch meshes to bodies
-        bodies.extend(sketch_meshes);
-        self.frame_submission.bodies = bodies;
+        // For now, only render sketch meshes (no demo bodies).
+        self.frame_submission.bodies = sketch_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
@@ -606,6 +582,14 @@ impl ApplicationHandler for PrintCadApp {
             ui_result_open = ui_result.open_requested;
             ui_result_save = ui_result.save_requested;
             ui_result_save_as = ui_result.save_as_requested;
+
+            if ui_result.reset_view_requested {
+                app_log::info("Fit View requested");
+                // TODO: compute bounds from real document bodies once available.
+                // For now, reset to a reasonable default around the origin.
+                use glam::Vec3;
+                self.camera.reset_to_fit(Vec3::ZERO, 1.0);
+            }
 
             if ui_result.finish_sketch_requested {
                 // Defer handling until after rendering to avoid borrow conflicts.
@@ -1123,59 +1107,6 @@ impl PrintCadApp {
             _ => false,
         }
     }
-}
-
-fn bodies_bounds(bodies: &[BodySubmission]) -> Option<(Vec3, f32)> {
-    let mut min = Vec3::splat(f32::INFINITY);
-    let mut max = Vec3::splat(f32::NEG_INFINITY);
-    let mut any = false;
-
-    for body in bodies {
-        for pos in &body.mesh.positions {
-            let v = Vec3::from_array(*pos);
-            min = min.min(v);
-            max = max.max(v);
-            any = true;
-        }
-    }
-
-    if !any {
-        return None;
-    }
-
-    let center = (min + max) * 0.5;
-    let mut radius = 0.0f32;
-    for body in bodies {
-        for pos in &body.mesh.positions {
-            let v = Vec3::from_array(*pos);
-            radius = radius.max((v - center).length());
-        }
-    }
-
-    Some((center, radius))
-}
-
-fn add_triangle(
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-    verts: [[f32; 3]; 3],
-) {
-    let normal = face_normal(verts[0], verts[1], verts[2]);
-    let start = positions.len() as u32;
-    for v in verts {
-        positions.push(v);
-        normals.push(normal);
-    }
-    indices.extend_from_slice(&[start, start + 1, start + 2]);
-}
-
-fn face_normal(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [f32; 3] {
-    let pa = Vec3::from_array(a);
-    let pb = Vec3::from_array(b);
-    let pc = Vec3::from_array(c);
-    let normal = (pb - pa).cross(pc - pa).normalize_or_zero();
-    normal.to_array()
 }
 
 fn lighting_data_from_settings(settings: &LightingSettings) -> LightingData {
