@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Simple "new sketch" icon: a sheet with a plus sign -->
+  <rect x="4" y="3" width="14" height="18" rx="2" ry="2"
+        fill="none" stroke="#FFFFFF" stroke-width="1.5"/>
+  <line x1="11" y1="10" x2="11" y2="17"
+        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="7.5" y1="13.5" x2="14.5" y2="13.5"
+        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
+
+
+

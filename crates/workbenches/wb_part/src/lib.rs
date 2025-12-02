@@ -13,7 +13,7 @@ pub struct PartDesignWorkbench {
 impl Workbench for PartDesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
-            "wb.part-design",
+            "wb.part",
             "Part Design",
             "Feature-based solid modeling workbench.",
         )

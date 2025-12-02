@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- New Body: cube with plus sign -->
+  <path d="M7 8 L12 5 L17 8 V14 L12 17 L7 14 Z"
+        fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
+  <line x1="5" y1="10" x2="5" y2="15"
+        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="2.5" y1="12.5" x2="7.5" y2="12.5"
+        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+</svg>
+
+
+

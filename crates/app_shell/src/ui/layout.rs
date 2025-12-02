@@ -1,8 +1,9 @@
 use axes::AxisSystem;
 use core_document::{DocumentService, WorkbenchId};
-use egui::{self, Color32, Context};
+use egui::{self, Color32, Context, Id, TextureHandle, TextureOptions};
+use std::collections::HashMap;
 
-use crate::log_panel;
+use crate::{log_panel, orientation_cube::rasterize_svg};
 use glam::Vec3;
 use workbenches::REGISTERED_WORKBENCHES;
 
@@ -60,23 +61,68 @@ pub fn draw_top_panel(
                 ui.add_space(6.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button("Open").clicked() {
+                    // Open
+                    if let Some(icon) = get_global_icon(ctx, "open") {
+                        let resp = ui
+                            .add(egui::Button::image(egui::Image::from(&icon)))
+                            .on_hover_text("Open");
+                        if resp.clicked() {
+                            result.open_requested = true;
+                        }
+                    } else if ui.button("Open").clicked() {
                         result.open_requested = true;
                     }
-                    if ui.button("Save").clicked() {
+
+                    // Save
+                    if let Some(icon) = get_global_icon(ctx, "save") {
+                        let resp = ui
+                            .add(egui::Button::image(egui::Image::from(&icon)))
+                            .on_hover_text("Save");
+                        if resp.clicked() {
+                            result.save_requested = true;
+                        }
+                    } else if ui.button("Save").clicked() {
                         result.save_requested = true;
                     }
-                    if ui.button("Save As").clicked() {
+
+                    // Save As
+                    if let Some(icon) = get_global_icon(ctx, "save_as") {
+                        let resp = ui
+                            .add(egui::Button::image(egui::Image::from(&icon)))
+                            .on_hover_text("Save As");
+                        if resp.clicked() {
+                            result.save_as_requested = true;
+                        }
+                    } else if ui.button("Save As").clicked() {
                         result.save_as_requested = true;
                     }
+
                     ui.separator();
-                    if ui
+
+                    // New Body
+                    if let Some(icon) = get_global_icon(ctx, "new_body") {
+                        let resp = ui
+                            .add(egui::Button::image(egui::Image::from(&icon)))
+                            .on_hover_text("New Body");
+                        if resp.clicked() {
+                            result.new_body_requested = true;
+                        }
+                    } else if ui
                         .add(egui::Button::new("New Body").min_size(egui::vec2(80.0, 0.0)))
                         .clicked()
                     {
                         result.new_body_requested = true;
                     }
-                    if ui.button("Fit View").clicked() {
+
+                    // Fit View
+                    if let Some(icon) = get_global_icon(ctx, "fit_view") {
+                        let resp = ui
+                            .add(egui::Button::image(egui::Image::from(&icon)))
+                            .on_hover_text("Fit View");
+                        if resp.clicked() {
+                            result.reset_view_requested = true;
+                        }
+                    } else if ui.button("Fit View").clicked() {
                         result.reset_view_requested = true;
                     }
                 });
@@ -112,9 +158,24 @@ pub fn draw_top_panel(
                         // Check with workbench if tool is enabled
                         let enabled = workbench.is_tool_enabled(&tool.id, &wb_ctx);
 
+                        // Try to load an icon for this tool based on convention:
+                        // - Workbench id, e.g. "wb.sketch"
+                        // - Tool id, e.g. "sketch.line"
+                        // - Icon path: crates/workbenches/<wb_crate>/src/icons/<tool_id>.svg
+                        //   where <wb_crate> is derived from the workbench id (wb.sketch -> wb_sketch)
+                        let icon = get_tool_icon_for(ctx, &active_workbench.0, &tool.id);
+
                         // Action tools behave like simple buttons (fire-and-forget),
                         // Radio and Check tools show selected state.
-                        let button = if tool.behavior == core_document::ToolBehavior::Action {
+                        let button = if let Some(icon) = icon {
+                            // Icon-based button (tooltip shows label).
+                            // Build an Image widget from the texture handle and wrap it in a button.
+                            let mut button = egui::Button::image(egui::Image::from(&icon));
+                            if tool.behavior != core_document::ToolBehavior::Action && is_active {
+                                button = button.selected(true);
+                            }
+                            ui.add_enabled(enabled, button).on_hover_text(&tool.label)
+                        } else if tool.behavior == core_document::ToolBehavior::Action {
                             ui.add_enabled(enabled, egui::Button::new(&tool.label))
                         } else {
                             ui.add_enabled(
@@ -170,6 +231,89 @@ pub fn draw_top_panel(
             });
         });
     result
+}
+
+#[derive(Default, Clone)]
+struct IconCache {
+    handles: HashMap<String, TextureHandle>,
+}
+
+fn workbench_id_to_crate_folder(id: &str) -> String {
+    // Map workbench IDs to crate folder names.
+    // Convention:
+    //   - "wb.sketch" -> "wb_sketch"
+    //   - "wb.part"   -> "wb_part"
+    //
+    // Implementation: replace '.' with '_' and keep the full id.
+    id.replace('.', "_")
+}
+
+fn load_svg_icon(
+    ctx: &Context,
+    cache_id: Id,
+    cache_key: &str,
+    texture_name_prefix: &str,
+    path: &std::path::Path,
+) -> Option<TextureHandle> {
+    // Try cache first
+    if let Some(handle) = ctx.data(|data| {
+        data.get_temp::<IconCache>(cache_id)
+            .and_then(|cache| cache.handles.get(cache_key).cloned())
+    }) {
+        return Some(handle);
+    }
+
+    let svg = std::fs::read_to_string(path).ok()?;
+    let image = rasterize_svg(&svg)?;
+
+    let tex_name = format!("{texture_name_prefix}{cache_key}");
+    let texture = ctx.load_texture(tex_name, image, TextureOptions::LINEAR);
+
+    // Store in cache
+    ctx.data_mut(|data| {
+        let cache = data.get_temp_mut_or_insert_with(cache_id, IconCache::default);
+        cache.handles.insert(cache_key.to_string(), texture.clone());
+    });
+
+    Some(texture)
+}
+
+fn get_tool_icon_for(
+    ctx: &Context,
+    workbench_id: &WorkbenchId,
+    tool_id: &str,
+) -> Option<TextureHandle> {
+    // Unique cache key per workbench/tool pair
+    let key = format!("tool::{}::{}", workbench_id.as_str(), tool_id);
+    let cache_id = Id::new("icon_cache");
+
+    // Derive crate folder from workbench id
+    let crate_folder = workbench_id_to_crate_folder(workbench_id.as_str());
+    let file_name = format!("{tool_id}.svg");
+
+    // Path: crates/workbenches/<crate_folder>/src/icons/<tool_id>.svg
+    let candidate = std::path::PathBuf::from("crates")
+        .join("workbenches")
+        .join(crate_folder)
+        .join("src")
+        .join("icons")
+        .join(&file_name);
+
+    load_svg_icon(ctx, cache_id, &key, "tool_icon_", &candidate)
+}
+
+fn get_global_icon(ctx: &Context, name: &str) -> Option<TextureHandle> {
+    let key = format!("global::{name}");
+    let cache_id = Id::new("icon_cache");
+
+    // Path: crates/app_shell/src/icons/<name>.svg
+    let candidate = std::path::PathBuf::from("crates")
+        .join("app_shell")
+        .join("src")
+        .join("icons")
+        .join(format!("{name}.svg"));
+
+    load_svg_icon(ctx, cache_id, &key, "global_icon_", &candidate)
 }
 
 pub struct LeftPanelResult {
@@ -410,13 +554,15 @@ pub fn draw_screen_space_overlays(
         return;
     }
 
-    let painter = ctx.layer_painter(egui::LayerId::new(
-        egui::Order::Foreground, // Draw on top of 3D scene
-        egui::Id::new("screen_space_overlays"),
-    ));
-
     let ppp = ctx.pixels_per_point();
     let viewport_rect = ctx.available_rect();
+
+    // Use Background order to draw beneath UI panels, and clip to viewport area
+    let layer_id = egui::LayerId::new(
+        egui::Order::Background, // Draw beneath UI but on top of 3D scene (3D is rendered separately)
+        egui::Id::new("screen_space_overlays"),
+    );
+    let painter = ctx.layer_painter(layer_id).with_clip_rect(viewport_rect);
 
     for overlay in overlays {
         // Screen coordinates are already in pixels relative to the viewport origin (0,0)

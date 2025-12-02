@@ -175,6 +175,8 @@ pub struct BodySubmission {
     pub mesh: TriMesh,
     pub color: [f32; 3],
     pub highlight: HighlightState,
+    /// If true, render as wireframe/line with depth bias to appear on top of solid geometry
+    pub is_wireframe: bool,
 }
 
 impl fmt::Debug for BodySubmission {

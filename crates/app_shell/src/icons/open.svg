@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Open: folder with arrow -->
+  <path d="M4 8 H10 L12 10 H20 V18 H4 Z"
+        fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
+  <path d="M12 5 L12 11"
+        fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <polyline points="10,7 12,5 14,7"
+            fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+
+
+

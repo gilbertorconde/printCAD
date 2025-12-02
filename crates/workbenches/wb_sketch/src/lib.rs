@@ -643,7 +643,7 @@ viewport_pos = ({:.1}, {:.1})",
         &self,
         _ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
-    ) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+    ) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
         Vec::new()
     }
 

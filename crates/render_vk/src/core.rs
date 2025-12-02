@@ -20,6 +20,10 @@ use crate::{
     VALIDATION_LAYER,
 };
 
+/// Background color for the 3D viewport (RGBA in range 0.0-1.0).
+/// Dark blue-gray color: [R, G, B, A]
+const VIEWPORT_BACKGROUND_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+
 pub(crate) struct RendererCore {
     instance: ash::Instance,
     surface_loader: SurfaceLoader,
@@ -1037,7 +1041,7 @@ impl RendererCore {
             vec![
                 vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [0.05, 0.08, 0.12, 1.0],
+                        float32: VIEWPORT_BACKGROUND_COLOR,
                     },
                 },
                 vk::ClearValue {
@@ -1048,7 +1052,7 @@ impl RendererCore {
                 },
                 vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [0.05, 0.08, 0.12, 1.0],
+                        float32: VIEWPORT_BACKGROUND_COLOR,
                     },
                 },
             ]
@@ -1057,7 +1061,7 @@ impl RendererCore {
             vec![
                 vk::ClearValue {
                     color: vk::ClearColorValue {
-                        float32: [0.05, 0.08, 0.12, 1.0],
+                        float32: VIEWPORT_BACKGROUND_COLOR,
                     },
                 },
                 vk::ClearValue {

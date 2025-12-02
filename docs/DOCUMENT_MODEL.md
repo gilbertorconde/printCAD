@@ -124,7 +124,7 @@ pub struct PadFeature {
 
 impl WorkbenchFeature for PadFeature {
     fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.part-design")
+        WorkbenchId::from("wb.part")
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {

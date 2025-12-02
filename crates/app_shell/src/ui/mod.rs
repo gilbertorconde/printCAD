@@ -188,6 +188,9 @@ impl UiLayer {
 
             viewport_rect_logical = ctx.available_rect();
 
+            // Draw screen-space overlays in the viewport area (before other overlays)
+            layout::draw_screen_space_overlays(ctx, screen_space_overlays);
+
             if let Some(input) = orientation_input {
                 cube_result = orientation_cube::draw(ctx, input, &cube_config);
             }
@@ -195,9 +198,6 @@ impl UiLayer {
             if let Some((px, py)) = pivot_screen_pos {
                 layout::draw_pivot_indicator(ctx, px, py);
             }
-
-            // Draw screen-space overlays in the viewport area
-            layout::draw_screen_space_overlays(ctx, screen_space_overlays);
         });
 
         // Detect workbench change

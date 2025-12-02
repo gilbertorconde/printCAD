@@ -116,6 +116,7 @@ pub(crate) struct MeshRenderer {
     index_capacity: usize,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
+    wireframe_pipeline: vk::Pipeline, // Separate pipeline for wireframes with depth bias
     msaa_samples: vk::SampleCountFlags,
 }
 
@@ -132,7 +133,10 @@ impl MeshRenderer {
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
 
         let pipeline_layout = create_mesh_pipeline_layout(&device)?;
-        let pipeline = create_mesh_pipeline(&device, render_pass, pipeline_layout, msaa_samples)?;
+        let pipeline =
+            create_mesh_pipeline(&device, render_pass, pipeline_layout, msaa_samples, false)?;
+        let wireframe_pipeline =
+            create_mesh_pipeline(&device, render_pass, pipeline_layout, msaa_samples, true)?;
 
         Ok(Self {
             device,
@@ -145,6 +149,7 @@ impl MeshRenderer {
             index_capacity: 0,
             pipeline_layout,
             pipeline,
+            wireframe_pipeline,
             msaa_samples,
         })
     }
@@ -156,6 +161,7 @@ impl MeshRenderer {
     ) -> Result<(), RenderError> {
         unsafe {
             self.device.destroy_pipeline(self.pipeline, None);
+            self.device.destroy_pipeline(self.wireframe_pipeline, None);
         }
         self.msaa_samples = msaa_samples;
         self.pipeline = create_mesh_pipeline(
@@ -163,6 +169,14 @@ impl MeshRenderer {
             render_pass,
             self.pipeline_layout,
             msaa_samples,
+            false,
+        )?;
+        self.wireframe_pipeline = create_mesh_pipeline(
+            &self.device,
+            render_pass,
+            self.pipeline_layout,
+            msaa_samples,
+            true,
         )?;
         Ok(())
     }
@@ -177,11 +191,83 @@ impl MeshRenderer {
         camera_pos: [f32; 3],
         lighting: &LightingData,
     ) -> Result<(), RenderError> {
-        let index_count = self.upload_meshes(bodies)?;
-        if index_count == 0 {
+        // Separate solid geometry from wireframes and order them: solid first, then wireframes
+        // This ensures indices are laid out correctly for separate draw calls
+        let solid_bodies: Vec<_> = bodies.iter().filter(|b| !b.is_wireframe).cloned().collect();
+        let mut wireframe_bodies: Vec<_> =
+            bodies.iter().filter(|b| b.is_wireframe).cloned().collect();
+
+        // Upload all meshes together in order: solid first, then wireframes
+        let mut ordered_bodies = solid_bodies;
+        ordered_bodies.append(&mut wireframe_bodies);
+
+        let total_index_count = self.upload_meshes(&ordered_bodies)?;
+        if total_index_count == 0 {
             return Ok(());
         }
 
+        // Calculate index counts
+        let mut solid_index_count = 0;
+        let mut wireframe_index_count = 0;
+
+        for body in bodies {
+            let mesh = &body.mesh;
+            let mesh_index_count = if mesh.indices.is_empty() {
+                mesh.positions.len()
+            } else {
+                mesh.indices.len()
+            };
+
+            if body.is_wireframe {
+                wireframe_index_count += mesh_index_count;
+            } else {
+                solid_index_count += mesh_index_count;
+            }
+        }
+
+        // Render solid geometry first (if any)
+        if solid_index_count > 0 {
+            self.draw_with_pipeline(
+                command_buffer,
+                swapchain_extent,
+                viewport_rect,
+                solid_index_count as u32,
+                view_proj,
+                camera_pos,
+                lighting,
+                self.pipeline,
+            )?;
+        }
+
+        // Render wireframes on top with depth bias (if any)
+        // Use index offset to skip solid geometry indices
+        if wireframe_index_count > 0 {
+            self.draw_wireframes_with_offset(
+                command_buffer,
+                swapchain_extent,
+                viewport_rect,
+                wireframe_index_count as u32,
+                solid_index_count,
+                view_proj,
+                camera_pos,
+                lighting,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    fn draw_with_pipeline(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        swapchain_extent: vk::Extent2D,
+        viewport_rect: Option<&ViewportRect>,
+        index_count: u32,
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        lighting: &LightingData,
+        pipeline: vk::Pipeline,
+    ) -> Result<(), RenderError> {
         let (vp_x, vp_y, vp_width, vp_height) = match viewport_rect {
             Some(rect) => (
                 rect.x as f32,
@@ -220,7 +306,7 @@ impl MeshRenderer {
             self.device.cmd_bind_pipeline(
                 command_buffer,
                 vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline,
+                pipeline,
             );
             self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
             self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
@@ -246,6 +332,93 @@ impl MeshRenderer {
             );
             self.device
                 .cmd_draw_indexed(command_buffer, index_count, 1, 0, 0, 0);
+        }
+
+        Ok(())
+    }
+
+    fn draw_wireframes_with_offset(
+        &mut self,
+        command_buffer: vk::CommandBuffer,
+        swapchain_extent: vk::Extent2D,
+        viewport_rect: Option<&ViewportRect>,
+        index_count: u32,
+        index_offset: usize,
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        lighting: &LightingData,
+    ) -> Result<(), RenderError> {
+        let (vp_x, vp_y, vp_width, vp_height) = match viewport_rect {
+            Some(rect) => (
+                rect.x as f32,
+                rect.y as f32,
+                rect.width as f32,
+                rect.height as f32,
+            ),
+            None => (
+                0.0,
+                0.0,
+                swapchain_extent.width as f32,
+                swapchain_extent.height as f32,
+            ),
+        };
+
+        let viewport = vk::Viewport {
+            x: vp_x,
+            y: vp_y,
+            width: vp_width,
+            height: vp_height,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        };
+        let scissor = vk::Rect2D {
+            offset: vk::Offset2D {
+                x: vp_x as i32,
+                y: vp_y as i32,
+            },
+            extent: vk::Extent2D {
+                width: vp_width as u32,
+                height: vp_height as u32,
+            },
+        };
+
+        unsafe {
+            self.device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.wireframe_pipeline,
+            );
+            self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+            self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+            self.device
+                .cmd_bind_vertex_buffers(command_buffer, 0, &[self.vertex_buffer], &[0]);
+            self.device.cmd_bind_index_buffer(
+                command_buffer,
+                self.index_buffer,
+                0,
+                vk::IndexType::UINT32,
+            );
+            let push = MeshPushConstants::new(view_proj, camera_pos, lighting);
+            let push_bytes = std::slice::from_raw_parts(
+                &push as *const _ as *const u8,
+                size_of::<MeshPushConstants>(),
+            );
+            self.device.cmd_push_constants(
+                command_buffer,
+                self.pipeline_layout,
+                vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                0,
+                push_bytes,
+            );
+            // Draw wireframes starting from the index offset (after solid geometry indices)
+            self.device.cmd_draw_indexed(
+                command_buffer,
+                index_count,
+                1,
+                index_offset as u32,
+                0, // base_vertex is 0 because indices already account for vertex offsets
+                0,
+            );
         }
 
         Ok(())
@@ -398,6 +571,7 @@ fn create_mesh_pipeline(
     render_pass: vk::RenderPass,
     layout: vk::PipelineLayout,
     msaa_samples: vk::SampleCountFlags,
+    is_wireframe: bool,
 ) -> Result<vk::Pipeline, RenderError> {
     let vert_module = create_shader_module(device, MESH_VERT_SPV)?;
     let frag_module = create_shader_module(device, MESH_FRAG_SPV)?;
@@ -450,6 +624,18 @@ fn create_mesh_pipeline(
         .viewport_count(1)
         .scissor_count(1);
 
+    // For wireframes, enable depth bias to prevent z-fighting with solid geometry
+    // Depth bias pushes wireframes slightly toward the camera so they appear on top
+    let (depth_bias_enable, depth_bias_constant_factor, depth_bias_slope_factor) = if is_wireframe {
+        (true, 1.0, 1.0) // Small bias values - adjust as needed
+    } else {
+        (false, 0.0, 0.0)
+    };
+
+    // Wireframes should not write to depth buffer so solid geometry can occlude them
+    // Depth bias ensures they appear on top where they're not occluded
+    let depth_write = !is_wireframe;
+
     let rasterizer = vk::PipelineRasterizationStateCreateInfo::default()
         .depth_clamp_enable(false)
         .rasterizer_discard_enable(false)
@@ -457,7 +643,9 @@ fn create_mesh_pipeline(
         .line_width(1.0)
         .cull_mode(vk::CullModeFlags::BACK)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
-        .depth_bias_enable(false);
+        .depth_bias_enable(depth_bias_enable)
+        .depth_bias_constant_factor(depth_bias_constant_factor)
+        .depth_bias_slope_factor(depth_bias_slope_factor);
 
     let multisampling = vk::PipelineMultisampleStateCreateInfo::default()
         .sample_shading_enable(false)
@@ -465,7 +653,7 @@ fn create_mesh_pipeline(
 
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
         .depth_test_enable(true)
-        .depth_write_enable(true)
+        .depth_write_enable(depth_write)
         .depth_compare_op(vk::CompareOp::LESS)
         .depth_bounds_test_enable(false)
         .stencil_test_enable(false);

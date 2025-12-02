@@ -21,8 +21,8 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
         (origin + x_axis * pos.x + y_axis * pos.y).to_array()
     };
 
-    // Get normal vector for the plane (not used currently, but available for future use)
-    let _normal = glam::Vec3::from_array(plane.normal).normalize();
+    // Get normal vector for the plane - use this for all geometry normals
+    let plane_normal = glam::Vec3::from_array(plane.normal).normalize();
 
     let mut vertex_offset = 0u32;
 
@@ -60,6 +60,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                         start_pos,
                         end_pos,
                         0.1,
+                        plane_normal,
                     );
                 }
             }
@@ -87,6 +88,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                         start_world,
                         end_world,
                         0.1,
+                        plane_normal,
                     );
                 }
             }
@@ -117,6 +119,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                                 prev,
                                 point_world,
                                 0.1,
+                                plane_normal,
                             );
                         }
                         prev_point = Some(point_world);
@@ -171,6 +174,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                                 prev,
                                 point_world,
                                 0.1,
+                                plane_normal,
                             );
                         }
                         prev_point = Some(point_world);
@@ -196,6 +200,7 @@ fn add_line_quad(
     start: [f32; 3],
     end: [f32; 3],
     thickness: f32,
+    plane_normal: glam::Vec3,
 ) {
     let dir = glam::Vec3::from_array([end[0] - start[0], end[1] - start[1], end[2] - start[2]]);
     let length = dir.length();
@@ -217,7 +222,9 @@ fn add_line_quad(
     .normalize()
         * thickness;
 
-    let normal = perp.cross(dir_norm).normalize();
+    // Use the plane normal instead of calculating from the line direction
+    // This ensures consistent lighting for all geometry on the same plane
+    let normal = plane_normal;
 
     // Create quad vertices
     let v0 = glam::Vec3::from_array(start) - perp;

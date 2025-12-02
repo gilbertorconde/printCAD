@@ -10,6 +10,7 @@ use core_document::{
     WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::Vec3;
+use kernel_api::TriMesh;
 use log_panel as app_log;
 use orientation_cube::OrientationCubeInput;
 use render_vk::{
@@ -29,6 +30,141 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 use workbenches::register_all_workbenches;
+
+/// Create a 3D line mesh along the X-axis (horizontal, red)
+fn create_horizontal_axis_line() -> TriMesh {
+    let length = 4.0;
+    let half_length = length * 0.5;
+    let thickness = 0.01; // Very thin line
+    let half_thickness = thickness * 0.5;
+
+    // Create a line along the X-axis from -half_length to +half_length
+    // The line is a box with rectangular cross-section (thickness in Y and Z)
+    // We need 24 vertices (4 per face × 6 faces) since normals differ per face
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Top face (y = +half_thickness): normal = [0, 1, 0]
+    positions.push([-half_length, half_thickness, -half_thickness]);
+    positions.push([half_length, half_thickness, -half_thickness]);
+    positions.push([half_length, half_thickness, half_thickness]);
+    positions.push([-half_length, half_thickness, half_thickness]);
+    normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
+    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+
+    // Bottom face (y = -half_thickness): normal = [0, -1, 0]
+    positions.push([-half_length, -half_thickness, half_thickness]);
+    positions.push([half_length, -half_thickness, half_thickness]);
+    positions.push([half_length, -half_thickness, -half_thickness]);
+    positions.push([-half_length, -half_thickness, -half_thickness]);
+    normals.extend_from_slice(&[[0.0, -1.0, 0.0]; 4]);
+    indices.extend_from_slice(&[4, 5, 6, 4, 6, 7]);
+
+    // Front face (z = +half_thickness): normal = [0, 0, 1]
+    positions.push([-half_length, -half_thickness, half_thickness]);
+    positions.push([-half_length, half_thickness, half_thickness]);
+    positions.push([half_length, half_thickness, half_thickness]);
+    positions.push([half_length, -half_thickness, half_thickness]);
+    normals.extend_from_slice(&[[0.0, 0.0, 1.0]; 4]);
+    indices.extend_from_slice(&[8, 9, 10, 8, 10, 11]);
+
+    // Back face (z = -half_thickness): normal = [0, 0, -1]
+    positions.push([half_length, -half_thickness, -half_thickness]);
+    positions.push([half_length, half_thickness, -half_thickness]);
+    positions.push([-half_length, half_thickness, -half_thickness]);
+    positions.push([-half_length, -half_thickness, -half_thickness]);
+    normals.extend_from_slice(&[[0.0, 0.0, -1.0]; 4]);
+    indices.extend_from_slice(&[12, 13, 14, 12, 14, 15]);
+
+    // Right face (x = +half_length): normal = [1, 0, 0]
+    positions.push([half_length, -half_thickness, -half_thickness]);
+    positions.push([half_length, -half_thickness, half_thickness]);
+    positions.push([half_length, half_thickness, half_thickness]);
+    positions.push([half_length, half_thickness, -half_thickness]);
+    normals.extend_from_slice(&[[1.0, 0.0, 0.0]; 4]);
+    indices.extend_from_slice(&[16, 17, 18, 16, 18, 19]);
+
+    // Left face (x = -half_length): normal = [-1, 0, 0]
+    positions.push([-half_length, -half_thickness, half_thickness]);
+    positions.push([-half_length, -half_thickness, -half_thickness]);
+    positions.push([-half_length, half_thickness, -half_thickness]);
+    positions.push([-half_length, half_thickness, half_thickness]);
+    normals.extend_from_slice(&[[-1.0, 0.0, 0.0]; 4]);
+    indices.extend_from_slice(&[20, 21, 22, 20, 22, 23]);
+
+    TriMesh {
+        positions,
+        normals,
+        indices,
+    }
+}
+
+/// Create a simple test cube mesh for panning verification
+fn create_test_cube() -> TriMesh {
+    let size = 1.0;
+    let half = size * 0.5;
+
+    // We need to duplicate vertices for each face since normals differ per face
+    // Create 24 vertices (4 per face × 6 faces)
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+
+    // Front face (z = +half): normal = [0, 0, 1]
+    positions.push([-half, -half, half]);
+    positions.push([half, -half, half]);
+    positions.push([half, half, half]);
+    positions.push([-half, half, half]);
+    normals.extend_from_slice(&[[0.0, 0.0, 1.0]; 4]);
+    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
+
+    // Back face (z = -half): normal = [0, 0, -1]
+    positions.push([half, -half, -half]);
+    positions.push([-half, -half, -half]);
+    positions.push([-half, half, -half]);
+    positions.push([half, half, -half]);
+    normals.extend_from_slice(&[[0.0, 0.0, -1.0]; 4]);
+    indices.extend_from_slice(&[4, 5, 6, 4, 6, 7]);
+
+    // Top face (y = +half): normal = [0, 1, 0]
+    positions.push([-half, half, half]);
+    positions.push([half, half, half]);
+    positions.push([half, half, -half]);
+    positions.push([-half, half, -half]);
+    normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
+    indices.extend_from_slice(&[8, 9, 10, 8, 10, 11]);
+
+    // Bottom face (y = -half): normal = [0, -1, 0]
+    positions.push([-half, -half, -half]);
+    positions.push([half, -half, -half]);
+    positions.push([half, -half, half]);
+    positions.push([-half, -half, half]);
+    normals.extend_from_slice(&[[0.0, -1.0, 0.0]; 4]);
+    indices.extend_from_slice(&[12, 13, 14, 12, 14, 15]);
+
+    // Right face (x = +half): normal = [1, 0, 0]
+    positions.push([half, -half, half]);
+    positions.push([half, -half, -half]);
+    positions.push([half, half, -half]);
+    positions.push([half, half, half]);
+    normals.extend_from_slice(&[[1.0, 0.0, 0.0]; 4]);
+    indices.extend_from_slice(&[16, 17, 18, 16, 18, 19]);
+
+    // Left face (x = -half): normal = [-1, 0, 0]
+    positions.push([-half, -half, -half]);
+    positions.push([-half, -half, half]);
+    positions.push([-half, half, half]);
+    positions.push([-half, half, -half]);
+    normals.extend_from_slice(&[[-1.0, 0.0, 0.0]; 4]);
+    indices.extend_from_slice(&[20, 21, 22, 20, 22, 23]);
+
+    TriMesh {
+        positions,
+        normals,
+        indices,
+    }
+}
 
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
@@ -454,6 +590,7 @@ impl ApplicationHandler for PrintCadApp {
                     mesh,
                     color: [0.2, 0.8, 0.2], // Green color for sketches
                     highlight: HighlightState::None,
+                    is_wireframe: false,
                 })
             })
             .collect();
@@ -476,11 +613,12 @@ impl ApplicationHandler for PrintCadApp {
 
                 wb.get_overlay_meshes(&wb_ctx, self.active_document_object)
                     .into_iter()
-                    .map(|(mesh, color)| BodySubmission {
+                    .map(|(mesh, color, is_wireframe)| BodySubmission {
                         id: Uuid::new_v4(), // Unique ID for overlay meshes
                         mesh,
                         color,
                         highlight: HighlightState::None,
+                        is_wireframe,
                     })
                     .collect()
             } else {
@@ -512,6 +650,27 @@ impl ApplicationHandler for PrintCadApp {
         // Combine sketch meshes and overlay meshes
         let mut all_meshes = sketch_meshes;
         all_meshes.append(&mut overlay_meshes);
+
+        // Add a fixed horizontal axis line (red, along X-axis) as wireframe
+        // Wireframes use depth bias to appear on top of solid geometry
+        let axis_line = create_horizontal_axis_line();
+        all_meshes.push(BodySubmission {
+            id: Uuid::new_v4(),
+            mesh: axis_line,
+            color: [1.0, 0.0, 0.0], // Red color
+            highlight: HighlightState::None,
+            is_wireframe: true, // Mark as wireframe to use depth bias pipeline
+        });
+
+        // Add a test cube for panning verification
+        let test_cube = create_test_cube();
+        all_meshes.push(BodySubmission {
+            id: Uuid::new_v4(),
+            mesh: test_cube,
+            color: [0.8, 0.2, 0.2], // Red color for test cube
+            highlight: HighlightState::None,
+            is_wireframe: false,
+        });
 
         // For now, only render sketch meshes (no demo bodies).
         self.frame_submission.bodies = all_meshes;

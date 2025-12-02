@@ -602,9 +602,10 @@ pub trait Workbench: Send {
 
     /// Get additional render meshes for overlay/helper visualization.
     /// Called every frame to allow workbenches to contribute visual aids (grid lines, guides, etc.).
-    /// Returns a vector of (mesh, color) tuples where:
+    /// Returns a vector of (mesh, color, is_wireframe) tuples where:
     /// - mesh: The triangular mesh to render
     /// - color: RGB color [r, g, b] in range 0.0-1.0
+    /// - is_wireframe: If true, render as wireframe with depth bias (appears on top of solid geometry)
     ///
     /// These meshes are rendered in 3D world space and will scale with zoom and rotate with the camera.
     /// For constant-thickness lines that don't change with zoom/rotation, use `get_screen_space_overlays` instead.
@@ -613,7 +614,7 @@ pub trait Workbench: Send {
         &self,
         _ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
-    ) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+    ) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
         Vec::new()
     }
 

@@ -636,7 +636,7 @@ fn get_overlay_meshes(
     &self,
     ctx: &WorkbenchRuntimeContext,
     active_feature: Option<FeatureId>,
-) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
+) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
     // Only show overlays for active sketch
     if let Some(feature_id) = active_feature {
         if let Some(node) = ctx.document.get_feature_meta(feature_id) {
@@ -648,8 +648,8 @@ fn get_overlay_meshes(
                             render::create_grid_lines(&sketch_feature.plane);
 
                         return vec![
-                            (x_mesh, [1.0, 0.0, 0.0]), // Red
-                            (y_mesh, [0.0, 1.0, 0.0]), // Green
+                            (x_mesh, [1.0, 0.0, 0.0], true),  // Red, wireframe
+                            (y_mesh, [0.0, 1.0, 0.0], true),  // Green, wireframe
                         ];
                     }
                 }
@@ -660,14 +660,17 @@ fn get_overlay_meshes(
 }
 ```
 
-The method returns a vector of `(mesh, color)` tuples where:
+The method returns a vector of `(mesh, color, is_wireframe)` tuples where:
 
 - `mesh`: A `TriMesh` from `kernel_api` containing the geometry to render
 - `color`: RGB color `[r, g, b]` in range 0.0-1.0
+- `is_wireframe`: If `true`, the mesh is rendered as a wireframe with depth bias, ensuring it appears on top of solid geometry. This is useful for axis lines, grid lines, and other visual guides that should always be visible. If `false`, the mesh is rendered as solid geometry.
+
+**Wireframe Rendering**: When `is_wireframe` is `true`, the renderer uses Vulkan's depth bias feature to push the geometry slightly toward the camera, preventing z-fighting and ensuring wireframes (like axis lines) are always visible on top of solid geometry. This is the proper way to render lines and wireframes in 3D applications.
 
 Overlay meshes are rendered every frame and are useful for:
 
-- Grid lines and axes
+- Grid lines and axes (typically wireframes)
 - Construction geometry
 - Visual guides and helpers
 - Temporary preview geometry

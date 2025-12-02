@@ -1098,7 +1098,7 @@ fn face_texture_palette() -> [(&'static str, Color32); 6] {
     ]
 }
 
-fn rasterize_svg(svg: &str) -> Option<ColorImage> {
+pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
     let mut opt = Options::default();
     opt.font_family = "DejaVu Sans".into();
     opt.languages = vec!["en".into()];
