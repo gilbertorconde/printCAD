@@ -133,6 +133,11 @@ impl LightSource {
     }
 }
 
+/// Camera tuning knobs.
+///
+/// All distance fields are expressed in the world's base unit, which printCAD
+/// fixes at **millimetres** (matching OCCT's STEP import output). The display
+/// unit shown in the UI is per-document and lives on `core_document::Document`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CameraSettings {
     pub orbit_button: MouseButtonSetting,
@@ -140,7 +145,9 @@ pub struct CameraSettings {
     pub orbit_sensitivity: f32,
     pub zoom_sensitivity: f32,
     pub invert_zoom: bool,
+    /// Closest the camera can dolly to the target, in millimetres.
     pub min_distance: f32,
+    /// Farthest the camera can dolly from the target, in millimetres.
     pub max_distance: f32,
     pub projection: ProjectionMode,
     pub fov_degrees: f32,
@@ -155,8 +162,8 @@ impl Default for CameraSettings {
             orbit_sensitivity: 0.4,
             zoom_sensitivity: 0.15,
             invert_zoom: false,
-            min_distance: 0.2,
-            max_distance: 500.0,
+            min_distance: 1.0,
+            max_distance: 5_000.0,
             projection: ProjectionMode::Perspective,
             fov_degrees: 50.0,
             axis_preset: AxisPreset::default(),

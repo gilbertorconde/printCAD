@@ -51,11 +51,12 @@ pub struct UiFrameResult {
     pub finish_sketch_requested: bool,
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
-    pub new_body_requested: bool,
     pub open_requested: bool,
     pub save_requested: bool,
     pub save_as_requested: bool,
+    pub import_step_requested: bool,
     pub reset_view_requested: bool,
+    pub quit_requested: bool,
 }
 
 pub struct UiLayer {
@@ -119,6 +120,7 @@ impl UiLayer {
         active_document_object: Option<core_document::FeatureId>,
         selected_body_id: Option<core_document::BodyId>,
         screen_space_overlays: &[core_document::ScreenSpaceOverlay],
+        pending_imports: u32,
     ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let prev_workbench = self.active_workbench.clone();
@@ -135,28 +137,41 @@ impl UiLayer {
 
         let mut tree_selection = None;
         let mut tree_activation = None;
-        let mut new_body_requested = false;
         let mut open_requested = false;
         let mut save_requested = false;
         let mut save_as_requested = false;
+        let mut import_step_requested = false;
         let mut reset_view_requested = false;
+        let mut quit_requested = false;
 
         let full_output = self.ctx.run(raw_input, |ctx| {
             let top = layout::draw_top_panel(
                 ctx,
                 &mut active_workbench,
-                &mut show_settings,
                 &mut active_tool,
                 registry,
                 document,
                 active_document_object,
                 selected_body_id,
             );
-            new_body_requested = top.new_body_requested;
             open_requested = top.open_requested;
             save_requested = top.save_requested;
             save_as_requested = top.save_as_requested;
+            import_step_requested = top.import_step_requested;
             reset_view_requested = top.reset_view_requested;
+            quit_requested = top.quit_requested;
+
+            // Translate menu-driven Settings/About requests into the persistent
+            // window state owned by `UiLayer`. About forces the About tab so
+            // the user lands on the right page; Preferences keeps whatever
+            // tab they used last.
+            if top.show_about_requested {
+                show_settings = true;
+                settings_tab = settings_panel::SettingsTab::About;
+            }
+            if top.show_settings_requested {
+                show_settings = true;
+            }
             let left_panel = layout::draw_left_panel(
                 ctx,
                 active_workbench.clone(),
@@ -178,13 +193,21 @@ impl UiLayer {
             settings_changed |= settings_panel::draw_settings_window(
                 ctx,
                 settings,
+                document,
                 &mut show_settings,
                 &mut settings_tab,
                 gpus,
                 gpu_name,
             );
             layout::draw_log_panel(ctx, settings.rendering.show_log_panel);
-            layout::draw_bottom_panel(ctx, fps, hovered_point, axis_system);
+            layout::draw_bottom_panel(
+                ctx,
+                fps,
+                hovered_point,
+                axis_system,
+                document.display_unit(),
+                pending_imports,
+            );
 
             viewport_rect_logical = ctx.available_rect();
 
@@ -241,11 +264,12 @@ impl UiLayer {
             finish_sketch_requested: finish_requested,
             tree_selection,
             tree_activation,
-            new_body_requested,
             open_requested,
             save_requested,
             save_as_requested,
+            import_step_requested,
             reset_view_requested,
+            quit_requested,
         }
     }
 }

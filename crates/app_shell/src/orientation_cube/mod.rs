@@ -222,9 +222,11 @@ pub fn draw(
                 Stroke::new(2.0, config.border_color),
             );
 
-            // Get camera orientation quaternion. We invert so cube shows world axes
-            // relative to the camera, then flip X/Z to match the camera's screen axes
-            // (so that X/Z rotations appear with the expected handedness).
+            // Build the cube's display rotation from the camera's orientation.
+            // We invert the camera quaternion so the cube shows the world axes as
+            // seen *from* the camera, then express it in the user's axis-system
+            // basis. For left-handed presets we additionally flip X on both sides
+            // so the cube spins with the same handedness as the main viewport.
             let q_world = Quat::from_array(input.camera_orientation).inverse();
             let world_rot = Mat3::from_quat(q_world);
             let basis = input.axis_system.canonical_basis();
@@ -383,7 +385,7 @@ fn draw_cube_interactive(
     // Top (+Y)
     let verts_top = make_main_face(x, z, y);
     polygons.push(CubePolygon {
-        uvs: Some(face_uvs(&verts_top, x, z, true, true)),
+        uvs: Some(face_uvs(&verts_top, x, z, false, true)),
         verts: verts_top,
         normal: Vec3::Y,
         color: top_color,
@@ -394,7 +396,7 @@ fn draw_cube_interactive(
     // Bottom (-Y)
     let verts_bottom = make_main_face(x, -z, -y);
     polygons.push(CubePolygon {
-        uvs: Some(face_uvs(&verts_bottom, x, -z, true, true)),
+        uvs: Some(face_uvs(&verts_bottom, x, -z, false, true)),
         verts: verts_bottom,
         normal: Vec3::NEG_Y,
         color: bottom_color,
@@ -405,7 +407,7 @@ fn draw_cube_interactive(
     // Front (+Z)
     let verts_front = make_main_face(x, y, z);
     polygons.push(CubePolygon {
-        uvs: Some(face_uvs(&verts_front, x, y, true, false)),
+        uvs: Some(face_uvs(&verts_front, x, y, false, false)),
         verts: verts_front,
         normal: Vec3::Z,
         color: front_color,
@@ -416,7 +418,7 @@ fn draw_cube_interactive(
     // Rear (-Z)
     let verts_rear = make_main_face(-x, y, -z);
     polygons.push(CubePolygon {
-        uvs: Some(face_uvs(&verts_rear, -x, y, true, false)),
+        uvs: Some(face_uvs(&verts_rear, -x, y, false, false)),
         verts: verts_rear,
         normal: Vec3::NEG_Z,
         color: rear_color,
@@ -427,7 +429,7 @@ fn draw_cube_interactive(
     // Right (+X)
     let verts_right = make_main_face(-z, y, x);
     polygons.push(CubePolygon {
-        uvs: Some(face_uvs(&verts_right, -z, y, true, false)),
+        uvs: Some(face_uvs(&verts_right, -z, y, false, false)),
         verts: verts_right,
         normal: Vec3::X,
         color: right_color,
@@ -438,7 +440,7 @@ fn draw_cube_interactive(
     // Left (-X)
     let verts_left = make_main_face(z, y, -x);
     polygons.push(CubePolygon {
-        uvs: Some(face_uvs(&verts_left, z, y, true, false)),
+        uvs: Some(face_uvs(&verts_left, z, y, false, false)),
         verts: verts_left,
         normal: Vec3::NEG_X,
         color: left_color,
@@ -650,9 +652,16 @@ fn draw_cube_interactive(
         uvs: None,
     });
 
-    // Project to 2D (simple orthographic)
+    // Orthographic projection from cube-local space to widget pixels:
+    //   * +X (cube right) → +screen X (right of widget)
+    //   * +Y (cube up)    → -screen Y (top of widget, since egui Y points down)
+    // Earlier versions negated X to compensate for a separate horizontal mirror
+    // in the main camera. With the camera's Vulkan Y-flip in place, the main
+    // viewport is no longer mirrored, so the cube must use a normal +X mapping
+    // — otherwise it appears L/R flipped and rotates in the opposite direction
+    // from the part when the camera orbits.
     let project =
-        |v: Vec3| -> Pos2 { Pos2::new(center.x - v.x * cube_scale, center.y - v.y * cube_scale) };
+        |v: Vec3| -> Pos2 { Pos2::new(center.x + v.x * cube_scale, center.y - v.y * cube_scale) };
 
     // Calculate depth and sort back-to-front
     let mut poly_data: Vec<_> = polygons

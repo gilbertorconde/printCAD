@@ -677,6 +677,56 @@ Overlay meshes are rendered every frame and are useful for:
 
 ---
 
+## Tool Icons
+
+Workbenches can provide SVG icons for their tools. The application will automatically discover and use these icons in the top toolbar if they follow the naming and folder conventions below.
+
+### File and Folder Convention
+
+- **Workbench ID → crate folder**:
+
+  - Workbench IDs must follow the pattern `wb.<name>`, e.g.:
+    - `wb.sketch` → crate folder `crates/workbenches/wb_sketch/`
+    - `wb.part` → crate folder `crates/workbenches/wb_part/`
+  - The runtime converts `.` to `_` to map from workbench id to crate folder.
+
+- **Icon folder**:
+
+  - Inside the workbench crate, place icons under:
+    - `crates/workbenches/<crate_folder>/src/icons/`
+  - For example:
+    - Sketch icons: `crates/workbenches/wb_sketch/src/icons/`
+    - Part Design icons: `crates/workbenches/wb_part/src/icons/`
+
+- **Icon filenames**:
+  - Each tool icon is an SVG named **exactly** after the tool id, with `.svg` extension:
+    - Tool id `sketch.circle` → `sketch.circle.svg`
+    - Tool id `sketch.arc` → `sketch.arc.svg`
+    - Tool id `part.pad` → `part.pad.svg`
+    - Tool id `part.pocket` → `part.pocket.svg`
+  - Icons must be valid SVG files (ideally simple, flat-color icons that rasterize well at small sizes).
+
+### How Icons Are Used at Runtime
+
+- The UI looks up an icon for each tool using:
+  - The **current workbench id** (e.g. `wb.sketch`) to locate the crate folder.
+  - The **tool id** (`ToolDescriptor::id`, e.g. `"sketch.circle"`) to build the SVG filename.
+- If a matching SVG file exists in `src/icons/`, it is:
+  - Loaded and rasterized into a texture.
+  - Cached in an internal icon cache keyed by workbench id and tool id.
+  - Rendered as the button image in the top toolbar instead of a text label.
+- If no icon is found:
+  - The tool still works; the UI simply shows the text label instead of an icon.
+
+### Summary / Checklist
+
+- **Workbench id**: use `wb.<name>` (no hyphens), so the crate folder is `wb_<name>`.
+- **Tool ids**: simple dot-separated strings, e.g. `"sketch.circle"`, `"part.pad"`.
+- **Icon path**: `crates/workbenches/wb_<name>/src/icons/<tool_id>.svg`.
+- **Fallback**: missing icons are safe; they just fall back to text labels.
+
+---
+
 ## Custom UI Panels
 
 Implement UI hooks to add custom content to the application panels:

@@ -86,9 +86,11 @@ impl CameraController {
             ProjectionMode::Orthographic => 50.0,
         };
 
+        // Idle the camera at ~150 mm from the origin so an empty CAD scene feels
+        // like a typical workshop framing of a small part.
         let mut controller = Self {
             target: Vec3::ZERO,
-            radius: settings.min_distance.max(5.0),
+            radius: settings.min_distance.max(150.0),
             yaw,
             pitch,
             orientation: Quat::IDENTITY,
@@ -235,9 +237,13 @@ impl CameraController {
             w as f32 / h as f32
         };
 
-        // Convert viewport-local coordinates to NDC in the range [-1, 1].
+        // Convert viewport-local coordinates (Y-down framebuffer) to NDC in
+        // the range [-1, 1]. After the Vulkan Y-flip applied in `view_proj`,
+        // NDC also runs Y-down, so the unproject mapping is a straight scale
+        // with no extra flip — top of the framebuffer (`viewport_y = 0`) is
+        // NDC -1, bottom is NDC +1, matching what the rasterizer produced.
         let ndc_x = (viewport_x / w as f32) * 2.0 - 1.0;
-        let ndc_y = 1.0 - (viewport_y / h as f32) * 2.0; // Flip Y
+        let ndc_y = (viewport_y / h as f32) * 2.0 - 1.0;
 
         // Get inverse view-projection
         let view_proj = self.view_proj(aspect);
@@ -282,7 +288,7 @@ impl CameraController {
         let view = self.view_matrix();
         let fov_persp_rad = self.fov_y_deg * DEG_TO_RAD;
         let fov_ortho_rad = 50.0_f32.to_radians();
-        let proj = match self.projection {
+        let mut proj = match self.projection {
             ProjectionMode::Perspective => {
                 Mat4::perspective_rh(fov_persp_rad, aspect.max(0.001), self.near, self.far)
             }
@@ -299,6 +305,26 @@ impl CameraController {
                 )
             }
         };
+
+        // Vulkan clip-space Y-flip.
+        //
+        // glam's `perspective_rh` / `orthographic_rh` produce OpenGL/WebGPU
+        // style Y-**up** clip space, but Vulkan's rasterizer maps clip +Y to
+        // the **bottom** of the framebuffer. Without a compensating flip, an
+        // imported model with "up" along world +Z renders on the bottom half
+        // of the screen, and through a couple of chained handedness flips
+        // appears mirrored left-to-right as well — i.e. exactly the
+        // "upside-down + left/right swapped" symptom you can see when
+        // comparing our front view against FreeCAD's.
+        //
+        // Negating element [1][1] of the column-major matrix is the
+        // canonical fix; equivalent to setting a negative-height viewport
+        // but doesn't bind us to Vulkan 1.1+, and keeps `world_to_screen`
+        // / `viewport_to_plane` working without any extra adjustments since
+        // they already use the same `view_proj` for both projection and
+        // unprojection.
+        proj.y_axis.y *= -1.0;
+
         proj * view
     }
 

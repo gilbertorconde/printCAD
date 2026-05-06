@@ -1,6 +1,6 @@
 use axes::AxisSystem;
-use core_document::{DocumentService, WorkbenchId};
-use egui::{self, Color32, Context, Id, TextureHandle, TextureOptions};
+use core_document::{format_length_mm, DocumentService, Unit, WorkbenchId};
+use egui::{self, Color32, Context, Id, Key, KeyboardShortcut, Modifiers, TextureHandle, TextureOptions};
 use std::collections::HashMap;
 
 use crate::{log_panel, orientation_cube::rasterize_svg};
@@ -9,18 +9,22 @@ use workbenches::REGISTERED_WORKBENCHES;
 
 use super::{feature_tree, ActiveTool, ActiveWorkbench};
 
+/// Outcome of a frame's interaction with the top bar (menu items + keyboard
+/// shortcuts). Each flag is `true` only on the frame the action was triggered.
 pub struct TopBarResult {
     pub open_requested: bool,
     pub save_requested: bool,
     pub save_as_requested: bool,
-    pub new_body_requested: bool,
+    pub import_step_requested: bool,
     pub reset_view_requested: bool,
+    pub show_settings_requested: bool,
+    pub show_about_requested: bool,
+    pub quit_requested: bool,
 }
 
 pub fn draw_top_panel(
     ctx: &Context,
     active_workbench: &mut ActiveWorkbench,
-    show_settings: &mut bool,
     active_tool: &mut ActiveTool,
     registry: &mut DocumentService,
     document: &mut core_document::Document,
@@ -31,122 +35,253 @@ pub fn draw_top_panel(
         open_requested: false,
         save_requested: false,
         save_as_requested: false,
-        new_body_requested: false,
+        import_step_requested: false,
         reset_view_requested: false,
+        show_settings_requested: false,
+        show_about_requested: false,
+        quit_requested: false,
     };
+
+    // Define the standard menu accelerators. `Modifiers::COMMAND` maps to
+    // Ctrl on Linux/Windows and Cmd on macOS, matching what users expect.
+    let sc_open = KeyboardShortcut::new(Modifiers::COMMAND, Key::O);
+    let sc_save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
+    let sc_save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+    let sc_import = KeyboardShortcut::new(Modifiers::COMMAND, Key::I);
+    let sc_quit = KeyboardShortcut::new(Modifiers::COMMAND, Key::Q);
+    let sc_fit = KeyboardShortcut::new(Modifiers::NONE, Key::F);
+
+    // Consume shortcuts up-front so the matching menu rows don't double-fire
+    // when an item is also clicked in the same frame.
+    ctx.input_mut(|i| {
+        if i.consume_shortcut(&sc_open) {
+            result.open_requested = true;
+        }
+        if i.consume_shortcut(&sc_save_as) {
+            // Save-As must be checked before Save: COMMAND+SHIFT+S would also
+            // satisfy COMMAND+S without this ordering.
+            result.save_as_requested = true;
+        }
+        if i.consume_shortcut(&sc_save) {
+            result.save_requested = true;
+        }
+        if i.consume_shortcut(&sc_import) {
+            result.import_step_requested = true;
+        }
+        if i.consume_shortcut(&sc_quit) {
+            result.quit_requested = true;
+        }
+        if i.consume_shortcut(&sc_fit) {
+            result.reset_view_requested = true;
+        }
+    });
+
     egui::TopBottomPanel::top("top_bar")
         .frame(
             egui::Frame::default()
-                .inner_margin(egui::Margin::same(8))
+                .inner_margin(egui::Margin::symmetric(6, 2))
                 .fill(ctx.style().visuals.panel_fill),
         )
         .show(ctx, |ui| {
             ui.vertical(|ui| {
-                ui.horizontal(|ui| {
-                    ui.heading("printCAD");
-                    ui.separator();
-                    if ui.button("Settings").clicked() {
-                        *show_settings = true;
-                    }
-                    ui.separator();
-                    ui.label("Workbench:");
-                    let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
-                    for wb in workbenches.iter() {
-                        let wb_id = WorkbenchId::from(wb.id.as_str());
-                        let wb_active = ActiveWorkbench(wb_id.clone());
-                        ui.selectable_value(active_workbench, wb_active, &wb.label);
-                    }
-                });
+                // ----------------- Menu bar (thin row) -----------------
+                egui::MenuBar::new().ui(ui, |ui| {
+                    // --- File menu ---
+                    let file_resp = ui.menu_button("File", |ui| {
+                        let new_btn = egui::Button::new("New")
+                            .shortcut_text(ctx.format_shortcut(&KeyboardShortcut::new(
+                                Modifiers::COMMAND,
+                                Key::N,
+                            )));
+                        // `New` is a placeholder until the multi-document flow lands.
+                        ui.add_enabled(false, new_btn)
+                            .on_hover_text("Create a new untitled document (coming soon)");
 
-                ui.add_space(6.0);
+                        ui.separator();
 
-                ui.horizontal(|ui| {
-                    // Open
-                    if let Some(icon) = get_global_icon(ctx, "open") {
-                        let resp = ui
-                            .add(egui::Button::image(egui::Image::from(&icon)))
-                            .on_hover_text("Open");
-                        if resp.clicked() {
+                        let open_btn = egui::Button::new("Open...")
+                            .shortcut_text(ctx.format_shortcut(&sc_open));
+                        if ui
+                            .add(open_btn)
+                            .on_hover_text("Open an existing .prtcad document")
+                            .clicked()
+                        {
                             result.open_requested = true;
+                            ui.close();
                         }
-                    } else if ui.button("Open").clicked() {
-                        result.open_requested = true;
-                    }
 
-                    // Save
-                    if let Some(icon) = get_global_icon(ctx, "save") {
-                        let resp = ui
-                            .add(egui::Button::image(egui::Image::from(&icon)))
-                            .on_hover_text("Save");
-                        if resp.clicked() {
+                        let save_btn = egui::Button::new("Save")
+                            .shortcut_text(ctx.format_shortcut(&sc_save));
+                        if ui
+                            .add(save_btn)
+                            .on_hover_text("Save the active document")
+                            .clicked()
+                        {
                             result.save_requested = true;
+                            ui.close();
                         }
-                    } else if ui.button("Save").clicked() {
-                        result.save_requested = true;
-                    }
 
-                    // Save As
-                    if let Some(icon) = get_global_icon(ctx, "save_as") {
-                        let resp = ui
-                            .add(egui::Button::image(egui::Image::from(&icon)))
-                            .on_hover_text("Save As");
-                        if resp.clicked() {
+                        let save_as_btn = egui::Button::new("Save As...")
+                            .shortcut_text(ctx.format_shortcut(&sc_save_as));
+                        if ui
+                            .add(save_as_btn)
+                            .on_hover_text("Save the active document under a new name")
+                            .clicked()
+                        {
                             result.save_as_requested = true;
+                            ui.close();
                         }
-                    } else if ui.button("Save As").clicked() {
-                        result.save_as_requested = true;
-                    }
 
-                    ui.separator();
+                        ui.separator();
 
-                    // New Body
-                    if let Some(icon) = get_global_icon(ctx, "new_body") {
-                        let resp = ui
-                            .add(egui::Button::image(egui::Image::from(&icon)))
-                            .on_hover_text("New Body");
-                        if resp.clicked() {
-                            result.new_body_requested = true;
+                        let import_btn = egui::Button::new("Import STEP...")
+                            .shortcut_text(ctx.format_shortcut(&sc_import));
+                        if ui
+                            .add(import_btn)
+                            .on_hover_text("Import a STEP/STP file into this document")
+                            .clicked()
+                        {
+                            result.import_step_requested = true;
+                            ui.close();
                         }
-                    } else if ui
-                        .add(egui::Button::new("New Body").min_size(egui::vec2(80.0, 0.0)))
-                        .clicked()
-                    {
-                        result.new_body_requested = true;
-                    }
 
-                    // Fit View
-                    if let Some(icon) = get_global_icon(ctx, "fit_view") {
-                        let resp = ui
-                            .add(egui::Button::image(egui::Image::from(&icon)))
-                            .on_hover_text("Fit View");
-                        if resp.clicked() {
+                        ui.separator();
+
+                        if ui
+                            .button("Preferences...")
+                            .on_hover_text("Open application preferences")
+                            .clicked()
+                        {
+                            result.show_settings_requested = true;
+                            ui.close();
+                        }
+
+                        ui.separator();
+
+                        let quit_btn = egui::Button::new("Quit")
+                            .shortcut_text(ctx.format_shortcut(&sc_quit));
+                        if ui
+                            .add(quit_btn)
+                            .on_hover_text("Exit printCAD")
+                            .clicked()
+                        {
+                            result.quit_requested = true;
+                            ui.close();
+                        }
+                    });
+                    file_resp
+                        .response
+                        .on_hover_text("File operations: open, save, import, preferences, quit");
+
+                    // --- View menu ---
+                    let view_resp = ui.menu_button("View", |ui| {
+                        let fit_btn = egui::Button::new("Fit View")
+                            .shortcut_text(ctx.format_shortcut(&sc_fit));
+                        if ui
+                            .add(fit_btn)
+                            .on_hover_text("Frame the document or origin in the viewport")
+                            .clicked()
+                        {
                             result.reset_view_requested = true;
+                            ui.close();
                         }
-                    } else if ui.button("Fit View").clicked() {
-                        result.reset_view_requested = true;
-                    }
+
+                        ui.separator();
+
+                        let wb_submenu = ui.menu_button("Workbench", |ui| {
+                            let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+                            for wb in workbenches.iter() {
+                                let wb_id = WorkbenchId::from(wb.id.as_str());
+                                let target = ActiveWorkbench(wb_id);
+                                let is_active = *active_workbench == target;
+                                if ui
+                                    .selectable_label(is_active, &wb.label)
+                                    .on_hover_text(&wb.description)
+                                    .clicked()
+                                {
+                                    *active_workbench = target;
+                                    ui.close();
+                                }
+                            }
+                        });
+                        wb_submenu
+                            .response
+                            .on_hover_text("Switch the active workbench");
+                    });
+                    view_resp
+                        .response
+                        .on_hover_text("View controls: fit, workbench switcher");
+
+                    // --- Help menu ---
+                    let help_resp = ui.menu_button("Help", |ui| {
+                        if ui
+                            .button("About printCAD")
+                            .on_hover_text("Show version and system information")
+                            .clicked()
+                        {
+                            result.show_about_requested = true;
+                            ui.close();
+                        }
+                    });
+                    help_resp
+                        .response
+                        .on_hover_text("Help and about information");
+
+                    // --- Right-aligned workbench combo (FreeCAD-style) ---
+                    ui.with_layout(
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+                            let current_label = workbenches
+                                .iter()
+                                .find(|wb| wb.id == active_workbench.0)
+                                .map(|wb| wb.label.clone())
+                                .unwrap_or_else(|| "(none)".to_string());
+                            let current_desc = workbenches
+                                .iter()
+                                .find(|wb| wb.id == active_workbench.0)
+                                .map(|wb| wb.description.clone())
+                                .unwrap_or_default();
+                            let combo = egui::ComboBox::from_id_salt("workbench_combo")
+                                .selected_text(&current_label)
+                                .show_ui(ui, |ui| {
+                                    for wb in workbenches.iter() {
+                                        let wb_id = WorkbenchId::from(wb.id.as_str());
+                                        let target = ActiveWorkbench(wb_id);
+                                        ui.selectable_value(active_workbench, target, &wb.label)
+                                            .on_hover_text(&wb.description);
+                                    }
+                                });
+                            let tooltip = if current_desc.is_empty() {
+                                "Active workbench".to_string()
+                            } else {
+                                format!("Active workbench: {}", current_desc)
+                            };
+                            combo.response.on_hover_text(tooltip);
+                        },
+                    );
                 });
 
-                ui.add_space(6.0);
-
+                // ----------------- Workbench tool ribbon -----------------
+                ui.add_space(2.0);
                 ui.horizontal_wrapped(|ui| {
-                    // Collect tools into Vec first to release the immutable borrow
+                    // Snapshot the tool list so we can reborrow the registry
+                    // mutably below for `is_tool_enabled` lookups.
                     let tools: Vec<_> = match registry.tools_for(&active_workbench.0) {
                         Ok(t) => t.to_vec(),
                         Err(_) => return,
                     };
 
-                    // Build a minimal runtime context for tool enabling checks
-                    let cam_pos = [0.0, 0.0, 5.0]; // Placeholder
-                    let cam_target = [0.0, 0.0, 0.0]; // Placeholder
-                    let viewport = (0, 0, 1920, 1080); // Placeholder
+                    // Minimal runtime context just for tool-enabling checks.
+                    let cam_pos = [0.0, 0.0, 5.0];
+                    let cam_target = [0.0, 0.0, 0.0];
+                    let viewport = (0, 0, 1920, 1080);
                     let mut wb_ctx = core_document::WorkbenchRuntimeContext::new(
                         document, cam_pos, cam_target, viewport,
                     );
                     wb_ctx.active_document_object = active_document_object;
                     wb_ctx.selected_body_id = selected_body_id.map(|id| id.0);
 
-                    // Get workbench once for tool enabling checks (now we can get mutable borrow)
                     let workbench = match registry.workbench_mut(&active_workbench.0) {
                         Ok(wb) => wb,
                         Err(_) => return,
@@ -154,22 +289,12 @@ pub fn draw_top_panel(
 
                     for tool in &tools {
                         let is_active = active_tool.active_ids.contains(&tool.id);
-
-                        // Check with workbench if tool is enabled
                         let enabled = workbench.is_tool_enabled(&tool.id, &wb_ctx);
 
-                        // Try to load an icon for this tool based on convention:
-                        // - Workbench id, e.g. "wb.sketch"
-                        // - Tool id, e.g. "sketch.line"
-                        // - Icon path: crates/workbenches/<wb_crate>/src/icons/<tool_id>.svg
-                        //   where <wb_crate> is derived from the workbench id (wb.sketch -> wb_sketch)
+                        // Icon convention: crates/workbenches/<crate>/src/icons/<tool_id>.svg.
                         let icon = get_tool_icon_for(ctx, &active_workbench.0, &tool.id);
 
-                        // Action tools behave like simple buttons (fire-and-forget),
-                        // Radio and Check tools show selected state.
-                        let button = if let Some(icon) = icon {
-                            // Icon-based button (tooltip shows label).
-                            // Build an Image widget from the texture handle and wrap it in a button.
+                        let response = if let Some(icon) = icon {
                             let mut button = egui::Button::image(egui::Image::from(&icon));
                             if tool.behavior != core_document::ToolBehavior::Action && is_active {
                                 button = button.selected(true);
@@ -177,22 +302,23 @@ pub fn draw_top_panel(
                             ui.add_enabled(enabled, button).on_hover_text(&tool.label)
                         } else if tool.behavior == core_document::ToolBehavior::Action {
                             ui.add_enabled(enabled, egui::Button::new(&tool.label))
+                                .on_hover_text(&tool.label)
                         } else {
                             ui.add_enabled(
                                 enabled,
                                 egui::Button::new(&tool.label).selected(is_active),
                             )
+                            .on_hover_text(&tool.label)
                         };
 
-                        if button.clicked() && enabled {
+                        if response.clicked() && enabled {
                             match tool.behavior {
                                 core_document::ToolBehavior::Action => {
-                                    // Fire-and-forget: always select the action tool for this frame.
-                                    // The host will clear it after handling the input.
+                                    // Fire-and-forget: always (re)select the action tool for this
+                                    // frame. The host clears it after handling the input.
                                     active_tool.active_ids.insert(tool.id.clone());
                                 }
                                 core_document::ToolBehavior::Check => {
-                                    // Check behavior: toggle independently
                                     if is_active {
                                         active_tool.active_ids.remove(&tool.id);
                                     } else {
@@ -200,16 +326,11 @@ pub fn draw_top_panel(
                                     }
                                 }
                                 core_document::ToolBehavior::Radio => {
-                                    // Radio behavior: only one tool per group can be active
                                     if is_active {
-                                        // Clicking an active tool deactivates it
                                         active_tool.active_ids.remove(&tool.id);
                                     } else {
-                                        // Deactivate other tools in the same group
                                         if let Some(group) = &tool.group {
-                                            // Remove all tools in this group
                                             active_tool.active_ids.retain(|active_id| {
-                                                // Find the tool descriptor to check its group
                                                 tools
                                                     .iter()
                                                     .find(|t| &t.id == active_id)
@@ -217,10 +338,8 @@ pub fn draw_top_panel(
                                                     .unwrap_or(true)
                                             });
                                         } else {
-                                            // No group: this tool is its own group, so just clear all
                                             active_tool.active_ids.clear();
                                         }
-                                        // Activate this tool
                                         active_tool.active_ids.insert(tool.id.clone());
                                     }
                                 }
@@ -302,20 +421,6 @@ fn get_tool_icon_for(
     load_svg_icon(ctx, cache_id, &key, "tool_icon_", &candidate)
 }
 
-fn get_global_icon(ctx: &Context, name: &str) -> Option<TextureHandle> {
-    let key = format!("global::{name}");
-    let cache_id = Id::new("icon_cache");
-
-    // Path: crates/app_shell/src/icons/<name>.svg
-    let candidate = std::path::PathBuf::from("crates")
-        .join("app_shell")
-        .join("src")
-        .join("icons")
-        .join(format!("{name}.svg"));
-
-    load_svg_icon(ctx, cache_id, &key, "global_icon_", &candidate)
-}
-
 pub struct LeftPanelResult {
     pub finish_sketch_requested: bool,
     pub tree_selection: Option<feature_tree::TreeItemId>,
@@ -341,7 +446,7 @@ pub fn draw_left_panel(
     active_document_object: Option<core_document::FeatureId>,
 ) -> LeftPanelResult {
     let mut panel_result = LeftPanelResult::default();
-
+    
     egui::SidePanel::left("left_panel")
         .resizable(true)
         .default_width(260.0)
@@ -355,10 +460,10 @@ pub fn draw_left_panel(
                 let tree_ui_result = feature_tree::draw_tree(ui, &tree_model, Some(selected_id));
                 panel_result.tree_selection = tree_ui_result.selection;
                 panel_result.tree_activation = tree_ui_result.activation;
-            });
+                });
 
             ui.separator();
-
+            
             // Call workbench's ui_left_panel hook
             if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
                 // Build a minimal runtime context for UI hooks
@@ -369,16 +474,16 @@ pub fn draw_left_panel(
                     document, cam_pos, cam_target, viewport,
                 );
                 ctx.active_document_object = active_document_object;
-
+                
                 wb.ui_left_panel(ui, &mut ctx);
-
+                
                 // Check for finish sketch request
                 if ctx.finish_sketch_requested {
                     panel_result.finish_sketch_requested = true;
                 }
             }
         });
-
+    
     panel_result
 }
 
@@ -467,6 +572,8 @@ pub fn draw_bottom_panel(
     fps: f32,
     hovered_point: Option<[f32; 3]>,
     axis_system: AxisSystem,
+    display_unit: Unit,
+    pending_imports: u32,
 ) {
     egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -487,20 +594,39 @@ pub fn draw_bottom_panel(
                 let values = canonical.to_array();
                 let mut parts = Vec::with_capacity(3);
                 for (idx, (role, axis)) in axes.iter().enumerate() {
+                    // Stored coordinates are in millimetres; format through the
+                    // active document's display unit so the same world point
+                    // reads naturally in mm, in, etc.
                     parts.push(format!(
-                        "{}({}): {:.3}",
+                        "{}({}): {}",
                         role,
                         axis.signed_label(),
-                        values[idx]
+                        format_length_mm(values[idx], display_unit, 3),
                     ));
                 }
                 ui.label(parts.join("  "));
             } else {
+                let suffix = display_unit.short_label();
                 let mut parts = Vec::with_capacity(3);
                 for (role, axis) in axes {
-                    parts.push(format!("{}({}): —", role, axis.signed_label()));
+                    parts.push(format!("{}({}): — {}", role, axis.signed_label(), suffix));
                 }
                 ui.label(parts.join("  "));
+            }
+
+            // Right-aligned import indicator: a spinner plus a short status
+            // string while the kernel worker is processing one or more STEP
+            // imports off the UI thread. Empty when nothing is in flight.
+            if pending_imports > 0 {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let label = if pending_imports == 1 {
+                        "Importing STEP…".to_string()
+                    } else {
+                        format!("Importing {pending_imports} STEPs…")
+                    };
+                    ui.label(label);
+                    ui.add(egui::Spinner::new());
+                });
             }
         });
     });

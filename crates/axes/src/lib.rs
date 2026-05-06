@@ -204,13 +204,13 @@ impl AxisPreset {
     pub const fn description(&self) -> &'static str {
         match self {
             AxisPreset::RightHandedZForward => {
-                "Typical CAD layout (match FreeCAD / conventional engineering axes)"
+                "Y points up, camera looks along -Z (WebGPU / Metal / D3D style)"
             }
             AxisPreset::RightHandedZBackward => {
-                "OpenGL-style view with camera forward along -Z (legacy DCC tooling)"
+                "Y points up, camera looks along +Z (legacy OpenGL / Maya tooling)"
             }
             AxisPreset::ZUpRightHanded => {
-                "Z points up (architectural/animation workflows), depth runs along -Y"
+                "Z points up, camera looks along +Y (engineering CAD: FreeCAD, SolidWorks, STEP)"
             }
         }
     }
@@ -238,7 +238,11 @@ impl AxisPreset {
 
 impl Default for AxisPreset {
     fn default() -> Self {
-        AxisPreset::RightHandedZForward
+        // Engineering CAD (FreeCAD, SolidWorks, OnShape, Inventor) and the STEP
+        // file standard all default to Z-up, so an imported STEP file's
+        // "front view" lines up with what the model's author saw in their
+        // source CAD tool.
+        AxisPreset::ZUpRightHanded
     }
 }
 

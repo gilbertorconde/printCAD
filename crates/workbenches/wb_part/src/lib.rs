@@ -20,6 +20,15 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        // Document-structure actions: shown first so the most common task
+        // (creating a new body) is one click away when this workbench is
+        // active. Action behaviour means the host will clear the activation
+        // after a single frame.
+        context.register_tool(ToolDescriptor::new_action(
+            "part.new_body",
+            "New Body",
+            Some("structure"),
+        ));
         context.register_tool(ToolDescriptor::new(
             "part.pad",
             "Pad (Extrude)",

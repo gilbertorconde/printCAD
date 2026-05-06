@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Import STEP: document with arrow descending into a stage tray -->
+  <path d="M9 3 H15 L18 6 V13 H9 Z"
+        fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
+  <polyline points="14,3 14,7 18,7"
+            fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linejoin="round"/>
+  <line x1="12" y1="13" x2="12" y2="19"
+        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+  <polyline points="9,16 12,19 15,16"
+            fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="4" y1="20.5" x2="20" y2="20.5"
+        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+</svg>

@@ -1,4 +1,5 @@
 mod camera;
+mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
 mod ui;
@@ -6,11 +7,13 @@ mod ui;
 use anyhow::{Context, Result};
 use camera::CameraController;
 use core_document::{
-    BodyId, Document, DocumentService, LogLevel, MouseButton as WbMouseButton, WorkbenchFeature,
-    WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BodyId, Document, DocumentService, ImportedGeometry, LogLevel,
+    MouseButton as WbMouseButton, Unit, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 use glam::Vec3;
-use kernel_api::TriMesh;
+use kernel_api::{ImportedModel, LengthUnit, TessellationSettings};
+use kernel_worker::{KernelResponse, KernelWorker};
 use log_panel as app_log;
 use orientation_cube::OrientationCubeInput;
 use render_vk::{
@@ -19,6 +22,7 @@ use render_vk::{
 };
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::error;
 use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
@@ -31,139 +35,26 @@ use winit::{
 };
 use workbenches::register_all_workbenches;
 
-/// Create a 3D line mesh along the X-axis (horizontal, red)
-fn create_horizontal_axis_line() -> TriMesh {
-    let length = 4.0;
-    let half_length = length * 0.5;
-    let thickness = 0.01; // Very thin line
-    let half_thickness = thickness * 0.5;
-
-    // Create a line along the X-axis from -half_length to +half_length
-    // The line is a box with rectangular cross-section (thickness in Y and Z)
-    // We need 24 vertices (4 per face × 6 faces) since normals differ per face
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-
-    // Top face (y = +half_thickness): normal = [0, 1, 0]
-    positions.push([-half_length, half_thickness, -half_thickness]);
-    positions.push([half_length, half_thickness, -half_thickness]);
-    positions.push([half_length, half_thickness, half_thickness]);
-    positions.push([-half_length, half_thickness, half_thickness]);
-    normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
-    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-
-    // Bottom face (y = -half_thickness): normal = [0, -1, 0]
-    positions.push([-half_length, -half_thickness, half_thickness]);
-    positions.push([half_length, -half_thickness, half_thickness]);
-    positions.push([half_length, -half_thickness, -half_thickness]);
-    positions.push([-half_length, -half_thickness, -half_thickness]);
-    normals.extend_from_slice(&[[0.0, -1.0, 0.0]; 4]);
-    indices.extend_from_slice(&[4, 5, 6, 4, 6, 7]);
-
-    // Front face (z = +half_thickness): normal = [0, 0, 1]
-    positions.push([-half_length, -half_thickness, half_thickness]);
-    positions.push([-half_length, half_thickness, half_thickness]);
-    positions.push([half_length, half_thickness, half_thickness]);
-    positions.push([half_length, -half_thickness, half_thickness]);
-    normals.extend_from_slice(&[[0.0, 0.0, 1.0]; 4]);
-    indices.extend_from_slice(&[8, 9, 10, 8, 10, 11]);
-
-    // Back face (z = -half_thickness): normal = [0, 0, -1]
-    positions.push([half_length, -half_thickness, -half_thickness]);
-    positions.push([half_length, half_thickness, -half_thickness]);
-    positions.push([-half_length, half_thickness, -half_thickness]);
-    positions.push([-half_length, -half_thickness, -half_thickness]);
-    normals.extend_from_slice(&[[0.0, 0.0, -1.0]; 4]);
-    indices.extend_from_slice(&[12, 13, 14, 12, 14, 15]);
-
-    // Right face (x = +half_length): normal = [1, 0, 0]
-    positions.push([half_length, -half_thickness, -half_thickness]);
-    positions.push([half_length, -half_thickness, half_thickness]);
-    positions.push([half_length, half_thickness, half_thickness]);
-    positions.push([half_length, half_thickness, -half_thickness]);
-    normals.extend_from_slice(&[[1.0, 0.0, 0.0]; 4]);
-    indices.extend_from_slice(&[16, 17, 18, 16, 18, 19]);
-
-    // Left face (x = -half_length): normal = [-1, 0, 0]
-    positions.push([-half_length, -half_thickness, half_thickness]);
-    positions.push([-half_length, -half_thickness, -half_thickness]);
-    positions.push([-half_length, half_thickness, -half_thickness]);
-    positions.push([-half_length, half_thickness, half_thickness]);
-    normals.extend_from_slice(&[[-1.0, 0.0, 0.0]; 4]);
-    indices.extend_from_slice(&[20, 21, 22, 20, 22, 23]);
-
-    TriMesh {
-        positions,
-        normals,
-        indices,
+/// Map a STEP-declared length unit onto the document's display unit enum.
+fn length_unit_to_document_unit(unit: LengthUnit) -> Unit {
+    match unit {
+        LengthUnit::Millimetre => Unit::Mm,
+        LengthUnit::Centimetre => Unit::Cm,
+        LengthUnit::Metre => Unit::M,
+        LengthUnit::Inch => Unit::In,
+        LengthUnit::Foot => Unit::Ft,
     }
 }
 
-/// Create a simple test cube mesh for panning verification
-fn create_test_cube() -> TriMesh {
-    let size = 1.0;
-    let half = size * 0.5;
-
-    // We need to duplicate vertices for each face since normals differ per face
-    // Create 24 vertices (4 per face × 6 faces)
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-
-    // Front face (z = +half): normal = [0, 0, 1]
-    positions.push([-half, -half, half]);
-    positions.push([half, -half, half]);
-    positions.push([half, half, half]);
-    positions.push([-half, half, half]);
-    normals.extend_from_slice(&[[0.0, 0.0, 1.0]; 4]);
-    indices.extend_from_slice(&[0, 1, 2, 0, 2, 3]);
-
-    // Back face (z = -half): normal = [0, 0, -1]
-    positions.push([half, -half, -half]);
-    positions.push([-half, -half, -half]);
-    positions.push([-half, half, -half]);
-    positions.push([half, half, -half]);
-    normals.extend_from_slice(&[[0.0, 0.0, -1.0]; 4]);
-    indices.extend_from_slice(&[4, 5, 6, 4, 6, 7]);
-
-    // Top face (y = +half): normal = [0, 1, 0]
-    positions.push([-half, half, half]);
-    positions.push([half, half, half]);
-    positions.push([half, half, -half]);
-    positions.push([-half, half, -half]);
-    normals.extend_from_slice(&[[0.0, 1.0, 0.0]; 4]);
-    indices.extend_from_slice(&[8, 9, 10, 8, 10, 11]);
-
-    // Bottom face (y = -half): normal = [0, -1, 0]
-    positions.push([-half, -half, -half]);
-    positions.push([half, -half, -half]);
-    positions.push([half, -half, half]);
-    positions.push([-half, -half, half]);
-    normals.extend_from_slice(&[[0.0, -1.0, 0.0]; 4]);
-    indices.extend_from_slice(&[12, 13, 14, 12, 14, 15]);
-
-    // Right face (x = +half): normal = [1, 0, 0]
-    positions.push([half, -half, half]);
-    positions.push([half, -half, -half]);
-    positions.push([half, half, -half]);
-    positions.push([half, half, half]);
-    normals.extend_from_slice(&[[1.0, 0.0, 0.0]; 4]);
-    indices.extend_from_slice(&[16, 17, 18, 16, 18, 19]);
-
-    // Left face (x = -half): normal = [-1, 0, 0]
-    positions.push([-half, -half, -half]);
-    positions.push([-half, -half, half]);
-    positions.push([-half, half, half]);
-    positions.push([-half, half, -half]);
-    normals.extend_from_slice(&[[-1.0, 0.0, 0.0]; 4]);
-    indices.extend_from_slice(&[20, 21, 22, 20, 22, 23]);
-
-    TriMesh {
-        positions,
-        normals,
-        indices,
-    }
+/// Stable u64 fingerprint of a serde JSON value. Used as a `revision`
+/// counter for sketch geometry so the GPU mesh cache can skip the upload
+/// when the underlying sketch JSON hasn't changed between frames.
+fn hash_revision(value: &serde_json::Value) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn main() -> Result<()> {
@@ -249,12 +140,17 @@ struct PrintCadApp {
     current_file: Option<PathBuf>,
     // Pending file dialog result from background thread.
     file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
+    // Background worker that owns the OCCT kernel. STEP imports run there
+    // so the viewport stays interactive while a multi-million-tri model is
+    // tessellated; responses are drained once per frame in `about_to_wait`.
+    kernel_worker: KernelWorker,
 }
 
 enum FileDialogKind {
     Open,
     Save,
     SaveAs,
+    ImportStep,
 }
 
 struct FileDialogResult {
@@ -301,6 +197,7 @@ impl PrintCadApp {
             tree_selection: Some(TreeItemId::DocumentRoot),
             current_file: None,
             file_dialog_rx: None,
+            kernel_worker: KernelWorker::spawn(),
         }
     }
 
@@ -553,8 +450,16 @@ impl ApplicationHandler for PrintCadApp {
 
         self.last_frame_time = Some(now);
 
-        let mut new_body_requested_flag = false;
         let mut workbench_change: Option<(ActiveWorkbench, ActiveWorkbench)> = None;
+        let mut new_body_requested_flag = false;
+        let mut quit_requested = false;
+
+        // Pull any STEP imports that the kernel worker finished off the
+        // queue before we build this frame's submission, so freshly imported
+        // bodies show up immediately and the import log lines stay tied to
+        // the frame they actually became visible in. Has to happen before
+        // we take a mutable borrow on `self.renderer` below.
+        self.drain_kernel_responses();
 
         let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
             (Some(window), Some(renderer)) => (window, renderer),
@@ -564,34 +469,66 @@ impl ApplicationHandler for PrintCadApp {
         // Update camera animation
         self.camera.update(dt_secs);
 
-        // Collect sketch features from document and convert to meshes
+        // Collect sketch features from document and convert to meshes.
+        //
+        // Sketch geometry is recomputed every frame (it's cheap), but we
+        // bump a per-feature revision based on the underlying JSON so the
+        // renderer's cache only re-uploads when the sketch actually changes.
         let sketch_meshes: Vec<BodySubmission> = self
             .document
             .feature_tree()
             .all_nodes()
             .filter_map(|(feature_id, node)| {
-                // Only process sketch features
                 if node.workbench_id.as_str() != "wb.sketch" {
                     return None;
                 }
 
-                // Deserialize sketch feature
                 let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
 
-                // Convert to mesh
                 let mesh = wb_sketch::render::sketch_to_mesh(
                     &sketch_feature.sketch,
                     &sketch_feature.plane,
                 );
 
-                // Create body submission for sketch (use feature ID UUID as body ID)
+                // Hash the serialized sketch JSON for a stable revision: the
+                // renderer skips the upload when the sketch is unchanged.
+                let revision = hash_revision(&node.data);
+
                 Some(BodySubmission {
                     id: feature_id.0,
-                    mesh,
-                    color: [0.2, 0.8, 0.2], // Green color for sketches
+                    revision,
+                    mesh: Arc::new(mesh),
+                    color: [0.2, 0.8, 0.2],
                     highlight: HighlightState::None,
                     is_wireframe: false,
                 })
+            })
+            .collect();
+
+        // Imported geometry (e.g. STEP files) becomes regular renderable bodies.
+        // The body id from the document is reused so picking/selection stays
+        // stable, and the document's revision counter is forwarded to the
+        // renderer so panning/orbiting never re-uploads the static mesh.
+        let imported_meshes: Vec<BodySubmission> = self
+            .document
+            .imported_geometries()
+            .map(|(body_id, geometry)| {
+                let is_selected = self.selected_body == Some(body_id.0);
+                let is_hovered = self.hovered_body == Some(body_id.0);
+                let highlight = match (is_selected, is_hovered) {
+                    (true, true) => HighlightState::HoveredAndSelected,
+                    (true, false) => HighlightState::Selected,
+                    (false, true) => HighlightState::Hovered,
+                    (false, false) => HighlightState::None,
+                };
+                BodySubmission {
+                    id: body_id.0,
+                    revision: geometry.revision,
+                    mesh: Arc::clone(&geometry.mesh),
+                    color: [0.78, 0.78, 0.82],
+                    highlight,
+                    is_wireframe: false,
+                }
             })
             .collect();
 
@@ -614,8 +551,16 @@ impl ApplicationHandler for PrintCadApp {
                 wb.get_overlay_meshes(&wb_ctx, self.active_document_object)
                     .into_iter()
                     .map(|(mesh, color, is_wireframe)| BodySubmission {
-                        id: Uuid::new_v4(), // Unique ID for overlay meshes
-                        mesh,
+                        // Overlays are regenerated every frame and we don't
+                        // have a stable identity for them, so we accept the
+                        // upload-and-GC cost: a fresh UUID guarantees a cache
+                        // miss this frame, and the GC pass at end-of-frame
+                        // reaps the previous frame's entry. Geometry is
+                        // typically tiny (grid lines, guides), so this stays
+                        // cheap relative to the imported-mesh path.
+                        id: Uuid::new_v4(),
+                        revision: 0,
+                        mesh: Arc::new(mesh),
                         color,
                         highlight: HighlightState::None,
                         is_wireframe,
@@ -647,32 +592,11 @@ impl ApplicationHandler for PrintCadApp {
                 Vec::new()
             };
 
-        // Combine sketch meshes and overlay meshes
+        // Combine sketch meshes, imported geometry, and overlay meshes.
         let mut all_meshes = sketch_meshes;
+        all_meshes.extend(imported_meshes);
         all_meshes.append(&mut overlay_meshes);
 
-        // Add a fixed horizontal axis line (red, along X-axis) as wireframe
-        // Wireframes use depth bias to appear on top of solid geometry
-        let axis_line = create_horizontal_axis_line();
-        all_meshes.push(BodySubmission {
-            id: Uuid::new_v4(),
-            mesh: axis_line,
-            color: [1.0, 0.0, 0.0], // Red color
-            highlight: HighlightState::None,
-            is_wireframe: true, // Mark as wireframe to use depth bias pipeline
-        });
-
-        // Add a test cube for panning verification
-        let test_cube = create_test_cube();
-        all_meshes.push(BodySubmission {
-            id: Uuid::new_v4(),
-            mesh: test_cube,
-            color: [0.8, 0.2, 0.2], // Red color for test cube
-            highlight: HighlightState::None,
-            is_wireframe: false,
-        });
-
-        // For now, only render sketch meshes (no demo bodies).
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();
         self.frame_submission.camera_pos = self.camera.position();
@@ -682,6 +606,7 @@ impl ApplicationHandler for PrintCadApp {
         let mut ui_result_open = false;
         let mut ui_result_save = false;
         let mut ui_result_save_as = false;
+        let mut ui_result_import_step = false;
 
         if let Some(ui_layer) = self.ui_layer.as_mut() {
             let orientation_input = OrientationCubeInput {
@@ -711,6 +636,7 @@ impl ApplicationHandler for PrintCadApp {
                 self.active_document_object,
                 self.active_body_id,
                 &self.frame_submission.screen_space_overlays,
+                self.kernel_worker.in_flight(),
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
@@ -754,19 +680,29 @@ impl ApplicationHandler for PrintCadApp {
                 }
             }
 
-            if ui_result.new_body_requested {
+            // The Part Design workbench exposes "New Body" as an Action tool.
+            // Action tools live in `active_ids` for exactly one frame; we
+            // detect a fresh click here and consume it so the body-creation
+            // call (deferred until after the renderer borrow ends) only
+            // fires once.
+            if self.active_tool.active_ids.remove("part.new_body") {
                 new_body_requested_flag = true;
             }
+
             ui_result_open = ui_result.open_requested;
             ui_result_save = ui_result.save_requested;
             ui_result_save_as = ui_result.save_as_requested;
+            ui_result_import_step = ui_result.import_step_requested;
+            quit_requested = ui_result.quit_requested;
 
             if ui_result.reset_view_requested {
                 app_log::info("Fit View requested");
                 // TODO: compute bounds from real document bodies once available.
-                // For now, reset to a reasonable default around the origin.
+                // For now reset to a CAD-friendly default around the origin: a
+                // 50 mm radius hint frames a comfortable ~125 mm view of an
+                // empty stage given the current FOV.
                 use glam::Vec3;
-                self.camera.reset_to_fit(Vec3::ZERO, 1.0);
+                self.camera.reset_to_fit(Vec3::ZERO, 50.0);
             }
 
             if ui_result.finish_sketch_requested {
@@ -834,8 +770,13 @@ impl ApplicationHandler for PrintCadApp {
             self.camera.set_orbit_pivot(None);
         }
 
-        if ui_result_open || ui_result_save || ui_result_save_as {
-            self.start_file_dialog(ui_result_open, ui_result_save, ui_result_save_as);
+        if ui_result_open || ui_result_save || ui_result_save_as || ui_result_import_step {
+            self.start_file_dialog(
+                ui_result_open,
+                ui_result_save,
+                ui_result_save_as,
+                ui_result_import_step,
+            );
         }
 
         if let Some(rx) = &self.file_dialog_rx {
@@ -862,6 +803,11 @@ impl ApplicationHandler for PrintCadApp {
                             }
                         }
                     }
+                    FileDialogKind::ImportStep => {
+                        if let Some(path) = result.path {
+                            self.import_step_at(&path);
+                        }
+                    }
                 }
                 self.file_dialog_rx = None;
             }
@@ -876,6 +822,13 @@ impl ApplicationHandler for PrintCadApp {
             self.call_workbench_deactivate(&old_wb.0);
 
             self.call_workbench_activate(&new_wb.0);
+        }
+
+        // File > Quit / Ctrl+Q. Deferred to here so the rest of the frame
+        // (rendering, picks, dialogs) finishes cleanly before the loop ends.
+        if quit_requested {
+            app_log::info("Quit requested via menu / shortcut");
+            event_loop.exit();
         }
     }
 }
@@ -998,7 +951,13 @@ impl PrintCadApp {
         Ok(())
     }
 
-    fn start_file_dialog(&mut self, open: bool, _save: bool, save_as: bool) {
+    fn start_file_dialog(
+        &mut self,
+        open: bool,
+        _save: bool,
+        save_as: bool,
+        import_step: bool,
+    ) {
         use std::sync::mpsc;
         if self.file_dialog_rx.is_some() {
             return;
@@ -1007,7 +966,9 @@ impl PrintCadApp {
         let (tx, rx) = mpsc::channel::<FileDialogResult>();
         self.file_dialog_rx = Some(rx);
 
-        let kind = if open {
+        let kind = if import_step {
+            FileDialogKind::ImportStep
+        } else if open {
             FileDialogKind::Open
         } else if save_as {
             FileDialogKind::SaveAs
@@ -1018,8 +979,12 @@ impl PrintCadApp {
         let current_path = self.current_file.clone();
 
         std::thread::spawn(move || {
-            let mut dialog =
-                rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
+            let mut dialog = match kind {
+                FileDialogKind::ImportStep => {
+                    rfd::FileDialog::new().add_filter("STEP file", &["step", "stp"])
+                }
+                _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
+            };
 
             if let Ok(recent_path) = settings::SettingsStore::recent_file_path() {
                 if let Ok(file) = std::fs::File::open(&recent_path) {
@@ -1032,6 +997,7 @@ impl PrintCadApp {
 
             let path = match kind {
                 FileDialogKind::Open => dialog.pick_file(),
+                FileDialogKind::ImportStep => dialog.pick_file(),
                 FileDialogKind::Save => {
                     if let Some(existing) = current_path {
                         Some(existing)
@@ -1044,6 +1010,164 @@ impl PrintCadApp {
 
             let _ = tx.send(FileDialogResult { kind, path });
         });
+    }
+
+    /// Submit a STEP/STP import to the kernel worker. Returns immediately;
+    /// the response is delivered later via `drain_kernel_responses` and the
+    /// document mutation happens in `apply_step_import` once the worker is
+    /// done. Logging the start/finish here keeps the user oriented while the
+    /// import is in flight.
+    fn import_step_at(&mut self, path: &PathBuf) {
+        let detail = TessellationSettings::default();
+        app_log::info(format!("Importing STEP `{}`...", path.display()));
+        self.kernel_worker
+            .request_step_import(path.clone(), detail);
+    }
+
+    /// Drain any STEP responses that have arrived from the kernel worker and
+    /// fold them into the document. Called once per frame in `about_to_wait`.
+    fn drain_kernel_responses(&mut self) {
+        for response in self.kernel_worker.drain() {
+            match response {
+                KernelResponse::StepImported {
+                    path,
+                    model,
+                    raw_bytes,
+                    elapsed,
+                } => {
+                    if let Err(err) = self.apply_step_import(&path, model, raw_bytes, elapsed) {
+                        app_log::error(format!(
+                            "Failed to apply STEP import {}: {err}",
+                            path.display()
+                        ));
+                    }
+                }
+                KernelResponse::StepFailed { path, error } => {
+                    app_log::error(format!("STEP import failed `{}`: {}", path.display(), error));
+                }
+            }
+        }
+    }
+
+    /// Register the imported bodies + raw asset bytes on the document and
+    /// frame the camera around the new geometry. Mirrors the behaviour of
+    /// the previous synchronous `import_step_at` but runs entirely on the UI
+    /// thread after the heavy CPU work has completed in the worker.
+    fn apply_step_import(
+        &mut self,
+        path: &PathBuf,
+        imported: ImportedModel,
+        raw_bytes: Vec<u8>,
+        elapsed: Duration,
+    ) -> Result<()> {
+        // Capture "fresh document" *before* we start mutating it so the
+        // auto-unit pick below isn't confused by bodies we're about to add.
+        let was_fresh_document = self.document.bodies().is_empty()
+            && !self.document.assets().any(|_| true)
+            && self.document.imported_geometries().next().is_none();
+
+        if imported.bodies.is_empty() {
+            app_log::warn(format!(
+                "STEP import produced no geometry: {}",
+                path.display()
+            ));
+            return Ok(());
+        }
+
+        let detected_unit = imported.source_unit.map(length_unit_to_document_unit);
+
+        let extension = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase())
+            .unwrap_or_else(|| "step".to_string());
+        let asset = core_document::AssetReference::new(
+            format!("assets/{}.{}", uuid::Uuid::new_v4(), extension),
+            core_document::AssetType::Step,
+            serde_json::json!({
+                "source_path": path.display().to_string(),
+                "body_count": imported.bodies.len(),
+            }),
+        );
+        let asset_id = self.document.add_asset_with_data(asset, raw_bytes);
+
+        let mut total_triangles: usize = 0;
+        let mut combined_min = [f32::INFINITY; 3];
+        let mut combined_max = [f32::NEG_INFINITY; 3];
+        let mut first_body: Option<BodyId> = None;
+
+        for body in imported.bodies {
+            let body_id = self.document.create_body(body.name.clone());
+            if first_body.is_none() {
+                first_body = Some(body_id);
+            }
+            total_triangles += body.mesh.indices.len() / 3;
+            if let Some((min, max)) = body.mesh.bounds() {
+                for axis in 0..3 {
+                    combined_min[axis] = combined_min[axis].min(min[axis]);
+                    combined_max[axis] = combined_max[axis].max(max[axis]);
+                }
+            }
+            self.document.set_imported_geometry(
+                body_id,
+                ImportedGeometry {
+                    mesh: Arc::new(body.mesh),
+                    source_asset: Some(asset_id),
+                    // `set_imported_geometry` overwrites this; any value works.
+                    revision: 0,
+                },
+            );
+        }
+
+        if combined_min[0] <= combined_max[0] {
+            let center = Vec3::new(
+                (combined_min[0] + combined_max[0]) * 0.5,
+                (combined_min[1] + combined_max[1]) * 0.5,
+                (combined_min[2] + combined_max[2]) * 0.5,
+            );
+            let extents = Vec3::new(
+                combined_max[0] - combined_min[0],
+                combined_max[1] - combined_min[1],
+                combined_max[2] - combined_min[2],
+            );
+            let radius = extents.length() * 0.5;
+            self.camera.reset_to_fit(center, radius.max(1.0));
+        }
+
+        if let Some(body_id) = first_body {
+            self.active_body_id = Some(body_id);
+            self.tree_selection = Some(TreeItemId::Body(body_id));
+            self.selected_body = Some(body_id.0);
+        }
+
+        // On a fresh document, adopt the STEP file's declared unit as the
+        // document's display unit. Otherwise leave the user's choice intact —
+        // mixing two STEP files with different units shouldn't silently flip
+        // the active document's display.
+        if was_fresh_document {
+            if let Some(unit) = detected_unit {
+                self.document.set_display_unit(unit);
+                app_log::info(format!(
+                    "Display unit set to {} from imported STEP `{}`",
+                    unit.short_label(),
+                    path.display()
+                ));
+            }
+        }
+
+        Self::write_recent_dir(path);
+        app_log::info(format!(
+            "Imported STEP `{}` in {:.0}ms: {} bodies, {} triangles",
+            path.display(),
+            elapsed.as_secs_f64() * 1000.0,
+            self.document
+                .imported_geometries()
+                .filter(|(_, g)| g.source_asset == Some(asset_id))
+                .count(),
+            total_triangles
+        ));
+
+        Ok(())
     }
 
     fn write_recent_dir(path: &PathBuf) {

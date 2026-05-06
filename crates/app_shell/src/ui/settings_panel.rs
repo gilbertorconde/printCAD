@@ -1,9 +1,11 @@
 use axes::AxisPreset;
+use core_document::{Document, Unit};
 use egui::{self, Color32, Context, Ui};
 use settings::{LightSource, ProjectionMode, UserSettings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SettingsTab {
+    Document,
     Camera,
     Lighting,
     Input,
@@ -12,7 +14,8 @@ pub(super) enum SettingsTab {
 }
 
 impl SettingsTab {
-    pub const ALL: [SettingsTab; 5] = [
+    pub const ALL: [SettingsTab; 6] = [
+        SettingsTab::Document,
         SettingsTab::Camera,
         SettingsTab::Lighting,
         SettingsTab::Input,
@@ -22,6 +25,7 @@ impl SettingsTab {
 
     pub fn label(&self) -> &'static str {
         match self {
+            SettingsTab::Document => "Document",
             SettingsTab::Camera => "Camera",
             SettingsTab::Lighting => "Lighting",
             SettingsTab::Input => "Input",
@@ -34,6 +38,7 @@ impl SettingsTab {
 pub(super) fn draw_settings_window(
     ctx: &Context,
     settings: &mut UserSettings,
+    document: &mut Document,
     show_settings: &mut bool,
     settings_tab: &mut SettingsTab,
     gpus: &[String],
@@ -65,6 +70,9 @@ pub(super) fn draw_settings_window(
                 right.heading(settings_tab.label());
                 right.separator();
                 match settings_tab {
+                    SettingsTab::Document => {
+                        changed |= document_settings_ui(right, document);
+                    }
                     SettingsTab::Camera => {
                         changed |= camera_settings_ui(right, settings);
                     }
@@ -86,6 +94,40 @@ pub(super) fn draw_settings_window(
     changed
 }
 
+fn document_settings_ui(ui: &mut Ui, document: &mut Document) -> bool {
+    let mut changed = false;
+
+    ui.label("Display unit");
+    ui.weak(
+        "Controls how lengths and coordinates are presented. \
+         Internal storage is always in millimetres, so switching units \
+         never alters geometry.",
+    );
+
+    let current = document.display_unit();
+    let mut selected = current;
+    egui::ComboBox::from_id_salt("document_display_unit_combo")
+        .width(260.0)
+        .selected_text(current.long_label())
+        .show_ui(ui, |ui| {
+            for unit in Unit::ALL {
+                if ui
+                    .selectable_value(&mut selected, unit, unit.long_label())
+                    .clicked()
+                {
+                    // selectable_value already mutates `selected`; no extra work.
+                }
+            }
+        });
+
+    if selected != current {
+        document.set_display_unit(selected);
+        changed = true;
+    }
+
+    changed
+}
+
 fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     let camera = &mut settings.camera;
     let mut changed = false;
@@ -100,10 +142,16 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
         .checkbox(&mut camera.invert_zoom, "Invert zoom")
         .changed();
     changed |= ui
-        .add(egui::Slider::new(&mut camera.min_distance, 0.05..=5.0).text("Min distance"))
+        .add(
+            egui::Slider::new(&mut camera.min_distance, 0.1..=50.0)
+                .text("Min distance (mm)"),
+        )
         .changed();
     changed |= ui
-        .add(egui::Slider::new(&mut camera.max_distance, 5.0..=2000.0).text("Max distance"))
+        .add(
+            egui::Slider::new(&mut camera.max_distance, 50.0..=20_000.0)
+                .text("Max distance (mm)"),
+        )
         .changed();
 
     ui.separator();
