@@ -2,6 +2,7 @@ pub mod asset;
 pub mod feature;
 pub mod registration;
 pub mod runtime;
+pub mod units;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -16,6 +17,8 @@ use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
+pub use kernel_api::TriMesh;
+pub use units::{format_length_mm, Unit};
 pub use runtime::{
     CameraOrientRequest, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
@@ -54,7 +57,20 @@ pub struct Document {
     workbench_storage: HashMap<String, WorkbenchStorage>,
     /// References to external files stored in the .prtcad archive.
     assets: HashMap<Uuid, AssetReference>,
+    /// Tessellated meshes for imported geometry, keyed by body id.
+    /// Stored alongside the document so reload doesn't require re-tessellation.
+    #[serde(default)]
+    imported_meshes: HashMap<BodyId, ImportedGeometry>,
+    /// Per-document display unit. All numeric storage stays in millimetres;
+    /// this only controls how lengths are surfaced to the user.
+    #[serde(default)]
+    display_unit: Unit,
     history: Vec<DocumentRevision>,
+    /// Raw asset bytes (STEP/STL files, etc.) kept in memory between import
+    /// and save. Populated either on import or after `load_from_file`. Skipped
+    /// from JSON because the bytes live as separate entries in the tar archive.
+    #[serde(skip)]
+    asset_blobs: HashMap<Uuid, Vec<u8>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +78,27 @@ pub struct Body {
     pub id: BodyId,
     pub name: String,
     pub created_at: i64,
+}
+
+/// Tessellated geometry produced by an external import (STEP, STL, ...).
+///
+/// `mesh` is wrapped in `Arc` so the renderer can hold on to it across
+/// frames without forcing a triangle-data clone every frame, and a `revision`
+/// counter lets the GPU mesh cache cheaply detect when the geometry has been
+/// reassigned without inspecting triangle data. The counter is bumped by
+/// [`Document::set_imported_geometry`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedGeometry {
+    /// Triangulated representation ready for the viewport.
+    pub mesh: std::sync::Arc<TriMesh>,
+    /// Optional reference back to the source asset (e.g. STEP file).
+    #[serde(default)]
+    pub source_asset: Option<Uuid>,
+    /// Monotonic counter bumped every time [`Document::set_imported_geometry`]
+    /// replaces the mesh for this body. Renderers compare against their cached
+    /// revision to know when GPU buffers need to be re-uploaded.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 impl Document {
@@ -72,7 +109,24 @@ impl Document {
             bodies: Vec::new(),
             workbench_storage: HashMap::new(),
             assets: HashMap::new(),
+            imported_meshes: HashMap::new(),
+            display_unit: Unit::default(),
             history: Vec::new(),
+            asset_blobs: HashMap::new(),
+        }
+    }
+
+    /// Currently selected display unit for this document (mm by default).
+    pub fn display_unit(&self) -> Unit {
+        self.display_unit
+    }
+
+    /// Override the display unit. Marks the document dirty so the choice is
+    /// persisted on the next save.
+    pub fn set_display_unit(&mut self, unit: Unit) {
+        if self.display_unit != unit {
+            self.display_unit = unit;
+            self.mark_dirty();
         }
     }
 
@@ -265,6 +319,17 @@ impl Document {
         id
     }
 
+    /// Add an asset reference together with its raw bytes. The bytes are
+    /// preserved in memory until the next `save_to_file` call writes them into
+    /// the archive.
+    pub fn add_asset_with_data(&mut self, asset: AssetReference, data: Vec<u8>) -> Uuid {
+        let id = asset.id;
+        self.assets.insert(id, asset);
+        self.asset_blobs.insert(id, data);
+        self.mark_dirty();
+        id
+    }
+
     /// Get an asset reference by ID.
     pub fn get_asset(&self, asset_id: Uuid) -> Option<&AssetReference> {
         self.assets.get(&asset_id)
@@ -275,9 +340,41 @@ impl Document {
         self.assets.get(&asset_id).map(|a| a.path.as_str())
     }
 
+    /// Get the raw bytes for an asset, if currently loaded in memory.
+    pub fn asset_bytes(&self, asset_id: Uuid) -> Option<&[u8]> {
+        self.asset_blobs.get(&asset_id).map(|v| v.as_slice())
+    }
+
     /// Get all assets.
     pub fn assets(&self) -> impl Iterator<Item = &AssetReference> {
         self.assets.values()
+    }
+
+    /// Insert (or replace) the tessellated geometry associated with a body.
+    ///
+    /// The `revision` field on the supplied `ImportedGeometry` is overwritten
+    /// with the next monotonic value for this body so renderers can
+    /// distinguish "this is the same mesh as last frame" from "this body's
+    /// mesh has been replaced" with a cheap u64 comparison.
+    pub fn set_imported_geometry(&mut self, body: BodyId, mut geometry: ImportedGeometry) {
+        let next_revision = self
+            .imported_meshes
+            .get(&body)
+            .map(|prev| prev.revision.saturating_add(1))
+            .unwrap_or(0);
+        geometry.revision = next_revision;
+        self.imported_meshes.insert(body, geometry);
+        self.mark_dirty();
+    }
+
+    /// Look up tessellated geometry for a body.
+    pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
+        self.imported_meshes.get(&body)
+    }
+
+    /// Iterate over all imported geometries currently stored on the document.
+    pub fn imported_geometries(&self) -> impl Iterator<Item = (&BodyId, &ImportedGeometry)> {
+        self.imported_meshes.iter()
     }
 
     /// Save document to a .prtcad file (tar archive, optionally compressed).
@@ -356,21 +453,42 @@ impl Document {
             }
         };
 
+        // First pass: collect document.json plus any asset entries by archive
+        // path. We can't seek inside a streaming archive, so this happens in a
+        // single traversal.
+        let mut doc_json: Option<Vec<u8>> = None;
+        let mut blobs_by_path: HashMap<String, Vec<u8>> = HashMap::new();
         for entry in archive.entries()? {
             let mut entry = entry?;
-            let path = entry.path()?;
-            if path == Path::new("document.json") {
-                let mut buf = String::new();
-                entry.read_to_string(&mut buf)?;
-                let doc: Document = serde_json::from_str(&buf)?;
-                return Ok(doc);
+            let entry_path = entry.path()?.to_path_buf();
+            let entry_path_str = entry_path.to_string_lossy().to_string();
+            if entry_path == Path::new("document.json") {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf)?;
+                doc_json = Some(buf);
+            } else if entry_path_str.starts_with("assets/") {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf)?;
+                blobs_by_path.insert(entry_path_str, buf);
             }
         }
 
-        Err(DocumentError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "document.json not found in archive",
-        )))
+        let json = doc_json.ok_or_else(|| {
+            DocumentError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "document.json not found in archive",
+            ))
+        })?;
+        let mut doc: Document = serde_json::from_slice(&json)?;
+
+        // Resolve any asset blobs that match an `AssetReference::path`.
+        for (asset_id, asset) in &doc.assets {
+            if let Some(bytes) = blobs_by_path.remove(&asset.path) {
+                doc.asset_blobs.insert(*asset_id, bytes);
+            }
+        }
+
+        Ok(doc)
     }
 
     fn write_archive<W: Write>(builder: &mut Builder<W>, doc: &Document) -> DocumentResult<()> {
@@ -381,6 +499,21 @@ impl Document {
         header.set_mode(0o644);
         header.set_cksum();
         builder.append(&header, &json[..])?;
+
+        // Emit asset blobs alongside the document so future reloads can recover
+        // the original imported file (e.g. for re-tessellation at a different
+        // detail level).
+        for (asset_id, asset) in &doc.assets {
+            let Some(bytes) = doc.asset_blobs.get(asset_id) else {
+                continue;
+            };
+            let mut header = Header::new_gnu();
+            header.set_path(&asset.path)?;
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, &bytes[..])?;
+        }
         Ok(())
     }
 }
