@@ -4,8 +4,13 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+build = "build.rs"
+links = "printcad_occt_shim"
 
 [dependencies]
 kernel_api = { path = "../kernel_api" }
 thiserror.workspace = true
 tracing.workspace = true
+
+[build-dependencies]
+cc = "1.1"
