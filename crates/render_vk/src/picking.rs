@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     create_shader_module,
-    mesh::MeshVertex,
+    mesh::{MeshCache, MeshVertex},
     util::{create_buffer, create_image, create_image_view},
     BodySubmission, PickResult, RenderError, ViewportRect, PICK_FRAG_SPV, PICK_VERT_SPV,
 };
@@ -18,7 +18,11 @@ struct PickPushConstants {
     object_id: [u32; 4], // UUID encoded as 4 u32s
 }
 
-/// GPU-based picking renderer that renders object IDs to an offscreen buffer
+/// GPU-based picking renderer that renders object IDs to an offscreen buffer.
+///
+/// As of the per-body cache refactor it no longer owns vertex/index buffers
+/// of its own — it draws straight out of the same `MeshCache` the solid pass
+/// uses, halving GPU memory and removing one full pack-and-upload per frame.
 pub(crate) struct PickRenderer {
     // Offscreen framebuffer resources
     id_image: vk::Image,
@@ -37,13 +41,6 @@ pub(crate) struct PickRenderer {
     pipeline: vk::Pipeline,
     // Extent
     extent: vk::Extent2D,
-    // Vertex/index buffers (shared with mesh renderer, but we need our own for simplicity)
-    vertex_buffer: vk::Buffer,
-    vertex_memory: vk::DeviceMemory,
-    vertex_capacity: usize,
-    index_buffer: vk::Buffer,
-    index_memory: vk::DeviceMemory,
-    index_capacity: usize,
 }
 
 impl PickRenderer {
@@ -130,12 +127,6 @@ impl PickRenderer {
             pipeline_layout,
             pipeline,
             extent,
-            vertex_buffer: vk::Buffer::null(),
-            vertex_memory: vk::DeviceMemory::null(),
-            vertex_capacity: 0,
-            index_buffer: vk::Buffer::null(),
-            index_memory: vk::DeviceMemory::null(),
-            index_capacity: 0,
         })
     }
 
@@ -240,7 +231,7 @@ impl PickRenderer {
                 .name(&entry_name),
         ];
 
-        // Same vertex input as mesh shader
+        // Same vertex input as mesh shader (position + normal, no color).
         let binding_desc = vk::VertexInputBindingDescription::default()
             .binding(0)
             .stride(size_of::<MeshVertex>() as u32)
@@ -257,11 +248,6 @@ impl PickRenderer {
                 .location(1)
                 .format(vk::Format::R32G32B32_SFLOAT)
                 .offset(12),
-            vk::VertexInputAttributeDescription::default()
-                .binding(0)
-                .location(2)
-                .format(vk::Format::R32G32B32_SFLOAT)
-                .offset(24),
         ];
 
         let binding_descs = [binding_desc];
@@ -358,19 +344,20 @@ impl PickRenderer {
         Uuid::from_bytes(bytes)
     }
 
-    /// Record commands to render picking pass
+    /// Record commands to render picking pass.
+    ///
+    /// `cache` must already contain freshly uploaded buffers for every body
+    /// passed in — the mesh renderer's `draw` is responsible for keeping it
+    /// up to date and is called before this in `RendererCore::record_command_buffer`.
     pub(crate) fn record_commands(
         &mut self,
         device: &ash::Device,
         command_buffer: vk::CommandBuffer,
+        cache: &MeshCache,
         bodies: &[BodySubmission],
         view_proj: [[f32; 4]; 4],
         viewport_rect: Option<&ViewportRect>,
-        memory_properties: &vk::PhysicalDeviceMemoryProperties,
     ) -> Result<(), RenderError> {
-        // Upload mesh data
-        self.upload_meshes(device, bodies, memory_properties)?;
-
         // Begin render pass
         let clear_values = [
             vk::ClearValue {
@@ -445,42 +432,42 @@ impl PickRenderer {
             device.cmd_set_viewport(command_buffer, 0, &[viewport]);
             device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
-            if self.vertex_buffer != vk::Buffer::null() {
-                device.cmd_bind_vertex_buffers(command_buffer, 0, &[self.vertex_buffer], &[0]);
+            // One draw per body, binding the cached vertex/index buffers
+            // directly out of the shared MeshCache.
+            for body in bodies {
+                let cached = match cache.get(&body.id) {
+                    Some(c) if c.index_count > 0 && c.vertex_buffer != vk::Buffer::null() => c,
+                    _ => continue,
+                };
+
+                let push = PickPushConstants {
+                    view_proj,
+                    object_id: Self::uuid_to_u32s(body.id),
+                };
+                let push_bytes = std::slice::from_raw_parts(
+                    &push as *const _ as *const u8,
+                    size_of::<PickPushConstants>(),
+                );
+                device.cmd_push_constants(
+                    command_buffer,
+                    self.pipeline_layout,
+                    vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    0,
+                    push_bytes,
+                );
+                device.cmd_bind_vertex_buffers(
+                    command_buffer,
+                    0,
+                    &[cached.vertex_buffer],
+                    &[0],
+                );
                 device.cmd_bind_index_buffer(
                     command_buffer,
-                    self.index_buffer,
+                    cached.index_buffer,
                     0,
                     vk::IndexType::UINT32,
                 );
-
-                // Draw each body with its unique ID
-                let mut index_offset = 0u32;
-                for body in bodies {
-                    let index_count = if body.mesh.indices.is_empty() {
-                        body.mesh.positions.len() as u32
-                    } else {
-                        body.mesh.indices.len() as u32
-                    };
-
-                    let push = PickPushConstants {
-                        view_proj,
-                        object_id: Self::uuid_to_u32s(body.id),
-                    };
-                    let push_bytes = std::slice::from_raw_parts(
-                        &push as *const _ as *const u8,
-                        size_of::<PickPushConstants>(),
-                    );
-                    device.cmd_push_constants(
-                        command_buffer,
-                        self.pipeline_layout,
-                        vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                        0,
-                        push_bytes,
-                    );
-                    device.cmd_draw_indexed(command_buffer, index_count, 1, index_offset, 0, 0);
-                    index_offset += index_count;
-                }
+                device.cmd_draw_indexed(command_buffer, cached.index_count, 1, 0, 0, 0);
             }
 
             device.cmd_end_render_pass(command_buffer);
@@ -648,11 +635,12 @@ impl PickRenderer {
         let vp_width = viewport.width as f32;
         let vp_height = viewport.height as f32;
 
-        // Convert to NDC (-1 to 1) within the viewport
-        // Note: Vulkan has Y=0 at top, NDC has Y=+1 at top
-        // But glam's perspective_rh already handles this, so we DON'T flip Y here
+        // Convert to NDC (-1 to 1) within the viewport. Vulkan rasterizes
+        // with framebuffer Y running downward, and the camera's `view_proj`
+        // applies the Y-flip needed to match that, so NDC also runs Y-down
+        // here — top of the viewport is NDC -1, bottom is NDC +1.
         let ndc_x = (vp_x / vp_width) * 2.0 - 1.0;
-        let ndc_y = (vp_y / vp_height) * 2.0 - 1.0; // No flip - Vulkan convention
+        let ndc_y = (vp_y / vp_height) * 2.0 - 1.0;
         let ndc_z = depth; // Vulkan depth is 0 to 1
 
         // Build inverse view-projection matrix
@@ -665,147 +653,6 @@ impl PickRenderer {
         let world = world / world.w;
 
         [world.x, world.y, world.z]
-    }
-
-    fn upload_meshes(
-        &mut self,
-        device: &ash::Device,
-        bodies: &[BodySubmission],
-        memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    ) -> Result<(), RenderError> {
-        let vertex_count: usize = bodies.iter().map(|b| b.mesh.positions.len()).sum();
-        if vertex_count == 0 {
-            return Ok(());
-        }
-        let index_count: usize = bodies
-            .iter()
-            .map(|body| {
-                let mesh = &body.mesh;
-                if mesh.indices.is_empty() {
-                    mesh.positions.len()
-                } else {
-                    mesh.indices.len()
-                }
-            })
-            .sum();
-
-        let vertex_bytes = vertex_count * size_of::<MeshVertex>();
-        let index_bytes = index_count * size_of::<u32>();
-
-        self.ensure_vertex_capacity(device, vertex_bytes, memory_properties)?;
-        self.ensure_index_capacity(device, index_bytes, memory_properties)?;
-
-        unsafe {
-            let vertex_ptr = device
-                .map_memory(
-                    self.vertex_memory,
-                    0,
-                    vertex_bytes as u64,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .map_err(RenderError::from)? as *mut MeshVertex;
-            let vertex_slice = std::slice::from_raw_parts_mut(vertex_ptr, vertex_count);
-
-            let mut v_offset = 0;
-            for body in bodies {
-                let mesh = &body.mesh;
-                for (i, position) in mesh.positions.iter().enumerate() {
-                    let normal = mesh.normals.get(i).cloned().unwrap_or([0.0, 1.0, 0.0]);
-                    vertex_slice[v_offset] = MeshVertex::new(*position, normal, body.color);
-                    v_offset += 1;
-                }
-            }
-            device.unmap_memory(self.vertex_memory);
-
-            let index_ptr = device
-                .map_memory(
-                    self.index_memory,
-                    0,
-                    index_bytes as u64,
-                    vk::MemoryMapFlags::empty(),
-                )
-                .map_err(RenderError::from)? as *mut u32;
-            let index_slice = std::slice::from_raw_parts_mut(index_ptr, index_count);
-
-            let mut i_offset = 0usize;
-            let mut base_vertex = 0u32;
-            for body in bodies {
-                let mesh = &body.mesh;
-                if mesh.indices.is_empty() {
-                    for i in 0..mesh.positions.len() {
-                        index_slice[i_offset] = base_vertex + i as u32;
-                        i_offset += 1;
-                    }
-                } else {
-                    for idx in &mesh.indices {
-                        index_slice[i_offset] = base_vertex + *idx;
-                        i_offset += 1;
-                    }
-                }
-                base_vertex += mesh.positions.len() as u32;
-            }
-            device.unmap_memory(self.index_memory);
-        }
-
-        Ok(())
-    }
-
-    fn ensure_vertex_capacity(
-        &mut self,
-        device: &ash::Device,
-        required: usize,
-        memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    ) -> Result<(), RenderError> {
-        if required <= self.vertex_capacity {
-            return Ok(());
-        }
-        let new_capacity = required.next_power_of_two().max(1024);
-        if self.vertex_buffer != vk::Buffer::null() {
-            unsafe {
-                device.destroy_buffer(self.vertex_buffer, None);
-                device.free_memory(self.vertex_memory, None);
-            }
-        }
-        let (buffer, memory) = create_buffer(
-            device,
-            new_capacity as u64,
-            vk::BufferUsageFlags::VERTEX_BUFFER,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            memory_properties,
-        )?;
-        self.vertex_buffer = buffer;
-        self.vertex_memory = memory;
-        self.vertex_capacity = new_capacity;
-        Ok(())
-    }
-
-    fn ensure_index_capacity(
-        &mut self,
-        device: &ash::Device,
-        required: usize,
-        memory_properties: &vk::PhysicalDeviceMemoryProperties,
-    ) -> Result<(), RenderError> {
-        if required <= self.index_capacity {
-            return Ok(());
-        }
-        let new_capacity = required.next_power_of_two().max(1024);
-        if self.index_buffer != vk::Buffer::null() {
-            unsafe {
-                device.destroy_buffer(self.index_buffer, None);
-                device.free_memory(self.index_memory, None);
-            }
-        }
-        let (buffer, memory) = create_buffer(
-            device,
-            new_capacity as u64,
-            vk::BufferUsageFlags::INDEX_BUFFER,
-            vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT,
-            memory_properties,
-        )?;
-        self.index_buffer = buffer;
-        self.index_memory = memory;
-        self.index_capacity = new_capacity;
-        Ok(())
     }
 
     pub(crate) fn destroy(self, device: &ash::Device) {
@@ -822,14 +669,6 @@ impl PickRenderer {
             device.free_memory(self.depth_image_memory, None);
             device.destroy_buffer(self.staging_buffer, None);
             device.free_memory(self.staging_memory, None);
-            if self.vertex_buffer != vk::Buffer::null() {
-                device.destroy_buffer(self.vertex_buffer, None);
-                device.free_memory(self.vertex_memory, None);
-            }
-            if self.index_buffer != vk::Buffer::null() {
-                device.destroy_buffer(self.index_buffer, None);
-                device.free_memory(self.index_memory, None);
-            }
         }
     }
 }

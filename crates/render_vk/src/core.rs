@@ -15,7 +15,11 @@ use winit::window::Window;
 
 use crate::{
     find_depth_format, get_max_usable_sample_count, identity_matrix, is_srgb_format, map_egui_err,
-    mesh::MeshRenderer, msaa_samples_to_vk, picking::PickRenderer, surface, util::find_memory_type,
+    mesh::{MeshCache, MeshRenderer},
+    msaa_samples_to_vk,
+    picking::PickRenderer,
+    surface,
+    util::find_memory_type,
     FrameSubmission, PickResult, RenderError, RenderSettings, ViewportRect, MAX_FRAMES_IN_FLIGHT,
     VALIDATION_LAYER,
 };
@@ -54,6 +58,9 @@ pub(crate) struct RendererCore {
     egui_renderer: Option<EguiRenderer>,
     textures_to_free: Vec<Vec<TextureId>>,
     mesh_renderer: Option<MeshRenderer>,
+    /// Per-body GPU buffer cache shared between mesh and pick passes. Bodies
+    /// only re-upload when their `BodySubmission::revision` advances.
+    mesh_cache: MeshCache,
     gpu_name: String,
     available_gpus: Vec<String>,
     // Depth buffer resources
@@ -198,6 +205,7 @@ impl RendererCore {
             egui_renderer: None,
             textures_to_free: vec![Vec::new(); MAX_FRAMES_IN_FLIGHT],
             mesh_renderer: None,
+            mesh_cache: MeshCache::new(),
             gpu_name,
             available_gpus,
             depth_image: vk::Image::null(),
@@ -425,6 +433,21 @@ impl RendererCore {
 
         // Store body IDs for picking
         self.last_frame_bodies = frame.bodies.iter().map(|b| b.id).collect();
+
+        // Mesh-cache GC: drop GPU buffers for any body that's no longer in
+        // the live submission set. We only do work (and only pay the
+        // wait-idle cost) when something actually disappeared — pan/orbit on
+        // a stable scene short-circuits to a single hashmap-keys diff. This
+        // keeps cached buffers from leaking when a body is deleted without
+        // forcing a wait every frame.
+        let alive_ids: Vec<Uuid> = frame.bodies.iter().map(|b| b.id).collect();
+        let needs_gc = self.mesh_cache.has_dead_entries(&alive_ids);
+        if needs_gc {
+            unsafe {
+                let _ = self.device.device_wait_idle();
+            }
+            self.mesh_cache.retain_only(&self.device, &alive_ids);
+        }
 
         // Process pending pick request - we need to wait for the previous frame to complete first
         // The pick result we read was rendered with pick_view_proj/pick_viewport_rect
@@ -1013,15 +1036,28 @@ impl RendererCore {
                 .map_err(RenderError::from)?;
         }
 
+        // Make sure every body has fresh GPU buffers in the shared cache
+        // *before* the picking pass runs — both passes draw out of the same
+        // buffers, so we upload exactly once per body per revision.
+        if let Some(mesh_renderer) = self.mesh_renderer.as_ref() {
+            for body in &frame.bodies {
+                self.mesh_cache.ensure_uploaded(
+                    &self.device,
+                    mesh_renderer.memory_properties(),
+                    body,
+                )?;
+            }
+        }
+
         // Record picking pass (renders to offscreen buffer for object ID detection)
         if let Some(pick_renderer) = self.pick_renderer.as_mut() {
             pick_renderer.record_commands(
                 &self.device,
                 command_buffer,
+                &self.mesh_cache,
                 &frame.bodies,
                 frame.view_proj,
                 frame.viewport_rect.as_ref(),
-                &self.memory_properties,
             )?;
 
             // Store the view_proj used for this picking pass
@@ -1093,6 +1129,7 @@ impl RendererCore {
 
         if let Some(mesh_renderer) = self.mesh_renderer.as_mut() {
             mesh_renderer.draw(
+                &mut self.mesh_cache,
                 command_buffer,
                 self.swapchain_extent,
                 frame.viewport_rect.as_ref(),
@@ -1271,6 +1308,12 @@ impl Drop for RendererCore {
             unsafe {
                 self.device.destroy_command_pool(self.command_pool, None);
             }
+        }
+        // Drop cached per-body GPU buffers before tearing down the renderer
+        // and pick passes so we keep destruction ordering deterministic.
+        self.mesh_cache.destroy(&self.device);
+        if let Some(pick_renderer) = self.pick_renderer.take() {
+            pick_renderer.destroy(&self.device);
         }
         if let Some(renderer) = self.mesh_renderer.take() {
             renderer.destroy();

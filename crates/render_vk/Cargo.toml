@@ -19,6 +19,7 @@ egui-ash-renderer.workspace = true
 bytemuck.workspace = true
 uuid.workspace = true
 glam.workspace = true
+rayon.workspace = true
 
 [build-dependencies]
 shaderc = "0.10.1"

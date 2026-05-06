@@ -11,6 +11,7 @@ use core_document::ScreenSpaceOverlay;
 use egui::{ClippedPrimitive, TexturesDelta};
 use kernel_api::TriMesh;
 use std::fmt;
+use std::sync::Arc;
 use thiserror::Error;
 use tracing::{debug, info};
 use uuid::Uuid;
@@ -22,6 +23,8 @@ const MAX_FRAMES_IN_FLIGHT: usize = 2;
 const VALIDATION_LAYER: &str = "VK_LAYER_KHRONOS_validation";
 const MESH_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mesh.vert.spv"));
 const MESH_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/mesh.frag.spv"));
+const EDGE_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/edge.vert.spv"));
+const EDGE_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/edge.frag.spv"));
 const PICK_VERT_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pick.vert.spv"));
 const PICK_FRAG_SPV: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pick.frag.spv"));
 
@@ -168,11 +171,18 @@ pub enum HighlightState {
     HoveredAndSelected,
 }
 
-/// Render-ready body (mesh + unique identifier for future picking).
+/// Render-ready body. The mesh is shared via `Arc<TriMesh>` so the renderer
+/// can keep a per-body GPU buffer alive across frames keyed by `id` and
+/// invalidated when `revision` advances; cloning a `BodySubmission` is
+/// effectively a refcount bump regardless of the underlying triangle count.
 #[derive(Clone)]
 pub struct BodySubmission {
     pub id: Uuid,
-    pub mesh: TriMesh,
+    /// Monotonic counter that lets the renderer detect mesh changes without
+    /// inspecting triangle data. Bump it whenever `mesh` is reassigned to
+    /// different geometry; leave it untouched on hover/select transitions.
+    pub revision: u64,
+    pub mesh: Arc<TriMesh>,
     pub color: [f32; 3],
     pub highlight: HighlightState,
     /// If true, render as wireframe/line with depth bias to appear on top of solid geometry
@@ -183,6 +193,7 @@ impl fmt::Debug for BodySubmission {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BodySubmission")
             .field("id", &self.id)
+            .field("revision", &self.revision)
             .field("vertex_count", &self.mesh.positions.len())
             .field("color", &self.color)
             .finish()

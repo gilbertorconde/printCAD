@@ -3,6 +3,8 @@ use std::{env, fs, path::PathBuf};
 fn main() {
     println!("cargo:rerun-if-changed=shaders/mesh.vert");
     println!("cargo:rerun-if-changed=shaders/mesh.frag");
+    println!("cargo:rerun-if-changed=shaders/edge.vert");
+    println!("cargo:rerun-if-changed=shaders/edge.frag");
     println!("cargo:rerun-if-changed=shaders/pick.vert");
     println!("cargo:rerun-if-changed=shaders/pick.frag");
 
@@ -11,6 +13,8 @@ fn main() {
 
     compile_shader("mesh.vert", shaderc::ShaderKind::Vertex, &out_dir);
     compile_shader("mesh.frag", shaderc::ShaderKind::Fragment, &out_dir);
+    compile_shader("edge.vert", shaderc::ShaderKind::Vertex, &out_dir);
+    compile_shader("edge.frag", shaderc::ShaderKind::Fragment, &out_dir);
     compile_shader("pick.vert", shaderc::ShaderKind::Vertex, &out_dir);
     compile_shader("pick.frag", shaderc::ShaderKind::Fragment, &out_dir);
 }
