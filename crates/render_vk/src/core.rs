@@ -146,9 +146,16 @@ impl RendererCore {
         let queue_family_indices = chosen.indices;
         let gpu_name = chosen.name.clone();
         let available_gpus: Vec<String> = candidates.iter().map(|c| c.name.clone()).collect();
-        let (device, graphics_queue, present_queue) =
+        let (device, graphics_queue, present_queue, wide_lines_on) =
             create_logical_device(&instance, physical_device, &queue_family_indices)?;
         let swapchain_loader = SwapchainLoader::new(&instance, &device);
+
+        let vk_limits = unsafe { instance.get_physical_device_properties(physical_device) }.limits;
+        let lw = vk_limits.line_width_range;
+        info!(
+            "Vulkan line width: range [{}, {}], wideLines feature enabled = {}",
+            lw[0], lw[1], wide_lines_on
+        );
 
         // Determine MSAA sample count (clamp to device max)
         let requested_samples = msaa_samples_to_vk(settings.msaa_samples);
@@ -159,13 +166,13 @@ impl RendererCore {
             info!(
                 "Requested MSAA {}x not supported, falling back to {}x",
                 settings.msaa_samples,
-                max_samples.as_raw().trailing_zeros() + 1
+                max_samples.as_raw()
             );
             max_samples
         };
         info!(
             "Using MSAA: {}x",
-            msaa_samples.as_raw().trailing_zeros() + 1
+            msaa_samples.as_raw()
         );
 
         // Find depth format
@@ -1400,7 +1407,7 @@ fn create_logical_device(
     instance: &ash::Instance,
     physical_device: vk::PhysicalDevice,
     indices: &QueueFamilyIndices,
-) -> Result<(ash::Device, vk::Queue, vk::Queue), RenderError> {
+) -> Result<(ash::Device, vk::Queue, vk::Queue, bool), RenderError> {
     let mut unique_indices = vec![indices.graphics_family];
     if indices.graphics_family != indices.present_family {
         unique_indices.push(indices.present_family);
@@ -1419,7 +1426,13 @@ fn create_logical_device(
         })
         .collect();
 
-    let device_features = vk::PhysicalDeviceFeatures::default();
+    let supported =
+        unsafe { instance.get_physical_device_features(physical_device) };
+    let mut device_features = vk::PhysicalDeviceFeatures::default();
+    // Without `wideLines`, Vulkan only allows pipeline `lineWidth` == 1.0, so
+    // thicker face-edge `LINE_LIST` drawing is impossible.
+    device_features.wide_lines = supported.wide_lines;
+    let wide_lines_on = device_features.wide_lines != vk::FALSE;
     let device_extensions = [ash::khr::swapchain::NAME.as_ptr()];
 
     let create_info = vk::DeviceCreateInfo::default()
@@ -1432,7 +1445,7 @@ fn create_logical_device(
     let graphics_queue = unsafe { device.get_device_queue(indices.graphics_family, 0) };
     let present_queue = unsafe { device.get_device_queue(indices.present_family, 0) };
 
-    Ok((device, graphics_queue, present_queue))
+    Ok((device, graphics_queue, present_queue, wide_lines_on))
 }
 
 fn find_queue_families(

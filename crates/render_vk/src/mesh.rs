@@ -10,18 +10,23 @@ use crate::{
 
 use crate::create_shader_module;
 
-/// Per-vertex format shared by the mesh, edge, and pick pipelines. Color now
-/// lives in per-draw push constants instead of being baked into every vertex,
-/// so a hover/select transition no longer requires re-uploading geometry.
+/// Per-vertex format shared by the mesh, edge, and pick pipelines. Albedo
+/// lives per-vertex (`color`); [`BodySubmission::color`] scales it for bodies
+/// without mesh vertex colours (sketches use white × tint).
 #[repr(C)]
 pub(crate) struct MeshVertex {
     pub(crate) position: [f32; 3],
     pub(crate) normal: [f32; 3],
+    pub(crate) color: [f32; 3],
 }
 
 impl MeshVertex {
-    pub(crate) fn new(position: [f32; 3], normal: [f32; 3]) -> Self {
-        Self { position, normal }
+    pub(crate) fn new(position: [f32; 3], normal: [f32; 3], color: [f32; 3]) -> Self {
+        Self {
+            position,
+            normal,
+            color,
+        }
     }
 }
 
@@ -67,13 +72,31 @@ impl GpuLight {
     }
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 pub struct LightingData {
     pub main_light: GpuLight,
     pub backlight: GpuLight,
     pub fill_light: GpuLight,
     pub ambient_color: [f32; 3],
     pub ambient_intensity: f32,
+    /// RGB for `LINE_LIST` face-boundary edges (not shaded).
+    pub edge_line_color: [f32; 3],
+    /// Requested width in pixels; clamped to `VkPhysicalDeviceLimits::lineWidthRange` when drawing.
+    pub edge_line_width: f32,
+}
+
+impl Default for LightingData {
+    fn default() -> Self {
+        Self {
+            main_light: GpuLight::default(),
+            backlight: GpuLight::default(),
+            fill_light: GpuLight::default(),
+            ambient_color: [0.0; 3],
+            ambient_intensity: 0.0,
+            edge_line_color: [0.08, 0.08, 0.08],
+            edge_line_width: 3.0,
+        }
+    }
 }
 
 /// Push-constant payload split into a frame-wide range (offset 0) and a
@@ -276,13 +299,23 @@ impl MeshCache {
                             let pos = mesh.positions[i];
                             let normal =
                                 mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
-                            *dst = MeshVertex::new(pos, normal);
+                            let color = mesh
+                                .colors
+                                .get(i)
+                                .copied()
+                                .unwrap_or([1.0, 1.0, 1.0]);
+                            *dst = MeshVertex::new(pos, normal, color);
                         });
                 } else {
                     for i in 0..vertex_count {
                         let pos = mesh.positions[i];
                         let normal = mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
-                        slice[i] = MeshVertex::new(pos, normal);
+                        let color = mesh
+                            .colors
+                            .get(i)
+                            .copied()
+                            .unwrap_or([1.0, 1.0, 1.0]);
+                        slice[i] = MeshVertex::new(pos, normal, color);
                     }
                 }
                 device.unmap_memory(entry.vertex_memory);
@@ -422,6 +455,10 @@ fn ensure_buffer(
     let new_capacity = required.next_power_of_two().max(1024);
     if *buffer != vk::Buffer::null() {
         unsafe {
+            // Other swapchain frames may still reference this buffer from an
+            // in-flight command buffer — only `MAX_FRAMES` fences are tracked,
+            // not a per-buffer fence. Idle before reallocating.
+            device.device_wait_idle().map_err(RenderError::from)?;
             device.destroy_buffer(*buffer, None);
             device.free_memory(*memory, None);
         }
@@ -447,6 +484,8 @@ pub(crate) struct MeshRenderer {
     wireframe_pipeline: vk::Pipeline,
     edge_pipeline: vk::Pipeline,
     msaa_samples: vk::SampleCountFlags,
+    solid_line_width: f32,
+    line_width_range: [f32; 2],
 }
 
 impl MeshRenderer {
@@ -460,6 +499,10 @@ impl MeshRenderer {
         let device = device.clone();
         let memory_properties =
             unsafe { instance.get_physical_device_memory_properties(physical_device) };
+        let line_range = unsafe { instance.get_physical_device_properties(physical_device) }
+            .limits
+            .line_width_range;
+        let solid_line_width = 1.0f32.clamp(line_range[0], line_range[1]);
 
         let pipeline_layout = create_mesh_pipeline_layout(&device)?;
         let pipeline = create_mesh_pipeline(
@@ -468,6 +511,8 @@ impl MeshRenderer {
             pipeline_layout,
             msaa_samples,
             MeshPipelineMode::Solid,
+            solid_line_width,
+            false,
         )?;
         let wireframe_pipeline = create_mesh_pipeline(
             &device,
@@ -475,6 +520,8 @@ impl MeshRenderer {
             pipeline_layout,
             msaa_samples,
             MeshPipelineMode::WireframeTriangles,
+            solid_line_width,
+            false,
         )?;
         let edge_pipeline = create_mesh_pipeline(
             &device,
@@ -482,6 +529,8 @@ impl MeshRenderer {
             pipeline_layout,
             msaa_samples,
             MeshPipelineMode::Edges,
+            solid_line_width,
+            true,
         )?;
 
         Ok(Self {
@@ -492,6 +541,8 @@ impl MeshRenderer {
             wireframe_pipeline,
             edge_pipeline,
             msaa_samples,
+            solid_line_width,
+            line_width_range: line_range,
         })
     }
 
@@ -512,6 +563,8 @@ impl MeshRenderer {
             self.pipeline_layout,
             msaa_samples,
             MeshPipelineMode::Solid,
+            self.solid_line_width,
+            false,
         )?;
         self.wireframe_pipeline = create_mesh_pipeline(
             &self.device,
@@ -519,6 +572,8 @@ impl MeshRenderer {
             self.pipeline_layout,
             msaa_samples,
             MeshPipelineMode::WireframeTriangles,
+            self.solid_line_width,
+            false,
         )?;
         self.edge_pipeline = create_mesh_pipeline(
             &self.device,
@@ -526,6 +581,8 @@ impl MeshRenderer {
             self.pipeline_layout,
             msaa_samples,
             MeshPipelineMode::Edges,
+            self.solid_line_width,
+            true,
         )?;
         Ok(())
     }
@@ -627,6 +684,12 @@ impl MeshRenderer {
                     vk::PipelineBindPoint::GRAPHICS,
                     self.edge_pipeline,
                 );
+                let edge_w = lighting.edge_line_width.clamp(
+                    self.line_width_range[0],
+                    self.line_width_range[1],
+                );
+                self.device
+                    .cmd_set_line_width(command_buffer, edge_w);
                 self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
                 self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 self.push_frame_constants(command_buffer, &frame_pc);
@@ -636,7 +699,7 @@ impl MeshRenderer {
                     Some(c) if c.edge_index_count > 0 => c,
                     _ => continue,
                 };
-                self.draw_body_edges(command_buffer, cached);
+                self.draw_body_edges(command_buffer, cached, lighting);
             }
         }
 
@@ -734,12 +797,15 @@ impl MeshRenderer {
         }
     }
 
-    fn draw_body_edges(&self, command_buffer: vk::CommandBuffer, cached: &CachedMesh) {
-        // Edge fragment shader uses a constant near-black color, so the draw
-        // range value is irrelevant; we still write it once to keep the
-        // shared push-constant block fully initialized.
+    fn draw_body_edges(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        cached: &CachedMesh,
+        lighting: &LightingData,
+    ) {
+        let c = lighting.edge_line_color;
         let draw_pc = MeshDrawPushConstants {
-            draw_color: [0.08, 0.08, 0.08, 0.0],
+            draw_color: [c[0], c[1], c[2], 0.0],
         };
         self.push_draw_constants(command_buffer, &draw_pc);
         unsafe {
@@ -794,6 +860,8 @@ fn create_mesh_pipeline(
     layout: vk::PipelineLayout,
     msaa_samples: vk::SampleCountFlags,
     mode: MeshPipelineMode,
+    line_width: f32,
+    dynamic_line_width: bool,
 ) -> Result<vk::Pipeline, RenderError> {
     let (vert_spv, frag_spv) = match mode {
         MeshPipelineMode::Solid | MeshPipelineMode::WireframeTriangles => {
@@ -832,6 +900,11 @@ fn create_mesh_pipeline(
             .location(1)
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(12),
+        vk::VertexInputAttributeDescription::default()
+            .binding(0)
+            .location(2)
+            .format(vk::Format::R32G32B32_SFLOAT)
+            .offset(24),
     ];
 
     let binding_descs = [binding_desc];
@@ -894,7 +967,7 @@ fn create_mesh_pipeline(
         .depth_clamp_enable(false)
         .rasterizer_discard_enable(false)
         .polygon_mode(polygon_mode)
-        .line_width(1.0)
+        .line_width(line_width)
         .cull_mode(cull_mode)
         .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
         .depth_bias_enable(depth_bias_enable)
@@ -931,9 +1004,20 @@ fn create_mesh_pipeline(
         .logic_op_enable(false)
         .attachments(&color_blend_attachments);
 
-    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-    let dynamic_state =
-        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states);
+    let dynamic_states_with_line = [
+        vk::DynamicState::VIEWPORT,
+        vk::DynamicState::SCISSOR,
+        vk::DynamicState::LINE_WIDTH,
+    ];
+    let dynamic_states_basic = [
+        vk::DynamicState::VIEWPORT,
+        vk::DynamicState::SCISSOR,
+    ];
+    let dynamic_state = if dynamic_line_width {
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states_with_line)
+    } else {
+        vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states_basic)
+    };
 
     let pipeline_info = vk::GraphicsPipelineCreateInfo::default()
         .stages(&stages)
