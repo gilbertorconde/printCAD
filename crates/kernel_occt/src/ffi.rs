@@ -11,6 +11,7 @@ pub(crate) struct PrintcadOcctBody {
     pub(crate) name: *mut c_char,
     pub(crate) positions: *mut f32,
     pub(crate) normals: *mut f32,
+    pub(crate) colors: *mut f32,
     pub(crate) indices: *mut u32,
     pub(crate) edges: *mut u32,
     pub(crate) vertex_count: usize,

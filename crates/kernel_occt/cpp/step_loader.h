@@ -18,12 +18,14 @@ extern "C" {
 // `vertex_count * 3`. `indices` is a flat array of length `index_count`.
 // `edges` is a flat list of vertex-index pairs (length `edge_count * 2`)
 // describing face-boundary line segments and is computed before any vertex
-// welding so hard CAD edges stay visible. `name` may be null when no STEP
+// welding so hard CAD edges stay visible. `colors` is flat RGB linear 0..1,
+// length `vertex_count * 3`, parallel to positions. `name` may be null when no STEP
 // product label was attached.
 typedef struct PrintcadOcctBody {
     char* name;
     float* positions;
     float* normals;
+    float* colors;
     uint32_t* indices;
     uint32_t* edges;
     size_t vertex_count;

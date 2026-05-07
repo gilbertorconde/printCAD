@@ -48,9 +48,13 @@ fn main() {
     // into a unified `TKDESTEP` data-exchange module. Both names are listed so
     // the build works against either generation when available.
     let occt_libs = [
-        "TKDESTEP", // Modern (OCCT 7.7+) STEP module.
-        "TKXSBase", // Shared XS Base module (always required).
-        "TKMesh",   // BRepMesh_IncrementalMesh.
+        "TKDESTEP", // STEP + STEPCAFControl (geometry + colours in DECAF doc).
+        "TKXSBase",
+        "TKXCAF",  // XCAF document / colour attributes on shapes.
+        "TKVCAF",
+        "TKLCAF",
+        "TKCAF",
+        "TKMesh",
         "TKBRep",
         "TKTopAlgo",
         "TKGeomAlgo",

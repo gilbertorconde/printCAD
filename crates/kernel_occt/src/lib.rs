@@ -9,6 +9,7 @@ mod step_header;
 
 use std::ffi::{CStr, CString};
 use std::path::Path;
+use std::time::Instant;
 
 use kernel_api::{
     BodyHandle, ImportedBody, ImportedModel, Kernel, KernelError, KernelResult, RebuildRequest,
@@ -83,6 +84,8 @@ impl Kernel for OcctKernel {
 }
 
 fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelResult<ImportedModel> {
+    let rust_total = Instant::now();
+
     let path_str = path.to_str().ok_or_else(|| {
         KernelError::InvalidInput(format!(
             "STEP path is not valid UTF-8: {}",
@@ -96,7 +99,9 @@ fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelRes
     // Probe the STEP HEADER section for its declared length unit before
     // handing the file to OCCT (OCCT itself converts geometry to mm regardless,
     // so this is a pure introspection step for the UI).
+    let header_start = Instant::now();
     let source_unit = step_header::detect_step_unit_from_path(path).ok().flatten();
+    let header_ms = header_start.elapsed().as_secs_f64() * 1000.0;
 
     let linear = detail.chord_tolerance.max(0.001) as f64;
     let angular = (detail.angular_tolerance_deg.max(0.5) as f64).to_radians();
@@ -105,6 +110,7 @@ fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelRes
 
     // SAFETY: the C++ shim allocates result buffers itself and we always pass
     // the result through `printcad_occt_free_result` after copying its data.
+    let ffi_start = Instant::now();
     let result = unsafe {
         ffi::printcad_occt_import_step(
             c_path.as_ptr(),
@@ -114,6 +120,7 @@ fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelRes
             weld_angle_rad,
         )
     };
+    let occt_ffi_ms = ffi_start.elapsed().as_secs_f64() * 1000.0;
 
     if !result.error.is_null() {
         let message = unsafe { CStr::from_ptr(result.error) }
@@ -123,12 +130,17 @@ fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelRes
         return Err(KernelError::Import(message));
     }
 
+    let copy_start = Instant::now();
     let mut bodies = Vec::with_capacity(result.body_count);
     if result.body_count > 0 && !result.bodies.is_null() {
         let raw_bodies = unsafe { std::slice::from_raw_parts(result.bodies, result.body_count) };
         for body in raw_bodies {
             let positions = copy_vec3_array(body.positions, body.vertex_count);
             let normals = copy_vec3_array(body.normals, body.vertex_count);
+            let mut colors = copy_vec3_array(body.colors, body.vertex_count);
+            if colors.len() != positions.len() && !positions.is_empty() {
+                colors = vec![[1.0, 1.0, 1.0]; positions.len()];
+            }
             let indices = copy_u32_array(body.indices, body.index_count);
             // Boundary edges are computed inside the C++ shim *before*
             // welding (so face boundaries survive even when seam vertices
@@ -169,6 +181,7 @@ fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelRes
                 normals,
                 indices,
                 edges,
+                colors,
             };
             let name = if body.name.is_null() {
                 None
@@ -179,7 +192,20 @@ fn import_step_internal(path: &Path, detail: &TessellationSettings) -> KernelRes
         }
     }
 
+    let rust_mesh_copy_ms = copy_start.elapsed().as_secs_f64() * 1000.0;
+
     unsafe { ffi::printcad_occt_free_result(result) };
+
+    let rust_total_ms = rust_total.elapsed().as_secs_f64() * 1000.0;
+
+    info!(
+        path = %path.display(),
+        header_scan_ms = format!("{header_ms:.2}"),
+        occt_ffi_ms = format!("{occt_ffi_ms:.2}"),
+        rust_mesh_copy_ms = format!("{rust_mesh_copy_ms:.2}"),
+        rust_import_total_ms = format!("{rust_total_ms:.2}"),
+        "STEP import timing (Rust; C++ phases on stderr as [printcad_import_cpp])"
+    );
 
     info!(
         "Imported STEP `{}`: {} bodies, {} triangles, source unit {:?}",

@@ -42,7 +42,7 @@ pub struct TessellationSettings {
     /// Maximum angle between two face normals at a shared position for them
     /// to be merged into a single welded vertex. Above this angle the kernel
     /// keeps them separate so hard CAD edges stay crisp under shading.
-    /// Defaults to 30°, which matches FreeCAD's behaviour.
+    /// Defaults to 30° (common cross-face weld preset).
     #[serde(default = "default_weld_angle_threshold_deg")]
     pub weld_angle_threshold_deg: f32,
 }
@@ -79,6 +79,10 @@ pub struct TriMesh {
     /// no edge information available.
     #[serde(default)]
     pub edges: Vec<u32>,
+    /// Optional per-vertex linear RGB albedo in 0..1 (same length as [`Self::positions`] when set).
+    /// Empty means the renderer uses the body tint from push constants only.
+    #[serde(default)]
+    pub colors: Vec<[f32; 3]>,
 }
 
 impl TriMesh {
