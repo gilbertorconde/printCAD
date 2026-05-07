@@ -189,6 +189,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
         normals,
         indices,
         edges: Vec::new(),
+        colors: Vec::new(),
     }
 }
 

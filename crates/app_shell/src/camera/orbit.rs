@@ -37,7 +37,7 @@ impl CameraController {
 
             self.orientation = (delta_q * self.orientation).normalize();
 
-            let new_forward = (self.orientation * -self.axis_depth_vec()).normalize_or_zero();
+            let new_forward = self.view_toward_target_world().normalize_or_zero();
             self.target = new_eye + new_forward * self.radius;
         } else {
             self.orientation = (delta_q * self.orientation).normalize();

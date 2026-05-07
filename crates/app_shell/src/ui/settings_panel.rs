@@ -260,6 +260,34 @@ fn lighting_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
             .changed();
     });
 
+    ui.add_space(10.0);
+    ui.separator();
+    ui.label("Face edge lines");
+    ui.horizontal(|ui| {
+        ui.label("Color:");
+        let mut color = Color32::from_rgb(
+            (lighting.edge_line_color[0] * 255.0) as u8,
+            (lighting.edge_line_color[1] * 255.0) as u8,
+            (lighting.edge_line_color[2] * 255.0) as u8,
+        );
+        if ui.color_edit_button_srgba(&mut color).changed() {
+            lighting.edge_line_color = [
+                color.r() as f32 / 255.0,
+                color.g() as f32 / 255.0,
+                color.b() as f32 / 255.0,
+            ];
+            changed = true;
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.label("Width (px):");
+        changed |= ui
+            .add(
+                egui::Slider::new(&mut lighting.edge_line_width, 0.5..=8.0).show_value(true),
+            )
+            .changed();
+    });
+
     changed
 }
 

@@ -315,7 +315,7 @@ impl CameraController {
         // of the screen, and through a couple of chained handedness flips
         // appears mirrored left-to-right as well — i.e. exactly the
         // "upside-down + left/right swapped" symptom you can see when
-        // comparing our front view against FreeCAD's.
+        // comparing our front view against common engineering-CAD conventions.
         //
         // Negating element [1][1] of the column-major matrix is the
         // canonical fix; equivalent to setting a negative-height viewport
@@ -335,7 +335,7 @@ impl CameraController {
     }
 
     pub(super) fn position_vec(&self) -> Vec3 {
-        let forward = self.orientation * (-self.axis_depth_vec());
+        let forward = self.view_toward_target_world();
         self.target - forward * self.radius
     }
 
@@ -365,6 +365,16 @@ impl CameraController {
 
     pub(super) fn axis_depth_vec(&self) -> Vec3 {
         self.axes.depth().vector()
+    }
+
+    /// World-space direction from camera **toward** [`Self::target`], before `radius` scaling.
+    ///
+    /// Use `−depth` for all axis presets so eyepoint / `look_at` stay consistent with yaw–pitch
+    /// and fit-to-view. (The on-screen axis triad uses [`crate::orientation_cube`] / settings basis
+    /// separately — do not special-case Z‑up here or framing inverts.)
+    pub(super) fn view_toward_target_world(&self) -> Vec3 {
+        let depth = self.axis_depth_vec();
+        self.orientation * (-depth)
     }
 
     fn axis_parity(&self) -> f32 {
@@ -486,7 +496,7 @@ impl CameraController {
     }
 
     pub(super) fn sync_yaw_pitch_from_orientation(&mut self) {
-        let forward_world = (self.orientation * -self.axis_depth_vec()).normalize_or_zero();
+        let forward_world = self.view_toward_target_world().normalize_or_zero();
         let forward = self.world_to_axis_local(forward_world);
         let horiz = Vec3::new(forward.x, 0.0, forward.z);
         let horiz_len = horiz.length();

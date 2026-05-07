@@ -12,6 +12,7 @@ use super::{feature_tree, ActiveTool, ActiveWorkbench};
 /// Outcome of a frame's interaction with the top bar (menu items + keyboard
 /// shortcuts). Each flag is `true` only on the frame the action was triggered.
 pub struct TopBarResult {
+    pub new_requested: bool,
     pub open_requested: bool,
     pub save_requested: bool,
     pub save_as_requested: bool,
@@ -32,6 +33,7 @@ pub fn draw_top_panel(
     selected_body_id: Option<core_document::BodyId>,
 ) -> TopBarResult {
     let mut result = TopBarResult {
+        new_requested: false,
         open_requested: false,
         save_requested: false,
         save_as_requested: false,
@@ -48,12 +50,16 @@ pub fn draw_top_panel(
     let sc_save = KeyboardShortcut::new(Modifiers::COMMAND, Key::S);
     let sc_save_as = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
     let sc_import = KeyboardShortcut::new(Modifiers::COMMAND, Key::I);
+    let sc_new = KeyboardShortcut::new(Modifiers::COMMAND, Key::N);
     let sc_quit = KeyboardShortcut::new(Modifiers::COMMAND, Key::Q);
     let sc_fit = KeyboardShortcut::new(Modifiers::NONE, Key::F);
 
     // Consume shortcuts up-front so the matching menu rows don't double-fire
     // when an item is also clicked in the same frame.
     ctx.input_mut(|i| {
+        if i.consume_shortcut(&sc_new) {
+            result.new_requested = true;
+        }
         if i.consume_shortcut(&sc_open) {
             result.open_requested = true;
         }
@@ -89,13 +95,15 @@ pub fn draw_top_panel(
                     // --- File menu ---
                     let file_resp = ui.menu_button("File", |ui| {
                         let new_btn = egui::Button::new("New")
-                            .shortcut_text(ctx.format_shortcut(&KeyboardShortcut::new(
-                                Modifiers::COMMAND,
-                                Key::N,
-                            )));
-                        // `New` is a placeholder until the multi-document flow lands.
-                        ui.add_enabled(false, new_btn)
-                            .on_hover_text("Create a new untitled document (coming soon)");
+                            .shortcut_text(ctx.format_shortcut(&sc_new));
+                        if ui
+                            .add(new_btn)
+                            .on_hover_text("Create a new untitled document")
+                            .clicked()
+                        {
+                            result.new_requested = true;
+                            ui.close();
+                        }
 
                         ui.separator();
 
@@ -227,7 +235,7 @@ pub fn draw_top_panel(
                         .response
                         .on_hover_text("Help and about information");
 
-                    // --- Right-aligned workbench combo (FreeCAD-style) ---
+                    // --- Right-aligned workbench combo ---
                     ui.with_layout(
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {

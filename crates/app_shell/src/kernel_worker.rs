@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use kernel_api::{ImportedModel, Kernel, TessellationSettings};
 use kernel_occt::OcctKernel;
+use tracing::info;
 
 /// Job submitted from the UI thread to the kernel worker.
 pub enum KernelRequest {
@@ -108,19 +109,35 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
         match request {
             KernelRequest::ImportStep { path, detail } => {
                 let started = Instant::now();
+                let k0 = Instant::now();
                 let response = match kernel.import_step(&path, &detail) {
-                    Ok(model) => match std::fs::read(&path) {
-                        Ok(raw_bytes) => KernelResponse::StepImported {
-                            path,
-                            model,
-                            raw_bytes,
-                            elapsed: started.elapsed(),
-                        },
-                        Err(err) => KernelResponse::StepFailed {
-                            path,
-                            error: format!("read source bytes failed: {err}"),
-                        },
-                    },
+                    Ok(model) => {
+                        let kernel_ms = k0.elapsed();
+                        let r0 = Instant::now();
+                        match std::fs::read(&path) {
+                            Ok(raw_bytes) => {
+                                let read_ms = r0.elapsed();
+                                let worker_total = started.elapsed();
+                                info!(
+                                    path = %path.display(),
+                                    kernel_import_ms = format!("{:.2}", kernel_ms.as_secs_f64() * 1000.0),
+                                    read_asset_bytes_ms = format!("{:.2}", read_ms.as_secs_f64() * 1000.0),
+                                    worker_total_ms = format!("{:.2}", worker_total.as_secs_f64() * 1000.0),
+                                    "STEP import worker timing (kernel thread)"
+                                );
+                                KernelResponse::StepImported {
+                                    path,
+                                    model,
+                                    raw_bytes,
+                                    elapsed: worker_total,
+                                }
+                            }
+                            Err(err) => KernelResponse::StepFailed {
+                                path,
+                                error: format!("read source bytes failed: {err}"),
+                            },
+                        }
+                    }
                     Err(err) => KernelResponse::StepFailed {
                         path,
                         error: err.to_string(),

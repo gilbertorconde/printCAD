@@ -51,6 +51,7 @@ pub struct UiFrameResult {
     pub finish_sketch_requested: bool,
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
+    pub new_requested: bool,
     pub open_requested: bool,
     pub save_requested: bool,
     pub save_as_requested: bool,
@@ -138,6 +139,7 @@ impl UiLayer {
         let mut tree_selection = None;
         let mut tree_activation = None;
         let mut open_requested = false;
+        let mut new_requested = false;
         let mut save_requested = false;
         let mut save_as_requested = false;
         let mut import_step_requested = false;
@@ -154,6 +156,7 @@ impl UiLayer {
                 active_document_object,
                 selected_body_id,
             );
+            new_requested = top.new_requested;
             open_requested = top.open_requested;
             save_requested = top.save_requested;
             save_as_requested = top.save_as_requested;
@@ -264,6 +267,7 @@ impl UiLayer {
             finish_sketch_requested: finish_requested,
             tree_selection,
             tree_activation,
+            new_requested,
             open_requested,
             save_requested,
             save_as_requested,

@@ -65,6 +65,14 @@ impl Default for RenderingSettings {
     }
 }
 
+fn default_edge_line_color() -> [f32; 3] {
+    [0.08, 0.08, 0.08]
+}
+
+fn default_edge_line_width() -> f32 {
+    3.0
+}
+
 /// Settings for the 3D viewport lighting system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightingSettings {
@@ -73,6 +81,12 @@ pub struct LightingSettings {
     pub fill_light: LightSource,
     pub ambient_intensity: f32,
     pub ambient_color: [f32; 3],
+    /// RGB color (0–1) for face-boundary edge lines drawn over solid bodies.
+    #[serde(default = "default_edge_line_color")]
+    pub edge_line_color: [f32; 3],
+    /// Raster line width in pixels for those edges (clamped to the GPU at draw time).
+    #[serde(default = "default_edge_line_width")]
+    pub edge_line_width: f32,
 }
 
 impl Default for LightingSettings {
@@ -101,6 +115,8 @@ impl Default for LightingSettings {
             },
             ambient_intensity: 0.2,
             ambient_color: [1.0, 1.0, 1.0],
+            edge_line_color: [0.08, 0.08, 0.08],
+            edge_line_width: 3.0,
         }
     }
 }

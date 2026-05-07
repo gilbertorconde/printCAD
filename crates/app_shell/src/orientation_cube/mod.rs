@@ -5,6 +5,9 @@
 //! and colored axis arrows (X=red, Y=green, Z=blue).
 //!
 //! The cube is interactive: clicking faces snaps to that view, clicking arrows rotates 45°.
+//!
+//! The RGB axis triad is drawn in a separate floating widget at the **top-right** of the
+//! viewport so it does not overlap the cube (which sits at the **bottom-right**).
 
 use std::collections::HashMap;
 
@@ -55,7 +58,7 @@ impl Default for OrientationCubeConfig {
 pub struct OrientationCubeInput {
     /// Camera orientation as quaternion [x, y, z, w]
     pub camera_orientation: [f32; 4],
-    /// Axis configuration used across the viewport
+    /// Axis configuration used across the viewport (settings preset)
     pub axis_system: AxisSystem,
 }
 
@@ -171,6 +174,32 @@ pub enum RotateAxis {
     ScreenZ, // Z axis (roll)
 }
 
+/// 3×3 rotation for the orientation cube (horizontal / vertical / depth basis).
+fn camera_display_rotation(input: &OrientationCubeInput) -> Mat3 {
+    let q_world = Quat::from_array(input.camera_orientation).inverse();
+    let world_rot = Mat3::from_quat(q_world);
+    let basis = input.axis_system.canonical_basis();
+    let mut rot = basis.transpose() * world_rot * basis;
+
+    let right = input.axis_system.horizontal().vector();
+    let up = input.axis_system.vertical().vector();
+    let depth = input.axis_system.depth().vector();
+    let parity = right.cross(up).dot(depth);
+    if parity < 0.0 {
+        let adjust = Mat3::from_diagonal(Vec3::new(-1.0, 1.0, 1.0));
+        rot = adjust * rot * adjust;
+    }
+    rot
+}
+
+/// Where **world** +X / +Y / +Z land in the axis widget (same `(Δx, −Δy)` as the cube).
+/// `w` maps as `rot * (Bᵀ w)` with `rot = camera_display_rotation` and `B` the settings canonical basis —
+/// same pipeline as cube face directions, which fixes e.g. +Y “back” vs forward for Z‑up.
+fn world_axes_widget_rotation(input: &OrientationCubeInput) -> Mat3 {
+    let basis = input.axis_system.canonical_basis();
+    camera_display_rotation(input) * basis.transpose()
+}
+
 /// Draws the orientation cube widget and returns interaction results
 pub fn draw(
     ctx: &Context,
@@ -178,6 +207,8 @@ pub fn draw(
     config: &OrientationCubeConfig,
 ) -> OrientationCubeResult {
     let mut result = OrientationCubeResult::default();
+
+    let rot = camera_display_rotation(input);
 
     // Extra space at the top for arc arrows
     let arc_arrow_padding = 50.0;
@@ -222,25 +253,6 @@ pub fn draw(
                 Stroke::new(2.0, config.border_color),
             );
 
-            // Build the cube's display rotation from the camera's orientation.
-            // We invert the camera quaternion so the cube shows the world axes as
-            // seen *from* the camera, then express it in the user's axis-system
-            // basis. For left-handed presets we additionally flip X on both sides
-            // so the cube spins with the same handedness as the main viewport.
-            let q_world = Quat::from_array(input.camera_orientation).inverse();
-            let world_rot = Mat3::from_quat(q_world);
-            let basis = input.axis_system.canonical_basis();
-            let mut rot = basis.transpose() * world_rot * basis;
-
-            let right = input.axis_system.horizontal().vector();
-            let up = input.axis_system.vertical().vector();
-            let depth = input.axis_system.depth().vector();
-            let parity = right.cross(up).dot(depth);
-            if parity < 0.0 {
-                let adjust = Mat3::from_diagonal(Vec3::new(-1.0, 1.0, 1.0));
-                rot = adjust * rot * adjust;
-            }
-
             // Draw and handle cube face clicks
             if let Some(snap) = draw_cube_interactive(
                 ui,
@@ -251,10 +263,6 @@ pub fn draw(
                 &response,
             ) {
                 result.snap_to_view = Some(snap);
-            }
-
-            if config.show_axis_arrows {
-                draw_axis_arrows(&painter, local_center, &rot, input.axis_system);
             }
 
             if config.show_rotation_arrows {
@@ -270,6 +278,26 @@ pub fn draw(
                 }
             }
         });
+
+    // Axis triad alone: top-right, away from the bottom-right cube.
+    if config.show_axis_arrows {
+        let axis_margin = margin;
+        let axis_widget = 80.0_f32;
+        let axis_pos = Pos2::new(
+            available.right() - axis_widget - axis_margin,
+            available.top() + axis_margin,
+        );
+        egui::Area::new(egui::Id::new("orientation_axes"))
+            .fixed_pos(axis_pos)
+            .order(egui::Order::Foreground)
+            .show(ctx, |ui| {
+                let (response, painter) =
+                    ui.allocate_painter(egui::Vec2::splat(axis_widget), Sense::hover());
+                let axis_center = response.rect.center();
+                let axis_rot = world_axes_widget_rotation(input);
+                draw_axis_arrows(&painter, axis_center, &axis_rot);
+            });
+    }
 
     result
 }
@@ -776,37 +804,25 @@ fn draw_cube_interactive(
     clicked_face
 }
 
-/// Draws the colored axis arrows (X=red, Y=green, Z=blue)
-fn draw_axis_arrows(painter: &egui::Painter, center: Pos2, rot: &Mat3, axis_system: AxisSystem) {
-    let axis_origin = Pos2::new(center.x - 35.0, center.y + 35.0);
+/// Draws the colored axis arrows for **world** X, Y, and Z (red / green / blue).
+/// `rot` is [`world_axes_widget_rotation`] — settings axis + camera quaternion, same widget basis as the cube.
+fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: &Mat3) {
     let axis_len = 18.0;
 
     let mut axis_data: Vec<_> = [
-        (
-            Vec3::X,
-            Color32::from_rgb(220, 80, 80),
-            axis_system.horizontal(),
-        ),
-        (
-            Vec3::Y,
-            Color32::from_rgb(80, 200, 80),
-            axis_system.vertical(),
-        ),
-        (
-            Vec3::Z,
-            Color32::from_rgb(80, 120, 220),
-            axis_system.depth(),
-        ),
+        (Vec3::X, Color32::from_rgb(220, 80, 80), "X"),
+        (Vec3::Y, Color32::from_rgb(80, 200, 80), "Y"),
+        (Vec3::Z, Color32::from_rgb(80, 120, 220), "Z"),
     ]
     .into_iter()
-    .map(|(dir, color, axis)| {
+    .map(|(dir, color, label)| {
         let rotated = *rot * dir;
-        (rotated, color, axis)
+        (rotated, color, label)
     })
     .collect();
     axis_data.sort_by(|a, b| a.0.z.partial_cmp(&b.0.z).unwrap());
 
-    for (rotated, color, axis) in &axis_data {
+    for (rotated, color, label) in &axis_data {
         let end = Pos2::new(
             axis_origin.x + rotated.x * axis_len,
             axis_origin.y - rotated.y * axis_len,
@@ -845,7 +861,7 @@ fn draw_axis_arrows(painter: &egui::Painter, center: Pos2, rot: &Mat3, axis_syst
             painter.text(
                 label_pos,
                 egui::Align2::CENTER_CENTER,
-                axis.signed_label(),
+                *label,
                 egui::FontId::proportional(10.0),
                 faded,
             );

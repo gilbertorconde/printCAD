@@ -20,11 +20,12 @@ use render_vk::{
     BodySubmission, FrameSubmission, GpuLight, HighlightState, LightingData, RenderBackend,
     RenderSettings, ViewportRect as RenderViewportRect, VulkanRenderer,
 };
+use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use settings::{LightingSettings, SettingsStore, UserSettings};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tracing::error;
+use tracing::{error, info};
 use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
 use uuid::Uuid;
 use winit::{
@@ -102,13 +103,23 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Button labels for the unsaved-changes dialog. GTK and Zenity backends report
+/// `MessageDialogResult::Custom(label)` for `YesNoCancelCustom`, not Yes/No/Cancel.
+const UNSAVED_CHANGES_SAVE: &str = "Save";
+const UNSAVED_CHANGES_DISCARD: &str = "Discard";
+const UNSAVED_CHANGES_CANCEL: &str = "Cancel";
+
 struct PrintCadApp {
     settings: RenderSettings,
-    renderer: Option<VulkanRenderer>,
+    /// Declared before GPU/window so it drops last — not used during teardown.
     frame_submission: FrameSubmission,
+    // `Window` must outlive `VulkanRenderer` (surface/swapchain). Rust drops
+    // fields in reverse declaration order, so `renderer` must appear *after*
+    // `window`/`ui_layer` so GPU teardown runs while the native window exists.
     window: Option<Window>,
     window_id: Option<WindowId>,
     ui_layer: Option<UiLayer>,
+    renderer: Option<VulkanRenderer>,
     settings_store: SettingsStore,
     user_settings: UserSettings,
     camera: CameraController,
@@ -170,11 +181,11 @@ impl PrintCadApp {
 
         Self {
             settings,
-            renderer: None,
             frame_submission: FrameSubmission::default(),
             window: None,
             window_id: None,
             ui_layer: None,
+            renderer: None,
             settings_store,
             user_settings,
             camera,
@@ -273,6 +284,101 @@ impl PrintCadApp {
             wb.on_activate(&mut ctx);
             Self::flush_logs(ctx.drain_logs());
         }
+    }
+
+    fn document_has_asset_files(&self) -> bool {
+        self.document.assets().next().is_some()
+    }
+
+    /// If the document is dirty, prompt Save / Discard / Cancel. Returns false when
+    /// the user cancels or save fails.
+    fn confirm_discard_or_save(&mut self) -> bool {
+        if !self.document.metadata().dirty() {
+            return true;
+        }
+        let res = MessageDialog::new()
+            .set_title("Unsaved changes")
+            .set_description(
+                "Save changes before continuing? Save writes the file, Discard loses edits, Cancel stays here.",
+            )
+            .set_level(MessageLevel::Warning)
+            .set_buttons(MessageButtons::YesNoCancelCustom(
+                UNSAVED_CHANGES_SAVE.into(),
+                UNSAVED_CHANGES_DISCARD.into(),
+                UNSAVED_CHANGES_CANCEL.into(),
+            ))
+            .show();
+        match res {
+            MessageDialogResult::Cancel => false,
+            MessageDialogResult::No => true,
+            MessageDialogResult::Yes => self.save_document_interactive(),
+            MessageDialogResult::Custom(s) if s == UNSAVED_CHANGES_SAVE => {
+                self.save_document_interactive()
+            }
+            MessageDialogResult::Custom(s) if s == UNSAVED_CHANGES_DISCARD => true,
+            MessageDialogResult::Custom(s) if s == UNSAVED_CHANGES_CANCEL => false,
+            _ => false,
+        }
+    }
+
+    /// Save to [`Self::current_file`] or prompt for a path. Returns false if cancelled or save fails.
+    fn save_document_interactive(&mut self) -> bool {
+        let path = if let Some(ref p) = self.current_file {
+            p.clone()
+        } else {
+            let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
+            if let Ok(recent_path) = SettingsStore::recent_file_path() {
+                if let Ok(file) = std::fs::File::open(&recent_path) {
+                    if let Ok(saved_dir_str) = serde_json::from_reader::<_, String>(file) {
+                        dialog = dialog.set_directory(std::path::PathBuf::from(saved_dir_str));
+                    }
+                }
+            }
+            match dialog.set_file_name("untitled.prtcad").save_file() {
+                Some(p) => p,
+                None => return false,
+            }
+        };
+        match self.save_document_at(&path) {
+            Ok(()) => true,
+            Err(err) => {
+                app_log::error(format!("Save failed: {err:#}"));
+                false
+            }
+        }
+    }
+
+    /// Replace the document with a blank one and reset navigation/selection.
+    fn reset_to_new_document(&mut self) {
+        while !self.kernel_worker.drain().is_empty() {}
+
+        if let Ok(wb) = self.registry.workbench_mut(&self.active_workbench.0) {
+            let cam_pos = self.camera.position();
+            let cam_target = self.camera.target();
+            let vp = self.camera.viewport_info();
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut self.document,
+                cam_pos,
+                cam_target,
+                (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            );
+            wb.on_deactivate(&mut ctx);
+            Self::flush_logs(ctx.drain_logs());
+        }
+
+        self.document = Document::new("Untitled");
+        self.current_file = None;
+        self.active_document_object = None;
+        self.active_body_id = None;
+        self.tree_selection = Some(TreeItemId::DocumentRoot);
+        self.selected_body = None;
+        self.hovered_body = None;
+
+        let wb_id = self.active_workbench.0.clone();
+        self.call_workbench_activate(&wb_id);
+
+        self.camera.reset_to_fit(Vec3::ZERO, 50.0);
+        app_log::info("New document");
     }
 }
 
@@ -381,7 +487,11 @@ impl ApplicationHandler for PrintCadApp {
         }
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                if self.confirm_discard_or_save() {
+                    event_loop.exit();
+                }
+            }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
                     renderer.resize(size);
@@ -521,11 +631,18 @@ impl ApplicationHandler for PrintCadApp {
                     (false, true) => HighlightState::Hovered,
                     (false, false) => HighlightState::None,
                 };
+                let use_vertex_albedo = geometry.mesh.colors.len() == geometry.mesh.positions.len()
+                    && !geometry.mesh.colors.is_empty();
+                let base_color = if use_vertex_albedo {
+                    [1.0, 1.0, 1.0]
+                } else {
+                    [0.78, 0.78, 0.82]
+                };
                 BodySubmission {
                     id: body_id.0,
                     revision: geometry.revision,
                     mesh: Arc::clone(&geometry.mesh),
-                    color: [0.78, 0.78, 0.82],
+                    color: base_color,
                     highlight,
                     is_wireframe: false,
                 }
@@ -604,6 +721,7 @@ impl ApplicationHandler for PrintCadApp {
         self.frame_submission.screen_space_overlays = screen_space_overlays;
 
         let mut ui_result_open = false;
+        let mut ui_result_new = false;
         let mut ui_result_save = false;
         let mut ui_result_save_as = false;
         let mut ui_result_import_step = false;
@@ -690,6 +808,7 @@ impl ApplicationHandler for PrintCadApp {
             }
 
             ui_result_open = ui_result.open_requested;
+            ui_result_new = ui_result.new_requested;
             ui_result_save = ui_result.save_requested;
             ui_result_save_as = ui_result.save_as_requested;
             ui_result_import_step = ui_result.import_step_requested;
@@ -770,9 +889,15 @@ impl ApplicationHandler for PrintCadApp {
             self.camera.set_orbit_pivot(None);
         }
 
-        if ui_result_open || ui_result_save || ui_result_save_as || ui_result_import_step {
+        if ui_result_new && self.confirm_discard_or_save() {
+            self.reset_to_new_document();
+        }
+
+        let open_after_confirm = ui_result_open && self.confirm_discard_or_save();
+
+        if open_after_confirm || ui_result_save || ui_result_save_as || ui_result_import_step {
             self.start_file_dialog(
-                ui_result_open,
+                open_after_confirm,
                 ui_result_save,
                 ui_result_save_as,
                 ui_result_import_step,
@@ -826,7 +951,7 @@ impl ApplicationHandler for PrintCadApp {
 
         // File > Quit / Ctrl+Q. Deferred to here so the rest of the frame
         // (rendering, picks, dialogs) finishes cleanly before the loop ends.
-        if quit_requested {
+        if quit_requested && self.confirm_discard_or_save() {
             app_log::info("Quit requested via menu / shortcut");
             event_loop.exit();
         }
@@ -888,6 +1013,7 @@ impl PrintCadApp {
         self.tree_selection = Some(TreeItemId::DocumentRoot);
         self.selected_body = None;
 
+        self.document.mark_clean();
         Self::write_recent_dir(path);
         app_log::info(format!("Opened document from {}", path.display()));
         Ok(())
@@ -912,6 +1038,24 @@ impl PrintCadApp {
             file_name
         };
         self.document.set_name(name);
+
+        let ext_lower = path
+            .extension()
+            .and_then(|s| s.to_str())
+            .map(|s| s.to_ascii_lowercase());
+        if matches!(ext_lower.as_deref(), Some("json")) && self.document_has_asset_files() {
+            let _ = MessageDialog::new()
+                .set_title("Cannot save as JSON")
+                .set_description(
+                    "This document has embedded assets (e.g. imported STEP). JSON export does not include those bytes. Save as .prtcad instead.",
+                )
+                .set_level(MessageLevel::Warning)
+                .set_buttons(MessageButtons::Ok)
+                .show();
+            return Err(anyhow::anyhow!(
+                "JSON format cannot store embedded assets; save as .prtcad"
+            ));
+        }
 
         // For legacy .json files, keep writing plain JSON.
         // For everything else, use the .prtcad tar-based container with optional compression.
@@ -947,6 +1091,7 @@ impl PrintCadApp {
 
         self.current_file = Some(path.clone());
         Self::write_recent_dir(path);
+        self.document.mark_clean();
         app_log::info(format!("Saved document to {}", path.display()));
         Ok(())
     }
@@ -1060,6 +1205,7 @@ impl PrintCadApp {
         raw_bytes: Vec<u8>,
         elapsed: Duration,
     ) -> Result<()> {
+        let apply_start = Instant::now();
         // Capture "fresh document" *before* we start mutating it so the
         // auto-unit pick below isn't confused by bodies we're about to add.
         let was_fresh_document = self.document.bodies().is_empty()
@@ -1156,10 +1302,18 @@ impl PrintCadApp {
         }
 
         Self::write_recent_dir(path);
+        let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
+        info!(
+            path = %path.display(),
+            apply_to_document_ms = format!("{apply_ms:.2}"),
+            worker_elapsed_ms = format!("{:.2}", elapsed.as_secs_f64() * 1000.0),
+            "STEP import timing (UI thread apply)"
+        );
         app_log::info(format!(
-            "Imported STEP `{}` in {:.0}ms: {} bodies, {} triangles",
+            "Imported STEP `{}` in {:.0}ms worker + {:.1}ms apply: {} bodies, {} triangles",
             path.display(),
             elapsed.as_secs_f64() * 1000.0,
+            apply_ms,
             self.document
                 .imported_geometries()
                 .filter(|(_, g)| g.source_asset == Some(asset_id))
@@ -1447,5 +1601,7 @@ fn lighting_data_from_settings(settings: &LightingSettings) -> LightingData {
         ),
         ambient_color: settings.ambient_color,
         ambient_intensity: settings.ambient_intensity,
+        edge_line_color: settings.edge_line_color,
+        edge_line_width: settings.edge_line_width,
     }
 }

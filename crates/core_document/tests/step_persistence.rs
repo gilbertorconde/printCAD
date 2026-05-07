@@ -14,6 +14,7 @@ fn fake_mesh() -> Arc<TriMesh> {
         normals: vec![[0.0, 0.0, 1.0]; 3],
         indices: vec![0, 1, 2],
         edges: Vec::new(),
+        colors: vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
     })
 }
 
@@ -52,6 +53,8 @@ fn imported_geometry_roundtrips_through_prtcad() {
         .expect("imported geometry survives save/load");
     assert_eq!(geometry.mesh.positions.len(), 3);
     assert_eq!(geometry.mesh.indices, vec![0, 1, 2]);
+    assert_eq!(geometry.mesh.colors.len(), 3);
+    assert_eq!(geometry.mesh.colors[0], [1.0, 0.0, 0.0]);
     assert_eq!(geometry.source_asset, Some(asset_id));
 
     let restored_asset = loaded
