@@ -76,7 +76,7 @@ impl CameraController {
         let direction = if settings.invert_zoom { 1.0 } else { -1.0 };
         let step = amount * direction * settings.zoom_sensitivity;
         let scale = (-step).exp();
-        self.radius =
-            (self.radius * scale).clamp(settings.min_distance, settings.max_distance);
+        let min_r = self.effective_min_orbit_radius(settings);
+        self.radius = (self.radius * scale).clamp(min_r, settings.max_distance);
     }
 }

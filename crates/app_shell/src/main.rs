@@ -58,6 +58,36 @@ fn hash_revision(value: &serde_json::Value) -> u64 {
     hasher.finish()
 }
 
+/// Union of all imported mesh AABBs in world space `(min, max)`.
+fn document_imported_aabb(document: &Document) -> Option<(Vec3, Vec3)> {
+    let mut combined_min = [f32::INFINITY; 3];
+    let mut combined_max = [f32::NEG_INFINITY; 3];
+    let mut any = false;
+    for (_, g) in document.imported_geometries() {
+        if let Some((min, max)) = g.mesh.bounds() {
+            any = true;
+            for axis in 0..3 {
+                combined_min[axis] = combined_min[axis].min(min[axis]);
+                combined_max[axis] = combined_max[axis].max(max[axis]);
+            }
+        }
+    }
+    if !any || combined_min[0] > combined_max[0] {
+        return None;
+    }
+    Some((
+        Vec3::new(combined_min[0], combined_min[1], combined_min[2]),
+        Vec3::new(combined_max[0], combined_max[1], combined_max[2]),
+    ))
+}
+
+fn aabb_fit_center_radius(aabb_min: Vec3, aabb_max: Vec3) -> (Vec3, f32) {
+    let center = (aabb_min + aabb_max) * 0.5;
+    let extents = aabb_max - aabb_min;
+    let radius = extents.length() * 0.5;
+    (center, radius.max(1.0))
+}
+
 fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -290,6 +320,16 @@ impl PrintCadApp {
         self.document.assets().next().is_some()
     }
 
+    fn sync_camera_scene_zoom_limit_from_document(&mut self) {
+        if let Some((mn, mx)) = document_imported_aabb(&self.document) {
+            self.camera.set_scene_zoom_aabb(mn, mx);
+        } else {
+            self.camera.clear_scene_zoom_constraint();
+        }
+        self.camera
+            .clamp_radius_to_effective_limits(&self.user_settings.camera);
+    }
+
     /// If the document is dirty, prompt Save / Discard / Cancel. Returns false when
     /// the user cancels or save fails.
     fn confirm_discard_or_save(&mut self) -> bool {
@@ -377,7 +417,7 @@ impl PrintCadApp {
         let wb_id = self.active_workbench.0.clone();
         self.call_workbench_activate(&wb_id);
 
-        self.camera.reset_to_fit(Vec3::ZERO, 50.0);
+        self.camera.reset_to_fit(Vec3::ZERO, 50.0, None);
         app_log::info("New document");
     }
 }
@@ -816,12 +856,12 @@ impl ApplicationHandler for PrintCadApp {
 
             if ui_result.reset_view_requested {
                 app_log::info("Fit View requested");
-                // TODO: compute bounds from real document bodies once available.
-                // For now reset to a CAD-friendly default around the origin: a
-                // 50 mm radius hint frames a comfortable ~125 mm view of an
-                // empty stage given the current FOV.
-                use glam::Vec3;
-                self.camera.reset_to_fit(Vec3::ZERO, 50.0);
+                if let Some(aabb) = document_imported_aabb(&self.document) {
+                    let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
+                    self.camera.reset_to_fit(center, radius, Some(aabb));
+                } else {
+                    self.camera.reset_to_fit(Vec3::ZERO, 50.0, None);
+                }
             }
 
             if ui_result.finish_sketch_requested {
@@ -1015,6 +1055,7 @@ impl PrintCadApp {
 
         self.document.mark_clean();
         Self::write_recent_dir(path);
+        self.sync_camera_scene_zoom_limit_from_document();
         app_log::info(format!("Opened document from {}", path.display()));
         Ok(())
     }
@@ -1266,18 +1307,10 @@ impl PrintCadApp {
         }
 
         if combined_min[0] <= combined_max[0] {
-            let center = Vec3::new(
-                (combined_min[0] + combined_max[0]) * 0.5,
-                (combined_min[1] + combined_max[1]) * 0.5,
-                (combined_min[2] + combined_max[2]) * 0.5,
-            );
-            let extents = Vec3::new(
-                combined_max[0] - combined_min[0],
-                combined_max[1] - combined_min[1],
-                combined_max[2] - combined_min[2],
-            );
-            let radius = extents.length() * 0.5;
-            self.camera.reset_to_fit(center, radius.max(1.0));
+            let aabb_min = Vec3::new(combined_min[0], combined_min[1], combined_min[2]);
+            let aabb_max = Vec3::new(combined_max[0], combined_max[1], combined_max[2]);
+            let (center, radius) = aabb_fit_center_radius(aabb_min, aabb_max);
+            self.camera.reset_to_fit(center, radius, Some((aabb_min, aabb_max)));
         }
 
         if let Some(body_id) = first_body {

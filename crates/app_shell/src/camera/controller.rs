@@ -7,6 +7,41 @@ use winit::dpi::PhysicalPosition;
 pub(super) const DEG_TO_RAD: f32 = std::f32::consts::PI / 180.0;
 pub(super) const MAX_PITCH_RAD: f32 = 1.570796; // ~90 degrees
 
+fn point_in_closed_aabb(p: Vec3, mn: Vec3, mx: Vec3) -> bool {
+    p.x >= mn.x && p.x <= mx.x && p.y >= mn.y && p.y <= mx.y && p.z >= mn.z && p.z <= mx.z
+}
+
+/// Smallest `t > 0` along `origin + t * dir` (dir unit not required) to the first AABB face hit
+/// when `origin` lies inside the closed box. Returns [`None`] if `origin` is not inside or `dir`
+/// is degenerate in the axes that matter.
+fn ray_positive_exit_aabb(origin: Vec3, dir: Vec3, mn: Vec3, mx: Vec3) -> Option<f32> {
+    if !point_in_closed_aabb(origin, mn, mx) {
+        return None;
+    }
+    let o = [origin.x, origin.y, origin.z];
+    let d = [dir.x, dir.y, dir.z];
+    let a = [mn.x, mn.y, mn.z];
+    let b = [mx.x, mx.y, mx.z];
+    let mut t_exit = f32::INFINITY;
+    for i in 0..3 {
+        if d[i].abs() > 1e-8 {
+            let t = if d[i] > 0.0 {
+                (b[i] - o[i]) / d[i]
+            } else {
+                (a[i] - o[i]) / d[i]
+            };
+            if t > 0.0 {
+                t_exit = t_exit.min(t);
+            }
+        }
+    }
+    if t_exit.is_finite() && t_exit > 0.0 {
+        Some(t_exit)
+    } else {
+        None
+    }
+}
+
 /// Simple animation helper so camera snaps remain smooth when requested.
 #[derive(Debug, Clone)]
 pub(super) struct CameraAnimation {
@@ -68,6 +103,13 @@ pub struct CameraController {
 
     pub(super) animation: Option<CameraAnimation>,
 
+    /// World-space AABB of imported geometry used only to clamp wheel zoom: the minimum orbit
+    /// radius keeps the eyepoint outside this box along the current view ray (distance from
+    /// [`Self::target`] to the first AABB exit toward the camera). This is much tighter than a
+    /// bounding-sphere constraint and stays usable on flat parts (PCBs) where the diagonal
+    /// sphere would block productive close-ups.
+    scene_zoom_aabb: Option<(Vec3, Vec3)>,
+
     // Dynamic orbit pivot support
     /// When set, orbit will use this point instead of target during drag
     pub(super) orbit_pivot: Option<Vec3>,
@@ -104,6 +146,7 @@ impl CameraController {
             viewport_origin: (0.0, 0.0),
             viewport_size: initial_viewport,
             animation: None,
+            scene_zoom_aabb: None,
             orbit_pivot: None,
             active_pivot: None,
             axes,
@@ -115,7 +158,15 @@ impl CameraController {
     }
 
     /// Recenter the camera on a bounding sphere.
-    pub fn reset_to_fit(&mut self, center: Vec3, radius_hint: f32) {
+    ///
+    /// `zoom_limit_aabb` stores the imported geometry AABB for zoom clamping ([`None`] clears).
+    pub fn reset_to_fit(
+        &mut self,
+        center: Vec3,
+        radius_hint: f32,
+        zoom_limit_aabb: Option<(Vec3, Vec3)>,
+    ) {
+        self.scene_zoom_aabb = zoom_limit_aabb;
         self.target = center;
         self.radius = radius_hint.max(1.0) * 2.5;
 
@@ -127,6 +178,41 @@ impl CameraController {
         self.panning = false;
 
         self.rebuild_orientation_from_yaw_pitch();
+    }
+
+    /// Update zoom limit from document AABB **without** moving the camera framing.
+    pub fn set_scene_zoom_aabb(&mut self, aabb_min: Vec3, aabb_max: Vec3) {
+        self.scene_zoom_aabb = Some((aabb_min, aabb_max));
+    }
+
+    pub fn clear_scene_zoom_constraint(&mut self) {
+        self.scene_zoom_aabb = None;
+    }
+
+    /// Smallest orbit radius allowed for the current view and settings (user minimum + AABB exit).
+    pub(super) fn effective_min_orbit_radius(&self, settings: &CameraSettings) -> f32 {
+        let min_r = settings.min_distance;
+        let Some((aabb_min, aabb_max)) = self.scene_zoom_aabb else {
+            return min_r;
+        };
+        let forward = self.view_toward_target_world().normalize_or_zero();
+        if forward.length_squared() < 1e-12 {
+            return min_r;
+        }
+        // From target toward the camera (negative view-to-target).
+        let dir = -forward;
+        let Some(t_exit) = ray_positive_exit_aabb(self.target, dir, aabb_min, aabb_max) else {
+            return min_r;
+        };
+        let diag = aabb_max.distance(aabb_min);
+        let margin = (diag * 1.0e-4).max(self.near * 0.25).max(1e-5);
+        min_r.max(t_exit + margin)
+    }
+
+    /// Clamp orbit radius after scene bounds change, without resetting drag/view state.
+    pub fn clamp_radius_to_effective_limits(&mut self, settings: &CameraSettings) {
+        let min_r = self.effective_min_orbit_radius(settings);
+        self.radius = self.radius.clamp(min_r, settings.max_distance);
     }
 
     fn rebuild_orientation_from_yaw_pitch(&mut self) {
@@ -416,9 +502,8 @@ impl CameraController {
     }
 
     pub fn sync_with_settings(&mut self, settings: &CameraSettings) {
-        self.radius = self
-            .radius
-            .clamp(settings.min_distance, settings.max_distance);
+        let min_r = self.effective_min_orbit_radius(settings);
+        self.radius = self.radius.clamp(min_r, settings.max_distance);
         self.projection = settings.projection;
         self.fov_y_deg = settings.fov_degrees;
         self.last_cursor = None;

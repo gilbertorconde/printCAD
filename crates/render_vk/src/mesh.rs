@@ -670,9 +670,9 @@ impl MeshRenderer {
             }
         }
 
-        // Edges follow the solid pass so they sit on top with the negative
-        // depth bias from `MeshPipelineMode::Edges`. Each body has its own
-        // edge index buffer pointing into its own vertex buffer.
+        // Edges after solids: biased + LEQUAL depth test (see
+        // `MeshPipelineMode::Edges`). Each body has its own edge index buffer
+        // pointing into its own vertex buffer.
         let has_edges = bodies
             .iter()
             .filter(|b| !b.is_wireframe)
@@ -848,9 +848,11 @@ pub(crate) enum MeshPipelineMode {
     /// Triangle wireframe overlay drawn on top of the solid pass with depth
     /// bias toward the camera.
     WireframeTriangles,
-    /// Face-boundary outlines drawn as a `LINE_LIST`. Two-sided (no culling),
-    /// depth-tested but doesn't write depth, biased toward the camera so the
-    /// lines stay readable when they coincide with the surface.
+    /// Face-boundary outlines as a `LINE_LIST`. Two-sided (no culling),
+    /// depth-tested (`LESS_OR_EQUAL`, depth write off) for correct occlusion.
+    /// Small constant raster bias + clip-space pull in `edge.vert` limit
+    /// coplanar z-fight; if bias is too strong, edges “see through” occluders
+    /// (tune those constants vs MSAA / line width).
     Edges,
 }
 
@@ -926,14 +928,14 @@ fn create_mesh_pipeline(
         .viewport_count(1)
         .scissor_count(1);
 
-    // Wireframes and edge outlines pull toward the camera so they don't
-    // z-fight with the solid surface they sit on top of.
+    // Wireframes and boundary edges pull slightly toward the camera so LEQUAL
+    // passes against coplanar solid depth. For `LINE_LIST`, use **constant
+    // bias only** (slope is poorly defined and can over-pull on steep spans).
+    // Too much bias + `edge.vert` nudge causes ghost edges through occluders.
     let (depth_bias_enable, depth_bias_constant_factor, depth_bias_slope_factor) = match mode {
         MeshPipelineMode::Solid => (false, 0.0, 0.0),
         MeshPipelineMode::WireframeTriangles => (true, 1.0, 1.0),
-        // Negative bias = pull toward camera (smaller depth values). The
-        // values are picked to be just enough to clear MSAA-resolved depth.
-        MeshPipelineMode::Edges => (true, -1.5, -1.5),
+        MeshPipelineMode::Edges => (true, -0.55, 0.0),
     };
 
     // Overlays must not stomp on the depth buffer, otherwise downstream
@@ -978,18 +980,16 @@ fn create_mesh_pipeline(
         .sample_shading_enable(false)
         .rasterization_samples(msaa_samples);
 
-    // `LESS_OR_EQUAL` instead of `LESS` for the overlay passes lets edges and
-    // wireframes pass when their depth value matches the underlying surface
-    // (which it usually does after the bias above), keeping outlines visible
-    // even on coplanar geometry.
-    let depth_compare_op = match mode {
-        MeshPipelineMode::Solid => vk::CompareOp::LESS,
+    // `LESS_OR_EQUAL` + modest bias lets outlines sit on their own surface
+    // without winning over clearly nearer geometry (avoid heavy bias + nudge).
+    let (depth_test_enable, depth_compare_op) = match mode {
+        MeshPipelineMode::Solid => (true, vk::CompareOp::LESS),
         MeshPipelineMode::WireframeTriangles | MeshPipelineMode::Edges => {
-            vk::CompareOp::LESS_OR_EQUAL
+            (true, vk::CompareOp::LESS_OR_EQUAL)
         }
     };
     let depth_stencil = vk::PipelineDepthStencilStateCreateInfo::default()
-        .depth_test_enable(true)
+        .depth_test_enable(depth_test_enable)
         .depth_write_enable(depth_write)
         .depth_compare_op(depth_compare_op)
         .depth_bounds_test_enable(false)
