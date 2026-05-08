@@ -593,9 +593,12 @@ impl ApplicationHandler for PrintCadApp {
             return;
         }
 
-        let cam_res = self
-            .camera
-            .on_viewport_pointer(&event, &self.user_settings.camera);
+        let orbit_pick = self.hovered_world_pos.map(Vec3::from_array);
+        let cam_res = self.camera.on_viewport_pointer(
+            &event,
+            &self.user_settings.camera,
+            orbit_pick,
+        );
         redraw |= cam_res.wants_redraw();
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
             redraw |= self.toggle_body_under_cursor_selection();
@@ -858,12 +861,9 @@ impl ApplicationHandler for PrintCadApp {
                 axis_system: self.camera.axis_system(),
             };
 
-            let pivot_screen_pos = if self.camera.rotation_pivot_marker_visible() {
-                self.camera
-                    .world_to_screen(Vec3::from_array(self.camera.target()))
-            } else {
-                None
-            };
+            let pivot_screen_pos = self.camera.rotation_pivot_indicator_screen_px(
+                self.user_settings.camera.orbit_pivot_pick,
+            );
 
             let ui_result = ui_layer.run(
                 window,

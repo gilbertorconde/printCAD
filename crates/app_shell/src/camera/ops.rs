@@ -67,6 +67,55 @@ pub fn orbit_pixels(
     state.clip_dirty = true;
 }
 
+/// Same deltas as [`orbit_pixels`], but rotates the eye about a fixed world **`pivot_world`** instead
+/// of pinning the focal point on the lens axis. Keeps [`CadCameraState::focal_distance`] unchanged
+/// so framing does not jump when orbit starts (unlike [`set_pivot_world_hit`] which recenters).
+pub fn orbit_pixels_around_world_anchor(
+    state: &mut CadCameraState,
+    axes: &axes::AxisSystem,
+    pivot_world: DVec3,
+    delta_px: Vec2,
+    settings: &CameraSettings,
+) {
+    if delta_px.length_squared() < 1e-12 {
+        return;
+    }
+    let sens = settings.orbit_sensitivity * 0.005;
+    let dx = -delta_px.x * sens;
+    let dy = -delta_px.y * sens;
+
+    let up_axis = match settings.orbit_yaw_axis {
+        OrbitYawAxis::WorldUp => axes.vertical().vector().normalize(),
+        OrbitYawAxis::CameraUp => state.up_world(axes).normalize_or_zero(),
+    };
+    let right = state.right_world(axes);
+    if up_axis.length_squared() < 1e-12 || right.length_squared() < 1e-12 {
+        return;
+    }
+    let up_axis = up_axis.normalize();
+    let right = right.normalize();
+
+    let yaw_q = glam::Quat::from_axis_angle(up_axis, dx);
+    let pitch_q = glam::Quat::from_axis_angle(right, dy.clamp(-1.45, 1.45));
+    let delta_q = (yaw_q * pitch_q).normalize();
+
+    let pivot_v = Vec3::new(pivot_world.x as f32, pivot_world.y as f32, pivot_world.z as f32);
+    let eye_v = Vec3::new(state.eye.x as f32, state.eye.y as f32, state.eye.z as f32);
+    let arm = eye_v - pivot_v;
+    if arm.length_squared() < 1e-24 {
+        return;
+    }
+
+    let arm_rot = delta_q * arm;
+    state.eye = DVec3::new(
+        (pivot_v.x + arm_rot.x) as f64,
+        (pivot_v.y + arm_rot.y) as f64,
+        (pivot_v.z + arm_rot.z) as f64,
+    );
+    state.orientation = (delta_q * state.orientation).normalize();
+    state.clip_dirty = true;
+}
+
 pub fn roll_pixels(state: &mut CadCameraState, axes: &axes::AxisSystem, delta_px_x: f32) {
     if delta_px_x.abs() < 1e-6 {
         return;

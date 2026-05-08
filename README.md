@@ -15,8 +15,8 @@ printCAD is a Linux-native, Wayland-first CAD application designed for creating 
 ### Key Features
 
 - **Vulkan Rendering** - Hardware-accelerated 3D viewport with perspective/orthographic projection
-- **FreeCAD-style Navigation** - Familiar camera controls with turntable orbit, pan, and zoom
-- **Interactive Orientation Cube** - Click faces, edges, or corners to snap to standard views
+- **FreeCAD-style Navigation** - Gesture camera (orbit, pan, zoom, roll) plus optional orbit around GPU-picked points without reframing the view
+- **Interactive Orientation Cube** - Click faces, edges, or corners for standard views; arc and triangle arrows for incremental rotation
 - **Modular Workbenches** - Extensible architecture for Sketch and Part Design workflows
 - **Parametric Core** - Feature tree with dependency graph, transactions, and undo/redo (planned)
 - **GPU Selection** - Choose between available graphics cards in hybrid GPU systems
@@ -74,13 +74,20 @@ printCAD/
 
 ### Camera Navigation
 
-| Action       | Control                                 |
-| ------------ | --------------------------------------- |
-| Orbit        | Middle mouse button drag                |
-| Pan          | Shift + Middle mouse button drag        |
-| Zoom         | Scroll wheel                            |
-| Snap to view | Click orientation cube face/edge/corner |
-| Rotate 45°   | Click orientation cube arrows           |
+Gesture-style navigation applies in the central 3D viewport (click vs drag distinguishes select from orbit):
+
+| Action | Control |
+| ------ | ------- |
+| **Orbit** | Left drag (after a small pixel threshold — short click selects instead) |
+| **Pan** | Right drag |
+| **Roll / tilt camera** | Left + right buttons drag |
+| **Zoom** | Scroll wheel (optional **zoom toward cursor**) |
+| **Pivot on geometry** | Middle click snaps the orbit pivot to the point under the cursor (reframes to that pivot on the lens axis) |
+| **Pivot on focal plane** | **`H`** with the cursor over the viewport — moves pivot to intersection of the ray under the cursor with the current focal plane |
+| Snap to standard view | Orientation cube face / edge / corner |
+| Nudge ±45° | Orientation cube triangular or arc arrows |
+
+When **Settings → Camera → “Orbit around point under cursor”** is enabled, an LMB orbit that starts over mesh uses that pick as an **off-axis orbit anchor**: the scene does **not** jump to center it; the small red orbit marker is drawn at the **projected anchor** while you drag.
 
 ### Orientation Cube
 
@@ -94,8 +101,7 @@ Settings are stored in `~/.config/printCAD/settings.json` and include:
 
 - Preferred GPU selection
 - FPS cap (0 = uncapped)
-- Camera projection (Perspective/Orthographic)
-- Field of view
+- Camera: projection (perspective / orthographic), FOV / ortho height, orbit & pan sensitivity, zoom-to-cursor, **orbit around point under cursor** (GPU pick orbit anchor), yaw axis for orbit, focal distance clamps, clip auto near/far, click↔drag threshold
 - Rendering quality (MSAA sample count)
 - Debug options such as the in-app log panel
 
@@ -111,13 +117,13 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 ### Current Status
 
 - [x] Vulkan renderer with basic mesh display
-- [x] Camera controller with turntable navigation
+- [x] Camera controller with gesture navigation (orbit / pan / roll / zoom-to-cursor / optional orbit around pick)
 - [x] Interactive orientation cube (FreeCAD-style NaviCube)
 - [x] Settings persistence
 - [x] GPU selection for hybrid or multi gpu systems
 - [ ] Sketch workbench with constraint solver
 - [ ] Part Design workbench (pad, pocket, revolve)
-- [ ] STEP import/export via OpenCASCADE
+- [x] STEP/STP import (OpenCASCADE) — experimental; export and full solid history still planned
 - [ ] Full parametric feature tree
 - [ ] Undo/redo system
 
@@ -128,7 +134,7 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 - **Graphics**: Vulkan via ash
 - **UI**: egui
 - **Math**: glam
-- **Geometry Kernel**: OpenCASCADE (planned)
+- **Geometry Kernel**: OpenCASCADE (STEP import; parametric modelling still planned)
 
 ## License
 

@@ -166,6 +166,12 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
         .add(egui::Slider::new(&mut camera.orbit_sensitivity, 0.05..=2.0).text("Orbit sensitivity"))
         .changed();
     changed |= ui
+        .checkbox(
+            &mut camera.orbit_pivot_pick,
+            "Orbit around point under cursor",
+        )
+        .changed();
+    changed |= ui
         .add(egui::Slider::new(&mut camera.pan_sensitivity, 0.1..=3.0).text("Pan sensitivity"))
         .changed();
 

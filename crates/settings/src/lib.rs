@@ -167,6 +167,10 @@ pub struct CameraSettings {
     pub wheel_zoom_factor: f32,
     #[serde(default)]
     pub orbit_sensitivity: f32,
+    /// Orbit rotates about the GPU-picked point under the cursor when an LMB orbit drag begins,
+    /// without reframing (no jump to frame center).
+    #[serde(default)]
+    pub orbit_pivot_pick: bool,
     #[serde(default = "default_pan_sensitivity")]
     pub pan_sensitivity: f32,
     #[serde(default)]
@@ -248,6 +252,7 @@ impl Default for CameraSettings {
             invert_zoom: false,
             wheel_zoom_factor: default_wheel_zoom_factor(),
             orbit_sensitivity: 0.4,
+            orbit_pivot_pick: false,
             pan_sensitivity: default_pan_sensitivity(),
             orbit_yaw_axis: OrbitYawAxis::default(),
             min_focal_distance: default_min_focal_distance(),
