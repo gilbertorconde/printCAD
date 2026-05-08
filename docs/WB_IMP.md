@@ -1,7 +1,7 @@
 # Workbench, Body, Document, and Sketch Editing Behavior (Generic Model)
 
-This document describes, by topic, how a “workbench” system (similar to
-FreeCAD’s PartDesign + Sketcher) typically works. It is written generically so
+This document describes, by topic, how a typical “workbench” system (often
+organized like PartDesign + Sketcher workflows) works. It is written generically so
 it can be adapted to a different application.
 
 ---

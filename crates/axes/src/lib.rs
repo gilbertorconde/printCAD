@@ -168,6 +168,24 @@ impl AxisSystem {
     pub fn world_to_canonical(&self, world: Vec3) -> Vec3 {
         self.canonical_basis().transpose() * world
     }
+
+    /// Map a unit-ish direction expressed in **CAD navigation canonical** axes
+    /// (matching `AxisPreset::RightHandedZForward`: +X right, +Y up, +Z forward) into this
+    /// system's world-space direction. Orthonormal presets preserve length; result is normalized.
+    pub fn canonical_light_direction_world(&self, canonical_dir: Vec3) -> Vec3 {
+        let v = self.canonical_to_world(canonical_dir);
+        v.normalize_or_zero()
+    }
+
+    /// Same as [`Self::canonical_light_direction_world`] but takes/returns arrays.
+    /// Degenerate input falls back to canonical +Z (world forward in nav frame).
+    pub fn canonical_light_direction_world_array(&self, canonical_dir: [f32; 3]) -> [f32; 3] {
+        let mut v = self.canonical_light_direction_world(Vec3::from_array(canonical_dir));
+        if v.length_squared() < 1e-24 {
+            v = self.canonical_light_direction_world(Vec3::Z);
+        }
+        v.to_array()
+    }
 }
 
 impl Default for AxisSystem {
@@ -210,7 +228,7 @@ impl AxisPreset {
                 "Y points up, camera looks along +Z (legacy OpenGL / Maya tooling)"
             }
             AxisPreset::ZUpRightHanded => {
-                "Z points up, camera looks along +Y (engineering CAD: FreeCAD, SolidWorks, STEP)"
+                "Z points up, camera looks along +Y (engineering CAD / STEP-style)"
             }
         }
     }
@@ -238,8 +256,7 @@ impl AxisPreset {
 
 impl Default for AxisPreset {
     fn default() -> Self {
-        // Engineering CAD (FreeCAD, SolidWorks, OnShape, Inventor) and the STEP
-        // file standard all default to Z-up, so an imported STEP file's
+        // Engineering CAD and STEP data commonly use Z-up, so an imported STEP file's
         // "front view" lines up with what the model's author saw in their
         // source CAD tool.
         AxisPreset::ZUpRightHanded

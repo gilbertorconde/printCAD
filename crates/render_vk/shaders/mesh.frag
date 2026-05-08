@@ -13,9 +13,8 @@ struct Light {
 };
 
 // Push-constant block split into two ranges:
-//   - frame range (offset 0, 192 B): updated once per render pass.
-//   - draw range  (offset 192, 16 B): updated once per body so highlight
-//     transitions don't force a vertex buffer re-upload.
+//   - frame range (offset 0): updated once per render pass.
+//   - draw range  (offset MESH_DRAW_PUSH_OFFSET): per-body draw_color.
 layout(push_constant) uniform PushConstants {
     mat4 view_proj;
     vec4 camera_pos;
@@ -23,32 +22,61 @@ layout(push_constant) uniform PushConstants {
     Light light_back;
     Light light_fill;
     vec4 ambient;       // rgb = ambient color * intensity
+    vec4 shading;       // x = specular exponent, y = specular intensity, zw unused
     vec4 draw_color;    // xyz = final body color (already highlight-mixed); w unused
 } pc;
 
-vec3 compute_light(Light light, vec3 normal) {
+vec3 lambert(Light light, vec3 normal) {
     if (light.color_enabled.a < 0.5) {
         return vec3(0.0);
     }
     vec3 light_dir = normalize(light.direction_intensity.xyz);
     float intensity = light.direction_intensity.w;
     vec3 color = light.color_enabled.rgb;
-    // Solid pass disables back-face culling (`CullModeFlags::NONE`), so both sides of
-    // a sheet or incorrectly wound STEP faces must read as lit without flipping the
-    // normal per fragment (that flip interacts badly with interpolation / holes).
-    float ndotl = abs(dot(normal, light_dir));
+    float ndotl = max(dot(normal, light_dir), 0.0);
     return color * intensity * ndotl;
 }
 
-void main() {
-    vec3 normal = normalize(v_normal);
-    vec3 main_contrib = compute_light(pc.light_main, normal);
-    vec3 back_contrib = compute_light(pc.light_back, normal);
-    vec3 fill_contrib = compute_light(pc.light_fill, normal);
+// Blinn-Phong highlight; stronger than pure Lambert for a typical CAD shaded solid.
+vec3 spec_one(Light light, vec3 normal, vec3 half_vec, float shininess) {
+    if (light.color_enabled.a < 0.5) {
+        return vec3(0.0);
+    }
+    float intensity = light.direction_intensity.w;
+    vec3 color = light.color_enabled.rgb;
+    float ndoth = max(dot(normal, half_vec), 0.0);
+    float spec = pow(ndoth, shininess) * intensity;
+    return spec * color;
+}
 
-    vec3 lighting = pc.ambient.rgb + main_contrib + back_contrib + fill_contrib;
+void main() {
+    vec3 n = normalize(v_normal);
+    if (!gl_FrontFacing) {
+        n = -n;
+    }
+
+    vec3 view_dir = normalize(pc.camera_pos.xyz - v_world_pos);
+    float shininess = max(pc.shading.x, 1.0);
+    float spec_k = pc.shading.y;
+
+    vec3 diffuse = pc.ambient.rgb
+        + lambert(pc.light_main, n)
+        + lambert(pc.light_back, n)
+        + lambert(pc.light_fill, n);
+
+    vec3 spec_sum = vec3(0.0);
+    if (spec_k > 1e-6) {
+        vec3 L0 = normalize(pc.light_main.direction_intensity.xyz);
+        vec3 L1 = normalize(pc.light_back.direction_intensity.xyz);
+        vec3 L2 = normalize(pc.light_fill.direction_intensity.xyz);
+        spec_sum += spec_one(pc.light_main, n, normalize(L0 + view_dir), shininess);
+        spec_sum += spec_one(pc.light_back, n, normalize(L1 + view_dir), shininess);
+        spec_sum += spec_one(pc.light_fill, n, normalize(L2 + view_dir), shininess);
+    }
 
     vec3 albedo = v_color * pc.draw_color.rgb;
-    vec3 color = clamp(albedo * lighting, 0.0, 1.0);
+    // Neutral grey specular tint (~0.52); not multiplied by albedo.
+    const vec3 spec_tint = vec3(0.52);
+    vec3 color = clamp(albedo * diffuse + spec_k * spec_tint * spec_sum, 0.0, 1.0);
     out_color = vec4(color, 1.0);
 }

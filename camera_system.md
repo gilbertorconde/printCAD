@@ -1,12 +1,18 @@
-Most of the FreeCAD wiki and forum pages are blocked by Anubis bot protection, but I got enough from the Gesture Navigation template + general knowledge of FreeCAD's Coin3D-based architecture to give you an accurate spec. Here's a description you can hand to Cursor.
+Internal spec for printCAD’s focal-distance viewport camera. It matches common
+patterns in engineering CAD tools: explicit eye, orientation, focal distance to a
+pivot, and projection parameters mutated in place (the scene graph stays fixed).
 
 ---
 
-# FreeCAD Camera System — Implementation Spec
+# Camera System — Implementation Spec
 
 ## Architecture overview
 
-FreeCAD uses **Coin3D** (an Open Inventor implementation) under the hood. The camera is a `SoCamera` node — either `SoPerspectiveCamera` or `SoOrthographicCamera` — and **all navigation is done by mutating the camera's transform and its projection parameters, never by moving the scene**.
+Many scene-graph CAD viewers follow the same pattern: a dedicated camera node with
+perspective or orthographic projection, and **navigation by mutating that camera’s
+transform and projection — not by moving world geometry**.
+
+In printCAD the same idea is modeled in Rust (no dependency on a particular scene graph).
 
 Key state held by the camera:
 - `position` (eye in world space)
@@ -22,7 +28,7 @@ The **focal point** is derived: `focalPoint = position + orientation * (0, 0, -f
 1. **Perspective**: uses `heightAngle` (FOV).
 2. **Orthographic**: uses `height` (world-space height of the viewport).
 
-When toggling, FreeCAD preserves `position`, `orientation`, and `focalDistance`, and computes the new projection parameter so the framing stays roughly identical at the focal plane:
+When toggling projection, keep `position`, `orientation`, and `focalDistance`, and compute the new projection parameter so framing stays roughly identical at the focal plane:
 ```text
 ortho.height = 2 * focalDistance * tan(persp.heightAngle / 2)
 ```
@@ -37,8 +43,8 @@ Zoom behaves **differently per camera type** — this is the key trick.
 - Scale `camera.height *= factor` (e.g. `factor = pow(0.95, wheel_steps)`).
 - Optionally pan so the world point under the cursor stays under the cursor (zoom-to-cursor).
 
-### Perspective zoom
-FreeCAD dollies the camera along its view direction **and** updates `focalDistance` so the pivot stays put in world space:
+For **perspective** zoom-with-pivot-invariant, dollies move the eye along view direction **and**
+update `focalDistance` so the pivot stays fixed in world space:
 ```text
 step = focalDistance * (1 - factor)        # positive = zoom in
 position += view_direction * step
@@ -59,10 +65,10 @@ With **zoom-at-cursor** enabled, it also slides `position` and the pivot lateral
   ```text
   position = focalPoint - new_orientation * -Z * focalDistance
   ```
-- This guarantees the focal point is invariant under rotation — that's the whole reason FreeCAD stores `focalDistance` rather than a separate pivot.
+- This keeps the focal point fixed under rotation — the usual reason CAD cameras store `focalDistance` explicitly instead of a loose pivot divorced from projection.
 
 ### Setting the pivot
-FreeCAD lets the user set the pivot explicitly, which is the **real fix for the "zoom into the part" problem**:
+Users often need an explicit pivot; it is the **real fix for the "zoom into the part" class of bugs**:
 - **Middle-click on geometry** → raycast hit point becomes the new focal point. `focalDistance` is updated to `|hit - position|`; orientation unchanged.
 - **`H` key** → same, using current cursor position.
 - **Fit-to-view / Fit-selection** → focal point set to the bbox center of (selection or scene), and `position` / `height` (or `focalDistance`) recomputed so the bbox fills the viewport with a small margin.
@@ -83,7 +89,7 @@ FreeCAD lets the user set the pivot explicitly, which is the **real fix for the 
 
 ## Near / Far auto-adjustment
 
-Coin3D has `SoCamera::viewAll()` and an "auto clipping" mode that FreeCAD enables. Each frame (or on camera change):
+Scene-graph viewers often expose a “view all” / auto–clip pass. When enabled, each frame (or on camera change):
 1. Compute scene AABB.
 2. Project its 8 corners into camera space; find min/max Z along view direction.
 3. Set:
@@ -97,7 +103,7 @@ This is **for Z-precision**, not to prevent geometry clipping — geometry clipp
 
 ## Navigation styles (input mapping layer)
 
-FreeCAD separates *what the camera does* from *how input triggers it*. Each style is a state machine mapping mouse/keyboard events → `zoom / rotate / pan / tilt` calls. The default **Gesture** style:
+Separate *what the camera does* from *how input triggers it*. Each style is a state machine mapping mouse/keyboard events → `zoom / rotate / pan / tilt` calls. One common **Gesture** mapping:
 
 | Action | Input |
 |---|---|
@@ -139,7 +145,7 @@ If you accumulate orbit rotations by **multiplying quaternions every frame**, fl
 
 **Fixes:**
 - Renormalize the quaternion after every composition (`q = normalize(q)`).
-- For yaw, decide **once** whether you rotate around **world up** or **camera up** — mixing them feels broken. FreeCAD/CAD convention: yaw around **world Z (or Y)**, pitch around **camera right**. This prevents unwanted roll.
+- For yaw, decide **once** whether you rotate around **world up** or **camera up** — mixing them feels broken. Typical CAD convention: yaw around **world Z (or Y)**, pitch around **camera right**. This prevents unwanted roll.
 - If you want true trackball behavior (Blender-style), that's a different model entirely (axis = perpendicular to drag in screen space). Don't mix the two.
 
 ---
@@ -212,7 +218,7 @@ Also: in ortho, `position` along the view axis is **almost meaningless** for wha
 ## 8. Coordinate system convention — pick once, document, never deviate
 
 - **Right-handed vs left-handed**
-- **Up axis**: Y-up (OpenGL/most 3D) or Z-up (CAD/CAM/engineering convention — FreeCAD uses Z-up)
+- **Up axis**: Y-up (OpenGL / many game engines) or Z-up (CAD/CAM/engineering — printCAD’s engineering preset uses Z-up)
 - **Forward axis**: -Z (OpenGL) or +Y (some CAD)
 
 Pick one tuple and enforce it in your `Camera` class. Half the bugs in homemade camera systems come from one function assuming Y-up and another assuming Z-up.
@@ -239,7 +245,7 @@ Pick one tuple and enforce it in your `Camera` class. Half the bugs in homemade 
 ## 11. Raycast for pivot — pick the right hit
 
 - Use the **first hit along the ray**, not the closest to the camera in world space (subtle difference when the ray origin is inside a bbox).
-- If nothing is hit (clicked empty space), **don't** change the pivot — or fall back to "project cursor onto current focal plane." FreeCAD does the latter.
+- If nothing is hit (clicked empty space), **don't** change the pivot — or fall back to projecting the cursor onto the current focal plane (common UX).
 - Beware of clicking on **edges/vertices** in CAD — usually you want to snap to those, not to the face behind them. Implement a priority: vertex > edge > face.
 
 ---

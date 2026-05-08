@@ -15,8 +15,8 @@ struct Light {
 };
 
 // Push-constant block split into two ranges:
-//   - frame range (offset 0, 192 B): updated once per render pass.
-//   - draw range  (offset 192, 16 B): updated once per body so the renderer
+//   - frame range (offset 0, 208 B): updated once per render pass.
+//   - draw range  (offset 208, 16 B): updated once per body so the renderer
 //     can change colour/highlight without forcing a vertex re-upload.
 layout(push_constant) uniform PushConstants {
     mat4 view_proj;
@@ -25,6 +25,7 @@ layout(push_constant) uniform PushConstants {
     Light light_back;
     Light light_fill;
     vec4 ambient;
+    vec4 shading;
     vec4 draw_color;        // xyz = base color; w = highlight flags as float
 } pc;
 

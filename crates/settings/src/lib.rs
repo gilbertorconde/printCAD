@@ -1,4 +1,4 @@
-use axes::AxisPreset;
+use axes::{AxisPreset, AxisSystem};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -73,6 +73,14 @@ fn default_edge_line_width() -> f32 {
     3.0
 }
 
+fn default_specular_shininess() -> f32 {
+    64.0
+}
+
+fn default_specular_intensity() -> f32 {
+    0.38
+}
+
 /// Settings for the 3D viewport lighting system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LightingSettings {
@@ -81,6 +89,14 @@ pub struct LightingSettings {
     pub fill_light: LightSource,
     pub ambient_intensity: f32,
     pub ambient_color: [f32; 3],
+    /// Blinn-Phong specular exponent (larger = tighter highlight). Typical CAD-style
+    /// shaded modes land visually in roughly the 40-96 range for machined metal.
+    #[serde(default = "default_specular_shininess")]
+    pub specular_shininess: f32,
+    /// Specular strength (0 = matte Lambert like before; ~0.3-0.5 matches
+    /// default shape specular channel in many CAD viewers).
+    #[serde(default = "default_specular_intensity")]
+    pub specular_intensity: f32,
     /// RGB color (0–1) for face-boundary edge lines drawn over solid bodies.
     #[serde(default = "default_edge_line_color")]
     pub edge_line_color: [f32; 3],
@@ -115,6 +131,8 @@ impl Default for LightingSettings {
             },
             ambient_intensity: 0.2,
             ambient_color: [1.0, 1.0, 1.0],
+            specular_shininess: default_specular_shininess(),
+            specular_intensity: default_specular_intensity(),
             edge_line_color: [0.08, 0.08, 0.08],
             edge_line_width: 3.0,
         }
@@ -136,7 +154,8 @@ pub struct LightSource {
 }
 
 impl LightSource {
-    /// Convert angles to a normalized direction vector
+    /// Direction in **CAD navigation canonical** space (Y-up: +X right, +Y up, +Z forward).
+    /// For rendering, use [`Self::direction_world`] so Z-up imports match the axis preset.
     pub fn direction(&self) -> [f32; 3] {
         let h = self.horizontal_angle.to_radians();
         let v = self.vertical_angle.to_radians();
@@ -147,9 +166,14 @@ impl LightSource {
             h.cos() * cos_v, // Z (forward)
         ]
     }
+
+    /// World-space direction for the active axis preset (`UserSettings.axis_preset`).
+    pub fn direction_world(&self, axis_preset: AxisPreset) -> [f32; 3] {
+        AxisSystem::from_preset(axis_preset).canonical_light_direction_world_array(self.direction())
+    }
 }
 
-/// Camera / navigation preferences (FreeCAD-style focal-distance model).
+/// Camera / navigation preferences (focal-distance viewport model).
 ///
 /// Distances are **millimetres** (printCAD world unit; matches STEP import).
 #[derive(Debug, Clone, Serialize, Deserialize)]

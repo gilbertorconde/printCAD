@@ -1,4 +1,4 @@
-//! FreeCAD / Coin-style CAD camera navigation for printCAD (`camera_system.md`).
+//! CAD-style viewport camera for printCAD (`camera_system.md`).
 //!
 //! Invariants worth preserving:
 //! - **`focal_distance`** measured along **`forward`** (eye→focal ray), not spherical radius quirks.

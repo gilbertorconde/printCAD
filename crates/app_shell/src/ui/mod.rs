@@ -42,6 +42,8 @@ pub struct ViewportRect {
 pub struct UiFrameResult {
     pub submission: EguiSubmission,
     pub settings_changed: bool,
+    /// Camera preferences edited in Settings (Camera tab); push into [`CameraController`].
+    pub camera_settings_changed: bool,
     pub active_tool: ActiveTool,
     pub active_workbench: ActiveWorkbench,
     pub workbench_changed: bool,
@@ -132,6 +134,7 @@ impl UiLayer {
 
         let cube_config = self.orientation_cube_config.clone();
         let mut settings_changed = false;
+        let mut camera_settings_changed = false;
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
         let mut finish_requested = false;
@@ -193,7 +196,7 @@ impl UiLayer {
                 registry,
                 active_document_object,
             );
-            settings_changed |= settings_panel::draw_settings_window(
+            let settings_outcome = settings_panel::draw_settings_window(
                 ctx,
                 settings,
                 document,
@@ -202,6 +205,8 @@ impl UiLayer {
                 gpus,
                 gpu_name,
             );
+            settings_changed |= settings_outcome.any;
+            camera_settings_changed |= settings_outcome.camera_prefs;
             layout::draw_log_panel(ctx, settings.rendering.show_log_panel);
             layout::draw_bottom_panel(
                 ctx,
@@ -258,6 +263,7 @@ impl UiLayer {
                 primitives,
             },
             settings_changed,
+            camera_settings_changed,
             active_tool,
             active_workbench,
             workbench_changed,

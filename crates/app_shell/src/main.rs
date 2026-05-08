@@ -21,7 +21,7 @@ use render_vk::{
     RenderSettings, ViewportRect as RenderViewportRect, VulkanRenderer,
 };
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
-use settings::{LightingSettings, SettingsStore, UserSettings};
+use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -846,7 +846,7 @@ impl ApplicationHandler for PrintCadApp {
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();
         self.frame_submission.camera_pos = self.camera.position();
-        self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings.lighting);
+        self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
         self.frame_submission.screen_space_overlays = screen_space_overlays;
 
         let mut ui_result_open = false;
@@ -920,10 +920,12 @@ impl ApplicationHandler for PrintCadApp {
             }
 
             if ui_result.settings_changed {
-                self.camera.sync_with_settings(&self.user_settings.camera);
                 if let Err(err) = self.settings_store.save(&self.user_settings) {
                     app_log::warn(format!("Failed to save settings: {err}"));
                 }
+            }
+            if ui_result.camera_settings_changed {
+                self.camera.sync_with_settings(&self.user_settings.camera);
             }
 
             // The Part Design workbench exposes "New Body" as an Action tool.
@@ -1704,28 +1706,32 @@ impl PrintCadApp {
 
 }
 
-fn lighting_data_from_settings(settings: &LightingSettings) -> LightingData {
+fn lighting_data_from_settings(user: &UserSettings) -> LightingData {
+    let settings = &user.lighting;
+    let preset = user.camera.axis_preset;
     LightingData {
         main_light: GpuLight::new(
-            settings.main_light.direction(),
+            settings.main_light.direction_world(preset),
             settings.main_light.color,
             settings.main_light.intensity,
             settings.main_light.enabled,
         ),
         backlight: GpuLight::new(
-            settings.backlight.direction(),
+            settings.backlight.direction_world(preset),
             settings.backlight.color,
             settings.backlight.intensity,
             settings.backlight.enabled,
         ),
         fill_light: GpuLight::new(
-            settings.fill_light.direction(),
+            settings.fill_light.direction_world(preset),
             settings.fill_light.color,
             settings.fill_light.intensity,
             settings.fill_light.enabled,
         ),
         ambient_color: settings.ambient_color,
         ambient_intensity: settings.ambient_intensity,
+        specular_shininess: settings.specular_shininess,
+        specular_intensity: settings.specular_intensity,
         edge_line_color: settings.edge_line_color,
         edge_line_width: settings.edge_line_width,
     }

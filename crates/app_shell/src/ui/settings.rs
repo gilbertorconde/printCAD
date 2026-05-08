@@ -302,6 +302,23 @@ fn lighting_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
             .changed();
     });
 
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label("Specular (shaded solid)");
+
+    ui.horizontal(|ui| {
+        ui.label("Shininess (exponent):");
+        changed |= ui
+            .add(egui::Slider::new(&mut lighting.specular_shininess, 8.0..=128.0).show_value(true))
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Intensity:");
+        changed |= ui
+            .add(egui::Slider::new(&mut lighting.specular_intensity, 0.0..=1.0).show_value(true))
+            .changed();
+    });
+
     ui.add_space(10.0);
     ui.separator();
     ui.label("Face edge lines");

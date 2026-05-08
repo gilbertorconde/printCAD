@@ -15,7 +15,7 @@ printCAD is a Linux-native, Wayland-first CAD application designed for creating 
 ### Key Features
 
 - **Vulkan Rendering** - Hardware-accelerated 3D viewport with perspective/orthographic projection
-- **FreeCAD-style Navigation** - Gesture camera (orbit, pan, zoom, roll) plus optional orbit around GPU-picked points without reframing the view
+- **CAD-style gesture navigation** - Orbit, pan, zoom, and roll plus optional orbit around GPU-picked points without reframing the view
 - **Interactive Orientation Cube** - Click faces, edges, or corners for standard views; arc and triangle arrows for incremental rotation
 - **Modular Workbenches** - Extensible architecture for Sketch and Part Design workflows
 - **Parametric Core** - Feature tree with dependency graph, transactions, and undo/redo (planned)
@@ -118,7 +118,7 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 
 - [x] Vulkan renderer with basic mesh display
 - [x] Camera controller with gesture navigation (orbit / pan / roll / zoom-to-cursor / optional orbit around pick)
-- [x] Interactive orientation cube (FreeCAD-style NaviCube)
+- [x] Interactive orientation cube for standard views
 - [x] Settings persistence
 - [x] GPU selection for hybrid or multi gpu systems
 - [ ] Sketch workbench with constraint solver
@@ -151,5 +151,4 @@ Contributions are welcome! Please feel free to submit issues and pull requests.
 
 ## Acknowledgments
 
-- Inspired by FreeCAD's navigation and UI patterns
 - Built with the excellent Rust ecosystem

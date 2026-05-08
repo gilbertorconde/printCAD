@@ -1,4 +1,4 @@
-//! Core camera state for a FreeCAD/Coin-style model: explicit eye position,
+//! Core camera state for a focal-distance CAD viewport: explicit eye position,
 //! orientation quaternion, focal distance along the view ray, per-mode projection,
 //! and near/far clip planes.
 

@@ -19,6 +19,7 @@ layout(push_constant) uniform PushConstants {
     Light light_back;
     Light light_fill;
     vec4 ambient;
+    vec4 shading;
     vec4 draw_color;
 } pc;
 

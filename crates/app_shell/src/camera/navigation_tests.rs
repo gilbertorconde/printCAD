@@ -1,4 +1,4 @@
-//! Unit tests for the Coin-style camera core.
+//! Unit tests for the focal-distance camera core.
 
 use axes::AxisSystem;
 use glam::Vec2;

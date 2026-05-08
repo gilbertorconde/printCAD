@@ -37,6 +37,16 @@ impl SettingsTab {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct SettingsWindowChange {
+    /// Any preference mutated (triggers save to disk).
+    pub any: bool,
+    /// Camera tab fields that must be pushed into [`crate::camera::CameraController`]
+    /// (`sync_with_settings`). Omit for lighting/render/etc. so wheel zoom and orbit framing
+    /// are not reset from saved `ortho_height_mm` / FOV.
+    pub camera_prefs: bool,
+}
+
 pub(super) fn draw_settings_window(
     ctx: &Context,
     settings: &mut UserSettings,
@@ -45,12 +55,13 @@ pub(super) fn draw_settings_window(
     settings_tab: &mut SettingsTab,
     gpus: &[String],
     gpu_name: Option<&str>,
-) -> bool {
+) -> SettingsWindowChange {
     if !*show_settings {
-        return false;
+        return SettingsWindowChange::default();
     }
 
     let mut changed = false;
+    let mut camera_prefs_changed = false;
     egui::Window::new("Settings")
         .open(show_settings)
         .default_width(520.0)
@@ -76,7 +87,9 @@ pub(super) fn draw_settings_window(
                         changed |= document_settings_ui(right, document);
                     }
                     SettingsTab::Camera => {
-                        changed |= camera_settings_ui(right, settings);
+                        let c = camera_settings_ui(right, settings);
+                        changed |= c;
+                        camera_prefs_changed |= c;
                     }
                     SettingsTab::Lighting => {
                         changed |= lighting_settings_ui(right, settings);
@@ -93,7 +106,10 @@ pub(super) fn draw_settings_window(
                 }
             });
         });
-    changed
+    SettingsWindowChange {
+        any: changed,
+        camera_prefs: camera_prefs_changed,
+    }
 }
 
 fn document_settings_ui(ui: &mut Ui, document: &mut Document) -> bool {
@@ -364,6 +380,23 @@ fn lighting_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
         ui.label("Intensity:");
         changed |= ui
             .add(egui::Slider::new(&mut lighting.ambient_intensity, 0.0..=1.0).show_value(true))
+            .changed();
+    });
+
+    ui.add_space(6.0);
+    ui.separator();
+    ui.label("Specular (shaded solid)");
+
+    ui.horizontal(|ui| {
+        ui.label("Shininess (exponent):");
+        changed |= ui
+            .add(egui::Slider::new(&mut lighting.specular_shininess, 8.0..=128.0).show_value(true))
+            .changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Intensity:");
+        changed |= ui
+            .add(egui::Slider::new(&mut lighting.specular_intensity, 0.0..=1.0).show_value(true))
             .changed();
     });
 

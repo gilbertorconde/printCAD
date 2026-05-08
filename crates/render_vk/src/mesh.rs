@@ -79,6 +79,9 @@ pub struct LightingData {
     pub fill_light: GpuLight,
     pub ambient_color: [f32; 3],
     pub ambient_intensity: f32,
+    /// Blinn–Phong exponent (matches `LightingSettings::specular_shininess`).
+    pub specular_shininess: f32,
+    pub specular_intensity: f32,
     /// RGB for `LINE_LIST` face-boundary edges (not shaded).
     pub edge_line_color: [f32; 3],
     /// Requested width in pixels; clamped to `VkPhysicalDeviceLimits::lineWidthRange` when drawing.
@@ -93,6 +96,8 @@ impl Default for LightingData {
             fill_light: GpuLight::default(),
             ambient_color: [0.0; 3],
             ambient_intensity: 0.0,
+            specular_shininess: 64.0,
+            specular_intensity: 0.0,
             edge_line_color: [0.08, 0.08, 0.08],
             edge_line_width: 3.0,
         }
@@ -113,6 +118,8 @@ struct MeshFramePushConstants {
     light_back: GpuLight,
     light_fill: GpuLight,
     ambient: [f32; 4],
+    /// x = shininess exponent, y = specular intensity, zw unused (see `mesh.frag`).
+    shading: [f32; 4],
 }
 
 impl MeshFramePushConstants {
@@ -128,6 +135,12 @@ impl MeshFramePushConstants {
                 lights.ambient_color[1] * lights.ambient_intensity,
                 lights.ambient_color[2] * lights.ambient_intensity,
                 1.0,
+            ],
+            shading: [
+                lights.specular_shininess.max(1.0),
+                lights.specular_intensity.max(0.0),
+                0.0,
+                0.0,
             ],
         }
     }
@@ -955,9 +968,9 @@ fn create_mesh_pipeline(
     // parametric → 3D mapping plus shell composition can flip the winding
     // independently). Culling such faces creates the "see-through holes"
     // symptom (back faces poking through the front) that we observe on real
-    // STEP files. The fragment shader handles two-sided lighting via a
-    // view-aligned normal flip, and the depth buffer correctly hides the
-    // far surface, so disabling culling is a clean robustness fix.
+    // STEP files. The fragment shader handles two-sided solids by flipping the
+    // shading normal when `gl_FrontFacing` is false, and depth correctly hides the
+    // far surface when both sides rasterize.
     //
     // Cost: roughly twice as many fragments enter the depth test, but most
     // of them fail it cheaply and never run the full lighting code.
