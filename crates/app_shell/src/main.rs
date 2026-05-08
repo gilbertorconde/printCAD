@@ -5,13 +5,13 @@ mod orientation_cube;
 mod ui;
 
 use anyhow::{Context, Result};
-use camera::CameraController;
+use camera::{CameraController, CameraPointerResult};
 use core_document::{
     BodyId, Document, DocumentService, ImportedGeometry, LogLevel,
     MouseButton as WbMouseButton, Unit, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use kernel_api::{ImportedModel, LengthUnit, TessellationSettings};
 use kernel_worker::{KernelResponse, KernelWorker};
 use log_panel as app_log;
@@ -26,6 +26,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
+use tracing_subscriber::{
+    prelude::*,
+    fmt,
+    EnvFilter,
+};
 use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
 use uuid::Uuid;
 use winit::{
@@ -88,12 +93,49 @@ fn aabb_fit_center_radius(aabb_min: Vec3, aabb_max: Vec3) -> (Vec3, f32) {
     (center, radius.max(1.0))
 }
 
+fn init_tracing_subscriber(
+) -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+    let stdout_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    if let Ok(raw) = std::env::var("PRINTCAD_CAMERA_LOG") {
+        let path = PathBuf::from(raw.trim());
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .with_context(|| format!("PRINTCAD_CAMERA_LOG={}", path.display()))?;
+
+        let (non_blocking, guard) = tracing_appender::non_blocking(file);
+
+        let cam_filter = std::env::var("PRINTCAD_CAMERA_LOG_FILTER")
+            .unwrap_or_else(|_| "printcad.camera=trace".to_string());
+        let file_layer = fmt::layer()
+            .with_ansi(false)
+            .with_writer(non_blocking)
+            .with_filter(EnvFilter::new(cam_filter.trim()));
+
+        tracing_subscriber::registry()
+            .with(fmt::layer().with_filter(stdout_filter.clone()))
+            .with(file_layer)
+            .init();
+
+        Ok(Some(guard))
+    } else {
+        tracing_subscriber::registry()
+            .with(fmt::layer().with_filter(stdout_filter))
+            .init();
+
+        Ok(None)
+    }
+}
+
 fn main() -> Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
-        )
-        .init();
+    let _camera_tracing_guard = init_tracing_subscriber().context("tracing subscriber init failed")?;
 
     let document = Document::new("Untitled");
     let mut registry = DocumentService::default();
@@ -320,16 +362,6 @@ impl PrintCadApp {
         self.document.assets().next().is_some()
     }
 
-    fn sync_camera_scene_zoom_limit_from_document(&mut self) {
-        if let Some((mn, mx)) = document_imported_aabb(&self.document) {
-            self.camera.set_scene_zoom_aabb(mn, mx);
-        } else {
-            self.camera.clear_scene_zoom_constraint();
-        }
-        self.camera
-            .clamp_radius_to_effective_limits(&self.user_settings.camera);
-    }
-
     /// If the document is dirty, prompt Save / Discard / Cancel. Returns false when
     /// the user cancels or save fails.
     fn confirm_discard_or_save(&mut self) -> bool {
@@ -417,7 +449,8 @@ impl PrintCadApp {
         let wb_id = self.active_workbench.0.clone();
         self.call_workbench_activate(&wb_id);
 
-        self.camera.reset_to_fit(Vec3::ZERO, 50.0, None);
+        self.camera
+            .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
         app_log::info("New document");
     }
 }
@@ -513,15 +546,74 @@ impl ApplicationHandler for PrintCadApp {
             }
         }
 
-        if self.handle_tool_input(&event) {
-            if let Some(window) = self.window.as_ref() {
-                window.request_redraw();
+        let vp_cursor = self.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
+        self.camera.set_cursor_viewport(vp_cursor);
+
+        use winit::keyboard::Key;
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event {
+            if matches!(ke.state, ElementState::Pressed) {
+                if let Key::Character(ch) = &ke.logical_key {
+                    let s = ch.as_str();
+                    if matches!(s, "h" | "H") && self.cursor_in_viewport.is_some() {
+                        if self
+                            .camera
+                            .pivot_from_key_h(&self.user_settings.camera)
+                        {
+                            if let Some(w) = self.window.as_ref() {
+                                w.request_redraw();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let WindowEvent::MouseInput {
+            button: MouseButton::Middle,
+            state: ElementState::Pressed,
+            ..
+        } = &event
+        {
+            if self.cursor_in_viewport.is_some() {
+                let hit = self.hovered_world_pos.map(Vec3::from_array);
+                self.camera.on_mmb_pivot_pick(hit, &self.user_settings.camera);
+                if let Some(w) = self.window.as_ref() {
+                    w.request_redraw();
+                }
+            }
+        }
+
+        let wb = self.dispatch_workbench_input_without_select(&event);
+        let mut redraw = wb.redraw;
+        if wb.consumed {
+            if redraw {
+                if let Some(window) = self.window.as_ref() {
+                    window.request_redraw();
+                }
             }
             return;
         }
 
-        if let Some(window) = self.window.as_ref() {
-            if self.camera.handle_event(&event, &self.user_settings.camera) {
+        let allow_lmb_orbit = match &event {
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state: ElementState::Pressed,
+                ..
+            } => Some(self.hovered_body.is_none()),
+            _ => None,
+        };
+        let cam_res = self.camera.on_viewport_pointer(
+            &event,
+            &self.user_settings.camera,
+            allow_lmb_orbit,
+        );
+        redraw |= cam_res.wants_redraw();
+        if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
+            redraw |= self.toggle_body_under_cursor_selection();
+        }
+
+        if redraw {
+            if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
             }
         }
@@ -617,7 +709,12 @@ impl ApplicationHandler for PrintCadApp {
         };
 
         // Update camera animation
-        self.camera.update(dt_secs);
+        self.camera
+            .flush_pending_wheel(&self.user_settings.camera);
+        self.camera
+            .apply_auto_clip_planes(&self.user_settings.camera);
+        self.camera
+            .update(dt_secs, &self.user_settings.camera);
 
         // Collect sketch features from document and convert to meshes.
         //
@@ -772,11 +869,12 @@ impl ApplicationHandler for PrintCadApp {
                 axis_system: self.camera.axis_system(),
             };
 
-            // Get pivot screen position for visual indicator
-            let pivot_screen_pos = self
-                .camera
-                .active_pivot()
-                .and_then(|pivot| self.camera.world_to_screen(pivot));
+            let pivot_screen_pos = if self.camera.rotation_pivot_marker_visible() {
+                self.camera
+                    .world_to_screen(Vec3::from_array(self.camera.target()))
+            } else {
+                None
+            };
 
             let ui_result = ui_layer.run(
                 window,
@@ -824,7 +922,8 @@ impl ApplicationHandler for PrintCadApp {
 
             // Handle orientation cube interactions
             if let Some(snap_view) = ui_result.snap_to_view {
-                self.camera.snap_to_view(snap_view);
+                self.camera
+                    .snap_to_view(snap_view, &self.user_settings.camera);
             }
             if let Some(ref rotate_delta) = ui_result.rotate_delta {
                 self.camera
@@ -858,9 +957,19 @@ impl ApplicationHandler for PrintCadApp {
                 app_log::info("Fit View requested");
                 if let Some(aabb) = document_imported_aabb(&self.document) {
                     let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
-                    self.camera.reset_to_fit(center, radius, Some(aabb));
+                    self.camera.reset_to_fit(
+                        center,
+                        radius,
+                        Some(aabb),
+                        &self.user_settings.camera,
+                    );
                 } else {
-                    self.camera.reset_to_fit(Vec3::ZERO, 50.0, None);
+                    self.camera.reset_to_fit(
+                        Vec3::ZERO,
+                        50.0,
+                        None,
+                        &self.user_settings.camera,
+                    );
                 }
             }
 
@@ -919,15 +1028,6 @@ impl ApplicationHandler for PrintCadApp {
         let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
         self.hovered_body = pick_result.body_id;
         self.hovered_world_pos = pick_result.world_position;
-
-        // Set orbit pivot based on what's under the cursor
-        // If hovering over geometry, orbit around that point; otherwise use default target
-        if let Some(world_pos) = pick_result.world_position {
-            self.camera
-                .set_orbit_pivot(Some(Vec3::from_array(world_pos)));
-        } else {
-            self.camera.set_orbit_pivot(None);
-        }
 
         if ui_result_new && self.confirm_discard_or_save() {
             self.reset_to_new_document();
@@ -1055,7 +1155,23 @@ impl PrintCadApp {
 
         self.document.mark_clean();
         Self::write_recent_dir(path);
-        self.sync_camera_scene_zoom_limit_from_document();
+        // Match STEP import: reframe imported mesh bounds so scene AABB and auto
+        // near/far use the same view as STEP apply (opening only updated zoom
+        // limits before, which left stale eye/target → marginal clipping until the
+        // user toggled projection or hit Fit View).
+        if let Some((mn, mx)) = document_imported_aabb(&self.document) {
+            let (center, radius) = aabb_fit_center_radius(mn, mx);
+            self.camera.reset_to_fit(
+                center,
+                radius,
+                Some((mn, mx)),
+                &self.user_settings.camera,
+            );
+        } else {
+            self.camera.clear_scene_zoom_constraint();
+            self.camera
+                .clamp_focal_to_settings(&self.user_settings.camera);
+        }
         app_log::info(format!("Opened document from {}", path.display()));
         Ok(())
     }
@@ -1310,7 +1426,12 @@ impl PrintCadApp {
             let aabb_min = Vec3::new(combined_min[0], combined_min[1], combined_min[2]);
             let aabb_max = Vec3::new(combined_max[0], combined_max[1], combined_max[2]);
             let (center, radius) = aabb_fit_center_radius(aabb_min, aabb_max);
-            self.camera.reset_to_fit(center, radius, Some((aabb_min, aabb_max)));
+            self.camera.reset_to_fit(
+                center,
+                radius,
+                Some((aabb_min, aabb_max)),
+                &self.user_settings.camera,
+            );
         }
 
         if let Some(body_id) = first_body {
@@ -1371,35 +1492,30 @@ impl PrintCadApp {
         }
     }
 
-    fn handle_tool_input(&mut self, event: &WindowEvent) -> bool {
-        // Convert winit event to workbench input event
+    fn dispatch_workbench_input_without_select(
+        &mut self,
+        event: &WindowEvent,
+    ) -> core_document::InputResult {
         let wb_event = match self.convert_to_wb_event(event) {
             Some(e) => e,
-            None => return false,
+            None => return core_document::InputResult::ignored(),
         };
 
-        // First, let the active workbench handle the event
         let wb_id = self.active_workbench_id();
-        // For input handling, we pass the first active tool (or None if no tools active)
-        // This maintains compatibility with the existing on_input API
         let active_tool_id = self.active_tool.active_ids.iter().next().cloned();
         let active_tool_str = active_tool_id.as_deref();
         let result = self.call_workbench_input(&wb_id, &wb_event, active_tool_str);
 
-        // Clear action tools after they're handled
         if let Some(tool_id) = active_tool_id {
             if tool_id == "sketch.create" && result.consumed {
                 self.active_tool.active_ids.remove(&tool_id);
             }
         }
 
-        if result.consumed {
-            return result.redraw;
-        }
-
-        // If workbench didn't consume, handle with default behavior (select tool)
-        self.handle_select_tool(event)
+        result
     }
+
+
 
     /// Call on_input on a workbench.
     fn call_workbench_input(
@@ -1484,6 +1600,7 @@ impl PrintCadApp {
                     glam::Vec3::from_array(orient_req.plane_origin),
                     glam::Vec3::from_array(orient_req.plane_normal),
                     glam::Vec3::from_array(orient_req.plane_up),
+                    &self.user_settings.camera,
                 );
             }
 
@@ -1580,36 +1697,22 @@ impl PrintCadApp {
         }
     }
 
-    fn handle_select_tool(&mut self, event: &WindowEvent) -> bool {
-        match event {
-            WindowEvent::MouseInput {
-                state: ElementState::Released,
-                button: MouseButton::Left,
-                ..
-            } => {
-                // Select the hovered body, or deselect if clicking empty space
-                if let Some(hovered) = self.hovered_body {
-                    if self.selected_body == Some(hovered) {
-                        // Clicking on already selected body - deselect
-                        self.selected_body = None;
-                        app_log::info("Deselected body");
-                    } else {
-                        // Select the new body
-                        self.selected_body = Some(hovered);
-                        app_log::info(format!("Selected body: {hovered:?}"));
-                    }
-                } else {
-                    // Clicked on empty space - deselect
-                    if self.selected_body.is_some() {
-                        self.selected_body = None;
-                        app_log::info("Deselected (clicked empty space)");
-                    }
-                }
-                true // Request redraw
+    fn toggle_body_under_cursor_selection(&mut self) -> bool {
+        if let Some(hovered) = self.hovered_body {
+            if self.selected_body == Some(hovered) {
+                self.selected_body = None;
+                app_log::info("Deselected body");
+            } else {
+                self.selected_body = Some(hovered);
+                app_log::info(format!("Selected body: {hovered:?}"));
             }
-            _ => false,
+        } else if self.selected_body.is_some() {
+            self.selected_body = None;
+            app_log::info("Deselected (clicked empty space)");
         }
+        true
     }
+
 }
 
 fn lighting_data_from_settings(settings: &LightingSettings) -> LightingData {

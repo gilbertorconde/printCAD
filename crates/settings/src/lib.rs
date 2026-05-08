@@ -149,55 +149,142 @@ impl LightSource {
     }
 }
 
-/// Camera tuning knobs.
+/// Camera / navigation preferences (FreeCAD-style focal-distance model).
 ///
-/// All distance fields are expressed in the world's base unit, which printCAD
-/// fixes at **millimetres** (matching OCCT's STEP import output). The display
-/// unit shown in the UI is per-document and lives on `core_document::Document`.
+/// Distances are **millimetres** (printCAD world unit; matches STEP import).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct CameraSettings {
-    pub orbit_button: MouseButtonSetting,
-    pub pan_button: MouseButtonSetting,
-    pub orbit_sensitivity: f32,
-    pub zoom_sensitivity: f32,
+    #[serde(default)]
+    pub navigation_style: NavigationStyle,
+    /// Zoom toward cursor (focal-plane correction after dolly / ortho scale).
+    #[serde(default = "default_true")]
+    pub zoom_to_cursor: bool,
+    #[serde(default)]
     pub invert_zoom: bool,
-    /// Closest the camera can dolly to the target, in millimetres.
-    pub min_distance: f32,
-    /// Farthest the camera can dolly from the target, in millimetres.
-    pub max_distance: f32,
+    /// Per scroll-line multiplicative factor (`factor^steps`). Slightly below 1.0 zooms in.
+    #[serde(default = "default_wheel_zoom_factor")]
+    pub wheel_zoom_factor: f32,
+    #[serde(default)]
+    pub orbit_sensitivity: f32,
+    #[serde(default = "default_pan_sensitivity")]
+    pub pan_sensitivity: f32,
+    #[serde(default)]
+    pub orbit_yaw_axis: OrbitYawAxis,
+    /// Minimum focal distance (mm); prevents dollying through the pivot.
+    #[serde(default = "default_min_focal_distance")]
+    pub min_focal_distance: f32,
+    #[serde(default = "default_max_focal_distance")]
+    pub max_focal_distance: f32,
     pub projection: ProjectionMode,
     pub fov_degrees: f32,
+    /// World-space height of the ortho frustum (mm), independent of perspective FOV.
+    #[serde(default = "default_ortho_height_mm")]
+    pub ortho_height_mm: f32,
+    #[serde(default = "default_true")]
+    pub auto_near_far: bool,
+    #[serde(default = "default_near_far_near_ratio")]
+    pub near_far_near_ratio: f32,
+    #[serde(default = "default_near_far_depth_ratio_cap")]
+    pub near_far_depth_ratio_cap: f32,
+    #[serde(default = "default_near_far_margin")]
+    pub near_far_margin: f32,
+    #[serde(default = "default_view_transition_ms")]
+    pub view_transition_ms: f32,
+    #[serde(default = "default_click_drag_threshold_px")]
+    pub click_drag_threshold_px: f32,
     pub axis_preset: AxisPreset,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_wheel_zoom_factor() -> f32 {
+    0.95
+}
+
+fn default_pan_sensitivity() -> f32 {
+    1.0
+}
+
+fn default_min_focal_distance() -> f32 {
+    1.0
+}
+
+fn default_max_focal_distance() -> f32 {
+    5_000.0
+}
+
+fn default_ortho_height_mm() -> f32 {
+    150.0
+}
+
+fn default_near_far_near_ratio() -> f32 {
+    0.001
+}
+
+fn default_near_far_depth_ratio_cap() -> f32 {
+    100_000.0
+}
+
+fn default_near_far_margin() -> f32 {
+    100.0
+}
+
+fn default_view_transition_ms() -> f32 {
+    400.0
+}
+
+fn default_click_drag_threshold_px() -> f32 {
+    4.0
 }
 
 impl Default for CameraSettings {
     fn default() -> Self {
         Self {
-            orbit_button: MouseButtonSetting::Right,
-            pan_button: MouseButtonSetting::Middle,
-            orbit_sensitivity: 0.4,
-            zoom_sensitivity: 0.15,
+            navigation_style: NavigationStyle::default(),
+            zoom_to_cursor: default_true(),
             invert_zoom: false,
-            min_distance: 1.0,
-            max_distance: 5_000.0,
+            wheel_zoom_factor: default_wheel_zoom_factor(),
+            orbit_sensitivity: 0.4,
+            pan_sensitivity: default_pan_sensitivity(),
+            orbit_yaw_axis: OrbitYawAxis::default(),
+            min_focal_distance: default_min_focal_distance(),
+            max_focal_distance: default_max_focal_distance(),
             projection: ProjectionMode::Perspective,
             fov_degrees: 50.0,
+            ortho_height_mm: default_ortho_height_mm(),
+            auto_near_far: default_true(),
+            near_far_near_ratio: default_near_far_near_ratio(),
+            near_far_depth_ratio_cap: default_near_far_depth_ratio_cap(),
+            near_far_margin: default_near_far_margin(),
+            view_transition_ms: default_view_transition_ms(),
+            click_drag_threshold_px: default_click_drag_threshold_px(),
             axis_preset: AxisPreset::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum NavigationStyle {
+    #[default]
+    Gesture,
+    /// Reserved for future remappable styles.
+    Cad,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum OrbitYawAxis {
+    #[default]
+    WorldUp,
+    CameraUp,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ProjectionMode {
     Perspective,
     Orthographic,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
-pub enum MouseButtonSetting {
-    Left,
-    Middle,
-    Right,
 }
 
 pub struct SettingsStore {

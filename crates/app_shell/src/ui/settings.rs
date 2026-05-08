@@ -1,4 +1,6 @@
-use crate::settings::{LightSource, ProjectionMode, UserSettings};
+use settings::{
+    LightSource, NavigationStyle, OrbitYawAxis, ProjectionMode, UserSettings,
+};
 use egui::{self, Color32, Context, Ui};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,20 +91,78 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     let camera = &mut settings.camera;
     let mut changed = false;
 
+    egui::ComboBox::from_id_salt("nav_style_main")
+        .selected_text(match camera.navigation_style {
+            NavigationStyle::Gesture => "Gesture",
+            NavigationStyle::Cad => "CAD (future)",
+        })
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_value(&mut camera.navigation_style, NavigationStyle::Gesture, "Gesture")
+                .changed()
+            {
+                changed = true;
+            }
+            if ui
+                .selectable_value(&mut camera.navigation_style, NavigationStyle::Cad, "CAD")
+                .changed()
+            {
+                changed = true;
+            }
+        });
+
+    changed |= ui
+        .checkbox(&mut camera.zoom_to_cursor, "Zoom to cursor")
+        .changed();
+    changed |= ui.checkbox(&mut camera.invert_zoom, "Invert zoom").changed();
+    changed |= ui
+        .add(egui::Slider::new(&mut camera.wheel_zoom_factor, 0.7..=0.995).text("Wheel step factor"))
+        .changed();
     changed |= ui
         .add(egui::Slider::new(&mut camera.orbit_sensitivity, 0.05..=2.0).text("Orbit sensitivity"))
         .changed();
     changed |= ui
-        .add(egui::Slider::new(&mut camera.zoom_sensitivity, 0.01..=0.5).text("Zoom sensitivity"))
+        .add(egui::Slider::new(&mut camera.pan_sensitivity, 0.1..=3.0).text("Pan sensitivity"))
+        .changed();
+
+    egui::ComboBox::from_id_salt("orbit_yaw_main")
+        .selected_text(match camera.orbit_yaw_axis {
+            OrbitYawAxis::WorldUp => "World up",
+            OrbitYawAxis::CameraUp => "Camera up",
+        })
+        .show_ui(ui, |ui| {
+            if ui
+                .selectable_value(
+                    &mut camera.orbit_yaw_axis,
+                    OrbitYawAxis::WorldUp,
+                    "World up",
+                )
+                .changed()
+            {
+                changed = true;
+            }
+            if ui
+                .selectable_value(
+                    &mut camera.orbit_yaw_axis,
+                    OrbitYawAxis::CameraUp,
+                    "Camera up",
+                )
+                .changed()
+            {
+                changed = true;
+            }
+        });
+
+    changed |= ui
+        .add(
+            egui::Slider::new(&mut camera.min_focal_distance, 0.05..=50.0)
+                .text("Min focal distance (mm)"),
+        )
         .changed();
     changed |= ui
-        .checkbox(&mut camera.invert_zoom, "Invert zoom")
-        .changed();
-    changed |= ui
-        .add(egui::Slider::new(&mut camera.min_distance, 0.05..=5.0).text("Min distance"))
-        .changed();
-    changed |= ui
-        .add(egui::Slider::new(&mut camera.max_distance, 5.0..=2000.0).text("Max distance"))
+        .add(egui::Slider::new(&mut camera.max_focal_distance, 50.0..=500_000.0).text(
+            "Max focal distance (mm)",
+        ))
         .changed();
 
     ui.separator();
@@ -125,15 +185,57 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     });
 
     if camera.projection == ProjectionMode::Perspective {
-        ui.separator();
-        ui.label("Field of view");
         changed |= ui
             .add(
                 egui::Slider::new(&mut camera.fov_degrees, 10.0..=120.0)
                     .text("Vertical FOV (degrees)"),
             )
             .changed();
+    } else {
+        changed |= ui
+            .add(
+                egui::Slider::new(&mut camera.ortho_height_mm, 1.0..=500_000.0)
+                    .text("Ortho height (mm)"),
+            )
+            .changed();
     }
+
+    ui.separator();
+    changed |= ui
+        .checkbox(&mut camera.auto_near_far, "Auto near/far from scene bounds")
+        .changed();
+    if camera.auto_near_far {
+        changed |= ui
+            .add(
+                egui::Slider::new(&mut camera.near_far_near_ratio, 0.00001..=0.1)
+                    .text("Near distance ratio (× focal distance)"),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::Slider::new(&mut camera.near_far_depth_ratio_cap, 1000.0..=500_000.0)
+                    .text("Far/near ratio cap"),
+            )
+            .changed();
+        changed |= ui
+            .add(
+                egui::Slider::new(&mut camera.near_far_margin, 1.0..=10_000.0)
+                    .text("Far-plane margin (mm)"),
+            )
+            .changed();
+    }
+
+    changed |= ui
+        .add(egui::Slider::new(&mut camera.view_transition_ms, 120.0..=1200.0).text(
+            "View transition (ms)",
+        ))
+        .changed();
+    changed |= ui
+        .add(
+            egui::Slider::new(&mut camera.click_drag_threshold_px, 2.0..=12.0)
+                .text("Click ↔ drag threshold (px)"),
+        )
+        .changed();
 
     changed
 }
