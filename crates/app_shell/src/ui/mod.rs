@@ -150,9 +150,9 @@ impl UiLayer {
         let mut reset_view_requested = false;
         let mut quit_requested = false;
 
-        let full_output = self.ctx.run(raw_input, |ctx| {
+        let full_output = self.ctx.run_ui(raw_input, |ui| {
             let top = layout::draw_top_panel(
-                ctx,
+                ui,
                 &mut active_workbench,
                 &mut active_tool,
                 registry,
@@ -180,7 +180,7 @@ impl UiLayer {
                 show_settings = true;
             }
             let left_panel = layout::draw_left_panel(
-                ctx,
+                ui,
                 active_workbench.clone(),
                 document,
                 registry,
@@ -191,14 +191,14 @@ impl UiLayer {
             tree_selection = left_panel.tree_selection;
             tree_activation = left_panel.tree_activation;
             layout::draw_right_panel(
-                ctx,
+                ui,
                 active_workbench.clone(),
                 document,
                 registry,
                 active_document_object,
             );
             let settings_outcome = settings_panel::draw_settings_window(
-                ctx,
+                ui.ctx(),
                 settings,
                 document,
                 &mut show_settings,
@@ -208,9 +208,9 @@ impl UiLayer {
             );
             settings_changed |= settings_outcome.any;
             camera_settings_changed |= settings_outcome.camera_prefs;
-            layout::draw_log_panel(ctx, settings.rendering.show_log_panel);
+            layout::draw_log_panel(ui, settings.rendering.show_log_panel);
             layout::draw_bottom_panel(
-                ctx,
+                ui,
                 fps,
                 hovered_point,
                 axis_system,
@@ -219,17 +219,18 @@ impl UiLayer {
                 pending_document_open,
             );
 
-            viewport_rect_logical = ctx.available_rect();
+            viewport_rect_logical = ui.available_rect_before_wrap();
 
             // Draw screen-space overlays in the viewport area (before other overlays)
-            layout::draw_screen_space_overlays(ctx, screen_space_overlays);
+            layout::draw_screen_space_overlays(ui.ctx(), viewport_rect_logical, screen_space_overlays);
 
             if let Some(input) = orientation_input {
-                cube_result = orientation_cube::draw(ctx, input, &cube_config);
+                cube_result =
+                    orientation_cube::draw(ui.ctx(), viewport_rect_logical, input, &cube_config);
             }
 
             if let Some((px, py)) = pivot_screen_pos {
-                layout::draw_pivot_indicator(ctx, px, py);
+                layout::draw_pivot_indicator(ui.ctx(), px, py);
             }
         });
 

@@ -203,6 +203,7 @@ fn world_axes_widget_rotation(input: &OrientationCubeInput) -> Mat3 {
 /// Draws the orientation cube widget and returns interaction results
 pub fn draw(
     ctx: &Context,
+    viewport_rect: egui::Rect,
     input: &OrientationCubeInput,
     config: &OrientationCubeConfig,
 ) -> OrientationCubeResult {
@@ -218,7 +219,7 @@ pub fn draw(
     let y_offset: f32 = 10.0;
 
     // Get the available central rect (the viewport area between panels)
-    let available = ctx.available_rect();
+    let available = viewport_rect;
     let margin = 10.0;
 
     // Position in bottom-right of the available viewport area

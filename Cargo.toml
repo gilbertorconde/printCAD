@@ -14,7 +14,7 @@ resolver = "2"
 [workspace.package]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-rust-version = "1.79"
+rust-version = "1.92"
 
 [workspace.metadata]
 description = "Workspace for the printCAD parametric CAD application."
@@ -29,14 +29,14 @@ tracing = "0.1.41"
 tracing-appender = "0.2"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter"] }
 uuid = { version = "1.18.1", features = ["serde", "v4"] }
-winit = "0.30.12"
+winit = "0.30.13"
 raw-window-handle = "0.6.2"
-egui = "0.33.2"
-egui-winit = "0.33.2"
-egui-ash-renderer = "0.10"
+egui = "0.34.2"
+egui-winit = "0.34.2"
+egui-ash-renderer = { path = "crates/egui-ash-renderer-vendored" }
 bytemuck = "1.14"
 directories = "6.0"
-glam = { version = "0.30.9", features = ["std"] }
+glam = { version = "0.32", features = ["std"] }
 tar = "0.4.44"
 flate2 = "1.1.5"
 zstd = "0.13.3"

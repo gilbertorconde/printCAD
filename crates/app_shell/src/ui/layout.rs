@@ -24,7 +24,7 @@ pub struct TopBarResult {
 }
 
 pub fn draw_top_panel(
-    ctx: &Context,
+    ui: &mut egui::Ui,
     active_workbench: &mut ActiveWorkbench,
     active_tool: &mut ActiveTool,
     registry: &mut DocumentService,
@@ -56,7 +56,7 @@ pub fn draw_top_panel(
 
     // Consume shortcuts up-front so the matching menu rows don't double-fire
     // when an item is also clicked in the same frame.
-    ctx.input_mut(|i| {
+    ui.ctx().input_mut(|i| {
         if i.consume_shortcut(&sc_new) {
             result.new_requested = true;
         }
@@ -82,20 +82,21 @@ pub fn draw_top_panel(
         }
     });
 
-    egui::TopBottomPanel::top("top_bar")
+    let panel_fill = ui.ctx().global_style().visuals.panel_fill;
+    egui::Panel::top("top_bar")
         .frame(
             egui::Frame::default()
                 .inner_margin(egui::Margin::symmetric(6, 2))
-                .fill(ctx.style().visuals.panel_fill),
+                .fill(panel_fill),
         )
-        .show(ctx, |ui| {
+        .show_inside(ui, |ui| {
             ui.vertical(|ui| {
                 // ----------------- Menu bar (thin row) -----------------
                 egui::MenuBar::new().ui(ui, |ui| {
                     // --- File menu ---
                     let file_resp = ui.menu_button("File", |ui| {
                         let new_btn = egui::Button::new("New")
-                            .shortcut_text(ctx.format_shortcut(&sc_new));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_new));
                         if ui
                             .add(new_btn)
                             .on_hover_text("Create a new untitled document")
@@ -108,7 +109,7 @@ pub fn draw_top_panel(
                         ui.separator();
 
                         let open_btn = egui::Button::new("Open...")
-                            .shortcut_text(ctx.format_shortcut(&sc_open));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_open));
                         if ui
                             .add(open_btn)
                             .on_hover_text("Open an existing .prtcad document")
@@ -119,7 +120,7 @@ pub fn draw_top_panel(
                         }
 
                         let save_btn = egui::Button::new("Save")
-                            .shortcut_text(ctx.format_shortcut(&sc_save));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_save));
                         if ui
                             .add(save_btn)
                             .on_hover_text("Save the active document")
@@ -130,7 +131,7 @@ pub fn draw_top_panel(
                         }
 
                         let save_as_btn = egui::Button::new("Save As...")
-                            .shortcut_text(ctx.format_shortcut(&sc_save_as));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_save_as));
                         if ui
                             .add(save_as_btn)
                             .on_hover_text("Save the active document under a new name")
@@ -143,7 +144,7 @@ pub fn draw_top_panel(
                         ui.separator();
 
                         let import_btn = egui::Button::new("Import STEP...")
-                            .shortcut_text(ctx.format_shortcut(&sc_import));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_import));
                         if ui
                             .add(import_btn)
                             .on_hover_text("Import a STEP/STP file into this document")
@@ -167,7 +168,7 @@ pub fn draw_top_panel(
                         ui.separator();
 
                         let quit_btn = egui::Button::new("Quit")
-                            .shortcut_text(ctx.format_shortcut(&sc_quit));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_quit));
                         if ui
                             .add(quit_btn)
                             .on_hover_text("Exit printCAD")
@@ -184,7 +185,7 @@ pub fn draw_top_panel(
                     // --- View menu ---
                     let view_resp = ui.menu_button("View", |ui| {
                         let fit_btn = egui::Button::new("Fit View")
-                            .shortcut_text(ctx.format_shortcut(&sc_fit));
+                            .shortcut_text(ui.ctx().format_shortcut(&sc_fit));
                         if ui
                             .add(fit_btn)
                             .on_hover_text("Frame the document or origin in the viewport")
@@ -300,7 +301,7 @@ pub fn draw_top_panel(
                         let enabled = workbench.is_tool_enabled(&tool.id, &wb_ctx);
 
                         // Icon convention: crates/workbenches/<crate>/src/icons/<tool_id>.svg.
-                        let icon = get_tool_icon_for(ctx, &active_workbench.0, &tool.id);
+                        let icon = get_tool_icon_for(ui.ctx(), &active_workbench.0, &tool.id);
 
                         let response = if let Some(icon) = icon {
                             let mut button = egui::Button::image(egui::Image::from(&icon));
@@ -446,7 +447,7 @@ impl Default for LeftPanelResult {
 }
 
 pub fn draw_left_panel(
-    ctx: &Context,
+    ui: &mut egui::Ui,
     active_workbench: ActiveWorkbench,
     document: &mut core_document::Document,
     registry: &mut core_document::DocumentService,
@@ -455,10 +456,10 @@ pub fn draw_left_panel(
 ) -> LeftPanelResult {
     let mut panel_result = LeftPanelResult::default();
     
-    egui::SidePanel::left("left_panel")
+    egui::Panel::left("left_panel")
         .resizable(true)
-        .default_width(260.0)
-        .show(ctx, |ui| {
+        .default_size(260.0)
+        .show_inside(ui, |ui| {
             ui.heading("Model");
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let tree_model = feature_tree::DocumentTree::build(document);
@@ -496,7 +497,7 @@ pub fn draw_left_panel(
 }
 
 pub fn draw_right_panel(
-    ctx: &Context,
+    ui: &mut egui::Ui,
     active_workbench: ActiveWorkbench,
     document: &mut core_document::Document,
     registry: &mut core_document::DocumentService,
@@ -511,10 +512,10 @@ pub fn draw_right_panel(
         return;
     }
 
-    egui::SidePanel::right("right_panel")
+    egui::Panel::right("right_panel")
         .resizable(true)
-        .default_width(280.0)
-        .show(ctx, |ui| {
+        .default_size(280.0)
+        .show_inside(ui, |ui| {
             if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
                 let cam_pos = [0.0, 0.0, 5.0];
                 let cam_target = [0.0, 0.0, 0.0];
@@ -528,7 +529,7 @@ pub fn draw_right_panel(
         });
 }
 
-pub fn draw_log_panel(ctx: &Context, show: bool) {
+pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
     if !show {
         return;
     }
@@ -538,11 +539,11 @@ pub fn draw_log_panel(ctx: &Context, show: bool) {
         return;
     }
 
-    egui::TopBottomPanel::bottom("log_panel")
+    egui::Panel::bottom("log_panel")
         .resizable(true)
-        .default_height(160.0)
-        .min_height(80.0)
-        .show(ctx, |ui| {
+        .default_size(160.0)
+        .min_size(80.0)
+        .show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Log");
                 ui.add_space(8.0);
@@ -576,7 +577,7 @@ pub fn draw_log_panel(ctx: &Context, show: bool) {
 }
 
 pub fn draw_bottom_panel(
-    ctx: &Context,
+    ui: &mut egui::Ui,
     fps: f32,
     hovered_point: Option<[f32; 3]>,
     axis_system: AxisSystem,
@@ -584,7 +585,7 @@ pub fn draw_bottom_panel(
     pending_imports: u32,
     pending_document_open: u32,
 ) {
-    egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
+    egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             let fps_text = if fps > 0.0 {
                 format!("FPS: {:.1}", fps)
@@ -688,6 +689,7 @@ pub fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {
 /// These are rendered as 2D lines in screen coordinates, maintaining constant thickness.
 pub fn draw_screen_space_overlays(
     ctx: &egui::Context,
+    viewport_rect: egui::Rect,
     overlays: &[core_document::ScreenSpaceOverlay],
 ) {
     if overlays.is_empty() {
@@ -695,7 +697,6 @@ pub fn draw_screen_space_overlays(
     }
 
     let ppp = ctx.pixels_per_point();
-    let viewport_rect = ctx.available_rect();
 
     // Use Background order to draw beneath UI panels, and clip to viewport area
     let layer_id = egui::LayerId::new(
