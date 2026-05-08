@@ -896,14 +896,14 @@ fn draw_rotation_arrows_interactive(
     //
     // Screen-space rotation (around camera's local axes):
     // - ScreenY: rotate around camera's UP axis
-    //   - Positive = rotate left (view shifts left)
-    //   - Negative = rotate right (view shifts right)
+    //   - Positive = rotate right (view shifts right)
+    //   - Negative = rotate left (view shifts left)
     // - ScreenX: rotate around camera's RIGHT axis
     //   - Positive = rotate up (view shifts up)
     //   - Negative = rotate down (view shifts down)
     let triangle_arrows = [
-        (0.0_f32, RotateAxis::ScreenY, -45.0), // Right arrow -> rotate right 45°
-        (180.0, RotateAxis::ScreenY, 45.0),    // Left arrow -> rotate left 45°
+        (0.0_f32, RotateAxis::ScreenY, 45.0), // Right arrow -> rotate right 45°
+        (180.0, RotateAxis::ScreenY, -45.0),   // Left arrow -> rotate left 45°
         (90.0, RotateAxis::ScreenX, 45.0),     // Bottom arrow -> rotate down 45°
         (270.0, RotateAxis::ScreenX, -45.0),   // Top arrow -> rotate up 45°
     ];
@@ -958,8 +958,7 @@ fn draw_rotation_arrows_interactive(
     let arc_y_offset = -widget_size / 2.0 - 2.0 - y_offset; // Above the top of the circle
     let arc_center = Pos2::new(center.x, center.y + arc_y_offset + arc_radius);
 
-    // Left-pointing arc arrow (rotate scene counter-clockwise = yaw+)
-    // User clicks left arc = wants scene to rotate left = yaw+
+    // Left-pointing arc arrow (yaw around view direction)
     draw_arc_arrow(
         ui,
         painter,
@@ -970,7 +969,7 @@ fn draw_rotation_arrows_interactive(
         std::f32::consts::PI + 0.3, // Start angle (left side, going up)
         true,                       // Arrow points left (counter-clockwise)
         RotateAxis::ScreenZ,
-        45.0, // Swapped: positive = counter-clockwise
+        -45.0,
         arrow_color,
         hover_color,
         &click_pos,
@@ -978,8 +977,7 @@ fn draw_rotation_arrows_interactive(
         &mut result,
     );
 
-    // Right-pointing arc arrow (rotate scene clockwise = yaw-)
-    // User clicks right arc = wants scene to rotate right = yaw-
+    // Right-pointing arc arrow (yaw around view direction)
     draw_arc_arrow(
         ui,
         painter,
@@ -990,7 +988,7 @@ fn draw_rotation_arrows_interactive(
         0.3,   // End angle
         false, // Arrow points right (clockwise)
         RotateAxis::ScreenZ,
-        -45.0, // Swapped: negative = clockwise
+        45.0,
         arrow_color,
         hover_color,
         &click_pos,
