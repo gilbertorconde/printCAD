@@ -593,19 +593,9 @@ impl ApplicationHandler for PrintCadApp {
             return;
         }
 
-        let allow_lmb_orbit = match &event {
-            WindowEvent::MouseInput {
-                button: MouseButton::Left,
-                state: ElementState::Pressed,
-                ..
-            } => Some(self.hovered_body.is_none()),
-            _ => None,
-        };
-        let cam_res = self.camera.on_viewport_pointer(
-            &event,
-            &self.user_settings.camera,
-            allow_lmb_orbit,
-        );
+        let cam_res = self
+            .camera
+            .on_viewport_pointer(&event, &self.user_settings.camera);
         redraw |= cam_res.wants_redraw();
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
             redraw |= self.toggle_body_under_cursor_selection();

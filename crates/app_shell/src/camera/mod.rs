@@ -32,12 +32,11 @@ pub struct CameraController {
     last_cursor_viewport: Option<Vec2>,
     last_cursor_vp_for_drag: Option<Vec2>,
     lmb_anchor_vp: Vec2,
-    /// True once LMB drag crosses `click_drag_threshold_px` starting from empty viewport.
+    /// True once movement from [`lmb_anchor_vp`] crosses `click_drag_threshold_px`.
     lmb_dragging_scene: bool,
     rmb_dragging_scene: bool,
     lmb_dragging_roll: bool,
     lmb_was_down_scene: bool,
-    allow_lmb_orbit: bool,
 }
 
 impl CameraController {
@@ -56,7 +55,6 @@ impl CameraController {
             rmb_dragging_scene: false,
             lmb_dragging_roll: false,
             lmb_was_down_scene: false,
-            allow_lmb_orbit: false,
         }
     }
 
@@ -64,14 +62,15 @@ impl CameraController {
         self.tween.cancel();
     }
 
-    /// Begin / update pointer drag modes. Gesture style: LMB orbit empty, RMB pan, LMB+RMB tilt.
+    /// Begin / update pointer drag modes: LMB orbit / select, RMB pan, LMB+RMB tilt (roll).
     ///
-    /// `allow_lmb_orbit` typically `hovered_body.is_none()` captured at LMB press from last pick.
+    /// Orbit activates after movement from the press anchor exceeds
+    /// `CameraSettings::click_drag_threshold_px` (over geometry or empty space). A shorter click
+    /// without that much motion selects under the cursor instead.
     pub fn on_viewport_pointer(
         &mut self,
         event: &WindowEvent,
         settings: &CameraSettings,
-        allow_lmb_orbit: Option<bool>,
     ) -> CameraPointerResult {
         match event {
             WindowEvent::MouseInput {
@@ -81,7 +80,6 @@ impl CameraController {
             } => {
                 self.cancel_animation();
                 self.lmb_was_down_scene = true;
-                self.allow_lmb_orbit = allow_lmb_orbit.unwrap_or(false);
                 self.lmb_dragging_scene = false;
                 self.lmb_dragging_roll = false;
                 if let Some(p) = self.last_cursor_viewport {
@@ -116,7 +114,6 @@ impl CameraController {
                 self.last_cursor_vp_for_drag = None;
                 self.lmb_dragging_roll = false;
                 self.lmb_was_down_scene = false;
-                self.allow_lmb_orbit = false;
                 self.lmb_dragging_scene = false;
 
                 if should_maybe_select && self.last_cursor_viewport.is_some() {
@@ -167,7 +164,7 @@ impl CameraController {
                     return CameraPointerResult::Redraw;
                 }
 
-                if self.lmb_was_down_scene && self.allow_lmb_orbit {
+                if self.lmb_was_down_scene {
                     let thresh_sq =
                         settings.click_drag_threshold_px * settings.click_drag_threshold_px;
                     if (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq {

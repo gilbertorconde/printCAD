@@ -276,8 +276,8 @@ pub enum NavigationStyle {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum OrbitYawAxis {
-    #[default]
     WorldUp,
+    #[default]
     CameraUp,
 }
 
