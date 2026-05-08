@@ -582,6 +582,7 @@ pub fn draw_bottom_panel(
     axis_system: AxisSystem,
     display_unit: Unit,
     pending_imports: u32,
+    pending_document_open: u32,
 ) {
     egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
         ui.horizontal(|ui| {
@@ -622,17 +623,22 @@ pub fn draw_bottom_panel(
                 ui.label(parts.join("  "));
             }
 
-            // Right-aligned import indicator: a spinner plus a short status
-            // string while the kernel worker is processing one or more STEP
-            // imports off the UI thread. Empty when nothing is in flight.
-            if pending_imports > 0 {
+            // Right-aligned activity indicator: spinner while the kernel worker
+            // imports STEP or a document loads from disk off the UI thread.
+            if pending_imports > 0 || pending_document_open > 0 {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let label = if pending_imports == 1 {
-                        "Importing STEP…".to_string()
-                    } else {
-                        format!("Importing {pending_imports} STEPs…")
-                    };
-                    ui.label(label);
+                    let mut parts = Vec::new();
+                    if pending_imports > 0 {
+                        if pending_imports == 1 {
+                            parts.push("Importing STEP…".to_string());
+                        } else {
+                            parts.push(format!("Importing {pending_imports} STEPs…"));
+                        }
+                    }
+                    if pending_document_open > 0 {
+                        parts.push("Opening document…".to_string());
+                    }
+                    ui.label(parts.join(" · "));
                     ui.add(egui::Spinner::new());
                 });
             }

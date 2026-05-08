@@ -122,9 +122,10 @@ impl UiLayer {
         active_tree_selection: Option<feature_tree::TreeItemId>,
         active_document_object: Option<core_document::FeatureId>,
         selected_body_id: Option<core_document::BodyId>,
-        screen_space_overlays: &[core_document::ScreenSpaceOverlay],
-        pending_imports: u32,
-    ) -> UiFrameResult {
+    screen_space_overlays: &[core_document::ScreenSpaceOverlay],
+    pending_imports: u32,
+    pending_document_open: u32,
+) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let prev_workbench = self.active_workbench.clone();
         let mut active_workbench = self.active_workbench.clone();
@@ -215,6 +216,7 @@ impl UiLayer {
                 axis_system,
                 document.display_unit(),
                 pending_imports,
+                pending_document_open,
             );
 
             viewport_rect_logical = ctx.available_rect();

@@ -22,7 +22,8 @@ use render_vk::{
 };
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use settings::{SettingsStore, UserSettings};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
@@ -227,6 +228,19 @@ struct PrintCadApp {
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
     kernel_worker: KernelWorker,
+    /// File > Open loads archives off the UI thread; results arrive on this
+    /// channel. `document_load_epoch` invalidates in-flight work after New
+    /// Document so late responses are ignored.
+    document_open_tx: Sender<(u64, PathBuf, DocumentOpenMsg)>,
+    document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
+    document_load_epoch: u64,
+    document_open_in_flight: u32,
+}
+
+/// Load outcome sent from the background open thread (document is large I/O).
+enum DocumentOpenMsg {
+    Loaded(Document),
+    Failed(String),
 }
 
 enum FileDialogKind {
@@ -250,6 +264,7 @@ impl PrintCadApp {
         registry: DocumentService,
     ) -> Self {
         let camera = CameraController::new(&user_settings.camera, (1, 1));
+        let (document_open_tx, document_open_rx) = mpsc::channel();
 
         Self {
             settings,
@@ -281,6 +296,10 @@ impl PrintCadApp {
             current_file: None,
             file_dialog_rx: None,
             kernel_worker: KernelWorker::spawn(),
+            document_open_tx,
+            document_open_rx,
+            document_load_epoch: 0,
+            document_open_in_flight: 0,
         }
     }
 
@@ -423,6 +442,11 @@ impl PrintCadApp {
     /// Replace the document with a blank one and reset navigation/selection.
     fn reset_to_new_document(&mut self) {
         while !self.kernel_worker.drain().is_empty() {}
+
+        self.document_load_epoch = self.document_load_epoch.wrapping_add(1);
+        while self.document_open_rx.try_recv().is_ok() {
+            self.document_open_in_flight = self.document_open_in_flight.saturating_sub(1);
+        }
 
         if let Ok(wb) = self.registry.workbench_mut(&self.active_workbench.0) {
             let cam_pos = self.camera.position();
@@ -694,6 +718,7 @@ impl ApplicationHandler for PrintCadApp {
         // the frame they actually became visible in. Has to happen before
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
+        self.drain_document_open_responses();
 
         let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
             (Some(window), Some(renderer)) => (window, renderer),
@@ -882,6 +907,7 @@ impl ApplicationHandler for PrintCadApp {
                 self.active_body_id,
                 &self.frame_submission.screen_space_overlays,
                 self.kernel_worker.in_flight(),
+                self.document_open_in_flight,
             );
             self.frame_submission.egui = Some(ui_result.submission);
             self.active_tool = ui_result.active_tool;
@@ -1040,9 +1066,7 @@ impl ApplicationHandler for PrintCadApp {
                 match result.kind {
                     FileDialogKind::Open => {
                         if let Some(path) = result.path {
-                            if let Err(err) = self.open_document_at(&path) {
-                                app_log::error(format!("Failed to open document: {err}"));
-                            }
+                            self.request_document_open(path);
                         }
                     }
                     FileDialogKind::Save => {
@@ -1103,8 +1127,7 @@ impl PrintCadApp {
         self.selected_body = Some(body_id.0);
     }
 
-    fn open_document_at(&mut self, path: &PathBuf) -> Result<()> {
-        // Support legacy .json files directly, otherwise use the .prtcad tar-based format.
+    fn load_document_from_path(path: &Path) -> Result<Document> {
         let document = match path
             .extension()
             .and_then(|s| s.to_str())
@@ -1118,10 +1141,13 @@ impl PrintCadApp {
             _ => Document::load_from_file(path)
                 .with_context(|| format!("Failed to open .prtcad document {}", path.display()))?,
         };
+        Ok(document)
+    }
 
+    /// Replace the in-memory document after a successful load (UI thread).
+    fn apply_opened_document(&mut self, path: PathBuf, document: Document) {
         self.document = document;
         self.current_file = Some(path.clone());
-        // Derive a user-facing document name from the file name (strip known extensions).
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -1145,7 +1171,7 @@ impl PrintCadApp {
         self.selected_body = None;
 
         self.document.mark_clean();
-        Self::write_recent_dir(path);
+        Self::write_recent_dir(&path);
         // Match STEP import: reframe imported mesh bounds so scene AABB and auto
         // near/far use the same view as STEP apply (opening only updated zoom
         // limits before, which left stale eye/target → marginal clipping until the
@@ -1164,7 +1190,42 @@ impl PrintCadApp {
                 .clamp_focal_to_settings(&self.user_settings.camera);
         }
         app_log::info(format!("Opened document from {}", path.display()));
-        Ok(())
+    }
+
+    /// Decode a `.prtcad` / `.json` document off the UI thread. Completion is
+    /// handled in [`Self::drain_document_open_responses`].
+    fn request_document_open(&mut self, path: PathBuf) {
+        let tx = self.document_open_tx.clone();
+        let epoch = self.document_load_epoch;
+        self.document_open_in_flight = self.document_open_in_flight.saturating_add(1);
+        app_log::info(format!("Opening `{}`...", path.display()));
+        std::thread::spawn(move || {
+            let msg = match Self::load_document_from_path(&path) {
+                Ok(document) => DocumentOpenMsg::Loaded(document),
+                Err(err) => DocumentOpenMsg::Failed(format!("{err:#}")),
+            };
+            let _ = tx.send((epoch, path, msg));
+        });
+    }
+
+    fn drain_document_open_responses(&mut self) {
+        while let Ok((epoch, path, msg)) = self.document_open_rx.try_recv() {
+            self.document_open_in_flight = self.document_open_in_flight.saturating_sub(1);
+            if epoch != self.document_load_epoch {
+                continue;
+            }
+            match msg {
+                DocumentOpenMsg::Loaded(document) => {
+                    self.apply_opened_document(path, document);
+                }
+                DocumentOpenMsg::Failed(error) => {
+                    app_log::error(format!(
+                        "Failed to open document {}: {error}",
+                        path.display()
+                    ));
+                }
+            }
+        }
     }
 
     fn save_document_at(&mut self, path: &PathBuf) -> Result<()> {
