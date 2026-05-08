@@ -503,34 +503,18 @@ impl ApplicationHandler for PrintCadApp {
             return;
         }
 
-        if let (Some(ui_layer), Some(window)) = (self.ui_layer.as_mut(), self.window.as_ref()) {
-            let response = ui_layer.on_window_event(window, &event);
-            if response.repaint {
-                window.request_redraw();
-            }
-            if response.consumed {
-                return;
-            }
-        }
-
-        // Track cursor position for picking (in physical/surface coordinates)
+        // Update picking + viewport-local cursor *before* egui. Cursor events can be marked
+        // consumed while dragging UI; we still need consistent coords for 3D hit testing and
+        // zoom-to-focal-plane math.
         if let WindowEvent::CursorMoved { position, .. } = &event {
-            // Convert logical window coordinates to physical pixels to match the
-            // viewport and renderer coordinate spaces.
-            let scale = self
-                .window
-                .as_ref()
-                .map(|w| w.scale_factor() as f32)
-                .unwrap_or(1.0);
-            let phys_x = (position.x as f32 * scale).round() as u32;
-            let phys_y = (position.y as f32 * scale).round() as u32;
+            // `CursorMoved` is already [`PhysicalPosition`]; match renderer + viewport_rect.
+            let phys_x = position.x.max(0.0).round() as u32;
+            let phys_y = position.y.max(0.0).round() as u32;
 
-            // Request GPU picking at cursor position
             if let Some(renderer) = self.renderer.as_mut() {
                 renderer.request_pick(phys_x, phys_y);
             }
 
-            // Store cursor position relative to viewport for other uses
             let vp = self.camera.viewport_info();
             let cursor_x = phys_x as f32 - vp.0;
             let cursor_y = phys_y as f32 - vp.1;
@@ -548,6 +532,21 @@ impl ApplicationHandler for PrintCadApp {
 
         let vp_cursor = self.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
         self.camera.set_cursor_viewport(vp_cursor);
+
+        let zoom_wheel_over_viewport = matches!(event, WindowEvent::MouseWheel { .. })
+            && self.cursor_in_viewport.is_some();
+
+        if let (Some(ui_layer), Some(window)) = (self.ui_layer.as_mut(), self.window.as_ref()) {
+            let response = ui_layer.on_window_event(window, &event);
+            if response.repaint {
+                window.request_redraw();
+            }
+            // egui-winit marks MouseWheel consumed when `wants_pointer_input()` — true over most
+            // of the central panel — which prevented the CAD camera from ever seeing scroll.
+            if response.consumed && !zoom_wheel_over_viewport {
+                return;
+            }
+        }
 
         use winit::keyboard::Key;
         if let WindowEvent::KeyboardInput { event: ke, .. } = &event {

@@ -31,8 +31,12 @@ pub fn viewport_ray(
     let near_w = near_clip.truncate() / near_clip.w;
     let far_w = far_clip.truncate() / far_clip.w;
     let dir = (far_w - near_w).normalize();
-    let origin = state.eye_vec3();
-    Some((origin, dir))
+    if dir.length_squared() < 1e-24 {
+        return None;
+    }
+    // Origin must lie on this pixel's ray. Using `eye` matches perspective rays but is wrong for
+    // orthographic rays (parallel to forward, offset laterally)—correction collapsed to orbit-center zoom.
+    Some((near_w, dir))
 }
 
 pub fn intersect_focal_plane_world(

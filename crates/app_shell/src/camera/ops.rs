@@ -40,8 +40,9 @@ pub fn orbit_pixels(
         return;
     }
     let sens = settings.orbit_sensitivity * 0.005;
-    let dx = delta_px.x * sens;
-    let dy = delta_px.y * sens;
+    // Screen-space Δ with negation so orbit matches CAD/turntable expect: drag follows scene motion.
+    let dx = -delta_px.x * sens;
+    let dy = -delta_px.y * sens;
 
     let focal = state.focal_point_dvec(axes);
 

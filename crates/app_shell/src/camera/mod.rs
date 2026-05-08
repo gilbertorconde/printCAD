@@ -322,18 +322,20 @@ impl CameraController {
         let near_w = near_clip.truncate() / near_clip.w;
         let far_w = far_clip.truncate() / far_clip.w;
         let ray_dir = (far_w - near_w).normalize();
-        let ray_origin = self.position_vec();
+        if ray_dir.length_squared() < 1e-24 {
+            return None;
+        }
 
         let n = plane_normal.normalize();
         let denom = ray_dir.dot(n);
         if denom.abs() < 1e-6 {
             return None;
         }
-        let t = (plane_origin - ray_origin).dot(n) / denom;
+        let t = (plane_origin - near_w).dot(n) / denom;
         if t < 0.0 {
             return None;
         }
-        Some(ray_origin + ray_dir * t)
+        Some(near_w + ray_dir * t)
     }
 
     pub fn reset_to_fit(
