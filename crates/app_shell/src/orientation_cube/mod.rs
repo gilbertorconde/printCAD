@@ -904,9 +904,9 @@ fn draw_rotation_arrows_interactive(
     //   - Negative = rotate down (view shifts down)
     let triangle_arrows = [
         (0.0_f32, RotateAxis::ScreenY, 45.0), // Right arrow -> rotate right 45°
-        (180.0, RotateAxis::ScreenY, -45.0),   // Left arrow -> rotate left 45°
-        (90.0, RotateAxis::ScreenX, 45.0),     // Bottom arrow -> rotate down 45°
-        (270.0, RotateAxis::ScreenX, -45.0),   // Top arrow -> rotate up 45°
+        (180.0, RotateAxis::ScreenY, -45.0),  // Left arrow -> rotate left 45°
+        (90.0, RotateAxis::ScreenX, 45.0),    // Bottom arrow -> rotate down 45°
+        (270.0, RotateAxis::ScreenX, -45.0),  // Top arrow -> rotate up 45°
     ];
 
     let triangle_size = 10.0;

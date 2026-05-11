@@ -1,9 +1,7 @@
 use axes::AxisPreset;
 use core_document::{Document, Unit};
 use egui::{self, Color32, Context, Ui};
-use settings::{
-    LightSource, NavigationStyle, OrbitYawAxis, ProjectionMode, UserSettings,
-};
+use settings::{LightSource, NavigationStyle, OrbitYawAxis, ProjectionMode, UserSettings};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SettingsTab {
@@ -158,7 +156,11 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
         })
         .show_ui(ui, |ui| {
             if ui
-                .selectable_value(&mut camera.navigation_style, NavigationStyle::Gesture, "Gesture")
+                .selectable_value(
+                    &mut camera.navigation_style,
+                    NavigationStyle::Gesture,
+                    "Gesture",
+                )
                 .changed()
             {
                 changed = true;
@@ -174,9 +176,13 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     changed |= ui
         .checkbox(&mut camera.zoom_to_cursor, "Zoom to cursor")
         .changed();
-    changed |= ui.checkbox(&mut camera.invert_zoom, "Invert zoom").changed();
     changed |= ui
-        .add(egui::Slider::new(&mut camera.wheel_zoom_factor, 0.7..=0.995).text("Wheel step factor"))
+        .checkbox(&mut camera.invert_zoom, "Invert zoom")
+        .changed();
+    changed |= ui
+        .add(
+            egui::Slider::new(&mut camera.wheel_zoom_factor, 0.7..=0.995).text("Wheel step factor"),
+        )
         .changed();
     changed |= ui
         .add(egui::Slider::new(&mut camera.orbit_sensitivity, 0.05..=2.0).text("Orbit sensitivity"))
@@ -313,9 +319,10 @@ fn camera_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     }
 
     changed |= ui
-        .add(egui::Slider::new(&mut camera.view_transition_ms, 120.0..=1200.0).text(
-            "View transition (ms)",
-        ))
+        .add(
+            egui::Slider::new(&mut camera.view_transition_ms, 120.0..=1200.0)
+                .text("View transition (ms)"),
+        )
         .changed();
     changed |= ui
         .add(
@@ -422,9 +429,7 @@ fn lighting_settings_ui(ui: &mut Ui, settings: &mut UserSettings) -> bool {
     ui.horizontal(|ui| {
         ui.label("Width (px):");
         changed |= ui
-            .add(
-                egui::Slider::new(&mut lighting.edge_line_width, 0.5..=8.0).show_value(true),
-            )
+            .add(egui::Slider::new(&mut lighting.edge_line_width, 0.5..=8.0).show_value(true))
             .changed();
     });
 

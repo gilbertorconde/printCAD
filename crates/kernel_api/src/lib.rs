@@ -27,9 +27,35 @@ pub struct RebuildResponse {
     pub diagnostics: Vec<String>,
 }
 
+/// How linear (chord) deflection is chosen for OCCT meshing.
+///
+/// The default is **bbox-scaled** deflection: absolute chord height is derived
+/// from the sum of the shape's bounding-box extents and a dimensionless
+/// multiplier ([`TessellationSettings::mesh_deviation`], typically `0.2`).
+/// This produces visually consistent tessellation across small and large
+/// parts without per-model tuning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LinearDeflectionMode {
+    /// Bounding-box scaled: linear deflection = `(dx + dy + dz) / 300 ×`
+    /// [`TessellationSettings::mesh_deviation`].
+    #[default]
+    BboxScaled,
+    /// Fixed absolute linear deflection in model units (millimetres for STEP geometry).
+    AbsoluteMm,
+}
+
 /// Parameters controlling tessellation quality for viewport rendering.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TessellationSettings {
+    #[serde(default)]
+    pub linear_deflection_mode: LinearDeflectionMode,
+    /// Dimensionless multiplier applied to the bbox-derived chord height when
+    /// [`Self::linear_deflection_mode`] is [`LinearDeflectionMode::BboxScaled`].
+    /// Typical range `0.05..=1.0`; smaller values yield finer triangulation.
+    #[serde(default = "default_mesh_deviation")]
+    pub mesh_deviation: f32,
+    /// Absolute chord height in model units when using [`LinearDeflectionMode::AbsoluteMm`].
     pub chord_tolerance: f32,
     pub angular_tolerance_deg: f32,
     /// When true, the kernel collapses vertices that share a position across
@@ -45,23 +71,56 @@ pub struct TessellationSettings {
     /// Defaults to 30° (common cross-face weld preset).
     #[serde(default = "default_weld_angle_threshold_deg")]
     pub weld_angle_threshold_deg: f32,
+    /// When true, import serializes each body with `BRepTools::Write` into
+    /// `brep_blob` (in memory) and leaves mesh fields empty until a follow-up
+    /// tessellation job runs on the kernel thread. **This is the recommended
+    /// default for large STEP files:** work is split across read/serialize vs
+    /// meshing, the UI can show 0 triangles then a tessellation log line, and
+    /// you avoid a single multi‑minute inline mesh+transfer FFI call.
+    /// When false, the importer tessellates **during** the import call (no BRep
+    /// blob); small parts can feel simpler, but huge models block one long step
+    /// (`inline_mesh_ms` in `[printcad_import_brep_cpp]` on stderr).
+    /// Serialization can still take minutes on massive assemblies; the STEP
+    /// asset remains available in the document regardless.
+    #[serde(default = "default_persist_brep_snapshot")]
+    pub persist_brep_snapshot: bool,
+    /// When true, compute mesh outline / edge segments for the viewport (face
+    /// boundaries). Skipping saves CPU on huge imports when outlines are not needed.
+    #[serde(default = "default_generate_boundary_edges")]
+    pub generate_boundary_edges: bool,
 }
 
 fn default_weld_cross_face() -> bool {
-    true
+    false
 }
 
 fn default_weld_angle_threshold_deg() -> f32 {
     30.0
 }
 
+fn default_mesh_deviation() -> f32 {
+    0.2
+}
+
+fn default_persist_brep_snapshot() -> bool {
+    true
+}
+
+fn default_generate_boundary_edges() -> bool {
+    true
+}
+
 impl Default for TessellationSettings {
     fn default() -> Self {
         Self {
+            linear_deflection_mode: LinearDeflectionMode::default(),
+            mesh_deviation: default_mesh_deviation(),
             chord_tolerance: 0.1,
-            angular_tolerance_deg: 20.0,
+            angular_tolerance_deg: 28.65,
             weld_cross_face: default_weld_cross_face(),
             weld_angle_threshold_deg: default_weld_angle_threshold_deg(),
+            persist_brep_snapshot: default_persist_brep_snapshot(),
+            generate_boundary_edges: default_generate_boundary_edges(),
         }
     }
 }
@@ -120,13 +179,70 @@ impl TriMesh {
 /// A single body produced by an external import (e.g. STEP).
 ///
 /// The kernel returns one entry per top-level solid/shell encountered in the
-/// source file, along with a tessellated [`TriMesh`] suitable for rendering.
+/// source file. With deferred tessellation, [`Self::mesh`] may be empty until
+/// background tessellation finishes; [`Self::brep_blob`] / [`Self::face_colors`]
+/// are populated by the fast STEP read path.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedBody {
     /// Optional name extracted from the source file (e.g. STEP product label).
     pub name: Option<String>,
-    /// Tessellated mesh ready for the viewport.
+    /// Tessellated mesh ready for the viewport (empty while tessellation is pending).
+    #[serde(default)]
     pub mesh: TriMesh,
+    /// Serialized BRep (e.g. `BRepTools::Write`) for this body when the fast
+    /// STEP path was used.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub brep_blob: Vec<u8>,
+    /// Per-face linear RGB albedo in the same order as `TopExp_Explorer` over
+    /// faces on the matching BRep (used when serializing BRep without an XCAF
+    /// document for deferred tessellation).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_colors: Vec<[f32; 3]>,
+    /// Axis-aligned bounds in millimetres from the raw BRep (before tessellation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+}
+
+/// Node type emitted by STEP import hierarchy reconstruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ImportedNodeKind {
+    #[default]
+    Assembly,
+    Part,
+    Instance,
+}
+
+/// One hierarchy node from the imported STEP/XCAF structure.
+///
+/// Nodes can either be pure containers (`body_index = None`) or reference a
+/// renderable payload in [`ImportedModel::bodies`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedNode {
+    /// Stable id scoped to one import result.
+    pub id: u64,
+    /// Parent node id; None means root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<u64>,
+    /// Human-readable name from STEP/XCAF labels when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Structural type of this node.
+    #[serde(default)]
+    pub kind: ImportedNodeKind,
+    /// Initial visibility from source file metadata (if available).
+    #[serde(default = "default_imported_node_visible")]
+    pub visible: bool,
+    /// Index into [`ImportedModel::bodies`] when this node owns geometry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_index: Option<usize>,
+    /// Local transform matrix (row-major) relative to parent, if known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_transform: Option<[[f32; 4]; 4]>,
+}
+
+fn default_imported_node_visible() -> bool {
+    true
 }
 
 /// Length unit declared by an imported source file.
@@ -149,6 +265,9 @@ pub enum LengthUnit {
 pub struct ImportedModel {
     /// One entry per top-level body in the source file.
     pub bodies: Vec<ImportedBody>,
+    /// Optional assembly/object tree reconstructed from STEP/XCAF labels.
+    #[serde(default)]
+    pub nodes: Vec<ImportedNode>,
     /// Length unit declared by the source file, when detectable. Geometry in
     /// `bodies` is *always* expressed in millimetres regardless — this field
     /// is purely informational and used by the UI to pick a display unit.

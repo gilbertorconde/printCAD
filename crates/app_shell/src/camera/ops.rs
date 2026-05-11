@@ -23,7 +23,8 @@ pub fn pan_pixels(
         return;
     }
     // Negate viewport X so drags behave like grabbing the scene (matches vertical feel).
-    let world_delta = (-delta_px.x as f64 * wpp) * DVec3::new(right.x as f64, right.y as f64, right.z as f64)
+    let world_delta = (-delta_px.x as f64 * wpp)
+        * DVec3::new(right.x as f64, right.y as f64, right.z as f64)
         + (delta_px.y as f64 * wpp) * DVec3::new(up.x as f64, up.y as f64, up.z as f64);
 
     state.eye += world_delta;
@@ -99,7 +100,11 @@ pub fn orbit_pixels_around_world_anchor(
     let pitch_q = glam::Quat::from_axis_angle(right, dy.clamp(-1.45, 1.45));
     let delta_q = (yaw_q * pitch_q).normalize();
 
-    let pivot_v = Vec3::new(pivot_world.x as f32, pivot_world.y as f32, pivot_world.z as f32);
+    let pivot_v = Vec3::new(
+        pivot_world.x as f32,
+        pivot_world.y as f32,
+        pivot_world.z as f32,
+    );
     let eye_v = Vec3::new(state.eye.x as f32, state.eye.y as f32, state.eye.z as f32);
     let arm = eye_v - pivot_v;
     if arm.length_squared() < 1e-24 {
@@ -187,9 +192,8 @@ pub fn fit_sphere(
     let focal = center;
     state.height_angle_rad = (settings.fov_degrees as f64).to_radians();
 
-    state.focal_distance = (r_ext as f64
-        / ((state.height_angle_rad * 0.5).tan()).max(1e-9))
-    .max(settings.min_focal_distance as f64);
+    state.focal_distance = (r_ext as f64 / ((state.height_angle_rad * 0.5).tan()).max(1e-9))
+        .max(settings.min_focal_distance as f64);
 
     if let Some((a, b)) = scene_aabb {
         let diag = (b - a).length().max(r_ext);
@@ -198,8 +202,11 @@ pub fn fit_sphere(
     }
     state.clamp_focal_distance(settings);
 
-    state.orientation =
-        crate::camera::state::orientation_from_yaw_pitch(axes, 45.0_f32.to_radians(), 35.0_f32.to_radians());
+    state.orientation = crate::camera::state::orientation_from_yaw_pitch(
+        axes,
+        45.0_f32.to_radians(),
+        35.0_f32.to_radians(),
+    );
     state.rederive_eye_from_focal(
         DVec3::new(focal.x as f64, focal.y as f64, focal.z as f64),
         axes,

@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use core_document::{Body, BodyId, Document, FeatureId, FeatureNode, FeatureTree};
 use egui::{Color32, Response, RichText, Ui};
+use uuid::Uuid;
 
 /// Identifier for selectable items in the tree panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -9,6 +10,7 @@ pub enum TreeItemId {
     DocumentRoot,
     Body(BodyId),
     Feature(FeatureId),
+    ImportedObject(Uuid),
 }
 
 impl From<FeatureId> for TreeItemId {
@@ -21,6 +23,7 @@ impl From<FeatureId> for TreeItemId {
 pub struct TreeUiResult {
     pub selection: Option<TreeItemId>,
     pub activation: Option<TreeItemId>,
+    pub imported_visibility_change: Option<(Uuid, bool)>,
 }
 
 /// View model describing the current document tree.
@@ -41,6 +44,7 @@ struct TreeNode {
     suppressed: bool,
     created_at_ms: i64,
     children: Vec<TreeNode>,
+    imported_object_id: Option<Uuid>,
 }
 
 impl DocumentTree {
@@ -80,10 +84,12 @@ impl DocumentTree {
             nodes.sort_by_key(|n| n.created_at_ms);
         }
 
-        // Build body nodes and attach their feature subtrees.
+        // Build body nodes and attach their feature subtrees. Bodies represented
+        // in imported-object hierarchy are shown there instead to avoid duplicates.
         let mut body_nodes: Vec<TreeNode> = document
             .bodies()
             .iter()
+            .filter(|body| document.imported_object_for_body(body.id).is_none())
             .map(|body| {
                 let mut node = build_body_node(body);
                 if let Some(children) = roots_by_body.remove(&Some(body.id)) {
@@ -92,6 +98,12 @@ impl DocumentTree {
                 node
             })
             .collect();
+
+        for &root in document.imported_object_roots() {
+            if let Some(node) = build_imported_node(document, root) {
+                body_nodes.push(node);
+            }
+        }
 
         // Any remaining roots without a body (or with unknown body IDs) are appended at the end.
         if let Some(mut doc_level) = roots_by_body.remove(&None) {
@@ -145,6 +157,7 @@ fn build_feature_node(
         suppressed: node.suppressed,
         created_at_ms: node.created_at,
         children,
+        imported_object_id: None,
     }
 }
 
@@ -159,7 +172,42 @@ fn build_body_node(body: &Body) -> TreeNode {
         suppressed: false,
         created_at_ms: body.created_at,
         children: Vec::new(),
+        imported_object_id: None,
     }
+}
+
+fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
+    let imported = document.imported_object(id)?;
+    let mut children = Vec::new();
+    for child_id in &imported.children {
+        if let Some(child) = build_imported_node(document, *child_id) {
+            children.push(child);
+        }
+    }
+    let label = if imported.name.is_empty() {
+        "Imported".to_string()
+    } else {
+        imported.name.clone()
+    };
+    let kind_badge = match imported.kind {
+        kernel_api::ImportedNodeKind::Assembly => Some("asm".to_string()),
+        kernel_api::ImportedNodeKind::Part => Some("part".to_string()),
+        kernel_api::ImportedNodeKind::Instance => Some("inst".to_string()),
+    };
+    Some(TreeNode {
+        id: TreeItemId::ImportedObject(imported.id),
+        label,
+        badge: kind_badge,
+        tooltip: imported
+            .body_id
+            .map(|body| format!("Linked body: {}", body.0)),
+        dirty: false,
+        visible: imported.visible,
+        suppressed: false,
+        created_at_ms: 0,
+        children,
+        imported_object_id: Some(imported.id),
+    })
 }
 
 fn format_workbench_tag(raw: &str) -> String {
@@ -202,6 +250,7 @@ fn draw_node(
     if node.children.is_empty() {
         ui.horizontal(|ui| {
             ui.add_space(indent);
+            maybe_draw_imported_visibility_toggle(ui, node, result);
             let label = compose_label(node);
             let is_selected = selected == Some(node.id);
             let response = if let Some(tooltip) = &node.tooltip {
@@ -215,6 +264,7 @@ fn draw_node(
     } else {
         ui.horizontal(|ui| {
             ui.add_space(indent);
+            maybe_draw_imported_visibility_toggle(ui, node, result);
             let label = compose_label(node);
             let collapsing = egui::CollapsingHeader::new(label)
                 .id_salt(format!("tree_node_{:?}", node.id))
@@ -236,6 +286,22 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
     if response.double_clicked() {
         result.activation = Some(id);
     }
+}
+
+fn maybe_draw_imported_visibility_toggle(ui: &mut Ui, node: &TreeNode, result: &mut TreeUiResult) {
+    let Some(imported_id) = node.imported_object_id else {
+        return;
+    };
+    let mut visible = node.visible;
+    let resp = ui.checkbox(&mut visible, "");
+    if resp.changed() {
+        result.imported_visibility_change = Some((imported_id, visible));
+    }
+    resp.on_hover_text(if visible {
+        "Hide imported node"
+    } else {
+        "Show imported node"
+    });
 }
 
 fn compose_label(node: &TreeNode) -> RichText {
@@ -268,4 +334,59 @@ fn feature_tooltip(node: &FeatureNode) -> String {
         parts.push("Pending recompute".into());
     }
     parts.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect_ids(nodes: &[TreeNode], out: &mut Vec<TreeItemId>) {
+        for node in nodes {
+            out.push(node.id);
+            collect_ids(&node.children, out);
+        }
+    }
+
+    #[test]
+    fn imported_nodes_render_in_tree_without_duplicate_body_row() {
+        let mut doc = Document::new("tree");
+        let body_id = doc.create_body(Some("Imported Body".into()));
+        let root = Uuid::new_v4();
+        let leaf = Uuid::new_v4();
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            root,
+            core_document::ImportedObjectNode {
+                id: root,
+                parent_id: None,
+                children: vec![leaf],
+                kind: kernel_api::ImportedNodeKind::Assembly,
+                name: "Asm".into(),
+                visible: true,
+                body_id: None,
+                local_transform: None,
+            },
+        );
+        graph.insert(
+            leaf,
+            core_document::ImportedObjectNode {
+                id: leaf,
+                parent_id: Some(root),
+                children: Vec::new(),
+                kind: kernel_api::ImportedNodeKind::Part,
+                name: "Part".into(),
+                visible: true,
+                body_id: Some(body_id),
+                local_transform: None,
+            },
+        );
+        doc.set_imported_object_graph(vec![root], graph);
+
+        let tree = DocumentTree::build(&doc);
+        let mut ids = Vec::new();
+        collect_ids(tree.nodes(), &mut ids);
+        assert!(ids.contains(&TreeItemId::ImportedObject(root)));
+        assert!(ids.contains(&TreeItemId::ImportedObject(leaf)));
+        assert!(!ids.contains(&TreeItemId::Body(body_id)));
+    }
 }

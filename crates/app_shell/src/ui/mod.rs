@@ -1,6 +1,11 @@
 mod feature_tree;
 mod layout;
 mod settings_panel;
+mod step_import_modal;
+
+pub use step_import_modal::StepImportDialogAction;
+
+use std::path::PathBuf;
 
 use axes::AxisSystem;
 use core_document::WorkbenchId;
@@ -53,6 +58,7 @@ pub struct UiFrameResult {
     pub finish_sketch_requested: bool,
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
+    pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
     pub new_requested: bool,
     pub open_requested: bool,
     pub save_requested: bool,
@@ -60,6 +66,7 @@ pub struct UiFrameResult {
     pub import_step_requested: bool,
     pub reset_view_requested: bool,
     pub quit_requested: bool,
+    pub step_import_dialog: StepImportDialogAction,
 }
 
 pub struct UiLayer {
@@ -122,10 +129,11 @@ impl UiLayer {
         active_tree_selection: Option<feature_tree::TreeItemId>,
         active_document_object: Option<core_document::FeatureId>,
         selected_body_id: Option<core_document::BodyId>,
-    screen_space_overlays: &[core_document::ScreenSpaceOverlay],
-    pending_imports: u32,
-    pending_document_open: u32,
-) -> UiFrameResult {
+        screen_space_overlays: &[core_document::ScreenSpaceOverlay],
+        pending_imports: u32,
+        pending_document_open: u32,
+        mut step_import_pending: Option<&mut (PathBuf, kernel_api::TessellationSettings)>,
+    ) -> UiFrameResult {
         let raw_input = self.state.take_egui_input(window);
         let prev_workbench = self.active_workbench.clone();
         let mut active_workbench = self.active_workbench.clone();
@@ -142,6 +150,7 @@ impl UiLayer {
 
         let mut tree_selection = None;
         let mut tree_activation = None;
+        let mut imported_visibility_change = None;
         let mut open_requested = false;
         let mut new_requested = false;
         let mut save_requested = false;
@@ -149,6 +158,7 @@ impl UiLayer {
         let mut import_step_requested = false;
         let mut reset_view_requested = false;
         let mut quit_requested = false;
+        let mut step_import_dialog = StepImportDialogAction::default();
 
         let full_output = self.ctx.run_ui(raw_input, |ui| {
             let top = layout::draw_top_panel(
@@ -190,6 +200,7 @@ impl UiLayer {
             finish_requested = left_panel.finish_sketch_requested;
             tree_selection = left_panel.tree_selection;
             tree_activation = left_panel.tree_activation;
+            imported_visibility_change = left_panel.imported_visibility_change;
             layout::draw_right_panel(
                 ui,
                 active_workbench.clone(),
@@ -222,11 +233,20 @@ impl UiLayer {
             viewport_rect_logical = ui.available_rect_before_wrap();
 
             // Draw screen-space overlays in the viewport area (before other overlays)
-            layout::draw_screen_space_overlays(ui.ctx(), viewport_rect_logical, screen_space_overlays);
+            layout::draw_screen_space_overlays(
+                ui.ctx(),
+                viewport_rect_logical,
+                screen_space_overlays,
+            );
 
             if let Some(input) = orientation_input {
                 cube_result =
                     orientation_cube::draw(ui.ctx(), viewport_rect_logical, input, &cube_config);
+            }
+
+            if let Some((path, draft)) = step_import_pending.as_mut() {
+                step_import_dialog =
+                    step_import_modal::draw_step_import_modal(ui.ctx(), path, draft);
             }
 
             if let Some((px, py)) = pivot_screen_pos {
@@ -276,6 +296,7 @@ impl UiLayer {
             finish_sketch_requested: finish_requested,
             tree_selection,
             tree_activation,
+            imported_visibility_change,
             new_requested,
             open_requested,
             save_requested,
@@ -283,6 +304,7 @@ impl UiLayer {
             import_step_requested,
             reset_view_requested,
             quit_requested,
+            step_import_dialog,
         }
     }
 }

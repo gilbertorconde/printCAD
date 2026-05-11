@@ -18,11 +18,11 @@ use uuid::Uuid;
 pub use asset::{AssetReference, AssetType};
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use kernel_api::TriMesh;
-pub use units::{format_length_mm, Unit};
 pub use runtime::{
     CameraOrientRequest, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
+pub use units::{format_length_mm, Unit};
 
 /// Result type for document operations.
 pub type DocumentResult<T> = std::result::Result<T, DocumentError>;
@@ -61,6 +61,12 @@ pub struct Document {
     /// Stored alongside the document so reload doesn't require re-tessellation.
     #[serde(default)]
     imported_meshes: HashMap<BodyId, ImportedGeometry>,
+    /// Imported STEP hierarchy (assemblies/parts/instances).
+    #[serde(default)]
+    imported_objects: HashMap<Uuid, ImportedObjectNode>,
+    /// Ordered roots for the imported hierarchy tree.
+    #[serde(default)]
+    imported_object_roots: Vec<Uuid>,
     /// Per-document display unit. All numeric storage stays in millimetres;
     /// this only controls how lengths are surfaced to the user.
     #[serde(default)]
@@ -71,6 +77,15 @@ pub struct Document {
     /// from JSON because the bytes live as separate entries in the tar archive.
     #[serde(skip)]
     asset_blobs: HashMap<Uuid, Vec<u8>>,
+    /// Frozen BRep binaries for deferred STEP tessellation / fast re-open (not in JSON).
+    #[serde(skip)]
+    imported_brep_blobs: HashMap<BodyId, Vec<u8>>,
+    /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
+    #[serde(skip)]
+    imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
+    /// Reverse index for fast body->imported-object visibility checks.
+    #[serde(skip)]
+    imported_body_to_object: HashMap<BodyId, Uuid>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -99,6 +114,37 @@ pub struct ImportedGeometry {
     /// revision to know when GPU buffers need to be re-uploaded.
     #[serde(default)]
     pub revision: u64,
+    /// Axis-aligned bounds in millimetres (e.g. from raw BRep before tessellation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+    /// Archive path to BRep binary (`brep/<uuid>.bin`) when present on disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub brep_blob_path: Option<String>,
+    /// Archive path to packed per-face colours (`brep/<uuid>.colors`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub face_colors_path: Option<String>,
+}
+
+/// Persistent imported object node (assembly/part/instance) shown in the model tree.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportedObjectNode {
+    pub id: Uuid,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<Uuid>,
+    #[serde(default)]
+    pub children: Vec<Uuid>,
+    pub kind: kernel_api::ImportedNodeKind,
+    pub name: String,
+    #[serde(default = "default_imported_object_visible")]
+    pub visible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_id: Option<BodyId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_transform: Option<[[f32; 4]; 4]>,
+}
+
+fn default_imported_object_visible() -> bool {
+    true
 }
 
 impl Document {
@@ -110,9 +156,14 @@ impl Document {
             workbench_storage: HashMap::new(),
             assets: HashMap::new(),
             imported_meshes: HashMap::new(),
+            imported_objects: HashMap::new(),
+            imported_object_roots: Vec::new(),
             display_unit: Unit::default(),
             history: Vec::new(),
             asset_blobs: HashMap::new(),
+            imported_brep_blobs: HashMap::new(),
+            imported_brep_face_colors: HashMap::new(),
+            imported_body_to_object: HashMap::new(),
         }
     }
 
@@ -367,6 +418,28 @@ impl Document {
         self.mark_dirty();
     }
 
+    /// Store BRep binary + face colour snapshot for a body (in-memory until save).
+    pub fn set_imported_brep_data(
+        &mut self,
+        body: BodyId,
+        brep_blob: Vec<u8>,
+        face_colors: Vec<[f32; 3]>,
+    ) {
+        self.imported_brep_blobs.insert(body, brep_blob);
+        self.imported_brep_face_colors.insert(body, face_colors);
+        self.mark_dirty();
+    }
+
+    pub fn imported_brep_blob(&self, body: BodyId) -> Option<&[u8]> {
+        self.imported_brep_blobs.get(&body).map(|v| v.as_slice())
+    }
+
+    pub fn imported_brep_face_colors(&self, body: BodyId) -> Option<&[[f32; 3]]> {
+        self.imported_brep_face_colors
+            .get(&body)
+            .map(|v| v.as_slice())
+    }
+
     /// Look up tessellated geometry for a body.
     pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
         self.imported_meshes.get(&body)
@@ -377,8 +450,90 @@ impl Document {
         self.imported_meshes.iter()
     }
 
+    /// Replace imported object hierarchy with the supplied nodes.
+    pub fn set_imported_object_graph(
+        &mut self,
+        roots: Vec<Uuid>,
+        nodes: HashMap<Uuid, ImportedObjectNode>,
+    ) {
+        self.imported_object_roots = roots;
+        self.imported_objects = nodes;
+        self.rebuild_imported_body_index();
+        self.mark_dirty();
+    }
+
+    /// Append imported hierarchy nodes (used when importing multiple STEP files).
+    pub fn append_imported_object_graph(
+        &mut self,
+        roots: Vec<Uuid>,
+        nodes: HashMap<Uuid, ImportedObjectNode>,
+    ) {
+        self.imported_object_roots.extend(roots);
+        for (id, node) in nodes {
+            self.imported_objects.insert(id, node);
+        }
+        self.rebuild_imported_body_index();
+        self.mark_dirty();
+    }
+
+    /// Remove imported hierarchy metadata.
+    pub fn clear_imported_object_graph(&mut self) {
+        self.imported_object_roots.clear();
+        self.imported_objects.clear();
+        self.imported_body_to_object.clear();
+        self.mark_dirty();
+    }
+
+    pub fn imported_object_roots(&self) -> &[Uuid] {
+        &self.imported_object_roots
+    }
+
+    pub fn imported_object(&self, id: Uuid) -> Option<&ImportedObjectNode> {
+        self.imported_objects.get(&id)
+    }
+
+    pub fn imported_object_for_body(&self, body: BodyId) -> Option<Uuid> {
+        self.imported_body_to_object.get(&body).copied()
+    }
+
+    pub fn set_imported_object_visibility(&mut self, id: Uuid, visible: bool) -> bool {
+        let mut changed = false;
+        if let Some(node) = self.imported_objects.get_mut(&id) {
+            if node.visible != visible {
+                node.visible = visible;
+                changed = true;
+            }
+        }
+        if changed {
+            self.mark_dirty();
+        }
+        changed
+    }
+
+    pub fn imported_object_effective_visible(&self, id: Uuid) -> bool {
+        let mut cursor = Some(id);
+        while let Some(current) = cursor {
+            let Some(node) = self.imported_objects.get(&current) else {
+                return true;
+            };
+            if !node.visible {
+                return false;
+            }
+            cursor = node.parent_id;
+        }
+        true
+    }
+
+    pub fn imported_body_effective_visible(&self, body: BodyId) -> bool {
+        match self.imported_body_to_object.get(&body).copied() {
+            Some(id) => self.imported_object_effective_visible(id),
+            None => true,
+        }
+    }
+
     /// Save document to a .prtcad file (tar archive, optionally compressed).
-    pub fn save_to_file(&self, path: &Path, compression: Compression) -> DocumentResult<()> {
+    pub fn save_to_file(&mut self, path: &Path, compression: Compression) -> DocumentResult<()> {
+        Self::sync_brep_paths_for_archive(self);
         let file = File::create(path)?;
 
         match compression {
@@ -470,6 +625,10 @@ impl Document {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 blobs_by_path.insert(entry_path_str, buf);
+            } else if entry_path_str.starts_with("brep/") {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf)?;
+                blobs_by_path.insert(entry_path_str, buf);
             }
         }
 
@@ -488,6 +647,23 @@ impl Document {
             }
         }
 
+        // Restore BRep sidecars for imported geometry.
+        for (body_id, geom) in &doc.imported_meshes {
+            if let Some(ref brep_path) = geom.brep_blob_path {
+                if let Some(bytes) = blobs_by_path.remove(brep_path) {
+                    doc.imported_brep_blobs.insert(*body_id, bytes);
+                }
+            }
+            if let Some(ref col_path) = geom.face_colors_path {
+                if let Some(bytes) = blobs_by_path.remove(col_path) {
+                    if let Some(parsed) = decode_face_colors_blob(&bytes) {
+                        doc.imported_brep_face_colors.insert(*body_id, parsed);
+                    }
+                }
+            }
+        }
+
+        doc.rebuild_imported_body_index();
         Ok(doc)
     }
 
@@ -514,8 +690,110 @@ impl Document {
             header.set_cksum();
             builder.append(&header, &bytes[..])?;
         }
+
+        for (body_id, geom) in &doc.imported_meshes {
+            if !doc.imported_brep_blobs.contains_key(body_id) {
+                continue;
+            }
+            let Some(brep_path) = geom.brep_blob_path.as_ref() else {
+                continue;
+            };
+            let Some(colors_path) = geom.face_colors_path.as_ref() else {
+                continue;
+            };
+            let Some(brep_bytes) = doc.imported_brep_blobs.get(body_id) else {
+                continue;
+            };
+            let Some(colors) = doc.imported_brep_face_colors.get(body_id) else {
+                continue;
+            };
+            let colors_bytes = encode_face_colors_blob(colors);
+
+            let mut header = Header::new_gnu();
+            header.set_path(brep_path)?;
+            header.set_size(brep_bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, brep_bytes.as_slice())?;
+
+            let mut header = Header::new_gnu();
+            header.set_path(colors_path)?;
+            header.set_size(colors_bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, &colors_bytes[..])?;
+        }
         Ok(())
     }
+
+    fn sync_brep_paths_for_archive(doc: &mut Document) {
+        for (body_id, geom) in doc.imported_meshes.iter_mut() {
+            if doc.imported_brep_blobs.contains_key(body_id) {
+                geom.brep_blob_path = Some(format!("brep/{}.bin", body_id.0));
+                geom.face_colors_path = Some(format!("brep/{}.colors", body_id.0));
+            }
+        }
+    }
+
+    fn rebuild_imported_body_index(&mut self) {
+        self.imported_body_to_object.clear();
+
+        // Build index in tree order (roots -> descendants) and keep the first
+        // owner for each body to avoid hash-order instability when multiple
+        // metadata nodes reference the same tessellated body.
+        let mut stack: Vec<Uuid> = self.imported_object_roots.iter().rev().copied().collect();
+        while let Some(node_id) = stack.pop() {
+            if let Some(node) = self.imported_objects.get(&node_id) {
+                if let Some(body_id) = node.body_id {
+                    self.imported_body_to_object
+                        .entry(body_id)
+                        .or_insert(node_id);
+                }
+                for child in node.children.iter().rev() {
+                    stack.push(*child);
+                }
+            }
+        }
+
+        // Fallback for legacy / detached nodes not reachable from roots.
+        for (id, node) in &self.imported_objects {
+            if let Some(body_id) = node.body_id {
+                self.imported_body_to_object.entry(body_id).or_insert(*id);
+            }
+        }
+    }
+}
+
+fn encode_face_colors_blob(colors: &[[f32; 3]]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(4 + colors.len() * 12);
+    v.extend_from_slice(&(colors.len() as u32).to_le_bytes());
+    for c in colors {
+        for comp in c {
+            v.extend_from_slice(&comp.to_le_bytes());
+        }
+    }
+    v
+}
+
+fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {
+    if data.len() < 4 {
+        return None;
+    }
+    let n = u32::from_le_bytes(data.get(0..4)?.try_into().ok()?) as usize;
+    let need = 4usize.saturating_add(n.saturating_mul(12));
+    if data.len() < need {
+        return None;
+    }
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let o = 4 + i * 12;
+        out.push([
+            f32::from_le_bytes(data.get(o..o + 4)?.try_into().ok()?),
+            f32::from_le_bytes(data.get(o + 4..o + 8)?.try_into().ok()?),
+            f32::from_le_bytes(data.get(o + 8..o + 12)?.try_into().ok()?),
+        ]);
+    }
+    Some(out)
 }
 
 fn next_indexed_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> String {

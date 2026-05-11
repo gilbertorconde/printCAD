@@ -112,15 +112,18 @@ impl CadCameraState {
         self.visible_height_at_focal_plane() / h
     }
 
-    pub fn set_projection_preserve_framing(&mut self, new: ProjectionMode, _axes: &axes::AxisSystem) {
+    pub fn set_projection_preserve_framing(
+        &mut self,
+        new: ProjectionMode,
+        _axes: &axes::AxisSystem,
+    ) {
         if new == self.projection {
             return;
         }
         let prev = self.projection;
         match (prev, new) {
             (ProjectionMode::Perspective, ProjectionMode::Orthographic) => {
-                self.ortho_height =
-                    2.0 * self.focal_distance * (self.height_angle_rad * 0.5).tan();
+                self.ortho_height = 2.0 * self.focal_distance * (self.height_angle_rad * 0.5).tan();
             }
             (ProjectionMode::Orthographic, ProjectionMode::Perspective) => {
                 let tan_half = self.ortho_height / (2.0 * self.focal_distance.max(1e-9));

@@ -196,25 +196,25 @@ impl Workbench for SketchWorkbench {
             // under that body in the feature tree.
             let owning_body = ctx.selected_body_id.map(BodyId);
 
-                match ctx
-                    .document
+            match ctx
+                .document
                 .add_feature_in_body(sketch_feature, sketch_name.clone(), owning_body)
-                {
-                    Ok(feature_id) => {
-                        self.active_sketch_id = Some(feature_id);
+            {
+                Ok(feature_id) => {
+                    self.active_sketch_id = Some(feature_id);
                     self.line_tool_state = None;
                     self.circle_tool_state = None;
                     self.arc_tool_state = None;
                     ctx.active_document_object = Some(feature_id);
-                        ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
-                            plane_origin: plane.origin,
-                            plane_normal: plane.normal,
-                            plane_up: plane.y_axis,
-                        });
+                    ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
+                        plane_origin: plane.origin,
+                        plane_normal: plane.normal,
+                        plane_up: plane.y_axis,
+                    });
                     ctx.log_info(format!("Created new sketch: {}", sketch_name));
-                    }
-                    Err(e) => {
-                        ctx.log_error(format!("Failed to create sketch: {}", e));
+                }
+                Err(e) => {
+                    ctx.log_error(format!("Failed to create sketch: {}", e));
                 }
             }
             return InputResult::consumed();

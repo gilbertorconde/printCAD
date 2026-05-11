@@ -305,29 +305,17 @@ impl MeshCache {
                 let slice = std::slice::from_raw_parts_mut(ptr, vertex_count);
                 if vertex_count >= PARALLEL_PACK_THRESHOLD {
                     use rayon::prelude::*;
-                    slice
-                        .par_iter_mut()
-                        .enumerate()
-                        .for_each(|(i, dst)| {
-                            let pos = mesh.positions[i];
-                            let normal =
-                                mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
-                            let color = mesh
-                                .colors
-                                .get(i)
-                                .copied()
-                                .unwrap_or([1.0, 1.0, 1.0]);
-                            *dst = MeshVertex::new(pos, normal, color);
-                        });
+                    slice.par_iter_mut().enumerate().for_each(|(i, dst)| {
+                        let pos = mesh.positions[i];
+                        let normal = mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
+                        let color = mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]);
+                        *dst = MeshVertex::new(pos, normal, color);
+                    });
                 } else {
                     for i in 0..vertex_count {
                         let pos = mesh.positions[i];
                         let normal = mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
-                        let color = mesh
-                            .colors
-                            .get(i)
-                            .copied()
-                            .unwrap_or([1.0, 1.0, 1.0]);
+                        let color = mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]);
                         slice[i] = MeshVertex::new(pos, normal, color);
                     }
                 }
@@ -697,12 +685,10 @@ impl MeshRenderer {
                     vk::PipelineBindPoint::GRAPHICS,
                     self.edge_pipeline,
                 );
-                let edge_w = lighting.edge_line_width.clamp(
-                    self.line_width_range[0],
-                    self.line_width_range[1],
-                );
-                self.device
-                    .cmd_set_line_width(command_buffer, edge_w);
+                let edge_w = lighting
+                    .edge_line_width
+                    .clamp(self.line_width_range[0], self.line_width_range[1]);
+                self.device.cmd_set_line_width(command_buffer, edge_w);
                 self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
                 self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 self.push_frame_constants(command_buffer, &frame_pc);
@@ -793,12 +779,8 @@ impl MeshRenderer {
         };
         self.push_draw_constants(command_buffer, &draw_pc);
         unsafe {
-            self.device.cmd_bind_vertex_buffers(
-                command_buffer,
-                0,
-                &[cached.vertex_buffer],
-                &[0],
-            );
+            self.device
+                .cmd_bind_vertex_buffers(command_buffer, 0, &[cached.vertex_buffer], &[0]);
             self.device.cmd_bind_index_buffer(
                 command_buffer,
                 cached.index_buffer,
@@ -822,12 +804,8 @@ impl MeshRenderer {
         };
         self.push_draw_constants(command_buffer, &draw_pc);
         unsafe {
-            self.device.cmd_bind_vertex_buffers(
-                command_buffer,
-                0,
-                &[cached.vertex_buffer],
-                &[0],
-            );
+            self.device
+                .cmd_bind_vertex_buffers(command_buffer, 0, &[cached.vertex_buffer], &[0]);
             self.device.cmd_bind_index_buffer(
                 command_buffer,
                 cached.edge_index_buffer,
@@ -1022,10 +1000,7 @@ fn create_mesh_pipeline(
         vk::DynamicState::SCISSOR,
         vk::DynamicState::LINE_WIDTH,
     ];
-    let dynamic_states_basic = [
-        vk::DynamicState::VIEWPORT,
-        vk::DynamicState::SCISSOR,
-    ];
+    let dynamic_states_basic = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
     let dynamic_state = if dynamic_line_width {
         vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&dynamic_states_with_line)
     } else {

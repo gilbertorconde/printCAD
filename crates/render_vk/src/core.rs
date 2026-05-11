@@ -170,10 +170,7 @@ impl RendererCore {
             );
             max_samples
         };
-        info!(
-            "Using MSAA: {}x",
-            msaa_samples.as_raw()
-        );
+        info!("Using MSAA: {}x", msaa_samples.as_raw());
 
         // Find depth format
         let depth_format = find_depth_format(&instance, physical_device)
@@ -1426,8 +1423,7 @@ fn create_logical_device(
         })
         .collect();
 
-    let supported =
-        unsafe { instance.get_physical_device_features(physical_device) };
+    let supported = unsafe { instance.get_physical_device_features(physical_device) };
     let mut device_features = vk::PhysicalDeviceFeatures::default();
     // Without `wideLines`, Vulkan only allows pipeline `lineWidth` == 1.0, so
     // thicker face-edge `LINE_LIST` drawing is impossible.

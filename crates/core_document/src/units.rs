@@ -12,9 +12,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Internal storage stays in millimetres; this enum only controls how values
 /// are rendered in the UI (status bar, dimension labels, etc.).
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Unit {
     /// Millimetres (1 unit = 1 mm). Default and matches storage.

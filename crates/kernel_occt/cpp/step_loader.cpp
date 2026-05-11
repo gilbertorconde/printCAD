@@ -18,10 +18,15 @@
 #include "step_loader.h"
 
 #include <BRepAdaptor_Surface.hxx>
+#include <BRep_Builder.hxx>
 #include <BRep_Tool.hxx>
+#include <BRepTools.hxx>
 #include <BRepMesh_IncrementalMesh.hxx>
+#include <IMeshTools_Parameters.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
+#include <Standard_Version.hxx>
+#include <gp.hxx>
 #include <Poly_Triangulation.hxx>
 #include <Poly_Triangle.hxx>
 #include <Quantity_Color.hxx>
@@ -32,7 +37,10 @@
 #include <TDF_ChildIterator.hxx>
 #include <TDF_Label.hxx>
 #include <TDF_LabelSequence.hxx>
+#include <TDF_Tool.hxx>
+#include <TDataStd_Name.hxx>
 #include <TDocStd_Document.hxx>
+#include <TCollection_AsciiString.hxx>
 #include <TopAbs_Orientation.hxx>
 #include <TopAbs_ShapeEnum.hxx>
 #include <TopExp.hxx>
@@ -71,8 +79,10 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -108,8 +118,211 @@ PrintcadOcctImportResult make_error(const std::string& message) {
     PrintcadOcctImportResult result{};
     result.bodies = nullptr;
     result.body_count = 0;
+    result.nodes = nullptr;
+    result.node_count = 0;
     result.error = duplicate_to_malloc(message);
     return result;
+}
+
+std::string label_name(const TDF_Label& label) {
+    if (label.IsNull()) {
+        return {};
+    }
+    Handle(TDataStd_Name) name_attr;
+    if (!label.FindAttribute(TDataStd_Name::GetID(), name_attr) || name_attr.IsNull()) {
+        return {};
+    }
+    const TCollection_AsciiString ascii(name_attr->Get());
+    return std::string(ascii.ToCString());
+}
+
+bool label_visible(const TDF_Label& label, const Handle(XCAFDoc_ColorTool)& color_tool) {
+    if (label.IsNull() || color_tool.IsNull()) {
+        return true;
+    }
+    return color_tool->IsVisible(label);
+}
+
+void trsf_to_row_major(const gp_Trsf& trsf, float* out16) {
+    if (out16 == nullptr) {
+        return;
+    }
+    out16[0] = static_cast<float>(trsf.Value(1, 1));
+    out16[1] = static_cast<float>(trsf.Value(1, 2));
+    out16[2] = static_cast<float>(trsf.Value(1, 3));
+    out16[3] = static_cast<float>(trsf.Value(1, 4));
+    out16[4] = static_cast<float>(trsf.Value(2, 1));
+    out16[5] = static_cast<float>(trsf.Value(2, 2));
+    out16[6] = static_cast<float>(trsf.Value(2, 3));
+    out16[7] = static_cast<float>(trsf.Value(2, 4));
+    out16[8] = static_cast<float>(trsf.Value(3, 1));
+    out16[9] = static_cast<float>(trsf.Value(3, 2));
+    out16[10] = static_cast<float>(trsf.Value(3, 3));
+    out16[11] = static_cast<float>(trsf.Value(3, 4));
+    out16[12] = 0.f;
+    out16[13] = 0.f;
+    out16[14] = 0.f;
+    out16[15] = 1.f;
+}
+
+bool trsf_is_identity(const gp_Trsf& trsf) {
+    return trsf.Form() == gp_Identity;
+}
+
+// Globally unique OCAF label key (e.g. "0:1:1:1:3"). `TDF_Label::Tag()` returns
+// only the local integer within the parent label and collides across branches,
+// so we use the full entry string for tree↔body mapping.
+std::string label_entry(const TDF_Label& label) {
+    if (label.IsNull()) {
+        return {};
+    }
+    TCollection_AsciiString ascii;
+    TDF_Tool::Entry(label, ascii);
+    return std::string(ascii.ToCString());
+}
+
+void collect_body_labels_recursive(
+    const TDF_Label& label,
+    const Handle(XCAFDoc_ShapeTool)& shape_tool,
+    std::unordered_set<std::string>& seen_label_entries,
+    std::vector<TDF_Label>& out_body_labels) {
+    if (label.IsNull() || shape_tool.IsNull()) {
+        return;
+    }
+
+    if (shape_tool->IsAssembly(label)) {
+        TDF_LabelSequence children;
+        shape_tool->GetComponents(label, children, Standard_False);
+        for (Standard_Integer i = 1; i <= children.Length(); ++i) {
+            collect_body_labels_recursive(children.Value(i), shape_tool, seen_label_entries, out_body_labels);
+        }
+        return;
+    }
+
+    const TopoDS_Shape shape = shape_tool->GetShape(label);
+    if (shape.IsNull()) {
+        return;
+    }
+    if (seen_label_entries.insert(label_entry(label)).second) {
+        out_body_labels.push_back(label);
+    }
+}
+
+int node_kind_for_label(const TDF_Label& label, const Handle(XCAFDoc_ShapeTool)& shape_tool) {
+    if (!shape_tool.IsNull()) {
+        if (shape_tool->IsReference(label) || shape_tool->IsComponent(label)) {
+            return 2; // instance
+        }
+        if (shape_tool->IsAssembly(label)) {
+            return 0; // assembly
+        }
+    }
+    return 1; // part
+}
+
+void append_node_recursive(
+    const TDF_Label& label,
+    int64_t parent_id,
+    const Handle(XCAFDoc_ShapeTool)& shape_tool,
+    const Handle(XCAFDoc_ColorTool)& color_tool,
+    const std::unordered_map<std::string, int64_t>& body_index_by_label_entry,
+    std::vector<PrintcadOcctImportNode>& out_nodes,
+    uint64_t& next_id) {
+    if (label.IsNull() || shape_tool.IsNull()) {
+        return;
+    }
+
+    PrintcadOcctImportNode node{};
+    node.id = next_id++;
+    node.parent_id = parent_id;
+    node.name = duplicate_to_malloc(label_name(label));
+    node.kind = node_kind_for_label(label, shape_tool);
+    node.visible = label_visible(label, color_tool) ? 1 : 0;
+    node.body_index = -1;
+    node.has_local_transform = 0;
+    for (float& v : node.local_transform) {
+        v = 0.f;
+    }
+
+    const auto it_body = body_index_by_label_entry.find(label_entry(label));
+    if (it_body != body_index_by_label_entry.end()) {
+        node.body_index = it_body->second;
+    }
+
+    const TopLoc_Location loc = XCAFDoc_ShapeTool::GetLocation(label);
+    const gp_Trsf trsf = loc.Transformation();
+    if (!trsf_is_identity(trsf)) {
+        node.has_local_transform = 1;
+        trsf_to_row_major(trsf, node.local_transform);
+    }
+
+    out_nodes.push_back(node);
+    const int64_t this_id = static_cast<int64_t>(node.id);
+
+    if (shape_tool->IsAssembly(label)) {
+        TDF_LabelSequence children;
+        shape_tool->GetComponents(label, children, Standard_False);
+        for (Standard_Integer i = 1; i <= children.Length(); ++i) {
+            append_node_recursive(
+                children.Value(i),
+                this_id,
+                shape_tool,
+                color_tool,
+                body_index_by_label_entry,
+                out_nodes,
+                next_id);
+        }
+        return;
+    }
+
+    if (shape_tool->IsReference(label)) {
+        TDF_Label referred;
+        XCAFDoc_ShapeTool::GetReferredShape(label, referred);
+        if (!referred.IsNull()) {
+            append_node_recursive(
+                referred,
+                this_id,
+                shape_tool,
+                color_tool,
+                body_index_by_label_entry,
+                out_nodes,
+                next_id);
+        }
+    }
+}
+
+std::vector<PrintcadOcctImportNode> build_import_nodes(
+    const std::vector<TDF_Label>& body_labels,
+    const Handle(XCAFDoc_ShapeTool)& shape_tool,
+    const Handle(XCAFDoc_ColorTool)& color_tool) {
+    std::vector<PrintcadOcctImportNode> out;
+    if (shape_tool.IsNull()) {
+        return out;
+    }
+
+    std::unordered_map<std::string, int64_t> body_index_by_label_entry;
+    body_index_by_label_entry.reserve(body_labels.size());
+    for (size_t i = 0; i < body_labels.size(); ++i) {
+        body_index_by_label_entry.emplace(label_entry(body_labels[i]), static_cast<int64_t>(i));
+    }
+
+    TDF_LabelSequence roots;
+    shape_tool->GetFreeShapes(roots);
+    if (roots.Length() <= 0) {
+        return out;
+    }
+    uint64_t next_id = 1;
+    for (Standard_Integer i = 1; i <= roots.Length(); ++i) {
+        append_node_recursive(
+            roots.Value(i),
+            -1,
+            shape_tool,
+            color_tool,
+            body_index_by_label_entry,
+            out,
+            next_id);
+    }
+    return out;
 }
 
 static bool try_shape_color(
@@ -1349,19 +1562,12 @@ bool finalize_body(
     return true;
 }
 
-void process_top_level(
+std::vector<std::array<float, 3>> collect_face_display_rgbs(
     const TopoDS_Shape& shape,
     const TDF_Label& xcaf_root_label,
-    std::vector<PrintcadOcctBody>& out,
-    int index,
-    bool weld_cross_face,
-    float weld_angle_cos_threshold,
     const Handle(XCAFDoc_ColorTool)& color_tool,
     const Handle(XCAFDoc_VisMaterialTool)& vis_tool,
     const Handle(XCAFDoc_ShapeTool)& shape_tool) {
-    MeshBuffer buffer;
-    buffer.face_starts.push_back(0);
-
     TopTools_IndexedDataMapOfShapeListOfShape face_to_solids;
     TopTools_IndexedDataMapOfShapeListOfShape face_to_shells;
     TopTools_IndexedDataMapOfShapeListOfShape face_to_compounds;
@@ -1384,6 +1590,7 @@ void process_top_level(
             xcaf_subshape_face_map,
             xcaf_subshape_face_rgb);
 
+    std::vector<std::array<float, 3>> rgbs;
     for (TopExp_Explorer it(shape, TopAbs_FACE); it.More(); it.Next()) {
         const TopoDS_Face& face = TopoDS::Face(it.Current());
         const std::array<float, 3> frgb_alb = face_albedo(
@@ -1417,12 +1624,43 @@ void process_top_level(
                 frgb = frgb_alb;
             }
         }
-        if (append_face(face, frgb, buffer)) {
+        rgbs.push_back(frgb);
+    }
+    return rgbs;
+}
+
+void mesh_shape_from_precolored_faces(
+    const TopoDS_Shape& shape,
+    const std::vector<std::array<float, 3>>& face_rgbs,
+    std::vector<PrintcadOcctBody>& out,
+    int index,
+    bool weld_cross_face,
+    float weld_angle_cos_threshold,
+    bool generate_boundary_edges) {
+    if (face_rgbs.empty()) {
+        return;
+    }
+    size_t face_idx = 0;
+    MeshBuffer buffer;
+    buffer.face_starts.push_back(0);
+    for (TopExp_Explorer it(shape, TopAbs_FACE); it.More(); it.Next()) {
+        if (face_idx >= face_rgbs.size()) {
+            return;
+        }
+        const TopoDS_Face& face = TopoDS::Face(it.Current());
+        if (append_face(face, face_rgbs[face_idx], buffer)) {
             buffer.face_starts.push_back(buffer.indices.size());
         }
+        ++face_idx;
+    }
+    if (face_idx != face_rgbs.size()) {
+        return;
     }
 
-    std::vector<uint32_t> edges = extract_boundary_edges(buffer.indices);
+    std::vector<uint32_t> edges;
+    if (generate_boundary_edges) {
+        edges = extract_boundary_edges(buffer.indices);
+    }
 
     if (weld_cross_face && !buffer.indices.empty()) {
         const size_t vertex_count = buffer.positions.size() / 3;
@@ -1457,6 +1695,82 @@ void process_top_level(
 
     std::string name = "Body " + std::to_string(index + 1);
     finalize_body(buffer, name, edges, out);
+}
+
+void process_top_level(
+    const TopoDS_Shape& shape,
+    const TDF_Label& xcaf_root_label,
+    std::vector<PrintcadOcctBody>& out,
+    int index,
+    bool weld_cross_face,
+    float weld_angle_cos_threshold,
+    bool generate_boundary_edges,
+    const Handle(XCAFDoc_ColorTool)& color_tool,
+    const Handle(XCAFDoc_VisMaterialTool)& vis_tool,
+    const Handle(XCAFDoc_ShapeTool)& shape_tool) {
+    std::vector<std::array<float, 3>> rgbs =
+        collect_face_display_rgbs(shape, xcaf_root_label, color_tool, vis_tool, shape_tool);
+    mesh_shape_from_precolored_faces(
+        shape, rgbs, out, index, weld_cross_face, weld_angle_cos_threshold, generate_boundary_edges);
+}
+
+static void shape_bbox_floats(const TopoDS_Shape& shape, float* bbox_min, float* bbox_max) {
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    Standard_Real xmin;
+    Standard_Real ymin;
+    Standard_Real zmin;
+    Standard_Real xmax;
+    Standard_Real ymax;
+    Standard_Real zmax;
+    box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    bbox_min[0] = static_cast<float>(xmin);
+    bbox_min[1] = static_cast<float>(ymin);
+    bbox_min[2] = static_cast<float>(zmin);
+    bbox_max[0] = static_cast<float>(xmax);
+    bbox_max[1] = static_cast<float>(ymax);
+    bbox_max[2] = static_cast<float>(zmax);
+}
+
+static bool brep_write_to_vector(const TopoDS_Shape& shape, std::vector<uint8_t>& out) {
+    std::ostringstream oss;
+    BRepTools::Write(shape, oss);
+    const std::string& s = oss.str();
+    if (s.empty()) {
+        return false;
+    }
+    out.assign(reinterpret_cast<const uint8_t*>(s.data()),
+               reinterpret_cast<const uint8_t*>(s.data()) + s.size());
+    return true;
+}
+
+static bool brep_read_from_bytes(const uint8_t* data, size_t len, TopoDS_Shape& shape) {
+    if (data == nullptr || len == 0) {
+        return false;
+    }
+    const std::string s(reinterpret_cast<const char*>(data), len);
+    std::istringstream iss(s);
+    BRep_Builder builder;
+    BRepTools::Read(shape, iss, builder);
+    return !shape.IsNull();
+}
+
+static PrintcadOcctBrepImportResult make_brep_error(const std::string& message) {
+    PrintcadOcctBrepImportResult result{};
+    result.bodies = nullptr;
+    result.body_count = 0;
+    result.nodes = nullptr;
+    result.node_count = 0;
+    result.error = duplicate_to_malloc(message);
+    return result;
+}
+
+static size_t count_faces(const TopoDS_Shape& shape) {
+    size_t n = 0;
+    for (TopExp_Explorer it(shape, TopAbs_FACE); it.More(); it.Next()) {
+        ++n;
+    }
+    return n;
 }
 
 bool try_read_step_xcaf(
@@ -1522,12 +1836,22 @@ bool try_read_step_xcaf(
         shape_tool->ComputeShapes(labels.Value(i));
     }
 
+    std::vector<TDF_Label> body_labels;
+    std::unordered_set<std::string> seen_label_entries;
     for (Standard_Integer i = 1; i <= labels.Length(); ++i) {
-        const TDF_Label& root_l = labels.Value(i);
-        const TopoDS_Shape sh = shape_tool->GetShape(root_l);
+        collect_body_labels_recursive(labels.Value(i), shape_tool, seen_label_entries, body_labels);
+    }
+    if (body_labels.empty()) {
+        for (Standard_Integer i = 1; i <= labels.Length(); ++i) {
+            body_labels.push_back(labels.Value(i));
+        }
+    }
+
+    for (const TDF_Label& body_label : body_labels) {
+        const TopoDS_Shape sh = shape_tool->GetShape(body_label);
         if (!sh.IsNull()) {
             out_shapes.push_back(sh);
-            out_root_labels.push_back(root_l);
+            out_root_labels.push_back(body_label);
         }
     }
     if (out_shapes.empty()) {
@@ -1541,14 +1865,73 @@ bool try_read_step_xcaf(
     return true;
 }
 
+// Bounding-box scaled linear deflection: (dx + dy + dz) / 300 × multiplier.
+// Yields a chord height that scales with model size so coarse parts and
+// detailed parts share comparable triangle density without per-model tuning.
+static double bbox_linear_deflection(const TopoDS_Shape& shape, double mesh_deviation) {
+    Bnd_Box bounds;
+    BRepBndLib::Add(shape, bounds);
+    bounds.SetGap(0.0);
+    Standard_Real xMin = 0.0, yMin = 0.0, zMin = 0.0, xMax = 0.0, yMax = 0.0, zMax = 0.0;
+    bounds.Get(xMin, yMin, zMin, xMax, yMax, zMax);
+    const double dx = static_cast<double>(xMax - xMin);
+    const double dy = static_cast<double>(yMax - yMin);
+    const double dz = static_cast<double>(zMax - zMin);
+    return ((dx + dy + dz) / 300.0) * mesh_deviation;
+}
+
+// Incremental BRep mesher tuned for viewport display: clean any stale poly
+// representation, then run BRepMesh with absolute deflection + angular limit
+// in parallel. Quality decrease is allowed so OCCT can pull back on
+// pathological faces rather than spinning indefinitely.
+static void brepmesh_incremental(TopoDS_Shape& shape, double linear_abs, double angular_rad) {
+#if OCC_VERSION_HEX >= 0x070600
+    BRepTools::Clean(shape, Standard_True);
+#else
+    BRepTools::Clean(shape);
+#endif
+    Standard_Real deflection = linear_abs;
+    if (deflection < gp::Resolution()) {
+        deflection = Precision::Confusion();
+    }
+    const Standard_Real angle =
+        angular_rad > 0.0 ? static_cast<Standard_Real>(angular_rad) : 0.5;
+
+    IMeshTools_Parameters mesh_params;
+    mesh_params.Deflection = deflection;
+    mesh_params.Relative = Standard_False;
+    mesh_params.Angle = angle;
+    mesh_params.InParallel = Standard_True;
+    mesh_params.AllowQualityDecrease = Standard_True;
+
+    BRepMesh_IncrementalMesh mesher(shape, mesh_params);
+    mesher.Perform();
+}
+
+// linear_deflection_mode: 0 = bbox-scaled (linear_value = mesh deviation pref), 1 = absolute.
+static double resolve_linear_deflection_abs(
+    const TopoDS_Shape& shape,
+    int linear_deflection_mode,
+    double linear_value) {
+    if (linear_deflection_mode != 0) {
+        return linear_value > 0.0 ? linear_value : 0.5;
+    }
+    const double mult = linear_value > 0.0 ? linear_value : 0.2;
+    return bbox_linear_deflection(shape, mult);
+}
+
 } // namespace
+
+static void free_import_nodes_vec(std::vector<PrintcadOcctImportNode>& nodes);
 
 extern "C" PrintcadOcctImportResult printcad_occt_import_step(
     const char* utf8_path,
-    double linear_deflection,
+    int linear_deflection_mode,
+    double linear_value,
     double angular_deflection_rad,
     int weld_cross_face,
-    double weld_angle_threshold_rad) {
+    double weld_angle_threshold_rad,
+    int generate_boundary_edges) {
     if (utf8_path == nullptr) {
         return make_error("STEP path is null");
     }
@@ -1604,19 +1987,20 @@ extern "C" PrintcadOcctImportResult printcad_occt_import_step(
         const auto t_after_read_transfer = clock::now();
 
         for (auto& shape : top_level) {
-            BRepMesh_IncrementalMesh mesher(
+            const double linear_abs = resolve_linear_deflection_abs(
                 shape,
-                linear_deflection > 0.0 ? linear_deflection : 0.5,
-                /*isRelative=*/Standard_False,
-                angular_deflection_rad > 0.0 ? angular_deflection_rad : 0.5,
-                /*isInParallel=*/Standard_True);
-            mesher.Perform();
+                linear_deflection_mode,
+                linear_value);
+            const double ang =
+                angular_deflection_rad > 0.0 ? angular_deflection_rad : 0.5;
+            brepmesh_incremental(shape, linear_abs, ang);
         }
         const auto t_after_brepmesh = clock::now();
 
         const float weld_angle_cos =
             static_cast<float>(std::cos(std::max(0.0, weld_angle_threshold_rad)));
         const bool do_weld = weld_cross_face != 0;
+        const bool do_edges = generate_boundary_edges != 0;
 
         std::vector<PrintcadOcctBody> bodies;
         bodies.reserve(top_level.size());
@@ -1630,6 +2014,7 @@ extern "C" PrintcadOcctImportResult printcad_occt_import_step(
                 static_cast<int>(i),
                 do_weld,
                 weld_angle_cos,
+                do_edges,
                 color_tool,
                 vis_tool,
                 shape_tool);
@@ -1643,7 +2028,7 @@ extern "C" PrintcadOcctImportResult printcad_occt_import_step(
         std::fprintf(
             stderr,
             "[printcad_import_cpp] read_transfer=%.1fms brepmesh=%.1fms "
-            "triangulate_weld=%.1fms total_cpp=%.1fms xcaf=%d file=%s\n",
+            "tessellate_weld_extract=%.1fms total_cpp=%.1fms xcaf=%d file=%s\n",
             read_ms,
             brepmesh_ms,
             extract_ms,
@@ -1653,6 +2038,401 @@ extern "C" PrintcadOcctImportResult printcad_occt_import_step(
 
         if (bodies.empty()) {
             return make_error("STEP file produced no triangulated geometry");
+        }
+
+        std::vector<PrintcadOcctImportNode> nodes =
+            build_import_nodes(xcaf_root_labels, shape_tool, color_tool);
+
+        PrintcadOcctImportResult result{};
+        result.body_count = bodies.size();
+        result.bodies = static_cast<PrintcadOcctBody*>(
+            std::malloc(bodies.size() * sizeof(PrintcadOcctBody)));
+        result.nodes = nullptr;
+        result.node_count = 0;
+        if (result.bodies == nullptr) {
+            for (auto& body : bodies) {
+                std::free(body.positions);
+                std::free(body.normals);
+                std::free(body.colors);
+                std::free(body.indices);
+                std::free(body.edges);
+                std::free(body.name);
+            }
+            free_import_nodes_vec(nodes);
+            return make_error("Out of memory while building STEP import result");
+        }
+        std::memcpy(result.bodies, bodies.data(), bodies.size() * sizeof(PrintcadOcctBody));
+        result.node_count = nodes.size();
+        result.nodes = nullptr;
+        if (!nodes.empty()) {
+            result.nodes = static_cast<PrintcadOcctImportNode*>(
+                std::malloc(nodes.size() * sizeof(PrintcadOcctImportNode)));
+            if (result.nodes == nullptr) {
+                for (auto& body : bodies) {
+                    std::free(body.positions);
+                    std::free(body.normals);
+                    std::free(body.colors);
+                    std::free(body.indices);
+                    std::free(body.edges);
+                    std::free(body.name);
+                }
+                std::free(result.bodies);
+                free_import_nodes_vec(nodes);
+                return make_error("Out of memory while building STEP import nodes");
+            }
+            std::memcpy(result.nodes, nodes.data(), nodes.size() * sizeof(PrintcadOcctImportNode));
+        }
+        result.error = nullptr;
+        return result;
+    } catch (Standard_Failure const& ex) {
+        return make_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_error("Unknown exception while importing STEP file");
+    }
+}
+
+static void free_brep_bodies_vec(std::vector<PrintcadOcctBrepBody>& bodies) {
+    for (auto& b : bodies) {
+        std::free(b.name);
+        std::free(b.brep_blob);
+        std::free(b.face_colors);
+        std::free(b.mesh_positions);
+        std::free(b.mesh_normals);
+        std::free(b.mesh_colors);
+        std::free(b.mesh_indices);
+        std::free(b.mesh_edges);
+    }
+    bodies.clear();
+}
+
+static void free_import_nodes_vec(std::vector<PrintcadOcctImportNode>& nodes) {
+    for (auto& n : nodes) {
+        std::free(n.name);
+        n.name = nullptr;
+    }
+    nodes.clear();
+}
+
+extern "C" PrintcadOcctBrepImportResult printcad_occt_import_step_brep(
+    const char* utf8_path,
+    int serialize_brep,
+    int linear_deflection_mode,
+    double linear_value,
+    double angular_deflection_rad,
+    int weld_cross_face,
+    double weld_angle_threshold_rad,
+    int generate_boundary_edges) {
+    if (utf8_path == nullptr) {
+        return make_brep_error("STEP path is null");
+    }
+
+    try {
+        using clock = std::chrono::steady_clock;
+        const auto t_cpp_start = clock::now();
+
+        std::vector<TopoDS_Shape> top_level;
+        std::vector<TDF_Label> xcaf_root_labels;
+        Handle(TDocStd_Document) xcaf_doc;
+        Handle(XCAFDoc_ColorTool) color_tool;
+        Handle(XCAFDoc_ShapeTool) shape_tool;
+        Handle(XCAFDoc_VisMaterialTool) vis_tool;
+        const bool xcaf_ok = try_read_step_xcaf(
+            utf8_path,
+            top_level,
+            xcaf_root_labels,
+            xcaf_doc,
+            color_tool,
+            shape_tool,
+            vis_tool);
+
+        if (!xcaf_ok) {
+            STEPControl_Reader reader;
+            const IFSelect_ReturnStatus status = reader.ReadFile(utf8_path);
+            if (status != IFSelect_RetDone) {
+                return make_brep_error(
+                    std::string("STEP read failed (status ")
+                    + std::to_string(static_cast<int>(status)) + ")");
+            }
+
+            const Standard_Integer transferred = reader.TransferRoots();
+            if (transferred <= 0) {
+                return make_brep_error("STEP file contained no transferable roots");
+            }
+
+            const Standard_Integer shape_count = reader.NbShapes();
+            if (shape_count <= 0) {
+                return make_brep_error("STEP file produced no shapes");
+            }
+
+            top_level.reserve(static_cast<size_t>(shape_count));
+            for (Standard_Integer i = 1; i <= shape_count; ++i) {
+                top_level.push_back(reader.Shape(i));
+            }
+            xcaf_root_labels.clear();
+            color_tool.Nullify();
+            shape_tool.Nullify();
+            vis_tool.Nullify();
+        }
+
+        const auto t_after_read_transfer = clock::now();
+
+        const float weld_angle_cos =
+            static_cast<float>(std::cos(std::max(0.0, weld_angle_threshold_rad)));
+        const bool do_weld = weld_cross_face != 0;
+        const bool do_edges = generate_boundary_edges != 0;
+
+        std::vector<PrintcadOcctBrepBody> bodies;
+        bodies.reserve(top_level.size());
+        for (size_t i = 0; i < top_level.size(); ++i) {
+            const TDF_Label root_lab =
+                (xcaf_ok && i < xcaf_root_labels.size()) ? xcaf_root_labels[i] : TDF_Label();
+            std::vector<std::array<float, 3>> rgbs = collect_face_display_rgbs(
+                top_level[i], root_lab, color_tool, vis_tool, shape_tool);
+
+            PrintcadOcctBrepBody entry{};
+            shape_bbox_floats(top_level[i], entry.bbox_min, entry.bbox_max);
+
+            const std::string name = "Body " + std::to_string(i + 1);
+            entry.name = duplicate_to_malloc(name);
+            if (entry.name == nullptr) {
+                free_brep_bodies_vec(bodies);
+                return make_brep_error("Out of memory while duplicating body name");
+            }
+
+            entry.face_count = rgbs.size();
+            entry.face_colors =
+                entry.face_count == 0
+                    ? nullptr
+                    : static_cast<float*>(std::malloc(entry.face_count * 3 * sizeof(float)));
+            if (entry.face_count > 0 && entry.face_colors == nullptr) {
+                std::free(entry.name);
+                free_brep_bodies_vec(bodies);
+                return make_brep_error("Out of memory while allocating face colour snapshot");
+            }
+            for (size_t f = 0; f < rgbs.size(); ++f) {
+                entry.face_colors[f * 3 + 0] = rgbs[f][0];
+                entry.face_colors[f * 3 + 1] = rgbs[f][1];
+                entry.face_colors[f * 3 + 2] = rgbs[f][2];
+            }
+
+            if (serialize_brep != 0) {
+                std::vector<uint8_t> brep_bin;
+                if (!brep_write_to_vector(top_level[i], brep_bin)) {
+                    std::free(entry.face_colors);
+                    std::free(entry.name);
+                    free_brep_bodies_vec(bodies);
+                    return make_brep_error("BRepTools::Write failed while serializing a body");
+                }
+                entry.brep_len = brep_bin.size();
+                entry.brep_blob =
+                    brep_bin.empty() ? nullptr
+                                     : static_cast<uint8_t*>(std::malloc(brep_bin.size()));
+                if (!brep_bin.empty() && entry.brep_blob == nullptr) {
+                    std::free(entry.face_colors);
+                    std::free(entry.name);
+                    free_brep_bodies_vec(bodies);
+                    return make_brep_error("Out of memory while allocating BRep blob");
+                }
+                if (!brep_bin.empty()) {
+                    std::memcpy(entry.brep_blob, brep_bin.data(), brep_bin.size());
+                }
+            } else {
+                entry.brep_blob = nullptr;
+                entry.brep_len = 0;
+                TopoDS_Shape& sh = top_level[i];
+                const double linear_abs =
+                    resolve_linear_deflection_abs(sh, linear_deflection_mode, linear_value);
+                const double ang =
+                    angular_deflection_rad > 0.0 ? angular_deflection_rad : 0.5;
+                brepmesh_incremental(sh, linear_abs, ang);
+
+                std::vector<PrintcadOcctBody> meshed_bodies;
+                mesh_shape_from_precolored_faces(
+                    sh,
+                    rgbs,
+                    meshed_bodies,
+                    static_cast<int>(i),
+                    do_weld,
+                    weld_angle_cos,
+                    do_edges);
+                if (meshed_bodies.size() != 1 || meshed_bodies[0].vertex_count == 0) {
+                    std::free(entry.face_colors);
+                    std::free(entry.name);
+                    free_brep_bodies_vec(bodies);
+                    return make_brep_error("inline tessellation produced no mesh geometry");
+                }
+                PrintcadOcctBody& mb = meshed_bodies[0];
+                std::free(mb.name);
+                mb.name = nullptr;
+
+                entry.mesh_positions = mb.positions;
+                entry.mesh_normals = mb.normals;
+                entry.mesh_colors = mb.colors;
+                entry.mesh_indices = mb.indices;
+                entry.mesh_edges = mb.edges;
+                entry.mesh_vertex_count = mb.vertex_count;
+                entry.mesh_index_count = mb.index_count;
+                entry.mesh_edge_count = mb.edge_count;
+
+                mb.positions = nullptr;
+                mb.normals = nullptr;
+                mb.colors = nullptr;
+                mb.indices = nullptr;
+                mb.edges = nullptr;
+                mb.vertex_count = 0;
+                mb.index_count = 0;
+                mb.edge_count = 0;
+            }
+
+            bodies.push_back(entry);
+        }
+
+        const auto t_after_snapshot = clock::now();
+        const double read_ms = ms_between(t_cpp_start, t_after_read_transfer);
+        const double extra_ms = ms_between(t_after_read_transfer, t_after_snapshot);
+        const double total_cpp_ms = ms_between(t_cpp_start, t_after_snapshot);
+        if (serialize_brep != 0) {
+            std::fprintf(
+                stderr,
+                "[printcad_import_brep_cpp] read_transfer=%.1fms brep_snapshot_serialize=%.1fms "
+                "total_cpp=%.1fms xcaf=%d file=%s\n",
+                read_ms,
+                extra_ms,
+                total_cpp_ms,
+                xcaf_ok ? 1 : 0,
+                utf8_path);
+        } else {
+            std::fprintf(
+                stderr,
+                "[printcad_import_brep_cpp] read_transfer=%.1fms inline_mesh_ms=%.1fms "
+                "total_cpp=%.1fms xcaf=%d file=%s\n",
+                read_ms,
+                extra_ms,
+                total_cpp_ms,
+                xcaf_ok ? 1 : 0,
+                utf8_path);
+        }
+
+        if (bodies.empty()) {
+            return make_brep_error("STEP file produced no bodies");
+        }
+
+        std::vector<PrintcadOcctImportNode> nodes =
+            build_import_nodes(xcaf_root_labels, shape_tool, color_tool);
+
+        PrintcadOcctBrepImportResult result{};
+        result.body_count = bodies.size();
+        result.bodies = static_cast<PrintcadOcctBrepBody*>(
+            std::malloc(bodies.size() * sizeof(PrintcadOcctBrepBody)));
+        if (result.bodies == nullptr) {
+            free_brep_bodies_vec(bodies);
+            free_import_nodes_vec(nodes);
+            return make_brep_error("Out of memory while building BRep import result");
+        }
+        std::memcpy(result.bodies, bodies.data(), bodies.size() * sizeof(PrintcadOcctBrepBody));
+        result.node_count = nodes.size();
+        result.nodes = nullptr;
+        if (!nodes.empty()) {
+            result.nodes = static_cast<PrintcadOcctImportNode*>(
+                std::malloc(nodes.size() * sizeof(PrintcadOcctImportNode)));
+            if (result.nodes == nullptr) {
+                free_brep_bodies_vec(bodies);
+                free_import_nodes_vec(nodes);
+                std::free(result.bodies);
+                return make_brep_error("Out of memory while building BRep import nodes");
+            }
+            std::memcpy(result.nodes, nodes.data(), nodes.size() * sizeof(PrintcadOcctImportNode));
+        }
+        result.error = nullptr;
+        return result;
+    } catch (Standard_Failure const& ex) {
+        return make_brep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_brep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_brep_error("Unknown exception while importing STEP file (brep)");
+    }
+}
+
+extern "C" PrintcadOcctImportResult printcad_occt_tessellate_brep(
+    const uint8_t* brep_bytes,
+    size_t brep_len,
+    const float* face_colors,
+    size_t face_color_count,
+    int linear_deflection_mode,
+    double linear_value,
+    double angular_deflection_rad,
+    int weld_cross_face,
+    double weld_angle_threshold_rad,
+    int generate_boundary_edges) {
+    if (brep_bytes == nullptr || brep_len == 0) {
+        return make_error("BRep blob is null or empty");
+    }
+    if (face_colors == nullptr && face_color_count > 0) {
+        return make_error("Face colours are null but face_count > 0");
+    }
+
+    try {
+        using clock = std::chrono::steady_clock;
+        const auto t_cpp_start = clock::now();
+
+        TopoDS_Shape shape;
+        if (!brep_read_from_bytes(brep_bytes, brep_len, shape) || shape.IsNull()) {
+            return make_error("BRepTools::Read failed (invalid or unsupported BRep blob)");
+        }
+
+        const size_t n_faces = count_faces(shape);
+        if (n_faces != face_color_count) {
+            return make_error(
+                std::string("face colour count (") + std::to_string(face_color_count)
+                + ") does not match BRep face count (" + std::to_string(n_faces) + ")");
+        }
+
+        const auto t_after_read = clock::now();
+
+        const double linear_abs =
+            resolve_linear_deflection_abs(shape, linear_deflection_mode, linear_value);
+        const double ang =
+            angular_deflection_rad > 0.0 ? angular_deflection_rad : 0.5;
+        brepmesh_incremental(shape, linear_abs, ang);
+
+        const auto t_after_brepmesh = clock::now();
+
+        std::vector<std::array<float, 3>> rgbs;
+        rgbs.reserve(face_color_count);
+        for (size_t i = 0; i < face_color_count; ++i) {
+            rgbs.push_back(std::array<float, 3>{
+                face_colors[i * 3 + 0], face_colors[i * 3 + 1], face_colors[i * 3 + 2]});
+        }
+
+        const float weld_angle_cos =
+            static_cast<float>(std::cos(std::max(0.0, weld_angle_threshold_rad)));
+        const bool do_weld = weld_cross_face != 0;
+        const bool do_edges = generate_boundary_edges != 0;
+
+        std::vector<PrintcadOcctBody> bodies;
+        mesh_shape_from_precolored_faces(
+            shape, rgbs, bodies, 0, do_weld, weld_angle_cos, do_edges);
+
+        const auto t_after_extract = clock::now();
+
+        const double read_ms = ms_between(t_cpp_start, t_after_read);
+        const double brepmesh_ms = ms_between(t_after_read, t_after_brepmesh);
+        const double extract_ms = ms_between(t_after_brepmesh, t_after_extract);
+        const double total_cpp_ms = ms_between(t_cpp_start, t_after_extract);
+        std::fprintf(
+            stderr,
+            "[printcad_tessellate_brep_cpp] brep_read=%.1fms brepmesh=%.1fms "
+            "tessellate_weld_extract=%.1fms total_cpp=%.1fms\n",
+            read_ms,
+            brepmesh_ms,
+            extract_ms,
+            total_cpp_ms);
+
+        if (bodies.empty()) {
+            return make_error("Tessellation produced no mesh geometry");
         }
 
         PrintcadOcctImportResult result{};
@@ -1668,7 +2448,7 @@ extern "C" PrintcadOcctImportResult printcad_occt_import_step(
                 std::free(body.edges);
                 std::free(body.name);
             }
-            return make_error("Out of memory while building STEP import result");
+            return make_error("Out of memory while building tessellation result");
         }
         std::memcpy(result.bodies, bodies.data(), bodies.size() * sizeof(PrintcadOcctBody));
         result.error = nullptr;
@@ -1678,7 +2458,7 @@ extern "C" PrintcadOcctImportResult printcad_occt_import_step(
     } catch (std::exception const& ex) {
         return make_error(std::string("std::exception: ") + ex.what());
     } catch (...) {
-        return make_error("Unknown exception while importing STEP file");
+        return make_error("Unknown exception while tessellating BRep blob");
     }
 }
 
@@ -1689,15 +2469,47 @@ extern "C" void printcad_occt_free_string(char* str) {
 }
 
 extern "C" void printcad_occt_free_result(PrintcadOcctImportResult result) {
-    for (size_t i = 0; i < result.body_count; ++i) {
-        PrintcadOcctBody& body = result.bodies[i];
-        std::free(body.positions);
-        std::free(body.normals);
-        std::free(body.colors);
-        std::free(body.indices);
-        std::free(body.edges);
-        std::free(body.name);
+    if (result.bodies != nullptr) {
+        for (size_t i = 0; i < result.body_count; ++i) {
+            PrintcadOcctBody& body = result.bodies[i];
+            std::free(body.positions);
+            std::free(body.normals);
+            std::free(body.colors);
+            std::free(body.indices);
+            std::free(body.edges);
+            std::free(body.name);
+        }
+        std::free(result.bodies);
     }
-    std::free(result.bodies);
+    if (result.nodes != nullptr) {
+        for (size_t i = 0; i < result.node_count; ++i) {
+            std::free(result.nodes[i].name);
+        }
+        std::free(result.nodes);
+    }
+    std::free(result.error);
+}
+
+extern "C" void printcad_occt_free_brep_import_result(PrintcadOcctBrepImportResult result) {
+    if (result.bodies != nullptr) {
+        for (size_t i = 0; i < result.body_count; ++i) {
+            PrintcadOcctBrepBody& b = result.bodies[i];
+            std::free(b.name);
+            std::free(b.brep_blob);
+            std::free(b.face_colors);
+            std::free(b.mesh_positions);
+            std::free(b.mesh_normals);
+            std::free(b.mesh_colors);
+            std::free(b.mesh_indices);
+            std::free(b.mesh_edges);
+        }
+        std::free(result.bodies);
+    }
+    if (result.nodes != nullptr) {
+        for (size_t i = 0; i < result.node_count; ++i) {
+            std::free(result.nodes[i].name);
+        }
+        std::free(result.nodes);
+    }
     std::free(result.error);
 }

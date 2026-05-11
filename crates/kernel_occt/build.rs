@@ -50,7 +50,7 @@ fn main() {
     let occt_libs = [
         "TKDESTEP", // STEP + STEPCAFControl (geometry + colours in DECAF doc).
         "TKXSBase",
-        "TKXCAF",  // XCAF document / colour attributes on shapes.
+        "TKXCAF", // XCAF document / colour attributes on shapes.
         "TKVCAF",
         "TKLCAF",
         "TKCAF",

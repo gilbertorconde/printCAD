@@ -455,12 +455,7 @@ impl PickRenderer {
                     0,
                     push_bytes,
                 );
-                device.cmd_bind_vertex_buffers(
-                    command_buffer,
-                    0,
-                    &[cached.vertex_buffer],
-                    &[0],
-                );
+                device.cmd_bind_vertex_buffers(command_buffer, 0, &[cached.vertex_buffer], &[0]);
                 device.cmd_bind_index_buffer(
                     command_buffer,
                     cached.index_buffer,

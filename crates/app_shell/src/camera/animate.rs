@@ -72,8 +72,7 @@ impl CameraTween {
                 let t = ease_in_out((*progress).min(1.0));
                 let eye = start_eye.lerp(*end_eye, t as f64);
                 let q = start_q.slerp(*end_q, t).normalize();
-                let ln =
-                    *start_ln_fd + (*end_ln_fd - *start_ln_fd) * t as f64;
+                let ln = *start_ln_fd + (*end_ln_fd - *start_ln_fd) * t as f64;
                 let fd = ln.exp();
 
                 *out_pose = (eye, q, fd);

@@ -7,5 +7,3 @@ use wb_sketch::SketchWorkbench;
 core_document::define_workbenches!(SketchWorkbench, PartDesignWorkbench);
 
 pub use core_document::registration::REGISTERED_WORKBENCHES;
-
-

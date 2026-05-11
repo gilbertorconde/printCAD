@@ -155,14 +155,7 @@ fn first_quoted_label(args: &str) -> Option<&str> {
 
 fn has_known_prefix(args: &str) -> bool {
     const PREFIXES: &[&str] = &[
-        ".MILLI.",
-        ".CENTI.",
-        ".MICRO.",
-        ".NANO.",
-        ".PICO.",
-        ".KILO.",
-        ".MEGA.",
-        ".DECI.",
+        ".MILLI.", ".CENTI.", ".MICRO.", ".NANO.", ".PICO.", ".KILO.", ".MEGA.", ".DECI.",
         ".HECTO.",
     ];
     PREFIXES.iter().any(|p| args.contains(p))

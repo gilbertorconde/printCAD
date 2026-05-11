@@ -13,6 +13,7 @@ mod ops;
 pub(crate) mod state;
 mod zoom_cursor;
 
+use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
@@ -20,7 +21,6 @@ use settings::CameraSettings;
 use state::{canonical_quat_to_world, CadCameraState};
 use tracing::{debug, trace};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
-use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 
 pub struct CameraController {
     pub(crate) state: CadCameraState,
@@ -177,14 +177,12 @@ impl CameraController {
                 if self.lmb_was_down_scene {
                     let thresh_sq =
                         settings.click_drag_threshold_px * settings.click_drag_threshold_px;
-                    let exceeds_anchor =
-                        (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq;
+                    let exceeds_anchor = (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq;
                     if exceeds_anchor && !self.lmb_dragging_scene {
                         self.lmb_dragging_scene = true;
                         if settings.orbit_pivot_pick {
-                            self.orbit_lmb_anchor_world = pick_world_under_cursor.map(|h| {
-                                DVec3::new(h.x as f64, h.y as f64, h.z as f64)
-                            });
+                            self.orbit_lmb_anchor_world = pick_world_under_cursor
+                                .map(|h| DVec3::new(h.x as f64, h.y as f64, h.z as f64));
                         }
                     }
                     if self.lmb_dragging_scene {
@@ -260,7 +258,11 @@ impl CameraController {
     }
 
     pub fn update(&mut self, dt_secs: f32, settings: &CameraSettings) -> bool {
-        let mut out = (self.state.eye, self.state.orientation, self.state.focal_distance);
+        let mut out = (
+            self.state.eye,
+            self.state.orientation,
+            self.state.focal_distance,
+        );
         let had = self.tween.tick(dt_secs, &mut out);
         if had {
             self.state.eye = out.0;
@@ -281,9 +283,7 @@ impl CameraController {
     }
 
     pub fn view_projection(&self) -> [[f32; 4]; 4] {
-        self.state
-            .view_projection(&self.axes)
-            .to_cols_array_2d()
+        self.state.view_projection(&self.axes).to_cols_array_2d()
     }
 
     pub fn viewport_info(&self) -> (f32, f32, u32, u32) {
@@ -328,10 +328,7 @@ impl CameraController {
     /// When [`CameraSettings::orbit_pivot_pick`] is on and LMB orbit rotates about a picked surface
     /// point, the indicator is drawn at that **anchor** projected to screen (not under the cursor
     /// while dragging).
-    pub fn rotation_pivot_indicator_screen_px(
-        &self,
-        orbit_pivot_pick: bool,
-    ) -> Option<(f32, f32)> {
+    pub fn rotation_pivot_indicator_screen_px(&self, orbit_pivot_pick: bool) -> Option<(f32, f32)> {
         if !self.rotation_pivot_marker_visible() {
             return None;
         }
@@ -440,8 +437,7 @@ impl CameraController {
             self.axes = AxisSystem::from(self.axis_preset);
         }
         self.state.height_angle_rad = (settings.fov_degrees as f64).to_radians();
-        self.state
-            .ortho_height = settings.ortho_height_mm as f64;
+        self.state.ortho_height = settings.ortho_height_mm as f64;
 
         let target_proj = settings.projection;
         if target_proj != self.state.projection {
@@ -477,8 +473,7 @@ impl CameraController {
         let focal = self.state.focal_point_dvec(&self.axes);
         let fd = self.state.focal_distance;
         let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end.normalize());
-        let eye_end =
-            focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
+        let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 
         let e0 = self.state.eye;
         let q0 = self.state.orientation;
@@ -509,10 +504,8 @@ impl CameraController {
             plane_origin.y as f64,
             plane_origin.z as f64,
         );
-        let fwd_end =
-            rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end);
-        let eye_end =
-            focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
+        let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end);
+        let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 
         self.cancel_animation();
         self.tween = CameraTween::begin(
@@ -544,8 +537,7 @@ impl CameraController {
         let fd = self.state.focal_distance;
 
         let fwd_end = rotate_vec_by_quat(self.axes.depth().vector() * -1.0, q_end);
-        let eye_end =
-            focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
+        let eye_end = focal - DVec3::new(fwd_end.x as f64, fwd_end.y as f64, fwd_end.z as f64) * fd;
 
         self.cancel_animation();
         self.tween = CameraTween::begin(e0, eye_end, current, q_end, fd, fd, settings);

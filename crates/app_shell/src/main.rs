@@ -7,9 +7,8 @@ mod ui;
 use anyhow::{Context, Result};
 use camera::{CameraController, CameraPointerResult};
 use core_document::{
-    BodyId, Document, DocumentService, ImportedGeometry, LogLevel,
-    MouseButton as WbMouseButton, Unit, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BodyId, Document, DocumentService, ImportedGeometry, LogLevel, MouseButton as WbMouseButton,
+    Unit, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::{Vec2, Vec3};
 use kernel_api::{ImportedModel, LengthUnit, TessellationSettings};
@@ -22,17 +21,14 @@ use render_vk::{
 };
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 use settings::{SettingsStore, UserSettings};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tracing::{error, info};
-use tracing_subscriber::{
-    prelude::*,
-    fmt,
-    EnvFilter,
-};
-use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use ui::{ActiveTool, ActiveWorkbench, StepImportDialogAction, TreeItemId, UiLayer};
 use uuid::Uuid;
 use winit::{
     application::ApplicationHandler,
@@ -94,8 +90,8 @@ fn aabb_fit_center_radius(aabb_min: Vec3, aabb_max: Vec3) -> (Vec3, f32) {
     (center, radius.max(1.0))
 }
 
-fn init_tracing_subscriber(
-) -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>> {
+fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>>
+{
     let stdout_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -136,7 +132,8 @@ fn init_tracing_subscriber(
 }
 
 fn main() -> Result<()> {
-    let _camera_tracing_guard = init_tracing_subscriber().context("tracing subscriber init failed")?;
+    let _camera_tracing_guard =
+        init_tracing_subscriber().context("tracing subscriber init failed")?;
 
     let document = Document::new("Untitled");
     let mut registry = DocumentService::default();
@@ -235,6 +232,10 @@ struct PrintCadApp {
     document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
     document_load_epoch: u64,
     document_open_in_flight: u32,
+    /// Picked STEP path and draft tessellation settings until the user confirms import.
+    step_import_pending: Option<(PathBuf, TessellationSettings)>,
+    /// Reuse the last confirmed import options when opening the dialog again.
+    last_step_import_detail: TessellationSettings,
 }
 
 /// Load outcome sent from the background open thread (document is large I/O).
@@ -300,6 +301,8 @@ impl PrintCadApp {
             document_open_rx,
             document_load_epoch: 0,
             document_open_in_flight: 0,
+            step_import_pending: None,
+            last_step_import_detail: TessellationSettings::default(),
         }
     }
 
@@ -444,6 +447,7 @@ impl PrintCadApp {
         while !self.kernel_worker.drain().is_empty() {}
 
         self.document_load_epoch = self.document_load_epoch.wrapping_add(1);
+        self.step_import_pending = None;
         while self.document_open_rx.try_recv().is_ok() {
             self.document_open_in_flight = self.document_open_in_flight.saturating_sub(1);
         }
@@ -557,8 +561,8 @@ impl ApplicationHandler for PrintCadApp {
         let vp_cursor = self.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
         self.camera.set_cursor_viewport(vp_cursor);
 
-        let zoom_wheel_over_viewport = matches!(event, WindowEvent::MouseWheel { .. })
-            && self.cursor_in_viewport.is_some();
+        let zoom_wheel_over_viewport =
+            matches!(event, WindowEvent::MouseWheel { .. }) && self.cursor_in_viewport.is_some();
 
         if let (Some(ui_layer), Some(window)) = (self.ui_layer.as_mut(), self.window.as_ref()) {
             let response = ui_layer.on_window_event(window, &event);
@@ -578,10 +582,7 @@ impl ApplicationHandler for PrintCadApp {
                 if let Key::Character(ch) = &ke.logical_key {
                     let s = ch.as_str();
                     if matches!(s, "h" | "H") && self.cursor_in_viewport.is_some() {
-                        if self
-                            .camera
-                            .pivot_from_key_h(&self.user_settings.camera)
-                        {
+                        if self.camera.pivot_from_key_h(&self.user_settings.camera) {
                             if let Some(w) = self.window.as_ref() {
                                 w.request_redraw();
                             }
@@ -599,7 +600,8 @@ impl ApplicationHandler for PrintCadApp {
         {
             if self.cursor_in_viewport.is_some() {
                 let hit = self.hovered_world_pos.map(Vec3::from_array);
-                self.camera.on_mmb_pivot_pick(hit, &self.user_settings.camera);
+                self.camera
+                    .on_mmb_pivot_pick(hit, &self.user_settings.camera);
                 if let Some(w) = self.window.as_ref() {
                     w.request_redraw();
                 }
@@ -618,11 +620,9 @@ impl ApplicationHandler for PrintCadApp {
         }
 
         let orbit_pick = self.hovered_world_pos.map(Vec3::from_array);
-        let cam_res = self.camera.on_viewport_pointer(
-            &event,
-            &self.user_settings.camera,
-            orbit_pick,
-        );
+        let cam_res =
+            self.camera
+                .on_viewport_pointer(&event, &self.user_settings.camera, orbit_pick);
         redraw |= cam_res.wants_redraw();
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
             redraw |= self.toggle_body_under_cursor_selection();
@@ -711,6 +711,7 @@ impl ApplicationHandler for PrintCadApp {
         let mut workbench_change: Option<(ActiveWorkbench, ActiveWorkbench)> = None;
         let mut new_body_requested_flag = false;
         let mut quit_requested = false;
+        let mut step_import_to_run: Option<(PathBuf, TessellationSettings)> = None;
 
         // Pull any STEP imports that the kernel worker finished off the
         // queue before we build this frame's submission, so freshly imported
@@ -720,92 +721,100 @@ impl ApplicationHandler for PrintCadApp {
         self.drain_kernel_responses();
         self.drain_document_open_responses();
 
-        let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
-            (Some(window), Some(renderer)) => (window, renderer),
-            _ => return,
-        };
+        let mut ui_result_open = false;
+        let mut ui_result_new = false;
+        let mut ui_result_save = false;
+        let mut ui_result_save_as = false;
+        let mut ui_result_import_step = false;
 
-        // Update camera animation
-        self.camera
-            .flush_pending_wheel(&self.user_settings.camera);
-        self.camera
-            .apply_auto_clip_planes(&self.user_settings.camera);
-        self.camera
-            .update(dt_secs, &self.user_settings.camera);
+        {
+            let (window, renderer) = match (self.window.as_ref(), self.renderer.as_mut()) {
+                (Some(window), Some(renderer)) => (window, renderer),
+                _ => return,
+            };
 
-        // Collect sketch features from document and convert to meshes.
-        //
-        // Sketch geometry is recomputed every frame (it's cheap), but we
-        // bump a per-feature revision based on the underlying JSON so the
-        // renderer's cache only re-uploads when the sketch actually changes.
-        let sketch_meshes: Vec<BodySubmission> = self
-            .document
-            .feature_tree()
-            .all_nodes()
-            .filter_map(|(feature_id, node)| {
-                if node.workbench_id.as_str() != "wb.sketch" {
-                    return None;
-                }
+            // Update camera animation
+            self.camera.flush_pending_wheel(&self.user_settings.camera);
+            self.camera
+                .apply_auto_clip_planes(&self.user_settings.camera);
+            self.camera.update(dt_secs, &self.user_settings.camera);
 
-                let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
+            // Collect sketch features from document and convert to meshes.
+            //
+            // Sketch geometry is recomputed every frame (it's cheap), but we
+            // bump a per-feature revision based on the underlying JSON so the
+            // renderer's cache only re-uploads when the sketch actually changes.
+            let sketch_meshes: Vec<BodySubmission> = self
+                .document
+                .feature_tree()
+                .all_nodes()
+                .filter_map(|(feature_id, node)| {
+                    if node.workbench_id.as_str() != "wb.sketch" {
+                        return None;
+                    }
 
-                let mesh = wb_sketch::render::sketch_to_mesh(
-                    &sketch_feature.sketch,
-                    &sketch_feature.plane,
-                );
+                    let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
 
-                // Hash the serialized sketch JSON for a stable revision: the
-                // renderer skips the upload when the sketch is unchanged.
-                let revision = hash_revision(&node.data);
+                    let mesh = wb_sketch::render::sketch_to_mesh(
+                        &sketch_feature.sketch,
+                        &sketch_feature.plane,
+                    );
 
-                Some(BodySubmission {
-                    id: feature_id.0,
-                    revision,
-                    mesh: Arc::new(mesh),
-                    color: [0.2, 0.8, 0.2],
-                    highlight: HighlightState::None,
-                    is_wireframe: false,
+                    // Hash the serialized sketch JSON for a stable revision: the
+                    // renderer skips the upload when the sketch is unchanged.
+                    let revision = hash_revision(&node.data);
+
+                    Some(BodySubmission {
+                        id: feature_id.0,
+                        revision,
+                        mesh: Arc::new(mesh),
+                        color: [0.2, 0.8, 0.2],
+                        highlight: HighlightState::None,
+                        is_wireframe: false,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
-        // Imported geometry (e.g. STEP files) becomes regular renderable bodies.
-        // The body id from the document is reused so picking/selection stays
-        // stable, and the document's revision counter is forwarded to the
-        // renderer so panning/orbiting never re-uploads the static mesh.
-        let imported_meshes: Vec<BodySubmission> = self
-            .document
-            .imported_geometries()
-            .map(|(body_id, geometry)| {
-                let is_selected = self.selected_body == Some(body_id.0);
-                let is_hovered = self.hovered_body == Some(body_id.0);
-                let highlight = match (is_selected, is_hovered) {
-                    (true, true) => HighlightState::HoveredAndSelected,
-                    (true, false) => HighlightState::Selected,
-                    (false, true) => HighlightState::Hovered,
-                    (false, false) => HighlightState::None,
-                };
-                let use_vertex_albedo = geometry.mesh.colors.len() == geometry.mesh.positions.len()
-                    && !geometry.mesh.colors.is_empty();
-                let base_color = if use_vertex_albedo {
-                    [1.0, 1.0, 1.0]
-                } else {
-                    [0.78, 0.78, 0.82]
-                };
-                BodySubmission {
-                    id: body_id.0,
-                    revision: geometry.revision,
-                    mesh: Arc::clone(&geometry.mesh),
-                    color: base_color,
-                    highlight,
-                    is_wireframe: false,
-                }
-            })
-            .collect();
+            // Imported geometry (e.g. STEP files) becomes regular renderable bodies.
+            // The body id from the document is reused so picking/selection stays
+            // stable, and the document's revision counter is forwarded to the
+            // renderer so panning/orbiting never re-uploads the static mesh.
+            let imported_meshes: Vec<BodySubmission> = self
+                .document
+                .imported_geometries()
+                .filter(|(body_id, _)| self.document.imported_body_effective_visible(**body_id))
+                .map(|(body_id, geometry)| {
+                    let is_selected = self.selected_body == Some(body_id.0);
+                    let is_hovered = self.hovered_body == Some(body_id.0);
+                    let highlight = match (is_selected, is_hovered) {
+                        (true, true) => HighlightState::HoveredAndSelected,
+                        (true, false) => HighlightState::Selected,
+                        (false, true) => HighlightState::Hovered,
+                        (false, false) => HighlightState::None,
+                    };
+                    let use_vertex_albedo = geometry.mesh.colors.len()
+                        == geometry.mesh.positions.len()
+                        && !geometry.mesh.colors.is_empty();
+                    let base_color = if use_vertex_albedo {
+                        [1.0, 1.0, 1.0]
+                    } else {
+                        [0.78, 0.78, 0.82]
+                    };
+                    BodySubmission {
+                        id: body_id.0,
+                        revision: geometry.revision,
+                        mesh: Arc::clone(&geometry.mesh),
+                        color: base_color,
+                        highlight,
+                        is_wireframe: false,
+                    }
+                })
+                .collect();
 
-        // Get overlay meshes from the active workbench (grid lines, guides, etc.)
-        let mut overlay_meshes: Vec<BodySubmission> =
-            if let Ok(wb) = self.registry.workbench_mut(&self.active_workbench.0) {
+            // Get overlay meshes from the active workbench (grid lines, guides, etc.)
+            let mut overlay_meshes: Vec<BodySubmission> = if let Ok(wb) =
+                self.registry.workbench_mut(&self.active_workbench.0)
+            {
                 // Build runtime context for overlay generation
                 let cam_pos = self.camera.position();
                 let cam_target = self.camera.target();
@@ -841,9 +850,10 @@ impl ApplicationHandler for PrintCadApp {
                 Vec::new()
             };
 
-        // Get screen-space overlays from the active workbench (constant-thickness lines)
-        let screen_space_overlays: Vec<core_document::ScreenSpaceOverlay> =
-            if let Ok(wb) = self.registry.workbench_mut(&self.active_workbench.0) {
+            // Get screen-space overlays from the active workbench (constant-thickness lines)
+            let screen_space_overlays: Vec<core_document::ScreenSpaceOverlay> = if let Ok(wb) =
+                self.registry.workbench_mut(&self.active_workbench.0)
+            {
                 // Build runtime context for overlay generation
                 let cam_pos = self.camera.position();
                 let cam_target = self.camera.target();
@@ -863,188 +873,224 @@ impl ApplicationHandler for PrintCadApp {
                 Vec::new()
             };
 
-        // Combine sketch meshes, imported geometry, and overlay meshes.
-        let mut all_meshes = sketch_meshes;
-        all_meshes.extend(imported_meshes);
-        all_meshes.append(&mut overlay_meshes);
+            // Combine sketch meshes, imported geometry, and overlay meshes.
+            let mut all_meshes = sketch_meshes;
+            all_meshes.extend(imported_meshes);
+            all_meshes.append(&mut overlay_meshes);
 
-        self.frame_submission.bodies = all_meshes;
-        self.frame_submission.view_proj = self.camera.view_projection();
-        self.frame_submission.camera_pos = self.camera.position();
-        self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
-        self.frame_submission.screen_space_overlays = screen_space_overlays;
+            self.frame_submission.bodies = all_meshes;
+            self.frame_submission.view_proj = self.camera.view_projection();
+            self.frame_submission.camera_pos = self.camera.position();
+            self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
+            self.frame_submission.screen_space_overlays = screen_space_overlays;
 
-        let mut ui_result_open = false;
-        let mut ui_result_new = false;
-        let mut ui_result_save = false;
-        let mut ui_result_save_as = false;
-        let mut ui_result_import_step = false;
+            if let Some(ui_layer) = self.ui_layer.as_mut() {
+                let orientation_input = OrientationCubeInput {
+                    camera_orientation: self.camera.orientation(),
+                    axis_system: self.camera.axis_system(),
+                };
 
-        if let Some(ui_layer) = self.ui_layer.as_mut() {
-            let orientation_input = OrientationCubeInput {
-                camera_orientation: self.camera.orientation(),
-                axis_system: self.camera.axis_system(),
-            };
+                let pivot_screen_pos = self
+                    .camera
+                    .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
-            let pivot_screen_pos = self.camera.rotation_pivot_indicator_screen_px(
-                self.user_settings.camera.orbit_pivot_pick,
-            );
+                let ui_result = ui_layer.run(
+                    window,
+                    &mut self.user_settings,
+                    Some(&orientation_input),
+                    self.current_fps,
+                    self.gpu_name.as_deref(),
+                    &self.available_gpus,
+                    self.hovered_world_pos,
+                    pivot_screen_pos,
+                    self.camera.axis_system(),
+                    &mut self.document,
+                    &mut self.registry,
+                    self.tree_selection,
+                    self.active_document_object,
+                    self.active_body_id,
+                    &self.frame_submission.screen_space_overlays,
+                    self.kernel_worker.in_flight(),
+                    self.document_open_in_flight,
+                    self.step_import_pending.as_mut(),
+                );
+                self.frame_submission.egui = Some(ui_result.submission);
+                self.active_tool = ui_result.active_tool;
 
-            let ui_result = ui_layer.run(
-                window,
-                &mut self.user_settings,
-                Some(&orientation_input),
-                self.current_fps,
-                self.gpu_name.as_deref(),
-                &self.available_gpus,
-                self.hovered_world_pos,
-                pivot_screen_pos,
-                self.camera.axis_system(),
-                &mut self.document,
-                &mut self.registry,
-                self.tree_selection,
-                self.active_document_object,
-                self.active_body_id,
-                &self.frame_submission.screen_space_overlays,
-                self.kernel_worker.in_flight(),
-                self.document_open_in_flight,
-            );
-            self.frame_submission.egui = Some(ui_result.submission);
-            self.active_tool = ui_result.active_tool;
-
-            // Track workbench change
-            if ui_result.workbench_changed {
-                workbench_change = Some((
-                    self.active_workbench.clone(),
-                    ui_result.active_workbench.clone(),
-                ));
-            }
-            self.active_workbench = ui_result.active_workbench;
-
-            self.frame_submission.viewport_rect = Some(RenderViewportRect {
-                x: ui_result.viewport.x,
-                y: ui_result.viewport.y,
-                width: ui_result.viewport.width,
-                height: ui_result.viewport.height,
-            });
-            self.camera.update_viewport(
-                (ui_result.viewport.x, ui_result.viewport.y),
-                (
-                    ui_result.viewport.width.max(1),
-                    ui_result.viewport.height.max(1),
-                ),
-            );
-
-            // Handle orientation cube interactions
-            if let Some(snap_view) = ui_result.snap_to_view {
-                self.camera
-                    .snap_to_view(snap_view, &self.user_settings.camera);
-            }
-            if let Some(ref rotate_delta) = ui_result.rotate_delta {
-                self.camera
-                    .apply_rotate_delta(rotate_delta, &self.user_settings.camera);
-            }
-
-            if ui_result.settings_changed {
-                if let Err(err) = self.settings_store.save(&self.user_settings) {
-                    app_log::warn(format!("Failed to save settings: {err}"));
+                // Track workbench change
+                if ui_result.workbench_changed {
+                    workbench_change = Some((
+                        self.active_workbench.clone(),
+                        ui_result.active_workbench.clone(),
+                    ));
                 }
-            }
-            if ui_result.camera_settings_changed {
-                self.camera.sync_with_settings(&self.user_settings.camera);
-            }
+                self.active_workbench = ui_result.active_workbench;
 
-            // The Part Design workbench exposes "New Body" as an Action tool.
-            // Action tools live in `active_ids` for exactly one frame; we
-            // detect a fresh click here and consume it so the body-creation
-            // call (deferred until after the renderer borrow ends) only
-            // fires once.
-            if self.active_tool.active_ids.remove("part.new_body") {
-                new_body_requested_flag = true;
-            }
+                self.frame_submission.viewport_rect = Some(RenderViewportRect {
+                    x: ui_result.viewport.x,
+                    y: ui_result.viewport.y,
+                    width: ui_result.viewport.width,
+                    height: ui_result.viewport.height,
+                });
+                self.camera.update_viewport(
+                    (ui_result.viewport.x, ui_result.viewport.y),
+                    (
+                        ui_result.viewport.width.max(1),
+                        ui_result.viewport.height.max(1),
+                    ),
+                );
 
-            ui_result_open = ui_result.open_requested;
-            ui_result_new = ui_result.new_requested;
-            ui_result_save = ui_result.save_requested;
-            ui_result_save_as = ui_result.save_as_requested;
-            ui_result_import_step = ui_result.import_step_requested;
-            quit_requested = ui_result.quit_requested;
-
-            if ui_result.reset_view_requested {
-                app_log::info("Fit View requested");
-                if let Some(aabb) = document_imported_aabb(&self.document) {
-                    let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
-                    self.camera.reset_to_fit(
-                        center,
-                        radius,
-                        Some(aabb),
-                        &self.user_settings.camera,
-                    );
-                } else {
-                    self.camera.reset_to_fit(
-                        Vec3::ZERO,
-                        50.0,
-                        None,
-                        &self.user_settings.camera,
-                    );
+                // Handle orientation cube interactions
+                if let Some(snap_view) = ui_result.snap_to_view {
+                    self.camera
+                        .snap_to_view(snap_view, &self.user_settings.camera);
                 }
-            }
+                if let Some(ref rotate_delta) = ui_result.rotate_delta {
+                    self.camera
+                        .apply_rotate_delta(rotate_delta, &self.user_settings.camera);
+                }
 
-            if ui_result.finish_sketch_requested {
-                // Defer handling until after rendering to avoid borrow conflicts.
-                // We'll process this flag once we exit the UI closure.
-            }
+                if ui_result.settings_changed {
+                    if let Err(err) = self.settings_store.save(&self.user_settings) {
+                        app_log::warn(format!("Failed to save settings: {err}"));
+                    }
+                }
+                if ui_result.camera_settings_changed {
+                    self.camera.sync_with_settings(&self.user_settings.camera);
+                }
 
-            if let Some(selection) = ui_result.tree_selection {
-                self.tree_selection = Some(selection);
-                match selection {
-                    TreeItemId::DocumentRoot => {
-                        self.active_document_object = None;
-                        self.active_body_id = None;
-                        self.selected_body = None;
+                // The Part Design workbench exposes "New Body" as an Action tool.
+                // Action tools live in `active_ids` for exactly one frame; we
+                // detect a fresh click here and consume it so the body-creation
+                // call (deferred until after the renderer borrow ends) only
+                // fires once.
+                if self.active_tool.active_ids.remove("part.new_body") {
+                    new_body_requested_flag = true;
+                }
+
+                ui_result_open = ui_result.open_requested;
+                ui_result_new = ui_result.new_requested;
+                ui_result_save = ui_result.save_requested;
+                ui_result_save_as = ui_result.save_as_requested;
+                ui_result_import_step = ui_result.import_step_requested;
+                quit_requested = ui_result.quit_requested;
+
+                match ui_result.step_import_dialog {
+                    StepImportDialogAction::Confirmed => {
+                        step_import_to_run = self.step_import_pending.take();
                     }
-                    TreeItemId::Body(id) => {
-                        self.active_body_id = Some(id);
-                        self.active_document_object = None;
-                        self.selected_body = Some(id.0);
+                    StepImportDialogAction::Cancelled => {
+                        self.step_import_pending = None;
                     }
-                    TreeItemId::Feature(id) => {
-                        if self.active_document_object != Some(id) {
-                            app_log::info(format!("Selected feature {:?}", id));
+                    StepImportDialogAction::None => {}
+                }
+
+                if ui_result.reset_view_requested {
+                    app_log::info("Fit View requested");
+                    if let Some(aabb) = document_imported_aabb(&self.document) {
+                        let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
+                        self.camera.reset_to_fit(
+                            center,
+                            radius,
+                            Some(aabb),
+                            &self.user_settings.camera,
+                        );
+                    } else {
+                        self.camera.reset_to_fit(
+                            Vec3::ZERO,
+                            50.0,
+                            None,
+                            &self.user_settings.camera,
+                        );
+                    }
+                }
+
+                if ui_result.finish_sketch_requested {
+                    // Defer handling until after rendering to avoid borrow conflicts.
+                    // We'll process this flag once we exit the UI closure.
+                }
+
+                if let Some((node_id, visible)) = ui_result.imported_visibility_change {
+                    self.document
+                        .set_imported_object_visibility(node_id, visible);
+                }
+
+                if let Some(selection) = ui_result.tree_selection {
+                    self.tree_selection = Some(selection);
+                    match selection {
+                        TreeItemId::DocumentRoot => {
+                            self.active_document_object = None;
+                            self.active_body_id = None;
+                            self.selected_body = None;
                         }
-                        self.active_document_object = Some(id);
+                        TreeItemId::Body(id) => {
+                            self.active_body_id = Some(id);
+                            self.active_document_object = None;
+                            self.selected_body = Some(id.0);
+                        }
+                        TreeItemId::Feature(id) => {
+                            if self.active_document_object != Some(id) {
+                                app_log::info(format!("Selected feature {:?}", id));
+                            }
+                            self.active_document_object = Some(id);
+                        }
+                        TreeItemId::ImportedObject(node_id) => {
+                            self.active_document_object = None;
+                            self.active_body_id = self
+                                .document
+                                .imported_object(node_id)
+                                .and_then(|n| n.body_id);
+                            self.selected_body = self.active_body_id.map(|id| id.0);
+                        }
                     }
                 }
-            }
 
-            if let Some(item) = ui_result.tree_activation {
-                match item {
-                    TreeItemId::Feature(id) => {
-                        app_log::info(format!("Activated feature {:?} (double-click in tree)", id));
+                if let Some(item) = ui_result.tree_activation {
+                    match item {
+                        TreeItemId::Feature(id) => {
+                            app_log::info(format!(
+                                "Activated feature {:?} (double-click in tree)",
+                                id
+                            ));
+                        }
+                        TreeItemId::Body(id) => {
+                            app_log::info(format!(
+                                "Activated body {:?} (double-click in tree)",
+                                id
+                            ));
+                        }
+                        TreeItemId::ImportedObject(id) => {
+                            app_log::info(format!(
+                                "Activated imported object {} (double-click in tree)",
+                                id
+                            ));
+                        }
+                        TreeItemId::DocumentRoot => {}
                     }
-                    TreeItemId::Body(id) => {
-                        app_log::info(format!("Activated body {:?} (double-click in tree)", id));
-                    }
-                    TreeItemId::DocumentRoot => {}
                 }
+            } else {
+                self.frame_submission.egui = None;
+                self.frame_submission.viewport_rect = None;
             }
-        } else {
-            self.frame_submission.egui = None;
-            self.frame_submission.viewport_rect = None;
+
+            window.request_redraw();
+
+            if let Err(err) = renderer.render(&self.frame_submission) {
+                app_log::error(format!("Render failure: {err}"));
+                event_loop.exit();
+                return;
+            }
+
+            // Retrieve pick result from GPU picking (processed during render)
+            let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
+            self.hovered_body = pick_result.body_id;
+            self.hovered_world_pos = pick_result.world_position;
         }
 
-        window.request_redraw();
-
-        if let Err(err) = renderer.render(&self.frame_submission) {
-            app_log::error(format!("Render failure: {err}"));
-            event_loop.exit();
-            return;
+        if let Some((path, detail)) = step_import_to_run {
+            self.last_step_import_detail = detail.clone();
+            self.import_step_at(&path, detail);
         }
-
-        // Retrieve pick result from GPU picking (processed during render)
-        let pick_result = renderer.pick_at(0, 0); // Coordinates don't matter, we use cached result
-        self.hovered_body = pick_result.body_id;
-        self.hovered_world_pos = pick_result.world_position;
 
         if ui_result_new && self.confirm_discard_or_save() {
             self.reset_to_new_document();
@@ -1085,7 +1131,8 @@ impl ApplicationHandler for PrintCadApp {
                     }
                     FileDialogKind::ImportStep => {
                         if let Some(path) = result.path {
-                            self.import_step_at(&path);
+                            self.step_import_pending =
+                                Some((path, self.last_step_import_detail.clone()));
                         }
                     }
                 }
@@ -1178,12 +1225,8 @@ impl PrintCadApp {
         // user toggled projection or hit Fit View).
         if let Some((mn, mx)) = document_imported_aabb(&self.document) {
             let (center, radius) = aabb_fit_center_radius(mn, mx);
-            self.camera.reset_to_fit(
-                center,
-                radius,
-                Some((mn, mx)),
-                &self.user_settings.camera,
-            );
+            self.camera
+                .reset_to_fit(center, radius, Some((mn, mx)), &self.user_settings.camera);
         } else {
             self.camera.clear_scene_zoom_constraint();
             self.camera
@@ -1305,13 +1348,7 @@ impl PrintCadApp {
         Ok(())
     }
 
-    fn start_file_dialog(
-        &mut self,
-        open: bool,
-        _save: bool,
-        save_as: bool,
-        import_step: bool,
-    ) {
+    fn start_file_dialog(&mut self, open: bool, _save: bool, save_as: bool, import_step: bool) {
         use std::sync::mpsc;
         if self.file_dialog_rx.is_some() {
             return;
@@ -1371,11 +1408,9 @@ impl PrintCadApp {
     /// document mutation happens in `apply_step_import` once the worker is
     /// done. Logging the start/finish here keeps the user oriented while the
     /// import is in flight.
-    fn import_step_at(&mut self, path: &PathBuf) {
-        let detail = TessellationSettings::default();
+    fn import_step_at(&mut self, path: &PathBuf, detail: TessellationSettings) {
         app_log::info(format!("Importing STEP `{}`...", path.display()));
-        self.kernel_worker
-            .request_step_import(path.clone(), detail);
+        self.kernel_worker.request_step_import(path.clone(), detail);
     }
 
     /// Drain any STEP responses that have arrived from the kernel worker and
@@ -1387,9 +1422,12 @@ impl PrintCadApp {
                     path,
                     model,
                     raw_bytes,
+                    detail,
                     elapsed,
                 } => {
-                    if let Err(err) = self.apply_step_import(&path, model, raw_bytes, elapsed) {
+                    if let Err(err) =
+                        self.apply_step_import(&path, model, raw_bytes, detail, elapsed)
+                    {
                         app_log::error(format!(
                             "Failed to apply STEP import {}: {err}",
                             path.display()
@@ -1397,7 +1435,49 @@ impl PrintCadApp {
                     }
                 }
                 KernelResponse::StepFailed { path, error } => {
-                    app_log::error(format!("STEP import failed `{}`: {}", path.display(), error));
+                    app_log::error(format!(
+                        "STEP import failed `{}`: {}",
+                        path.display(),
+                        error
+                    ));
+                }
+                KernelResponse::BodyTessellated {
+                    body_id,
+                    mesh,
+                    elapsed,
+                } => {
+                    let bid = BodyId(body_id);
+                    let Some(prev) = self.document.imported_geometry(bid) else {
+                        continue;
+                    };
+                    let source_asset = prev.source_asset;
+                    let bounds_mm = prev.bounds_mm;
+                    let brep_blob_path = prev.brep_blob_path.clone();
+                    let face_colors_path = prev.face_colors_path.clone();
+                    self.document.set_imported_geometry(
+                        bid,
+                        ImportedGeometry {
+                            mesh: Arc::new(mesh),
+                            source_asset,
+                            revision: 0,
+                            bounds_mm,
+                            brep_blob_path,
+                            face_colors_path,
+                        },
+                    );
+                    app_log::info(format!(
+                        "Tessellated `{}` in {:.0}ms (worker)",
+                        self.document
+                            .bodies()
+                            .iter()
+                            .find(|b| b.id == bid)
+                            .map(|b| b.name.as_str())
+                            .unwrap_or("body"),
+                        elapsed.as_secs_f64() * 1000.0
+                    ));
+                }
+                KernelResponse::BodyTessellateFailed { body_id, error } => {
+                    app_log::error(format!("Tessellation failed for body {}: {error}", body_id));
                 }
             }
         }
@@ -1412,6 +1492,7 @@ impl PrintCadApp {
         path: &PathBuf,
         imported: ImportedModel,
         raw_bytes: Vec<u8>,
+        detail: TessellationSettings,
         elapsed: Duration,
     ) -> Result<()> {
         let apply_start = Instant::now();
@@ -1421,15 +1502,20 @@ impl PrintCadApp {
             && !self.document.assets().any(|_| true)
             && self.document.imported_geometries().next().is_none();
 
-        if imported.bodies.is_empty() {
+        let ImportedModel {
+            bodies: imported_bodies,
+            nodes: imported_nodes,
+            source_unit,
+        } = imported;
+
+        if imported_bodies.is_empty() {
             app_log::warn(format!(
                 "STEP import produced no geometry: {}",
                 path.display()
             ));
             return Ok(());
         }
-
-        let detected_unit = imported.source_unit.map(length_unit_to_document_unit);
+        let detected_unit = source_unit.map(length_unit_to_document_unit);
 
         let extension = path
             .extension()
@@ -1441,37 +1527,133 @@ impl PrintCadApp {
             core_document::AssetType::Step,
             serde_json::json!({
                 "source_path": path.display().to_string(),
-                "body_count": imported.bodies.len(),
+                "body_count": imported_bodies.len(),
             }),
         );
         let asset_id = self.document.add_asset_with_data(asset, raw_bytes);
+
+        let pending_note = if imported_bodies
+            .iter()
+            .any(|b| !b.brep_blob.is_empty() && b.mesh.positions.is_empty())
+        {
+            "background tessellation may still be running"
+        } else {
+            "mesh from import (no pending tessellation)"
+        };
 
         let mut total_triangles: usize = 0;
         let mut combined_min = [f32::INFINITY; 3];
         let mut combined_max = [f32::NEG_INFINITY; 3];
         let mut first_body: Option<BodyId> = None;
+        let mut body_ids_by_import_index: Vec<BodyId> = Vec::with_capacity(imported_bodies.len());
 
-        for body in imported.bodies {
+        for body in imported_bodies {
             let body_id = self.document.create_body(body.name.clone());
+            body_ids_by_import_index.push(body_id);
             if first_body.is_none() {
                 first_body = Some(body_id);
             }
             total_triangles += body.mesh.indices.len() / 3;
-            if let Some((min, max)) = body.mesh.bounds() {
+            if let Some((min, max)) = body.bounds_mm {
+                for axis in 0..3 {
+                    combined_min[axis] = combined_min[axis].min(min[axis]);
+                    combined_max[axis] = combined_max[axis].max(max[axis]);
+                }
+            } else if let Some((min, max)) = body.mesh.bounds() {
                 for axis in 0..3 {
                     combined_min[axis] = combined_min[axis].min(min[axis]);
                     combined_max[axis] = combined_max[axis].max(max[axis]);
                 }
             }
+
+            self.document.set_imported_brep_data(
+                body_id,
+                body.brep_blob.clone(),
+                body.face_colors.clone(),
+            );
             self.document.set_imported_geometry(
                 body_id,
                 ImportedGeometry {
                     mesh: Arc::new(body.mesh),
                     source_asset: Some(asset_id),
-                    // `set_imported_geometry` overwrites this; any value works.
                     revision: 0,
+                    bounds_mm: body.bounds_mm,
+                    brep_blob_path: None,
+                    face_colors_path: None,
                 },
             );
+
+            if !body.brep_blob.is_empty() {
+                self.kernel_worker.request_tessellate_body(
+                    body_id.0,
+                    body.brep_blob,
+                    body.face_colors,
+                    detail.clone(),
+                );
+            }
+        }
+
+        let mut roots = Vec::new();
+        let mut nodes_map = HashMap::new();
+        if !imported_nodes.is_empty() {
+            let mut id_map = HashMap::with_capacity(imported_nodes.len());
+            for src in &imported_nodes {
+                id_map.insert(src.id, Uuid::new_v4());
+            }
+            let mut claimed_body_indices: HashMap<usize, Uuid> = HashMap::new();
+            // Preserve C++ FFI preorder DFS emission order so siblings appear
+            // in source-file order instead of HashMap-iteration order.
+            let mut parent_links_in_order: Vec<(Uuid, Uuid)> =
+                Vec::with_capacity(imported_nodes.len());
+            for src in imported_nodes {
+                let Some(doc_id) = id_map.get(&src.id).copied() else {
+                    continue;
+                };
+                let parent_id = src.parent_id.and_then(|pid| id_map.get(&pid).copied());
+                let body_id = src.body_index.and_then(|idx| {
+                    if claimed_body_indices.contains_key(&idx) {
+                        // The same tessellated body can appear on both an
+                        // instance node and its referred prototype node.
+                        // Bind it once (first owner) so visibility links stay stable.
+                        None
+                    } else {
+                        let out = body_ids_by_import_index.get(idx).copied();
+                        if out.is_some() {
+                            claimed_body_indices.insert(idx, doc_id);
+                        }
+                        out
+                    }
+                });
+                let name = src.name.unwrap_or_else(|| match src.kind {
+                    kernel_api::ImportedNodeKind::Assembly => "Assembly".to_string(),
+                    kernel_api::ImportedNodeKind::Part => "Part".to_string(),
+                    kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),
+                });
+                let node = core_document::ImportedObjectNode {
+                    id: doc_id,
+                    parent_id,
+                    children: Vec::new(),
+                    kind: src.kind,
+                    name,
+                    visible: src.visible,
+                    body_id,
+                    local_transform: src.local_transform,
+                };
+                if let Some(parent) = parent_id {
+                    parent_links_in_order.push((doc_id, parent));
+                } else {
+                    roots.push(doc_id);
+                }
+                nodes_map.insert(doc_id, node);
+            }
+            for (child, parent) in parent_links_in_order {
+                if let Some(parent_node) = nodes_map.get_mut(&parent) {
+                    parent_node.children.push(child);
+                }
+            }
+        }
+        if !nodes_map.is_empty() {
+            self.document.append_imported_object_graph(roots, nodes_map);
         }
 
         if combined_min[0] <= combined_max[0] {
@@ -1516,7 +1698,7 @@ impl PrintCadApp {
             "STEP import timing (UI thread apply)"
         );
         app_log::info(format!(
-            "Imported STEP `{}` in {:.0}ms worker + {:.1}ms apply: {} bodies, {} triangles",
+            "Imported STEP `{}` in {:.0}ms worker + {:.1}ms apply: {} bodies ({} triangles; {pending_note})",
             path.display(),
             elapsed.as_secs_f64() * 1000.0,
             apply_ms,
@@ -1524,7 +1706,7 @@ impl PrintCadApp {
                 .imported_geometries()
                 .filter(|(_, g)| g.source_asset == Some(asset_id))
                 .count(),
-            total_triangles
+            total_triangles,
         ));
 
         Ok(())
@@ -1566,8 +1748,6 @@ impl PrintCadApp {
 
         result
     }
-
-
 
     /// Call on_input on a workbench.
     fn call_workbench_input(
@@ -1764,7 +1944,6 @@ impl PrintCadApp {
         }
         true
     }
-
 }
 
 fn lighting_data_from_settings(user: &UserSettings) -> LightingData {

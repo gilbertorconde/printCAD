@@ -15,17 +15,24 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use kernel_api::{ImportedModel, Kernel, TessellationSettings};
+use kernel_api::{ImportedModel, Kernel, TessellationSettings, TriMesh};
 use kernel_occt::OcctKernel;
 use tracing::info;
+use uuid::Uuid;
 
 /// Job submitted from the UI thread to the kernel worker.
 pub enum KernelRequest {
-    /// Read a STEP/STP file from disk, tessellate every top-level body, and
-    /// return both the imported model and the raw source bytes for asset
-    /// persistence.
+    /// Read a STEP/STP file (BRep-only fast path) and return bodies for the UI
+    /// to register; tessellation is scheduled separately per body.
     ImportStep {
         path: PathBuf,
+        detail: TessellationSettings,
+    },
+    /// Tessellate one body's BRep snapshot on the kernel thread.
+    TessellateBody {
+        body_id: Uuid,
+        brep_blob: Vec<u8>,
+        face_colors: Vec<[f32; 3]>,
         detail: TessellationSettings,
     },
 }
@@ -40,17 +47,28 @@ pub enum KernelResponse {
         path: PathBuf,
         model: ImportedModel,
         raw_bytes: Vec<u8>,
+        detail: TessellationSettings,
         elapsed: Duration,
     },
     StepFailed {
         path: PathBuf,
         error: String,
     },
+    BodyTessellated {
+        body_id: Uuid,
+        mesh: TriMesh,
+        elapsed: Duration,
+    },
+    BodyTessellateFailed {
+        body_id: Uuid,
+        error: String,
+    },
 }
 
 /// UI-side handle to the worker thread. `in_flight` is incremented by
-/// [`Self::request_step_import`] and decremented by [`Self::drain`] so the
-/// status panel can show a spinner while imports are pending.
+/// [`Self::request_step_import`] / [`Self::request_tessellate_body`] and
+/// decremented by [`Self::drain`] so the status panel can show a spinner while
+/// imports are pending.
 pub struct KernelWorker {
     tx: Sender<KernelRequest>,
     rx: Receiver<KernelResponse>,
@@ -80,7 +98,32 @@ impl KernelWorker {
     /// Submit a STEP import job. Returns immediately; the result will arrive
     /// via [`Self::drain`] some time later.
     pub fn request_step_import(&mut self, path: PathBuf, detail: TessellationSettings) {
-        if self.tx.send(KernelRequest::ImportStep { path, detail }).is_ok() {
+        if self
+            .tx
+            .send(KernelRequest::ImportStep { path, detail })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    pub fn request_tessellate_body(
+        &mut self,
+        body_id: Uuid,
+        brep_blob: Vec<u8>,
+        face_colors: Vec<[f32; 3]>,
+        detail: TessellationSettings,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::TessellateBody {
+                body_id,
+                brep_blob,
+                face_colors,
+                detail,
+            })
+            .is_ok()
+        {
             self.in_flight = self.in_flight.saturating_add(1);
         }
     }
@@ -123,12 +166,13 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
                                     kernel_import_ms = format!("{:.2}", kernel_ms.as_secs_f64() * 1000.0),
                                     read_asset_bytes_ms = format!("{:.2}", read_ms.as_secs_f64() * 1000.0),
                                     worker_total_ms = format!("{:.2}", worker_total.as_secs_f64() * 1000.0),
-                                    "STEP import worker timing (kernel thread)"
+                                    "STEP BRep import worker timing (kernel thread)"
                                 );
                                 KernelResponse::StepImported {
                                     path,
                                     model,
                                     raw_bytes,
+                                    detail,
                                     elapsed: worker_total,
                                 }
                             }
@@ -144,7 +188,28 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
                     },
                 };
                 if tx.send(response).is_err() {
-                    // UI thread has dropped the receiver; nothing left to do.
+                    return;
+                }
+            }
+            KernelRequest::TessellateBody {
+                body_id,
+                brep_blob,
+                face_colors,
+                detail,
+            } => {
+                let started = Instant::now();
+                let resp = match kernel.tessellate_step_brep(&brep_blob, &face_colors, &detail) {
+                    Ok(mesh) => KernelResponse::BodyTessellated {
+                        body_id,
+                        mesh,
+                        elapsed: started.elapsed(),
+                    },
+                    Err(err) => KernelResponse::BodyTessellateFailed {
+                        body_id,
+                        error: err.to_string(),
+                    },
+                };
+                if tx.send(resp).is_err() {
                     return;
                 }
             }

@@ -40,13 +40,7 @@ fn perspective_dolly_preserves_focal_point() {
     let axes = AxisSystem::from(settings.axis_preset);
     let mut cam = CadCameraState::new(&settings, (512, 512));
     let focal_before = cam.focal_point_vec3(&axes);
-    zoom_cursor::apply_zoom_wheels(
-        &mut cam,
-        &axes,
-        None,
-        1.0,
-        &settings,
-    );
+    zoom_cursor::apply_zoom_wheels(&mut cam, &axes, None, 1.0, &settings);
     let focal_after = cam.focal_point_vec3(&axes);
     assert!((focal_before - focal_after).length() < 1e-3);
 }

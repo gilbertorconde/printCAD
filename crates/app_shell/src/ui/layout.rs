@@ -1,6 +1,8 @@
 use axes::AxisSystem;
 use core_document::{format_length_mm, DocumentService, Unit, WorkbenchId};
-use egui::{self, Color32, Context, Id, Key, KeyboardShortcut, Modifiers, TextureHandle, TextureOptions};
+use egui::{
+    self, Color32, Context, Id, Key, KeyboardShortcut, Modifiers, TextureHandle, TextureOptions,
+};
 use std::collections::HashMap;
 
 use crate::{log_panel, orientation_cube::rasterize_svg};
@@ -169,11 +171,7 @@ pub fn draw_top_panel(
 
                         let quit_btn = egui::Button::new("Quit")
                             .shortcut_text(ui.ctx().format_shortcut(&sc_quit));
-                        if ui
-                            .add(quit_btn)
-                            .on_hover_text("Exit printCAD")
-                            .clicked()
-                        {
+                        if ui.add(quit_btn).on_hover_text("Exit printCAD").clicked() {
                             result.quit_requested = true;
                             ui.close();
                         }
@@ -237,38 +235,35 @@ pub fn draw_top_panel(
                         .on_hover_text("Help and about information");
 
                     // --- Right-aligned workbench combo ---
-                    ui.with_layout(
-                        egui::Layout::right_to_left(egui::Align::Center),
-                        |ui| {
-                            let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
-                            let current_label = workbenches
-                                .iter()
-                                .find(|wb| wb.id == active_workbench.0)
-                                .map(|wb| wb.label.clone())
-                                .unwrap_or_else(|| "(none)".to_string());
-                            let current_desc = workbenches
-                                .iter()
-                                .find(|wb| wb.id == active_workbench.0)
-                                .map(|wb| wb.description.clone())
-                                .unwrap_or_default();
-                            let combo = egui::ComboBox::from_id_salt("workbench_combo")
-                                .selected_text(&current_label)
-                                .show_ui(ui, |ui| {
-                                    for wb in workbenches.iter() {
-                                        let wb_id = WorkbenchId::from(wb.id.as_str());
-                                        let target = ActiveWorkbench(wb_id);
-                                        ui.selectable_value(active_workbench, target, &wb.label)
-                                            .on_hover_text(&wb.description);
-                                    }
-                                });
-                            let tooltip = if current_desc.is_empty() {
-                                "Active workbench".to_string()
-                            } else {
-                                format!("Active workbench: {}", current_desc)
-                            };
-                            combo.response.on_hover_text(tooltip);
-                        },
-                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
+                        let current_label = workbenches
+                            .iter()
+                            .find(|wb| wb.id == active_workbench.0)
+                            .map(|wb| wb.label.clone())
+                            .unwrap_or_else(|| "(none)".to_string());
+                        let current_desc = workbenches
+                            .iter()
+                            .find(|wb| wb.id == active_workbench.0)
+                            .map(|wb| wb.description.clone())
+                            .unwrap_or_default();
+                        let combo = egui::ComboBox::from_id_salt("workbench_combo")
+                            .selected_text(&current_label)
+                            .show_ui(ui, |ui| {
+                                for wb in workbenches.iter() {
+                                    let wb_id = WorkbenchId::from(wb.id.as_str());
+                                    let target = ActiveWorkbench(wb_id);
+                                    ui.selectable_value(active_workbench, target, &wb.label)
+                                        .on_hover_text(&wb.description);
+                                }
+                            });
+                        let tooltip = if current_desc.is_empty() {
+                            "Active workbench".to_string()
+                        } else {
+                            format!("Active workbench: {}", current_desc)
+                        };
+                        combo.response.on_hover_text(tooltip);
+                    });
                 });
 
                 // ----------------- Workbench tool ribbon -----------------
@@ -434,6 +429,7 @@ pub struct LeftPanelResult {
     pub finish_sketch_requested: bool,
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
+    pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
 }
 
 impl Default for LeftPanelResult {
@@ -442,6 +438,7 @@ impl Default for LeftPanelResult {
             finish_sketch_requested: false,
             tree_selection: None,
             tree_activation: None,
+            imported_visibility_change: None,
         }
     }
 }
@@ -455,7 +452,7 @@ pub fn draw_left_panel(
     active_document_object: Option<core_document::FeatureId>,
 ) -> LeftPanelResult {
     let mut panel_result = LeftPanelResult::default();
-    
+
     egui::Panel::left("left_panel")
         .resizable(true)
         .default_size(260.0)
@@ -469,10 +466,11 @@ pub fn draw_left_panel(
                 let tree_ui_result = feature_tree::draw_tree(ui, &tree_model, Some(selected_id));
                 panel_result.tree_selection = tree_ui_result.selection;
                 panel_result.tree_activation = tree_ui_result.activation;
-                });
+                panel_result.imported_visibility_change = tree_ui_result.imported_visibility_change;
+            });
 
             ui.separator();
-            
+
             // Call workbench's ui_left_panel hook
             if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
                 // Build a minimal runtime context for UI hooks
@@ -483,16 +481,16 @@ pub fn draw_left_panel(
                     document, cam_pos, cam_target, viewport,
                 );
                 ctx.active_document_object = active_document_object;
-                
+
                 wb.ui_left_panel(ui, &mut ctx);
-                
+
                 // Check for finish sketch request
                 if ctx.finish_sketch_requested {
                     panel_result.finish_sketch_requested = true;
                 }
             }
         });
-    
+
     panel_result
 }
 
