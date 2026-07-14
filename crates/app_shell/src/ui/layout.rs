@@ -478,28 +478,31 @@ pub fn draw_left_panel(
                 if ctx.finish_sketch_requested {
                     panel_result.finish_sketch_requested = true;
                 }
+                flush_ctx_logs(&mut ctx);
             }
         });
 
     panel_result
 }
 
+/// Returns true when the workbench requested to finish sketch editing.
 pub fn draw_right_panel(
     ui: &mut egui::Ui,
     active_workbench: ActiveWorkbench,
     document: &mut core_document::Document,
     registry: &mut core_document::DocumentService,
     active_document_object: Option<core_document::FeatureId>,
-) {
+) -> bool {
     let wants_panel = registry
         .workbench_mut(&active_workbench.0)
         .map(|wb| wb.wants_right_panel())
         .unwrap_or(false);
 
     if !wants_panel {
-        return;
+        return false;
     }
 
+    let mut finish_requested = false;
     egui::Panel::right("right_panel")
         .resizable(true)
         .default_size(280.0)
@@ -513,8 +516,23 @@ pub fn draw_right_panel(
                 );
                 ctx.active_document_object = active_document_object;
                 wb.ui_right_panel(ui, &mut ctx);
+                finish_requested = ctx.finish_sketch_requested;
+                flush_ctx_logs(&mut ctx);
             }
         });
+    finish_requested
+}
+
+/// Panel UI hooks log through the runtime context; route those entries to
+/// the app log panel instead of dropping them.
+fn flush_ctx_logs(ctx: &mut core_document::WorkbenchRuntimeContext) {
+    for entry in ctx.drain_logs() {
+        match entry.level {
+            core_document::LogLevel::Info => log_panel::info(entry.message),
+            core_document::LogLevel::Warn => log_panel::warn(entry.message),
+            core_document::LogLevel::Error => log_panel::error(entry.message),
+        }
+    }
 }
 
 pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {

@@ -291,12 +291,23 @@ impl PrintCadApp {
         // Sketch geometry is recomputed every frame (it's cheap), but we
         // bump a per-feature revision based on the underlying JSON so the
         // renderer's cache only re-uploads when the sketch actually changes.
+        // The sketch currently being edited is drawn as crisp screen-space
+        // overlays by the workbench; only sketches NOT under edit get the 3D
+        // tessellation (drawing both would double-render the active one).
+        let editing_sketch = if self.active_workbench.0.as_str() == "wb.sketch" {
+            self.active_document_object
+        } else {
+            None
+        };
         let sketch_meshes: Vec<BodySubmission> = self
             .document
             .feature_tree()
             .all_nodes()
             .filter_map(|(feature_id, node)| {
                 if node.workbench_id.as_str() != "wb.sketch" {
+                    return None;
+                }
+                if Some(*feature_id) == editing_sketch {
                     return None;
                 }
 

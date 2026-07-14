@@ -30,6 +30,7 @@ struct FrameIntents {
     new_document: bool,
     file_dialog: Option<FileDialogKind>,
     workbench_switch: Option<(ActiveWorkbench, ActiveWorkbench)>,
+    finish_sketch: bool,
     quit: bool,
 }
 
@@ -77,8 +78,7 @@ impl PrintCadApp {
                 }
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
-                // Dead before the command refactor too; see ui/commands.rs.
-                UiCommand::FinishSketch => {}
+                UiCommand::FinishSketch => intents.finish_sketch = true,
                 UiCommand::SwitchWorkbench { from, to } => {
                     intents.workbench_switch = Some((from, to));
                 }
@@ -126,6 +126,10 @@ impl PrintCadApp {
         }
         if let Some(item) = intents.activate_tree_item {
             self.log_tree_activation(item);
+        }
+
+        if intents.finish_sketch {
+            self.finish_active_workbench_editing();
         }
 
         if let Some((path, detail)) = step_import_to_run {
@@ -181,6 +185,21 @@ impl PrintCadApp {
         self.tree_selection = Some(TreeItemId::Body(body_id));
         self.selected_body = Some(body_id.0);
         self.undo.commit(&self.document, "Create body");
+    }
+
+    /// End the active workbench's editing session (e.g. Exit Sketch Mode)
+    /// and drop the edited feature from the active-object slot so the
+    /// workbench doesn't immediately re-enter editing on the next event.
+    fn finish_active_workbench_editing(&mut self) {
+        let wb_id = self.active_workbench.0.clone();
+        let params = self.interaction_ctx_params();
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx))
+        {
+            self.apply_hook_outcome(outcome);
+        }
+        self.active_document_object = None;
+        self.tree_selection = Some(TreeItemId::DocumentRoot);
     }
 
     /// Frame the camera around the imported geometry (or the default box).

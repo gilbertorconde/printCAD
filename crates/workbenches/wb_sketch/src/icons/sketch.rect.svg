@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Rectangle with corner vertices -->
+  <rect x="5" y="7" width="14" height="10" fill="none"
+        stroke="#FFFFFF" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="5" cy="7" r="1.5" fill="#FFFFFF"/>
+  <circle cx="19" cy="7" r="1.5" fill="#FFFFFF"/>
+  <circle cx="19" cy="17" r="1.5" fill="#FFFFFF"/>
+  <circle cx="5" cy="17" r="1.5" fill="#FFFFFF"/>
+</svg>

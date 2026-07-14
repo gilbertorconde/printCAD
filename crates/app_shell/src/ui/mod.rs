@@ -184,7 +184,7 @@ impl UiLayer {
             tree_selection = left_panel.tree_selection;
             tree_activation = left_panel.tree_activation;
             imported_visibility_change = left_panel.imported_visibility_change;
-            layout::draw_right_panel(
+            finish_requested |= layout::draw_right_panel(
                 ui,
                 active_workbench.clone(),
                 document,

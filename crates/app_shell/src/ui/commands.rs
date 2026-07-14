@@ -34,9 +34,8 @@ pub enum UiCommand {
     },
     ConfirmStepImport,
     CancelStepImport,
-    /// Emitted by the sketch left panel. Not handled anywhere — the flag was
-    /// already dead before the command refactor; kept so the wiring is
-    /// visible when the finish-sketch flow gets implemented.
+    /// Exit the active workbench's editing session (e.g. "Exit Sketch
+    /// Mode" in the sketcher panel).
     FinishSketch,
     SwitchWorkbench {
         from: ActiveWorkbench,
