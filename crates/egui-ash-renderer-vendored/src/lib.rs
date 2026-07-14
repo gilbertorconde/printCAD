@@ -46,7 +46,7 @@
 //! `Renderer::free_textures`. The former must be call before submitting the command buffer for rendering and the latter must be
 //! called after rendering is complete. Example:
 //!
-//! ```rust
+//! ```rust,ignore
 //! let output = egui_ctx.run(raw_input, |ui| {
 //!     // ui code ..
 //! });
@@ -61,7 +61,7 @@
 //! ```
 //!
 //! > If you have multiple frames in flight you might want to hold a set of textures to free for each frame and call
-//! `Renderer::free_textures` after waiting for the fence of the previous frame.
+//! > `Renderer::free_textures` after waiting for the fence of the previous frame.
 //!
 //! ### Custom textures
 //!
@@ -70,7 +70,7 @@
 //! (see [create_vulkan_descriptor_set_layout](./src/renderer/vulkan.rs)). This will return a `egui::TextureId` that you
 //! can use in your ui code. Example:
 //!
-//! ```rust
+//! ```rust,ignore
 //! let user_texture_set: vk::DescriptorSet = ...;
 //! let texture_id = renderer.add_user_texture(user_texture_set);
 //!
@@ -114,7 +114,7 @@
 //!
 //! You can find an example of integration with [winit][winit] in the [common module](examples/common/mod.rs) of the examples.
 //!
-//! ```rust
+//! ```rust,ignore
 //! // Example with default allocator
 //! let renderer = Renderer::with_default_allocator(
 //!     &vk_instance,

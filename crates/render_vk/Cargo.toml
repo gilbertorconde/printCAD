@@ -7,7 +7,6 @@ rust-version.workspace = true
 build = "build.rs"
 
 [dependencies]
-core_document = { path = "../core_document" }
 ash.workspace = true
 kernel_api = { path = "../kernel_api" }
 raw-window-handle.workspace = true

@@ -134,36 +134,207 @@ impl<'a> WorkbenchRuntimeContext<'a> {
         std::mem::take(&mut self.pending_logs)
     }
 
-    /// Convert a world position to viewport coordinates.
-    /// Returns None if the point is behind the camera or outside the viewport.
-    /// (Stub: actual implementation requires view-projection matrix from host.)
-    pub fn world_to_viewport(&self, _world_pos: [f32; 3]) -> Option<(f32, f32)> {
-        // TODO: Host should provide the actual transform
-        None
+    /// Convert a world position to viewport-local pixel coordinates (the
+    /// same space as [`Self::cursor_viewport_pos`], i.e. without the
+    /// viewport's screen offset).
+    ///
+    /// NDC is Y-down: the host camera bakes the Vulkan Y flip into
+    /// `view_proj`, so no flip is applied here (this mirrors the app shell's
+    /// `CameraController::world_to_screen`).
+    ///
+    /// Returns `None` when no `view_proj` was provided, the viewport is
+    /// degenerate, or the point is behind the camera.
+    pub fn world_to_viewport(&self, world_pos: [f32; 3]) -> Option<(f32, f32)> {
+        let view_proj = glam::Mat4::from_cols_array_2d(&self.view_proj?);
+        let (_, _, w, h) = self.viewport;
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let clip = view_proj * glam::Vec3::from_array(world_pos).extend(1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let ndc = clip.truncate() / clip.w;
+        Some((
+            (ndc.x + 1.0) * 0.5 * w as f32,
+            (ndc.y + 1.0) * 0.5 * h as f32,
+        ))
     }
 
-    /// Convert viewport coordinates to a ray in world space.
-    /// Returns (origin, direction) of the ray.
-    /// (Stub: actual implementation requires inverse view-projection from host.)
-    pub fn viewport_to_ray(&self, _viewport_pos: (f32, f32)) -> ([f32; 3], [f32; 3]) {
-        // TODO: Host should provide the actual transform
-        let origin = self.camera_position;
-        let direction = [0.0, 0.0, -1.0];
-        (origin, direction)
+    /// Convert viewport-local pixel coordinates to a world-space ray.
+    /// Returns `(origin, direction)` with `direction` normalized, or `None`
+    /// when no `view_proj` was provided or the unprojection is degenerate.
+    ///
+    /// Depth follows the Vulkan convention (near plane at NDC z = 0, far at
+    /// z = 1); the ray origin sits on the near plane.
+    pub fn viewport_to_ray(&self, viewport_pos: (f32, f32)) -> Option<([f32; 3], [f32; 3])> {
+        let view_proj = glam::Mat4::from_cols_array_2d(&self.view_proj?);
+        let (_, _, w, h) = self.viewport;
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let ndc_x = (viewport_pos.0 / w as f32) * 2.0 - 1.0;
+        let ndc_y = (viewport_pos.1 / h as f32) * 2.0 - 1.0;
+        let inv = view_proj.inverse();
+        let near_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+        let far_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+        if near_clip.w.abs() < 1e-12 || far_clip.w.abs() < 1e-12 {
+            return None;
+        }
+        let near_world = near_clip.truncate() / near_clip.w;
+        let far_world = far_clip.truncate() / far_clip.w;
+        let dir = far_world - near_world;
+        if dir.length_squared() < 1e-24 {
+            return None;
+        }
+        Some((near_world.to_array(), dir.normalize().to_array()))
     }
 
-    /// Convert viewport coordinates to a point on a plane in world space.
-    /// Returns the intersection point of the camera ray with the plane.
-    /// (Stub: actual implementation requires inverse view-projection from host.)
+    /// Convert viewport-local pixel coordinates to the intersection of the
+    /// cursor ray with a plane. Returns `None` when the ray is (nearly)
+    /// parallel to the plane or the intersection lies behind the near plane.
     pub fn viewport_to_plane(
         &self,
-        _viewport_pos: (f32, f32),
-        _plane_origin: [f32; 3],
-        _plane_normal: [f32; 3],
+        viewport_pos: (f32, f32),
+        plane_origin: [f32; 3],
+        plane_normal: [f32; 3],
     ) -> Option<[f32; 3]> {
-        // TODO: Host should provide the actual transform
-        // For now, return None - host will need to implement this
-        None
+        let (origin, dir) = self.viewport_to_ray(viewport_pos)?;
+        let origin = glam::Vec3::from_array(origin);
+        let dir = glam::Vec3::from_array(dir);
+        let normal = glam::Vec3::from_array(plane_normal).normalize();
+        let denom = dir.dot(normal);
+        if denom.abs() < 1e-6 {
+            return None;
+        }
+        let t = (glam::Vec3::from_array(plane_origin) - origin).dot(normal) / denom;
+        if t < 0.0 {
+            return None;
+        }
+        Some((origin + dir * t).to_array())
+    }
+}
+
+#[cfg(test)]
+mod transform_tests {
+    use super::*;
+    use glam::{Mat4, Vec3, Vec4};
+
+    /// Build a Vulkan-convention view-projection like the app camera does:
+    /// perspective (0..1 depth) with the Y flip baked in, looking at the
+    /// origin from +Z.
+    fn test_ctx_matrix() -> [[f32; 4]; 4] {
+        let proj = Mat4::perspective_rh(60f32.to_radians(), 4.0 / 3.0, 0.1, 100.0);
+        let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
+        let view = Mat4::look_at_rh(Vec3::new(0.0, 0.0, 10.0), Vec3::ZERO, Vec3::Y);
+        (flip_y * proj * view).to_cols_array_2d()
+    }
+
+    fn ctx_with_matrix(document: &mut Document) -> WorkbenchRuntimeContext<'_> {
+        let mut ctx = WorkbenchRuntimeContext::new(
+            document,
+            [0.0, 0.0, 10.0],
+            [0.0, 0.0, 0.0],
+            (0, 0, 800, 600),
+        );
+        ctx.view_proj = Some(test_ctx_matrix());
+        ctx
+    }
+
+    #[test]
+    fn center_of_viewport_projects_to_camera_target() {
+        let mut doc = Document::new("t");
+        let ctx = ctx_with_matrix(&mut doc);
+        let (x, y) = ctx.world_to_viewport([0.0, 0.0, 0.0]).unwrap();
+        assert!((x - 400.0).abs() < 0.5, "x = {x}");
+        assert!((y - 300.0).abs() < 0.5, "y = {y}");
+    }
+
+    #[test]
+    fn behind_camera_returns_none() {
+        let mut doc = Document::new("t");
+        let ctx = ctx_with_matrix(&mut doc);
+        assert!(ctx.world_to_viewport([0.0, 0.0, 20.0]).is_none());
+    }
+
+    #[test]
+    fn no_view_proj_returns_none() {
+        let mut doc = Document::new("t");
+        let ctx = WorkbenchRuntimeContext::new(
+            &mut doc,
+            [0.0, 0.0, 10.0],
+            [0.0, 0.0, 0.0],
+            (0, 0, 800, 600),
+        );
+        assert!(ctx.world_to_viewport([0.0, 0.0, 0.0]).is_none());
+        assert!(ctx.viewport_to_ray((400.0, 300.0)).is_none());
+    }
+
+    #[test]
+    fn center_ray_passes_through_target() {
+        let mut doc = Document::new("t");
+        let ctx = ctx_with_matrix(&mut doc);
+        let (origin, dir) = ctx.viewport_to_ray((400.0, 300.0)).unwrap();
+        let origin = Vec3::from_array(origin);
+        let dir = Vec3::from_array(dir);
+        // Ray from the camera through the viewport center should pass
+        // (very close to) the world origin.
+        let t = (Vec3::ZERO - origin).dot(dir);
+        let closest = origin + dir * t;
+        assert!(closest.length() < 1e-3, "closest = {closest}");
+        // And it points away from the camera (-Z).
+        assert!(dir.z < 0.0);
+    }
+
+    #[test]
+    fn plane_hit_roundtrips_through_projection() {
+        let mut doc = Document::new("t");
+        let ctx = ctx_with_matrix(&mut doc);
+        // Pick an arbitrary viewport point, intersect the Z=0 plane, and
+        // project the hit back: it must land on the original pixel.
+        let px = (513.0, 222.0);
+        let hit = ctx
+            .viewport_to_plane(px, [0.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+            .unwrap();
+        assert!(hit[2].abs() < 1e-4);
+        let (x, y) = ctx.world_to_viewport(hit).unwrap();
+        assert!((x - px.0).abs() < 0.05, "x = {x}");
+        assert!((y - px.1).abs() < 0.05, "y = {y}");
+    }
+
+    #[test]
+    fn parallel_plane_returns_none() {
+        let mut doc = Document::new("t");
+        let ctx = ctx_with_matrix(&mut doc);
+        // The center ray travels along -Z; a plane containing that axis
+        // (normal +Y at the ray height) is parallel to it.
+        assert!(ctx
+            .viewport_to_plane((400.0, 300.0), [0.0, 5.0, 0.0], [0.0, 1.0, 0.0])
+            .is_none());
+    }
+
+    #[test]
+    fn y_axis_is_screen_down() {
+        let mut doc = Document::new("t");
+        let ctx = ctx_with_matrix(&mut doc);
+        // World +Y should appear ABOVE the center on screen, i.e. smaller
+        // viewport y (Y-down pixels, flip baked into the matrix).
+        let (_, y_up) = ctx.world_to_viewport([0.0, 2.0, 0.0]).unwrap();
+        let (_, y_center) = ctx.world_to_viewport([0.0, 0.0, 0.0]).unwrap();
+        assert!(y_up < y_center, "y_up = {y_up}, y_center = {y_center}");
+    }
+
+    #[test]
+    fn used_vec4_sanity() {
+        // Guard against accidental column/row-major confusion in
+        // from_cols_array_2d usage: transform a known point both ways.
+        let m = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
+        let arr = m.to_cols_array_2d();
+        let back = Mat4::from_cols_array_2d(&arr);
+        assert_eq!(
+            back * Vec4::new(0.0, 0.0, 0.0, 1.0),
+            Vec4::new(1.0, 2.0, 3.0, 1.0)
+        );
     }
 }
 

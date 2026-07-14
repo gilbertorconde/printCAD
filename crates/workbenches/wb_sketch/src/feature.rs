@@ -2,7 +2,6 @@
 
 use core_document::{DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
-use serde_json;
 
 use crate::sketch::{Sketch, SketchPlane};
 

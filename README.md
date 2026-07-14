@@ -3,7 +3,7 @@
 A parametric CAD application focused on designing parts for FDM/SLA 3D printing, built entirely in Rust with a Vulkan renderer.
 
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
-![Rust](https://img.shields.io/badge/rust-1.79%2B-orange)
+![Rust](https://img.shields.io/badge/rust-1.92%2B-orange)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
 > ⚠️ **Early Development** - This project is in early development and is not yet usable for actual CAD work. Core features like sketch constraints, part operations, and file I/O are still being implemented.
@@ -18,7 +18,7 @@ printCAD is a Linux-native, Wayland-first CAD application designed for creating 
 - **CAD-style gesture navigation** - Orbit, pan, zoom, and roll plus optional orbit around GPU-picked points without reframing the view
 - **Interactive Orientation Cube** - Click faces, edges, or corners for standard views; arc and triangle arrows for incremental rotation
 - **Modular Workbenches** - Extensible architecture for Sketch and Part Design workflows
-- **Parametric Core** - Feature tree with dependency graph, transactions, and undo/redo (planned)
+- **Parametric Core** - Feature tree with dependency graph and snapshot-based undo/redo (parametric recompute planned)
 - **GPU Selection** - Choose between available graphics cards in hybrid GPU systems
 
 ## Screenshots
@@ -29,8 +29,9 @@ _Coming soon_
 
 ### Prerequisites
 
-- Rust 1.79 or later
+- Rust 1.92 or later
 - Vulkan SDK and drivers
+- OpenCASCADE development headers (`opencascade` on Arch, `libocct-*-dev` on Debian/Ubuntu)
 - Linux with Wayland (X11/XWayland fallback supported)
 
 ### Build & Run
@@ -125,7 +126,7 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 - [ ] Part Design workbench (pad, pocket, revolve)
 - [x] STEP/STP import (OpenCASCADE) — experimental; export and full solid history still planned
 - [ ] Full parametric feature tree
-- [ ] Undo/redo system
+- [x] Undo/redo system (snapshot-based; Ctrl+Z / Ctrl+Shift+Z)
 
 ## Technology Stack
 

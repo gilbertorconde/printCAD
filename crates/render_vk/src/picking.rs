@@ -7,8 +7,24 @@ use crate::{
     create_shader_module,
     mesh::{MeshCache, MeshVertex},
     util::{create_buffer, create_image, create_image_view},
-    BodySubmission, PickResult, RenderError, ViewportRect, PICK_FRAG_SPV, PICK_VERT_SPV,
+    BodySubmission, PickResult, RenderError, ViewportRect, MAX_FRAMES_IN_FLIGHT, PICK_FRAG_SPV,
+    PICK_VERT_SPV,
 };
+
+/// Bytes reserved per in-flight-frame staging slot: the 16-byte pixel ID at
+/// offset 0 and the depth float at offset 32 (kept apart for alignment).
+const PICK_SLOT_STRIDE: u64 = 64;
+const PICK_SLOT_DEPTH_OFFSET: u64 = 32;
+
+/// A pick readback that has been recorded into a frame's command buffer and
+/// resolves once that frame's fence is waited on.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct PendingPick {
+    pub x: u32,
+    pub y: u32,
+    pub view_proj: [[f32; 4]; 4],
+    pub viewport: ViewportRect,
+}
 
 /// Push constants for the picking shader
 #[repr(C)]
@@ -99,8 +115,9 @@ impl PickRenderer {
         let framebuffer = unsafe { device.create_framebuffer(&framebuffer_info, None) }
             .map_err(RenderError::from)?;
 
-        // Create staging buffer for readback (16 bytes for ID + padding + 4 bytes for depth)
-        let staging_size = 64u64; // 16 bytes for ID + 16 bytes padding + 4 bytes for depth + extra
+        // Staging buffer for readback, one slot per in-flight frame so two
+        // frames' copies never alias (ID at slot+0, depth at slot+32).
+        let staging_size = PICK_SLOT_STRIDE * MAX_FRAMES_IN_FLIGHT as u64;
         let (staging_buffer, staging_memory) = create_buffer(
             device,
             staging_size,
@@ -471,45 +488,69 @@ impl PickRenderer {
         Ok(())
     }
 
-    /// Read back the pick result at a specific pixel
-    pub(crate) fn read_pick_result(
+    /// Record the two 1-pixel readback copies into the frame's command
+    /// buffer, targeting staging slot `slot` (one per in-flight frame).
+    /// Must be recorded after [`Self::record_commands`]: the barriers order
+    /// the copies against the pick pass's attachment writes.
+    ///
+    /// Returns `false` (recording nothing) when the pixel lies outside the
+    /// pick attachments.
+    pub(crate) fn record_readback(
         &self,
         device: &ash::Device,
-        command_pool: vk::CommandPool,
-        queue: vk::Queue,
+        command_buffer: vk::CommandBuffer,
         x: u32,
         y: u32,
-        view_proj: [[f32; 4]; 4],
-        viewport: &ViewportRect,
-    ) -> Result<PickResult, RenderError> {
+        slot: usize,
+    ) -> bool {
         if x >= self.extent.width || y >= self.extent.height {
-            return Ok(PickResult::default());
+            return false;
         }
+        let slot_offset = slot as u64 * PICK_SLOT_STRIDE;
 
-        // Create a one-time command buffer for the copy
-        let alloc_info = vk::CommandBufferAllocateInfo::default()
-            .command_pool(command_pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
-            .command_buffer_count(1);
+        // The render pass leaves both attachments in TRANSFER_SRC_OPTIMAL,
+        // but the implicit external dependency does not make the writes
+        // visible to transfer reads — do that explicitly.
+        let image_barriers = [
+            vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(self.id_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                }),
+            vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(self.depth_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::DEPTH,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                }),
+        ];
 
-        let command_buffer =
-            unsafe { device.allocate_command_buffers(&alloc_info) }.map_err(RenderError::from)?[0];
-
-        let begin_info = vk::CommandBufferBeginInfo::default()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
-        unsafe {
-            device
-                .begin_command_buffer(command_buffer, &begin_info)
-                .map_err(RenderError::from)?;
-
-            // Copy single pixel from ID image to staging buffer (offset 0)
-            let id_region = vk::BufferImageCopy::default()
-                .buffer_offset(0)
+        let pixel = |aspect_mask, buffer_offset| {
+            vk::BufferImageCopy::default()
+                .buffer_offset(buffer_offset)
                 .buffer_row_length(0)
                 .buffer_image_height(0)
                 .image_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    aspect_mask,
                     mip_level: 0,
                     base_array_layer: 0,
                     layer_count: 1,
@@ -523,63 +564,79 @@ impl PickRenderer {
                     width: 1,
                     height: 1,
                     depth: 1,
-                });
+                })
+        };
+
+        unsafe {
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &image_barriers,
+            );
 
             device.cmd_copy_image_to_buffer(
                 command_buffer,
                 self.id_image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.staging_buffer,
-                &[id_region],
+                &[pixel(vk::ImageAspectFlags::COLOR, slot_offset)],
             );
-
-            // Copy single pixel from depth image to staging buffer (offset 32 for alignment)
-            let depth_region = vk::BufferImageCopy::default()
-                .buffer_offset(32)
-                .buffer_row_length(0)
-                .buffer_image_height(0)
-                .image_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::DEPTH,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .image_offset(vk::Offset3D {
-                    x: x as i32,
-                    y: y as i32,
-                    z: 0,
-                })
-                .image_extent(vk::Extent3D {
-                    width: 1,
-                    height: 1,
-                    depth: 1,
-                });
-
             device.cmd_copy_image_to_buffer(
                 command_buffer,
                 self.depth_image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.staging_buffer,
-                &[depth_region],
+                &[pixel(
+                    vk::ImageAspectFlags::DEPTH,
+                    slot_offset + PICK_SLOT_DEPTH_OFFSET,
+                )],
             );
 
-            device
-                .end_command_buffer(command_buffer)
-                .map_err(RenderError::from)?;
+            // Make the transfer writes visible to the host read that happens
+            // after the frame fence is waited on.
+            let host_barrier = vk::BufferMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(vk::AccessFlags::HOST_READ)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .buffer(self.staging_buffer)
+                .offset(slot_offset)
+                .size(PICK_SLOT_STRIDE);
+            device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::HOST,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[host_barrier],
+                &[],
+            );
+        }
+        true
+    }
 
-            // Submit and wait
-            let command_buffers = [command_buffer];
-            let submit_info = vk::SubmitInfo::default().command_buffers(&command_buffers);
-            device
-                .queue_submit(queue, &[submit_info], vk::Fence::null())
-                .map_err(RenderError::from)?;
-            device.queue_wait_idle(queue).map_err(RenderError::from)?;
-
-            device.free_command_buffers(command_pool, &[command_buffer]);
-
-            // Read back the data (ID at offset 0, depth at offset 32)
+    /// Decode a staging slot after the frame that recorded it has been
+    /// fence-waited. Pure host work: no submits, no waits.
+    pub(crate) fn read_slot(
+        &self,
+        device: &ash::Device,
+        slot: usize,
+        pending: &PendingPick,
+    ) -> Result<PickResult, RenderError> {
+        let slot_offset = slot as u64 * PICK_SLOT_STRIDE;
+        unsafe {
             let data_ptr = device
-                .map_memory(self.staging_memory, 0, 36, vk::MemoryMapFlags::empty())
+                .map_memory(
+                    self.staging_memory,
+                    slot_offset,
+                    PICK_SLOT_STRIDE,
+                    vk::MemoryMapFlags::empty(),
+                )
                 .map_err(RenderError::from)? as *const u32;
 
             let id_values = [
@@ -588,22 +645,23 @@ impl PickRenderer {
                 *data_ptr.add(2),
                 *data_ptr.add(3),
             ];
-
-            // Read depth at offset 32 (8 u32s from start)
-            let depth = *((data_ptr.add(8)) as *const f32);
+            let depth = *((data_ptr.add((PICK_SLOT_DEPTH_OFFSET / 4) as usize)) as *const f32);
 
             device.unmap_memory(self.staging_memory);
 
-            // Check if we hit anything (all zeros = no hit)
+            // All zeros = cleared pixel = no object under the cursor.
             if id_values == [0, 0, 0, 0] {
                 return Ok(PickResult::default());
             }
 
             let uuid = Self::u32s_to_uuid(id_values);
-
-            // Compute world position by unprojecting the screen coordinates with depth
-            // The screen coordinates are in window space, we need to convert to viewport-relative
-            let world_pos = Self::unproject(x as f32, y as f32, depth, viewport, view_proj);
+            let world_pos = Self::unproject(
+                pending.x as f32,
+                pending.y as f32,
+                depth,
+                &pending.viewport,
+                pending.view_proj,
+            );
 
             Ok(PickResult {
                 body_id: Some(uuid),

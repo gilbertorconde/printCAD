@@ -1,24 +1,21 @@
+mod commands;
 mod feature_tree;
+mod inputs;
 mod layout;
 mod settings_panel;
 mod step_import_modal;
 
+pub use commands::{FileCommand, UiCommand};
+pub use inputs::UiFrameInputs;
 pub use step_import_modal::StepImportDialogAction;
 
-use std::path::PathBuf;
-
-use axes::AxisSystem;
 use core_document::WorkbenchId;
 use egui::Context;
 use egui_winit::{egui as egui_core, State};
 use render_vk::EguiSubmission;
-use settings::UserSettings;
 use winit::{event::WindowEvent, window::Window};
 
-use crate::orientation_cube::{
-    self, CameraSnapView, OrientationCubeConfig, OrientationCubeInput, OrientationCubeResult,
-    RotateDelta,
-};
+use crate::orientation_cube::{self, OrientationCubeConfig, OrientationCubeResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveWorkbench(pub WorkbenchId);
@@ -44,36 +41,20 @@ pub struct ViewportRect {
     pub height: u32,
 }
 
-pub struct UiFrameResult {
+/// Per-frame data (submission, viewport, tool/workbench state) plus the
+/// list of actions the user triggered this frame.
+pub struct UiFrameOutput {
     pub submission: EguiSubmission,
-    pub settings_changed: bool,
-    /// Camera preferences edited in Settings (Camera tab); push into [`CameraController`].
-    pub camera_settings_changed: bool,
+    pub viewport: ViewportRect,
     pub active_tool: ActiveTool,
     pub active_workbench: ActiveWorkbench,
-    pub workbench_changed: bool,
-    pub snap_to_view: Option<CameraSnapView>,
-    pub rotate_delta: Option<RotateDelta>,
-    pub viewport: ViewportRect,
-    pub finish_sketch_requested: bool,
-    pub tree_selection: Option<feature_tree::TreeItemId>,
-    pub tree_activation: Option<feature_tree::TreeItemId>,
-    pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
-    pub new_requested: bool,
-    pub open_requested: bool,
-    pub save_requested: bool,
-    pub save_as_requested: bool,
-    pub import_step_requested: bool,
-    pub reset_view_requested: bool,
-    pub quit_requested: bool,
-    pub step_import_dialog: StepImportDialogAction,
+    pub commands: Vec<UiCommand>,
 }
 
 pub struct UiLayer {
     ctx: Context,
     state: State,
     active_workbench: ActiveWorkbench,
-    active_tool: ActiveTool,
     settings_tab: settings_panel::SettingsTab,
     show_settings: bool,
     orientation_cube_config: OrientationCubeConfig,
@@ -97,7 +78,6 @@ impl UiLayer {
             ctx,
             state,
             active_workbench: ActiveWorkbench::default(),
-            active_tool: ActiveTool::default(),
             settings_tab: settings_panel::SettingsTab::Camera,
             show_settings: false,
             orientation_cube_config: OrientationCubeConfig::default(),
@@ -112,32 +92,35 @@ impl UiLayer {
         self.state.on_window_event(window, event)
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn run(
-        &mut self,
-        window: &Window,
-        settings: &mut UserSettings,
-        orientation_input: Option<&OrientationCubeInput>,
-        fps: f32,
-        gpu_name: Option<&str>,
-        gpus: &[String],
-        hovered_point: Option<[f32; 3]>,
-        pivot_screen_pos: Option<(f32, f32)>,
-        axis_system: AxisSystem,
-        document: &mut core_document::Document,
-        registry: &mut core_document::DocumentService,
-        active_tree_selection: Option<feature_tree::TreeItemId>,
-        active_document_object: Option<core_document::FeatureId>,
-        selected_body_id: Option<core_document::BodyId>,
-        screen_space_overlays: &[core_document::ScreenSpaceOverlay],
-        pending_imports: u32,
-        pending_document_open: u32,
-        mut step_import_pending: Option<&mut (PathBuf, kernel_api::TessellationSettings)>,
-    ) -> UiFrameResult {
+    pub fn run(&mut self, window: &Window, inputs: UiFrameInputs<'_>) -> UiFrameOutput {
+        let UiFrameInputs {
+            active_tool: host_active_tool,
+            settings,
+            document,
+            registry,
+            orientation_input,
+            fps,
+            gpu_name,
+            gpus,
+            hovered_point,
+            pivot_screen_pos,
+            axis_system,
+            tree_selection: active_tree_selection,
+            active_document_object,
+            selected_body_id,
+            screen_space_overlays,
+            pending_imports,
+            pending_document_open,
+            mut step_import_pending,
+        } = inputs;
+
         let raw_input = self.state.take_egui_input(window);
         let prev_workbench = self.active_workbench.clone();
         let mut active_workbench = self.active_workbench.clone();
-        let mut active_tool = self.active_tool.clone();
+        // Seed tool state from the host, not a UiLayer copy: the host owns
+        // consumption of Action tools, and a stale parallel copy here would
+        // resurrect them every frame (infinite "New Body" loop).
+        let mut active_tool = host_active_tool;
         let mut show_settings = self.show_settings;
         let mut settings_tab = self.settings_tab;
 
@@ -262,7 +245,6 @@ impl UiLayer {
         }
 
         self.active_workbench = active_workbench.clone();
-        self.active_tool = active_tool.clone();
         self.show_settings = show_settings;
         self.settings_tab = settings_tab;
         self.state
@@ -279,32 +261,76 @@ impl UiLayer {
             height: (viewport_rect_logical.height() * ppp).max(1.0) as u32,
         };
 
-        UiFrameResult {
+        // Fold this frame's interactions into commands. Application order is
+        // decided by `apply_ui_commands`, not by the order of this list.
+        let mut commands = Vec::new();
+        if new_requested {
+            commands.push(UiCommand::File(FileCommand::New));
+        }
+        if open_requested {
+            commands.push(UiCommand::File(FileCommand::Open));
+        }
+        if save_requested {
+            commands.push(UiCommand::File(FileCommand::Save));
+        }
+        if save_as_requested {
+            commands.push(UiCommand::File(FileCommand::SaveAs));
+        }
+        if import_step_requested {
+            commands.push(UiCommand::File(FileCommand::ImportStep));
+        }
+        if reset_view_requested {
+            commands.push(UiCommand::FitView);
+        }
+        if quit_requested {
+            commands.push(UiCommand::Quit);
+        }
+        if let Some(view) = cube_result.snap_to_view {
+            commands.push(UiCommand::CameraSnap(view));
+        }
+        if let Some(delta) = cube_result.rotate_delta {
+            commands.push(UiCommand::CameraRotate(delta));
+        }
+        if settings_changed {
+            commands.push(UiCommand::PersistSettings);
+        }
+        if camera_settings_changed {
+            commands.push(UiCommand::ApplyCameraSettings);
+        }
+        if let Some(item) = tree_selection {
+            commands.push(UiCommand::SelectTreeItem(item));
+        }
+        if let Some(item) = tree_activation {
+            commands.push(UiCommand::ActivateTreeItem(item));
+        }
+        if let Some((node, visible)) = imported_visibility_change {
+            commands.push(UiCommand::SetImportedVisibility { node, visible });
+        }
+        match step_import_dialog {
+            StepImportDialogAction::Confirmed => commands.push(UiCommand::ConfirmStepImport),
+            StepImportDialogAction::Cancelled => commands.push(UiCommand::CancelStepImport),
+            StepImportDialogAction::None => {}
+        }
+        if finish_requested {
+            commands.push(UiCommand::FinishSketch);
+        }
+        if workbench_changed {
+            commands.push(UiCommand::SwitchWorkbench {
+                from: prev_workbench,
+                to: active_workbench.clone(),
+            });
+        }
+
+        UiFrameOutput {
             submission: EguiSubmission {
                 pixels_per_point: full_output.pixels_per_point,
                 textures_delta: full_output.textures_delta,
                 primitives,
             },
-            settings_changed,
-            camera_settings_changed,
+            viewport,
             active_tool,
             active_workbench,
-            workbench_changed,
-            snap_to_view: cube_result.snap_to_view,
-            rotate_delta: cube_result.rotate_delta,
-            viewport,
-            finish_sketch_requested: finish_requested,
-            tree_selection,
-            tree_activation,
-            imported_visibility_change,
-            new_requested,
-            open_requested,
-            save_requested,
-            save_as_requested,
-            import_step_requested,
-            reset_view_requested,
-            quit_requested,
-            step_import_dialog,
+            commands,
         }
     }
 }

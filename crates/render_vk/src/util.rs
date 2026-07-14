@@ -2,6 +2,7 @@ use ash::vk;
 
 use crate::RenderError;
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn create_image(
     device: &ash::Device,
     width: u32,

@@ -86,7 +86,7 @@ fn scan_si_length_unit(upper: &str) -> Option<(usize, LengthUnit)> {
                         || args.contains("$ , .METRE.")
                     {
                         LengthUnit::Metre
-                    } else if !has_known_prefix(&args) {
+                    } else if !has_known_prefix(args) {
                         // No prefix at all → bare SI metre.
                         LengthUnit::Metre
                     } else {
@@ -110,7 +110,7 @@ fn scan_conversion_based_unit(upper: &str) -> Option<(usize, LengthUnit)> {
         let abs = search_from + rel;
         if let Some(args) = extract_parens(&upper[abs..]) {
             // The first argument is a quoted unit name.
-            let label = first_quoted_label(&args).unwrap_or("");
+            let label = first_quoted_label(args).unwrap_or("");
             let unit = match label {
                 "INCH" | "INCHES" => Some(LengthUnit::Inch),
                 "FOOT" | "FEET" => Some(LengthUnit::Foot),

@@ -14,10 +14,10 @@ use uuid::Uuid;
 use winit::window::Window;
 
 use crate::{
-    find_depth_format, get_max_usable_sample_count, identity_matrix, is_srgb_format, map_egui_err,
+    find_depth_format, get_max_usable_sample_count, is_srgb_format, map_egui_err,
     mesh::{MeshCache, MeshRenderer},
     msaa_samples_to_vk,
-    picking::PickRenderer,
+    picking::{PendingPick, PickRenderer},
     surface,
     util::find_memory_type,
     FrameSubmission, PickResult, RenderError, RenderSettings, ViewportRect, MAX_FRAMES_IN_FLIGHT,
@@ -30,6 +30,9 @@ const VIEWPORT_BACKGROUND_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
 
 pub(crate) struct RendererCore {
     instance: ash::Instance,
+    /// Routes validation-layer messages into `tracing`; only present when
+    /// validation layers are enabled. Destroyed just before the instance.
+    debug_messenger: Option<crate::debug::DebugMessenger>,
     surface_loader: SurfaceLoader,
     surface: vk::SurfaceKHR,
     device: ash::Device,
@@ -76,15 +79,13 @@ pub(crate) struct RendererCore {
     memory_properties: vk::PhysicalDeviceMemoryProperties,
     // GPU Picking resources
     pick_renderer: Option<PickRenderer>,
-    // Last frame's body list for picking (we need UUIDs to decode pick results)
-    last_frame_bodies: Vec<Uuid>,
-    // Cached pick result (updated after each frame)
+    /// Pick request from the app; consumed by the next recorded frame.
     pending_pick: Option<(u32, u32)>,
+    /// Per-in-flight-frame readbacks recorded into command buffers; each
+    /// resolves at the top of `draw_frame` once its frame's fence is waited.
+    pick_in_flight: Vec<Option<PendingPick>>,
+    // Cached pick result (updated when an in-flight readback resolves)
     last_pick_result: PickResult,
-    // View-projection and viewport used for the last picking pass that was submitted
-    // (used for unprojection when reading back the pick result)
-    pending_pick_view_proj: [[f32; 4]; 4],
-    pending_pick_viewport_rect: ViewportRect,
 }
 
 impl RendererCore {
@@ -113,6 +114,18 @@ impl RendererCore {
         }
 
         let instance = create_instance(&entry, window, validation_enabled)?;
+
+        let debug_messenger = if validation_enabled {
+            match crate::debug::DebugMessenger::new(&entry, &instance) {
+                Ok(messenger) => Some(messenger),
+                Err(err) => {
+                    warn!("Failed to create Vulkan debug messenger: {err}");
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         let surface = surface::create_surface(&entry, &instance, window)?;
 
@@ -182,6 +195,7 @@ impl RendererCore {
 
         let mut core = RendererCore {
             instance,
+            debug_messenger,
             surface_loader,
             surface,
             device,
@@ -222,11 +236,9 @@ impl RendererCore {
             color_image_view: vk::ImageView::null(),
             memory_properties,
             pick_renderer: None,
-            last_frame_bodies: Vec::new(),
             pending_pick: None,
+            pick_in_flight: vec![None; MAX_FRAMES_IN_FLIGHT],
             last_pick_result: PickResult::default(),
-            pending_pick_view_proj: identity_matrix(),
-            pending_pick_viewport_rect: ViewportRect::default(),
         };
 
         core.create_swapchain(extent)?;
@@ -279,6 +291,8 @@ impl RendererCore {
         unsafe {
             self.device.device_wait_idle().map_err(RenderError::from)?;
         }
+        // Device is idle: retired buffers can be reclaimed immediately.
+        self.mesh_cache.flush_retired(&self.device);
         self.cleanup_swapchain();
         self.create_swapchain(extent)?;
         self.create_depth_resources()?;
@@ -288,6 +302,7 @@ impl RendererCore {
         self.create_framebuffers()?;
         self.create_ui_framebuffers()?;
         self.create_command_buffers()?;
+        self.create_sync_objects()?;
         if let Some(renderer) = self.egui_renderer.as_mut() {
             renderer
                 .set_render_pass(self.ui_render_pass)
@@ -296,7 +311,11 @@ impl RendererCore {
         if let Some(renderer) = self.mesh_renderer.as_mut() {
             renderer.set_render_pass(self.render_pass, self.msaa_samples)?;
         }
-        // Recreate picking renderer with new extent
+        // Recreate picking renderer with new extent; pending readbacks
+        // reference the old staging buffer and stale coordinates.
+        for slot in &mut self.pick_in_flight {
+            *slot = None;
+        }
         if let Some(pick_renderer) = self.pick_renderer.take() {
             pick_renderer.destroy(&self.device);
         }
@@ -334,6 +353,29 @@ impl RendererCore {
             self.device
                 .wait_for_fences(&[self.in_flight_fences[self.current_frame]], true, u64::MAX)
                 .map_err(RenderError::from)?;
+        }
+
+        // Destroy retired GPU buffers that are provably no longer referenced
+        // by any in-flight command buffer.
+        self.mesh_cache.begin_frame(&self.device);
+
+        // The fence wait above proves the readback recorded into this slot's
+        // frame has completed: resolve it host-side with no extra sync.
+        if let Some(pending) = self.pick_in_flight[self.current_frame].take() {
+            if let Some(pick_renderer) = &self.pick_renderer {
+                match pick_renderer.read_slot(&self.device, self.current_frame, &pending) {
+                    Ok(result) => {
+                        if result.body_id.is_some() {
+                            debug!(
+                                "GPU pick hit: {:?} at ({}, {})",
+                                result.body_id, pending.x, pending.y
+                            );
+                        }
+                        self.last_pick_result = result;
+                    }
+                    Err(e) => warn!("GPU pick readback failed: {:?}", e),
+                }
+            }
         }
 
         if let Some(renderer) = self.egui_renderer.as_mut() {
@@ -387,7 +429,7 @@ impl RendererCore {
 
         self.record_command_buffer(self.command_buffers[self.current_frame], image_index, frame)?;
 
-        let signal_semaphores = [self.render_finished_semaphores[self.current_frame]];
+        let signal_semaphores = [self.render_finished_semaphores[image_index as usize]];
         let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
         let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
 
@@ -435,60 +477,12 @@ impl RendererCore {
             self.textures_to_free[self.current_frame].clear();
         }
 
-        // Store body IDs for picking
-        self.last_frame_bodies = frame.bodies.iter().map(|b| b.id).collect();
-
         // Mesh-cache GC: drop GPU buffers for any body that's no longer in
-        // the live submission set. We only do work (and only pay the
-        // wait-idle cost) when something actually disappeared — pan/orbit on
-        // a stable scene short-circuits to a single hashmap-keys diff. This
-        // keeps cached buffers from leaking when a body is deleted without
-        // forcing a wait every frame.
+        // the live submission set. Dead entries go onto the retire queue and
+        // are destroyed a couple of frames later — no stall.
         let alive_ids: Vec<Uuid> = frame.bodies.iter().map(|b| b.id).collect();
-        let needs_gc = self.mesh_cache.has_dead_entries(&alive_ids);
-        if needs_gc {
-            unsafe {
-                let _ = self.device.device_wait_idle();
-            }
-            self.mesh_cache.retain_only(&self.device, &alive_ids);
-        }
-
-        // Process pending pick request - we need to wait for the previous frame to complete first
-        // The pick result we read was rendered with pick_view_proj/pick_viewport_rect
-        if let Some((x, y)) = self.pending_pick.take() {
-            if let Some(pick_renderer) = &self.pick_renderer {
-                // Wait for the current frame's fence to ensure the previous picking pass is complete
-                unsafe {
-                    let _ = self.device.wait_for_fences(
-                        &[self.in_flight_fences[self.current_frame]],
-                        true,
-                        u64::MAX,
-                    );
-                }
-
-                // The picking pass we're reading from was rendered with pending_pick_* matrices
-                // (set during the frame that just completed)
-                // Use those matrices for unprojection
-                match pick_renderer.read_pick_result(
-                    &self.device,
-                    self.command_pool,
-                    self.graphics_queue,
-                    x,
-                    y,
-                    self.pending_pick_view_proj,
-                    &self.pending_pick_viewport_rect,
-                ) {
-                    Ok(result) => {
-                        if result.body_id.is_some() {
-                            debug!("GPU pick hit: {:?} at ({}, {})", result.body_id, x, y);
-                        }
-                        self.last_pick_result = result;
-                    }
-                    Err(e) => {
-                        warn!("GPU pick failed: {:?}", e);
-                    }
-                }
-            }
+        if self.mesh_cache.has_dead_entries(&alive_ids) {
+            self.mesh_cache.retain_only(&alive_ids);
         }
 
         self.current_frame = (self.current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -659,6 +653,7 @@ impl RendererCore {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn create_image(
         &self,
         width: u32,
@@ -1011,13 +1006,19 @@ impl RendererCore {
         for _ in 0..MAX_FRAMES_IN_FLIGHT {
             let image_available = unsafe { self.device.create_semaphore(&semaphore_info, None) }
                 .map_err(RenderError::from)?;
-            let render_finished = unsafe { self.device.create_semaphore(&semaphore_info, None) }
-                .map_err(RenderError::from)?;
             let fence = unsafe { self.device.create_fence(&fence_info, None) }
                 .map_err(RenderError::from)?;
             self.image_available_semaphores.push(image_available);
-            self.render_finished_semaphores.push(render_finished);
             self.in_flight_fences.push(fence);
+        }
+        // Render-finished semaphores are per swapchain IMAGE, not per frame
+        // in flight: presentation holds the semaphore until the image is
+        // reacquired, which can be later than the frame slot's next reuse
+        // (VUID-vkQueueSubmit "semaphore still in use by swapchain").
+        for _ in 0..self.swapchain_images.len() {
+            let render_finished = unsafe { self.device.create_semaphore(&semaphore_info, None) }
+                .map_err(RenderError::from)?;
+            self.render_finished_semaphores.push(render_finished);
         }
         self.images_in_flight = vec![vk::Fence::null(); self.swapchain_images.len()];
         self.current_frame = 0;
@@ -1053,26 +1054,42 @@ impl RendererCore {
             }
         }
 
-        // Record picking pass (renders to offscreen buffer for object ID detection)
-        if let Some(pick_renderer) = self.pick_renderer.as_mut() {
-            pick_renderer.record_commands(
-                &self.device,
-                command_buffer,
-                &self.mesh_cache,
-                &frame.bodies,
-                frame.view_proj,
-                frame.viewport_rect.as_ref(),
-            )?;
+        // Record the picking pass + 1-pixel readback only when the app asked
+        // for a pick this frame; idle frames skip the offscreen pass
+        // entirely. The readback lands in this frame's staging slot and is
+        // resolved after this frame's fence wait (a stable
+        // MAX_FRAMES_IN_FLIGHT-frame latency, no GPU stalls).
+        if let Some((x, y)) = self.pending_pick.take() {
+            if let Some(pick_renderer) = self.pick_renderer.as_mut() {
+                pick_renderer.record_commands(
+                    &self.device,
+                    command_buffer,
+                    &self.mesh_cache,
+                    &frame.bodies,
+                    frame.view_proj,
+                    frame.viewport_rect.as_ref(),
+                )?;
 
-            // Store the view_proj used for this picking pass
-            // When this frame completes, these become the "current" pick matrices
-            self.pending_pick_view_proj = frame.view_proj;
-            self.pending_pick_viewport_rect = frame.viewport_rect.unwrap_or(ViewportRect {
-                x: 0,
-                y: 0,
-                width: self.swapchain_extent.width,
-                height: self.swapchain_extent.height,
-            });
+                if pick_renderer.record_readback(
+                    &self.device,
+                    command_buffer,
+                    x,
+                    y,
+                    self.current_frame,
+                ) {
+                    self.pick_in_flight[self.current_frame] = Some(PendingPick {
+                        x,
+                        y,
+                        view_proj: frame.view_proj,
+                        viewport: frame.viewport_rect.unwrap_or(ViewportRect {
+                            x: 0,
+                            y: 0,
+                            width: self.swapchain_extent.width,
+                            height: self.swapchain_extent.height,
+                        }),
+                    });
+                }
+            }
         }
 
         let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
@@ -1325,6 +1342,11 @@ impl Drop for RendererCore {
         unsafe {
             self.device.destroy_device(None);
             self.surface_loader.destroy_surface(self.surface, None);
+        }
+        if let Some(mut messenger) = self.debug_messenger.take() {
+            messenger.destroy();
+        }
+        unsafe {
             self.instance.destroy_instance(None);
         }
     }
@@ -1356,10 +1378,17 @@ fn create_instance(
         .map(|layer| layer.as_ptr())
         .collect();
 
-    let create_info = vk::InstanceCreateInfo::default()
+    let mut create_info = vk::InstanceCreateInfo::default()
         .application_info(&app_info)
         .enabled_extension_names(&extensions_vec)
         .enabled_layer_names(&validation_layers);
+
+    // Chain a messenger create-info so instance create/destroy-time messages
+    // (outside the lifetime of the real messenger) are captured too.
+    let mut instance_debug_info = crate::debug::DebugMessenger::create_info();
+    if enable_validation {
+        create_info = create_info.push_next(&mut instance_debug_info);
+    }
 
     unsafe { entry.create_instance(&create_info, None) }.map_err(RenderError::from)
 }
@@ -1424,10 +1453,14 @@ fn create_logical_device(
         .collect();
 
     let supported = unsafe { instance.get_physical_device_features(physical_device) };
-    let mut device_features = vk::PhysicalDeviceFeatures::default();
     // Without `wideLines`, Vulkan only allows pipeline `lineWidth` == 1.0, so
-    // thicker face-edge `LINE_LIST` drawing is impossible.
-    device_features.wide_lines = supported.wide_lines;
+    // thicker face-edge `LINE_LIST` drawing is impossible. `fillModeNonSolid`
+    // gates VK_POLYGON_MODE_LINE for the wireframe pipeline.
+    let device_features = vk::PhysicalDeviceFeatures {
+        wide_lines: supported.wide_lines,
+        fill_mode_non_solid: supported.fill_mode_non_solid,
+        ..vk::PhysicalDeviceFeatures::default()
+    };
     let wide_lines_on = device_features.wide_lines != vk::FALSE;
     let device_extensions = [ash::khr::swapchain::NAME.as_ptr()];
 
@@ -1535,10 +1568,7 @@ fn choose_surface_format(available_formats: &[vk::SurfaceFormatKHR]) -> vk::Surf
 }
 
 fn choose_present_mode(available_present_modes: &[vk::PresentModeKHR]) -> vk::PresentModeKHR {
-    if available_present_modes
-        .iter()
-        .any(|&mode| mode == vk::PresentModeKHR::MAILBOX)
-    {
+    if available_present_modes.contains(&vk::PresentModeKHR::MAILBOX) {
         vk::PresentModeKHR::MAILBOX
     } else {
         vk::PresentModeKHR::FIFO

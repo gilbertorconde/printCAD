@@ -40,15 +40,47 @@ fn main() {
         .define("HAVE_NO_DLL", None);
     build.compile("printcad_occt_shim");
 
-    if let Ok(lib_dir) = std::env::var("OCCT_LIB_DIR") {
+    let occt_lib_dir = std::env::var("OCCT_LIB_DIR").ok();
+    if let Some(lib_dir) = &occt_lib_dir {
         println!("cargo:rustc-link-search=native={}", lib_dir);
     }
 
-    // OpenCASCADE 7.6+ split STEP support out of the legacy `TKSTEP` library
-    // into a unified `TKDESTEP` data-exchange module. Both names are listed so
-    // the build works against either generation when available.
+    // OpenCASCADE 7.8 merged the legacy `TKSTEP*` libraries into a unified
+    // `TKDESTEP` data-exchange module. Probe the library directories so the
+    // build links whichever generation is installed.
+    let mut lib_search_dirs: Vec<PathBuf> = occt_lib_dir.iter().map(PathBuf::from).collect();
+    lib_search_dirs.extend(
+        [
+            "/usr/lib",
+            "/usr/lib/x86_64-linux-gnu",
+            "/usr/lib64",
+            "/usr/local/lib",
+            "/opt/opencascade/lib",
+        ]
+        .iter()
+        .map(PathBuf::from),
+    );
+    let has_lib = |name: &str| {
+        lib_search_dirs
+            .iter()
+            .any(|dir| dir.join(format!("lib{name}.so")).exists())
+    };
+
+    let step_libs: &[&str] = if has_lib("TKDESTEP") {
+        // STEP + STEPCAFControl (geometry + colours in DECAF doc).
+        &["TKDESTEP"]
+    } else {
+        // OCCT <= 7.7 legacy naming (TKXDESTEP carries STEPCAFControl).
+        &[
+            "TKXDESTEP",
+            "TKSTEP",
+            "TKSTEP209",
+            "TKSTEPAttr",
+            "TKSTEPBase",
+        ]
+    };
+
     let occt_libs = [
-        "TKDESTEP", // STEP + STEPCAFControl (geometry + colours in DECAF doc).
         "TKXSBase",
         "TKXCAF", // XCAF document / colour attributes on shapes.
         "TKVCAF",
@@ -64,7 +96,7 @@ fn main() {
         "TKMath",
         "TKernel",
     ];
-    for name in occt_libs {
+    for name in step_libs.iter().copied().chain(occt_libs) {
         println!("cargo:rustc-link-lib=dylib={name}");
     }
 }

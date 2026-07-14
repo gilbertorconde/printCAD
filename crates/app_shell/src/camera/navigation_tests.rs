@@ -55,9 +55,11 @@ fn auto_clip_empty_scene_no_panic() {
 
 #[test]
 fn zoom_to_cursor_preserves_world_point_on_focal_plane() {
-    let mut settings = CameraSettings::default();
-    settings.zoom_to_cursor = true;
-    settings.invert_zoom = false;
+    let settings = CameraSettings {
+        zoom_to_cursor: true,
+        invert_zoom: false,
+        ..CameraSettings::default()
+    };
     let axes = AxisSystem::from(settings.axis_preset);
     let mut cam = CadCameraState::new(&settings, (640, 480));
     cam.focal_distance = 80.0;

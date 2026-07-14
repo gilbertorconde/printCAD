@@ -11,6 +11,7 @@ use sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
 use uuid::Uuid;
 
 /// Sketch workbench: 2D drawing with constraints.
+#[derive(Default)]
 pub struct SketchWorkbench {
     /// Currently active sketch feature ID (if any).
     active_sketch_id: Option<FeatureId>,
@@ -20,17 +21,6 @@ pub struct SketchWorkbench {
     circle_tool_state: Option<Uuid>,
     /// Arc tool state: (center, start) points (if clicking to create an arc).
     arc_tool_state: Option<(Uuid, Uuid)>,
-}
-
-impl Default for SketchWorkbench {
-    fn default() -> Self {
-        Self {
-            active_sketch_id: None,
-            line_tool_state: None,
-            circle_tool_state: None,
-            arc_tool_state: None,
-        }
-    }
 }
 
 impl SketchWorkbench {
@@ -188,7 +178,7 @@ impl Workbench for SketchWorkbench {
                 return InputResult::ignored();
             }
 
-            let sketch_name = Self::next_sketch_name(&ctx.document);
+            let sketch_name = Self::next_sketch_name(ctx.document);
             let sketch = Sketch::new(sketch_name.clone());
             let plane = sketch.plane;
             let sketch_feature = SketchFeature::new(sketch, plane);
@@ -240,14 +230,23 @@ impl Workbench for SketchWorkbench {
                     }
                 };
 
-                // Convert viewport position to sketch coordinates.
-                // If we don't have a projected world position, don't fall back to the
-                // plane origin (that would always give (0, 0) in sketch space).
-                let world_pos = match ctx.hovered_world_pos {
+                // Convert viewport position to sketch coordinates. Prefer the
+                // GPU-picked world position; when the cursor is over empty
+                // space, cast the cursor ray onto this sketch's plane instead.
+                // Never fall back to the plane origin (that would always give
+                // (0, 0) in sketch space).
+                let raycast = || {
+                    ctx.viewport_to_plane(
+                        *viewport_pos,
+                        sketch_feature.plane.origin,
+                        sketch_feature.plane.normal,
+                    )
+                };
+                let world_pos = match ctx.hovered_world_pos.or_else(raycast) {
                     Some(p) => p,
                     None => {
                         ctx.log_error(format!(
-                            "Failed to project cursor onto sketch plane (no hovered_world_pos). \
+                            "Failed to project cursor onto sketch plane. \
 viewport_pos = ({:.1}, {:.1})",
                             viewport_pos.0, viewport_pos.1
                         ));
@@ -660,10 +659,8 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     let lower = name.to_ascii_lowercase();
     let rest = if let Some(r) = lower.strip_prefix("sketch_") {
         r
-    } else if let Some(r) = lower.strip_prefix("sketch") {
-        r
     } else {
-        return None;
+        lower.strip_prefix("sketch")?
     };
 
     let trimmed = rest.trim_start_matches(&['_', '.', ' '][..]);

@@ -1,4 +1,7 @@
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
 fn main() {
     println!("cargo:rerun-if-changed=shaders/mesh.vert");
@@ -19,7 +22,7 @@ fn main() {
     compile_shader("pick.frag", shaderc::ShaderKind::Fragment, &out_dir);
 }
 
-fn compile_shader(name: &str, kind: shaderc::ShaderKind, out_dir: &PathBuf) {
+fn compile_shader(name: &str, kind: shaderc::ShaderKind, out_dir: &Path) {
     let shaders_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest"));
     let source_path = shaders_dir.join("shaders").join(name);
     let source =

@@ -28,10 +28,11 @@ pub enum KernelRequest {
         path: PathBuf,
         detail: TessellationSettings,
     },
-    /// Tessellate one body's BRep snapshot on the kernel thread.
+    /// Tessellate one body's BRep snapshot on the kernel thread. The blob
+    /// is shared with the document, so sending it is a refcount bump.
     TessellateBody {
         body_id: Uuid,
-        brep_blob: Vec<u8>,
+        brep_blob: std::sync::Arc<Vec<u8>>,
         face_colors: Vec<[f32; 3]>,
         detail: TessellationSettings,
     },
@@ -110,7 +111,7 @@ impl KernelWorker {
     pub fn request_tessellate_body(
         &mut self,
         body_id: Uuid,
-        brep_blob: Vec<u8>,
+        brep_blob: std::sync::Arc<Vec<u8>>,
         face_colors: Vec<[f32; 3]>,
         detail: TessellationSettings,
     ) {

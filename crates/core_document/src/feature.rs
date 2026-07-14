@@ -152,13 +152,13 @@ impl FeatureTree {
         // Add to dependencies
         self.dependencies
             .entry(dependent)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(dependency);
 
         // Add to reverse dependencies
         self.dependents
             .entry(dependency)
-            .or_insert_with(Vec::new)
+            .or_default()
             .push(dependent);
 
         // Remove from roots if it was a root
@@ -254,6 +254,138 @@ impl FeatureTree {
     /// Get all feature nodes.
     pub fn all_nodes(&self) -> impl Iterator<Item = (&FeatureId, &FeatureNode)> {
         self.features.iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_node(id: FeatureId) -> FeatureNode {
+        FeatureNode {
+            id,
+            workbench_id: WorkbenchId::new("wb.test"),
+            name: "test".into(),
+            body: None,
+            visible: true,
+            suppressed: false,
+            dirty: false,
+            created_at: 0,
+            data: serde_json::Value::Null,
+        }
+    }
+
+    /// Diamond DAG: a ← b, a ← c, b ← d, c ← d (d depends on b and c).
+    /// `add_dependency` is called before `add_node` for non-roots so root
+    /// bookkeeping in `add_node` sees the dependency entry (the tree's
+    /// root check is order-sensitive; this is the supported call order,
+    /// matching `Document::add_feature`).
+    fn diamond() -> (FeatureTree, FeatureId, FeatureId, FeatureId, FeatureId) {
+        let (a, b, c, d) = (
+            FeatureId::new(),
+            FeatureId::new(),
+            FeatureId::new(),
+            FeatureId::new(),
+        );
+        let mut tree = FeatureTree::new();
+        tree.add_node(test_node(a));
+        for (dependent, dependency) in [(b, a), (c, a), (d, b), (d, c)] {
+            tree.add_dependency(dependent, dependency);
+        }
+        tree.add_node(test_node(b));
+        tree.add_node(test_node(c));
+        tree.add_node(test_node(d));
+        (tree, a, b, c, d)
+    }
+
+    #[test]
+    fn diamond_has_single_root() {
+        let (tree, a, ..) = diamond();
+        assert_eq!(tree.roots(), &[a]);
+    }
+
+    #[test]
+    fn mark_dirty_propagates_to_all_dependents() {
+        let (mut tree, a, b, c, d) = diamond();
+        tree.mark_dirty(a);
+        let dirty: HashSet<FeatureId> = tree.dirty_features().into_iter().collect();
+        assert_eq!(dirty, HashSet::from([a, b, c, d]));
+    }
+
+    #[test]
+    fn mark_dirty_on_branch_leaves_sibling_clean() {
+        let (mut tree, _a, b, c, d) = diamond();
+        tree.mark_dirty(b);
+        let dirty: HashSet<FeatureId> = tree.dirty_features().into_iter().collect();
+        assert_eq!(dirty, HashSet::from([b, d]));
+        assert!(!tree.get_node(c).unwrap().dirty);
+    }
+
+    #[test]
+    fn mark_dirty_is_idempotent() {
+        let (mut tree, a, ..) = diamond();
+        tree.mark_dirty(a);
+        tree.mark_dirty(a);
+        assert_eq!(tree.dirty_features().len(), 4);
+    }
+
+    #[test]
+    fn recompute_order_respects_dependencies() {
+        let (mut tree, a, b, c, d) = diamond();
+        tree.mark_dirty(a);
+        let order = tree.recompute_order(&tree.dirty_features());
+        assert_eq!(order.len(), 4);
+        let pos = |id: FeatureId| order.iter().position(|&x| x == id).unwrap();
+        assert!(pos(a) < pos(b));
+        assert!(pos(a) < pos(c));
+        assert!(pos(b) < pos(d));
+        assert!(pos(c) < pos(d));
+    }
+
+    #[test]
+    fn recompute_order_ignores_dependencies_outside_dirty_set() {
+        let (mut tree, _a, b, _c, d) = diamond();
+        tree.mark_dirty(b);
+        let order = tree.recompute_order(&tree.dirty_features());
+        // `a` and `c` are clean: only the dirty chain is ordered, with the
+        // clean dependency `c` of `d` treated as already up to date.
+        assert_eq!(order, vec![b, d]);
+    }
+
+    #[test]
+    fn recompute_order_empty_input() {
+        let (tree, ..) = diamond();
+        assert!(tree.recompute_order(&[]).is_empty());
+    }
+
+    /// Pins current behaviour: members of a dependency cycle are silently
+    /// dropped from the recompute order (Kahn's algorithm never reaches
+    /// in-degree 0 for them). If cycles should become a hard error, this
+    /// test is the place that documents the change.
+    #[test]
+    fn recompute_order_drops_cycle_members() {
+        let (x, y) = (FeatureId::new(), FeatureId::new());
+        let mut tree = FeatureTree::new();
+        tree.add_node(test_node(x));
+        tree.add_node(test_node(y));
+        tree.add_dependency(x, y);
+        tree.add_dependency(y, x);
+        tree.mark_dirty(x);
+        let order = tree.recompute_order(&tree.dirty_features());
+        assert!(order.is_empty(), "cycle members are dropped, got {order:?}");
+    }
+
+    #[test]
+    fn add_dependency_removes_dependent_from_roots() {
+        let (x, y) = (FeatureId::new(), FeatureId::new());
+        let mut tree = FeatureTree::new();
+        tree.add_node(test_node(x));
+        tree.add_node(test_node(y));
+        assert_eq!(tree.roots().len(), 2);
+        tree.add_dependency(y, x);
+        assert_eq!(tree.roots(), &[x]);
+        assert_eq!(tree.dependencies(y), vec![x]);
+        assert_eq!(tree.dependents(x), vec![y]);
     }
 }
 

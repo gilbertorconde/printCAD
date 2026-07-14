@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::{
     util::create_buffer, BodySubmission, HighlightState, RenderError, ViewportRect, EDGE_FRAG_SPV,
-    EDGE_VERT_SPV, MESH_FRAG_SPV, MESH_VERT_SPV,
+    EDGE_VERT_SPV, MAX_FRAMES_IN_FLIGHT, MESH_FRAG_SPV, MESH_VERT_SPV,
 };
 
 use crate::create_shader_module;
@@ -182,7 +182,33 @@ pub(crate) struct CachedMesh {
     pub(crate) revision: u64,
 }
 
+/// A buffer/memory pair whose owner stopped referencing it at
+/// `retire_frame`; safe to destroy once every command buffer that might
+/// still reference it has been fence-waited.
+pub(crate) struct RetiredBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    retire_frame: u64,
+}
+
 impl CachedMesh {
+    /// Queue every live buffer of this entry for deferred destruction.
+    fn retire(self, retired: &mut Vec<RetiredBuffer>, retire_frame: u64) {
+        for (buffer, memory) in [
+            (self.vertex_buffer, self.vertex_memory),
+            (self.index_buffer, self.index_memory),
+            (self.edge_index_buffer, self.edge_index_memory),
+        ] {
+            if buffer != vk::Buffer::null() {
+                retired.push(RetiredBuffer {
+                    buffer,
+                    memory,
+                    retire_frame,
+                });
+            }
+        }
+    }
+
     fn destroy(self, device: &ash::Device) {
         unsafe {
             if self.vertex_buffer != vk::Buffer::null() {
@@ -206,12 +232,51 @@ impl CachedMesh {
 /// pan/orbit/hover transitions all hit the cache.
 pub(crate) struct MeshCache {
     entries: HashMap<Uuid, CachedMesh>,
+    /// Buffers replaced by a regrow or dropped by GC. Destroyed
+    /// MAX_FRAMES_IN_FLIGHT frames later in [`Self::begin_frame`], once no
+    /// in-flight command buffer can still reference them — this replaces the
+    /// device_wait_idle stalls the old code paid on every regrow/GC.
+    retired: Vec<RetiredBuffer>,
+    /// Monotonic frame counter advanced by [`Self::begin_frame`].
+    frame_counter: u64,
 }
 
 impl MeshCache {
     pub(crate) fn new() -> Self {
         Self {
             entries: HashMap::new(),
+            retired: Vec::new(),
+            frame_counter: 0,
+        }
+    }
+
+    /// Advance the frame counter and destroy retired buffers that are now
+    /// provably unreferenced. Call once per frame, right after the frame's
+    /// fence wait.
+    pub(crate) fn begin_frame(&mut self, device: &ash::Device) {
+        self.frame_counter += 1;
+        let frame = self.frame_counter;
+        self.retired.retain(|r| {
+            if frame > r.retire_frame + MAX_FRAMES_IN_FLIGHT as u64 {
+                unsafe {
+                    device.destroy_buffer(r.buffer, None);
+                    device.free_memory(r.memory, None);
+                }
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// Destroy every retired buffer immediately. Only valid after a device
+    /// idle (swapchain recreation, teardown).
+    pub(crate) fn flush_retired(&mut self, device: &ash::Device) {
+        for r in self.retired.drain(..) {
+            unsafe {
+                device.destroy_buffer(r.buffer, None);
+                device.free_memory(r.memory, None);
+            }
         }
     }
 
@@ -266,6 +331,8 @@ impl MeshCache {
             &mut entry.vertex_capacity,
             vertex_bytes,
             vk::BufferUsageFlags::VERTEX_BUFFER,
+            &mut self.retired,
+            self.frame_counter,
         )?;
         ensure_buffer(
             device,
@@ -275,6 +342,8 @@ impl MeshCache {
             &mut entry.index_capacity,
             index_bytes,
             vk::BufferUsageFlags::INDEX_BUFFER,
+            &mut self.retired,
+            self.frame_counter,
         )?;
         ensure_buffer(
             device,
@@ -284,6 +353,8 @@ impl MeshCache {
             &mut entry.edge_index_capacity,
             edge_bytes,
             vk::BufferUsageFlags::INDEX_BUFFER,
+            &mut self.retired,
+            self.frame_counter,
         )?;
 
         // Pack the vertex stream in parallel for big bodies. The work is
@@ -312,11 +383,11 @@ impl MeshCache {
                         *dst = MeshVertex::new(pos, normal, color);
                     });
                 } else {
-                    for i in 0..vertex_count {
+                    for (i, dst) in slice.iter_mut().enumerate() {
                         let pos = mesh.positions[i];
                         let normal = mesh.normals.get(i).copied().unwrap_or([0.0, 1.0, 0.0]);
                         let color = mesh.colors.get(i).copied().unwrap_or([1.0, 1.0, 1.0]);
-                        slice[i] = MeshVertex::new(pos, normal, color);
+                        *dst = MeshVertex::new(pos, normal, color);
                     }
                 }
                 device.unmap_memory(entry.vertex_memory);
@@ -342,8 +413,8 @@ impl MeshCache {
                             .enumerate()
                             .for_each(|(i, dst)| *dst = i as u32);
                     } else {
-                        for i in 0..vertex_count {
-                            slice[i] = i as u32;
+                        for (i, dst) in slice.iter_mut().enumerate() {
+                            *dst = i as u32;
                         }
                     }
                 } else {
@@ -412,11 +483,10 @@ impl MeshCache {
         }
     }
 
-    /// Drop any entry whose id was not referenced by the supplied set. Caller
-    /// must guarantee no command buffer in flight is still using the buffers
-    /// being destroyed (we wait on the device idle in the renderer's draw
-    /// path before invoking GC).
-    pub(crate) fn retain_only(&mut self, device: &ash::Device, alive: &[Uuid]) {
+    /// Drop any entry whose id was not referenced by the supplied set. The
+    /// buffers go onto the retire queue and are destroyed once no in-flight
+    /// command buffer can still reference them.
+    pub(crate) fn retain_only(&mut self, alive: &[Uuid]) {
         let alive_set: std::collections::HashSet<&Uuid> = alive.iter().collect();
         let dead: Vec<Uuid> = self
             .entries
@@ -426,18 +496,21 @@ impl MeshCache {
             .collect();
         for id in dead {
             if let Some(entry) = self.entries.remove(&id) {
-                entry.destroy(device);
+                entry.retire(&mut self.retired, self.frame_counter);
             }
         }
     }
 
+    /// Immediate teardown. Only valid after a device idle.
     pub(crate) fn destroy(&mut self, device: &ash::Device) {
+        self.flush_retired(device);
         for (_, entry) in self.entries.drain() {
             entry.destroy(device);
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ensure_buffer(
     device: &ash::Device,
     memory_properties: &vk::PhysicalDeviceMemoryProperties,
@@ -446,6 +519,8 @@ fn ensure_buffer(
     capacity: &mut usize,
     required: usize,
     usage: vk::BufferUsageFlags,
+    retired: &mut Vec<RetiredBuffer>,
+    retire_frame: u64,
 ) -> Result<(), RenderError> {
     if required <= *capacity && *buffer != vk::Buffer::null() {
         return Ok(());
@@ -455,14 +530,13 @@ fn ensure_buffer(
     }
     let new_capacity = required.next_power_of_two().max(1024);
     if *buffer != vk::Buffer::null() {
-        unsafe {
-            // Other swapchain frames may still reference this buffer from an
-            // in-flight command buffer — only `MAX_FRAMES` fences are tracked,
-            // not a per-buffer fence. Idle before reallocating.
-            device.device_wait_idle().map_err(RenderError::from)?;
-            device.destroy_buffer(*buffer, None);
-            device.free_memory(*memory, None);
-        }
+        // Other in-flight frames may still reference the old buffer from a
+        // submitted command buffer; defer destruction instead of stalling.
+        retired.push(RetiredBuffer {
+            buffer: *buffer,
+            memory: *memory,
+            retire_frame,
+        });
     }
     let (new_buffer, new_memory) = create_buffer(
         device,
@@ -487,6 +561,9 @@ pub(crate) struct MeshRenderer {
     msaa_samples: vk::SampleCountFlags,
     solid_line_width: f32,
     line_width_range: [f32; 2],
+    /// Whether `fillModeNonSolid` is enabled; without it the wireframe
+    /// pipeline must fall back to `POLYGON_MODE_FILL`.
+    non_solid_fill: bool,
 }
 
 impl MeshRenderer {
@@ -504,6 +581,10 @@ impl MeshRenderer {
             .limits
             .line_width_range;
         let solid_line_width = 1.0f32.clamp(line_range[0], line_range[1]);
+        // The logical device enables `fill_mode_non_solid` iff supported.
+        let non_solid_fill = unsafe { instance.get_physical_device_features(physical_device) }
+            .fill_mode_non_solid
+            != vk::FALSE;
 
         let pipeline_layout = create_mesh_pipeline_layout(&device)?;
         let pipeline = create_mesh_pipeline(
@@ -514,6 +595,7 @@ impl MeshRenderer {
             MeshPipelineMode::Solid,
             solid_line_width,
             false,
+            non_solid_fill,
         )?;
         let wireframe_pipeline = create_mesh_pipeline(
             &device,
@@ -523,6 +605,7 @@ impl MeshRenderer {
             MeshPipelineMode::WireframeTriangles,
             solid_line_width,
             false,
+            non_solid_fill,
         )?;
         let edge_pipeline = create_mesh_pipeline(
             &device,
@@ -532,6 +615,7 @@ impl MeshRenderer {
             MeshPipelineMode::Edges,
             solid_line_width,
             true,
+            non_solid_fill,
         )?;
 
         Ok(Self {
@@ -544,6 +628,7 @@ impl MeshRenderer {
             msaa_samples,
             solid_line_width,
             line_width_range: line_range,
+            non_solid_fill,
         })
     }
 
@@ -566,6 +651,7 @@ impl MeshRenderer {
             MeshPipelineMode::Solid,
             self.solid_line_width,
             false,
+            self.non_solid_fill,
         )?;
         self.wireframe_pipeline = create_mesh_pipeline(
             &self.device,
@@ -575,6 +661,7 @@ impl MeshRenderer {
             MeshPipelineMode::WireframeTriangles,
             self.solid_line_width,
             false,
+            self.non_solid_fill,
         )?;
         self.edge_pipeline = create_mesh_pipeline(
             &self.device,
@@ -584,6 +671,7 @@ impl MeshRenderer {
             MeshPipelineMode::Edges,
             self.solid_line_width,
             true,
+            self.non_solid_fill,
         )?;
         Ok(())
     }
@@ -592,6 +680,7 @@ impl MeshRenderer {
         &self.memory_properties
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn draw(
         &mut self,
         cache: &mut MeshCache,
@@ -847,6 +936,7 @@ pub(crate) enum MeshPipelineMode {
     Edges,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn create_mesh_pipeline(
     device: &ash::Device,
     render_pass: vk::RenderPass,
@@ -855,6 +945,7 @@ fn create_mesh_pipeline(
     mode: MeshPipelineMode,
     line_width: f32,
     dynamic_line_width: bool,
+    non_solid_fill: bool,
 ) -> Result<vk::Pipeline, RenderError> {
     let (vert_spv, frag_spv) = match mode {
         MeshPipelineMode::Solid | MeshPipelineMode::WireframeTriangles => {
@@ -899,11 +990,18 @@ fn create_mesh_pipeline(
             .format(vk::Format::R32G32B32_SFLOAT)
             .offset(24),
     ];
+    // edge.vert only consumes position + normal; declaring the color
+    // attribute there just trips the validation layer's OutputNotConsumed
+    // performance warning. The stride keeps buffers shared either way.
+    let attr_count = match mode {
+        MeshPipelineMode::Solid | MeshPipelineMode::WireframeTriangles => attr_descs.len(),
+        MeshPipelineMode::Edges => 2,
+    };
 
     let binding_descs = [binding_desc];
     let vertex_input = vk::PipelineVertexInputStateCreateInfo::default()
         .vertex_binding_descriptions(&binding_descs)
-        .vertex_attribute_descriptions(&attr_descs);
+        .vertex_attribute_descriptions(&attr_descs[..attr_count]);
 
     let topology = match mode {
         MeshPipelineMode::Solid | MeshPipelineMode::WireframeTriangles => {
@@ -935,7 +1033,10 @@ fn create_mesh_pipeline(
 
     let polygon_mode = match mode {
         MeshPipelineMode::Solid => vk::PolygonMode::FILL,
-        MeshPipelineMode::WireframeTriangles => vk::PolygonMode::LINE,
+        // POLYGON_MODE_LINE requires the fillModeNonSolid device feature;
+        // fall back to filled triangles where it's unavailable.
+        MeshPipelineMode::WireframeTriangles if non_solid_fill => vk::PolygonMode::LINE,
+        MeshPipelineMode::WireframeTriangles => vk::PolygonMode::FILL,
         MeshPipelineMode::Edges => vk::PolygonMode::FILL, // ignored for line list
     };
     // Back-face culling is intentionally disabled on the solid pass.

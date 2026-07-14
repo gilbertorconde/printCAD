@@ -211,9 +211,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
 }
 
 fn format_workbench_tag(raw: &str) -> String {
-    raw.trim_start_matches("wb.")
-        .replace('-', " ")
-        .replace('_', " ")
+    raw.trim_start_matches("wb.").replace(['-', '_'], " ")
 }
 
 pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>) -> TreeUiResult {

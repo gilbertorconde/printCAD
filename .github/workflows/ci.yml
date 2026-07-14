@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        # libvulkan-dev: ash uses the "linked" feature (links libvulkan at build time).
+        # glslc/libshaderc: render_vk's build.rs compiles GLSL via shaderc.
+        # libocct-*: kernel_occt links OpenCASCADE directly.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libvulkan-dev glslc libshaderc-dev \
+            libocct-foundation-dev libocct-modeling-algorithms-dev \
+            libocct-modeling-data-dev libocct-data-exchange-dev \
+            libocct-ocaf-dev libocct-visualization-dev
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace

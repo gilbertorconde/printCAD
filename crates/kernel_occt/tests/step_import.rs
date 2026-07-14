@@ -1,67 +1,50 @@
 //! End-to-end smoke test: confirms the OCCT-backed STEP loader can read a
-//! real-world STEP file and produce a triangulated mesh.
+//! real STEP file and produce a triangulated mesh.
 //!
-//! The test looks for the first available STEP file under `/usr/share/kicad`
-//! (or honours `PRINTCAD_TEST_STEP_FILE` for full control). When no STEP
-//! sample is reachable, the test is skipped with a clear message.
+//! Tests run against the committed fixture in `tests/data/box.step` by
+//! default; set `PRINTCAD_TEST_STEP_FILE` to exercise a richer model (e.g. a
+//! KiCad or FreeCAD sample with assemblies and colors).
 
 use kernel_api::{Kernel, TessellationSettings};
 use kernel_occt::OcctKernel;
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 
-fn locate_sample() -> Option<PathBuf> {
-    if let Ok(env_path) = std::env::var("PRINTCAD_TEST_STEP_FILE") {
-        let candidate = PathBuf::from(env_path);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
+/// OCCT's STEP machinery relies on process-global state (Interface statics,
+/// XCAF sessions) and crashes when two kernels import concurrently, so the
+/// tests in this binary serialize on this mutex. The production app is safe
+/// because all OCCT work funnels through the single kernel-worker thread.
+static OCCT_SERIAL: Mutex<()> = Mutex::new(());
 
-    // Walk a couple of common system directories looking for any STEP file.
-    let roots = [
-        "/usr/share/kicad",
-        "/usr/share/freecad",
-        "/usr/share/opencascade",
-    ];
-    for root in roots {
-        let root = PathBuf::from(root);
-        if !root.exists() {
-            continue;
-        }
-        if let Some(found) = walk_for_step(&root, 6) {
-            return Some(found);
-        }
-    }
-    None
+fn occt_guard() -> MutexGuard<'static, ()> {
+    OCCT_SERIAL
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-fn walk_for_step(dir: &std::path::Path, depth: usize) -> Option<PathBuf> {
-    if depth == 0 {
-        return None;
+fn locate_sample() -> PathBuf {
+    if let Ok(env_path) = std::env::var("PRINTCAD_TEST_STEP_FILE") {
+        let candidate = PathBuf::from(&env_path);
+        assert!(
+            candidate.is_file(),
+            "PRINTCAD_TEST_STEP_FILE points to a missing file: {env_path}"
+        );
+        return candidate;
     }
-    let entries = std::fs::read_dir(dir).ok()?;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if let Some(found) = walk_for_step(&path, depth - 1) {
-                return Some(found);
-            }
-        } else if matches!(
-            path.extension().and_then(|s| s.to_str()),
-            Some("step") | Some("stp") | Some("STEP") | Some("STP")
-        ) {
-            return Some(path);
-        }
-    }
-    None
+
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/box.step");
+    assert!(
+        fixture.is_file(),
+        "bundled STEP fixture missing: {}",
+        fixture.display()
+    );
+    fixture
 }
 
 #[test]
 fn imports_real_world_step_file() {
-    let Some(sample) = locate_sample() else {
-        eprintln!("No STEP sample found; skipping import smoke test.");
-        return;
-    };
+    let _serial = occt_guard();
+    let sample = locate_sample();
 
     let mut kernel = OcctKernel::new();
     kernel.initialize().expect("initialize OCCT kernel");
@@ -134,10 +117,8 @@ fn imports_real_world_step_file() {
 
 #[test]
 fn imported_node_body_indices_dont_collide_across_branches() {
-    let Some(sample) = locate_sample() else {
-        eprintln!("No STEP sample found; skipping branch-uniqueness test.");
-        return;
-    };
+    let _serial = occt_guard();
+    let sample = locate_sample();
 
     let mut kernel = OcctKernel::new();
     kernel.initialize().expect("initialize OCCT kernel");
@@ -196,16 +177,16 @@ fn imported_node_body_indices_dont_collide_across_branches() {
 
 #[test]
 fn deferred_pipeline_approximates_monolithic_tessellation() {
-    let Some(sample) = locate_sample() else {
-        eprintln!("No STEP sample found; skipping deferred vs monolithic test.");
-        return;
-    };
+    let _serial = occt_guard();
+    let sample = locate_sample();
 
     let mut kernel = OcctKernel::new();
     kernel.initialize().expect("initialize OCCT kernel");
     // Force BRep snapshot so we exercise read → blob → tessellate (deferred) in this test.
-    let mut detail = TessellationSettings::default();
-    detail.persist_brep_snapshot = true;
+    let detail = TessellationSettings {
+        persist_brep_snapshot: true,
+        ..TessellationSettings::default()
+    };
 
     let fast = kernel.import_step(&sample, &detail).expect("fast import");
     let full = kernel

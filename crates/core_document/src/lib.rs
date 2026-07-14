@@ -2,7 +2,10 @@ pub mod asset;
 pub mod feature;
 pub mod registration;
 pub mod runtime;
+pub mod service;
+pub mod undo;
 pub mod units;
+pub mod workbench;
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -10,7 +13,6 @@ use std::io::{Read, Seek, Write};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use serde_json;
 use tar::{Archive, Builder, Header};
 use thiserror::Error;
 use uuid::Uuid;
@@ -22,7 +24,12 @@ pub use runtime::{
     CameraOrientRequest, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
     WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
+pub use service::DocumentService;
 pub use units::{format_length_mm, Unit};
+pub use workbench::{
+    CommandDescriptor, ScreenSpaceOverlay, ToolBehavior, ToolDescriptor, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
+};
 
 /// Result type for document operations.
 pub type DocumentResult<T> = std::result::Result<T, DocumentError>;
@@ -44,10 +51,11 @@ impl WorkbenchStorage {
 
 /// Primary data structure persisted by the application.
 ///
-/// The document is saved as a `.prtcad` file, which is a ZIP archive containing:
+/// The document is saved as a `.prtcad` file, which is a tar archive
+/// (optionally gzip- or zstd-compressed) containing:
 /// - `document.json` - This document structure (serialized)
 /// - `assets/` - External files (STEP, STL, etc.) referenced by the document
-/// - `cache/` - Optional cached computed data (meshes, tessellations)
+/// - `brep/` - Per-body OCCT B-Rep snapshots and face-color sidecars
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     metadata: DocumentMetadata,
@@ -76,16 +84,21 @@ pub struct Document {
     /// and save. Populated either on import or after `load_from_file`. Skipped
     /// from JSON because the bytes live as separate entries in the tar archive.
     #[serde(skip)]
-    asset_blobs: HashMap<Uuid, Vec<u8>>,
+    asset_blobs: HashMap<Uuid, std::sync::Arc<Vec<u8>>>,
     /// Frozen BRep binaries for deferred STEP tessellation / fast re-open (not in JSON).
     #[serde(skip)]
-    imported_brep_blobs: HashMap<BodyId, Vec<u8>>,
+    imported_brep_blobs: HashMap<BodyId, std::sync::Arc<Vec<u8>>>,
     /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
     #[serde(skip)]
     imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
     /// Reverse index for fast body->imported-object visibility checks.
     #[serde(skip)]
     imported_body_to_object: HashMap<BodyId, Uuid>,
+    /// Monotonic edit counter bumped by [`Self::mark_dirty`]. Cheap change
+    /// detection for the undo system: equal values mean "no edits since".
+    /// Not persisted; only compared for equality within one process.
+    #[serde(skip)]
+    mutation_seq: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,6 +177,7 @@ impl Document {
             imported_brep_blobs: HashMap::new(),
             imported_brep_face_colors: HashMap::new(),
             imported_body_to_object: HashMap::new(),
+            mutation_seq: 0,
         }
     }
 
@@ -190,7 +204,11 @@ impl Document {
     }
 
     pub fn set_name(&mut self, name: impl Into<String>) {
-        self.metadata.name = name.into();
+        let name = name.into();
+        if self.metadata.name != name {
+            self.metadata.name = name;
+            self.mark_dirty();
+        }
     }
 
     pub fn metadata(&self) -> &DocumentMetadata {
@@ -199,6 +217,12 @@ impl Document {
 
     pub fn mark_dirty(&mut self) {
         self.metadata.dirty = true;
+        self.mutation_seq = self.mutation_seq.wrapping_add(1);
+    }
+
+    /// See the `mutation_seq` field: bumped on every `mark_dirty`.
+    pub fn mutation_seq(&self) -> u64 {
+        self.mutation_seq
     }
 
     pub fn mark_clean(&mut self) {
@@ -376,7 +400,7 @@ impl Document {
     pub fn add_asset_with_data(&mut self, asset: AssetReference, data: Vec<u8>) -> Uuid {
         let id = asset.id;
         self.assets.insert(id, asset);
-        self.asset_blobs.insert(id, data);
+        self.asset_blobs.insert(id, std::sync::Arc::new(data));
         self.mark_dirty();
         id
     }
@@ -425,13 +449,20 @@ impl Document {
         brep_blob: Vec<u8>,
         face_colors: Vec<[f32; 3]>,
     ) {
-        self.imported_brep_blobs.insert(body, brep_blob);
+        self.imported_brep_blobs
+            .insert(body, std::sync::Arc::new(brep_blob));
         self.imported_brep_face_colors.insert(body, face_colors);
         self.mark_dirty();
     }
 
     pub fn imported_brep_blob(&self, body: BodyId) -> Option<&[u8]> {
         self.imported_brep_blobs.get(&body).map(|v| v.as_slice())
+    }
+
+    /// Shared handle to a body's BRep snapshot; cloning is a refcount bump,
+    /// so this is the cheap way to hand the blob to a worker thread.
+    pub fn imported_brep_blob_arc(&self, body: BodyId) -> Option<std::sync::Arc<Vec<u8>>> {
+        self.imported_brep_blobs.get(&body).cloned()
     }
 
     pub fn imported_brep_face_colors(&self, body: BodyId) -> Option<&[[f32; 3]]> {
@@ -621,11 +652,7 @@ impl Document {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 doc_json = Some(buf);
-            } else if entry_path_str.starts_with("assets/") {
-                let mut buf = Vec::new();
-                entry.read_to_end(&mut buf)?;
-                blobs_by_path.insert(entry_path_str, buf);
-            } else if entry_path_str.starts_with("brep/") {
+            } else if entry_path_str.starts_with("assets/") || entry_path_str.starts_with("brep/") {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 blobs_by_path.insert(entry_path_str, buf);
@@ -643,7 +670,8 @@ impl Document {
         // Resolve any asset blobs that match an `AssetReference::path`.
         for (asset_id, asset) in &doc.assets {
             if let Some(bytes) = blobs_by_path.remove(&asset.path) {
-                doc.asset_blobs.insert(*asset_id, bytes);
+                doc.asset_blobs
+                    .insert(*asset_id, std::sync::Arc::new(bytes));
             }
         }
 
@@ -651,7 +679,8 @@ impl Document {
         for (body_id, geom) in &doc.imported_meshes {
             if let Some(ref brep_path) = geom.brep_blob_path {
                 if let Some(bytes) = blobs_by_path.remove(brep_path) {
-                    doc.imported_brep_blobs.insert(*body_id, bytes);
+                    doc.imported_brep_blobs
+                        .insert(*body_id, std::sync::Arc::new(bytes));
                 }
             }
             if let Some(ref col_path) = geom.face_colors_path {
@@ -801,7 +830,7 @@ fn next_indexed_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) ->
 
     for name in existing {
         if name.eq_ignore_ascii_case(base) {
-            max_suffix = Some(max_suffix.map_or(0, |m| m.max(0)));
+            max_suffix = Some(max_suffix.map_or(0, |m| m));
         } else if let Some(rest) = name
             .to_ascii_lowercase()
             .strip_prefix(&(base.to_ascii_lowercase() + "_"))
@@ -853,416 +882,6 @@ impl DocumentMetadata {
 pub struct DocumentRevision {
     pub message: String,
     pub timestamp_epoch_ms: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct WorkbenchId(String);
-
-impl WorkbenchId {
-    pub fn new(id: impl Into<String>) -> Self {
-        Self(id.into())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<&str> for WorkbenchId {
-    fn from(value: &str) -> Self {
-        Self(value.to_owned())
-    }
-}
-
-/// A screen-space overlay line segment for constant-thickness visualization.
-///
-/// Screen-space overlays are rendered as 2D lines in screen coordinates, maintaining
-/// constant thickness regardless of zoom or camera rotation. Ideal for grid lines,
-/// guides, and reference geometry.
-#[derive(Debug, Clone)]
-pub struct ScreenSpaceOverlay {
-    /// Starting point in screen coordinates (x, y) in pixels, relative to viewport origin.
-    pub start: [f32; 2],
-    /// Ending point in screen coordinates (x, y) in pixels, relative to viewport origin.
-    pub end: [f32; 2],
-    /// RGB color [r, g, b] in range 0.0-1.0.
-    pub color: [f32; 3],
-    /// Line thickness in pixels (constant screen-space).
-    pub thickness: f32,
-}
-
-impl ScreenSpaceOverlay {
-    /// Create a new screen-space overlay line.
-    pub fn new(start: [f32; 2], end: [f32; 2], color: [f32; 3], thickness: f32) -> Self {
-        Self {
-            start,
-            end,
-            color,
-            thickness,
-        }
-    }
-}
-
-/// User-facing description provided by workbenches to populate menus.
-#[derive(Debug, Clone)]
-pub struct WorkbenchDescriptor {
-    pub id: WorkbenchId,
-    pub label: String,
-    pub description: String,
-}
-
-impl WorkbenchDescriptor {
-    pub fn new(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        description: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: WorkbenchId::new(id),
-            label: label.into(),
-            description: description.into(),
-        }
-    }
-}
-
-/// Trait implemented by all workbench plugins.
-///
-/// Workbenches declare their tools/commands via `configure`, and can optionally
-/// implement runtime hooks for input handling, per-frame updates, and custom UI.
-pub trait Workbench: Send {
-    /// Returns metadata describing this workbench.
-    fn descriptor(&self) -> WorkbenchDescriptor;
-
-    /// Called once at registration to declare tools and commands.
-    fn configure(&self, context: &mut WorkbenchContext);
-
-    /// Called when this workbench becomes active.
-    fn on_activate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Called when this workbench is deactivated (another WB becomes active).
-    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Called every frame while this workbench is active.
-    fn on_frame(&mut self, _dt: f32, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Called when an input event occurs while this workbench is active.
-    /// Return `InputResult::consumed()` to prevent further event propagation.
-    fn on_input(
-        &mut self,
-        _event: &WorkbenchInputEvent,
-        _active_tool: Option<&str>,
-        _ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        InputResult::ignored()
-    }
-
-    /// Draw custom UI in the left panel (below the tool list).
-    /// Called every frame while this workbench is active.
-    #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Draw custom UI in the right panel (properties/inspector area).
-    /// Called every frame while this workbench is active.
-    #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Whether this workbench exposes right-panel UI.
-    #[cfg(feature = "egui")]
-    fn wants_right_panel(&self) -> bool {
-        false
-    }
-
-    /// Check if a tool is enabled given the current runtime context.
-    /// Called by the UI to determine if a tool button should be enabled/disabled.
-    /// Default implementation returns true for all tools.
-    fn is_tool_enabled(&self, _tool_id: &str, _ctx: &WorkbenchRuntimeContext) -> bool {
-        true
-    }
-
-    /// Draw custom settings UI in the Settings window.
-    /// Called when the Settings window is open and this workbench's tab is selected.
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, _ui: &mut egui::Ui) -> bool {
-        false // Return true if settings changed
-    }
-
-    /// Finish/close the current editing session (e.g., finish sketch).
-    /// Called when the user requests to finish editing (e.g., via UI button).
-    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Deserialize a feature of this workbench's type from JSON.
-    /// Called by the document when loading features from storage.
-    /// Returns None if the feature type doesn't belong to this workbench.
-    fn deserialize_feature(
-        &self,
-        _workbench_id: &WorkbenchId,
-        _data: &serde_json::Value,
-    ) -> Option<Box<dyn std::any::Any>> {
-        None // Default: no feature deserialization
-    }
-
-    /// Get feature dependencies from serialized feature data.
-    /// Used by the document to build the dependency graph.
-    fn feature_dependencies(
-        &self,
-        _workbench_id: &WorkbenchId,
-        _data: &serde_json::Value,
-    ) -> Vec<FeatureId> {
-        Vec::new() // Default: no dependencies
-    }
-
-    /// Get additional render meshes for overlay/helper visualization.
-    /// Called every frame to allow workbenches to contribute visual aids (grid lines, guides, etc.).
-    /// Returns a vector of (mesh, color, is_wireframe) tuples where:
-    /// - mesh: The triangular mesh to render
-    /// - color: RGB color [r, g, b] in range 0.0-1.0
-    /// - is_wireframe: If true, render as wireframe with depth bias (appears on top of solid geometry)
-    ///
-    /// These meshes are rendered in 3D world space and will scale with zoom and rotate with the camera.
-    /// For constant-thickness lines that don't change with zoom/rotation, use `get_screen_space_overlays` instead.
-    /// Default implementation returns empty vector.
-    fn get_overlay_meshes(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
-        Vec::new()
-    }
-
-    /// Get screen-space overlays for constant-thickness visualization.
-    /// Called every frame to allow workbenches to contribute visual aids that maintain
-    /// constant screen-space thickness regardless of zoom or camera rotation.
-    ///
-    /// Screen-space overlays are rendered as 2D lines in screen coordinates, making them
-    /// ideal for grid lines, guides, and other reference geometry that should remain visible
-    /// and maintain consistent appearance regardless of camera position.
-    ///
-    /// Returns a vector of screen-space line segments where:
-    /// - start: Starting point in screen coordinates (x, y) in pixels, relative to viewport origin
-    /// - end: Ending point in screen coordinates (x, y) in pixels, relative to viewport origin
-    /// - color: RGB color [r, g, b] in range 0.0-1.0
-    /// - thickness: Line thickness in pixels (constant screen-space)
-    ///
-    /// Default implementation returns empty vector.
-    fn get_screen_space_overlays(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceOverlay> {
-        Vec::new()
-    }
-}
-
-/// Registry used by workbenches to declare the tools/commands they expose.
-#[derive(Debug, Default)]
-pub struct WorkbenchContext {
-    tools: Vec<ToolDescriptor>,
-    commands: Vec<CommandDescriptor>,
-}
-
-impl WorkbenchContext {
-    pub fn register_tool(&mut self, tool: ToolDescriptor) {
-        self.tools.push(tool);
-    }
-
-    pub fn register_command(&mut self, command: CommandDescriptor) {
-        self.commands.push(command);
-    }
-
-    pub fn tools(&self) -> &[ToolDescriptor] {
-        &self.tools
-    }
-
-    pub fn commands(&self) -> &[CommandDescriptor] {
-        &self.commands
-    }
-}
-
-/// Describes how a tool button should behave in the UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ToolBehavior {
-    /// Radio button behavior: only one tool in the same group can be active at a time.
-    /// Clicking an active tool deactivates it. Tools in different groups are independent.
-    /// This is the default.
-    #[default]
-    Radio,
-    /// Check button behavior: independent toggle. Each tool can be on or off independently.
-    /// Multiple check tools can be active simultaneously.
-    Check,
-    /// Action button behavior: fire-and-forget. Clicking triggers the action
-    /// but doesn't keep the tool "active". The tool is cleared after handling.
-    Action,
-}
-
-/// Describes an interactive tool contributed by a workbench.
-#[derive(Debug, Clone)]
-pub struct ToolDescriptor {
-    pub id: String,
-    pub label: String,
-    /// Optional category for grouping/organization (e.g., "drawing", "modeling", "utility").
-    /// This is informational and doesn't affect behavior.
-    pub category: Option<String>,
-    /// How the tool button should behave in the UI.
-    pub behavior: ToolBehavior,
-    /// Optional group name for Radio tools. Tools in the same group are mutually exclusive.
-    /// Only one tool per group can be active at a time. If None, each tool is its own group.
-    /// Ignored for Check and Action tools.
-    pub group: Option<String>,
-}
-
-impl ToolDescriptor {
-    /// Create a new tool descriptor with radio button behavior (default).
-    /// Tools in the same group are mutually exclusive.
-    pub fn new(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        category: Option<impl Into<String>>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            category: category.map(|c| c.into()),
-            behavior: ToolBehavior::Radio,
-            group: None, // Each tool is its own group by default
-        }
-    }
-
-    /// Create a new tool descriptor with radio button behavior in a specific group.
-    /// Tools in the same group are mutually exclusive.
-    pub fn new_radio_group(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        category: Option<impl Into<String>>,
-        group: impl Into<String>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            category: category.map(|c| c.into()),
-            behavior: ToolBehavior::Radio,
-            group: Some(group.into()),
-        }
-    }
-
-    /// Create a new tool descriptor with check button behavior.
-    /// Check tools are independent - multiple can be active simultaneously.
-    pub fn new_check(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        category: Option<impl Into<String>>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            category: category.map(|c| c.into()),
-            behavior: ToolBehavior::Check,
-            group: None, // Groups don't apply to Check tools
-        }
-    }
-
-    /// Create a new tool descriptor with action button behavior.
-    pub fn new_action(
-        id: impl Into<String>,
-        label: impl Into<String>,
-        category: Option<impl Into<String>>,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-            category: category.map(|c| c.into()),
-            behavior: ToolBehavior::Action,
-            group: None, // Groups don't apply to Action tools
-        }
-    }
-}
-
-/// Simple metadata for commands that may be bound to shortcuts or macros.
-#[derive(Debug, Clone)]
-pub struct CommandDescriptor {
-    pub id: String,
-    pub label: String,
-}
-
-impl CommandDescriptor {
-    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-        }
-    }
-}
-
-/// Central registry tracking workbenches and their declared capabilities.
-#[derive(Default)]
-pub struct DocumentService {
-    workbenches: HashMap<String, WorkbenchEntry>,
-}
-
-struct WorkbenchEntry {
-    descriptor: WorkbenchDescriptor,
-    workbench: Box<dyn Workbench>,
-    context: WorkbenchContext,
-}
-
-impl DocumentService {
-    pub fn register_workbench(&mut self, workbench: Box<dyn Workbench>) -> DocumentResult<()> {
-        let descriptor = workbench.descriptor();
-        if self.workbenches.contains_key(descriptor.id.as_str()) {
-            return Err(DocumentError::WorkbenchExists(
-                descriptor.id.as_str().to_owned(),
-            ));
-        }
-
-        let mut context = WorkbenchContext::default();
-        workbench.configure(&mut context);
-
-        self.workbenches.insert(
-            descriptor.id.as_str().to_owned(),
-            WorkbenchEntry {
-                descriptor,
-                workbench,
-                context,
-            },
-        );
-
-        Ok(())
-    }
-
-    pub fn workbench_descriptors(&self) -> impl Iterator<Item = &WorkbenchDescriptor> {
-        self.workbenches.values().map(|entry| &entry.descriptor)
-    }
-
-    pub fn tools_for(&self, id: &WorkbenchId) -> DocumentResult<&[ToolDescriptor]> {
-        let entry = self
-            .workbenches
-            .get(id.as_str())
-            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
-        Ok(entry.context.tools())
-    }
-
-    pub fn commands_for(&self, id: &WorkbenchId) -> DocumentResult<&[CommandDescriptor]> {
-        let entry = self
-            .workbenches
-            .get(id.as_str())
-            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
-        Ok(entry.context.commands())
-    }
-
-    pub fn workbench(&self, id: &WorkbenchId) -> DocumentResult<&dyn Workbench> {
-        let entry = self
-            .workbenches
-            .get(id.as_str())
-            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
-        Ok(entry.workbench.as_ref())
-    }
-
-    pub fn workbench_mut(&mut self, id: &WorkbenchId) -> DocumentResult<&mut Box<dyn Workbench>> {
-        let entry = self
-            .workbenches
-            .get_mut(id.as_str())
-            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
-        Ok(&mut entry.workbench)
-    }
 }
 
 /// Errors surfaced when interacting with documents or workbench registries.

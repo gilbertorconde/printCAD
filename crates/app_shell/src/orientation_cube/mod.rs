@@ -108,7 +108,6 @@ pub enum CameraSnapView {
 impl CameraSnapView {
     /// Get the yaw and pitch angles (in degrees) for this view.
     /// Used by the turntable camera system.
-
     pub fn yaw_pitch(&self) -> (f32, f32) {
         match self {
             // Main faces
@@ -251,7 +250,7 @@ pub fn draw(
             painter.circle_stroke(
                 local_center,
                 config.widget_size / 2.0,
-                Stroke::new(2.0, config.border_color),
+                Stroke::new(2.0_f32, config.border_color),
             );
 
             // Draw and handle cube face clicks
@@ -770,7 +769,7 @@ fn draw_cube_interactive(
         painter.add(egui::Shape::convex_polygon(
             points.clone(),
             shaded_color,
-            Stroke::new(0.5, stroke_color),
+            Stroke::new(0.5_f32, stroke_color),
         ));
 
         if let (Some(label), Some(uvs)) = (poly.label, &poly.uvs) {
@@ -833,7 +832,7 @@ fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: &Mat3) {
         let faded =
             Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), (alpha * 255.0) as u8);
 
-        let thickness = if rotated.z > 0.0 { 2.5 } else { 1.5 };
+        let thickness = if rotated.z > 0.0 { 2.5_f32 } else { 1.5_f32 };
         painter.line_segment([axis_origin, end], Stroke::new(thickness, faded));
 
         // Arrow head
@@ -1123,10 +1122,12 @@ fn face_texture_palette() -> [(&'static str, Color32); 6] {
 }
 
 pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
-    let mut opt = Options::default();
-    opt.font_family = "DejaVu Sans".into();
-    opt.languages = vec!["en".into()];
-    opt.font_size = 44.0;
+    let opt = Options {
+        font_family: "DejaVu Sans".into(),
+        languages: vec!["en".into()],
+        font_size: 44.0,
+        ..Options::default()
+    };
     let mut fontdb = fontdb::Database::new();
     fontdb.load_system_fonts();
     let tree = usvg::Tree::from_data(svg.as_bytes(), &opt, &fontdb).ok()?;

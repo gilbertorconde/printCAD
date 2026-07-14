@@ -425,22 +425,12 @@ fn get_tool_icon_for(
     load_svg_icon(ctx, cache_id, &key, "tool_icon_", &candidate)
 }
 
+#[derive(Default)]
 pub struct LeftPanelResult {
     pub finish_sketch_requested: bool,
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
-}
-
-impl Default for LeftPanelResult {
-    fn default() -> Self {
-        Self {
-            finish_sketch_requested: false,
-            tree_selection: None,
-            tree_activation: None,
-            imported_visibility_change: None,
-        }
-    }
 }
 
 pub fn draw_left_panel(
@@ -662,7 +652,7 @@ pub fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {
         pos,
         radius,
         fill_color,
-        egui::Stroke::new(2.0, stroke_color),
+        egui::Stroke::new(2.0_f32, stroke_color),
     );
 
     let cross_size = 4.0;
@@ -672,14 +662,14 @@ pub fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {
             egui::pos2(pos.x - cross_size, pos.y),
             egui::pos2(pos.x + cross_size, pos.y),
         ],
-        egui::Stroke::new(1.5, cross_color),
+        egui::Stroke::new(1.5_f32, cross_color),
     );
     painter.line_segment(
         [
             egui::pos2(pos.x, pos.y - cross_size),
             egui::pos2(pos.x, pos.y + cross_size),
         ],
-        egui::Stroke::new(1.5, cross_color),
+        egui::Stroke::new(1.5_f32, cross_color),
     );
 }
 

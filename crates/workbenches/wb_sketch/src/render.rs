@@ -194,6 +194,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
 }
 
 /// Add a line segment as a thin quad (two triangles) to the mesh.
+#[allow(clippy::too_many_arguments)]
 fn add_line_quad(
     positions: &mut Vec<[f32; 3]>,
     normals: &mut Vec<[f32; 3]>,

@@ -13,6 +13,7 @@ egui = ["dep:egui"]
 serde.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true
+glam.workspace = true
 uuid.workspace = true
 egui = { workspace = true, optional = true }
 once_cell.workspace = true

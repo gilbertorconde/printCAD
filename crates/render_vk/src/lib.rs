@@ -1,4 +1,5 @@
 mod core;
+mod debug;
 mod mesh;
 mod picking;
 mod surface;
@@ -7,7 +8,6 @@ mod util;
 pub use mesh::{GpuLight, LightingData};
 
 use ash::vk;
-use core_document::ScreenSpaceOverlay;
 use egui::{ClippedPrimitive, TexturesDelta};
 use kernel_api::TriMesh;
 use std::fmt;
@@ -137,8 +137,10 @@ pub trait RenderBackend {
     fn initialize(&mut self, window: &Window) -> Result<(), RenderError>;
     fn render(&mut self, frame: &FrameSubmission) -> Result<(), RenderError>;
     fn resize(&mut self, new_size: PhysicalSize<u32>);
-    /// Query what object is at the given screen position (in physical pixels)
-    fn pick_at(&self, x: u32, y: u32) -> PickResult;
+    /// Most recent GPU pick readback. Picks are requested via
+    /// `VulkanRenderer::request_pick` and resolved during `render`, so the
+    /// result trails the request by a frame.
+    fn latest_pick_result(&self) -> PickResult;
 }
 
 /// Basic configuration knobs for the renderer.
@@ -218,8 +220,6 @@ pub struct FrameSubmission {
     pub egui: Option<EguiSubmission>,
     /// The 3D viewport rect (area where mesh should be rendered)
     pub viewport_rect: Option<ViewportRect>,
-    /// Screen-space overlays (constant-thickness lines rendered in 2D screen coordinates)
-    pub screen_space_overlays: Vec<ScreenSpaceOverlay>,
 }
 
 impl Default for FrameSubmission {
@@ -231,7 +231,6 @@ impl Default for FrameSubmission {
             lighting: LightingData::default(),
             egui: None,
             viewport_rect: None,
-            screen_space_overlays: Vec::new(),
         }
     }
 }
@@ -351,9 +350,7 @@ impl RenderBackend for VulkanRenderer {
         self.pending_extent = to_extent(new_size);
     }
 
-    fn pick_at(&self, _x: u32, _y: u32) -> PickResult {
-        // Return the last pick result - the actual picking happens in draw_frame
-        // after the pending_pick is set
+    fn latest_pick_result(&self) -> PickResult {
         self.core
             .as_ref()
             .map(|c| c.last_pick_result())
@@ -388,7 +385,7 @@ fn create_shader_module(
     // SPIR-V is a stream of 32-bit words, but our `bytes` may not be
     // properly aligned for a direct bytemuck cast on all platforms.
     // To avoid `cast_slice` panics, manually assemble a Vec<u32>.
-    if bytes.len() % 4 != 0 {
+    if !bytes.len().is_multiple_of(4) {
         return Err(RenderError::Initialization(
             "SPIR-V bytecode length is not a multiple of 4".into(),
         ));

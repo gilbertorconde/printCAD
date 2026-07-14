@@ -194,13 +194,14 @@ impl Default for AxisSystem {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AxisPreset {
     /// X right, Y up, Z forward (right-handed, default CAD layout)
     RightHandedZForward,
     /// X right, Y up, Z backward (right-handed, OpenGL-style forward)
     RightHandedZBackward,
     /// X right, Z up, -Y forward (right-handed, Z-up workflows)
+    #[default]
     ZUpRightHanded,
 }
 
@@ -251,15 +252,6 @@ impl AxisPreset {
                 Axis::negative(AxisDirection::Y),
             ),
         }
-    }
-}
-
-impl Default for AxisPreset {
-    fn default() -> Self {
-        // Engineering CAD and STEP data commonly use Z-up, so an imported STEP file's
-        // "front view" lines up with what the model's author saw in their
-        // source CAD tool.
-        AxisPreset::ZUpRightHanded
     }
 }
 

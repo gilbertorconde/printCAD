@@ -14,8 +14,10 @@ use serde::{Deserialize, Serialize};
 /// are rendered in the UI (status bar, dimension labels, etc.).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum Unit {
     /// Millimetres (1 unit = 1 mm). Default and matches storage.
+    #[default]
     Mm,
     /// Centimetres (1 unit = 10 mm).
     Cm,
@@ -25,12 +27,6 @@ pub enum Unit {
     In,
     /// Feet (1 unit = 304.8 mm).
     Ft,
-}
-
-impl Default for Unit {
-    fn default() -> Self {
-        Self::Mm
-    }
 }
 
 impl Unit {

@@ -151,18 +151,24 @@ pub struct WorkbenchStorage {
 
 ## Bodies
 
-Bodies represent the final 3D geometry:
+Bodies are lightweight identity records; geometry lives in sidecar maps on
+the `Document`:
 
 ```rust
 pub struct Body {
     pub id: BodyId,
     pub name: String,
-    pub root_feature: FeatureId, // top-level feature that generates this body
-    pub kernel_handle: Option<kernel_api::BodyHandle>, // kernel-managed geometry
-    pub mesh: Option<kernel_api::TriMesh>, // cached tessellation
-    pub dirty: bool,
+    pub created_at: i64,
 }
 ```
+
+Tessellated geometry for a body is stored in `Document::imported_meshes`
+(`BodyId -> ImportedGeometry`, an `Arc<TriMesh>` plus a `revision` counter
+the renderer uses for cache invalidation). Imported STEP bodies additionally
+carry a frozen B-Rep snapshot (`imported_brep_blobs`) and per-face colours
+(`imported_brep_face_colors`) used for deferred re-tessellation. A future
+parametric rebuild will link bodies to kernel handles; that linkage does not
+exist yet.
 
 ## Workbench Data
 

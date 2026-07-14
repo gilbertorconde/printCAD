@@ -4,6 +4,7 @@
 //! - **`focal_distance`** measured along **`forward`** (eye→focal ray), not spherical radius quirks.
 //! - **Pan** translates `eye`; focal point stays `eye + forward * focal_distance` (orientation fixed).
 //! - **Perspective zoom** dolls along **forward** so the pivot stays fixed unless zoom-to-cursor corrects.
+//!
 //! Vulkan Y-flip, unproject parity, and large-coordinate pitfalls are summarized in **`camera_system.md`** (floating origin, clipping).
 
 mod animate;
@@ -341,45 +342,6 @@ impl CameraController {
             }
         }
         self.world_to_screen(Vec3::from_array(self.target()))
-    }
-
-    pub fn viewport_to_plane(
-        &self,
-        viewport_x: f32,
-        viewport_y: f32,
-        plane_origin: Vec3,
-        plane_normal: Vec3,
-    ) -> Option<Vec3> {
-        let (w, h) = self.state.viewport_size;
-        if w == 0 || h == 0 {
-            return None;
-        }
-        let ndc_x = (viewport_x / w as f32) * 2.0 - 1.0;
-        let ndc_y = (viewport_y / h as f32) * 2.0 - 1.0;
-        let vp = self.state.view_projection(&self.axes);
-        let inv = vp.inverse();
-        let near_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-        let far_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
-        if near_clip.w.abs() < 1e-12 || far_clip.w.abs() < 1e-12 {
-            return None;
-        }
-        let near_w = near_clip.truncate() / near_clip.w;
-        let far_w = far_clip.truncate() / far_clip.w;
-        let ray_dir = (far_w - near_w).normalize();
-        if ray_dir.length_squared() < 1e-24 {
-            return None;
-        }
-
-        let n = plane_normal.normalize();
-        let denom = ray_dir.dot(n);
-        if denom.abs() < 1e-6 {
-            return None;
-        }
-        let t = (plane_origin - near_w).dot(n) / denom;
-        if t < 0.0 {
-            return None;
-        }
-        Some(near_w + ray_dir * t)
     }
 
     pub fn reset_to_fit(
