@@ -58,6 +58,15 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<Vec<ExtrudeOp
     let mut ops = Vec::with_capacity(features.len());
 
     for (feature_id, feature) in features {
+        // Suppressed features are excluded from the build (still listed in
+        // the panel so they can be re-enabled).
+        if document
+            .get_feature_meta(feature_id)
+            .map(|n| n.suppressed)
+            .unwrap_or(false)
+        {
+            continue;
+        }
         let sketch_id = feature.sketch();
         let sketch_data = document
             .get_feature_data(sketch_id)
@@ -247,6 +256,40 @@ mod tests {
         doc.clear_feature_dirty(pad_id);
         doc.clear_feature_dirty(sketch_id);
         assert!(pending_body_rebuilds(&doc).is_empty());
+    }
+
+    #[test]
+    fn suppressed_features_are_skipped_in_build() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_a = doc
+            .add_feature_in_body(
+                PartFeature::Pad {
+                    sketch: sketch_id,
+                    length: 5.0,
+                    reversed: false,
+                },
+                "PadA".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::Pad {
+                sketch: sketch_id,
+                length: 9.0,
+                reversed: false,
+            },
+            "PadB".into(),
+            Some(body),
+        )
+        .unwrap();
+
+        assert_eq!(body_build_ops(&doc, body).unwrap().len(), 2);
+        doc.set_feature_suppressed(pad_a, true);
+        let ops = body_build_ops(&doc, body).unwrap();
+        assert_eq!(ops.len(), 1);
+        // The remaining pad becomes the first op → NewSolid.
+        assert_eq!(ops[0].op, BooleanOp::NewSolid);
+        assert!((ops[0].distance - 9.0).abs() < 1e-9);
     }
 
     #[test]

@@ -56,7 +56,6 @@ pub struct UiFrameOutput {
 pub struct UiLayer {
     ctx: Context,
     state: State,
-    active_workbench: ActiveWorkbench,
     settings_tab: settings_panel::SettingsTab,
     show_settings: bool,
     orientation_cube_config: OrientationCubeConfig,
@@ -79,7 +78,6 @@ impl UiLayer {
         Self {
             ctx,
             state,
-            active_workbench: ActiveWorkbench::default(),
             settings_tab: settings_panel::SettingsTab::Camera,
             show_settings: false,
             orientation_cube_config: OrientationCubeConfig::default(),
@@ -97,6 +95,7 @@ impl UiLayer {
     pub fn run(&mut self, window: &Window, inputs: UiFrameInputs<'_>) -> UiFrameOutput {
         let UiFrameInputs {
             active_tool: host_active_tool,
+            active_workbench: host_active_workbench,
             settings,
             document,
             registry,
@@ -117,8 +116,8 @@ impl UiLayer {
         } = inputs;
 
         let raw_input = self.state.take_egui_input(window);
-        let prev_workbench = self.active_workbench.clone();
-        let mut active_workbench = self.active_workbench.clone();
+        let prev_workbench = host_active_workbench.clone();
+        let mut active_workbench = host_active_workbench;
         // Seed tool state from the host, not a UiLayer copy: the host owns
         // consumption of Action tools, and a stale parallel copy here would
         // resurrect them every frame (infinite "New Body" loop).
@@ -132,6 +131,7 @@ impl UiLayer {
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
         let mut finish_requested = false;
+        let mut orient_request: Option<core_document::CameraOrientRequest> = None;
 
         let mut tree_selection = None;
         let mut tree_activation = None;
@@ -183,7 +183,16 @@ impl UiLayer {
                 active_document_object,
             );
             finish_requested = left_panel.finish_sketch_requested;
-            tree_selection = left_panel.tree_selection;
+            orient_request = left_panel.camera_orient_request;
+            // A feature created from a panel becomes the tree selection so
+            // the host's active-object state follows.
+            if let Some(id) = left_panel.activated_feature {
+                tree_selection = Some(TreeItemId::Feature(id));
+            }
+            // An explicit tree click wins over a panel-created feature.
+            if left_panel.tree_selection.is_some() {
+                tree_selection = left_panel.tree_selection;
+            }
             tree_activation = left_panel.tree_activation;
             imported_visibility_change = left_panel.imported_visibility_change;
             finish_requested |= layout::draw_right_panel(
@@ -246,7 +255,6 @@ impl UiLayer {
             active_tool = ActiveTool::default();
         }
 
-        self.active_workbench = active_workbench.clone();
         self.show_settings = show_settings;
         self.settings_tab = settings_tab;
         self.state
@@ -315,6 +323,9 @@ impl UiLayer {
         }
         if finish_requested {
             commands.push(UiCommand::FinishSketch);
+        }
+        if let Some(req) = orient_request {
+            commands.push(UiCommand::OrientCameraToPlane(req));
         }
         if workbench_changed {
             commands.push(UiCommand::SwitchWorkbench {

@@ -79,12 +79,37 @@ impl Harness {
         self.event(WorkbenchInputEvent::KeyPress { key }, tool);
     }
 
+    /// Create a sketch feature directly (the interactive path goes through
+    /// the egui plane picker, which has no headless harness) and make it the
+    /// active object, exactly as the picker's create path does.
     fn create_sketch(&mut self) -> FeatureId {
+        use wb_sketch::sketch::Sketch;
+        let sketch = Sketch::new("test-sketch");
+        let plane = sketch.plane;
+        let id = self
+            .doc
+            .add_feature_in_body(SketchFeature::new(sketch, plane), "sketch".into(), None)
+            .expect("create sketch feature");
+        self.active_object = Some(id);
+        // Let the workbench sync (enter editing) off the selection.
+        self.event(WorkbenchInputEvent::KeyPress { key: KeyCode::A }, None);
+        id
+    }
+
+    fn release(&mut self, x: f32, y: f32, tool: &str) {
+        let viewport_pos = self.px_of(x, y);
         self.event(
-            WorkbenchInputEvent::KeyPress { key: KeyCode::A },
-            Some("sketch.create"),
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                viewport_pos,
+            },
+            Some(tool),
         );
-        self.active_object.expect("sketch feature created")
+    }
+
+    fn mouse_move(&mut self, x: f32, y: f32, tool: &str) {
+        let viewport_pos = self.px_of(x, y);
+        self.event(WorkbenchInputEvent::MouseMove { viewport_pos }, Some(tool));
     }
 
     fn sketch(&self) -> Sketch {
@@ -120,6 +145,108 @@ fn create_sketch_registers_feature() {
     assert!(h.doc.get_feature_data(id).is_some());
     let (p, l, c, a) = h.counts();
     assert_eq!((p, l, c, a), (0, 0, 0, 0));
+}
+
+#[test]
+fn create_action_opens_picker_instead_of_creating() {
+    let mut h = Harness::new();
+    h.event(
+        WorkbenchInputEvent::KeyPress { key: KeyCode::A },
+        Some("sketch.create"),
+    );
+    // No feature yet — the plane picker is pending in the panel.
+    assert!(h.active_object.is_none());
+    assert_eq!(h.doc.feature_tree().all_nodes().count(), 0);
+}
+
+#[test]
+fn cross_workbench_sketch_request_is_consumed() {
+    let mut h = Harness::new();
+    let body = uuid::Uuid::new_v4();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.start_sketch_on_body = Some(body);
+    h.wb.on_input(
+        &WorkbenchInputEvent::KeyPress { key: KeyCode::A },
+        None,
+        &mut ctx,
+    );
+    assert!(
+        ctx.start_sketch_on_body.is_none(),
+        "the sketch workbench takes the pending request"
+    );
+}
+
+#[test]
+fn dragging_a_point_moves_it_and_click_still_selects() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+
+    // Drag the (10,7) endpoint to (14,9): press, move, release.
+    h.click(10.0, 7.0, "sketch.select");
+    h.mouse_move(14.0, 9.0, "sketch.select");
+    h.release(14.0, 9.0, "sketch.select");
+
+    let sketch = h.sketch();
+    let moved = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
+        .any(|p| (p.x - 14.0).abs() < 0.05 && (p.y - 9.0).abs() < 0.05);
+    assert!(moved, "endpoint followed the drag");
+
+    // Press+release without movement is still a click (selects the point,
+    // so Delete cascades the line away).
+    h.click(0.0, 0.0, "sketch.select");
+    h.release(0.0, 0.0, "sketch.select");
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (1, 0), "clicked point deleted with its line");
+}
+
+#[test]
+fn dragging_a_constrained_point_respects_constraints() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // Axis-snapped horizontal line gets an auto Horizontal constraint.
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(15.0, 0.05, "sketch.line");
+    let sketch = h.sketch();
+    assert_eq!(sketch.constraints.len(), 1);
+
+    // Drag the far endpoint up and sideways: the solver must keep the line
+    // horizontal (y's equal) while the x movement sticks.
+    h.click(15.0, 0.0, "sketch.select");
+    h.mouse_move(20.0, 6.0, "sketch.select");
+    h.release(20.0, 6.0, "sketch.select");
+
+    let sketch = h.sketch();
+    let ys: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.y),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        (ys[0] - ys[1]).abs() < 1e-3,
+        "line stayed horizontal under drag: {ys:?}"
+    );
+    let max_x = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.x),
+            _ => None,
+        })
+        .fold(f32::MIN, f32::max);
+    assert!(max_x > 17.0, "x movement applied: {max_x}");
 }
 
 #[test]
@@ -221,8 +348,10 @@ fn deleting_a_point_cascades_to_its_line() {
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 7.0, "sketch.line");
-    // Click exactly on an endpoint: point wins the hit-test.
+    // Click exactly on an endpoint: point wins the hit-test. Point
+    // selection resolves on release (press begins a potential drag).
     h.click(10.0, 7.0, "sketch.select");
+    h.release(10.0, 7.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (1, 0), "line cascaded away with its endpoint");

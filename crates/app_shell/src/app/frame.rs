@@ -204,6 +204,7 @@ impl PrintCadApp {
                     window,
                     ui::UiFrameInputs {
                         active_tool: self.active_tool.clone(),
+                        active_workbench: self.active_workbench.clone(),
                         settings: &mut self.user_settings,
                         document: &mut self.document,
                         registry: &mut self.registry,

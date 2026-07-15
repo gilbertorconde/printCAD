@@ -428,6 +428,11 @@ fn get_tool_icon_for(
 #[derive(Default)]
 pub struct LeftPanelResult {
     pub finish_sketch_requested: bool,
+    /// Camera orient request written by a panel hook (e.g. after creating a
+    /// sketch from the plane picker).
+    pub camera_orient_request: Option<core_document::CameraOrientRequest>,
+    /// The panel hook changed the active document object (feature created).
+    pub activated_feature: Option<core_document::FeatureId>,
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
@@ -477,6 +482,13 @@ pub fn draw_left_panel(
                 // Check for finish sketch request
                 if ctx.finish_sketch_requested {
                     panel_result.finish_sketch_requested = true;
+                }
+                // Panel hooks can create features (e.g. the sketch plane
+                // picker); surface their write-backs instead of dropping
+                // them.
+                panel_result.camera_orient_request = ctx.camera_orient_request.take();
+                if ctx.active_document_object != active_document_object {
+                    panel_result.activated_feature = ctx.active_document_object;
                 }
                 flush_ctx_logs(&mut ctx);
             }

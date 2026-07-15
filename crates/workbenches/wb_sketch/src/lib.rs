@@ -43,11 +43,27 @@ impl Default for ConstraintDrafts {
     }
 }
 
+/// A "create sketch" request waiting for the user to pick a plane.
+struct PendingCreation {
+    body: Option<BodyId>,
+}
+
+/// In-progress drag of a point in select mode.
+struct DragState {
+    point: Uuid,
+    original: Vec2D,
+    moved: bool,
+}
+
 /// Sketch workbench: 2D drawing with constraints.
 #[derive(Default)]
 pub struct SketchWorkbench {
     /// Currently active sketch feature ID (if any).
     active_sketch_id: Option<FeatureId>,
+    /// Waiting for a plane choice before creating a sketch.
+    pending_creation: Option<PendingCreation>,
+    /// Point being dragged (select mode).
+    dragging: Option<DragState>,
     /// In-progress drawing-tool state.
     tool_state: ToolState,
     /// Selected geometry ids (select mode; click toggles).
@@ -104,6 +120,7 @@ impl SketchWorkbench {
         self.selected.clear();
         self.hovered = None;
         self.cursor = None;
+        self.dragging = None;
     }
 
     fn sync_active_sketch_from_ctx(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -169,22 +186,26 @@ impl SketchWorkbench {
         SNAP_TOLERANCE_PX * proj.units_per_px()
     }
 
-    fn create_sketch(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        // Only create a new sketch on the first use after entering sketch
-        // mode; further events while the action stays selected are ignored.
-        if self.active_sketch_id.is_some() {
-            return InputResult::ignored();
-        }
+    /// The "Create Sketch" action: open the plane picker. The sketch is
+    /// created once a plane is chosen in the left panel.
+    fn begin_sketch_creation(&mut self, body: Option<BodyId>) {
+        self.pending_creation = Some(PendingCreation { body });
+    }
 
+    fn create_sketch_on_plane(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        body: Option<BodyId>,
+        plane: SketchPlane,
+    ) {
         let sketch_name = Self::next_sketch_name(ctx.document);
-        let sketch = Sketch::new(sketch_name.clone());
-        let plane = sketch.plane;
+        let mut sketch = Sketch::new(sketch_name.clone());
+        sketch.plane = plane;
         let sketch_feature = SketchFeature::new(sketch, plane);
-        let owning_body = ctx.selected_body_id.map(BodyId);
 
         match ctx
             .document
-            .add_feature_in_body(sketch_feature, sketch_name.clone(), owning_body)
+            .add_feature_in_body(sketch_feature, sketch_name.clone(), body)
         {
             Ok(feature_id) => {
                 self.active_sketch_id = Some(feature_id);
@@ -201,7 +222,6 @@ impl SketchWorkbench {
                 ctx.log_error(format!("Failed to create sketch: {e}"));
             }
         }
-        InputResult::consumed()
     }
 
     fn handle_left_click(
@@ -234,17 +254,29 @@ impl SketchWorkbench {
                 InputResult::consumed()
             }
             _ => {
-                // Select mode: toggle the element under the cursor, clear on
-                // empty space.
+                // Select mode. Pressing on a point begins a drag (the
+                // release decides between "click to toggle-select" and "drag
+                // finished"); curves toggle immediately; empty space clears.
                 match snap::hit_test(&feature.sketch, cursor, tol) {
+                    Some(id) if feature.sketch.point_position(id).is_some() => {
+                        self.dragging = Some(DragState {
+                            point: id,
+                            original: feature.sketch.point_position(id).unwrap(),
+                            moved: false,
+                        });
+                        InputResult::consumed()
+                    }
                     Some(id) => {
                         if !self.selected.remove(&id) {
                             self.selected.insert(id);
                         }
+                        InputResult::consumed()
                     }
-                    None => self.selected.clear(),
+                    None => {
+                        self.selected.clear();
+                        InputResult::consumed()
+                    }
                 }
-                InputResult::consumed()
             }
         }
     }
@@ -255,11 +287,29 @@ impl SketchWorkbench {
         tool: Option<&str>,
         viewport_pos: (f32, f32),
     ) -> InputResult {
-        let Some(feature) = self.get_active_sketch(ctx) else {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
         let plane = feature.plane;
         self.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
+
+        // Constraint-aware point drag: move the point to the cursor and let
+        // the solver re-project it onto whatever its constraints allow.
+        // Consumed so the camera doesn't orbit underneath the drag.
+        if let Some(drag) = self.dragging.as_mut() {
+            if let Some(cursor) = self.cursor {
+                let point = drag.point;
+                drag.moved = true;
+                if let Some(sketch::GeometryElement::Point(p)) =
+                    feature.sketch.get_geometry_mut(point)
+                {
+                    p.position = cursor;
+                }
+                self.solve(ctx, &mut feature);
+                self.store_sketch(ctx, feature);
+            }
+            return InputResult::consumed();
+        }
         if matches!(tool, None | Some("sketch.select")) {
             let tol = Self::snap_tolerance(ctx, &plane);
             self.hovered = self
@@ -270,6 +320,19 @@ impl SketchWorkbench {
         }
         // Never consume moves — the camera still needs them for orbiting.
         InputResult::redraw_only()
+    }
+
+    fn handle_left_release(&mut self, _ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if let Some(drag) = self.dragging.take() {
+            if !drag.moved {
+                // A press+release without movement is a click: toggle-select.
+                if !self.selected.remove(&drag.point) {
+                    self.selected.insert(drag.point);
+                }
+            }
+            return InputResult::consumed();
+        }
+        InputResult::ignored()
     }
 
     fn delete_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -292,6 +355,25 @@ impl SketchWorkbench {
     }
 
     fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if let Some(drag) = self.dragging.take() {
+            // Restore the pre-drag position.
+            if drag.moved {
+                if let Some(mut feature) = self.get_active_sketch(ctx) {
+                    if let Some(sketch::GeometryElement::Point(p)) =
+                        feature.sketch.get_geometry_mut(drag.point)
+                    {
+                        p.position = drag.original;
+                    }
+                    self.solve(ctx, &mut feature);
+                    self.store_sketch(ctx, feature);
+                }
+            }
+            return InputResult::consumed();
+        }
+        if self.pending_creation.is_some() {
+            self.pending_creation = None;
+            return InputResult::consumed();
+        }
         if !self.tool_state.is_idle() {
             self.tool_state = ToolState::Idle;
             ctx.log_info("Sketch: cancelled current tool operation");
@@ -382,8 +464,17 @@ impl Workbench for SketchWorkbench {
             };
         }
 
+        // Another workbench (or the host) asked us to create a sketch on a
+        // specific body: take the request and open the plane picker.
+        if let Some(body) = ctx.start_sketch_on_body.take() {
+            self.begin_sketch_creation(Some(BodyId(body)));
+        }
+
         if active_tool == Some("sketch.create") {
-            return self.create_sketch(ctx);
+            if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
+                self.begin_sketch_creation(ctx.selected_body_id.map(BodyId));
+            }
+            return InputResult::consumed();
         }
 
         if self.active_sketch_id.is_none() {
@@ -415,6 +506,10 @@ impl Workbench for SketchWorkbench {
                     InputResult::ignored()
                 }
             }
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                ..
+            } => self.handle_left_release(ctx),
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
                 self.handle_mouse_move(ctx, tool, *viewport_pos)
             }
@@ -436,8 +531,37 @@ impl Workbench for SketchWorkbench {
         self.sync_active_sketch_from_ctx(ctx);
 
         ui.heading("Sketcher");
+
+        // Plane picker for a pending sketch creation.
+        if let Some(pending) = &self.pending_creation {
+            let body = pending.body;
+            ui.label("New sketch — choose a plane:");
+            let mut chosen: Option<SketchPlane> = None;
+            ui.horizontal(|ui| {
+                if ui.button("Top (XY)").clicked() {
+                    chosen = Some(SketchPlane::xy());
+                }
+                if ui.button("Front (XZ)").clicked() {
+                    chosen = Some(SketchPlane::xz());
+                }
+                if ui.button("Side (YZ)").clicked() {
+                    chosen = Some(SketchPlane::yz());
+                }
+            });
+            if ui.button("Cancel").clicked() {
+                self.pending_creation = None;
+            }
+            if let Some(plane) = chosen {
+                self.pending_creation = None;
+                self.create_sketch_on_plane(ctx, body, plane);
+            }
+            ui.separator();
+        }
+
         let Some(feature) = self.get_active_sketch(ctx) else {
-            ui.label("Select a sketch in the tree or create a new one to begin editing.");
+            if self.pending_creation.is_none() {
+                ui.label("Select a sketch in the tree or create a new one to begin editing.");
+            }
             return;
         };
         let sketch = &feature.sketch;

@@ -82,3 +82,47 @@ fn zoom_to_cursor_preserves_world_point_on_focal_plane() {
     let delta_o = (w2 - w3).length();
     assert!(delta_o < 5e-2, "ortho zoom cursor delta {delta_o}");
 }
+
+#[test]
+fn orient_to_plane_puts_sketch_axes_screen_aligned() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    // Default settings use the Z-up axis preset — the case that used to
+    // roll the view on sketch entry (the orientation was built against a
+    // hardcoded XYZ camera basis instead of the preset's).
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+
+    // Default sketch plane: XY at origin, +Z normal, +Y plane-up.
+    cam.orient_to_plane(Vec3::ZERO, Vec3::Z, Vec3::Y, &settings);
+    // Drive the transition tween to completion.
+    for _ in 0..600 {
+        cam.update(0.016, &settings);
+    }
+
+    let origin = cam.world_to_screen(Vec3::ZERO).expect("origin visible");
+    let plus_x = cam
+        .world_to_screen(Vec3::new(10.0, 0.0, 0.0))
+        .expect("+X visible");
+    let plus_y = cam
+        .world_to_screen(Vec3::new(0.0, 10.0, 0.0))
+        .expect("+Y visible");
+
+    // Screen space is Y-down: sketch +X must appear to the right of the
+    // origin and sketch +Y above it (smaller screen y). The old code showed
+    // the sketch mirrored/rolled.
+    assert!(
+        plus_x.0 > origin.0 + 1.0,
+        "sketch +X should be screen-right: origin {origin:?}, +X {plus_x:?}"
+    );
+    assert!(
+        (plus_x.1 - origin.1).abs() < 1.0,
+        "sketch +X should stay level: origin {origin:?}, +X {plus_x:?}"
+    );
+    assert!(
+        plus_y.1 < origin.1 - 1.0,
+        "sketch +Y should be screen-up: origin {origin:?}, +Y {plus_y:?}"
+    );
+}

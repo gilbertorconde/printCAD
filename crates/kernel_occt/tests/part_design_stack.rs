@@ -18,6 +18,21 @@ fn occt_guard() -> MutexGuard<'static, ()> {
     OCCT_SERIAL.lock().unwrap_or_else(|p| p.into_inner())
 }
 
+fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32) -> SketchFeature {
+    let mut sketch = Sketch::new("s");
+    sketch.plane = plane;
+    let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(width, 0.0))));
+    let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
+        width, height,
+    ))));
+    let d = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, height))));
+    for (s, e) in [(a, b), (b, c), (c, d), (d, a)] {
+        sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
+    }
+    SketchFeature::new(sketch, plane)
+}
+
 fn rect_sketch(width: f32, height: f32) -> SketchFeature {
     let mut sketch = Sketch::new("s");
     let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
@@ -134,6 +149,42 @@ fn pocket_feature_cuts_into_the_pad() {
         with_hole.mesh.indices.len(),
         solid.mesh.indices.len()
     );
+}
+
+#[test]
+fn pad_on_front_plane_extrudes_along_minus_y() {
+    let _serial = occt_guard();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    // Front (XZ) plane: sketch x → world X, sketch y → world Z, normal -Y.
+    let sketch_id = doc
+        .add_feature_in_body(
+            rect_sketch_on(wb_sketch::sketch::SketchPlane::xz(), 10.0, 4.0),
+            "front".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        PartFeature::Pad {
+            sketch: sketch_id,
+            length: 6.0,
+            reversed: false,
+        },
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+
+    let ops = wb_part::body_build_ops(&doc, body).unwrap();
+    let mut kernel = OcctKernel::new();
+    let result = kernel
+        .execute_extrude_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let (min, max) = mesh_bounds(&result.mesh);
+    assert!((max[0] - min[0] - 10.0).abs() < 1e-3, "world X = sketch x");
+    assert!((max[2] - min[2] - 4.0).abs() < 1e-3, "world Z = sketch y");
+    assert!((max[1] - min[1] - 6.0).abs() < 1e-3, "extruded along Y");
+    assert!(max[1].abs() < 1e-3, "normal is -Y: solid at negative Y");
 }
 
 #[test]

@@ -218,15 +218,42 @@ pub struct SketchPlane {
     pub y_axis: [f32; 3],
 }
 
-impl Default for SketchPlane {
-    fn default() -> Self {
-        // Default to XY plane at origin
+impl SketchPlane {
+    /// Top plane: sketch on XY, normal +Z.
+    pub fn xy() -> Self {
         Self {
             origin: [0.0, 0.0, 0.0],
             normal: [0.0, 0.0, 1.0],
             x_axis: [1.0, 0.0, 0.0],
             y_axis: [0.0, 1.0, 0.0],
         }
+    }
+
+    /// Front plane: sketch on XZ, normal -Y (x right, z up, right-handed:
+    /// x_axis × y_axis = normal).
+    pub fn xz() -> Self {
+        Self {
+            origin: [0.0, 0.0, 0.0],
+            normal: [0.0, -1.0, 0.0],
+            x_axis: [1.0, 0.0, 0.0],
+            y_axis: [0.0, 0.0, 1.0],
+        }
+    }
+
+    /// Side plane: sketch on YZ, normal +X.
+    pub fn yz() -> Self {
+        Self {
+            origin: [0.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+            x_axis: [0.0, 1.0, 0.0],
+            y_axis: [0.0, 0.0, 1.0],
+        }
+    }
+}
+
+impl Default for SketchPlane {
+    fn default() -> Self {
+        Self::xy()
     }
 }
 

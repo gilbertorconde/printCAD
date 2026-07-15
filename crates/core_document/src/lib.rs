@@ -331,6 +331,16 @@ impl Document {
         }
     }
 
+    /// Suppress/unsuppress a feature (excluded from builds while suppressed).
+    pub fn set_feature_suppressed(&mut self, feature_id: FeatureId, suppressed: bool) {
+        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+            if node.suppressed != suppressed {
+                node.suppressed = suppressed;
+                self.mark_dirty();
+            }
+        }
+    }
+
     /// Remove a feature node. Features that depended on it are marked dirty
     /// so their owners can react to the missing input.
     pub fn remove_feature(&mut self, feature_id: FeatureId) -> DocumentResult<()> {

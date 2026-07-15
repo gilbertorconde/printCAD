@@ -450,15 +450,26 @@ impl CameraController {
         settings: &CameraSettings,
     ) {
         let normal = plane_normal.normalize();
-        let up = plane_up.normalize();
+        // Look at the plane from its +normal side, with the plane's up axis
+        // (orthogonalized against the view direction) as screen-up.
         let forward = -normal;
-        let right = up.cross(forward).normalize_or_zero();
-        if right.length_squared() < 1e-12 {
+        let up_raw = plane_up - forward * plane_up.dot(forward);
+        if up_raw.length_squared() < 1e-12 {
             return;
         }
-        let cam_up = forward.cross(right).normalize();
-        let rot = Mat3::from_cols(right, cam_up, forward);
-        let q_end = Quat::from_mat3(&rot).normalize();
+        let cam_up = up_raw.normalize();
+
+        // The camera state consumes the orientation as `q * (-depth) =
+        // forward` and `q * vertical = up` in the ACTIVE axis preset — do
+        // not assume the canonical XYZ basis here (that was wrong for the
+        // default Z-up preset and rolled the view on sketch entry). Build q
+        // as the rotation mapping the preset pair onto the target pair.
+        let depth = self.axes.depth().vector();
+        let vertical = self.axes.vertical().vector();
+        let src_forward = -depth;
+        let src = Mat3::from_cols(src_forward, vertical, src_forward.cross(vertical));
+        let dst = Mat3::from_cols(forward, cam_up, forward.cross(cam_up));
+        let q_end = Quat::from_mat3(&(dst * src.transpose())).normalize();
 
         let fd = self.state.focal_distance;
         let focal = DVec3::new(

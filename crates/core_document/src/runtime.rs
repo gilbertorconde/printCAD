@@ -70,6 +70,16 @@ pub struct WorkbenchRuntimeContext<'a> {
 
     /// Request to exit sketch mode (set by workbench UI, read by host).
     pub finish_sketch_requested: bool,
+
+    /// Workbench → host: switch the active workbench after this hook
+    /// returns (e.g. Part Design's "New Sketch" jumps to the sketcher).
+    pub workbench_switch_request: Option<crate::WorkbenchId>,
+
+    /// Host ⇄ sketch workbench: a pending "create a sketch on this body"
+    /// request. Set by a requesting workbench, carried by the host between
+    /// hooks, and TAKEN by the sketch workbench when it starts its plane
+    /// picker.
+    pub start_sketch_on_body: Option<uuid::Uuid>,
 }
 
 /// Request to orient camera to a specific plane.
@@ -102,6 +112,8 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             finish_sketch_requested: false,
             active_document_object: None,
             view_proj: None,
+            workbench_switch_request: None,
+            start_sketch_on_body: None,
         }
     }
 

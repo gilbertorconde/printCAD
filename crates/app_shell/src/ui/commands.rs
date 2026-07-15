@@ -37,6 +37,8 @@ pub enum UiCommand {
     /// Exit the active workbench's editing session (e.g. "Exit Sketch
     /// Mode" in the sketcher panel).
     FinishSketch,
+    /// Orient the camera to a plane (sketch created from the panel).
+    OrientCameraToPlane(core_document::CameraOrientRequest),
     SwitchWorkbench {
         from: ActiveWorkbench,
         to: ActiveWorkbench,

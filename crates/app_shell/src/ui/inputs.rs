@@ -6,7 +6,7 @@ use axes::AxisSystem;
 use settings::UserSettings;
 
 use super::feature_tree::TreeItemId;
-use super::ActiveTool;
+use super::{ActiveTool, ActiveWorkbench};
 use crate::orientation_cube::OrientationCubeInput;
 
 /// Everything the UI needs to draw one frame. Constructed as a literal at
@@ -17,6 +17,9 @@ pub struct UiFrameInputs<'a> {
     /// ids (e.g. `part.new_body`, a used `sketch.create`) from its copy, so
     /// the UI must re-seed from it each frame rather than keeping its own.
     pub active_tool: ActiveTool,
+    /// The host's active workbench — authoritative (the host can switch
+    /// benches itself, e.g. the create-sketch flow).
+    pub active_workbench: ActiveWorkbench,
     pub settings: &'a mut UserSettings,
     pub document: &'a mut core_document::Document,
     pub registry: &'a mut core_document::DocumentService,

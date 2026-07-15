@@ -30,6 +30,7 @@ struct FrameIntents {
     new_document: bool,
     file_dialog: Option<FileDialogKind>,
     workbench_switch: Option<(ActiveWorkbench, ActiveWorkbench)>,
+    orient_to_plane: Option<core_document::CameraOrientRequest>,
     finish_sketch: bool,
     quit: bool,
 }
@@ -79,6 +80,7 @@ impl PrintCadApp {
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
                 UiCommand::FinishSketch => intents.finish_sketch = true,
+                UiCommand::OrientCameraToPlane(req) => intents.orient_to_plane = Some(req),
                 UiCommand::SwitchWorkbench { from, to } => {
                     intents.workbench_switch = Some((from, to));
                 }
@@ -128,6 +130,15 @@ impl PrintCadApp {
             self.log_tree_activation(item);
         }
 
+        if let Some(req) = intents.orient_to_plane {
+            self.camera.orient_to_plane(
+                Vec3::from_array(req.plane_origin),
+                Vec3::from_array(req.plane_normal),
+                Vec3::from_array(req.plane_up),
+                &self.user_settings.camera,
+            );
+        }
+
         if intents.finish_sketch {
             self.finish_active_workbench_editing();
         }
@@ -161,6 +172,8 @@ impl PrintCadApp {
         // Workbench change last-but-one so the outgoing workbench sees the
         // frame's selection updates in its deactivate hook.
         if let Some((old_wb, new_wb)) = intents.workbench_switch {
+            // A deliberate user switch cancels any pending return-to-bench.
+            self.return_workbench = None;
             self.call_workbench_deactivate(&old_wb.0);
             self.call_workbench_activate(&new_wb.0);
         }
@@ -190,6 +203,8 @@ impl PrintCadApp {
     /// End the active workbench's editing session (e.g. Exit Sketch Mode)
     /// and drop the edited feature from the active-object slot so the
     /// workbench doesn't immediately re-enter editing on the next event.
+    /// When the editing flow was started from another workbench (Part
+    /// Design's "New Sketch"), jump back to it.
     fn finish_active_workbench_editing(&mut self) {
         let wb_id = self.active_workbench.0.clone();
         let params = self.interaction_ctx_params();
@@ -200,6 +215,29 @@ impl PrintCadApp {
         }
         self.active_document_object = None;
         self.tree_selection = Some(TreeItemId::DocumentRoot);
+
+        if let Some(previous) = self.return_workbench.take() {
+            if previous != self.active_workbench {
+                self.switch_workbench_for_flow(previous.0);
+            }
+        }
+    }
+
+    /// Host-driven workbench switch (create-sketch flow, return-on-finish).
+    /// Remembers the outgoing workbench as the return target when jumping
+    /// INTO the sketcher so finishing can jump back.
+    pub(crate) fn switch_workbench_for_flow(&mut self, target: crate::WorkbenchId) {
+        if self.active_workbench.0 == target {
+            return;
+        }
+        if target.as_str() == "wb.sketch" {
+            self.return_workbench = Some(self.active_workbench.clone());
+        }
+        let old = self.active_workbench.0.clone();
+        self.call_workbench_deactivate(&old);
+        self.active_workbench = ActiveWorkbench(target.clone());
+        self.active_tool = Default::default();
+        self.call_workbench_activate(&target);
     }
 
     /// Frame the camera around the imported geometry (or the default box).

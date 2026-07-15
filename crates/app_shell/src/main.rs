@@ -176,6 +176,12 @@ struct PrintCadApp {
     overlay_id_pool: Vec<Uuid>,
     /// Latest keyboard modifiers from `WindowEvent::ModifiersChanged`.
     modifiers: winit::keyboard::ModifiersState,
+    /// A workbench asked to create a sketch on this body; carried between
+    /// hooks until the sketch workbench consumes it (plane picker).
+    pending_sketch_creation: Option<Uuid>,
+    /// Workbench to return to when sketch editing finishes, when the sketch
+    /// flow was started from another workbench (e.g. Part Design).
+    return_workbench: Option<ActiveWorkbench>,
 }
 
 impl PrintCadApp {
@@ -227,6 +233,8 @@ impl PrintCadApp {
             mouse_buttons_down: 0,
             overlay_id_pool: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),
+            pending_sketch_creation: None,
+            return_workbench: None,
         }
     }
 

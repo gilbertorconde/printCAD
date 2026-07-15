@@ -132,6 +132,11 @@ impl Workbench for PartDesignWorkbench {
             Some("structure"),
         ));
         context.register_tool(ToolDescriptor::new_action(
+            "part.new_sketch",
+            "New Sketch",
+            Some("structure"),
+        ));
+        context.register_tool(ToolDescriptor::new_action(
             "part.pad",
             "Pad (Extrude)",
             Some("modeling"),
@@ -159,6 +164,18 @@ impl Workbench for PartDesignWorkbench {
         match active_tool {
             Some("part.pad") => self.insert_extrude(ctx, ExtrudeKind::Pad),
             Some("part.pocket") => self.insert_extrude(ctx, ExtrudeKind::Pocket),
+            Some("part.new_sketch") => {
+                let Some(body) = Self::target_body(ctx) else {
+                    ctx.log_warn("Select a body (or one of its features) first");
+                    return InputResult::consumed();
+                };
+                // Hand off to the sketch workbench: it opens its plane
+                // picker for this body, and finishing the sketch returns
+                // here (the host tracks the return workbench).
+                ctx.start_sketch_on_body = Some(body.0);
+                ctx.workbench_switch_request = Some(WorkbenchId::from("wb.sketch"));
+                InputResult::consumed()
+            }
             _ => InputResult::ignored(),
         }
     }
@@ -166,6 +183,7 @@ impl Workbench for PartDesignWorkbench {
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
             "part.new_body" => true,
+            "part.new_sketch" => Self::target_body(ctx).is_some(),
             "part.pad" => Self::selected_sketch(ctx).is_some(),
             "part.pocket" => {
                 let Some(body) = Self::target_body(ctx) else {
@@ -208,12 +226,14 @@ impl Workbench for PartDesignWorkbench {
         let mut updated: Option<(FeatureId, PartFeature)> = None;
         let mut removed: Option<(FeatureId, FeatureId)> = None; // (feature, its sketch)
 
+        let mut suppress_toggle: Option<(FeatureId, bool)> = None;
+
         for (feature_id, part_feature) in &features {
-            let node_name = ctx
+            let (node_name, suppressed) = ctx
                 .document
                 .get_feature_meta(*feature_id)
-                .map(|n| n.name.clone())
-                .unwrap_or_else(|| part_feature.kind_label().to_string());
+                .map(|n| (n.name.clone(), n.suppressed))
+                .unwrap_or_else(|| (part_feature.kind_label().to_string(), false));
             let mut edited = part_feature.clone();
             let changed = ui
                 .horizontal(|ui| {
@@ -246,6 +266,14 @@ impl Workbench for PartDesignWorkbench {
                         .checkbox(reversed, "rev")
                         .on_hover_text("Extrude in the opposite direction")
                         .changed();
+                    let mut is_suppressed = suppressed;
+                    if ui
+                        .checkbox(&mut is_suppressed, "off")
+                        .on_hover_text("Suppress: exclude this feature from the build")
+                        .changed()
+                    {
+                        suppress_toggle = Some((*feature_id, is_suppressed));
+                    }
                     changed
                 })
                 .inner;
@@ -254,6 +282,10 @@ impl Workbench for PartDesignWorkbench {
             }
         }
 
+        if let Some((feature_id, suppressed)) = suppress_toggle {
+            ctx.document.set_feature_suppressed(feature_id, suppressed);
+            ctx.document.mark_feature_dirty(feature_id);
+        }
         if let Some((feature_id, edited)) = updated {
             if ctx
                 .document

@@ -26,6 +26,7 @@ pub(crate) struct WbCtxParams {
     pub selected_body_id: Option<Uuid>,
     pub cursor_viewport_pos: Option<(f32, f32)>,
     pub active_document_object: Option<FeatureId>,
+    pub start_sketch_on_body: Option<Uuid>,
 }
 
 /// Everything a hook may have written back into the context, extracted
@@ -33,6 +34,8 @@ pub(crate) struct WbCtxParams {
 pub(crate) struct WbHookOutcome {
     pub camera_orient_request: Option<CameraOrientRequest>,
     pub active_document_object: Option<FeatureId>,
+    pub workbench_switch_request: Option<WorkbenchId>,
+    pub start_sketch_on_body: Option<Uuid>,
     /// Carried for parity with the context; no call site handles it yet
     /// (the pre-existing "finish sketch" flow was never wired up).
     #[allow(dead_code)]
@@ -54,6 +57,7 @@ impl PrintCadApp {
             selected_body_id: self.selected_body,
             cursor_viewport_pos: self.cursor_in_viewport,
             active_document_object: self.active_document_object,
+            start_sketch_on_body: self.pending_sketch_creation,
         }
     }
 
@@ -77,6 +81,7 @@ impl PrintCadApp {
             selected_body_id: self.active_body_id.map(|id| id.0),
             cursor_viewport_pos: None,
             active_document_object: self.active_document_object,
+            start_sketch_on_body: None,
         }
     }
 
@@ -107,12 +112,15 @@ impl PrintCadApp {
         ctx.selected_body_id = params.selected_body_id;
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
         ctx.active_document_object = params.active_document_object;
+        ctx.start_sketch_on_body = params.start_sketch_on_body;
 
         let result = f(wb.as_mut(), &mut ctx);
 
         let outcome = WbHookOutcome {
             camera_orient_request: ctx.camera_orient_request.take(),
             active_document_object: ctx.active_document_object,
+            workbench_switch_request: ctx.workbench_switch_request.take(),
+            start_sketch_on_body: ctx.start_sketch_on_body,
             finish_sketch_requested: ctx.finish_sketch_requested,
         };
         Self::flush_logs(ctx.drain_logs());
@@ -124,6 +132,12 @@ impl PrintCadApp {
     pub(crate) fn apply_hook_outcome(&mut self, outcome: WbHookOutcome) {
         if outcome.active_document_object != self.active_document_object {
             self.active_document_object = outcome.active_document_object;
+        }
+        // The context was seeded with the pending request; a consuming
+        // workbench takes it (None comes back), a requesting one sets it.
+        self.pending_sketch_creation = outcome.start_sketch_on_body;
+        if let Some(target) = outcome.workbench_switch_request {
+            self.switch_workbench_for_flow(target);
         }
         if let Some(orient_req) = outcome.camera_orient_request {
             self.camera.orient_to_plane(
