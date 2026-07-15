@@ -21,8 +21,8 @@ pub use asset::{AssetReference, AssetType};
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use kernel_api::TriMesh;
 pub use runtime::{
-    CameraOrientRequest, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    CameraOrientRequest, FaceRef, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
+    SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
 pub use units::{format_length_mm, Unit};

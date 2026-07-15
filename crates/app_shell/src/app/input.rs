@@ -9,6 +9,7 @@ use winit::{
 };
 
 use render_vk::RenderBackend;
+use uuid::Uuid;
 
 use crate::camera::CameraPointerResult;
 use crate::log_panel as app_log;
@@ -340,17 +341,117 @@ impl PrintCadApp {
 
     fn toggle_body_under_cursor_selection(&mut self) -> bool {
         if let Some(hovered) = self.hovered_body {
+            // Sketch feature meshes are pickable too: clicking one selects
+            // it in the tree so e.g. Pad can be invoked straight away.
+            let feature_id = core_document::FeatureId(hovered);
+            if self
+                .document
+                .get_feature_meta(feature_id)
+                .map(|n| n.workbench_id.as_str() == "wb.sketch")
+                .unwrap_or(false)
+            {
+                self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
+                self.last_face_hit = None;
+                return true;
+            }
+
             if self.selected_body == Some(hovered) {
                 self.selected_body = None;
+                self.last_face_hit = None;
                 app_log::info("Deselected body");
             } else {
                 self.selected_body = Some(hovered);
+                self.last_face_hit = self
+                    .face_hit_under_cursor(hovered)
+                    .map(|face| (hovered, face));
                 app_log::info(format!("Selected body: {hovered:?}"));
             }
         } else if self.selected_body.is_some() {
             self.selected_body = None;
+            self.last_face_hit = None;
             app_log::info("Deselected (clicked empty space)");
         }
         true
     }
+
+    /// Derive the face (surface point + normal) under the cursor from the
+    /// picked body's mesh: the GPU pick gives an exact on-surface world
+    /// position; the closest triangle's geometric normal identifies the
+    /// face plane. Runs only on selection clicks, so a linear scan is fine.
+    fn face_hit_under_cursor(&self, body: Uuid) -> Option<core_document::FaceRef> {
+        let point = glam::Vec3::from_array(self.hovered_world_pos?);
+        let geometry = self
+            .document
+            .imported_geometry(core_document::BodyId(body))?;
+        let mesh = &geometry.mesh;
+
+        let mut best: Option<(f32, glam::Vec3)> = None;
+        for tri in mesh.indices.chunks_exact(3) {
+            let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
+            let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
+            let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
+            let normal = (b - a).cross(c - a);
+            if normal.length_squared() < 1e-12 {
+                continue;
+            }
+            let d = point_triangle_distance_sq(point, a, b, c);
+            if best.map(|(bd, _)| d < bd).unwrap_or(true) {
+                best = Some((d, normal.normalize()));
+            }
+        }
+        let (dist_sq, normal) = best?;
+        // The pick position must actually lie on the surface (guards against
+        // stale hover data).
+        if dist_sq > 0.5 {
+            return None;
+        }
+        Some(core_document::FaceRef {
+            point: point.to_array(),
+            normal: normal.to_array(),
+        })
+    }
+}
+
+/// Squared distance from `p` to triangle `abc` (closest-point projection).
+fn point_triangle_distance_sq(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> f32 {
+    // Ericson, "Real-Time Collision Detection", closest point on triangle.
+    let ab = b - a;
+    let ac = c - a;
+    let ap = p - a;
+    let d1 = ab.dot(ap);
+    let d2 = ac.dot(ap);
+    if d1 <= 0.0 && d2 <= 0.0 {
+        return ap.length_squared();
+    }
+    let bp = p - b;
+    let d3 = ab.dot(bp);
+    let d4 = ac.dot(bp);
+    if d3 >= 0.0 && d4 <= d3 {
+        return bp.length_squared();
+    }
+    let vc = d1 * d4 - d3 * d2;
+    if vc <= 0.0 && d1 >= 0.0 && d3 <= 0.0 {
+        let v = d1 / (d1 - d3);
+        return (ap - ab * v).length_squared();
+    }
+    let cp = p - c;
+    let d5 = ab.dot(cp);
+    let d6 = ac.dot(cp);
+    if d6 >= 0.0 && d5 <= d6 {
+        return cp.length_squared();
+    }
+    let vb = d5 * d2 - d1 * d6;
+    if vb <= 0.0 && d2 >= 0.0 && d6 <= 0.0 {
+        let w = d2 / (d2 - d6);
+        return (ap - ac * w).length_squared();
+    }
+    let va = d3 * d6 - d5 * d4;
+    if va <= 0.0 && (d4 - d3) >= 0.0 && (d5 - d6) >= 0.0 {
+        let w = (d4 - d3) / ((d4 - d3) + (d5 - d6));
+        return (bp - (c - b) * w).length_squared();
+    }
+    let denom = 1.0 / (va + vb + vc);
+    let v = vb * denom;
+    let w = vc * denom;
+    (p - (a + ab * v + ac * w)).length_squared()
 }

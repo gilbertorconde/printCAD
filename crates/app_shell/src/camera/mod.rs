@@ -41,6 +41,8 @@ pub struct CameraController {
     /// LMB orbit pivot (world) when [`settings::CameraSettings::orbit_pivot_pick`] is enabled;
     /// rotates the eye about this point without reframing.
     orbit_lmb_anchor_world: Option<DVec3>,
+    /// Out-of-plane rotation disabled (sketch editing keeps the view planar).
+    orbit_locked: bool,
 }
 
 impl CameraController {
@@ -60,11 +62,18 @@ impl CameraController {
             lmb_dragging_roll: false,
             lmb_was_down_scene: false,
             orbit_lmb_anchor_world: None,
+            orbit_locked: false,
         }
     }
 
     pub(crate) fn cancel_animation(&mut self) {
         self.tween.cancel();
+    }
+
+    /// Lock out-of-plane rotation (LMB orbit). Pan, zoom, and roll stay
+    /// available — they keep the view planar. Used while editing a sketch.
+    pub fn set_orbit_lock(&mut self, locked: bool) {
+        self.orbit_locked = locked;
     }
 
     /// Begin / update pointer drag modes: LMB orbit / select, RMB pan, LMB+RMB tilt (roll).
@@ -175,7 +184,7 @@ impl CameraController {
                     return CameraPointerResult::Redraw;
                 }
 
-                if self.lmb_was_down_scene {
+                if self.lmb_was_down_scene && !self.orbit_locked {
                     let thresh_sq =
                         settings.click_drag_threshold_px * settings.click_drag_threshold_px;
                     let exceeds_anchor = (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq;

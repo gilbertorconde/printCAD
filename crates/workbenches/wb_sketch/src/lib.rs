@@ -46,6 +46,9 @@ impl Default for ConstraintDrafts {
 /// A "create sketch" request waiting for the user to pick a plane.
 struct PendingCreation {
     body: Option<BodyId>,
+    /// Plane of the solid face that was selected when the request was made,
+    /// offered as the first choice in the picker.
+    face_plane: Option<SketchPlane>,
 }
 
 /// In-progress drag of a point in select mode.
@@ -188,8 +191,8 @@ impl SketchWorkbench {
 
     /// The "Create Sketch" action: open the plane picker. The sketch is
     /// created once a plane is chosen in the left panel.
-    fn begin_sketch_creation(&mut self, body: Option<BodyId>) {
-        self.pending_creation = Some(PendingCreation { body });
+    fn begin_sketch_creation(&mut self, body: Option<BodyId>, face_plane: Option<SketchPlane>) {
+        self.pending_creation = Some(PendingCreation { body, face_plane });
     }
 
     fn create_sketch_on_plane(
@@ -466,13 +469,19 @@ impl Workbench for SketchWorkbench {
 
         // Another workbench (or the host) asked us to create a sketch on a
         // specific body: take the request and open the plane picker.
-        if let Some(body) = ctx.start_sketch_on_body.take() {
-            self.begin_sketch_creation(Some(BodyId(body)));
+        if let Some(request) = ctx.start_sketch_on_body.take() {
+            let face_plane = request
+                .face
+                .map(|f| SketchPlane::from_face(f.point, f.normal));
+            self.begin_sketch_creation(Some(BodyId(request.body)), face_plane);
         }
 
         if active_tool == Some("sketch.create") {
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
-                self.begin_sketch_creation(ctx.selected_body_id.map(BodyId));
+                let face_plane = ctx
+                    .selected_face
+                    .map(|f| SketchPlane::from_face(f.point, f.normal));
+                self.begin_sketch_creation(ctx.selected_body_id.map(BodyId), face_plane);
             }
             return InputResult::consumed();
         }
@@ -535,8 +544,18 @@ impl Workbench for SketchWorkbench {
         // Plane picker for a pending sketch creation.
         if let Some(pending) = &self.pending_creation {
             let body = pending.body;
+            let face_plane = pending.face_plane;
             ui.label("New sketch — choose a plane:");
             let mut chosen: Option<SketchPlane> = None;
+            if let Some(face) = face_plane {
+                if ui
+                    .button("▸ Selected face")
+                    .on_hover_text("Sketch on the face you clicked on the solid")
+                    .clicked()
+                {
+                    chosen = Some(face);
+                }
+            }
             ui.horizontal(|ui| {
                 if ui.button("Top (XY)").clicked() {
                     chosen = Some(SketchPlane::xy());

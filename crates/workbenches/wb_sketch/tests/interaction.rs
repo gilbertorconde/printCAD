@@ -165,7 +165,7 @@ fn cross_workbench_sketch_request_is_consumed() {
     let body = uuid::Uuid::new_v4();
     let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
     ctx.view_proj = Some(h.vp);
-    ctx.start_sketch_on_body = Some(body);
+    ctx.start_sketch_on_body = Some(core_document::SketchAttachRequest { body, face: None });
     h.wb.on_input(
         &WorkbenchInputEvent::KeyPress { key: KeyCode::A },
         None,

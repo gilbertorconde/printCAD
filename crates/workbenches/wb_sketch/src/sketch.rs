@@ -251,6 +251,29 @@ impl SketchPlane {
     }
 }
 
+impl SketchPlane {
+    /// Build a plane from a surface point + outward normal (e.g. a picked
+    /// solid face). Axes are derived deterministically: x along the most
+    /// stable world axis projected into the plane, y = normal × x.
+    pub fn from_face(point: [f32; 3], normal: [f32; 3]) -> Self {
+        let n = glam::Vec3::from_array(normal).normalize();
+        // Reference direction least aligned with the normal.
+        let reference = if n.z.abs() < 0.9 {
+            glam::Vec3::Z
+        } else {
+            glam::Vec3::Y
+        };
+        let x_axis = reference.cross(n).normalize();
+        let y_axis = n.cross(x_axis).normalize();
+        Self {
+            origin: point,
+            normal: n.to_array(),
+            x_axis: x_axis.to_array(),
+            y_axis: y_axis.to_array(),
+        }
+    }
+}
+
 impl Default for SketchPlane {
     fn default() -> Self {
         Self::xy()
@@ -399,4 +422,53 @@ pub enum Constraint {
         line2: Uuid,
         angle_rad: f32,
     },
+}
+
+#[cfg(test)]
+mod plane_tests {
+    use super::*;
+
+    fn assert_orthonormal(plane: &SketchPlane) {
+        let n = glam::Vec3::from_array(plane.normal);
+        let x = glam::Vec3::from_array(plane.x_axis);
+        let y = glam::Vec3::from_array(plane.y_axis);
+        assert!((n.length() - 1.0).abs() < 1e-5);
+        assert!((x.length() - 1.0).abs() < 1e-5);
+        assert!((y.length() - 1.0).abs() < 1e-5);
+        assert!(x.dot(n).abs() < 1e-5);
+        assert!(y.dot(n).abs() < 1e-5);
+        assert!(x.dot(y).abs() < 1e-5);
+        // Right-handed: x × y = n.
+        assert!((x.cross(y) - n).length() < 1e-5);
+    }
+
+    #[test]
+    fn presets_are_orthonormal_and_right_handed() {
+        for plane in [SketchPlane::xy(), SketchPlane::xz(), SketchPlane::yz()] {
+            assert_orthonormal(&plane);
+        }
+    }
+
+    #[test]
+    fn face_plane_top_face_matches_world_axes() {
+        // Top face of a padded box: normal +Z at height 8.
+        let plane = SketchPlane::from_face([5.0, 3.0, 8.0], [0.0, 0.0, 1.0]);
+        assert_orthonormal(&plane);
+        assert_eq!(plane.origin, [5.0, 3.0, 8.0]);
+        let n = glam::Vec3::from_array(plane.normal);
+        assert!((n - glam::Vec3::Z).length() < 1e-5);
+    }
+
+    #[test]
+    fn face_plane_side_and_arbitrary_normals() {
+        // Front face (normal -Y): the plane must be usable for sketching.
+        let plane = SketchPlane::from_face([0.0, 0.0, 0.0], [0.0, -1.0, 0.0]);
+        assert_orthonormal(&plane);
+
+        // Slanted face: still orthonormal, normalized input not required.
+        let plane = SketchPlane::from_face([1.0, 2.0, 3.0], [1.0, 1.0, 1.0]);
+        assert_orthonormal(&plane);
+        let n = glam::Vec3::from_array(plane.normal);
+        assert!((n - glam::Vec3::ONE.normalize()).length() < 1e-5);
+    }
 }

@@ -89,12 +89,20 @@ impl PrintCadApp {
 
         // ---- Phase 2: apply in legacy frame order ----
 
-        if let Some(view) = intents.camera_snap {
-            self.camera.snap_to_view(view, &self.user_settings.camera);
-        }
-        if let Some(ref delta) = intents.camera_rotate {
-            self.camera
-                .apply_rotate_delta(delta, &self.user_settings.camera);
+        // Orientation-cube rotations are locked during sketch editing:
+        // the view must stay planar to the sketch.
+        if self.sketch_editing_active() {
+            if intents.camera_snap.is_some() || intents.camera_rotate.is_some() {
+                app_log::info("View rotation is locked while editing a sketch");
+            }
+        } else {
+            if let Some(view) = intents.camera_snap {
+                self.camera.snap_to_view(view, &self.user_settings.camera);
+            }
+            if let Some(ref delta) = intents.camera_rotate {
+                self.camera
+                    .apply_rotate_delta(delta, &self.user_settings.camera);
+            }
         }
 
         if intents.persist_settings {
@@ -253,7 +261,7 @@ impl PrintCadApp {
         }
     }
 
-    fn apply_tree_selection(&mut self, selection: TreeItemId) {
+    pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
         self.tree_selection = Some(selection);
         match selection {
             TreeItemId::DocumentRoot => {

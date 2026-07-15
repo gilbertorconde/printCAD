@@ -178,7 +178,10 @@ struct PrintCadApp {
     modifiers: winit::keyboard::ModifiersState,
     /// A workbench asked to create a sketch on this body; carried between
     /// hooks until the sketch workbench consumes it (plane picker).
-    pending_sketch_creation: Option<Uuid>,
+    pending_sketch_creation: Option<core_document::SketchAttachRequest>,
+    /// Face under the most recent body selection click (surface point +
+    /// normal derived from the picked mesh triangle).
+    last_face_hit: Option<(Uuid, core_document::FaceRef)>,
     /// Workbench to return to when sketch editing finishes, when the sketch
     /// flow was started from another workbench (e.g. Part Design).
     return_workbench: Option<ActiveWorkbench>,
@@ -234,6 +237,7 @@ impl PrintCadApp {
             overlay_id_pool: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),
             pending_sketch_creation: None,
+            last_face_hit: None,
             return_workbench: None,
         }
     }

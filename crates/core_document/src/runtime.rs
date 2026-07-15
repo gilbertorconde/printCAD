@@ -79,7 +79,28 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// request. Set by a requesting workbench, carried by the host between
     /// hooks, and TAKEN by the sketch workbench when it starts its plane
     /// picker.
-    pub start_sketch_on_body: Option<uuid::Uuid>,
+    pub start_sketch_on_body: Option<SketchAttachRequest>,
+
+    /// Host → workbench: the face under the last body selection, when the
+    /// GPU pick landed on solid geometry (surface point + outward normal in
+    /// world space). Lets "New Sketch" attach to the clicked face.
+    pub selected_face: Option<FaceRef>,
+}
+
+/// A picked face on a solid body: a point on the surface and its outward
+/// normal, both in world space (millimetres).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FaceRef {
+    pub point: [f32; 3],
+    pub normal: [f32; 3],
+}
+
+/// Request to create a sketch attached to a body, optionally referenced on
+/// one of its faces.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SketchAttachRequest {
+    pub body: uuid::Uuid,
+    pub face: Option<FaceRef>,
 }
 
 /// Request to orient camera to a specific plane.
@@ -114,6 +135,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             view_proj: None,
             workbench_switch_request: None,
             start_sketch_on_body: None,
+            selected_face: None,
         }
     }
 

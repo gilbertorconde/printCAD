@@ -170,9 +170,13 @@ impl Workbench for PartDesignWorkbench {
                     return InputResult::consumed();
                 };
                 // Hand off to the sketch workbench: it opens its plane
-                // picker for this body, and finishing the sketch returns
-                // here (the host tracks the return workbench).
-                ctx.start_sketch_on_body = Some(body.0);
+                // picker for this body (offering the clicked face when the
+                // selection landed on solid geometry), and finishing the
+                // sketch returns here (the host tracks the return bench).
+                ctx.start_sketch_on_body = Some(core_document::SketchAttachRequest {
+                    body: body.0,
+                    face: ctx.selected_face,
+                });
                 ctx.workbench_switch_request = Some(WorkbenchId::from("wb.sketch"));
                 InputResult::consumed()
             }

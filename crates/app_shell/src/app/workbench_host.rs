@@ -26,7 +26,8 @@ pub(crate) struct WbCtxParams {
     pub selected_body_id: Option<Uuid>,
     pub cursor_viewport_pos: Option<(f32, f32)>,
     pub active_document_object: Option<FeatureId>,
-    pub start_sketch_on_body: Option<Uuid>,
+    pub start_sketch_on_body: Option<core_document::SketchAttachRequest>,
+    pub selected_face: Option<core_document::FaceRef>,
 }
 
 /// Everything a hook may have written back into the context, extracted
@@ -35,7 +36,7 @@ pub(crate) struct WbHookOutcome {
     pub camera_orient_request: Option<CameraOrientRequest>,
     pub active_document_object: Option<FeatureId>,
     pub workbench_switch_request: Option<WorkbenchId>,
-    pub start_sketch_on_body: Option<Uuid>,
+    pub start_sketch_on_body: Option<core_document::SketchAttachRequest>,
     /// Carried for parity with the context; no call site handles it yet
     /// (the pre-existing "finish sketch" flow was never wired up).
     #[allow(dead_code)]
@@ -58,6 +59,10 @@ impl PrintCadApp {
             cursor_viewport_pos: self.cursor_in_viewport,
             active_document_object: self.active_document_object,
             start_sketch_on_body: self.pending_sketch_creation,
+            selected_face: self
+                .last_face_hit
+                .filter(|(body, _)| self.selected_body == Some(*body))
+                .map(|(_, face)| face),
         }
     }
 
@@ -82,6 +87,7 @@ impl PrintCadApp {
             cursor_viewport_pos: None,
             active_document_object: self.active_document_object,
             start_sketch_on_body: None,
+            selected_face: None,
         }
     }
 
@@ -113,6 +119,7 @@ impl PrintCadApp {
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
         ctx.active_document_object = params.active_document_object;
         ctx.start_sketch_on_body = params.start_sketch_on_body;
+        ctx.selected_face = params.selected_face;
 
         let result = f(wb.as_mut(), &mut ctx);
 

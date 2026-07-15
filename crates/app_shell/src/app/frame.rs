@@ -282,7 +282,19 @@ impl PrintCadApp {
     /// (sketch tessellations, imported bodies, workbench overlay meshes).
     /// Returns the workbench's screen-space overlays, which are drawn via
     /// egui rather than the 3D pass.
+    /// True while the sketch workbench is editing a sketch. Gates the
+    /// camera's out-of-plane rotation so the view stays planar.
+    pub(crate) fn sketch_editing_active(&self) -> bool {
+        self.active_workbench.0.as_str() == "wb.sketch"
+            && self
+                .active_document_object
+                .and_then(|id| self.document.get_feature_meta(id))
+                .map(|n| n.workbench_id.as_str() == "wb.sketch")
+                .unwrap_or(false)
+    }
+
     fn build_scene_submission(&mut self, dt_secs: f32) -> Vec<core_document::ScreenSpaceOverlay> {
+        self.camera.set_orbit_lock(self.sketch_editing_active());
         self.camera.flush_pending_wheel(&self.user_settings.camera);
         self.camera
             .apply_auto_clip_planes(&self.user_settings.camera);
