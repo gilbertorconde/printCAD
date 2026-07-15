@@ -1,5 +1,6 @@
 mod feature;
 mod overlay;
+pub mod profile;
 pub mod render;
 pub mod sketch;
 mod snap;

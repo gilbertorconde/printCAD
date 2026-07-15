@@ -80,15 +80,23 @@ impl PrintCadApp {
             _ => {}
         }
 
+        let active_object_dangles = self
+            .active_document_object
+            .map(|id| !feature_exists(id))
+            .unwrap_or(false);
+
+        // Solid geometry lives in derived sidecars that snapshot separately
+        // from the features that produce them; after a jump, rebuild every
+        // part body so the solids always match the restored feature state.
+        wb_part::mark_all_part_features_dirty(&mut self.document);
+
         // If the feature under edit was undone away, end the workbench's
         // editing session so it doesn't write into a deleted feature.
-        if let Some(id) = self.active_document_object {
-            if !feature_exists(id) {
-                self.active_document_object = None;
-                let wb_id = self.active_workbench.0.clone();
-                let params = self.interaction_ctx_params();
-                self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx));
-            }
+        if active_object_dangles {
+            self.active_document_object = None;
+            let wb_id = self.active_workbench.0.clone();
+            let params = self.interaction_ctx_params();
+            self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx));
         }
     }
 }

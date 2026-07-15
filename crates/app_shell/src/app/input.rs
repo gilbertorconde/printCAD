@@ -207,13 +207,26 @@ impl PrintCadApp {
         let active_tool_str = active_tool_id.as_deref();
         let result = self.call_workbench_input(&wb_id, &wb_event, active_tool_str);
 
+        // Action-behaviour tools fire once: consume them as soon as the
+        // workbench handled an event with them active.
         if let Some(tool_id) = active_tool_id {
-            if tool_id == "sketch.create" && result.consumed {
+            if result.consumed && self.tool_is_action(&wb_id, &tool_id) {
                 self.active_tool.active_ids.remove(&tool_id);
             }
         }
 
         result
+    }
+
+    fn tool_is_action(&self, wb_id: &WorkbenchId, tool_id: &str) -> bool {
+        self.registry
+            .tools_for(wb_id)
+            .map(|tools| {
+                tools
+                    .iter()
+                    .any(|t| t.id == tool_id && t.behavior == core_document::ToolBehavior::Action)
+            })
+            .unwrap_or(false)
     }
 
     /// Call on_input on a workbench.

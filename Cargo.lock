@@ -1619,9 +1619,12 @@ name = "kernel_occt"
 version = "0.1.0"
 dependencies = [
  "cc",
+ "core_document",
  "kernel_api",
  "thiserror 2.0.18",
  "tracing",
+ "wb_part",
+ "wb_sketch",
 ]
 
 [[package]]
@@ -4230,6 +4233,11 @@ version = "0.1.0"
 dependencies = [
  "core_document",
  "egui",
+ "kernel_api",
+ "serde",
+ "serde_json",
+ "uuid",
+ "wb_sketch",
 ]
 
 [[package]]

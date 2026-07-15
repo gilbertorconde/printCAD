@@ -275,6 +275,78 @@ pub struct ImportedModel {
     pub source_unit: Option<LengthUnit>,
 }
 
+/// One segment of a closed 2D profile wire, in sketch-plane coordinates
+/// (millimetres). Arcs are encoded as three on-curve points so consumers
+/// never have to agree on a winding convention.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ProfileSegment {
+    Line {
+        start: [f64; 2],
+        end: [f64; 2],
+    },
+    /// Circular arc through three points (start → mid → end).
+    Arc {
+        start: [f64; 2],
+        mid: [f64; 2],
+        end: [f64; 2],
+    },
+    Circle {
+        center: [f64; 2],
+        radius: f64,
+    },
+}
+
+/// A closed loop of profile segments. Consecutive segments share endpoints;
+/// a single `Circle` segment is a wire by itself.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ProfileWire {
+    pub segments: Vec<ProfileSegment>,
+}
+
+/// The plane a profile lives on, in world coordinates (millimetres).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ProfilePlane {
+    pub origin: [f64; 3],
+    pub x_axis: [f64; 3],
+    pub y_axis: [f64; 3],
+    pub normal: [f64; 3],
+}
+
+/// How an extrusion combines with the body's existing solid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BooleanOp {
+    /// Replace / start the body's solid (first feature).
+    NewSolid,
+    /// Union with the existing solid (Pad on an existing body).
+    Fuse,
+    /// Subtract from the existing solid (Pocket).
+    Cut,
+}
+
+/// A single sketch-profile extrusion step in a body's build history.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtrudeOp {
+    pub plane: ProfilePlane,
+    /// Closed wires; the largest-area wire is the outer boundary, the rest
+    /// become holes.
+    pub wires: Vec<ProfileWire>,
+    /// Extrusion length along `plane.normal`; negative extrudes backwards.
+    pub distance: f64,
+    pub op: BooleanOp,
+}
+
+/// Result of executing a body's extrude chain.
+#[derive(Debug, Clone, Default)]
+pub struct SolidBuildResult {
+    /// OCCT BRep snapshot of the final solid (for later re-tessellation,
+    /// persistence, and downstream booleans).
+    pub brep_blob: Vec<u8>,
+    /// Render mesh of the final solid.
+    pub mesh: TriMesh,
+    /// Axis-aligned bounds in millimetres.
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+}
+
 /// Trait implemented by any geometry kernel that can serve the application.
 pub trait Kernel: Send {
     /// Human-friendly identifier for logging purposes.

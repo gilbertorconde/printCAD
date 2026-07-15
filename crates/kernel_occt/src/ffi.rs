@@ -68,6 +68,47 @@ pub(crate) struct PrintcadOcctBrepImportResult {
     pub(crate) error: *mut c_char,
 }
 
+/// One profile segment in sketch-plane (u, v) millimetre coordinates.
+/// `kind` 0 = line (`d = [su, sv, eu, ev, 0, 0]`), 1 = arc through three
+/// on-curve points (`d = [su, sv, mu, mv, eu, ev]`), 2 = circle
+/// (`d = [cu, cv, radius, 0, 0, 0]`).
+#[repr(C)]
+pub(crate) struct PcadProfileSegment {
+    pub(crate) kind: i32,
+    pub(crate) d: [c_double; 6],
+}
+
+#[repr(C)]
+pub(crate) struct PcadProfileWire {
+    pub(crate) segments: *const PcadProfileSegment,
+    pub(crate) count: usize,
+}
+
+#[repr(C)]
+pub(crate) struct PcadProfilePlane {
+    pub(crate) origin: [c_double; 3],
+    pub(crate) x_axis: [c_double; 3],
+    pub(crate) y_axis: [c_double; 3],
+    pub(crate) normal: [c_double; 3],
+}
+
+/// Result of one extrude step: `brep_blob` always on success; `mesh_*` arrays
+/// only when the call requested a mesh. Freed via
+/// `printcad_occt_free_extrude_result`.
+#[repr(C)]
+pub(crate) struct PrintcadOcctExtrudeResult {
+    pub(crate) brep_blob: *mut u8,
+    pub(crate) brep_len: usize,
+    pub(crate) mesh_positions: *mut f32,
+    pub(crate) mesh_normals: *mut f32,
+    pub(crate) mesh_indices: *mut u32,
+    pub(crate) mesh_edges: *mut u32,
+    pub(crate) mesh_vertex_count: usize,
+    pub(crate) mesh_index_count: usize,
+    pub(crate) mesh_edge_count: usize,
+    pub(crate) error: *mut c_char,
+}
+
 extern "C" {
     pub(crate) fn printcad_occt_import_step(
         utf8_path: *const c_char,
@@ -103,7 +144,26 @@ extern "C" {
         generate_boundary_edges: c_int,
     ) -> PrintcadOcctImportResult;
 
+    pub(crate) fn printcad_occt_extrude_profile(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        plane: *const PcadProfilePlane,
+        wires: *const PcadProfileWire,
+        wire_count: usize,
+        distance: c_double,
+        op: i32,
+        want_mesh: c_int,
+        linear_deflection_mode: c_int,
+        linear_value: c_double,
+        angular_deflection_rad: c_double,
+        weld_cross_face: c_int,
+        weld_angle_threshold_rad: c_double,
+        generate_boundary_edges: c_int,
+    ) -> PrintcadOcctExtrudeResult;
+
     pub(crate) fn printcad_occt_free_result(result: PrintcadOcctImportResult);
 
     pub(crate) fn printcad_occt_free_brep_import_result(result: PrintcadOcctBrepImportResult);
+
+    pub(crate) fn printcad_occt_free_extrude_result(result: PrintcadOcctExtrudeResult);
 }

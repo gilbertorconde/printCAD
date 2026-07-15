@@ -25,6 +25,25 @@
 #include <IMeshTools_Parameters.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepGProp.hxx>
+#include <BRepPrimAPI_MakePrism.hxx>
+#include <GC_MakeArcOfCircle.hxx>
+#include <GC_MakeSegment.hxx>
+#include <GProp_GProps.hxx>
+#include <Geom_TrimmedCurve.hxx>
+#include <ShapeFix_Face.hxx>
+#include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <TopoDS_Edge.hxx>
+#include <TopoDS_Wire.hxx>
+#include <gp_Ax2.hxx>
+#include <gp_Ax3.hxx>
+#include <gp_Circ.hxx>
+#include <gp_Pln.hxx>
 #include <Standard_Version.hxx>
 #include <gp.hxx>
 #include <Poly_Triangulation.hxx>
@@ -1920,6 +1939,163 @@ static double resolve_linear_deflection_abs(
     return bbox_linear_deflection(shape, mult);
 }
 
+// ---- Sketch-profile extrusion (pad/pocket) ----
+
+static PrintcadOcctExtrudeResult make_extrude_error(const std::string& message) {
+    PrintcadOcctExtrudeResult result{};
+    result.error = duplicate_to_malloc(message);
+    return result;
+}
+
+// Map a sketch-plane (u, v) coordinate to world space via the profile plane.
+static gp_Pnt profile_point(const PcadProfilePlane& plane, double u, double v) {
+    return gp_Pnt(
+        plane.origin[0] + u * plane.x_axis[0] + v * plane.y_axis[0],
+        plane.origin[1] + u * plane.x_axis[1] + v * plane.y_axis[1],
+        plane.origin[2] + u * plane.x_axis[2] + v * plane.y_axis[2]);
+}
+
+// Build one closed TopoDS_Wire from a profile wire description. Returns false
+// with a diagnostic in `err` on degenerate segments, disconnected segments, or
+// an open loop.
+static bool build_profile_wire(
+    const PcadProfilePlane& plane,
+    const gp_Dir& normal_dir,
+    const gp_Dir& x_dir,
+    const PcadProfileWire& wire_in,
+    TopoDS_Wire& out_wire,
+    std::string& err) {
+    if (wire_in.segments == nullptr || wire_in.count == 0) {
+        err = "profile wire has no segments";
+        return false;
+    }
+    BRepBuilderAPI_MakeWire maker;
+    for (size_t i = 0; i < wire_in.count; ++i) {
+        const PcadProfileSegment& seg = wire_in.segments[i];
+        TopoDS_Edge edge;
+        switch (seg.kind) {
+            case 0: { // line: start -> end
+                const gp_Pnt p1 = profile_point(plane, seg.d[0], seg.d[1]);
+                const gp_Pnt p2 = profile_point(plane, seg.d[2], seg.d[3]);
+                if (p1.Distance(p2) <= Precision::Confusion()) {
+                    err = "degenerate (zero-length) line segment in profile";
+                    return false;
+                }
+                GC_MakeSegment mk(p1, p2);
+                if (!mk.IsDone()) {
+                    err = "failed to build line segment for profile";
+                    return false;
+                }
+                edge = BRepBuilderAPI_MakeEdge(mk.Value()).Edge();
+                break;
+            }
+            case 1: { // arc through three on-curve points: start -> mid -> end
+                const gp_Pnt p1 = profile_point(plane, seg.d[0], seg.d[1]);
+                const gp_Pnt pm = profile_point(plane, seg.d[2], seg.d[3]);
+                const gp_Pnt p2 = profile_point(plane, seg.d[4], seg.d[5]);
+                GC_MakeArcOfCircle mk(p1, pm, p2);
+                if (!mk.IsDone()) {
+                    err = "failed to build arc segment for profile "
+                          "(points may be collinear or coincident)";
+                    return false;
+                }
+                edge = BRepBuilderAPI_MakeEdge(mk.Value()).Edge();
+                break;
+            }
+            case 2: { // full circle: center + radius
+                const double radius = seg.d[2];
+                if (!(radius > Precision::Confusion())) {
+                    err = "profile circle radius must be positive";
+                    return false;
+                }
+                const gp_Pnt center = profile_point(plane, seg.d[0], seg.d[1]);
+                const gp_Circ circ(gp_Ax2(center, normal_dir, x_dir), radius);
+                edge = BRepBuilderAPI_MakeEdge(circ).Edge();
+                break;
+            }
+            default:
+                err = "unknown profile segment kind " + std::to_string(seg.kind);
+                return false;
+        }
+        maker.Add(edge);
+        if (!maker.IsDone()) {
+            err = "profile segments do not form a connected closed wire";
+            return false;
+        }
+    }
+    TopoDS_Wire wire = maker.Wire();
+    if (wire.IsNull() || !BRep_Tool::IsClosed(wire)) {
+        err = "profile wire is not closed";
+        return false;
+    }
+    out_wire = wire;
+    return true;
+}
+
+// Absolute enclosed area of a single closed planar wire (0 when the face
+// cannot be built).
+static double planar_wire_area(const gp_Pln& pln, const TopoDS_Wire& wire) {
+    BRepBuilderAPI_MakeFace maker(pln, wire, Standard_True);
+    if (!maker.IsDone()) {
+        return 0.0;
+    }
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(maker.Face(), props);
+    return std::abs(props.Mass());
+}
+
+// Build the profile face: the wire with the largest absolute enclosed area is
+// the outer boundary, every other wire becomes a hole. A ShapeFix_Face pass
+// afterwards orients the hole wires opposite to the outer boundary.
+static bool build_profile_face(
+    const gp_Pln& pln,
+    const std::vector<TopoDS_Wire>& wires,
+    TopoDS_Face& out_face,
+    std::string& err) {
+    size_t outer = 0;
+    double best_area = -1.0;
+    for (size_t i = 0; i < wires.size(); ++i) {
+        const double area = planar_wire_area(pln, wires[i]);
+        if (area > best_area) {
+            best_area = area;
+            outer = i;
+        }
+    }
+    if (!(best_area > 0.0)) {
+        err = "profile encloses no area";
+        return false;
+    }
+
+    BRepBuilderAPI_MakeFace maker(pln, wires[outer], Standard_True);
+    if (!maker.IsDone()) {
+        err = "failed to build profile face from outer wire";
+        return false;
+    }
+    for (size_t i = 0; i < wires.size(); ++i) {
+        if (i == outer) {
+            continue;
+        }
+        maker.Add(wires[i]);
+        if (!maker.IsDone()) {
+            err = "failed to add hole wire to profile face";
+            return false;
+        }
+    }
+    TopoDS_Face face = maker.Face();
+
+    ShapeFix_Face fixer(face);
+    fixer.Perform();
+    if (!fixer.Face().IsNull()) {
+        face = fixer.Face();
+    }
+    if (face.IsNull()) {
+        err = "profile face construction produced a null face";
+        return false;
+    }
+    out_face = face;
+    return true;
+}
+
 } // namespace
 
 static void free_import_nodes_vec(std::vector<PrintcadOcctImportNode>& nodes);
@@ -2460,6 +2636,193 @@ extern "C" PrintcadOcctImportResult printcad_occt_tessellate_brep(
     } catch (...) {
         return make_error("Unknown exception while tessellating BRep blob");
     }
+}
+
+extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadProfilePlane* plane,
+    const PcadProfileWire* wires,
+    size_t wire_count,
+    double distance,
+    int32_t op,
+    int want_mesh,
+    int linear_deflection_mode,
+    double linear_value,
+    double angular_deflection_rad,
+    int weld_cross_face,
+    double weld_angle_threshold_rad,
+    int generate_boundary_edges) {
+    if (plane == nullptr) {
+        return make_extrude_error("profile plane is null");
+    }
+    if (wires == nullptr || wire_count == 0) {
+        return make_extrude_error("extrude op has no profile wires");
+    }
+    if (op < 0 || op > 2) {
+        return make_extrude_error(
+            "unknown boolean op " + std::to_string(op) + " (expected 0=new, 1=fuse, 2=cut)");
+    }
+    if (op == 0 && base_brep != nullptr) {
+        return make_extrude_error("new-solid op must not receive a base BRep");
+    }
+    if (op != 0 && (base_brep == nullptr || base_brep_len == 0)) {
+        return make_extrude_error("fuse/cut op requires a non-empty base BRep");
+    }
+
+    try {
+        if (std::abs(distance) <= Precision::Confusion()) {
+            return make_extrude_error("extrusion distance is zero");
+        }
+
+        // gp_Dir normalizes and throws on near-zero vectors (caught below).
+        const gp_Dir normal_dir(plane->normal[0], plane->normal[1], plane->normal[2]);
+        const gp_Dir x_dir(plane->x_axis[0], plane->x_axis[1], plane->x_axis[2]);
+        const gp_Pnt origin(plane->origin[0], plane->origin[1], plane->origin[2]);
+        const gp_Pln pln(gp_Ax3(origin, normal_dir, x_dir));
+
+        std::string err;
+        std::vector<TopoDS_Wire> topo_wires;
+        topo_wires.reserve(wire_count);
+        for (size_t i = 0; i < wire_count; ++i) {
+            TopoDS_Wire wire;
+            if (!build_profile_wire(*plane, normal_dir, x_dir, wires[i], wire, err)) {
+                return make_extrude_error(err);
+            }
+            topo_wires.push_back(wire);
+        }
+
+        TopoDS_Face face;
+        if (!build_profile_face(pln, topo_wires, face, err)) {
+            return make_extrude_error(err);
+        }
+
+        gp_Vec sweep(normal_dir);
+        sweep *= distance;
+        BRepPrimAPI_MakePrism prism(face, sweep);
+        if (!prism.IsDone()) {
+            return make_extrude_error("prism extrusion failed");
+        }
+        TopoDS_Shape tool = prism.Shape();
+        if (tool.IsNull()) {
+            return make_extrude_error("prism extrusion produced no shape");
+        }
+
+        TopoDS_Shape result_shape;
+        if (op == 0) {
+            result_shape = tool;
+        } else {
+            TopoDS_Shape base;
+            if (!brep_read_from_bytes(base_brep, base_brep_len, base)) {
+                return make_extrude_error(
+                    "BRepTools::Read failed (invalid or unsupported base BRep blob)");
+            }
+            if (op == 1) {
+                BRepAlgoAPI_Fuse boolean_op(base, tool);
+                if (!boolean_op.IsDone()) {
+                    return make_extrude_error("fuse boolean operation failed");
+                }
+                result_shape = boolean_op.Shape();
+            } else {
+                BRepAlgoAPI_Cut boolean_op(base, tool);
+                if (!boolean_op.IsDone()) {
+                    return make_extrude_error("cut boolean operation failed");
+                }
+                result_shape = boolean_op.Shape();
+            }
+            if (result_shape.IsNull()) {
+                return make_extrude_error("boolean operation produced a null shape");
+            }
+            // Merge coplanar faces / colinear edges the boolean left behind so
+            // later features (fillets, further booleans) see clean topology.
+            ShapeUpgrade_UnifySameDomain unify(
+                result_shape, Standard_True, Standard_True, Standard_False);
+            unify.Build();
+            if (!unify.Shape().IsNull()) {
+                result_shape = unify.Shape();
+            }
+        }
+        if (count_faces(result_shape) == 0) {
+            return make_extrude_error(
+                "extrude result contains no faces (boolean removed all material?)");
+        }
+
+        std::vector<uint8_t> blob;
+        if (!brep_write_to_vector(result_shape, blob)) {
+            return make_extrude_error("BRepTools::Write failed while serializing extrude result");
+        }
+
+        PrintcadOcctExtrudeResult result{};
+        result.brep_len = blob.size();
+        result.brep_blob = static_cast<uint8_t*>(std::malloc(blob.size()));
+        if (result.brep_blob == nullptr) {
+            return make_extrude_error("Out of memory while allocating extrude BRep blob");
+        }
+        std::memcpy(result.brep_blob, blob.data(), blob.size());
+
+        if (want_mesh != 0) {
+            const double linear_abs = resolve_linear_deflection_abs(
+                result_shape, linear_deflection_mode, linear_value);
+            const double ang =
+                angular_deflection_rad > 0.0 ? angular_deflection_rad : 0.5;
+            brepmesh_incremental(result_shape, linear_abs, ang);
+
+            const float weld_angle_cos =
+                static_cast<float>(std::cos(std::max(0.0, weld_angle_threshold_rad)));
+            const std::vector<std::array<float, 3>> rgbs(
+                count_faces(result_shape), std::array<float, 3>{{1.0f, 1.0f, 1.0f}});
+            std::vector<PrintcadOcctBody> bodies;
+            mesh_shape_from_precolored_faces(
+                result_shape,
+                rgbs,
+                bodies,
+                0,
+                weld_cross_face != 0,
+                weld_angle_cos,
+                generate_boundary_edges != 0);
+            if (bodies.size() != 1 || bodies[0].vertex_count == 0) {
+                for (auto& body : bodies) {
+                    std::free(body.positions);
+                    std::free(body.normals);
+                    std::free(body.colors);
+                    std::free(body.indices);
+                    std::free(body.edges);
+                    std::free(body.name);
+                }
+                std::free(result.brep_blob);
+                return make_extrude_error(
+                    "tessellation of extrude result produced no mesh geometry");
+            }
+            PrintcadOcctBody& mb = bodies[0];
+            std::free(mb.name);
+            std::free(mb.colors);
+            result.mesh_positions = mb.positions;
+            result.mesh_normals = mb.normals;
+            result.mesh_indices = mb.indices;
+            result.mesh_edges = mb.edges;
+            result.mesh_vertex_count = mb.vertex_count;
+            result.mesh_index_count = mb.index_count;
+            result.mesh_edge_count = mb.edge_count;
+        }
+
+        result.error = nullptr;
+        return result;
+    } catch (Standard_Failure const& ex) {
+        return make_extrude_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_extrude_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_extrude_error("Unknown exception while extruding profile");
+    }
+}
+
+extern "C" void printcad_occt_free_extrude_result(PrintcadOcctExtrudeResult result) {
+    std::free(result.brep_blob);
+    std::free(result.mesh_positions);
+    std::free(result.mesh_normals);
+    std::free(result.mesh_indices);
+    std::free(result.mesh_edges);
+    std::free(result.error);
 }
 
 extern "C" void printcad_occt_free_string(char* str) {

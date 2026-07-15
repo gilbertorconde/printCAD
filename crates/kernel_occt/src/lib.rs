@@ -12,9 +12,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use kernel_api::{
-    BodyHandle, ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind, Kernel, KernelError,
-    KernelResult, LinearDeflectionMode, RebuildRequest, RebuildResponse, TessellationSettings,
-    TriMesh,
+    BodyHandle, BooleanOp, ExtrudeOp, ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind,
+    Kernel, KernelError, KernelResult, LinearDeflectionMode, ProfilePlane, ProfileSegment,
+    RebuildRequest, RebuildResponse, SolidBuildResult, TessellationSettings, TriMesh,
 };
 use tracing::info;
 
@@ -80,6 +80,18 @@ impl OcctKernel {
     ) -> KernelResult<ImportedModel> {
         self.initialize()?;
         import_step_full_mesh_internal(path, detail)
+    }
+
+    /// Execute a body's extrude chain: the first op must be NewSolid; each
+    /// subsequent op fuses/cuts against the accumulated solid. Returns the
+    /// final solid's BRep snapshot + render mesh.
+    pub fn execute_extrude_chain(
+        &mut self,
+        ops: &[ExtrudeOp],
+        detail: &TessellationSettings,
+    ) -> Result<SolidBuildResult, KernelError> {
+        self.initialize()?;
+        execute_extrude_chain_internal(ops, detail)
     }
 }
 
@@ -179,6 +191,160 @@ fn tessellate_brep_internal(
     }
 
     Ok(mesh)
+}
+
+fn profile_segment_to_ffi(segment: &ProfileSegment) -> ffi::PcadProfileSegment {
+    match *segment {
+        ProfileSegment::Line { start, end } => ffi::PcadProfileSegment {
+            kind: 0,
+            d: [start[0], start[1], end[0], end[1], 0.0, 0.0],
+        },
+        ProfileSegment::Arc { start, mid, end } => ffi::PcadProfileSegment {
+            kind: 1,
+            d: [start[0], start[1], mid[0], mid[1], end[0], end[1]],
+        },
+        ProfileSegment::Circle { center, radius } => ffi::PcadProfileSegment {
+            kind: 2,
+            d: [center[0], center[1], radius, 0.0, 0.0, 0.0],
+        },
+    }
+}
+
+fn profile_plane_to_ffi(plane: &ProfilePlane) -> ffi::PcadProfilePlane {
+    ffi::PcadProfilePlane {
+        origin: plane.origin,
+        x_axis: plane.x_axis,
+        y_axis: plane.y_axis,
+        normal: plane.normal,
+    }
+}
+
+fn boolean_op_to_ffi(op: BooleanOp) -> i32 {
+    match op {
+        BooleanOp::NewSolid => 0,
+        BooleanOp::Fuse => 1,
+        BooleanOp::Cut => 2,
+    }
+}
+
+fn execute_extrude_chain_internal(
+    ops: &[ExtrudeOp],
+    detail: &TessellationSettings,
+) -> KernelResult<SolidBuildResult> {
+    if ops.is_empty() {
+        return Err(KernelError::InvalidInput("extrude chain is empty".into()));
+    }
+    if ops[0].op != BooleanOp::NewSolid {
+        return Err(KernelError::InvalidInput(
+            "first extrude op in a chain must be NewSolid".into(),
+        ));
+    }
+    if let Some(offset) = ops[1..].iter().position(|op| op.op == BooleanOp::NewSolid) {
+        return Err(KernelError::InvalidInput(format!(
+            "extrude op {} is NewSolid but only the first op in a chain may be",
+            offset + 1
+        )));
+    }
+
+    let (linear_mode, linear_value) = tessellation_linear_for_ffi(detail);
+    let angular = (detail.angular_tolerance_deg.max(0.5) as f64).to_radians();
+    let weld_cross_face = if detail.weld_cross_face { 1 } else { 0 };
+    let weld_angle_rad = (detail.weld_angle_threshold_deg.max(0.0) as f64).to_radians();
+    let gen_edges = boundary_edges_for_ffi(detail);
+
+    let mut current_blob: Vec<u8> = Vec::new();
+    let mut final_mesh = TriMesh::default();
+
+    for (index, extrude) in ops.iter().enumerate() {
+        if extrude.wires.is_empty() {
+            return Err(KernelError::InvalidInput(format!(
+                "extrude op {index} has no profile wires"
+            )));
+        }
+
+        // Segment arrays must outlive the FFI call; wires borrow into them.
+        let segment_storage: Vec<Vec<ffi::PcadProfileSegment>> = extrude
+            .wires
+            .iter()
+            .map(|wire| wire.segments.iter().map(profile_segment_to_ffi).collect())
+            .collect();
+        let ffi_wires: Vec<ffi::PcadProfileWire> = segment_storage
+            .iter()
+            .map(|segments| ffi::PcadProfileWire {
+                segments: segments.as_ptr(),
+                count: segments.len(),
+            })
+            .collect();
+        let plane = profile_plane_to_ffi(&extrude.plane);
+
+        let is_last = index + 1 == ops.len();
+        let (base_ptr, base_len) = if index == 0 {
+            (std::ptr::null(), 0)
+        } else {
+            (current_blob.as_ptr(), current_blob.len())
+        };
+
+        let result = unsafe {
+            ffi::printcad_occt_extrude_profile(
+                base_ptr,
+                base_len,
+                &plane,
+                ffi_wires.as_ptr(),
+                ffi_wires.len(),
+                extrude.distance,
+                boolean_op_to_ffi(extrude.op),
+                if is_last { 1 } else { 0 },
+                linear_mode,
+                linear_value,
+                angular,
+                weld_cross_face,
+                weld_angle_rad,
+                gen_edges,
+            )
+        };
+
+        if !result.error.is_null() {
+            let message = unsafe { CStr::from_ptr(result.error) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe { ffi::printcad_occt_free_extrude_result(result) };
+            return Err(KernelError::InvalidInput(format!(
+                "extrude op {index}: {message}"
+            )));
+        }
+        if result.brep_blob.is_null() || result.brep_len == 0 {
+            unsafe { ffi::printcad_occt_free_extrude_result(result) };
+            return Err(KernelError::InvalidInput(format!(
+                "extrude op {index} returned no BRep snapshot"
+            )));
+        }
+
+        current_blob =
+            unsafe { std::slice::from_raw_parts(result.brep_blob, result.brep_len) }.to_vec();
+        if is_last {
+            final_mesh = TriMesh {
+                positions: copy_vec3_array(result.mesh_positions, result.mesh_vertex_count),
+                normals: copy_vec3_array(result.mesh_normals, result.mesh_vertex_count),
+                indices: copy_u32_array(result.mesh_indices, result.mesh_index_count),
+                edges: copy_u32_array(result.mesh_edges, result.mesh_edge_count * 2),
+                colors: Vec::new(),
+            };
+        }
+        unsafe { ffi::printcad_occt_free_extrude_result(result) };
+    }
+
+    if final_mesh.positions.is_empty() || final_mesh.indices.is_empty() {
+        return Err(KernelError::InvalidInput(
+            "extrude chain produced an empty render mesh".into(),
+        ));
+    }
+
+    let bounds_mm = final_mesh.bounds();
+    Ok(SolidBuildResult {
+        brep_blob: current_blob,
+        mesh: final_mesh,
+        bounds_mm,
+    })
 }
 
 fn import_step_brep_only_internal(

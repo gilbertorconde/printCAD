@@ -137,8 +137,77 @@ PrintcadOcctImportResult printcad_occt_tessellate_brep(
     double weld_angle_threshold_rad,
     int generate_boundary_edges);
 
+// ---- Sketch-profile extrusion (pad/pocket) ----
+
+// One profile segment in sketch-plane (u, v) millimetre coordinates.
+// kind 0 = line:   d = { start_u, start_v, end_u, end_v, 0, 0 }
+// kind 1 = arc:    d = { start_u, start_v, mid_u, mid_v, end_u, end_v }
+//                  (three on-curve points: start -> mid -> end)
+// kind 2 = circle: d = { center_u, center_v, radius, 0, 0, 0 }
+typedef struct PcadProfileSegment {
+    int32_t kind;
+    double d[6];
+} PcadProfileSegment;
+
+// A closed loop of consecutive segments (a single circle is a wire by itself).
+typedef struct PcadProfileWire {
+    const PcadProfileSegment* segments;
+    size_t count;
+} PcadProfileWire;
+
+// World-space plane the profile lives on (millimetres):
+// 3D point = origin + u * x_axis + v * y_axis.
+typedef struct PcadProfilePlane {
+    double origin[3];
+    double x_axis[3];
+    double y_axis[3];
+    double normal[3];
+} PcadProfilePlane;
+
+// Result of one extrude step. On success `error` is null and `brep_blob` holds
+// the `BRepTools::Write` snapshot of the resulting solid; the `mesh_*` arrays
+// are populated only when `want_mesh != 0` (same layout as `PrintcadOcctBody`,
+// no per-vertex colours). On failure `error` is a malloc'd string and every
+// other field is null/zero.
+typedef struct PrintcadOcctExtrudeResult {
+    uint8_t* brep_blob;
+    size_t brep_len;
+    float* mesh_positions;
+    float* mesh_normals;
+    uint32_t* mesh_indices;
+    uint32_t* mesh_edges;
+    size_t mesh_vertex_count;
+    size_t mesh_index_count;
+    size_t mesh_edge_count;
+    char* error;
+} PrintcadOcctExtrudeResult;
+
+// Extrude a closed sketch profile into a prism and combine it with an optional
+// base solid. `op`: 0 = new solid (base_brep must be NULL), 1 = fuse,
+// 2 = cut (base_brep required for 1/2). `distance` is measured along
+// `plane->normal` and may be negative to extrude backwards. The largest-area
+// wire is the outer boundary; the remaining wires become holes. Tessellation
+// parameters mirror `printcad_occt_tessellate_brep` and are only used when
+// `want_mesh != 0`.
+PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadProfilePlane* plane,
+    const PcadProfileWire* wires,
+    size_t wire_count,
+    double distance,
+    int32_t op,
+    int want_mesh,
+    int linear_deflection_mode,
+    double linear_value,
+    double angular_deflection_rad,
+    int weld_cross_face,
+    double weld_angle_threshold_rad,
+    int generate_boundary_edges);
+
 // Free helpers — every output buffer must be released exactly once.
 void printcad_occt_free_string(char* str);
+void printcad_occt_free_extrude_result(PrintcadOcctExtrudeResult result);
 void printcad_occt_free_result(PrintcadOcctImportResult result);
 void printcad_occt_free_brep_import_result(PrintcadOcctBrepImportResult result);
 

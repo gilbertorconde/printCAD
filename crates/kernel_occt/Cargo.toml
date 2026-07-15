@@ -14,3 +14,8 @@ tracing.workspace = true
 
 [build-dependencies]
 cc = "1.1"
+
+[dev-dependencies]
+core_document = { path = "../core_document" }
+wb_part = { path = "../workbenches/wb_part", default-features = false }
+wb_sketch = { path = "../workbenches/wb_sketch", default-features = false }

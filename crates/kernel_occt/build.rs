@@ -88,6 +88,10 @@ fn main() {
         "TKCAF",
         "TKMesh",
         "TKBRep",
+        "TKPrim",      // BRepPrimAPI_MakePrism (sketch extrusion).
+        "TKBO",        // BRepAlgoAPI_Fuse / BRepAlgoAPI_Cut booleans.
+        "TKBool",      // Boolean-op support toolkit used by TKBO.
+        "TKShHealing", // ShapeFix_Face / ShapeUpgrade_UnifySameDomain.
         "TKTopAlgo",
         "TKGeomAlgo",
         "TKGeomBase",

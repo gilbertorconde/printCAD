@@ -82,6 +82,11 @@ pub struct FeatureNode {
     pub suppressed: bool,
     pub dirty: bool,
     pub created_at: i64,
+    /// Monotonic insertion sequence within the document. THE ordering key
+    /// for build histories — `created_at` has millisecond resolution and
+    /// ties would otherwise order nondeterministically.
+    #[serde(default)]
+    pub seq: u64,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
 }
@@ -100,6 +105,7 @@ impl FeatureNode {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as i64,
+            seq: 0,
             data: feature.to_json(),
         }
     }
@@ -122,6 +128,15 @@ impl FeatureTree {
     /// Create a new empty feature tree.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Next insertion sequence number (max existing + 1).
+    pub fn next_seq(&self) -> u64 {
+        self.features
+            .values()
+            .map(|n| n.seq)
+            .max()
+            .map_or(0, |m| m + 1)
     }
 
     /// Add a feature node to the tree.
@@ -246,6 +261,24 @@ impl FeatureTree {
         result
     }
 
+    /// Remove a node and every dependency-graph edge that references it.
+    /// Returns false when the id is unknown.
+    pub fn remove_node(&mut self, id: FeatureId) -> bool {
+        if self.features.remove(&id).is_none() {
+            return false;
+        }
+        self.roots.retain(|&r| r != id);
+        self.dependencies.remove(&id);
+        self.dependents.remove(&id);
+        for deps in self.dependencies.values_mut() {
+            deps.retain(|&d| d != id);
+        }
+        for deps in self.dependents.values_mut() {
+            deps.retain(|&d| d != id);
+        }
+        true
+    }
+
     /// Get all root features.
     pub fn roots(&self) -> &[FeatureId] {
         &self.roots
@@ -271,6 +304,7 @@ mod tests {
             suppressed: false,
             dirty: false,
             created_at: 0,
+            seq: 0,
             data: serde_json::Value::Null,
         }
     }

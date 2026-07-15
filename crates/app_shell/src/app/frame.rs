@@ -167,6 +167,7 @@ impl PrintCadApp {
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
         self.drain_document_open_responses();
+        self.drive_part_recompute();
 
         if self.gfx.is_none() {
             return;
@@ -307,7 +308,7 @@ impl PrintCadApp {
                 if node.workbench_id.as_str() != "wb.sketch" {
                     return None;
                 }
-                if Some(*feature_id) == editing_sketch {
+                if Some(*feature_id) == editing_sketch || !node.visible {
                     return None;
                 }
 

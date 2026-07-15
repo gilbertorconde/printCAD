@@ -22,7 +22,9 @@ pub struct ActiveWorkbench(pub WorkbenchId);
 
 impl Default for ActiveWorkbench {
     fn default() -> Self {
-        Self(WorkbenchId::from("wb.sketch"))
+        // Part Design is the natural landing place: create a body, sketch on
+        // it, pad it. The Sketch workbench is one click away.
+        Self(WorkbenchId::from("wb.part"))
     }
 }
 

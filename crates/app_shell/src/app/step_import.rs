@@ -107,6 +107,51 @@ impl PrintCadApp {
                 KernelResponse::BodyTessellateFailed { body_id, error } => {
                     app_log::error(format!("Tessellation failed for body {}: {error}", body_id));
                 }
+                KernelResponse::SolidBuilt {
+                    body_id,
+                    result,
+                    elapsed,
+                } => {
+                    let bid = BodyId(body_id);
+                    if !self.document.bodies().iter().any(|b| b.id == bid) {
+                        // Body deleted (e.g. undo) while the rebuild ran.
+                        continue;
+                    }
+                    let bounds_mm = result.bounds_mm;
+                    self.document
+                        .set_imported_brep_data(bid, result.brep_blob, Vec::new());
+                    self.document.set_imported_geometry(
+                        bid,
+                        ImportedGeometry {
+                            mesh: Arc::new(result.mesh),
+                            source_asset: None,
+                            revision: 0,
+                            bounds_mm,
+                            brep_blob_path: None,
+                            face_colors_path: None,
+                        },
+                    );
+                    app_log::info(format!(
+                        "Rebuilt `{}` in {:.0}ms",
+                        self.document
+                            .bodies()
+                            .iter()
+                            .find(|b| b.id == bid)
+                            .map(|b| b.name.as_str())
+                            .unwrap_or("body"),
+                        elapsed.as_secs_f64() * 1000.0
+                    ));
+                }
+                KernelResponse::SolidFailed { body_id, error } => {
+                    let name = self
+                        .document
+                        .bodies()
+                        .iter()
+                        .find(|b| b.id == BodyId(body_id))
+                        .map(|b| b.name.clone())
+                        .unwrap_or_else(|| "body".to_string());
+                    app_log::error(format!("Rebuild of `{name}` failed: {error}"));
+                }
             }
         }
     }

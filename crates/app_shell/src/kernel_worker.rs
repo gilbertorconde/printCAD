@@ -15,7 +15,9 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use kernel_api::{ImportedModel, Kernel, TessellationSettings, TriMesh};
+use kernel_api::{
+    ExtrudeOp, ImportedModel, Kernel, SolidBuildResult, TessellationSettings, TriMesh,
+};
 use kernel_occt::OcctKernel;
 use tracing::info;
 use uuid::Uuid;
@@ -26,6 +28,12 @@ pub enum KernelRequest {
     /// to register; tessellation is scheduled separately per body.
     ImportStep {
         path: PathBuf,
+        detail: TessellationSettings,
+    },
+    /// Rebuild a body's solid from its Part Design extrude chain.
+    BuildSolid {
+        body_id: Uuid,
+        ops: Vec<ExtrudeOp>,
         detail: TessellationSettings,
     },
     /// Tessellate one body's BRep snapshot on the kernel thread. The blob
@@ -59,6 +67,15 @@ pub enum KernelResponse {
         body_id: Uuid,
         mesh: TriMesh,
         elapsed: Duration,
+    },
+    SolidBuilt {
+        body_id: Uuid,
+        result: SolidBuildResult,
+        elapsed: Duration,
+    },
+    SolidFailed {
+        body_id: Uuid,
+        error: String,
     },
     BodyTessellateFailed {
         body_id: Uuid,
@@ -102,6 +119,26 @@ impl KernelWorker {
         if self
             .tx
             .send(KernelRequest::ImportStep { path, detail })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit a Part Design solid rebuild. One response arrives per request.
+    pub fn request_build_solid(
+        &mut self,
+        body_id: Uuid,
+        ops: Vec<ExtrudeOp>,
+        detail: TessellationSettings,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::BuildSolid {
+                body_id,
+                ops,
+                detail,
+            })
             .is_ok()
         {
             self.in_flight = self.in_flight.saturating_add(1);
@@ -189,6 +226,27 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
                     },
                 };
                 if tx.send(response).is_err() {
+                    return;
+                }
+            }
+            KernelRequest::BuildSolid {
+                body_id,
+                ops,
+                detail,
+            } => {
+                let started = Instant::now();
+                let resp = match kernel.execute_extrude_chain(&ops, &detail) {
+                    Ok(result) => KernelResponse::SolidBuilt {
+                        body_id,
+                        result,
+                        elapsed: started.elapsed(),
+                    },
+                    Err(err) => KernelResponse::SolidFailed {
+                        body_id,
+                        error: err.to_string(),
+                    },
+                };
+                if tx.send(resp).is_err() {
                     return;
                 }
             }

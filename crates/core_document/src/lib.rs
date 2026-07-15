@@ -253,6 +253,7 @@ impl Document {
     ) -> DocumentResult<FeatureId> {
         let id = FeatureId::new();
         let deps = feature.dependencies();
+        let seq = self.feature_tree.next_seq();
 
         let node = FeatureNode {
             id,
@@ -266,6 +267,7 @@ impl Document {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as i64,
+            seq,
             data: feature.to_json(),
         };
 
@@ -309,6 +311,39 @@ impl Document {
     pub fn mark_feature_dirty(&mut self, feature_id: FeatureId) {
         self.feature_tree.mark_dirty(feature_id);
         self.mark_dirty();
+    }
+
+    /// Clear a feature's dirty flag (host calls this once its recompute has
+    /// been scheduled or applied).
+    pub fn clear_feature_dirty(&mut self, feature_id: FeatureId) {
+        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+            node.dirty = false;
+        }
+    }
+
+    /// Show/hide a feature (e.g. hide a sketch once a pad consumes it).
+    pub fn set_feature_visible(&mut self, feature_id: FeatureId, visible: bool) {
+        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+            if node.visible != visible {
+                node.visible = visible;
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Remove a feature node. Features that depended on it are marked dirty
+    /// so their owners can react to the missing input.
+    pub fn remove_feature(&mut self, feature_id: FeatureId) -> DocumentResult<()> {
+        let dependents = self.feature_tree.dependents(feature_id);
+        for dep in &dependents {
+            self.feature_tree.mark_dirty(*dep);
+        }
+        if self.feature_tree.remove_node(feature_id) {
+            self.mark_dirty();
+            Ok(())
+        } else {
+            Err(DocumentError::FeatureNotFound(feature_id))
+        }
     }
 
     /// Get all dirty features.
@@ -440,6 +475,17 @@ impl Document {
         geometry.revision = next_revision;
         self.imported_meshes.insert(body, geometry);
         self.mark_dirty();
+    }
+
+    /// Drop a body's computed/imported geometry (mesh, BRep snapshot,
+    /// face colours). Used when a body's last solid feature is deleted.
+    pub fn remove_imported_geometry(&mut self, body: BodyId) {
+        let removed = self.imported_meshes.remove(&body).is_some();
+        self.imported_brep_blobs.remove(&body);
+        self.imported_brep_face_colors.remove(&body);
+        if removed {
+            self.mark_dirty();
+        }
     }
 
     /// Store BRep binary + face colour snapshot for a body (in-memory until save).

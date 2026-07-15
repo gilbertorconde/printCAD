@@ -11,4 +11,9 @@ egui = ["core_document/egui", "dep:egui"]
 
 [dependencies]
 core_document = { path = "../../core_document" }
+kernel_api = { path = "../../kernel_api" }
+wb_sketch = { path = "../wb_sketch", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
 egui = { workspace = true, optional = true }
