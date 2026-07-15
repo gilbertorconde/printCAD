@@ -30,8 +30,10 @@
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_Transform.hxx>
 #include <BRepGProp.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
+#include <BRepPrimAPI_MakeRevol.hxx>
 #include <GC_MakeArcOfCircle.hxx>
 #include <GC_MakeSegment.hxx>
 #include <GProp_GProps.hxx>
@@ -40,6 +42,7 @@
 #include <ShapeUpgrade_UnifySameDomain.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
+#include <gp_Ax1.hxx>
 #include <gp_Ax2.hxx>
 #include <gp_Ax3.hxx>
 #include <gp_Circ.hxx>
@@ -1939,10 +1942,10 @@ static double resolve_linear_deflection_abs(
     return bbox_linear_deflection(shape, mult);
 }
 
-// ---- Sketch-profile extrusion (pad/pocket) ----
+// ---- Sketch-profile solid sweeps (pad/pocket/revolve/groove) ----
 
-static PrintcadOcctExtrudeResult make_extrude_error(const std::string& message) {
-    PrintcadOcctExtrudeResult result{};
+static PrintcadOcctSweepResult make_sweep_error(const std::string& message) {
+    PrintcadOcctSweepResult result{};
     result.error = duplicate_to_malloc(message);
     return result;
 }
@@ -2638,13 +2641,15 @@ extern "C" PrintcadOcctImportResult printcad_occt_tessellate_brep(
     }
 }
 
-extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
+extern "C" PrintcadOcctSweepResult printcad_occt_sweep_profile(
     const uint8_t* base_brep,
     size_t base_brep_len,
     const PcadProfilePlane* plane,
     const PcadProfileWire* wires,
     size_t wire_count,
-    double distance,
+    int32_t sweep_kind,
+    const double params[5],
+    int symmetric,
     int32_t op,
     int want_mesh,
     int linear_deflection_mode,
@@ -2654,27 +2659,31 @@ extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
     double weld_angle_threshold_rad,
     int generate_boundary_edges) {
     if (plane == nullptr) {
-        return make_extrude_error("profile plane is null");
+        return make_sweep_error("profile plane is null");
     }
     if (wires == nullptr || wire_count == 0) {
-        return make_extrude_error("extrude op has no profile wires");
+        return make_sweep_error("solid op has no profile wires");
+    }
+    if (params == nullptr) {
+        return make_sweep_error("sweep parameter array is null");
+    }
+    if (sweep_kind != 0 && sweep_kind != 1) {
+        return make_sweep_error(
+            "unknown sweep kind " + std::to_string(sweep_kind)
+            + " (expected 0=extrude, 1=revolve)");
     }
     if (op < 0 || op > 2) {
-        return make_extrude_error(
+        return make_sweep_error(
             "unknown boolean op " + std::to_string(op) + " (expected 0=new, 1=fuse, 2=cut)");
     }
     if (op == 0 && base_brep != nullptr) {
-        return make_extrude_error("new-solid op must not receive a base BRep");
+        return make_sweep_error("new-solid op must not receive a base BRep");
     }
     if (op != 0 && (base_brep == nullptr || base_brep_len == 0)) {
-        return make_extrude_error("fuse/cut op requires a non-empty base BRep");
+        return make_sweep_error("fuse/cut op requires a non-empty base BRep");
     }
 
     try {
-        if (std::abs(distance) <= Precision::Confusion()) {
-            return make_extrude_error("extrusion distance is zero");
-        }
-
         // gp_Dir normalizes and throws on near-zero vectors (caught below).
         const gp_Dir normal_dir(plane->normal[0], plane->normal[1], plane->normal[2]);
         const gp_Dir x_dir(plane->x_axis[0], plane->x_axis[1], plane->x_axis[2]);
@@ -2687,25 +2696,96 @@ extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
         for (size_t i = 0; i < wire_count; ++i) {
             TopoDS_Wire wire;
             if (!build_profile_wire(*plane, normal_dir, x_dir, wires[i], wire, err)) {
-                return make_extrude_error(err);
+                return make_sweep_error(err);
             }
             topo_wires.push_back(wire);
         }
 
         TopoDS_Face face;
         if (!build_profile_face(pln, topo_wires, face, err)) {
-            return make_extrude_error(err);
+            return make_sweep_error(err);
         }
 
-        gp_Vec sweep(normal_dir);
-        sweep *= distance;
-        BRepPrimAPI_MakePrism prism(face, sweep);
-        if (!prism.IsDone()) {
-            return make_extrude_error("prism extrusion failed");
-        }
-        TopoDS_Shape tool = prism.Shape();
-        if (tool.IsNull()) {
-            return make_extrude_error("prism extrusion produced no shape");
+        TopoDS_Shape tool;
+        if (sweep_kind == 0) {
+            // Linear extrusion along the plane normal.
+            const double distance = params[0];
+            if (std::abs(distance) <= Precision::Confusion()) {
+                return make_sweep_error("extrusion distance is zero");
+            }
+
+            TopoDS_Shape sweep_profile = face;
+            if (symmetric != 0) {
+                // Shift the profile back by half the distance so the prism
+                // straddles the sketch plane. With a negative distance the
+                // shift is forwards (+|d|/2) and the sweep runs backwards,
+                // producing exactly the same solid as the positive distance.
+                gp_Vec half_back(normal_dir);
+                half_back *= -distance * 0.5;
+                gp_Trsf shift;
+                shift.SetTranslation(half_back);
+                BRepBuilderAPI_Transform mover(face, shift, Standard_True);
+                if (!mover.IsDone() || mover.Shape().IsNull()) {
+                    return make_sweep_error(
+                        "failed to translate profile face for symmetric extrusion");
+                }
+                sweep_profile = mover.Shape();
+            }
+
+            gp_Vec sweep(normal_dir);
+            sweep *= distance;
+            BRepPrimAPI_MakePrism prism(sweep_profile, sweep);
+            if (!prism.IsDone()) {
+                return make_sweep_error("prism extrusion failed");
+            }
+            tool = prism.Shape();
+            if (tool.IsNull()) {
+                return make_sweep_error("prism extrusion produced no shape");
+            }
+        } else {
+            // Revolution about an axis lying in the sketch plane.
+            const double axis_origin_u = params[0];
+            const double axis_origin_v = params[1];
+            const double axis_dir_u = params[2];
+            const double axis_dir_v = params[3];
+            const double angle_deg = params[4];
+            if (!(angle_deg > 0.0) || angle_deg > 360.0) {
+                return make_sweep_error(
+                    "revolve angle must be in (0, 360] degrees, got "
+                    + std::to_string(angle_deg));
+            }
+
+            const gp_Vec axis_vec(
+                axis_dir_u * plane->x_axis[0] + axis_dir_v * plane->y_axis[0],
+                axis_dir_u * plane->x_axis[1] + axis_dir_v * plane->y_axis[1],
+                axis_dir_u * plane->x_axis[2] + axis_dir_v * plane->y_axis[2]);
+            if (axis_vec.Magnitude() <= Precision::Confusion()) {
+                return make_sweep_error(
+                    "revolve axis direction is (near) zero in the sketch plane");
+            }
+            const gp_Pnt axis_point =
+                profile_point(*plane, axis_origin_u, axis_origin_v);
+            const gp_Ax1 axis(axis_point, gp_Dir(axis_vec));
+
+            // Treat anything within a millidegree of a full turn as 360°.
+            const bool full_turn = angle_deg >= 359.999;
+            const double angle_rad = angle_deg / 180.0 * 3.14159265358979323846;
+            if (full_turn) {
+                BRepPrimAPI_MakeRevol revol(face, axis);
+                if (!revol.IsDone()) {
+                    return make_sweep_error("revolve operation failed");
+                }
+                tool = revol.Shape();
+            } else {
+                BRepPrimAPI_MakeRevol revol(face, axis, angle_rad);
+                if (!revol.IsDone()) {
+                    return make_sweep_error("revolve operation failed");
+                }
+                tool = revol.Shape();
+            }
+            if (tool.IsNull()) {
+                return make_sweep_error("revolve produced no shape");
+            }
         }
 
         TopoDS_Shape result_shape;
@@ -2714,24 +2794,24 @@ extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
         } else {
             TopoDS_Shape base;
             if (!brep_read_from_bytes(base_brep, base_brep_len, base)) {
-                return make_extrude_error(
+                return make_sweep_error(
                     "BRepTools::Read failed (invalid or unsupported base BRep blob)");
             }
             if (op == 1) {
                 BRepAlgoAPI_Fuse boolean_op(base, tool);
                 if (!boolean_op.IsDone()) {
-                    return make_extrude_error("fuse boolean operation failed");
+                    return make_sweep_error("fuse boolean operation failed");
                 }
                 result_shape = boolean_op.Shape();
             } else {
                 BRepAlgoAPI_Cut boolean_op(base, tool);
                 if (!boolean_op.IsDone()) {
-                    return make_extrude_error("cut boolean operation failed");
+                    return make_sweep_error("cut boolean operation failed");
                 }
                 result_shape = boolean_op.Shape();
             }
             if (result_shape.IsNull()) {
-                return make_extrude_error("boolean operation produced a null shape");
+                return make_sweep_error("boolean operation produced a null shape");
             }
             // Merge coplanar faces / colinear edges the boolean left behind so
             // later features (fillets, further booleans) see clean topology.
@@ -2743,20 +2823,20 @@ extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
             }
         }
         if (count_faces(result_shape) == 0) {
-            return make_extrude_error(
-                "extrude result contains no faces (boolean removed all material?)");
+            return make_sweep_error(
+                "sweep result contains no faces (boolean removed all material?)");
         }
 
         std::vector<uint8_t> blob;
         if (!brep_write_to_vector(result_shape, blob)) {
-            return make_extrude_error("BRepTools::Write failed while serializing extrude result");
+            return make_sweep_error("BRepTools::Write failed while serializing sweep result");
         }
 
-        PrintcadOcctExtrudeResult result{};
+        PrintcadOcctSweepResult result{};
         result.brep_len = blob.size();
         result.brep_blob = static_cast<uint8_t*>(std::malloc(blob.size()));
         if (result.brep_blob == nullptr) {
-            return make_extrude_error("Out of memory while allocating extrude BRep blob");
+            return make_sweep_error("Out of memory while allocating sweep BRep blob");
         }
         std::memcpy(result.brep_blob, blob.data(), blob.size());
 
@@ -2790,8 +2870,8 @@ extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
                     std::free(body.name);
                 }
                 std::free(result.brep_blob);
-                return make_extrude_error(
-                    "tessellation of extrude result produced no mesh geometry");
+                return make_sweep_error(
+                    "tessellation of sweep result produced no mesh geometry");
             }
             PrintcadOcctBody& mb = bodies[0];
             std::free(mb.name);
@@ -2808,15 +2888,15 @@ extern "C" PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
         result.error = nullptr;
         return result;
     } catch (Standard_Failure const& ex) {
-        return make_extrude_error(std::string("OCCT exception: ") + ex.GetMessageString());
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
     } catch (std::exception const& ex) {
-        return make_extrude_error(std::string("std::exception: ") + ex.what());
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
     } catch (...) {
-        return make_extrude_error("Unknown exception while extruding profile");
+        return make_sweep_error("Unknown exception while sweeping profile");
     }
 }
 
-extern "C" void printcad_occt_free_extrude_result(PrintcadOcctExtrudeResult result) {
+extern "C" void printcad_occt_free_sweep_result(PrintcadOcctSweepResult result) {
     std::free(result.brep_blob);
     std::free(result.mesh_positions);
     std::free(result.mesh_normals);

@@ -194,12 +194,42 @@ enum ResidualSpec {
     },
     /// Implicit arc consistency: |endpoint - center| - r.
     ArcEndpoint { p: usize, c: usize, r: usize },
+    /// |perpendicular distance(center, infinite line)| - r.
+    TangentLineCircle {
+        s: usize,
+        e: usize,
+        c: usize,
+        r: usize,
+    },
+    /// |c1 - c2| - (r1 + r2) (external) or |c1 - c2| - |r1 - r2| (internal).
+    /// The branch is picked once per solve, from the configuration at solve
+    /// start (see `build_system`), never per iteration.
+    TangentCircles {
+        c1: usize,
+        r1: usize,
+        c2: usize,
+        r2: usize,
+        internal: bool,
+    },
+    /// p1/p2 mirror-symmetric about a line: midpoint on the line (cross
+    /// residual) and the p1→p2 direction perpendicular to it (dot residual).
+    Symmetric {
+        p1: usize,
+        p2: usize,
+        s: usize,
+        e: usize,
+    },
+    /// p - (s + e)/2 (2 residuals).
+    Midpoint { p: usize, s: usize, e: usize },
 }
 
 impl ResidualSpec {
     fn dim(&self) -> usize {
         match self {
-            ResidualSpec::FixedPoint { .. } | ResidualSpec::Coincident { .. } => 2,
+            ResidualSpec::FixedPoint { .. }
+            | ResidualSpec::Coincident { .. }
+            | ResidualSpec::Symmetric { .. }
+            | ResidualSpec::Midpoint { .. } => 2,
             _ => 1,
         }
     }
@@ -261,8 +291,50 @@ impl ResidualSpec {
                 let dot = d1.0 * d2.0 + d1.1 * d2.1;
                 out.push(wrap_angle(cross.atan2(dot) - angle));
             }
+            ResidualSpec::TangentLineCircle { s, e, c, r } => {
+                out.push(point_line_distance(v, c, s, e).abs() - v[r]);
+            }
+            ResidualSpec::TangentCircles {
+                c1,
+                r1,
+                c2,
+                r2,
+                internal,
+            } => {
+                let target = if internal {
+                    (v[r1] - v[r2]).abs()
+                } else {
+                    v[r1] + v[r2]
+                };
+                out.push(segment_length(v, c1, c2) - target);
+            }
+            ResidualSpec::Symmetric { p1, p2, s, e } => {
+                // (1) The p1p2 midpoint lies on the line (signed
+                // perpendicular distance, like PointOnLine).
+                let (mx, my) = ((v[p1] + v[p2]) * 0.5, (v[p1 + 1] + v[p2 + 1]) * 0.5);
+                let dx = v[e] - v[s];
+                let dy = v[e + 1] - v[s + 1];
+                let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+                out.push(((mx - v[s]) * dy - (my - v[s + 1]) * dx) / len);
+                // (2) p1 → p2 perpendicular to the line direction.
+                let (ux, uy) = (dx / len, dy / len);
+                out.push((v[p1] - v[p2]) * ux + (v[p1 + 1] - v[p2 + 1]) * uy);
+            }
+            ResidualSpec::Midpoint { p, s, e } => {
+                out.push(v[p] - (v[s] + v[e]) * 0.5);
+                out.push(v[p + 1] - (v[s + 1] + v[e + 1]) * 0.5);
+            }
         }
     }
+}
+
+/// Signed perpendicular distance from point `p` to the infinite line
+/// through `s` → `e`.
+fn point_line_distance(v: &[f64], p: usize, s: usize, e: usize) -> f64 {
+    let dx = v[e] - v[s];
+    let dy = v[e + 1] - v[s + 1];
+    let len = (dx * dx + dy * dy).sqrt().max(MIN_LEN);
+    ((v[p] - v[s]) * dy - (v[p + 1] - v[s + 1]) * dx) / len
 }
 
 fn segment_length(v: &[f64], a: usize, b: usize) -> f64 {
@@ -447,6 +519,57 @@ fn build_system(sketch: &Sketch) -> System {
                         e2,
                         angle: f64::from(angle_rad),
                     });
+                }
+            }
+            Constraint::Tangent {
+                line_or_circle1,
+                item2,
+            } => {
+                let resolved = match (
+                    line_vars(line_or_circle1),
+                    circle_vars(line_or_circle1),
+                    line_vars(item2),
+                    circle_vars(item2),
+                ) {
+                    // Line ↔ circle/arc, in either selection order.
+                    (Some((s, e)), _, _, Some((c, r))) | (_, Some((c, r)), Some((s, e)), _) => {
+                        Some(ResidualSpec::TangentLineCircle { s, e, c, r })
+                    }
+                    // Circle/arc ↔ circle/arc: choose the external or
+                    // internal branch ONCE, from the configuration at solve
+                    // start (build_system runs once per solve call).
+                    (_, Some((c1, r1)), _, Some((c2, r2))) => {
+                        let dist = segment_length(&vars, c1, c2);
+                        let external_err = (dist - (vars[r1] + vars[r2])).abs();
+                        let internal_err = (dist - (vars[r1] - vars[r2]).abs()).abs();
+                        Some(ResidualSpec::TangentCircles {
+                            c1,
+                            r1,
+                            c2,
+                            r2,
+                            internal: internal_err < external_err,
+                        })
+                    }
+                    _ => None,
+                };
+                if let Some(spec) = resolved {
+                    specs.push(spec);
+                }
+            }
+            Constraint::Symmetric {
+                point1,
+                point2,
+                line,
+            } => {
+                if let (Some(p1), Some(p2), Some((s, e))) =
+                    (point_var(point1), point_var(point2), line_vars(line))
+                {
+                    specs.push(ResidualSpec::Symmetric { p1, p2, s, e });
+                }
+            }
+            Constraint::Midpoint { point, line } => {
+                if let (Some(p), Some((s, e))) = (point_var(point), line_vars(line)) {
+                    specs.push(ResidualSpec::Midpoint { p, s, e });
                 }
             }
         }
@@ -1105,6 +1228,164 @@ mod tests {
             3.0,
             1e-3,
         );
+    }
+
+    #[test]
+    fn tangent_line_circle_moves_center_onto_offset() {
+        let mut sketch = Sketch::new("tangent_line_circle");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 0.0);
+        let center = add_point(&mut sketch, 5.0, 3.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
+        sketch.constraints.push(Constraint::Radius {
+            circle,
+            radius: 2.0,
+        });
+        sketch.constraints.push(Constraint::Tangent {
+            line_or_circle1: line,
+            item2: circle,
+        });
+        assert_converged(solve(&mut sketch));
+        // Perpendicular distance from the center to the x-axis line must
+        // equal the radius (center approached from y=3, so it lands at +2).
+        assert_near(pos(&sketch, center).y, 2.0, 1e-3);
+        assert_near(circle_radius(&sketch, circle), 2.0, 1e-4);
+    }
+
+    #[test]
+    fn tangent_line_circle_works_with_swapped_operands() {
+        let mut sketch = Sketch::new("tangent_swapped");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 0.0);
+        let center = add_point(&mut sketch, 5.0, 3.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
+        fix(&mut sketch, center, 5.0, 3.0);
+        // Circle first, line second: the radius adapts instead.
+        sketch.constraints.push(Constraint::Tangent {
+            line_or_circle1: circle,
+            item2: line,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(circle_radius(&sketch, circle), 3.0, 1e-3);
+    }
+
+    #[test]
+    fn tangent_circles_external_branch_stays_external() {
+        let mut sketch = Sketch::new("tangent_external");
+        let c1 = add_point(&mut sketch, 0.0, 0.0);
+        let c2 = add_point(&mut sketch, 10.0, 0.0);
+        let circle1 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c1, 3.0)));
+        let circle2 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c2, 4.0)));
+        fix(&mut sketch, c1, 0.0, 0.0);
+        sketch.constraints.push(Constraint::Radius {
+            circle: circle1,
+            radius: 3.0,
+        });
+        sketch.constraints.push(Constraint::Radius {
+            circle: circle2,
+            radius: 4.0,
+        });
+        sketch.constraints.push(Constraint::Tangent {
+            line_or_circle1: circle1,
+            item2: circle2,
+        });
+        assert_converged(solve(&mut sketch));
+        // Externally-tangent circles STAY external: center distance is
+        // r1 + r2 = 7, not |r1 - r2| = 1.
+        assert_near((pos(&sketch, c2) - pos(&sketch, c1)).length(), 7.0, 1e-3);
+    }
+
+    #[test]
+    fn tangent_circles_internal_branch_when_overlapping() {
+        let mut sketch = Sketch::new("tangent_internal");
+        let c1 = add_point(&mut sketch, 0.0, 0.0);
+        let c2 = add_point(&mut sketch, 1.5, 0.0);
+        let circle1 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c1, 3.0)));
+        let circle2 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c2, 4.0)));
+        fix(&mut sketch, c1, 0.0, 0.0);
+        sketch.constraints.push(Constraint::Radius {
+            circle: circle1,
+            radius: 3.0,
+        });
+        sketch.constraints.push(Constraint::Radius {
+            circle: circle2,
+            radius: 4.0,
+        });
+        sketch.constraints.push(Constraint::Tangent {
+            line_or_circle1: circle1,
+            item2: circle2,
+        });
+        assert_converged(solve(&mut sketch));
+        // One circle inside the other: the internal branch |r1 - r2| = 1 is
+        // closer than the external 7, so the solve keeps them nested.
+        assert_near((pos(&sketch, c2) - pos(&sketch, c1)).length(), 1.0, 1e-3);
+    }
+
+    #[test]
+    fn symmetric_mirrors_point_about_line() {
+        let mut sketch = Sketch::new("symmetric");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 0.0);
+        let p1 = add_point(&mut sketch, 3.0, 4.0);
+        let p2 = add_point(&mut sketch, 5.0, -2.0);
+        fix(&mut sketch, p1, 3.0, 4.0);
+        sketch.constraints.push(Constraint::Symmetric {
+            point1: p1,
+            point2: p2,
+            line,
+        });
+        assert_converged(solve(&mut sketch));
+        // Mirror of (3, 4) about the x-axis is (3, -4).
+        assert_near(pos(&sketch, p2).x, 3.0, 1e-3);
+        assert_near(pos(&sketch, p2).y, -4.0, 1e-3);
+    }
+
+    #[test]
+    fn symmetric_about_diagonal_line() {
+        let mut sketch = Sketch::new("symmetric_diag");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 10.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 10.0);
+        let p1 = add_point(&mut sketch, 6.0, 2.0);
+        let p2 = add_point(&mut sketch, 1.0, 5.0);
+        fix(&mut sketch, p1, 6.0, 2.0);
+        sketch.constraints.push(Constraint::Symmetric {
+            point1: p1,
+            point2: p2,
+            line,
+        });
+        assert_converged(solve(&mut sketch));
+        // Mirror of (6, 2) about y = x is (2, 6).
+        assert_near(pos(&sketch, p2).x, 2.0, 1e-3);
+        assert_near(pos(&sketch, p2).y, 6.0, 1e-3);
+    }
+
+    #[test]
+    fn midpoint_pins_point_to_line_center() {
+        let mut sketch = Sketch::new("midpoint");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 4.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 4.0);
+        let p = add_point(&mut sketch, 7.0, 7.0);
+        sketch
+            .constraints
+            .push(Constraint::Midpoint { point: p, line });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, p).x, 5.0, 1e-3);
+        assert_near(pos(&sketch, p).y, 2.0, 1e-3);
     }
 
     #[test]

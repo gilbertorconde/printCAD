@@ -1,11 +1,12 @@
-//! Sketch-profile extrusion (pad/pocket) tests for the OCCT kernel.
+//! Sketch-profile solid-op (pad/pocket/revolve) tests for the OCCT kernel.
 //!
 //! Every test builds simple analytic profiles (rectangles, circles, arcs) and
 //! checks the resulting solid via its render-mesh bounds, triangle counts,
 //! and BRep snapshot round-trips.
 
 use kernel_api::{
-    BooleanOp, ExtrudeOp, ProfilePlane, ProfileSegment, ProfileWire, TessellationSettings,
+    BooleanOp, ProfilePlane, ProfileSegment, ProfileWire, SolidOp, SweepKind, TessellationSettings,
+    TriMesh,
 };
 use kernel_occt::OcctKernel;
 use std::sync::{Mutex, MutexGuard};
@@ -70,11 +71,45 @@ fn circle_wire(cx: f64, cy: f64, radius: f64) -> ProfileWire {
     }
 }
 
-fn pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> ExtrudeOp {
-    ExtrudeOp {
+fn pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> SolidOp {
+    SolidOp {
         plane: xy_plane(),
         wires,
-        distance,
+        kind: SweepKind::Extrude {
+            distance,
+            symmetric: false,
+        },
+        op,
+    }
+}
+
+fn symmetric_pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> SolidOp {
+    SolidOp {
+        plane: xy_plane(),
+        wires,
+        kind: SweepKind::Extrude {
+            distance,
+            symmetric: true,
+        },
+        op,
+    }
+}
+
+fn revolve(
+    wires: Vec<ProfileWire>,
+    axis_origin: [f64; 2],
+    axis_dir: [f64; 2],
+    angle_deg: f64,
+    op: BooleanOp,
+) -> SolidOp {
+    SolidOp {
+        plane: xy_plane(),
+        wires,
+        kind: SweepKind::Revolve {
+            axis_origin,
+            axis_dir,
+            angle_deg,
+        },
         op,
     }
 }
@@ -84,6 +119,19 @@ fn assert_close(actual: f32, expected: f32, tol: f32, what: &str) {
         (actual - expected).abs() <= tol,
         "{what}: expected {expected} +/- {tol}, got {actual}"
     );
+}
+
+/// Re-tessellate a solid-chain BRep snapshot. Swept shapes do not expose their
+/// face count through `SolidBuildResult`, so probe the all-white colour-table
+/// size until the shim accepts it (it requires an exact face-count match).
+fn retessellate(kernel: &OcctKernel, blob: &[u8], detail: &TessellationSettings) -> TriMesh {
+    for face_count in 1..=32 {
+        let colors = vec![[1.0_f32, 1.0, 1.0]; face_count];
+        if let Ok(mesh) = kernel.tessellate_step_brep(blob, &colors, detail) {
+            return mesh;
+        }
+    }
+    panic!("could not re-tessellate BRep snapshot with any face count in 1..=32");
 }
 
 #[test]
@@ -98,7 +146,7 @@ fn pads_rectangle_to_box() {
         BooleanOp::NewSolid,
     )];
     let result = kernel
-        .execute_extrude_chain(&ops, &detail)
+        .execute_solid_chain(&ops, &detail)
         .expect("pad rectangle");
 
     assert!(!result.mesh.positions.is_empty(), "mesh has no vertices");
@@ -136,7 +184,7 @@ fn pads_circle_to_cylinder() {
         BooleanOp::NewSolid,
     )];
     let result = kernel
-        .execute_extrude_chain(&ops, &detail)
+        .execute_solid_chain(&ops, &detail)
         .expect("pad circle");
 
     assert!(!result.mesh.positions.is_empty());
@@ -155,7 +203,7 @@ fn rectangle_with_circular_hole_keeps_bounds_and_adds_triangles() {
     let detail = TessellationSettings::default();
 
     let plain = kernel
-        .execute_extrude_chain(
+        .execute_solid_chain(
             &[pad(
                 vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
                 5.0,
@@ -165,7 +213,7 @@ fn rectangle_with_circular_hole_keeps_bounds_and_adds_triangles() {
         )
         .expect("plain pad");
     let holed = kernel
-        .execute_extrude_chain(
+        .execute_solid_chain(
             &[pad(
                 vec![rect_wire(0.0, 0.0, 10.0, 20.0), circle_wire(5.0, 10.0, 2.0)],
                 5.0,
@@ -208,7 +256,7 @@ fn cut_pocket_keeps_outer_bounds() {
         pad(vec![rect_wire(2.0, 5.0, 8.0, 15.0)], 2.5, BooleanOp::Cut),
     ];
     let result = kernel
-        .execute_extrude_chain(&ops, &detail)
+        .execute_solid_chain(&ops, &detail)
         .expect("pad + pocket chain");
 
     assert!(!result.brep_blob.is_empty(), "missing BRep snapshot");
@@ -241,7 +289,7 @@ fn fuse_grows_bounds() {
         pad(vec![rect_wire(5.0, 0.0, 15.0, 20.0)], 5.0, BooleanOp::Fuse),
     ];
     let result = kernel
-        .execute_extrude_chain(&ops, &detail)
+        .execute_solid_chain(&ops, &detail)
         .expect("pad + fuse chain");
 
     let (min, max) = result.bounds_mm.expect("bounds");
@@ -263,7 +311,7 @@ fn negative_distance_extrudes_backwards() {
         BooleanOp::NewSolid,
     )];
     let result = kernel
-        .execute_extrude_chain(&ops, &detail)
+        .execute_solid_chain(&ops, &detail)
         .expect("negative pad");
 
     let (min, max) = result.bounds_mm.expect("bounds");
@@ -280,7 +328,7 @@ fn invalid_chains_error_instead_of_crashing() {
 
     // First op must be NewSolid.
     let err = kernel
-        .execute_extrude_chain(
+        .execute_solid_chain(
             &[pad(
                 vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
                 5.0,
@@ -313,7 +361,7 @@ fn invalid_chains_error_instead_of_crashing() {
         ],
     };
     let err = kernel
-        .execute_extrude_chain(&[pad(vec![open_wire], 5.0, BooleanOp::NewSolid)], &detail)
+        .execute_solid_chain(&[pad(vec![open_wire], 5.0, BooleanOp::NewSolid)], &detail)
         .expect_err("open wire must fail");
     assert!(
         err.to_string().contains("closed"),
@@ -350,7 +398,7 @@ fn arc_profile_pads_successfully() {
         ],
     };
     let result = kernel
-        .execute_extrude_chain(&[pad(vec![wire], 5.0, BooleanOp::NewSolid)], &detail)
+        .execute_solid_chain(&[pad(vec![wire], 5.0, BooleanOp::NewSolid)], &detail)
         .expect("arc profile pad");
 
     assert!(!result.mesh.positions.is_empty());
@@ -368,7 +416,7 @@ fn brep_blob_round_trips_through_step_brep_tessellation() {
     let detail = TessellationSettings::default();
 
     let result = kernel
-        .execute_extrude_chain(
+        .execute_solid_chain(
             &[pad(
                 vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
                 5.0,
@@ -383,7 +431,7 @@ fn brep_blob_round_trips_through_step_brep_tessellation() {
     let face_colors = vec![[1.0_f32, 1.0, 1.0]; 6];
     let mesh = kernel
         .tessellate_step_brep(&result.brep_blob, &face_colors, &detail)
-        .expect("re-tessellate extrude BRep snapshot");
+        .expect("re-tessellate solid-chain BRep snapshot");
 
     let tri_extrude = result.mesh.indices.len() / 3;
     let tri_roundtrip = mesh.indices.len() / 3;
@@ -406,17 +454,255 @@ fn offset_plane_places_pad_at_origin_height() {
         origin: [0.0, 0.0, 7.0],
         ..xy_plane()
     };
-    let ops = [ExtrudeOp {
+    let ops = [SolidOp {
         plane,
         wires: vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
-        distance: 5.0,
+        kind: SweepKind::Extrude {
+            distance: 5.0,
+            symmetric: false,
+        },
         op: BooleanOp::NewSolid,
     }];
     let result = kernel
-        .execute_extrude_chain(&ops, &detail)
+        .execute_solid_chain(&ops, &detail)
         .expect("pad on offset plane");
 
     let (min, max) = result.bounds_mm.expect("bounds");
     assert_close(min[2], 7.0, 1e-3, "min z (plane origin height)");
     assert_close(max[2], 12.0, 1e-3, "max z");
+}
+
+#[test]
+fn symmetric_extrude_straddles_sketch_plane() {
+    let _serial = occt_guard();
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+
+    let ops = [symmetric_pad(
+        vec![rect_wire(0.0, 0.0, 10.0, 5.0)],
+        8.0,
+        BooleanOp::NewSolid,
+    )];
+    let result = kernel
+        .execute_solid_chain(&ops, &detail)
+        .expect("symmetric pad");
+
+    let (min, max) = result.bounds_mm.expect("bounds");
+    assert_close(min[0], 0.0, 1e-3, "min x");
+    assert_close(max[0], 10.0, 1e-3, "max x");
+    assert_close(min[1], 0.0, 1e-3, "min y");
+    assert_close(max[1], 5.0, 1e-3, "max y");
+    assert_close(min[2], -4.0, 1e-3, "min z (half below sketch plane)");
+    assert_close(max[2], 4.0, 1e-3, "max z (half above sketch plane)");
+
+    // A negative symmetric distance is documented to produce exactly the same
+    // solid as its positive counterpart.
+    let negative = kernel
+        .execute_solid_chain(
+            &[symmetric_pad(
+                vec![rect_wire(0.0, 0.0, 10.0, 5.0)],
+                -8.0,
+                BooleanOp::NewSolid,
+            )],
+            &detail,
+        )
+        .expect("negative symmetric pad");
+    let (nmin, nmax) = negative.bounds_mm.expect("negative bounds");
+    for axis in 0..3 {
+        assert_close(nmin[axis], min[axis], 1e-3, "negative symmetric min bound");
+        assert_close(nmax[axis], max[axis], 1e-3, "negative symmetric max bound");
+    }
+}
+
+#[test]
+fn full_revolve_of_offset_rectangle_makes_ring() {
+    let _serial = occt_guard();
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+
+    // Rectangle x in [5, 8] revolved a full turn about the sketch v-axis
+    // (world Y on the XY plane): a square-section ring of radii 5..8 that
+    // spans world x/z in [-8, 8] and keeps y in [0, 4].
+    let ops = [revolve(
+        vec![rect_wire(5.0, 0.0, 8.0, 4.0)],
+        [0.0, 0.0],
+        [0.0, 1.0],
+        360.0,
+        BooleanOp::NewSolid,
+    )];
+    let result = kernel
+        .execute_solid_chain(&ops, &detail)
+        .expect("full revolve");
+
+    assert!(!result.mesh.positions.is_empty());
+    assert!(!result.brep_blob.is_empty(), "missing BRep snapshot");
+    let (min, max) = result.bounds_mm.expect("bounds");
+    // Chords of the tessellated circles sit slightly inside the true radius.
+    assert_close(min[0], -8.0, 0.2, "min x");
+    assert_close(max[0], 8.0, 0.2, "max x");
+    assert_close(min[2], -8.0, 0.2, "min z");
+    assert_close(max[2], 8.0, 0.2, "max z");
+    assert_close(min[1], 0.0, 1e-3, "min y");
+    assert_close(max[1], 4.0, 1e-3, "max y");
+
+    // The BRep snapshot must survive a re-tessellation round-trip.
+    let mesh = retessellate(&kernel, &result.brep_blob, &detail);
+    assert!(!mesh.positions.is_empty());
+    assert!(!mesh.indices.is_empty());
+    let (rmin, rmax) = mesh.bounds().expect("round-trip bounds");
+    for axis in 0..3 {
+        assert_close(rmin[axis], min[axis], 0.2, "round-trip min bound");
+        assert_close(rmax[axis], max[axis], 0.2, "round-trip max bound");
+    }
+}
+
+#[test]
+fn partial_revolve_sweeps_half_space_only() {
+    let _serial = occt_guard();
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+
+    // 180 degrees about the sketch v-axis: the profile sweeps a half-ring, so
+    // x still spans [-8, 8] but the world-z extent is only one half-space.
+    let ops = [revolve(
+        vec![rect_wire(5.0, 0.0, 8.0, 4.0)],
+        [0.0, 0.0],
+        [0.0, 1.0],
+        180.0,
+        BooleanOp::NewSolid,
+    )];
+    let result = kernel
+        .execute_solid_chain(&ops, &detail)
+        .expect("half revolve");
+
+    let (min, max) = result.bounds_mm.expect("bounds");
+    assert_close(min[0], -8.0, 0.2, "min x");
+    assert_close(max[0], 8.0, 0.2, "max x");
+    assert_close(min[1], 0.0, 1e-3, "min y");
+    assert_close(max[1], 4.0, 1e-3, "max y");
+    // One z half-space stays empty (which one depends on the sweep sense).
+    assert_close(max[2] - min[2], 8.0, 0.2, "z extent (half ring)");
+    assert!(
+        min[2].abs() <= 0.2 || max[2].abs() <= 0.2,
+        "half revolve must leave one z half-space empty, got z in [{}, {}]",
+        min[2],
+        max[2]
+    );
+}
+
+#[test]
+fn groove_cut_by_revolve_keeps_box_bounds() {
+    let _serial = occt_guard();
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+
+    // Pad a 20x20x6 box centered on the origin, then cut a full-turn ring
+    // (radii 6..8, y in [2, 4]) around the sketch v-axis: a groove.
+    let plain = kernel
+        .execute_solid_chain(
+            &[pad(
+                vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
+                6.0,
+                BooleanOp::NewSolid,
+            )],
+            &detail,
+        )
+        .expect("plain box");
+    let grooved = kernel
+        .execute_solid_chain(
+            &[
+                pad(
+                    vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
+                    6.0,
+                    BooleanOp::NewSolid,
+                ),
+                revolve(
+                    vec![rect_wire(6.0, 2.0, 8.0, 4.0)],
+                    [0.0, 0.0],
+                    [0.0, 1.0],
+                    360.0,
+                    BooleanOp::Cut,
+                ),
+            ],
+            &detail,
+        )
+        .expect("box + revolve groove");
+
+    assert!(!grooved.brep_blob.is_empty(), "missing BRep snapshot");
+    assert!(!grooved.mesh.positions.is_empty());
+    assert_eq!(grooved.mesh.indices.len() % 3, 0);
+    // The groove adds curved interior walls: more triangles than the box.
+    assert!(
+        grooved.mesh.indices.len() / 3 > plain.mesh.indices.len() / 3,
+        "groove should add triangles ({} vs {})",
+        grooved.mesh.indices.len() / 3,
+        plain.mesh.indices.len() / 3
+    );
+
+    // A cut can only keep or shrink the bounds; here the groove is interior,
+    // so they stay exactly the box bounds.
+    let (pmin, pmax) = plain.bounds_mm.expect("plain bounds");
+    let (gmin, gmax) = grooved.bounds_mm.expect("grooved bounds");
+    for axis in 0..3 {
+        assert!(
+            gmin[axis] >= pmin[axis] - 1e-3,
+            "cut must not grow min bound"
+        );
+        assert!(
+            gmax[axis] <= pmax[axis] + 1e-3,
+            "cut must not grow max bound"
+        );
+        assert_close(gmin[axis], pmin[axis], 1e-3, "grooved min bound");
+        assert_close(gmax[axis], pmax[axis], 1e-3, "grooved max bound");
+    }
+}
+
+#[test]
+fn revolve_angle_out_of_range_errors() {
+    let _serial = occt_guard();
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+
+    for bad_angle in [0.0, -90.0, 360.5, 720.0] {
+        let err = kernel
+            .execute_solid_chain(
+                &[revolve(
+                    vec![rect_wire(5.0, 0.0, 8.0, 4.0)],
+                    [0.0, 0.0],
+                    [0.0, 1.0],
+                    bad_angle,
+                    BooleanOp::NewSolid,
+                )],
+                &detail,
+            )
+            .expect_err("out-of-range revolve angle must fail");
+        assert!(
+            err.to_string().contains("angle"),
+            "error for angle {bad_angle} should mention the angle: {err}"
+        );
+    }
+}
+
+#[test]
+fn revolve_zero_axis_direction_errors() {
+    let _serial = occt_guard();
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+
+    let err = kernel
+        .execute_solid_chain(
+            &[revolve(
+                vec![rect_wire(5.0, 0.0, 8.0, 4.0)],
+                [0.0, 0.0],
+                [0.0, 0.0],
+                180.0,
+                BooleanOp::NewSolid,
+            )],
+            &detail,
+        )
+        .expect_err("zero axis direction must fail");
+    assert!(
+        err.to_string().contains("axis"),
+        "error should mention the axis: {err}"
+    );
 }

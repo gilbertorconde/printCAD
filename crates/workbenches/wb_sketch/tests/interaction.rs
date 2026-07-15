@@ -409,6 +409,148 @@ fn overlays_are_generated_while_editing() {
 }
 
 #[test]
+fn polygon_tool_draws_closed_hexagon_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.polygon");
+    h.click(6.0, 0.0, "sketch.polygon");
+    let (p, l, c, a) = h.counts();
+    assert_eq!((p, l, c, a), (6, 6, 0, 0), "default 6 sides");
+    // Closed loop through shared vertices: the profile extractor accepts it.
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 6);
+}
+
+#[test]
+fn slot_tool_draws_closed_slot_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.slot");
+    h.click(12.0, 0.0, "sketch.slot");
+    let (p, l, c, a) = h.counts();
+    assert_eq!(
+        (p, l, c, a),
+        (6, 2, 0, 2),
+        "junctions + centers, sides, caps"
+    );
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 4);
+}
+
+#[test]
+fn fillet_tool_rounds_rectangle_corner_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    // Click the shared corner point with the fillet tool (default r=2).
+    h.click(12.0, 8.0, "sketch.fillet");
+    let (p, l, c, a) = h.counts();
+    assert_eq!((p, l, c, a), (6, 4, 0, 1), "corner replaced by arc");
+    let sketch = h.sketch();
+    assert_eq!(
+        sketch.constraints.len(),
+        4,
+        "rectangle H/V constraints survive the fillet"
+    );
+    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 5, "4 lines + 1 corner arc");
+}
+
+#[test]
+fn construction_action_toggles_selected_line() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    // Select the line mid-span, then fire the construction action (an
+    // Action tool arrives as the active tool for one input event).
+    h.click(5.0, 3.5, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.construction"));
+    let sketch = h.sketch();
+    let line_id = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .unwrap();
+    assert!(sketch.is_construction(line_id), "line flagged construction");
+    // Firing again flips it back.
+    h.key(KeyCode::A, Some("sketch.construction"));
+    assert!(!h.sketch().is_construction(line_id));
+}
+
+#[test]
+fn editing_a_dimension_constraint_re_solves_the_sketch() {
+    use wb_sketch::sketch::Constraint;
+
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    // Axis-snapped horizontal line: 10 long, auto Horizontal constraint.
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.05, "sketch.line");
+
+    // Add a Length constraint directly on the stored feature (the panel's
+    // "Add Constraint" buttons are egui-only) plus a fixed anchor.
+    let sketch = h.sketch();
+    let line = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let anchor = sketch.point_position(line.start).unwrap();
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    feature.sketch.constraints.push(Constraint::FixedPoint {
+        point: line.start,
+        position: anchor,
+    });
+    feature.sketch.constraints.push(Constraint::Length {
+        line: line.id,
+        length: 10.0,
+    });
+    let constraint_idx = feature.sketch.constraints.len() - 1;
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+
+    // Edit the dimension through the panel's code path: replace in place,
+    // re-solve, store.
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.active_document_object = h.active_object;
+    h.wb.update_constraint(
+        &mut ctx,
+        constraint_idx,
+        Constraint::Length {
+            line: line.id,
+            length: 20.0,
+        },
+    );
+
+    let sketch = h.sketch();
+    let start = sketch.point_position(line.start).unwrap().to_glam();
+    let end = sketch.point_position(line.end).unwrap().to_glam();
+    assert!(
+        ((end - start).length() - 20.0).abs() < 1e-3,
+        "line re-solved to the edited length, got {}",
+        (end - start).length()
+    );
+    assert!(
+        matches!(
+            sketch.constraints[constraint_idx],
+            Constraint::Length { length, .. } if (length - 20.0).abs() < 1e-6
+        ),
+        "constraint value stored"
+    );
+}
+
+#[test]
 fn no_geometry_created_without_active_sketch() {
     let mut h = Harness::new();
     // No create_sketch: clicks must be no-ops without a panic.

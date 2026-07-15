@@ -137,7 +137,7 @@ PrintcadOcctImportResult printcad_occt_tessellate_brep(
     double weld_angle_threshold_rad,
     int generate_boundary_edges);
 
-// ---- Sketch-profile extrusion (pad/pocket) ----
+// ---- Sketch-profile solid sweeps (pad/pocket/revolve/groove) ----
 
 // One profile segment in sketch-plane (u, v) millimetre coordinates.
 // kind 0 = line:   d = { start_u, start_v, end_u, end_v, 0, 0 }
@@ -164,12 +164,12 @@ typedef struct PcadProfilePlane {
     double normal[3];
 } PcadProfilePlane;
 
-// Result of one extrude step. On success `error` is null and `brep_blob` holds
-// the `BRepTools::Write` snapshot of the resulting solid; the `mesh_*` arrays
-// are populated only when `want_mesh != 0` (same layout as `PrintcadOcctBody`,
-// no per-vertex colours). On failure `error` is a malloc'd string and every
-// other field is null/zero.
-typedef struct PrintcadOcctExtrudeResult {
+// Result of one solid-sweep step. On success `error` is null and `brep_blob`
+// holds the `BRepTools::Write` snapshot of the resulting solid; the `mesh_*`
+// arrays are populated only when `want_mesh != 0` (same layout as
+// `PrintcadOcctBody`, no per-vertex colours). On failure `error` is a malloc'd
+// string and every other field is null/zero.
+typedef struct PrintcadOcctSweepResult {
     uint8_t* brep_blob;
     size_t brep_len;
     float* mesh_positions;
@@ -180,22 +180,39 @@ typedef struct PrintcadOcctExtrudeResult {
     size_t mesh_index_count;
     size_t mesh_edge_count;
     char* error;
-} PrintcadOcctExtrudeResult;
+} PrintcadOcctSweepResult;
 
-// Extrude a closed sketch profile into a prism and combine it with an optional
-// base solid. `op`: 0 = new solid (base_brep must be NULL), 1 = fuse,
-// 2 = cut (base_brep required for 1/2). `distance` is measured along
-// `plane->normal` and may be negative to extrude backwards. The largest-area
-// wire is the outer boundary; the remaining wires become holes. Tessellation
-// parameters mirror `printcad_occt_tessellate_brep` and are only used when
-// `want_mesh != 0`.
-PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
+// Sweep a closed sketch profile into a solid and combine it with an optional
+// base solid. The largest-area wire is the outer boundary; the remaining
+// wires become holes.
+//
+// `sweep_kind` selects how the profile face becomes a solid, with the scalar
+// parameters packed into `params[5]`:
+//   0 = extrude: params[0] = distance along `plane->normal` (may be negative
+//       to extrude backwards). When `symmetric != 0` the profile face is
+//       first translated by -distance/2 along the (unit) normal and then
+//       swept by the full distance so the solid straddles the sketch plane.
+//       Note a negative distance with `symmetric` shifts forwards and sweeps
+//       backwards, producing exactly the same solid as the positive distance.
+//   1 = revolve: params[0..1] = axis origin (u, v) and params[2..3] = axis
+//       direction (u, v), both in sketch-plane coordinates (the axis lies in
+//       the sketch plane); params[4] = angle in degrees, required in
+//       (0, 360]. Angles >= 359.999 degrees revolve a full turn. `symmetric`
+//       is ignored. A zero axis direction or an out-of-range angle fails
+//       with `error`; profiles crossing the axis surface OCCT's own failure.
+//
+// `op`: 0 = new solid (base_brep must be NULL), 1 = fuse, 2 = cut (base_brep
+// required for 1/2). Tessellation parameters mirror
+// `printcad_occt_tessellate_brep` and are only used when `want_mesh != 0`.
+PrintcadOcctSweepResult printcad_occt_sweep_profile(
     const uint8_t* base_brep,
     size_t base_brep_len,
     const PcadProfilePlane* plane,
     const PcadProfileWire* wires,
     size_t wire_count,
-    double distance,
+    int32_t sweep_kind,
+    const double params[5],
+    int symmetric,
     int32_t op,
     int want_mesh,
     int linear_deflection_mode,
@@ -207,7 +224,7 @@ PrintcadOcctExtrudeResult printcad_occt_extrude_profile(
 
 // Free helpers — every output buffer must be released exactly once.
 void printcad_occt_free_string(char* str);
-void printcad_occt_free_extrude_result(PrintcadOcctExtrudeResult result);
+void printcad_occt_free_sweep_result(PrintcadOcctSweepResult result);
 void printcad_occt_free_result(PrintcadOcctImportResult result);
 void printcad_occt_free_brep_import_result(PrintcadOcctBrepImportResult result);
 

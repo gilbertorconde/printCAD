@@ -5,7 +5,7 @@
 //! [`ExtrudeOp`] chain, and hands the chain to the kernel worker.
 
 use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
-use kernel_api::{BooleanOp, ExtrudeOp};
+use kernel_api::{BooleanOp, SolidOp, SweepKind};
 use wb_sketch::profile;
 use wb_sketch::SketchFeature;
 
@@ -50,10 +50,15 @@ pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
         .collect()
 }
 
-/// Convert a body's feature history into a kernel extrude chain. Returns an
+/// "Through all" pockets are approximated with a cut far longer than any
+/// printable part; a topological through-all needs face references that the
+/// feature model doesn't carry yet.
+const THROUGH_ALL_MM: f64 = 1.0e5;
+
+/// Convert a body's feature history into a kernel solid-op chain. Returns an
 /// empty chain when the body has no part features (the caller should clear
 /// its solid).
-pub fn body_build_ops(document: &Document, body: BodyId) -> Result<Vec<ExtrudeOp>, String> {
+pub fn body_build_ops(document: &Document, body: BodyId) -> Result<Vec<SolidOp>, String> {
     let features = part_features_of_body(document, body);
     let mut ops = Vec::with_capacity(features.len());
 
@@ -85,41 +90,106 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<Vec<ExtrudeOp
         })?;
         let plane = profile::plane_of(&sketch_feature.plane);
 
-        let (distance, op) = match feature {
+        if feature.is_subtractive() && ops.is_empty() {
+            return Err(format!(
+                "{} needs existing material; add a Pad or Revolution first",
+                feature.kind_label()
+            ));
+        }
+        let additive_boolean = if ops.is_empty() {
+            BooleanOp::NewSolid
+        } else {
+            BooleanOp::Fuse
+        };
+
+        let (kind, op) = match feature {
             PartFeature::Pad {
-                length, reversed, ..
+                length,
+                reversed,
+                symmetric,
+                ..
             } => {
                 let sign = if reversed { -1.0 } else { 1.0 };
-                let boolean = if ops.is_empty() {
-                    BooleanOp::NewSolid
-                } else {
-                    BooleanOp::Fuse
-                };
-                (f64::from(length) * sign, boolean)
+                (
+                    SweepKind::Extrude {
+                        distance: f64::from(length) * sign,
+                        symmetric,
+                    },
+                    additive_boolean,
+                )
             }
             PartFeature::Pocket {
-                depth, reversed, ..
+                depth,
+                reversed,
+                through_all,
+                ..
             } => {
-                if ops.is_empty() {
-                    return Err("Pocket needs existing material; add a Pad first".to_string());
-                }
                 let sign = if reversed { -1.0 } else { 1.0 };
-                (f64::from(depth) * sign, BooleanOp::Cut)
+                let distance = if through_all {
+                    THROUGH_ALL_MM * sign
+                } else {
+                    f64::from(depth) * sign
+                };
+                (
+                    SweepKind::Extrude {
+                        distance,
+                        symmetric: through_all,
+                    },
+                    BooleanOp::Cut,
+                )
             }
+            PartFeature::Revolution {
+                angle_deg,
+                axis,
+                reversed,
+                ..
+            } => (revolve_kind(axis, angle_deg, reversed)?, additive_boolean),
+            PartFeature::Groove {
+                angle_deg,
+                axis,
+                reversed,
+                ..
+            } => (revolve_kind(axis, angle_deg, reversed)?, BooleanOp::Cut),
         };
-        if distance.abs() < 1e-9 {
-            return Err(format!("{} has zero length", feature.kind_label()));
+
+        if let SweepKind::Extrude { distance, .. } = kind {
+            if distance.abs() < 1e-9 {
+                return Err(format!("{} has zero length", feature.kind_label()));
+            }
         }
 
-        ops.push(ExtrudeOp {
+        ops.push(SolidOp {
             plane,
             wires,
-            distance,
+            kind,
             op,
         });
     }
 
     Ok(ops)
+}
+
+/// Build the revolve sweep for a feature. `reversed` flips the axis so the
+/// sweep runs the other way around.
+fn revolve_kind(
+    axis: crate::feature::RevolveAxis,
+    angle_deg: f32,
+    reversed: bool,
+) -> Result<SweepKind, String> {
+    if !(angle_deg > 0.0 && angle_deg <= 360.0) {
+        return Err(format!(
+            "Revolution angle must be in (0, 360], got {angle_deg}"
+        ));
+    }
+    let mut dir = axis.dir_2d();
+    if reversed {
+        dir = [-dir[0], -dir[1]];
+    }
+    Ok(SweepKind::Revolve {
+        axis_origin: [0.0, 0.0],
+        axis_dir: dir,
+        angle_deg: f64::from(angle_deg),
+    })
 }
 
 /// Mark every part feature dirty (used after undo/redo jumps, where the
@@ -171,6 +241,7 @@ mod tests {
                 sketch: sketch_id,
                 length: 7.0,
                 reversed: false,
+                symmetric: false,
             },
             "Pad".into(),
             Some(body),
@@ -180,7 +251,10 @@ mod tests {
         let ops = body_build_ops(&doc, body).unwrap();
         assert_eq!(ops.len(), 1);
         assert_eq!(ops[0].op, BooleanOp::NewSolid);
-        assert!((ops[0].distance - 7.0).abs() < 1e-9);
+        assert!(matches!(
+            ops[0].kind,
+            SweepKind::Extrude { distance, symmetric: false } if (distance - 7.0).abs() < 1e-9
+        ));
         assert_eq!(ops[0].wires.len(), 1);
         assert_eq!(ops[0].wires[0].segments.len(), 4);
     }
@@ -193,16 +267,19 @@ mod tests {
                 sketch: sketch_id,
                 length: 5.0,
                 reversed: false,
+                symmetric: false,
             },
             PartFeature::Pad {
                 sketch: sketch_id,
                 length: 2.0,
                 reversed: true,
+                symmetric: false,
             },
             PartFeature::Pocket {
                 sketch: sketch_id,
                 depth: 3.0,
                 reversed: false,
+                through_all: false,
             },
         ] {
             let label = feature.kind_label().to_string();
@@ -212,7 +289,13 @@ mod tests {
         assert_eq!(ops.len(), 3);
         assert_eq!(ops[0].op, BooleanOp::NewSolid);
         assert_eq!(ops[1].op, BooleanOp::Fuse);
-        assert!(ops[1].distance < 0.0, "reversed pad extrudes backwards");
+        assert!(
+            matches!(
+                ops[1].kind,
+                SweepKind::Extrude { distance, .. } if distance < 0.0
+            ),
+            "reversed pad extrudes backwards"
+        );
         assert_eq!(ops[2].op, BooleanOp::Cut);
     }
 
@@ -224,13 +307,14 @@ mod tests {
                 sketch: sketch_id,
                 depth: 3.0,
                 reversed: false,
+                through_all: false,
             },
             "Pocket".into(),
             Some(body),
         )
         .unwrap();
         let err = body_build_ops(&doc, body).unwrap_err();
-        assert!(err.contains("Pad first"), "{err}");
+        assert!(err.contains("material"), "{err}");
     }
 
     #[test]
@@ -242,6 +326,7 @@ mod tests {
                     sketch: sketch_id,
                     length: 7.0,
                     reversed: false,
+                    symmetric: false,
                 },
                 "Pad".into(),
                 Some(body),
@@ -267,6 +352,7 @@ mod tests {
                     sketch: sketch_id,
                     length: 5.0,
                     reversed: false,
+                    symmetric: false,
                 },
                 "PadA".into(),
                 Some(body),
@@ -277,6 +363,7 @@ mod tests {
                 sketch: sketch_id,
                 length: 9.0,
                 reversed: false,
+                symmetric: false,
             },
             "PadB".into(),
             Some(body),
@@ -289,7 +376,119 @@ mod tests {
         assert_eq!(ops.len(), 1);
         // The remaining pad becomes the first op → NewSolid.
         assert_eq!(ops[0].op, BooleanOp::NewSolid);
-        assert!((ops[0].distance - 9.0).abs() < 1e-9);
+        assert!(matches!(
+            ops[0].kind,
+            SweepKind::Extrude { distance, .. } if (distance - 9.0).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn revolution_and_groove_map_to_revolve_kind() {
+        use crate::feature::RevolveAxis;
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(
+            PartFeature::Revolution {
+                sketch: sketch_id,
+                angle_deg: 270.0,
+                axis: RevolveAxis::SketchY,
+                reversed: false,
+            },
+            "Revolution".into(),
+            Some(body),
+        )
+        .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::Groove {
+                sketch: sketch_id,
+                angle_deg: 90.0,
+                axis: RevolveAxis::SketchX,
+                reversed: true,
+            },
+            "Groove".into(),
+            Some(body),
+        )
+        .unwrap();
+        let ops = body_build_ops(&doc, body).unwrap();
+        assert_eq!(ops.len(), 2);
+        assert_eq!(ops[0].op, BooleanOp::NewSolid);
+        assert!(matches!(
+            ops[0].kind,
+            SweepKind::Revolve { axis_dir: [x, y], angle_deg, .. }
+                if x.abs() < 1e-9 && (y - 1.0).abs() < 1e-9 && (angle_deg - 270.0).abs() < 1e-9
+        ));
+        assert_eq!(ops[1].op, BooleanOp::Cut);
+        assert!(
+            matches!(
+                ops[1].kind,
+                SweepKind::Revolve { axis_dir: [x, y], .. }
+                    if (x + 1.0).abs() < 1e-9 && y.abs() < 1e-9
+            ),
+            "reversed groove flips the axis"
+        );
+    }
+
+    #[test]
+    fn groove_first_is_an_error_and_bad_angle_rejected() {
+        use crate::feature::RevolveAxis;
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(
+            PartFeature::Groove {
+                sketch: sketch_id,
+                angle_deg: 90.0,
+                axis: RevolveAxis::SketchY,
+                reversed: false,
+            },
+            "Groove".into(),
+            Some(body),
+        )
+        .unwrap();
+        assert!(body_build_ops(&doc, body).unwrap_err().contains("material"));
+
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(
+            PartFeature::Revolution {
+                sketch: sketch_id,
+                angle_deg: 0.0,
+                axis: RevolveAxis::SketchY,
+                reversed: false,
+            },
+            "Revolution".into(),
+            Some(body),
+        )
+        .unwrap();
+        assert!(body_build_ops(&doc, body).unwrap_err().contains("angle"));
+    }
+
+    #[test]
+    fn through_all_pocket_uses_large_symmetric_cut() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(
+            PartFeature::Pad {
+                sketch: sketch_id,
+                length: 5.0,
+                reversed: false,
+                symmetric: false,
+            },
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::Pocket {
+                sketch: sketch_id,
+                depth: 1.0,
+                reversed: false,
+                through_all: true,
+            },
+            "Pocket".into(),
+            Some(body),
+        )
+        .unwrap();
+        let ops = body_build_ops(&doc, body).unwrap();
+        assert!(matches!(
+            ops[1].kind,
+            SweepKind::Extrude { distance, symmetric: true } if distance >= THROUGH_ALL_MM
+        ));
     }
 
     #[test]
@@ -309,6 +508,7 @@ mod tests {
                 sketch: open_id,
                 length: 7.0,
                 reversed: false,
+                symmetric: false,
             },
             "BadPad".into(),
             Some(body),

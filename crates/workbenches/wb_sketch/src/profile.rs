@@ -80,6 +80,11 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     let mut edges: Vec<EdgeCurve> = Vec::new();
 
     for geom in &sketch.geometry {
+        // Construction geometry is a drawing guide, never part of the
+        // profile (FreeCAD semantics).
+        if sketch.is_construction(geom.id()) {
+            continue;
+        }
         match geom {
             GeometryElement::Point(_) => {}
             GeometryElement::Circle(c) => {
@@ -292,6 +297,33 @@ mod tests {
         let mut sketch = Sketch::new("t");
         assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
         pt(&mut sketch, 1.0, 1.0);
+        assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
+    }
+
+    #[test]
+    fn construction_curves_are_ignored_by_profile() {
+        let mut sketch = Sketch::new("t");
+        let [a, _, c, _] = rectangle(&mut sketch);
+        // A construction diagonal through two rectangle corners would make
+        // the endpoint graph branch if it were considered part of the wire.
+        let diagonal = line(&mut sketch, a, c);
+        sketch.set_construction(diagonal, true);
+        // A construction circle must not become its own wire either.
+        let center = pt(&mut sketch, 5.0, 2.5);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
+        sketch.set_construction(circle, true);
+
+        let wires = extract_wires(&sketch).unwrap();
+        assert_eq!(wires.len(), 1, "only the rectangle remains");
+        assert_eq!(wires[0].segments.len(), 4);
+    }
+
+    #[test]
+    fn all_construction_geometry_yields_empty_error() {
+        let mut sketch = Sketch::new("t");
+        let center = pt(&mut sketch, 0.0, 0.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
+        sketch.set_construction(circle, true);
         assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
     }
 

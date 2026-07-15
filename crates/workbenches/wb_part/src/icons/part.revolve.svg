@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Profile revolved about a vertical axis -->
+  <line x1="12" y1="3" x2="12" y2="21" stroke="#FFFFFF" stroke-width="1.2" stroke-dasharray="2.5 2"/>
+  <path d="M14 6 L19 6 L19 14 L14 14 Z" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linejoin="round"/>
+  <path d="M9 18 A7 3 0 1 1 15 18.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
+  <path d="M15 18.5 L13.6 16.8 M15 18.5 L17 17.9" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
+</svg>

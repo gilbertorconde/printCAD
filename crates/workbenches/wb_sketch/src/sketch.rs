@@ -61,6 +61,12 @@ pub struct Sketch {
     pub constraints: Vec<Constraint>,
     /// Whether the sketch is fully constrained.
     pub is_fully_constrained: bool,
+    /// Ids of geometry flagged as construction (FreeCAD's "blue" geometry):
+    /// guides that snap, hit-test and constrain like normal geometry but are
+    /// excluded from profile extraction. Defaults to empty so sketches saved
+    /// before this field existed keep loading.
+    #[serde(default)]
+    pub construction: std::collections::HashSet<Uuid>,
 }
 
 impl Sketch {
@@ -72,6 +78,21 @@ impl Sketch {
             geometry: Vec::new(),
             constraints: Vec::new(),
             is_fully_constrained: false,
+            construction: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Whether `id` is flagged as construction geometry.
+    pub fn is_construction(&self, id: Uuid) -> bool {
+        self.construction.contains(&id)
+    }
+
+    /// Set or clear the construction flag on `id`.
+    pub fn set_construction(&mut self, id: Uuid, construction: bool) {
+        if construction {
+            self.construction.insert(id);
+        } else {
+            self.construction.remove(&id);
         }
     }
 
@@ -142,6 +163,7 @@ impl Sketch {
         self.geometry.retain(|g| !doomed.contains(&g.id()));
         self.constraints
             .retain(|c| !constraint_refs(c).iter().any(|id| doomed.contains(id)));
+        self.construction.retain(|id| !doomed.contains(id));
         removed
     }
 
@@ -180,6 +202,16 @@ pub fn constraint_refs(constraint: &Constraint) -> Vec<Uuid> {
         Constraint::Horizontal { element } | Constraint::Vertical { element } => vec![*element],
         Constraint::Distance { point1, point2, .. } => vec![*point1, *point2],
         Constraint::Angle { line1, line2, .. } => vec![*line1, *line2],
+        Constraint::Tangent {
+            line_or_circle1,
+            item2,
+        } => vec![*line_or_circle1, *item2],
+        Constraint::Symmetric {
+            point1,
+            point2,
+            line,
+        } => vec![*point1, *point2, *line],
+        Constraint::Midpoint { point, line } => vec![*point, *line],
     }
 }
 
@@ -202,6 +234,9 @@ pub fn constraint_label(constraint: &Constraint) -> String {
         Constraint::Angle { angle_rad, .. } => {
             format!("Angle {:.1}°", angle_rad.to_degrees())
         }
+        Constraint::Tangent { .. } => "Tangent".to_string(),
+        Constraint::Symmetric { .. } => "Symmetric".to_string(),
+        Constraint::Midpoint { .. } => "Midpoint".to_string(),
     }
 }
 
@@ -422,6 +457,70 @@ pub enum Constraint {
         line2: Uuid,
         angle_rad: f32,
     },
+    /// Tangency: a line tangent to a circle/arc, or two circles/arcs
+    /// tangent to each other (externally or internally, whichever is
+    /// closer to the current configuration when the solve starts).
+    Tangent { line_or_circle1: Uuid, item2: Uuid },
+    /// Two points mirror-symmetric about a line.
+    Symmetric {
+        point1: Uuid,
+        point2: Uuid,
+        line: Uuid,
+    },
+    /// Point sits at the midpoint of a line's endpoints.
+    Midpoint { point: Uuid, line: Uuid },
+}
+
+#[cfg(test)]
+mod construction_tests {
+    use super::*;
+
+    #[test]
+    fn construction_flag_round_trips() {
+        let mut sketch = Sketch::new("t");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+
+        assert!(!sketch.is_construction(line));
+        sketch.set_construction(line, true);
+        assert!(sketch.is_construction(line));
+        assert!(!sketch.is_construction(a), "flag applies per element");
+
+        // Survives serde round-trip.
+        let json = serde_json::to_value(&sketch).unwrap();
+        let restored: Sketch = serde_json::from_value(json).unwrap();
+        assert!(restored.is_construction(line));
+
+        sketch.set_construction(line, false);
+        assert!(!sketch.is_construction(line));
+    }
+
+    #[test]
+    fn old_json_without_construction_field_deserializes() {
+        // A sketch serialized before the `construction` field existed.
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "name": "legacy",
+            "plane": SketchPlane::xy(),
+            "geometry": [],
+            "constraints": [],
+            "is_fully_constrained": false,
+        });
+        let sketch: Sketch = serde_json::from_value(json).expect("legacy sketch loads");
+        assert!(sketch.construction.is_empty());
+    }
+
+    #[test]
+    fn cascade_delete_cleans_construction_set() {
+        let mut sketch = Sketch::new("t");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.set_construction(line, true);
+        sketch.remove_geometry_cascade(&[a]);
+        assert!(sketch.construction.is_empty());
+    }
 }
 
 #[cfg(test)]

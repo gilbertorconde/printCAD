@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Regular hexagon outline with center mark -->
+  <polygon points="20,12 16,18.9 8,18.9 4,12 8,5.1 16,5.1"
+           fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linejoin="round"/>
+  <circle cx="12" cy="12" r="1.5" fill="#FFFFFF"/>
+</svg>

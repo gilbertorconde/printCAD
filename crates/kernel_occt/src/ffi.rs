@@ -92,11 +92,11 @@ pub(crate) struct PcadProfilePlane {
     pub(crate) normal: [c_double; 3],
 }
 
-/// Result of one extrude step: `brep_blob` always on success; `mesh_*` arrays
-/// only when the call requested a mesh. Freed via
-/// `printcad_occt_free_extrude_result`.
+/// Result of one solid-sweep step: `brep_blob` always on success; `mesh_*`
+/// arrays only when the call requested a mesh. Freed via
+/// `printcad_occt_free_sweep_result`.
 #[repr(C)]
-pub(crate) struct PrintcadOcctExtrudeResult {
+pub(crate) struct PrintcadOcctSweepResult {
     pub(crate) brep_blob: *mut u8,
     pub(crate) brep_len: usize,
     pub(crate) mesh_positions: *mut f32,
@@ -144,13 +144,19 @@ extern "C" {
         generate_boundary_edges: c_int,
     ) -> PrintcadOcctImportResult;
 
-    pub(crate) fn printcad_occt_extrude_profile(
+    /// Sweep one profile into a solid and combine it with an optional base.
+    /// `sweep_kind` 0 = extrude (`params[0]` = distance, `symmetric` applies),
+    /// 1 = revolve (`params[0..2]` = axis origin uv, `params[2..4]` = axis
+    /// direction uv, `params[4]` = angle in degrees, required in (0, 360]).
+    pub(crate) fn printcad_occt_sweep_profile(
         base_brep: *const u8,
         base_brep_len: usize,
         plane: *const PcadProfilePlane,
         wires: *const PcadProfileWire,
         wire_count: usize,
-        distance: c_double,
+        sweep_kind: i32,
+        params: *const c_double,
+        symmetric: c_int,
         op: i32,
         want_mesh: c_int,
         linear_deflection_mode: c_int,
@@ -159,11 +165,11 @@ extern "C" {
         weld_cross_face: c_int,
         weld_angle_threshold_rad: c_double,
         generate_boundary_edges: c_int,
-    ) -> PrintcadOcctExtrudeResult;
+    ) -> PrintcadOcctSweepResult;
 
     pub(crate) fn printcad_occt_free_result(result: PrintcadOcctImportResult);
 
     pub(crate) fn printcad_occt_free_brep_import_result(result: PrintcadOcctBrepImportResult);
 
-    pub(crate) fn printcad_occt_free_extrude_result(result: PrintcadOcctExtrudeResult);
+    pub(crate) fn printcad_occt_free_sweep_result(result: PrintcadOcctSweepResult);
 }

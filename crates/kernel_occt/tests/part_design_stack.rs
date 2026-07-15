@@ -1,5 +1,5 @@
 //! Full-stack Part Design test: sketch geometry → Pad/Pocket features →
-//! `wb_part::body_build_ops` → `OcctKernel::execute_extrude_chain` → mesh.
+//! `wb_part::body_build_ops` → `OcctKernel::execute_solid_chain` → mesh.
 //! This exercises the exact pipeline the app's recompute driver runs.
 
 use std::sync::{Mutex, MutexGuard};
@@ -78,6 +78,7 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
             sketch: sketch_id,
             length: 8.0,
             reversed: false,
+            symmetric: false,
         },
         "Pad".into(),
         Some(body),
@@ -87,7 +88,7 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
     let ops = wb_part::body_build_ops(&doc, body).unwrap();
     let mut kernel = OcctKernel::new();
     let result = kernel
-        .execute_extrude_chain(&ops, &TessellationSettings::default())
+        .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
 
     assert!(!result.brep_blob.is_empty());
@@ -110,6 +111,7 @@ fn pocket_feature_cuts_into_the_pad() {
             sketch: rect_id,
             length: 6.0,
             reversed: false,
+            symmetric: false,
         },
         "Pad".into(),
         Some(body),
@@ -120,6 +122,7 @@ fn pocket_feature_cuts_into_the_pad() {
             sketch: hole_id,
             depth: 6.0,
             reversed: false,
+            through_all: false,
         },
         "Pocket".into(),
         Some(body),
@@ -133,9 +136,9 @@ fn pocket_feature_cuts_into_the_pad() {
     let detail = TessellationSettings::default();
 
     // Pad only.
-    let solid = kernel.execute_extrude_chain(&ops[..1], &detail).unwrap();
+    let solid = kernel.execute_solid_chain(&ops[..1], &detail).unwrap();
     // Pad + pocket: same bounds, more triangles (the bore adds a wall).
-    let with_hole = kernel.execute_extrude_chain(&ops, &detail).unwrap();
+    let with_hole = kernel.execute_solid_chain(&ops, &detail).unwrap();
 
     let (a_min, a_max) = mesh_bounds(&solid.mesh);
     let (b_min, b_max) = mesh_bounds(&with_hole.mesh);
@@ -169,6 +172,7 @@ fn pad_on_front_plane_extrudes_along_minus_y() {
             sketch: sketch_id,
             length: 6.0,
             reversed: false,
+            symmetric: false,
         },
         "Pad".into(),
         Some(body),
@@ -178,7 +182,7 @@ fn pad_on_front_plane_extrudes_along_minus_y() {
     let ops = wb_part::body_build_ops(&doc, body).unwrap();
     let mut kernel = OcctKernel::new();
     let result = kernel
-        .execute_extrude_chain(&ops, &TessellationSettings::default())
+        .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
     let (min, max) = mesh_bounds(&result.mesh);
     assert!((max[0] - min[0] - 10.0).abs() < 1e-3, "world X = sketch x");
@@ -197,6 +201,7 @@ fn editing_the_pad_length_changes_the_solid() {
                 sketch: sketch_id,
                 length: 8.0,
                 reversed: false,
+                symmetric: false,
             },
             "Pad".into(),
             Some(body),
@@ -211,6 +216,7 @@ fn editing_the_pad_length_changes_the_solid() {
             sketch: sketch_id,
             length: 3.0,
             reversed: true,
+            symmetric: false,
         }
         .to_json(),
     )
@@ -221,9 +227,86 @@ fn editing_the_pad_length_changes_the_solid() {
     let ops = wb_part::body_build_ops(&doc, body).unwrap();
     let mut kernel = OcctKernel::new();
     let result = kernel
-        .execute_extrude_chain(&ops, &TessellationSettings::default())
+        .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
     let (min, max) = mesh_bounds(&result.mesh);
     assert!((max[2] - min[2] - 3.0).abs() < 1e-3, "new length");
     assert!(max[2].abs() < 1e-3, "reversed: solid below the plane");
+}
+
+#[test]
+fn revolution_feature_builds_a_ring_through_the_full_stack() {
+    let _serial = occt_guard();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    // Rectangle x ∈ [5, 8], y ∈ [0, 2]: revolving about the sketch Y axis
+    // sweeps a ring of outer radius 8.
+    let mut sketch = Sketch::new("ring");
+    let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
+    let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(8.0, 0.0))));
+    let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(8.0, 2.0))));
+    let d = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 2.0))));
+    for (s, e) in [(a, b), (b, c), (c, d), (d, a)] {
+        sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
+    }
+    let plane = sketch.plane;
+    let sketch_id = doc
+        .add_feature_in_body(SketchFeature::new(sketch, plane), "ring".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        wb_part::PartFeature::Revolution {
+            sketch: sketch_id,
+            angle_deg: 360.0,
+            axis: wb_part::RevolveAxis::SketchY,
+            reversed: false,
+        },
+        "Revolution".into(),
+        Some(body),
+    )
+    .unwrap();
+
+    let ops = wb_part::body_build_ops(&doc, body).unwrap();
+    let mut kernel = OcctKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let (min, max) = mesh_bounds(&result.mesh);
+    // XY sketch plane, revolve about its y axis (world Y through origin):
+    // the swept ring spans ±8 in world X and Z, height 2 in world Y.
+    assert!(
+        (max[0] - 8.0).abs() < 0.1 && (min[0] + 8.0).abs() < 0.1,
+        "x span"
+    );
+    assert!(
+        (max[2] - 8.0).abs() < 0.1 && (min[2] + 8.0).abs() < 0.1,
+        "z span"
+    );
+    assert!((max[1] - min[1] - 2.0).abs() < 0.1, "height");
+}
+
+#[test]
+fn symmetric_pad_straddles_the_sketch_plane() {
+    let _serial = occt_guard();
+    let (mut doc, body, sketch_id) = setup(10.0, 5.0);
+    doc.add_feature_in_body(
+        PartFeature::Pad {
+            sketch: sketch_id,
+            length: 8.0,
+            reversed: false,
+            symmetric: true,
+        },
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap();
+    let mut kernel = OcctKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let (min, max) = mesh_bounds(&result.mesh);
+    assert!(
+        (max[2] - 4.0).abs() < 1e-3 && (min[2] + 4.0).abs() < 1e-3,
+        "±4 about the plane"
+    );
 }

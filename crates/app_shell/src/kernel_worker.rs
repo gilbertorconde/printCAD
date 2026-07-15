@@ -15,9 +15,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use kernel_api::{
-    ExtrudeOp, ImportedModel, Kernel, SolidBuildResult, TessellationSettings, TriMesh,
-};
+use kernel_api::{ImportedModel, Kernel, SolidBuildResult, SolidOp, TessellationSettings, TriMesh};
 use kernel_occt::OcctKernel;
 use tracing::info;
 use uuid::Uuid;
@@ -30,10 +28,10 @@ pub enum KernelRequest {
         path: PathBuf,
         detail: TessellationSettings,
     },
-    /// Rebuild a body's solid from its Part Design extrude chain.
+    /// Rebuild a body's solid from its Part Design feature chain.
     BuildSolid {
         body_id: Uuid,
-        ops: Vec<ExtrudeOp>,
+        ops: Vec<SolidOp>,
         detail: TessellationSettings,
     },
     /// Tessellate one body's BRep snapshot on the kernel thread. The blob
@@ -129,7 +127,7 @@ impl KernelWorker {
     pub fn request_build_solid(
         &mut self,
         body_id: Uuid,
-        ops: Vec<ExtrudeOp>,
+        ops: Vec<SolidOp>,
         detail: TessellationSettings,
     ) {
         if self
@@ -235,7 +233,7 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
                 detail,
             } => {
                 let started = Instant::now();
-                let resp = match kernel.execute_extrude_chain(&ops, &detail) {
+                let resp = match kernel.execute_solid_chain(&ops, &detail) {
                     Ok(result) => KernelResponse::SolidBuilt {
                         body_id,
                         result,

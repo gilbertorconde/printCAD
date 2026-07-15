@@ -12,9 +12,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use kernel_api::{
-    BodyHandle, BooleanOp, ExtrudeOp, ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind,
-    Kernel, KernelError, KernelResult, LinearDeflectionMode, ProfilePlane, ProfileSegment,
-    RebuildRequest, RebuildResponse, SolidBuildResult, TessellationSettings, TriMesh,
+    BodyHandle, BooleanOp, ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind, Kernel,
+    KernelError, KernelResult, LinearDeflectionMode, ProfilePlane, ProfileSegment, RebuildRequest,
+    RebuildResponse, SolidBuildResult, SolidOp, SweepKind, TessellationSettings, TriMesh,
 };
 use tracing::info;
 
@@ -82,16 +82,18 @@ impl OcctKernel {
         import_step_full_mesh_internal(path, detail)
     }
 
-    /// Execute a body's extrude chain: the first op must be NewSolid; each
-    /// subsequent op fuses/cuts against the accumulated solid. Returns the
-    /// final solid's BRep snapshot + render mesh.
-    pub fn execute_extrude_chain(
+    /// Execute a body's solid-op chain: the first op must be NewSolid; each
+    /// subsequent op fuses/cuts against the accumulated solid. Each op sweeps
+    /// its sketch profile per [`SweepKind`] (linear extrude, optionally
+    /// symmetric about the sketch plane, or revolve about an in-plane axis).
+    /// Returns the final solid's BRep snapshot + render mesh.
+    pub fn execute_solid_chain(
         &mut self,
-        ops: &[ExtrudeOp],
+        ops: &[SolidOp],
         detail: &TessellationSettings,
     ) -> Result<SolidBuildResult, KernelError> {
         self.initialize()?;
-        execute_extrude_chain_internal(ops, detail)
+        execute_solid_chain_internal(ops, detail)
     }
 }
 
@@ -227,21 +229,59 @@ fn boolean_op_to_ffi(op: BooleanOp) -> i32 {
     }
 }
 
-fn execute_extrude_chain_internal(
-    ops: &[ExtrudeOp],
+/// Pack a [`SweepKind`] into its C ABI encoding: `(kind, params[5], symmetric)`.
+///
+/// Extrude: `params[0]` = distance; a negative distance extrudes backwards.
+/// With `symmetric` the C++ shim translates the profile face by `-distance/2`
+/// along the unit normal before sweeping the full distance, so negative and
+/// positive distances of equal magnitude produce the identical solid.
+///
+/// Revolve: `params[0..2]` = axis origin (u, v), `params[2..4]` = axis
+/// direction (u, v) — both in sketch-plane coordinates — and `params[4]` =
+/// angle in degrees, validated by the shim to be in `(0, 360]`.
+fn sweep_kind_to_ffi(kind: &SweepKind) -> (i32, [f64; 5], c_int) {
+    match *kind {
+        SweepKind::Extrude {
+            distance,
+            symmetric,
+        } => (
+            0,
+            [distance, 0.0, 0.0, 0.0, 0.0],
+            if symmetric { 1 } else { 0 },
+        ),
+        SweepKind::Revolve {
+            axis_origin,
+            axis_dir,
+            angle_deg,
+        } => (
+            1,
+            [
+                axis_origin[0],
+                axis_origin[1],
+                axis_dir[0],
+                axis_dir[1],
+                angle_deg,
+            ],
+            0,
+        ),
+    }
+}
+
+fn execute_solid_chain_internal(
+    ops: &[SolidOp],
     detail: &TessellationSettings,
 ) -> KernelResult<SolidBuildResult> {
     if ops.is_empty() {
-        return Err(KernelError::InvalidInput("extrude chain is empty".into()));
+        return Err(KernelError::InvalidInput("solid-op chain is empty".into()));
     }
     if ops[0].op != BooleanOp::NewSolid {
         return Err(KernelError::InvalidInput(
-            "first extrude op in a chain must be NewSolid".into(),
+            "first solid op in a chain must be NewSolid".into(),
         ));
     }
     if let Some(offset) = ops[1..].iter().position(|op| op.op == BooleanOp::NewSolid) {
         return Err(KernelError::InvalidInput(format!(
-            "extrude op {} is NewSolid but only the first op in a chain may be",
+            "solid op {} is NewSolid but only the first op in a chain may be",
             offset + 1
         )));
     }
@@ -255,15 +295,15 @@ fn execute_extrude_chain_internal(
     let mut current_blob: Vec<u8> = Vec::new();
     let mut final_mesh = TriMesh::default();
 
-    for (index, extrude) in ops.iter().enumerate() {
-        if extrude.wires.is_empty() {
+    for (index, solid_op) in ops.iter().enumerate() {
+        if solid_op.wires.is_empty() {
             return Err(KernelError::InvalidInput(format!(
-                "extrude op {index} has no profile wires"
+                "solid op {index} has no profile wires"
             )));
         }
 
         // Segment arrays must outlive the FFI call; wires borrow into them.
-        let segment_storage: Vec<Vec<ffi::PcadProfileSegment>> = extrude
+        let segment_storage: Vec<Vec<ffi::PcadProfileSegment>> = solid_op
             .wires
             .iter()
             .map(|wire| wire.segments.iter().map(profile_segment_to_ffi).collect())
@@ -275,7 +315,8 @@ fn execute_extrude_chain_internal(
                 count: segments.len(),
             })
             .collect();
-        let plane = profile_plane_to_ffi(&extrude.plane);
+        let plane = profile_plane_to_ffi(&solid_op.plane);
+        let (sweep_kind, sweep_params, symmetric) = sweep_kind_to_ffi(&solid_op.kind);
 
         let is_last = index + 1 == ops.len();
         let (base_ptr, base_len) = if index == 0 {
@@ -285,14 +326,16 @@ fn execute_extrude_chain_internal(
         };
 
         let result = unsafe {
-            ffi::printcad_occt_extrude_profile(
+            ffi::printcad_occt_sweep_profile(
                 base_ptr,
                 base_len,
                 &plane,
                 ffi_wires.as_ptr(),
                 ffi_wires.len(),
-                extrude.distance,
-                boolean_op_to_ffi(extrude.op),
+                sweep_kind,
+                sweep_params.as_ptr(),
+                symmetric,
+                boolean_op_to_ffi(solid_op.op),
                 if is_last { 1 } else { 0 },
                 linear_mode,
                 linear_value,
@@ -307,15 +350,15 @@ fn execute_extrude_chain_internal(
             let message = unsafe { CStr::from_ptr(result.error) }
                 .to_string_lossy()
                 .into_owned();
-            unsafe { ffi::printcad_occt_free_extrude_result(result) };
+            unsafe { ffi::printcad_occt_free_sweep_result(result) };
             return Err(KernelError::InvalidInput(format!(
-                "extrude op {index}: {message}"
+                "solid op {index}: {message}"
             )));
         }
         if result.brep_blob.is_null() || result.brep_len == 0 {
-            unsafe { ffi::printcad_occt_free_extrude_result(result) };
+            unsafe { ffi::printcad_occt_free_sweep_result(result) };
             return Err(KernelError::InvalidInput(format!(
-                "extrude op {index} returned no BRep snapshot"
+                "solid op {index} returned no BRep snapshot"
             )));
         }
 
@@ -330,12 +373,12 @@ fn execute_extrude_chain_internal(
                 colors: Vec::new(),
             };
         }
-        unsafe { ffi::printcad_occt_free_extrude_result(result) };
+        unsafe { ffi::printcad_occt_free_sweep_result(result) };
     }
 
     if final_mesh.positions.is_empty() || final_mesh.indices.is_empty() {
         return Err(KernelError::InvalidInput(
-            "extrude chain produced an empty render mesh".into(),
+            "solid-op chain produced an empty render mesh".into(),
         ));
     }
 

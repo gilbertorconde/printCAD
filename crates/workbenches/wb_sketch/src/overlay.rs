@@ -13,9 +13,10 @@ use uuid::Uuid;
 
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
 use crate::snap::{arc_angles, SnapTarget};
-use crate::tools::ToolState;
+use crate::tools::{polygon_vertices, slot_corners, ToolParams, ToolState};
 
 pub const COLOR_GEOMETRY: [f32; 3] = [0.92, 0.92, 0.92];
+pub const COLOR_CONSTRUCTION: [f32; 3] = [0.4, 0.55, 0.95];
 pub const COLOR_SELECTED: [f32; 3] = [0.35, 0.95, 0.45];
 pub const COLOR_HOVERED: [f32; 3] = [1.0, 0.75, 0.2];
 pub const COLOR_PREVIEW: [f32; 3] = [0.55, 0.75, 1.0];
@@ -129,13 +130,22 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
     })
 }
 
-fn element_color(id: Uuid, selected: &HashSet<Uuid>, hovered: Option<Uuid>) -> [f32; 3] {
+/// Color + thickness for one element. Selection and hover win; otherwise
+/// construction geometry is drawn blue and thinner (FreeCAD convention).
+fn element_style(
+    sketch: &Sketch,
+    id: Uuid,
+    selected: &HashSet<Uuid>,
+    hovered: Option<Uuid>,
+) -> ([f32; 3], f32) {
     if selected.contains(&id) {
-        COLOR_SELECTED
+        (COLOR_SELECTED, 2.0)
     } else if hovered == Some(id) {
-        COLOR_HOVERED
+        (COLOR_HOVERED, 2.0)
+    } else if sketch.is_construction(id) {
+        (COLOR_CONSTRUCTION, 1.0)
     } else {
-        COLOR_GEOMETRY
+        (COLOR_GEOMETRY, 2.0)
     }
 }
 
@@ -207,6 +217,7 @@ fn push_preview(
     sketch: &Sketch,
     state: &ToolState,
     cursor: Vec2D,
+    params: &ToolParams,
 ) {
     let pos = |t: &SnapTarget| t.position(sketch);
     match state {
@@ -255,6 +266,29 @@ fn push_preview(
                 push_point_marker(out, proj, c, COLOR_PREVIEW);
             }
         }
+        ToolState::PolygonCenter { center } => {
+            if let Some(c) = pos(center) {
+                if (cursor - c).to_glam().length() > 1e-6 {
+                    // The polygon rotates with the cursor: the first vertex
+                    // follows it exactly, like the committed shape will.
+                    let verts = polygon_vertices(c, cursor, params.polygon_sides);
+                    let closed = verts.iter().copied().chain(verts.first().copied());
+                    push_polyline(out, proj, closed, COLOR_PREVIEW, 1.5);
+                }
+                push_point_marker(out, proj, c, COLOR_PREVIEW);
+            }
+        }
+        ToolState::SlotFrom { from } => {
+            if let Some(a) = pos(from) {
+                if let Some((p1, p2, p3, p4)) = slot_corners(a, cursor, params.slot_width) {
+                    push_polyline(out, proj, [p1, p2].into_iter(), COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, [p3, p4].into_iter(), COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, arc_points(cursor, p3, p2), COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, arc_points(a, p1, p4), COLOR_PREVIEW, 1.5);
+                }
+                push_point_marker(out, proj, a, COLOR_PREVIEW);
+            }
+        }
     }
 }
 
@@ -266,6 +300,7 @@ pub fn build_overlays(
     hovered: Option<Uuid>,
     tool_state: &ToolState,
     cursor: Option<Vec2D>,
+    params: &ToolParams,
 ) -> Vec<ScreenSpaceOverlay> {
     let mut out = Vec::new();
     push_axes(&mut out, proj);
@@ -273,19 +308,19 @@ pub fn build_overlays(
     // Curves first, then points on top so vertices stay visible.
     for geom in &sketch.geometry {
         if !matches!(geom, GeometryElement::Point(_)) {
-            let color = element_color(geom.id(), selected, hovered);
-            push_element(&mut out, proj, sketch, geom, color, 2.0);
+            let (color, thickness) = element_style(sketch, geom.id(), selected, hovered);
+            push_element(&mut out, proj, sketch, geom, color, thickness);
         }
     }
     for geom in &sketch.geometry {
         if matches!(geom, GeometryElement::Point(_)) {
-            let color = element_color(geom.id(), selected, hovered);
-            push_element(&mut out, proj, sketch, geom, color, 2.0);
+            let (color, thickness) = element_style(sketch, geom.id(), selected, hovered);
+            push_element(&mut out, proj, sketch, geom, color, thickness);
         }
     }
 
     if let Some(cursor) = cursor {
-        push_preview(&mut out, proj, sketch, tool_state, cursor);
+        push_preview(&mut out, proj, sketch, tool_state, cursor, params);
     }
     out
 }

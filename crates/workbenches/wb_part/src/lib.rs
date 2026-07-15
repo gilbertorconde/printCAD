@@ -10,7 +10,7 @@ pub use build::{
     body_build_ops, mark_all_part_features_dirty, part_feature_ids, part_features_of_body,
     pending_body_rebuilds,
 };
-pub use feature::PartFeature;
+pub use feature::{PartFeature, RevolveAxis};
 
 use core_document::{
     BodyId, FeatureId, InputResult, ToolDescriptor, Workbench, WorkbenchContext,
@@ -26,6 +26,8 @@ pub struct PartDesignWorkbench;
 enum ExtrudeKind {
     Pad,
     Pocket,
+    Revolution,
+    Groove,
 }
 
 impl PartDesignWorkbench {
@@ -73,8 +75,9 @@ impl PartDesignWorkbench {
             ctx.log_warn("The selected sketch does not belong to a body");
             return InputResult::consumed();
         };
-        if kind == ExtrudeKind::Pocket && part_features_of_body(ctx.document, body).is_empty() {
-            ctx.log_warn("Pocket needs existing material; add a Pad first");
+        let subtractive = matches!(kind, ExtrudeKind::Pocket | ExtrudeKind::Groove);
+        if subtractive && part_features_of_body(ctx.document, body).is_empty() {
+            ctx.log_warn("This feature needs existing material; add a Pad or Revolution first");
             return InputResult::consumed();
         }
 
@@ -84,6 +87,7 @@ impl PartDesignWorkbench {
                     sketch: sketch_id,
                     length: 10.0,
                     reversed: false,
+                    symmetric: false,
                 },
                 "Pad",
             ),
@@ -92,8 +96,27 @@ impl PartDesignWorkbench {
                     sketch: sketch_id,
                     depth: 5.0,
                     reversed: false,
+                    through_all: false,
                 },
                 "Pocket",
+            ),
+            ExtrudeKind::Revolution => (
+                PartFeature::Revolution {
+                    sketch: sketch_id,
+                    angle_deg: 360.0,
+                    axis: RevolveAxis::default(),
+                    reversed: false,
+                },
+                "Revolution",
+            ),
+            ExtrudeKind::Groove => (
+                PartFeature::Groove {
+                    sketch: sketch_id,
+                    angle_deg: 360.0,
+                    axis: RevolveAxis::default(),
+                    reversed: false,
+                },
+                "Groove",
             ),
         };
         let name = Self::next_feature_name(ctx, base);
@@ -146,6 +169,16 @@ impl Workbench for PartDesignWorkbench {
             "Pocket (Cut)",
             Some("modeling"),
         ));
+        context.register_tool(ToolDescriptor::new_action(
+            "part.revolve",
+            "Revolution",
+            Some("modeling"),
+        ));
+        context.register_tool(ToolDescriptor::new_action(
+            "part.groove",
+            "Groove (Revolved Cut)",
+            Some("modeling"),
+        ));
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -164,6 +197,8 @@ impl Workbench for PartDesignWorkbench {
         match active_tool {
             Some("part.pad") => self.insert_extrude(ctx, ExtrudeKind::Pad),
             Some("part.pocket") => self.insert_extrude(ctx, ExtrudeKind::Pocket),
+            Some("part.revolve") => self.insert_extrude(ctx, ExtrudeKind::Revolution),
+            Some("part.groove") => self.insert_extrude(ctx, ExtrudeKind::Groove),
             Some("part.new_sketch") => {
                 let Some(body) = Self::target_body(ctx) else {
                     ctx.log_warn("Select a body (or one of its features) first");
@@ -188,8 +223,8 @@ impl Workbench for PartDesignWorkbench {
         match tool_id {
             "part.new_body" => true,
             "part.new_sketch" => Self::target_body(ctx).is_some(),
-            "part.pad" => Self::selected_sketch(ctx).is_some(),
-            "part.pocket" => {
+            "part.pad" | "part.revolve" => Self::selected_sketch(ctx).is_some(),
+            "part.pocket" | "part.groove" => {
                 let Some(body) = Self::target_body(ctx) else {
                     return false;
                 };
@@ -216,7 +251,18 @@ impl Workbench for PartDesignWorkbench {
             .find(|b| b.id == body)
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "Body".to_string());
-        ui.label(format!("Features of {body_name}"));
+        // Body rename.
+        let mut edited_body_name = body_name.clone();
+        ui.horizontal(|ui| {
+            ui.label("Body:");
+            if ui
+                .add(egui::TextEdit::singleline(&mut edited_body_name).desired_width(140.0))
+                .lost_focus()
+                && edited_body_name != body_name
+            {
+                ctx.document.rename_body(body, edited_body_name.clone());
+            }
+        });
         ui.separator();
 
         let features = part_features_of_body(ctx.document, body);
@@ -239,6 +285,8 @@ impl Workbench for PartDesignWorkbench {
                 .map(|n| (n.name.clone(), n.suppressed))
                 .unwrap_or_else(|| (part_feature.kind_label().to_string(), false));
             let mut edited = part_feature.clone();
+            let mut edited_name = node_name.clone();
+            let mut renamed = false;
             let changed = ui
                 .horizontal(|ui| {
                     if ui
@@ -248,28 +296,103 @@ impl Workbench for PartDesignWorkbench {
                     {
                         removed = Some((*feature_id, part_feature.sketch()));
                     }
-                    ui.label(&node_name);
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut edited_name).desired_width(80.0))
+                        .lost_focus()
+                        && edited_name != node_name
+                    {
+                        renamed = true;
+                    }
                     let mut changed = false;
-                    let (value, reversed) = match &mut edited {
+                    match &mut edited {
                         PartFeature::Pad {
-                            length, reversed, ..
-                        } => (length, reversed),
+                            length,
+                            reversed,
+                            symmetric,
+                            ..
+                        } => {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(length)
+                                        .speed(0.5)
+                                        .range(0.01..=1.0e6)
+                                        .suffix(" mm"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .checkbox(reversed, "rev")
+                                .on_hover_text("Extrude in the opposite direction")
+                                .changed();
+                            changed |= ui
+                                .checkbox(symmetric, "sym")
+                                .on_hover_text("Extrude half to each side of the plane")
+                                .changed();
+                        }
                         PartFeature::Pocket {
-                            depth, reversed, ..
-                        } => (depth, reversed),
-                    };
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(value)
-                                .speed(0.5)
-                                .range(0.01..=1.0e6)
-                                .suffix(" mm"),
-                        )
-                        .changed();
-                    changed |= ui
-                        .checkbox(reversed, "rev")
-                        .on_hover_text("Extrude in the opposite direction")
-                        .changed();
+                            depth,
+                            reversed,
+                            through_all,
+                            ..
+                        } => {
+                            changed |= ui
+                                .add_enabled(
+                                    !*through_all,
+                                    egui::DragValue::new(depth)
+                                        .speed(0.5)
+                                        .range(0.01..=1.0e6)
+                                        .suffix(" mm"),
+                                )
+                                .changed();
+                            changed |= ui
+                                .checkbox(reversed, "rev")
+                                .on_hover_text("Cut in the opposite direction")
+                                .changed();
+                            changed |= ui
+                                .checkbox(through_all, "thru")
+                                .on_hover_text("Cut through the entire body")
+                                .changed();
+                        }
+                        PartFeature::Revolution {
+                            angle_deg,
+                            axis,
+                            reversed,
+                            ..
+                        }
+                        | PartFeature::Groove {
+                            angle_deg,
+                            axis,
+                            reversed,
+                            ..
+                        } => {
+                            changed |= ui
+                                .add(
+                                    egui::DragValue::new(angle_deg)
+                                        .speed(1.0)
+                                        .range(0.1..=360.0)
+                                        .suffix("°"),
+                                )
+                                .changed();
+                            let other = match axis {
+                                RevolveAxis::SketchY => RevolveAxis::SketchX,
+                                RevolveAxis::SketchX => RevolveAxis::SketchY,
+                            };
+                            if ui
+                                .button(match axis {
+                                    RevolveAxis::SketchY => "Y",
+                                    RevolveAxis::SketchX => "X",
+                                })
+                                .on_hover_text(format!("Axis: {} (click to switch)", axis.label()))
+                                .clicked()
+                            {
+                                *axis = other;
+                                changed = true;
+                            }
+                            changed |= ui
+                                .checkbox(reversed, "rev")
+                                .on_hover_text("Revolve the other way around the axis")
+                                .changed();
+                        }
+                    }
                     let mut is_suppressed = suppressed;
                     if ui
                         .checkbox(&mut is_suppressed, "off")
@@ -281,6 +404,9 @@ impl Workbench for PartDesignWorkbench {
                     changed
                 })
                 .inner;
+            if renamed {
+                ctx.document.rename_feature(*feature_id, edited_name);
+            }
             if changed {
                 updated = Some((*feature_id, edited));
             }

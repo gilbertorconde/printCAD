@@ -331,6 +331,28 @@ impl Document {
         }
     }
 
+    /// Rename a feature (user-facing name in the tree and panels).
+    pub fn rename_feature(&mut self, feature_id: FeatureId, name: impl Into<String>) {
+        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+            let name = name.into();
+            if node.name != name && !name.trim().is_empty() {
+                node.name = name;
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Rename a body.
+    pub fn rename_body(&mut self, body: BodyId, name: impl Into<String>) {
+        if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == body) {
+            let name = name.into();
+            if entry.name != name && !name.trim().is_empty() {
+                entry.name = name;
+                self.mark_dirty();
+            }
+        }
+    }
+
     /// Suppress/unsuppress a feature (excluded from builds while suppressed).
     pub fn set_feature_suppressed(&mut self, feature_id: FeatureId, suppressed: bool) {
         if let Some(node) = self.feature_tree.get_node_mut(feature_id) {

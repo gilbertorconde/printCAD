@@ -17,7 +17,7 @@ pub use feature::SketchFeature;
 use overlay::SketchProjector;
 use sketch::{Constraint, GeometryElement, Sketch, SketchPlane, Vec2D};
 use solver::SolveOutcome;
-use tools::ToolState;
+use tools::{ToolParams, ToolState};
 use uuid::Uuid;
 
 /// Snap / hit-test tolerance in screen pixels, converted to sketch units
@@ -78,6 +78,12 @@ pub struct SketchWorkbench {
     cursor: Option<Vec2D>,
     /// Panel drafts for dimensional constraints.
     drafts: ConstraintDrafts,
+    /// Panel-editable tool parameters (polygon sides, slot width, fillet
+    /// radius).
+    tool_params: ToolParams,
+    /// Most recent sketch tool seen in `on_input`; used by the left panel to
+    /// show the matching tool settings.
+    last_tool: Option<String>,
     /// Last solver outcome, surfaced in the panel.
     last_solve: Option<SolveOutcome>,
 }
@@ -245,8 +251,14 @@ impl SketchWorkbench {
 
         match tool {
             Some(t) if t != "sketch.select" => {
-                let effect =
-                    tools::handle_click(&mut self.tool_state, t, &mut feature.sketch, cursor, tol);
+                let effect = tools::handle_click(
+                    &mut self.tool_state,
+                    t,
+                    &mut feature.sketch,
+                    cursor,
+                    tol,
+                    &self.tool_params,
+                );
                 if effect.changed {
                     self.solve(ctx, &mut feature);
                     if let Some(log) = effect.log {
@@ -357,6 +369,31 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// Toggle the construction flag on every selected element (the
+    /// `sketch.construction` action tool, applied like Delete).
+    fn toggle_construction_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.selected.is_empty() {
+            ctx.log_warn("Select geometry first to toggle construction mode");
+            return InputResult::consumed();
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let mut toggled = 0usize;
+        for id in &self.selected {
+            if feature.sketch.get_geometry(*id).is_some() {
+                let flag = !feature.sketch.is_construction(*id);
+                feature.sketch.set_construction(*id, flag);
+                toggled += 1;
+            }
+        }
+        if toggled > 0 {
+            ctx.log_info(format!("Toggled construction on {toggled} element(s)"));
+            self.store_sketch(ctx, feature);
+        }
+        InputResult::consumed()
+    }
+
     fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         if let Some(drag) = self.dragging.take() {
             // Restore the pre-drag position.
@@ -384,6 +421,27 @@ impl SketchWorkbench {
             self.selected.clear();
         }
         InputResult::consumed()
+    }
+
+    /// Replace the constraint at `idx` with `constraint`, then re-solve and
+    /// persist. Backs the panel's inline dimension editing (FreeCAD-style
+    /// editable dimensions): the constraint is edited in place, no extra
+    /// state is kept.
+    pub fn update_constraint(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        idx: usize,
+        constraint: Constraint,
+    ) {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some(slot) = feature.sketch.constraints.get_mut(idx) else {
+            return;
+        };
+        *slot = constraint;
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// Add a constraint from the panel, then re-solve and persist.
@@ -429,11 +487,27 @@ impl Workbench for SketchWorkbench {
             Some("sketch"),
         ));
         context.register_tool(ToolDescriptor::new(
+            "sketch.polygon",
+            "Polygon",
+            Some("sketch"),
+        ));
+        context.register_tool(ToolDescriptor::new("sketch.slot", "Slot", Some("sketch")));
+        context.register_tool(ToolDescriptor::new(
             "sketch.circle",
             "Circle",
             Some("sketch"),
         ));
         context.register_tool(ToolDescriptor::new("sketch.arc", "Arc", Some("sketch")));
+        context.register_tool(ToolDescriptor::new(
+            "sketch.fillet",
+            "Fillet",
+            Some("sketch"),
+        ));
+        context.register_tool(ToolDescriptor::new_action(
+            "sketch.construction",
+            "Toggle Construction",
+            Some("sketch"),
+        ));
         // The solver runs automatically after every geometry/constraint
         // edit, so no explicit solve command is registered.
         context.register_command(CommandDescriptor::new("sketch.finish", "Finish Sketch"));
@@ -490,12 +564,22 @@ impl Workbench for SketchWorkbench {
             return InputResult::ignored();
         }
 
+        // Action tool: flip the construction flag on the selection.
+        if active_tool == Some("sketch.construction") {
+            return self.toggle_construction_selected(ctx);
+        }
+
         // Every remaining interaction needs an editing sketch. `None`
         // active tool behaves as select mode.
         let tool = match active_tool {
             Some(t) if t.starts_with("sketch.") => Some(t),
             _ => None,
         };
+        // Remember the tool so the left panel can surface its settings
+        // (polygon sides, slot width, fillet radius).
+        if self.last_tool.as_deref() != tool {
+            self.last_tool = tool.map(str::to_string);
+        }
 
         match event {
             WorkbenchInputEvent::MousePress {
@@ -589,6 +673,7 @@ impl Workbench for SketchWorkbench {
         if let Some(status) = self.tool_state.status() {
             ui.colored_label(egui::Color32::from_rgb(140, 190, 255), status);
         }
+        self.tool_settings_ui(ui);
 
         let dof = solver::dof_estimate(sketch);
         let (dof_text, dof_color) = if sketch.constraints.is_empty() {
@@ -618,6 +703,7 @@ impl Workbench for SketchWorkbench {
         ui.separator();
         ui.heading("Constraints");
         let mut delete_constraint: Option<usize> = None;
+        let mut edited_constraint: Option<(usize, Constraint)> = None;
         if sketch.constraints.is_empty() {
             ui.label("None yet. Select geometry to add constraints.");
         } else {
@@ -634,7 +720,9 @@ impl Workbench for SketchWorkbench {
                             {
                                 delete_constraint = Some(idx);
                             }
-                            ui.label(sketch::constraint_label(constraint));
+                            if let Some(edited) = constraint_row(ui, constraint) {
+                                edited_constraint = Some((idx, edited));
+                            }
                         });
                     }
                 });
@@ -645,6 +733,9 @@ impl Workbench for SketchWorkbench {
                 self.solve(ctx, &mut feature);
                 self.store_sketch(ctx, feature);
             }
+        }
+        if let Some((idx, constraint)) = edited_constraint {
+            self.update_constraint(ctx, idx, constraint);
         }
 
         ui.separator();
@@ -731,12 +822,52 @@ impl Workbench for SketchWorkbench {
             self.hovered,
             &self.tool_state,
             self.cursor,
+            &self.tool_params,
         )
     }
 }
 
 #[cfg(feature = "egui")]
 impl SketchWorkbench {
+    /// Settings for the active drawing tool (shown while it is selected).
+    fn tool_settings_ui(&mut self, ui: &mut egui::Ui) {
+        match self.last_tool.as_deref() {
+            Some("sketch.polygon") => {
+                ui.horizontal(|ui| {
+                    ui.label("Sides:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.tool_params.polygon_sides)
+                            .speed(0.1)
+                            .range(3..=12),
+                    );
+                });
+            }
+            Some("sketch.slot") => {
+                ui.horizontal(|ui| {
+                    ui.label("Width:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.tool_params.slot_width)
+                            .speed(0.1)
+                            .range(0.001..=1.0e6)
+                            .suffix(" mm"),
+                    );
+                });
+            }
+            Some("sketch.fillet") => {
+                ui.horizontal(|ui| {
+                    ui.label("Radius:");
+                    ui.add(
+                        egui::DragValue::new(&mut self.tool_params.fillet_radius)
+                            .speed(0.1)
+                            .range(0.001..=1.0e6)
+                            .suffix(" mm"),
+                    );
+                });
+            }
+            _ => {}
+        }
+    }
+
     /// Constraint buttons applicable to the current selection.
     fn constraint_buttons(
         &mut self,
@@ -850,10 +981,30 @@ impl SketchWorkbench {
                 }
             });
         }
-        if circles.len() == 2 && selected.len() == 2 && ui.button("Equal radius").clicked() {
-            pending = Some(Constraint::EqualRadius {
-                circle1: circles[0],
-                circle2: circles[1],
+        if circles.len() == 2 && selected.len() == 2 {
+            ui.horizontal(|ui| {
+                if ui.button("Equal radius").clicked() {
+                    pending = Some(Constraint::EqualRadius {
+                        circle1: circles[0],
+                        circle2: circles[1],
+                    });
+                }
+                if ui.button("Tangent").clicked() {
+                    pending = Some(Constraint::Tangent {
+                        line_or_circle1: circles[0],
+                        item2: circles[1],
+                    });
+                }
+            });
+        }
+        if lines.len() == 1
+            && circles.len() == 1
+            && selected.len() == 2
+            && ui.button("Tangent").clicked()
+        {
+            pending = Some(Constraint::Tangent {
+                line_or_circle1: lines[0],
+                item2: circles[0],
             });
         }
         if points.len() == 2 && selected.len() == 2 {
@@ -880,13 +1031,30 @@ impl SketchWorkbench {
                 }
             });
         }
-        if points.len() == 1
+        if points.len() == 1 && lines.len() == 1 && selected.len() == 2 {
+            ui.horizontal(|ui| {
+                if ui.button("Point on line").clicked() {
+                    pending = Some(Constraint::PointOnLine {
+                        point: points[0],
+                        line: lines[0],
+                    });
+                }
+                if ui.button("Midpoint").clicked() {
+                    pending = Some(Constraint::Midpoint {
+                        point: points[0],
+                        line: lines[0],
+                    });
+                }
+            });
+        }
+        if points.len() == 2
             && lines.len() == 1
-            && selected.len() == 2
-            && ui.button("Point on line").clicked()
+            && selected.len() == 3
+            && ui.button("Symmetric").clicked()
         {
-            pending = Some(Constraint::PointOnLine {
-                point: points[0],
+            pending = Some(Constraint::Symmetric {
+                point1: points[0],
+                point2: points[1],
                 line: lines[0],
             });
         }
@@ -932,8 +1100,68 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     }
 }
 
+/// One row of the constraint list. Dimensional constraints (Length, Radius,
+/// Distance, Angle) render an inline DragValue; editing it returns the
+/// updated constraint so the caller can re-solve and persist. Everything
+/// else renders as a plain label and returns `None`.
+#[cfg(feature = "egui")]
+fn constraint_row(ui: &mut egui::Ui, constraint: &Constraint) -> Option<Constraint> {
+    let dim_value = |ui: &mut egui::Ui, label: &str, value: f32| -> Option<f32> {
+        ui.label(label);
+        let mut v = value;
+        ui.add(egui::DragValue::new(&mut v).speed(0.1).range(0.001..=1.0e6))
+            .changed()
+            .then_some(v)
+    };
+    match *constraint {
+        Constraint::Length { line, length } => {
+            dim_value(ui, "Length", length).map(|length| Constraint::Length { line, length })
+        }
+        Constraint::Radius { circle, radius } => {
+            dim_value(ui, "Radius", radius).map(|radius| Constraint::Radius { circle, radius })
+        }
+        Constraint::Distance {
+            point1,
+            point2,
+            distance,
+        } => dim_value(ui, "Distance", distance).map(|distance| Constraint::Distance {
+            point1,
+            point2,
+            distance,
+        }),
+        Constraint::Angle {
+            line1,
+            line2,
+            angle_rad,
+        } => {
+            ui.label("Angle");
+            let mut deg = angle_rad.to_degrees();
+            ui.add(egui::DragValue::new(&mut deg).speed(1.0).suffix("°"))
+                .changed()
+                .then(|| Constraint::Angle {
+                    line1,
+                    line2,
+                    angle_rad: deg.to_radians(),
+                })
+        }
+        ref other => {
+            ui.label(sketch::constraint_label(other));
+            None
+        }
+    }
+}
+
 #[cfg(feature = "egui")]
 fn describe_geometry(sketch: &Sketch, element: &GeometryElement) -> String {
+    let mut text = describe_geometry_base(sketch, element);
+    if sketch.is_construction(element.id()) {
+        text.push_str(" (construction)");
+    }
+    text
+}
+
+#[cfg(feature = "egui")]
+fn describe_geometry_base(sketch: &Sketch, element: &GeometryElement) -> String {
     match element {
         GeometryElement::Point(point) => {
             format!("Point ({:.2}, {:.2})", point.position.x, point.position.y)

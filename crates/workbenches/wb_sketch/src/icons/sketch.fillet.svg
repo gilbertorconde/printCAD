@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- Two perpendicular lines joined by a tangent arc (rounded corner) -->
+  <path d="M5 6 V12 A6 6 0 0 0 11 18 H19"
+        fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="5" cy="6" r="1.5" fill="#FFFFFF"/>
+  <circle cx="19" cy="18" r="1.5" fill="#FFFFFF"/>
+</svg>

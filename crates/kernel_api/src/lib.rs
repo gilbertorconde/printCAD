@@ -323,19 +323,36 @@ pub enum BooleanOp {
     Cut,
 }
 
-/// A single sketch-profile extrusion step in a body's build history.
+/// How a profile is swept into a solid.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SweepKind {
+    /// Linear extrusion along `plane.normal`; negative extrudes backwards.
+    Extrude {
+        distance: f64,
+        /// Extrude half the distance to each side of the sketch plane.
+        symmetric: bool,
+    },
+    /// Revolution about an axis lying IN the sketch plane, given in sketch
+    /// 2D coordinates (point + direction). `angle_deg` in (0, 360].
+    Revolve {
+        axis_origin: [f64; 2],
+        axis_dir: [f64; 2],
+        angle_deg: f64,
+    },
+}
+
+/// A single sketch-profile solid step in a body's build history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ExtrudeOp {
+pub struct SolidOp {
     pub plane: ProfilePlane,
     /// Closed wires; the largest-area wire is the outer boundary, the rest
     /// become holes.
     pub wires: Vec<ProfileWire>,
-    /// Extrusion length along `plane.normal`; negative extrudes backwards.
-    pub distance: f64,
+    pub kind: SweepKind,
     pub op: BooleanOp,
 }
 
-/// Result of executing a body's extrude chain.
+/// Result of executing a body's solid-op chain.
 #[derive(Debug, Clone, Default)]
 pub struct SolidBuildResult {
     /// OCCT BRep snapshot of the final solid (for later re-tessellation,
