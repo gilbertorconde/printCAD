@@ -196,6 +196,86 @@ fn revolve_kind(
     })
 }
 
+/// Sketches available in a body (id + display name), for re-attachment.
+pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, String)> {
+    let mut sketches: Vec<(u64, FeatureId, String)> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body == Some(body))
+        .map(|(id, n)| (n.seq, *id, n.name.clone()))
+        .collect();
+    sketches.sort_by_key(|(seq, _, _)| *seq);
+    sketches.into_iter().map(|(_, id, n)| (id, n)).collect()
+}
+
+/// Point a part feature at a different sketch: updates the payload, rewires
+/// the dependency edge, hides the new sketch (it's consumed) and reveals
+/// the old one when nothing else consumes it, then marks for rebuild.
+pub fn retarget_feature_sketch(
+    document: &mut Document,
+    feature_id: FeatureId,
+    new_sketch: FeatureId,
+) -> Result<(), String> {
+    let data = document
+        .get_feature_data(feature_id)
+        .ok_or("feature not found")?;
+    let mut feature = PartFeature::from_json(data).map_err(|e| e.to_string())?;
+    let old_sketch = feature.sketch();
+    if old_sketch == new_sketch {
+        return Ok(());
+    }
+    match &mut feature {
+        PartFeature::Pad { sketch, .. }
+        | PartFeature::Pocket { sketch, .. }
+        | PartFeature::Revolution { sketch, .. }
+        | PartFeature::Groove { sketch, .. } => *sketch = new_sketch,
+    }
+    document
+        .update_feature_data(feature_id, feature.to_json())
+        .map_err(|e| e.to_string())?;
+    document.set_feature_dependencies(feature_id, vec![new_sketch]);
+    document.set_feature_visible(new_sketch, false);
+    // Reveal the old sketch only if no remaining part feature consumes it.
+    let still_consumed = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(id, n)| n.workbench_id.as_str() == "wb.part" && **id != feature_id)
+        .filter_map(|(_, n)| PartFeature::from_json(&n.data).ok())
+        .any(|f| f.sketch() == old_sketch);
+    if !still_consumed {
+        document.set_feature_visible(old_sketch, true);
+    }
+    Ok(())
+}
+
+/// Human description of the plane a feature's sketch sits on.
+pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> String {
+    use wb_sketch::sketch::SketchPlane;
+    let Some(data) = document.get_feature_data(sketch) else {
+        return "missing sketch".to_string();
+    };
+    let Ok(feature) = SketchFeature::from_json(data) else {
+        return "invalid sketch".to_string();
+    };
+    let p = feature.plane;
+    let close = |a: [f32; 3], b: [f32; 3]| {
+        (a[0] - b[0]).abs() < 1e-5 && (a[1] - b[1]).abs() < 1e-5 && (a[2] - b[2]).abs() < 1e-5
+    };
+    for (preset, label) in [
+        (SketchPlane::xy(), "Top (XY)"),
+        (SketchPlane::xz(), "Front (XZ)"),
+        (SketchPlane::yz(), "Side (YZ)"),
+    ] {
+        if close(p.origin, preset.origin) && close(p.normal, preset.normal) {
+            return label.to_string();
+        }
+    }
+    format!(
+        "Face @ ({:.1}, {:.1}, {:.1})  n=({:.2}, {:.2}, {:.2})",
+        p.origin[0], p.origin[1], p.origin[2], p.normal[0], p.normal[1], p.normal[2]
+    )
+}
+
 /// Mark every part feature dirty (used after undo/redo jumps, where the
 /// applied solid geometry may no longer match the restored feature state).
 pub fn mark_all_part_features_dirty(document: &mut Document) {
@@ -537,6 +617,66 @@ mod tests {
             ops[1].kind,
             SweepKind::Extrude { distance, symmetric: true } if distance.abs() >= THROUGH_ALL_MM
         ));
+    }
+
+    #[test]
+    fn retarget_moves_dependency_and_visibility() {
+        let (mut doc, body, sketch_a) = doc_with_body_sketch();
+        let sketch_b = doc
+            .add_feature_in_body(rect_sketch(), "sketch_b".into(), Some(body))
+            .unwrap();
+        let pad = doc
+            .add_feature_in_body(
+                PartFeature::Pad {
+                    sketch: sketch_a,
+                    length: 5.0,
+                    reversed: false,
+                    symmetric: false,
+                },
+                "Pad".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.set_feature_visible(sketch_a, false);
+        doc.clear_feature_dirty(pad);
+
+        retarget_feature_sketch(&mut doc, pad, sketch_b).unwrap();
+
+        assert_eq!(doc.feature_tree().dependencies(pad), vec![sketch_b]);
+        assert!(
+            doc.get_feature_meta(sketch_a).unwrap().visible,
+            "old sketch revealed"
+        );
+        assert!(
+            !doc.get_feature_meta(sketch_b).unwrap().visible,
+            "new sketch consumed"
+        );
+        assert!(
+            doc.get_feature_meta(pad).unwrap().dirty,
+            "rebuild scheduled"
+        );
+        // Editing the NEW sketch dirties the pad through the rewired edge.
+        doc.clear_feature_dirty(pad);
+        doc.mark_feature_dirty(sketch_b);
+        assert!(doc.get_feature_meta(pad).unwrap().dirty);
+        // The old edge is gone.
+        doc.clear_feature_dirty(pad);
+        doc.clear_feature_dirty(sketch_b);
+        doc.mark_feature_dirty(sketch_a);
+        assert!(!doc.get_feature_meta(pad).unwrap().dirty);
+    }
+
+    #[test]
+    fn sketches_of_body_lists_in_creation_order() {
+        let (mut doc, body, first) = doc_with_body_sketch();
+        let second = doc
+            .add_feature_in_body(rect_sketch(), "second".into(), Some(body))
+            .unwrap();
+        let list = sketches_of_body(&doc, body);
+        assert_eq!(
+            list.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![first, second]
+        );
     }
 
     #[test]

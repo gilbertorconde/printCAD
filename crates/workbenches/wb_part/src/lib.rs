@@ -8,7 +8,7 @@ mod feature;
 
 pub use build::{
     body_build_ops, mark_all_part_features_dirty, part_feature_ids, part_features_of_body,
-    pending_body_rebuilds,
+    pending_body_rebuilds, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{PartFeature, RevolveAxis};
 
@@ -41,14 +41,22 @@ impl PartDesignWorkbench {
     /// The body the current selection belongs to: the selected sketch's
     /// owning body, or the selected body itself.
     fn target_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
-        if let Some(sketch_id) = Self::selected_sketch(ctx) {
-            if let Some(node) = ctx.document.get_feature_meta(sketch_id) {
+        // Any selected feature (sketch OR part operation) carries its body.
+        if let Some(id) = ctx.active_document_object {
+            if let Some(node) = ctx.document.get_feature_meta(id) {
                 if node.body.is_some() {
                     return node.body;
                 }
             }
         }
         ctx.selected_body_id.map(BodyId)
+    }
+
+    /// The part feature currently selected in the tree, if any.
+    fn selected_part_feature(ctx: &WorkbenchRuntimeContext) -> Option<FeatureId> {
+        let id = ctx.active_document_object?;
+        let node = ctx.document.get_feature_meta(id)?;
+        (node.workbench_id.as_str() == "wb.part").then_some(id)
     }
 
     fn next_feature_name(ctx: &WorkbenchRuntimeContext, base: &str) -> String {
@@ -285,8 +293,7 @@ impl Workbench for PartDesignWorkbench {
                 .map(|n| (n.name.clone(), n.suppressed))
                 .unwrap_or_else(|| (part_feature.kind_label().to_string(), false));
             let mut edited = part_feature.clone();
-            let mut edited_name = node_name.clone();
-            let mut renamed = false;
+            let is_active = ctx.active_document_object == Some(*feature_id);
             let changed = ui
                 .horizontal(|ui| {
                     if ui
@@ -297,11 +304,11 @@ impl Workbench for PartDesignWorkbench {
                         removed = Some((*feature_id, part_feature.sketch()));
                     }
                     if ui
-                        .add(egui::TextEdit::singleline(&mut edited_name).desired_width(80.0))
-                        .lost_focus()
-                        && edited_name != node_name
+                        .selectable_label(is_active, &node_name)
+                        .on_hover_text("Click to edit this operation's settings")
+                        .clicked()
                     {
-                        renamed = true;
+                        ctx.active_document_object = Some(*feature_id);
                     }
                     let mut changed = false;
                     match &mut edited {
@@ -404,9 +411,6 @@ impl Workbench for PartDesignWorkbench {
                     changed
                 })
                 .inner;
-            if renamed {
-                ctx.document.rename_feature(*feature_id, edited_name);
-            }
             if changed {
                 updated = Some((*feature_id, edited));
             }
@@ -425,6 +429,66 @@ impl Workbench for PartDesignWorkbench {
                 ctx.document.mark_feature_dirty(feature_id);
             }
         }
+        // ---- Detail editor for the operation selected in the tree ----
+        if let Some(feature_id) = Self::selected_part_feature(ctx) {
+            if let Some((part_feature, node_name)) = ctx
+                .document
+                .get_feature_meta(feature_id)
+                .filter(|n| n.body == Some(body))
+                .map(|n| (PartFeature::from_json(&n.data).ok(), n.name.clone()))
+                .and_then(|(f, n)| f.map(|f| (f, n)))
+            {
+                ui.separator();
+                ui.heading(format!("{} settings", part_feature.kind_label()));
+
+                let mut edited_name = node_name.clone();
+                ui.horizontal(|ui| {
+                    ui.label("Name:");
+                    if ui
+                        .add(egui::TextEdit::singleline(&mut edited_name).desired_width(140.0))
+                        .lost_focus()
+                        && edited_name != node_name
+                    {
+                        ctx.document.rename_feature(feature_id, edited_name);
+                    }
+                });
+
+                // Attachment: which sketch, on which plane — retargetable.
+                let sketch_id = part_feature.sketch();
+                let sketches = sketches_of_body(ctx.document, body);
+                let current_name = sketches
+                    .iter()
+                    .find(|(id, _)| *id == sketch_id)
+                    .map(|(_, n)| n.clone())
+                    .unwrap_or_else(|| "(missing)".to_string());
+                let mut retarget: Option<FeatureId> = None;
+                ui.horizontal(|ui| {
+                    ui.label("Sketch:");
+                    egui::ComboBox::from_id_salt(("feature_sketch", feature_id))
+                        .selected_text(current_name)
+                        .show_ui(ui, |ui| {
+                            for (id, name) in &sketches {
+                                if ui.selectable_label(*id == sketch_id, name).clicked()
+                                    && *id != sketch_id
+                                {
+                                    retarget = Some(*id);
+                                }
+                            }
+                        });
+                });
+                ui.label(format!(
+                    "Plane: {}",
+                    sketch_plane_description(ctx.document, sketch_id)
+                ));
+                if let Some(new_sketch) = retarget {
+                    match retarget_feature_sketch(ctx.document, feature_id, new_sketch) {
+                        Ok(()) => ctx.log_info("Re-attached feature to a different sketch"),
+                        Err(e) => ctx.log_error(format!("Re-attach failed: {e}")),
+                    }
+                }
+            }
+        }
+
         if let Some((feature_id, sketch_id)) = removed {
             if ctx.document.remove_feature(feature_id).is_ok() {
                 ctx.log_info("Deleted feature");

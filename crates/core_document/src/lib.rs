@@ -331,6 +331,12 @@ impl Document {
         }
     }
 
+    /// Rewire a feature's dependencies (marks it dirty for recompute).
+    pub fn set_feature_dependencies(&mut self, feature_id: FeatureId, deps: Vec<FeatureId>) {
+        self.feature_tree.set_dependencies(feature_id, deps);
+        self.mark_feature_dirty(feature_id);
+    }
+
     /// Rename a feature (user-facing name in the tree and panels).
     pub fn rename_feature(&mut self, feature_id: FeatureId, name: impl Into<String>) {
         if let Some(node) = self.feature_tree.get_node_mut(feature_id) {

@@ -261,6 +261,27 @@ impl FeatureTree {
         result
     }
 
+    /// Replace a node's dependency edges (e.g. a Pad re-targeted onto a
+    /// different sketch). Fixes both edge directions and root bookkeeping.
+    pub fn set_dependencies(&mut self, id: FeatureId, new_deps: Vec<FeatureId>) {
+        if !self.features.contains_key(&id) {
+            return;
+        }
+        // Drop old reverse edges.
+        for deps in self.dependents.values_mut() {
+            deps.retain(|&d| d != id);
+        }
+        self.dependencies.remove(&id);
+        self.roots.retain(|&r| r != id);
+        if new_deps.is_empty() {
+            self.roots.push(id);
+        } else {
+            for dep in new_deps {
+                self.add_dependency(id, dep);
+            }
+        }
+    }
+
     /// Remove a node and every dependency-graph edge that references it.
     /// Returns false when the id is unknown.
     pub fn remove_node(&mut self, id: FeatureId) -> bool {
