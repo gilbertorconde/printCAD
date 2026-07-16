@@ -48,11 +48,16 @@ fn rect_sketch(width: f32, height: f32) -> SketchFeature {
     SketchFeature::new(sketch, plane)
 }
 
-fn circle_sketch(cx: f32, cy: f32, r: f32) -> SketchFeature {
+fn circle_sketch_on(
+    plane: wb_sketch::sketch::SketchPlane,
+    cx: f32,
+    cy: f32,
+    r: f32,
+) -> SketchFeature {
     let mut sketch = Sketch::new("c");
+    sketch.plane = plane;
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(cx, cy))));
     sketch.add_geometry(GeometryElement::Circle(Circle::new(center, r)));
-    let plane = sketch.plane;
     SketchFeature::new(sketch, plane)
 }
 
@@ -99,12 +104,22 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
     assert!(min[2].abs() < 1e-3, "starts on the sketch plane");
 }
 
+/// Regression for the reported "pocket did nothing" bug: a sketch drawn on
+/// the TOP FACE of a pad has its normal pointing out of the material; the
+/// pocket must cut against that normal (into the pad) by default.
 #[test]
 fn pocket_feature_cuts_into_the_pad() {
     let _serial = occt_guard();
     let (mut doc, body, rect_id) = setup(20.0, 20.0);
+    // The hole sketch sits on the pad's top face (z = 6, normal +Z), exactly
+    // as produced by clicking the face and choosing "Selected face".
+    let top_face = wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let hole_id = doc
-        .add_feature_in_body(circle_sketch(10.0, 10.0, 3.0), "hole".into(), Some(body))
+        .add_feature_in_body(
+            circle_sketch_on(top_face, 0.0, 0.0, 3.0),
+            "hole".into(),
+            Some(body),
+        )
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::Pad {

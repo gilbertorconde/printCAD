@@ -124,7 +124,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<Vec<SolidOp>,
                 through_all,
                 ..
             } => {
-                let sign = if reversed { -1.0 } else { 1.0 };
+                // FreeCAD convention: a pocket cuts OPPOSITE the sketch
+                // normal — a sketch on a solid's face has its normal
+                // pointing out of the material, so the default digs in.
+                // `reversed` flips to cut along +normal.
+                let sign = if reversed { 1.0 } else { -1.0 };
                 let distance = if through_all {
                     THROUGH_ALL_MM * sign
                 } else {
@@ -460,6 +464,50 @@ mod tests {
     }
 
     #[test]
+    fn pocket_defaults_to_cutting_against_the_sketch_normal() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        for (reversed, name) in [(false, "Pocket"), (true, "PocketRev")] {
+            doc.add_feature_in_body(
+                PartFeature::Pad {
+                    sketch: sketch_id,
+                    length: 5.0,
+                    reversed: false,
+                    symmetric: false,
+                },
+                format!("Pad{name}"),
+                Some(body),
+            )
+            .unwrap();
+            doc.add_feature_in_body(
+                PartFeature::Pocket {
+                    sketch: sketch_id,
+                    depth: 3.0,
+                    reversed,
+                    through_all: false,
+                },
+                name.to_string(),
+                Some(body),
+            )
+            .unwrap();
+        }
+        let ops = body_build_ops(&doc, body).unwrap();
+        assert!(
+            matches!(
+                ops[1].kind,
+                SweepKind::Extrude { distance, .. } if distance < 0.0
+            ),
+            "default pocket cuts against the normal (into a face's material)"
+        );
+        assert!(
+            matches!(
+                ops[3].kind,
+                SweepKind::Extrude { distance, .. } if distance > 0.0
+            ),
+            "reversed pocket cuts along the normal"
+        );
+    }
+
+    #[test]
     fn through_all_pocket_uses_large_symmetric_cut() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         doc.add_feature_in_body(
@@ -487,7 +535,7 @@ mod tests {
         let ops = body_build_ops(&doc, body).unwrap();
         assert!(matches!(
             ops[1].kind,
-            SweepKind::Extrude { distance, symmetric: true } if distance >= THROUGH_ALL_MM
+            SweepKind::Extrude { distance, symmetric: true } if distance.abs() >= THROUGH_ALL_MM
         ));
     }
 
