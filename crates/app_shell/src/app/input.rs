@@ -360,7 +360,7 @@ impl PrintCadApp {
                 return true;
             }
 
-            // FreeCAD-style: the first click selects the FACE under the
+            // Face-first selection: the first click selects the FACE under the
             // cursor; a double click promotes to the whole body.
             let now = Instant::now();
             let is_double = self

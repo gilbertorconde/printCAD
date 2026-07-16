@@ -1,9 +1,9 @@
 //! Screen-space overlay generation for the sketch under edit.
 //!
 //! While a sketch is being edited its geometry is drawn as constant-width
-//! 2D lines (crisp at any zoom, like FreeCAD's edit mode); the 3D
+//! 2D lines (crisp at any zoom); the 3D
 //! tessellation is used only for sketches *not* being edited. Colors follow
-//! FreeCAD conventions loosely: white geometry, green selection, orange
+//! a common CAD palette: white geometry, green selection, orange
 //! hover, pale-blue tool preview.
 
 use std::collections::HashSet;
@@ -172,7 +172,7 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
 
 /// Color + thickness + dashing for one element. Selection and hover win;
 /// otherwise construction geometry is drawn blue, thinner and dashed
-/// (FreeCAD convention, made unmistakable by the dashes).
+/// (made unmistakable by the dashes).
 fn element_style(
     sketch: &Sketch,
     id: Uuid,

@@ -177,7 +177,7 @@ fn handle_line_click(
             let end_id = materialize(sketch, end);
             let line_id = sketch.add_geometry(GeometryElement::Line(Line::new(start_id, end_id)));
 
-            // Auto-constraint on axis-snapped segments (FreeCAD behaviour),
+            // Auto-constraint on axis-snapped segments,
             // only when the end point wasn't itself snapped to existing
             // geometry (which takes priority over the axis).
             let mut log = format!(

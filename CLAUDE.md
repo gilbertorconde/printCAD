@@ -1,7 +1,12 @@
 # printCAD — agent notes
 
-Linux-native parametric CAD app (FreeCAD-inspired, aimed at FDM/SLA printing).
+Linux-native parametric CAD app aimed at FDM/SLA printing.
 Rust workspace + Vulkan (ash) + egui + OpenCASCADE via a hand-written C++ shim.
+
+**Never reference FreeCAD by name** anywhere in the project — no code,
+comments, identifiers, file or folder names, docs, UI strings, or commit
+messages. Describe conventions on their own terms, not by attribution.
+(This line is the single sanctioned mention.)
 
 ## Commands
 
@@ -71,8 +76,8 @@ sidecar → rendered/picked like any body.
 - **Sketch endpoint snapping REUSES point ids** — that shared-vertex topology
   is what makes profiles closed for `profile::extract_wires`. Don't create
   coincident duplicate points.
-- **Pocket/Groove cut AGAINST the sketch normal by default** (FreeCAD
-  convention — a face sketch's normal points out of the material).
+- **Pocket/Groove cut AGAINST the sketch normal by default** (a face
+  sketch's normal points out of the material, so the default digs in).
 - **NDC is Y-down**: the camera bakes the Vulkan Y flip into `view_proj`.
   Transform helpers live in `core_document::runtime` (ctx methods + free
   functions) — mirror them, never re-derive with a different convention.

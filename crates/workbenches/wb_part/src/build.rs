@@ -124,7 +124,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<Vec<SolidOp>,
                 through_all,
                 ..
             } => {
-                // FreeCAD convention: a pocket cuts OPPOSITE the sketch
+                // A pocket cuts OPPOSITE the sketch
                 // normal — a sketch on a solid's face has its normal
                 // pointing out of the material, so the default digs in.
                 // `reversed` flips to cut along +normal.

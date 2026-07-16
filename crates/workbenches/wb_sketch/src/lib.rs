@@ -543,8 +543,8 @@ impl SketchWorkbench {
     }
 
     /// Replace the constraint at `idx` with `constraint`, then re-solve and
-    /// persist. Backs the panel's inline dimension editing (FreeCAD-style
-    /// editable dimensions): the constraint is edited in place, no extra
+    /// persist. Backs the panel's inline dimension editing: the constraint
+    /// is edited in place, no extra
     /// state is kept.
     pub fn update_constraint(
         &mut self,

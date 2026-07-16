@@ -61,7 +61,7 @@ pub struct Sketch {
     pub constraints: Vec<Constraint>,
     /// Whether the sketch is fully constrained.
     pub is_fully_constrained: bool,
-    /// Ids of geometry flagged as construction (FreeCAD's "blue" geometry):
+    /// Ids of geometry flagged as construction:
     /// guides that snap, hit-test and constrain like normal geometry but are
     /// excluded from profile extraction. Defaults to empty so sketches saved
     /// before this field existed keep loading.
@@ -131,7 +131,7 @@ impl Sketch {
         }
     }
 
-    /// Remove elements by id with FreeCAD-style cascade semantics:
+    /// Remove elements by id with cascade semantics:
     /// - removing a point also removes every curve that references it;
     /// - removing a curve leaves its points in place (they may be shared);
     /// - constraints referencing any removed element are dropped.

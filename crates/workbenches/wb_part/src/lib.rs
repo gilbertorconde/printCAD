@@ -135,7 +135,7 @@ impl PartDesignWorkbench {
         {
             Ok(feature_id) => {
                 ctx.document.mark_feature_dirty(feature_id);
-                // FreeCAD-style: the consumed sketch is hidden; the solid
+                // The consumed sketch is hidden; the solid
                 // takes over visually.
                 ctx.document.set_feature_visible(sketch_id, false);
                 ctx.active_document_object = Some(feature_id);

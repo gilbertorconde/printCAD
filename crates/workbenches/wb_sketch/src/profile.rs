@@ -81,7 +81,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
 
     for geom in &sketch.geometry {
         // Construction geometry is a drawing guide, never part of the
-        // profile (FreeCAD semantics).
+        // profile.
         if sketch.is_construction(geom.id()) {
             continue;
         }

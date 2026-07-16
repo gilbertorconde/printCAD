@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// origin).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RevolveAxis {
-    /// The sketch's vertical (y) axis — FreeCAD's default.
+    /// The sketch's vertical (y) axis (the default).
     #[default]
     SketchY,
     /// The sketch's horizontal (x) axis.
@@ -66,7 +66,7 @@ pub enum PartFeature {
         #[serde(default)]
         reversed: bool,
     },
-    /// Revolve the sketch profile and subtract it (FreeCAD's Groove).
+    /// Revolve the sketch profile and subtract it.
     Groove {
         sketch: FeatureId,
         angle_deg: f32,

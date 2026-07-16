@@ -3,7 +3,7 @@
 //!
 //! Tests run against the committed fixture in `tests/data/box.step` by
 //! default; set `PRINTCAD_TEST_STEP_FILE` to exercise a richer model (e.g. a
-//! KiCad or FreeCAD sample with assemblies and colors).
+//! KiCad sample with assemblies and colors).
 
 use kernel_api::{Kernel, TessellationSettings};
 use kernel_occt::OcctKernel;

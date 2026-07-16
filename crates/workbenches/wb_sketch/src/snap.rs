@@ -58,7 +58,7 @@ pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f32, exclude: &[Uuid])
 /// While drawing from `from`, snap `cursor` onto the horizontal/vertical
 /// axis through `from` when it is within `tol` of it. Returns the adjusted
 /// position and which axis was snapped (used to auto-add the matching
-/// constraint, mirroring FreeCAD's auto-constraints).
+/// constraint).
 pub fn snap_axis(from: Vec2D, cursor: Vec2D, tol: f32) -> (Vec2D, Option<AxisSnap>) {
     let dx = (cursor.x - from.x).abs();
     let dy = (cursor.y - from.y).abs();
