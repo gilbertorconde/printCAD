@@ -475,41 +475,62 @@ impl PrintCadApp {
     }
 
     /// Derive the face (surface point + normal) under the cursor from the
-    /// picked body's mesh: the GPU pick gives an exact on-surface world
-    /// position; the closest triangle's geometric normal identifies the
-    /// face plane. Runs only on selection clicks, so a linear scan is fine.
+    /// picked body's mesh. Runs only on selection clicks, so a linear scan
+    /// is fine.
     fn face_hit_under_cursor(&self, body: Uuid) -> Option<core_document::FaceRef> {
         let point = glam::Vec3::from_array(self.hovered_world_pos?);
         let geometry = self
             .document
             .imported_geometry(core_document::BodyId(body))?;
-        let mesh = &geometry.mesh;
-
-        let mut best: Option<(f32, glam::Vec3)> = None;
-        for tri in mesh.indices.chunks_exact(3) {
-            let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
-            let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
-            let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
-            let normal = (b - a).cross(c - a);
-            if normal.length_squared() < 1e-12 {
-                continue;
-            }
-            let d = point_triangle_distance_sq(point, a, b, c);
-            if best.map(|(bd, _)| d < bd).unwrap_or(true) {
-                best = Some((d, normal.normalize()));
-            }
-        }
-        let (dist_sq, normal) = best?;
-        // The pick position must actually lie on the surface (guards against
-        // stale hover data).
-        if dist_sq > 0.5 {
-            return None;
-        }
-        Some(core_document::FaceRef {
-            point: point.to_array(),
-            normal: normal.to_array(),
-        })
+        face_ref_from_mesh(&geometry.mesh, point)
     }
+}
+
+/// Resolve a picked world position to a face reference on `mesh`.
+///
+/// The GPU pick reconstructs the position from the depth buffer, whose
+/// precision varies with view angle and distance — the raw point can sit a
+/// millimetre or more off the surface (which used to make face selection
+/// fail on some faces and silently fall back to whole-body selection). So:
+/// find the nearest triangle, take the face plane from ITS exact vertices,
+/// and project the picked point onto that plane.
+pub(crate) fn face_ref_from_mesh(
+    mesh: &kernel_api::TriMesh,
+    point: glam::Vec3,
+) -> Option<core_document::FaceRef> {
+    let mut best: Option<(f32, glam::Vec3, glam::Vec3)> = None; // (dist2, anchor, normal)
+    for tri in mesh.indices.chunks_exact(3) {
+        let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
+        let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
+        let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
+        let normal = (b - a).cross(c - a);
+        if normal.length_squared() < 1e-12 {
+            continue;
+        }
+        let d = point_triangle_distance_sq(point, a, b, c);
+        if best.map(|(bd, _, _)| d < bd).unwrap_or(true) {
+            best = Some((d, a, normal.normalize()));
+        }
+    }
+    let (dist_sq, anchor, normal) = best?;
+
+    // Sanity bound relative to the model size: the pick already identified
+    // this body, so the nearest triangle is the right face unless the
+    // position is wildly stale.
+    let (min, max) = mesh.bounds()?;
+    let diag = (glam::Vec3::from_array(max) - glam::Vec3::from_array(min)).length();
+    let limit = (diag * 0.05).max(1.0);
+    if dist_sq > limit * limit {
+        return None;
+    }
+
+    // Project the noisy picked point onto the triangle's exact plane so the
+    // face plane (and any sketch placed on it) is depth-error free.
+    let projected = point - normal * (point - anchor).dot(normal);
+    Some(core_document::FaceRef {
+        point: projected.to_array(),
+        normal: normal.to_array(),
+    })
 }
 
 /// Coplanar-region sub-mesh extracted around a face hit, used to render a
@@ -656,6 +677,30 @@ mod tests {
             sub.positions.iter().all(|p| (p[2] - 1.05).abs() < 1e-4),
             "lifted 0.05 along the normal"
         );
+    }
+
+    #[test]
+    fn noisy_pick_point_still_resolves_the_face() {
+        use super::face_ref_from_mesh;
+        let mesh = two_face_mesh();
+        // Simulate depth-buffer error: 0.4 above the top face.
+        let face = face_ref_from_mesh(&mesh, glam::Vec3::new(0.5, 0.5, 1.4)).unwrap();
+        assert!((glam::Vec3::from_array(face.normal) - glam::Vec3::Z).length() < 1e-4);
+        assert!(
+            (face.point[2] - 1.0).abs() < 1e-4,
+            "point projected onto the exact face plane: {:?}",
+            face.point
+        );
+        // And extraction from the projected point succeeds.
+        let sub = coplanar_face_submesh(&mesh, face.point, face.normal).unwrap();
+        assert_eq!(sub.indices.len(), 6);
+    }
+
+    #[test]
+    fn wildly_stale_point_is_rejected() {
+        use super::face_ref_from_mesh;
+        let mesh = two_face_mesh();
+        assert!(face_ref_from_mesh(&mesh, glam::Vec3::new(50.0, 50.0, 50.0)).is_none());
     }
 
     #[test]
