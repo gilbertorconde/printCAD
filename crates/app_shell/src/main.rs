@@ -182,6 +182,16 @@ struct PrintCadApp {
     /// Face under the most recent body selection click (surface point +
     /// normal derived from the picked mesh triangle).
     last_face_hit: Option<(Uuid, core_document::FaceRef)>,
+    /// Extracted coplanar sub-mesh of the selected face, rendered as a
+    /// highlight overlay. Present only while a face (not the whole body)
+    /// is the selection.
+    face_highlight: Option<app::input::FaceHighlight>,
+    /// Sketch feature under the cursor (CPU hit-test, drives hover tint).
+    hovered_sketch: Option<core_document::FeatureId>,
+    /// Stable renderer id for the face-highlight overlay slot.
+    face_highlight_id: Uuid,
+    /// Timestamp + target of the last selection click (double-click detect).
+    last_select_click: Option<(Instant, Uuid)>,
     /// Workbench to return to when sketch editing finishes, when the sketch
     /// flow was started from another workbench (e.g. Part Design).
     return_workbench: Option<ActiveWorkbench>,
@@ -238,6 +248,10 @@ impl PrintCadApp {
             modifiers: winit::keyboard::ModifiersState::default(),
             pending_sketch_creation: None,
             last_face_hit: None,
+            face_highlight: None,
+            hovered_sketch: None,
+            face_highlight_id: Uuid::new_v4(),
+            last_select_click: None,
             return_workbench: None,
         }
     }

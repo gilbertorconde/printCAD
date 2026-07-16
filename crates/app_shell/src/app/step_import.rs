@@ -131,6 +131,11 @@ impl PrintCadApp {
                             face_colors_path: None,
                         },
                     );
+                    if self.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
+                        // The face sub-mesh belongs to the replaced solid.
+                        self.face_highlight = None;
+                        self.last_face_hit = None;
+                    }
                     app_log::info(format!(
                         "Rebuilt `{}` in {:.0}ms",
                         self.document

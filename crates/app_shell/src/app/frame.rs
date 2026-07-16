@@ -336,11 +336,27 @@ impl PrintCadApp {
                 // renderer skips the upload when the sketch is unchanged.
                 let revision = hash_revision(&node.data);
 
+                // Match the in-edit overlay palette: white geometry,
+                // orange hover, green selection. Color is baked directly so
+                // the tint is unmistakable even on hairline geometry.
+                let is_selected = self.active_document_object == Some(*feature_id)
+                    || self.tree_selection == Some(crate::ui::TreeItemId::Feature(*feature_id));
+                let is_hovered = self.hovered_sketch == Some(*feature_id);
+                let color = if is_selected {
+                    [0.35, 0.95, 0.45]
+                } else if is_hovered {
+                    [1.0, 0.75, 0.2]
+                } else {
+                    [0.85, 0.85, 0.85]
+                };
+                // The tint participates in the cache revision so hover /
+                // selection transitions actually re-upload the color.
+                let state_bits = (is_selected as u64) | ((is_hovered as u64) << 1);
                 Some(BodySubmission {
                     id: feature_id.0,
-                    revision,
+                    revision: revision ^ (state_bits << 62),
                     mesh: Arc::new(mesh),
-                    color: [0.2, 0.8, 0.2],
+                    color,
                     highlight: HighlightState::None,
                     is_wireframe: false,
                 })
@@ -356,7 +372,14 @@ impl PrintCadApp {
             .imported_geometries()
             .filter(|(body_id, _)| self.document.imported_body_effective_visible(**body_id))
             .map(|(body_id, geometry)| {
-                let is_selected = self.selected_body == Some(body_id.0);
+                // While a single FACE is the selection, the body itself is
+                // not tinted — only the face overlay below highlights.
+                let face_only = self
+                    .face_highlight
+                    .as_ref()
+                    .map(|f| f.body == body_id.0)
+                    .unwrap_or(false);
+                let is_selected = self.selected_body == Some(body_id.0) && !face_only;
                 let is_hovered = self.hovered_body == Some(body_id.0);
                 let highlight = match (is_selected, is_hovered) {
                     (true, true) => HighlightState::HoveredAndSelected,
@@ -426,6 +449,19 @@ impl PrintCadApp {
         let mut all_meshes = sketch_meshes;
         all_meshes.extend(imported_meshes);
         all_meshes.append(&mut overlay_meshes);
+
+        // Selected-face highlight: the coplanar sub-mesh, slightly lifted
+        // off the surface, in the selection green.
+        if let Some(face) = &self.face_highlight {
+            all_meshes.push(BodySubmission {
+                id: self.face_highlight_id,
+                revision: face.revision,
+                mesh: Arc::clone(&face.mesh),
+                color: [0.35, 0.95, 0.45],
+                highlight: HighlightState::None,
+                is_wireframe: false,
+            });
+        }
 
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();

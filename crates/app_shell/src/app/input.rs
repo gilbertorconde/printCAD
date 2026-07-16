@@ -10,6 +10,7 @@ use winit::{
 
 use core_document::WorkbenchFeature;
 use render_vk::RenderBackend;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::camera::CameraPointerResult;
@@ -70,6 +71,14 @@ impl PrintCadApp {
                 if let Some(gfx) = self.gfx.as_mut() {
                     gfx.renderer.request_pick(phys_x, phys_y);
                 }
+                // Sketch hover feedback (CPU hit-test; the GPU pick can't
+                // reliably hit hairline sketch curves). Skipped while
+                // editing — the sketcher renders its own hover state.
+                self.hovered_sketch = if self.sketch_editing_active() {
+                    None
+                } else {
+                    self.sketch_feature_under_cursor()
+                };
             } else {
                 self.cursor_in_viewport = None;
                 // No picks are requested off-viewport, so drop the stale
@@ -331,6 +340,7 @@ impl PrintCadApp {
         if let Some(feature_id) = self.sketch_feature_under_cursor() {
             self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
             self.last_face_hit = None;
+            self.face_highlight = None;
             app_log::info(format!("Selected sketch {feature_id:?}"));
             return true;
         }
@@ -350,7 +360,21 @@ impl PrintCadApp {
                 return true;
             }
 
-            if self.selected_body == Some(hovered) {
+            // FreeCAD-style: the first click selects the FACE under the
+            // cursor; a double click promotes to the whole body.
+            let now = Instant::now();
+            let is_double = self
+                .last_select_click
+                .map(|(t, target)| target == hovered && now.duration_since(t).as_millis() < 400)
+                .unwrap_or(false);
+            self.last_select_click = Some((now, hovered));
+
+            if is_double {
+                self.face_highlight = None;
+                self.selected_body = Some(hovered);
+                app_log::info(format!("Selected body: {hovered:?}"));
+            } else if self.selected_body == Some(hovered) && self.face_highlight.is_none() {
+                // Clicking an already fully-selected body deselects it.
                 self.selected_body = None;
                 self.last_face_hit = None;
                 app_log::info("Deselected body");
@@ -359,11 +383,29 @@ impl PrintCadApp {
                 self.last_face_hit = self
                     .face_hit_under_cursor(hovered)
                     .map(|face| (hovered, face));
-                app_log::info(format!("Selected body: {hovered:?}"));
+                self.face_highlight = self.last_face_hit.and_then(|(body, face)| {
+                    let geometry = self
+                        .document
+                        .imported_geometry(core_document::BodyId(body))?;
+                    let submesh = coplanar_face_submesh(&geometry.mesh, face.point, face.normal)?;
+                    let revision = self
+                        .face_highlight
+                        .as_ref()
+                        .map(|f| f.revision.wrapping_add(1))
+                        .unwrap_or(0);
+                    Some(FaceHighlight {
+                        body,
+                        mesh: std::sync::Arc::new(submesh),
+                        revision,
+                    })
+                });
+                app_log::info("Selected face (double-click for the whole body)");
             }
         } else if self.selected_body.is_some() {
             self.selected_body = None;
             self.last_face_hit = None;
+            self.face_highlight = None;
+            self.last_select_click = None;
             app_log::info("Deselected (clicked empty space)");
         }
         true
@@ -470,6 +512,68 @@ impl PrintCadApp {
     }
 }
 
+/// Coplanar-region sub-mesh extracted around a face hit, used to render a
+/// single-face selection highlight. Approximation: coplanar-but-disjoint
+/// regions of the same solid highlight together (no OCCT face ids in the
+/// mesh yet).
+pub(crate) struct FaceHighlight {
+    pub body: Uuid,
+    pub mesh: std::sync::Arc<kernel_api::TriMesh>,
+    /// Bumped whenever the sub-mesh is re-extracted.
+    pub revision: u64,
+}
+
+/// Extract every triangle of `mesh` lying on the plane (point, normal),
+/// offset slightly along the normal so the highlight never z-fights the
+/// face it covers.
+pub(crate) fn coplanar_face_submesh(
+    mesh: &kernel_api::TriMesh,
+    point: [f32; 3],
+    normal: [f32; 3],
+) -> Option<kernel_api::TriMesh> {
+    const NORMAL_ALIGN: f32 = 0.999;
+    const PLANE_TOL: f32 = 0.05;
+    const LIFT: f32 = 0.05;
+    let n = glam::Vec3::from_array(normal).normalize();
+    let p0 = glam::Vec3::from_array(point);
+
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+    for tri in mesh.indices.chunks_exact(3) {
+        let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
+        let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
+        let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
+        let tri_n_raw = (b - a).cross(c - a);
+        if tri_n_raw.length_squared() < 1e-12 {
+            continue;
+        }
+        let tri_n = tri_n_raw.normalize();
+        if tri_n.dot(n) < NORMAL_ALIGN {
+            continue;
+        }
+        if (a - p0).dot(n).abs() > PLANE_TOL {
+            continue;
+        }
+        let base = positions.len() as u32;
+        for v in [a, b, c] {
+            positions.push((v + n * LIFT).to_array());
+            normals.push(n.to_array());
+        }
+        indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+    if indices.is_empty() {
+        return None;
+    }
+    Some(kernel_api::TriMesh {
+        positions,
+        normals,
+        indices,
+        edges: Vec::new(),
+        colors: Vec::new(),
+    })
+}
+
 /// Squared distance from `p` to triangle `abc` (closest-point projection).
 fn point_triangle_distance_sq(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: glam::Vec3) -> f32 {
     // Ericson, "Real-Time Collision Detection", closest point on triangle.
@@ -512,4 +616,52 @@ fn point_triangle_distance_sq(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: gl
     let v = vb * denom;
     let w = vc * denom;
     (p - (a + ab * v + ac * w)).length_squared()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::coplanar_face_submesh;
+    use kernel_api::TriMesh;
+
+    /// Two quads: top face at z=1 (normal +Z), bottom at z=0 (normal -Z).
+    fn two_face_mesh() -> TriMesh {
+        let positions = vec![
+            // top (CCW seen from +Z)
+            [0.0, 0.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+            [0.0, 1.0, 1.0],
+            // bottom (CCW seen from -Z)
+            [0.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [1.0, 0.0, 0.0],
+        ];
+        let indices = vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+        TriMesh {
+            positions,
+            normals: Vec::new(),
+            indices,
+            edges: Vec::new(),
+            colors: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn extracts_only_the_hit_plane_and_lifts_it() {
+        let mesh = two_face_mesh();
+        let sub = coplanar_face_submesh(&mesh, [0.5, 0.5, 1.0], [0.0, 0.0, 1.0]).unwrap();
+        assert_eq!(sub.indices.len(), 6, "only the top quad's two triangles");
+        assert!(
+            sub.positions.iter().all(|p| (p[2] - 1.05).abs() < 1e-4),
+            "lifted 0.05 along the normal"
+        );
+    }
+
+    #[test]
+    fn no_matching_plane_returns_none() {
+        let mesh = two_face_mesh();
+        // Side plane: no triangles align with +X.
+        assert!(coplanar_face_submesh(&mesh, [1.0, 0.5, 0.5], [1.0, 0.0, 0.0]).is_none());
+    }
 }

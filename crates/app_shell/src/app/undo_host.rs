@@ -80,6 +80,10 @@ impl PrintCadApp {
             _ => {}
         }
 
+        self.face_highlight = None;
+        self.last_face_hit = None;
+        self.hovered_sketch = None;
+
         let active_object_dangles = self
             .active_document_object
             .map(|id| !feature_exists(id))
