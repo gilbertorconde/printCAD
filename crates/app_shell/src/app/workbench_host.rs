@@ -28,6 +28,7 @@ pub(crate) struct WbCtxParams {
     pub active_document_object: Option<FeatureId>,
     pub start_sketch_on_body: Option<core_document::SketchAttachRequest>,
     pub selected_face: Option<core_document::FaceRef>,
+    pub ctrl_down: bool,
 }
 
 /// Everything a hook may have written back into the context, extracted
@@ -63,6 +64,7 @@ impl PrintCadApp {
                 .last_face_hit
                 .filter(|(body, _)| self.selected_body == Some(*body))
                 .map(|(_, face)| face),
+            ctrl_down: self.modifiers.control_key(),
         }
     }
 
@@ -88,6 +90,7 @@ impl PrintCadApp {
             active_document_object: self.active_document_object,
             start_sketch_on_body: None,
             selected_face: None,
+            ctrl_down: false,
         }
     }
 
@@ -120,6 +123,7 @@ impl PrintCadApp {
         ctx.active_document_object = params.active_document_object;
         ctx.start_sketch_on_body = params.start_sketch_on_body;
         ctx.selected_face = params.selected_face;
+        ctx.ctrl_down = params.ctrl_down;
 
         let result = f(wb.as_mut(), &mut ctx);
 

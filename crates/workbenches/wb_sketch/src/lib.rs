@@ -51,11 +51,24 @@ struct PendingCreation {
     face_plane: Option<SketchPlane>,
 }
 
+/// In-progress box selection (select mode, started by pressing on empty
+/// space). Corners are in sketch coordinates.
+struct BoxSelect {
+    anchor: Vec2D,
+    current: Vec2D,
+    /// Ctrl was held at press time: the box ADDS to the selection instead
+    /// of replacing it (and a below-threshold release keeps it).
+    additive: bool,
+}
+
 /// In-progress drag of a point in select mode.
 struct DragState {
     point: Uuid,
     original: Vec2D,
     moved: bool,
+    /// Ctrl was held at press time: a release-without-move toggles the
+    /// point in the selection instead of replacing it.
+    additive: bool,
 }
 
 /// Sketch workbench: 2D drawing with constraints.
@@ -67,6 +80,8 @@ pub struct SketchWorkbench {
     pending_creation: Option<PendingCreation>,
     /// Point being dragged (select mode).
     dragging: Option<DragState>,
+    /// Box selection in progress (select mode).
+    box_select: Option<BoxSelect>,
     /// In-progress drawing-tool state.
     tool_state: ToolState,
     /// Selected geometry ids (select mode; click toggles).
@@ -84,6 +99,10 @@ pub struct SketchWorkbench {
     /// Most recent sketch tool seen in `on_input`; used by the left panel to
     /// show the matching tool settings.
     last_tool: Option<String>,
+    /// While on, every newly created element (from any drawing tool) is
+    /// flagged as construction geometry. Toggled by the
+    /// `sketch.construction` action when nothing is selected.
+    construction_mode: bool,
     /// Last solver outcome, surfaced in the panel.
     last_solve: Option<SolveOutcome>,
 }
@@ -124,12 +143,26 @@ impl SketchWorkbench {
         }
     }
 
+    /// Click-selection semantics: a plain click replaces the selection with
+    /// just `id`; ctrl+click (`additive`) toggles `id` in/out of it.
+    fn select_click(&mut self, id: Uuid, additive: bool) {
+        if additive {
+            if !self.selected.remove(&id) {
+                self.selected.insert(id);
+            }
+        } else {
+            self.selected.clear();
+            self.selected.insert(id);
+        }
+    }
+
     fn clear_interaction_state(&mut self) {
         self.tool_state = ToolState::Idle;
         self.selected.clear();
         self.hovered = None;
         self.cursor = None;
         self.dragging = None;
+        self.box_select = None;
     }
 
     fn sync_active_sketch_from_ctx(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -251,6 +284,18 @@ impl SketchWorkbench {
 
         match tool {
             Some(t) if t != "sketch.select" => {
+                // Remember which geometry existed so construction mode can
+                // flag everything the tool created, regardless of which
+                // tool ran (an id set, not a Vec index: the fillet tool
+                // also *removes* the corner point, shifting indices).
+                let before: Option<HashSet<Uuid>> = self.construction_mode.then(|| {
+                    feature
+                        .sketch
+                        .geometry
+                        .iter()
+                        .map(GeometryElement::id)
+                        .collect()
+                });
                 let effect = tools::handle_click(
                     &mut self.tool_state,
                     t,
@@ -259,6 +304,18 @@ impl SketchWorkbench {
                     tol,
                     &self.tool_params,
                 );
+                if let Some(before) = before {
+                    let new_ids: Vec<Uuid> = feature
+                        .sketch
+                        .geometry
+                        .iter()
+                        .map(GeometryElement::id)
+                        .filter(|id| !before.contains(id))
+                        .collect();
+                    for id in new_ids {
+                        feature.sketch.set_construction(id, true);
+                    }
+                }
                 if effect.changed {
                     self.solve(ctx, &mut feature);
                     if let Some(log) = effect.log {
@@ -270,25 +327,34 @@ impl SketchWorkbench {
             }
             _ => {
                 // Select mode. Pressing on a point begins a drag (the
-                // release decides between "click to toggle-select" and "drag
-                // finished"); curves toggle immediately; empty space clears.
+                // release decides between "click to select" and "drag
+                // finished"); curves select immediately. A plain click
+                // REPLACES the selection, ctrl+click toggles the element
+                // in/out of it (multi-select). Empty space starts a box
+                // selection (resolved on release).
                 match snap::hit_test(&feature.sketch, cursor, tol) {
                     Some(id) if feature.sketch.point_position(id).is_some() => {
                         self.dragging = Some(DragState {
                             point: id,
                             original: feature.sketch.point_position(id).unwrap(),
                             moved: false,
+                            additive: ctx.ctrl_down,
                         });
                         InputResult::consumed()
                     }
                     Some(id) => {
-                        if !self.selected.remove(&id) {
-                            self.selected.insert(id);
-                        }
+                        self.select_click(id, ctx.ctrl_down);
                         InputResult::consumed()
                     }
                     None => {
-                        self.selected.clear();
+                        // Empty space: begin a box selection. The release
+                        // decides between a real box and a plain click
+                        // (which clears the selection unless ctrl is held).
+                        self.box_select = Some(BoxSelect {
+                            anchor: cursor,
+                            current: cursor,
+                            additive: ctx.ctrl_down,
+                        });
                         InputResult::consumed()
                     }
                 }
@@ -325,6 +391,14 @@ impl SketchWorkbench {
             }
             return InputResult::consumed();
         }
+        // Box selection in progress: track the moving corner. Consumed so
+        // the camera doesn't move underneath the box.
+        if let Some(bs) = self.box_select.as_mut() {
+            if let Some(cursor) = self.cursor {
+                bs.current = cursor;
+            }
+            return InputResult::consumed();
+        }
         if matches!(tool, None | Some("sketch.select")) {
             let tol = Self::snap_tolerance(ctx, &plane);
             self.hovered = self
@@ -337,17 +411,51 @@ impl SketchWorkbench {
         InputResult::redraw_only()
     }
 
-    fn handle_left_release(&mut self, _ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+    fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if let Some(bs) = self.box_select.take() {
+            return self.finish_box_select(ctx, bs);
+        }
         if let Some(drag) = self.dragging.take() {
             if !drag.moved {
-                // A press+release without movement is a click: toggle-select.
-                if !self.selected.remove(&drag.point) {
-                    self.selected.insert(drag.point);
-                }
+                // A press+release without movement is a click: select the
+                // point (replace, or toggle when ctrl was held at press).
+                self.select_click(drag.point, drag.additive);
             }
             return InputResult::consumed();
         }
         InputResult::ignored()
+    }
+
+    /// Resolve a released box selection. A drag beyond the snap tolerance
+    /// selects every element fully inside the rectangle (replacing the
+    /// selection, or adding to it when ctrl was held at press); anything
+    /// shorter counts as a plain empty click (clear unless additive).
+    fn finish_box_select(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        bs: BoxSelect,
+    ) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::consumed();
+        };
+        let tol = Self::snap_tolerance(ctx, &feature.plane);
+        if (bs.current - bs.anchor).to_glam().length() <= tol {
+            if !bs.additive {
+                self.selected.clear();
+            }
+            return InputResult::consumed();
+        }
+        let min = Vec2D::new(bs.anchor.x.min(bs.current.x), bs.anchor.y.min(bs.current.y));
+        let max = Vec2D::new(bs.anchor.x.max(bs.current.x), bs.anchor.y.max(bs.current.y));
+        if !bs.additive {
+            self.selected.clear();
+        }
+        for geom in &feature.sketch.geometry {
+            if element_fully_inside(&feature.sketch, geom, min, max) {
+                self.selected.insert(geom.id());
+            }
+        }
+        InputResult::consumed()
     }
 
     fn delete_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -369,11 +477,18 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
-    /// Toggle the construction flag on every selected element (the
-    /// `sketch.construction` action tool, applied like Delete).
+    /// The `sketch.construction` action. With a selection: flip each
+    /// selected element's construction flag individually (mixed selections
+    /// end up mixed-inverted). With nothing selected: toggle construction
+    /// *mode*, under which all newly drawn geometry is construction.
     fn toggle_construction_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         if self.selected.is_empty() {
-            ctx.log_warn("Select geometry first to toggle construction mode");
+            self.construction_mode = !self.construction_mode;
+            ctx.log_info(if self.construction_mode {
+                "Construction mode ON"
+            } else {
+                "Construction mode OFF"
+            });
             return InputResult::consumed();
         }
         let Some(mut feature) = self.get_active_sketch(ctx) else {
@@ -395,6 +510,10 @@ impl SketchWorkbench {
     }
 
     fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.box_select.take().is_some() {
+            // Cancel the box; the selection it would have replaced stays.
+            return InputResult::consumed();
+        }
         if let Some(drag) = self.dragging.take() {
             // Restore the pre-drag position.
             if drag.moved {
@@ -670,6 +789,12 @@ impl Workbench for SketchWorkbench {
         let sketch = &feature.sketch;
 
         ui.label(format!("Editing {}", sketch.name));
+        if self.construction_mode {
+            ui.colored_label(
+                egui::Color32::from_rgb(102, 140, 242),
+                "Construction mode ON (new geometry is construction)",
+            );
+        }
         if let Some(status) = self.tool_state.status() {
             ui.colored_label(egui::Color32::from_rgb(140, 190, 255), status);
         }
@@ -823,6 +948,7 @@ impl Workbench for SketchWorkbench {
             &self.tool_state,
             self.cursor,
             &self.tool_params,
+            self.box_select.as_ref().map(|b| (b.anchor, b.current)),
         )
     }
 }
@@ -1081,6 +1207,53 @@ impl SketchWorkbench {
         if let Some(constraint) = pending {
             self.add_constraint(ctx, constraint);
         }
+    }
+}
+
+fn point_in_rect(p: Vec2D, min: Vec2D, max: Vec2D) -> bool {
+    p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y
+}
+
+/// Whether `geom` lies FULLY inside the axis-aligned rectangle `min`..`max`
+/// (box-selection containment): a point by its position; a line by both
+/// endpoints; an arc by its center, endpoints and angular midpoint; a
+/// circle by its center±radius bounding box. Unresolvable references are
+/// never inside.
+fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max: Vec2D) -> bool {
+    let inside = |p: Vec2D| point_in_rect(p, min, max);
+    match geom {
+        GeometryElement::Point(p) => inside(p.position),
+        GeometryElement::Line(l) => {
+            match (sketch.point_position(l.start), sketch.point_position(l.end)) {
+                (Some(a), Some(b)) => inside(a) && inside(b),
+                _ => false,
+            }
+        }
+        GeometryElement::Arc(a) => {
+            let (Some(c), Some(s), Some(e)) = (
+                sketch.point_position(a.center),
+                sketch.point_position(a.start),
+                sketch.point_position(a.end),
+            ) else {
+                return false;
+            };
+            let sv = (s - c).to_glam();
+            let radius = sv.length();
+            let (start_angle, sweep) = snap::arc_angles(sv, (e - c).to_glam());
+            let mid_angle = start_angle + sweep * 0.5;
+            let mid = Vec2D::new(
+                c.x + radius * mid_angle.cos(),
+                c.y + radius * mid_angle.sin(),
+            );
+            inside(c) && inside(s) && inside(e) && inside(mid)
+        }
+        GeometryElement::Circle(circle) => match sketch.point_position(circle.center) {
+            Some(c) => {
+                inside(Vec2D::new(c.x - circle.radius, c.y - circle.radius))
+                    && inside(Vec2D::new(c.x + circle.radius, c.y + circle.radius))
+            }
+            None => false,
+        },
     }
 }
 

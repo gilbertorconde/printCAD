@@ -43,6 +43,11 @@ pub struct CameraController {
     orbit_lmb_anchor_world: Option<DVec3>,
     /// Out-of-plane rotation disabled (sketch editing keeps the view planar).
     orbit_locked: bool,
+    /// MMB drag state (orbit lives on the middle button; a clean MMB click
+    /// picks the orbit pivot instead).
+    mmb_was_down_scene: bool,
+    mmb_anchor_vp: Vec2,
+    mmb_dragging_scene: bool,
 }
 
 impl CameraController {
@@ -63,6 +68,9 @@ impl CameraController {
             lmb_was_down_scene: false,
             orbit_lmb_anchor_world: None,
             orbit_locked: false,
+            mmb_was_down_scene: false,
+            mmb_anchor_vp: Vec2::ZERO,
+            mmb_dragging_scene: false,
         }
     }
 
@@ -121,7 +129,34 @@ impl CameraController {
                 button: MouseButton::Middle,
                 state: winit::event::ElementState::Pressed,
                 ..
-            } => CameraPointerResult::None,
+            } => {
+                self.cancel_animation();
+                self.mmb_was_down_scene = true;
+                self.mmb_dragging_scene = false;
+                self.orbit_lmb_anchor_world = None;
+                if let Some(p) = self.last_cursor_viewport {
+                    self.mmb_anchor_vp = p;
+                    self.last_cursor_vp_for_drag = Some(p);
+                }
+                CameraPointerResult::Redraw
+            }
+            WindowEvent::MouseInput {
+                button: MouseButton::Middle,
+                state: winit::event::ElementState::Released,
+                ..
+            } => {
+                let was_click = self.mmb_was_down_scene && !self.mmb_dragging_scene;
+                self.mmb_was_down_scene = false;
+                self.mmb_dragging_scene = false;
+                self.last_cursor_vp_for_drag = None;
+                self.orbit_lmb_anchor_world = None;
+                if was_click && self.last_cursor_viewport.is_some() {
+                    // A clean middle click (no drag) picks the orbit pivot.
+                    self.on_mmb_pivot_pick(pick_world_under_cursor, settings);
+                    return CameraPointerResult::Redraw;
+                }
+                CameraPointerResult::None
+            }
             WindowEvent::MouseInput {
                 button: MouseButton::Left,
                 state: winit::event::ElementState::Released,
@@ -184,18 +219,19 @@ impl CameraController {
                     return CameraPointerResult::Redraw;
                 }
 
-                if self.lmb_was_down_scene && !self.orbit_locked {
+                // Orbit lives on MMB drag; a plain MMB click picks the pivot.
+                if self.mmb_was_down_scene {
                     let thresh_sq =
                         settings.click_drag_threshold_px * settings.click_drag_threshold_px;
-                    let exceeds_anchor = (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq;
-                    if exceeds_anchor && !self.lmb_dragging_scene {
-                        self.lmb_dragging_scene = true;
+                    let exceeds_anchor = (cur - self.mmb_anchor_vp).length_squared() >= thresh_sq;
+                    if exceeds_anchor && !self.mmb_dragging_scene && !self.orbit_locked {
+                        self.mmb_dragging_scene = true;
                         if settings.orbit_pivot_pick {
                             self.orbit_lmb_anchor_world = pick_world_under_cursor
                                 .map(|h| DVec3::new(h.x as f64, h.y as f64, h.z as f64));
                         }
                     }
-                    if self.lmb_dragging_scene {
+                    if self.mmb_dragging_scene {
                         if let Some(pivot) = self.orbit_lmb_anchor_world {
                             ops::orbit_pixels_around_world_anchor(
                                 &mut self.state,
@@ -210,6 +246,17 @@ impl CameraController {
                         self.last_cursor_vp_for_drag = Some(cur);
                         self.state.clip_dirty = true;
                         return CameraPointerResult::Redraw;
+                    }
+                }
+
+                // LMB drag no longer orbits (the button belongs to selection)
+                // but still tracks the click-vs-drag threshold so a drag
+                // doesn't count as a selection click on release.
+                if self.lmb_was_down_scene && !self.lmb_dragging_scene {
+                    let thresh_sq =
+                        settings.click_drag_threshold_px * settings.click_drag_threshold_px;
+                    if (cur - self.lmb_anchor_vp).length_squared() >= thresh_sq {
+                        self.lmb_dragging_scene = true;
                     }
                 }
 

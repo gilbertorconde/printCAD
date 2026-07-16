@@ -27,6 +27,10 @@ const CIRCLE_SEGMENTS: usize = 48;
 const ARC_SEGMENTS: usize = 32;
 const POINT_HALF_PX: f32 = 3.5;
 const AXIS_EXTENT_UNITS: f32 = 1.0e3;
+/// Dash pattern for construction geometry and the selection box, in
+/// viewport pixels (applied after projection so it is zoom-independent).
+const DASH_PX: f32 = 6.0;
+const DASH_GAP_PX: f32 = 4.0;
 
 /// Projects sketch-plane coordinates into viewport-local pixels.
 pub struct SketchProjector<'a> {
@@ -71,19 +75,55 @@ impl<'a> SketchProjector<'a> {
     }
 }
 
-/// Emit a polyline between sketch points as overlay segments.
+/// Emit one projected segment, either solid or split into ~6px dashes with
+/// ~4px gaps (in viewport pixel space).
+fn push_segment_px(
+    out: &mut Vec<ScreenSpaceOverlay>,
+    a: [f32; 2],
+    b: [f32; 2],
+    color: [f32; 3],
+    thickness: f32,
+    dashed: bool,
+) {
+    let dx = b[0] - a[0];
+    let dy = b[1] - a[1];
+    let len = (dx * dx + dy * dy).sqrt();
+    if !dashed || len <= DASH_PX {
+        out.push(ScreenSpaceOverlay::new(a, b, color, thickness));
+        return;
+    }
+    let period = DASH_PX + DASH_GAP_PX;
+    let mut start = 0.0f32;
+    while start < len {
+        let end = (start + DASH_PX).min(len);
+        let t0 = start / len;
+        let t1 = end / len;
+        out.push(ScreenSpaceOverlay::new(
+            [a[0] + dx * t0, a[1] + dy * t0],
+            [a[0] + dx * t1, a[1] + dy * t1],
+            color,
+            thickness,
+        ));
+        start += period;
+    }
+}
+
+/// Emit a polyline between sketch points as overlay segments. `dashed`
+/// renders each projected segment as a pixel-space dash pattern
+/// (construction geometry, selection box).
 fn push_polyline(
     out: &mut Vec<ScreenSpaceOverlay>,
     proj: &SketchProjector,
     pts: impl Iterator<Item = Vec2D>,
     color: [f32; 3],
     thickness: f32,
+    dashed: bool,
 ) {
     let mut prev: Option<[f32; 2]> = None;
     for p in pts {
         let px = proj.to_px(p);
         if let (Some(a), Some(b)) = (prev, px) {
-            out.push(ScreenSpaceOverlay::new(a, b, color, thickness));
+            push_segment_px(out, a, b, color, thickness, dashed);
         }
         prev = px;
     }
@@ -130,22 +170,23 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
     })
 }
 
-/// Color + thickness for one element. Selection and hover win; otherwise
-/// construction geometry is drawn blue and thinner (FreeCAD convention).
+/// Color + thickness + dashing for one element. Selection and hover win;
+/// otherwise construction geometry is drawn blue, thinner and dashed
+/// (FreeCAD convention, made unmistakable by the dashes).
 fn element_style(
     sketch: &Sketch,
     id: Uuid,
     selected: &HashSet<Uuid>,
     hovered: Option<Uuid>,
-) -> ([f32; 3], f32) {
+) -> ([f32; 3], f32, bool) {
     if selected.contains(&id) {
-        (COLOR_SELECTED, 2.0)
+        (COLOR_SELECTED, 2.0, false)
     } else if hovered == Some(id) {
-        (COLOR_HOVERED, 2.0)
+        (COLOR_HOVERED, 2.0, false)
     } else if sketch.is_construction(id) {
-        (COLOR_CONSTRUCTION, 1.0)
+        (COLOR_CONSTRUCTION, 1.0, true)
     } else {
-        (COLOR_GEOMETRY, 2.0)
+        (COLOR_GEOMETRY, 2.0, false)
     }
 }
 
@@ -156,19 +197,28 @@ fn push_element(
     geom: &GeometryElement,
     color: [f32; 3],
     thickness: f32,
+    dashed: bool,
 ) {
     match geom {
+        // Point markers stay solid (a dashed 7px cross would just vanish).
         GeometryElement::Point(p) => push_point_marker(out, proj, p.position, color),
         GeometryElement::Line(l) => {
             if let (Some(a), Some(b)) =
                 (sketch.point_position(l.start), sketch.point_position(l.end))
             {
-                push_polyline(out, proj, [a, b].into_iter(), color, thickness);
+                push_polyline(out, proj, [a, b].into_iter(), color, thickness, dashed);
             }
         }
         GeometryElement::Circle(c) => {
             if let Some(center) = sketch.point_position(c.center) {
-                push_polyline(out, proj, circle_points(center, c.radius), color, thickness);
+                push_polyline(
+                    out,
+                    proj,
+                    circle_points(center, c.radius),
+                    color,
+                    thickness,
+                    dashed,
+                );
             }
         }
         GeometryElement::Arc(a) => {
@@ -177,7 +227,7 @@ fn push_element(
                 sketch.point_position(a.start),
                 sketch.point_position(a.end),
             ) {
-                push_polyline(out, proj, arc_points(c, s, e), color, thickness);
+                push_polyline(out, proj, arc_points(c, s, e), color, thickness, dashed);
             }
         }
     }
@@ -196,6 +246,7 @@ fn push_axes(out: &mut Vec<ScreenSpaceOverlay>, proj: &SketchProjector) {
         .into_iter(),
         COLOR_AXIS_X,
         1.0,
+        false,
     );
     push_polyline(
         out,
@@ -207,6 +258,7 @@ fn push_axes(out: &mut Vec<ScreenSpaceOverlay>, proj: &SketchProjector) {
         .into_iter(),
         COLOR_AXIS_Y,
         1.0,
+        false,
     );
 }
 
@@ -224,7 +276,14 @@ fn push_preview(
         ToolState::Idle => {}
         ToolState::LineFrom { from, .. } => {
             if let Some(a) = pos(from) {
-                push_polyline(out, proj, [a, cursor].into_iter(), COLOR_PREVIEW, 1.5);
+                push_polyline(
+                    out,
+                    proj,
+                    [a, cursor].into_iter(),
+                    COLOR_PREVIEW,
+                    1.5,
+                    false,
+                );
             }
         }
         ToolState::RectFrom { corner } => {
@@ -237,6 +296,7 @@ fn push_preview(
                     [a, b, cursor, d, a].into_iter(),
                     COLOR_PREVIEW,
                     1.5,
+                    false,
                 );
             }
         }
@@ -244,7 +304,7 @@ fn push_preview(
             if let Some(c) = pos(center) {
                 let r = (cursor - c).to_glam().length();
                 if r > 1e-6 {
-                    push_polyline(out, proj, circle_points(c, r), COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, circle_points(c, r), COLOR_PREVIEW, 1.5, false);
                 }
                 push_point_marker(out, proj, c, COLOR_PREVIEW);
             }
@@ -252,7 +312,14 @@ fn push_preview(
         ToolState::ArcCenter { center } => {
             if let Some(c) = pos(center) {
                 push_point_marker(out, proj, c, COLOR_PREVIEW);
-                push_polyline(out, proj, [c, cursor].into_iter(), COLOR_PREVIEW, 1.0);
+                push_polyline(
+                    out,
+                    proj,
+                    [c, cursor].into_iter(),
+                    COLOR_PREVIEW,
+                    1.0,
+                    false,
+                );
             }
         }
         ToolState::ArcStart { center, start } => {
@@ -261,7 +328,7 @@ fn push_preview(
                 let dir = (cursor - c).to_glam();
                 if r > 1e-6 && dir.length() > 1e-6 {
                     let end = Vec2D::from_glam(c.to_glam() + dir.normalize() * r);
-                    push_polyline(out, proj, arc_points(c, s, end), COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, arc_points(c, s, end), COLOR_PREVIEW, 1.5, false);
                 }
                 push_point_marker(out, proj, c, COLOR_PREVIEW);
             }
@@ -273,7 +340,7 @@ fn push_preview(
                     // follows it exactly, like the committed shape will.
                     let verts = polygon_vertices(c, cursor, params.polygon_sides);
                     let closed = verts.iter().copied().chain(verts.first().copied());
-                    push_polyline(out, proj, closed, COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, closed, COLOR_PREVIEW, 1.5, false);
                 }
                 push_point_marker(out, proj, c, COLOR_PREVIEW);
             }
@@ -281,10 +348,17 @@ fn push_preview(
         ToolState::SlotFrom { from } => {
             if let Some(a) = pos(from) {
                 if let Some((p1, p2, p3, p4)) = slot_corners(a, cursor, params.slot_width) {
-                    push_polyline(out, proj, [p1, p2].into_iter(), COLOR_PREVIEW, 1.5);
-                    push_polyline(out, proj, [p3, p4].into_iter(), COLOR_PREVIEW, 1.5);
-                    push_polyline(out, proj, arc_points(cursor, p3, p2), COLOR_PREVIEW, 1.5);
-                    push_polyline(out, proj, arc_points(a, p1, p4), COLOR_PREVIEW, 1.5);
+                    push_polyline(out, proj, [p1, p2].into_iter(), COLOR_PREVIEW, 1.5, false);
+                    push_polyline(out, proj, [p3, p4].into_iter(), COLOR_PREVIEW, 1.5, false);
+                    push_polyline(
+                        out,
+                        proj,
+                        arc_points(cursor, p3, p2),
+                        COLOR_PREVIEW,
+                        1.5,
+                        false,
+                    );
+                    push_polyline(out, proj, arc_points(a, p1, p4), COLOR_PREVIEW, 1.5, false);
                 }
                 push_point_marker(out, proj, a, COLOR_PREVIEW);
             }
@@ -292,7 +366,22 @@ fn push_preview(
     }
 }
 
+/// Dashed rectangle for an in-progress box selection (corners in sketch
+/// coordinates, drawn in the preview color).
+fn push_selection_box(
+    out: &mut Vec<ScreenSpaceOverlay>,
+    proj: &SketchProjector,
+    a: Vec2D,
+    b: Vec2D,
+) {
+    let corners = [a, Vec2D::new(b.x, a.y), b, Vec2D::new(a.x, b.y), a];
+    push_polyline(out, proj, corners.into_iter(), COLOR_PREVIEW, 1.0, true);
+}
+
 /// Build the full overlay set for one frame of sketch editing.
+/// `selection_box` is an in-progress box selection (anchor, current corner)
+/// in sketch coordinates.
+#[allow(clippy::too_many_arguments)]
 pub fn build_overlays(
     proj: &SketchProjector,
     sketch: &Sketch,
@@ -301,6 +390,7 @@ pub fn build_overlays(
     tool_state: &ToolState,
     cursor: Option<Vec2D>,
     params: &ToolParams,
+    selection_box: Option<(Vec2D, Vec2D)>,
 ) -> Vec<ScreenSpaceOverlay> {
     let mut out = Vec::new();
     push_axes(&mut out, proj);
@@ -308,18 +398,20 @@ pub fn build_overlays(
     // Curves first, then points on top so vertices stay visible.
     for geom in &sketch.geometry {
         if !matches!(geom, GeometryElement::Point(_)) {
-            let (color, thickness) = element_style(sketch, geom.id(), selected, hovered);
-            push_element(&mut out, proj, sketch, geom, color, thickness);
+            let (color, thickness, dashed) = element_style(sketch, geom.id(), selected, hovered);
+            push_element(&mut out, proj, sketch, geom, color, thickness, dashed);
         }
     }
     for geom in &sketch.geometry {
         if matches!(geom, GeometryElement::Point(_)) {
-            let (color, thickness) = element_style(sketch, geom.id(), selected, hovered);
-            push_element(&mut out, proj, sketch, geom, color, thickness);
+            let (color, thickness, dashed) = element_style(sketch, geom.id(), selected, hovered);
+            push_element(&mut out, proj, sketch, geom, color, thickness, dashed);
         }
     }
 
-    if let Some(cursor) = cursor {
+    if let Some((a, b)) = selection_box {
+        push_selection_box(&mut out, proj, a, b);
+    } else if let Some(cursor) = cursor {
         push_preview(&mut out, proj, sketch, tool_state, cursor, params);
     }
     out

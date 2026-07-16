@@ -123,22 +123,6 @@ impl PrintCadApp {
             }
         }
 
-        if let WindowEvent::MouseInput {
-            button: MouseButton::Middle,
-            state: ElementState::Pressed,
-            ..
-        } = &event
-        {
-            if self.cursor_in_viewport.is_some() {
-                let hit = self.hovered_world_pos.map(Vec3::from_array);
-                self.camera
-                    .on_mmb_pivot_pick(hit, &self.user_settings.camera);
-                if let Some(gfx) = self.gfx.as_ref() {
-                    gfx.window.request_redraw();
-                }
-            }
-        }
-
         let wb = self.dispatch_workbench_input_without_select(&event);
         let mut redraw = wb.redraw;
         if wb.consumed {

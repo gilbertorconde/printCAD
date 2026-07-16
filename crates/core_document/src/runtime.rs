@@ -81,6 +81,9 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// picker.
     pub start_sketch_on_body: Option<SketchAttachRequest>,
 
+    /// Host → workbench: whether Ctrl is held (multi-select modifier).
+    pub ctrl_down: bool,
+
     /// Host → workbench: the face under the last body selection, when the
     /// GPU pick landed on solid geometry (surface point + outward normal in
     /// world space). Lets "New Sketch" attach to the clicked face.
@@ -136,6 +139,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             workbench_switch_request: None,
             start_sketch_on_body: None,
             selected_face: None,
+            ctrl_down: false,
         }
     }
 
