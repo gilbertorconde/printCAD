@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Linear pattern: three cubes in a row, amber direction arrow -->
+  <path d="M4 6h14.5M16.4 4.4L19.3 6l-2.9 1.6" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M5.5 10.5L8 11.75 5.5 13 3 11.75z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M3 11.75l2.5 1.25v4L3 15.75z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M8 11.75v4L5.5 17v-4z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.75">
+    <path d="M12 10.5l2.5 1.25L12 13l-2.5-1.25z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M9.5 11.75l2.5 1.25v4l-2.5-1.25z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M14.5 11.75v4L12 17v-4z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.5">
+    <path d="M18.5 10.5L21 11.75 18.5 13 16 11.75z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M16 11.75l2.5 1.25v4L16 15.75z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M21 11.75v4L18.5 17v-4z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+</svg>

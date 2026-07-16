@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Primitive: sphere + cube pair -->
+  <circle cx="16" cy="8" r="5.5" stroke="#D8DEE9" stroke-width="1.5"
+          fill="#D8DEE9" fill-opacity="0.12"/>
+  <path d="M10.5 8a5.5 2 0 0 0 11 0" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linecap="round" fill="none"/>
+  <path d="M21.5 8a5.5 2 0 0 0-11 0" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-dasharray="2 2" stroke-linecap="round" fill="none" opacity="0.45"/>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M8 10l4 2-4 2-4-2z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M4 12l4 2v5.5l-4-2z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M12 12v5.5l-4 2v-5.5z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+</svg>

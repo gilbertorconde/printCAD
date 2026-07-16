@@ -19,11 +19,24 @@ impl From<FeatureId> for TreeItemId {
     }
 }
 
+/// Context-menu action on a feature row, applied by the host.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeFeatureCommand {
+    Suppress(bool),
+    SetVisible(bool),
+    Delete,
+    MoveUp,
+    MoveDown,
+    SetTip,
+    ClearTip,
+}
+
 #[derive(Debug, Default)]
 pub struct TreeUiResult {
     pub selection: Option<TreeItemId>,
     pub activation: Option<TreeItemId>,
     pub imported_visibility_change: Option<(Uuid, bool)>,
+    pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
 }
 
 /// View model describing the current document tree.
@@ -42,7 +55,15 @@ struct TreeNode {
     dirty: bool,
     visible: bool,
     suppressed: bool,
-    created_at_ms: i64,
+    error: Option<String>,
+    /// Marks the body-tip feature / features past the tip (excluded from
+    /// the build).
+    is_tip: bool,
+    after_tip: bool,
+    /// Feature nodes get a history context menu.
+    feature_menu: Option<FeatureId>,
+    /// Insertion order within the document; THE history ordering key.
+    seq: u64,
     children: Vec<TreeNode>,
     imported_object_id: Option<Uuid>,
 }
@@ -60,11 +81,23 @@ impl DocumentTree {
             map.entry(body).or_default().push(node);
         };
 
+        // Tip metadata per body: the tip feature's seq bounds the build.
+        let tip_seq_by_body: HashMap<BodyId, (FeatureId, u64)> = document
+            .bodies()
+            .iter()
+            .filter_map(|body| {
+                let tip = body.tip?;
+                let seq = feature_tree.get_node(tip)?.seq;
+                Some((body.id, (tip, seq)))
+            })
+            .collect();
+
         // First, build subtrees for all root features.
         for &root_id in feature_tree.roots() {
             if let Some(node) = feature_tree.get_node(root_id) {
                 let body = node.body;
-                let tree_node = build_feature_node(feature_tree, node, &mut visited);
+                let tree_node =
+                    build_feature_node(feature_tree, node, &mut visited, &tip_seq_by_body);
                 push_root(body, tree_node, &mut roots_by_body);
             }
         }
@@ -74,14 +107,16 @@ impl DocumentTree {
         for (&id, node) in feature_tree.all_nodes() {
             if !visited.contains(&id) {
                 let body = node.body;
-                let tree_node = build_feature_node(feature_tree, node, &mut visited);
+                let tree_node =
+                    build_feature_node(feature_tree, node, &mut visited, &tip_seq_by_body);
                 push_root(body, tree_node, &mut roots_by_body);
             }
         }
 
-        // Sort feature roots within each body group by creation time.
+        // Sort feature roots within each body group by insertion order (the
+        // history ordering key; creation times have millisecond ties).
         for nodes in roots_by_body.values_mut() {
-            nodes.sort_by_key(|n| n.created_at_ms);
+            nodes.sort_by_key(|n| n.seq);
         }
 
         // Build body nodes and attach their feature subtrees. Bodies represented
@@ -132,6 +167,7 @@ fn build_feature_node(
     feature_tree: &FeatureTree,
     node: &FeatureNode,
     visited: &mut HashSet<FeatureId>,
+    tip_seq_by_body: &HashMap<BodyId, (FeatureId, u64)>,
 ) -> TreeNode {
     visited.insert(node.id);
 
@@ -141,21 +177,34 @@ fn build_feature_node(
             continue;
         }
         if let Some(child) = feature_tree.get_node(child_id) {
-            children.push(build_feature_node(feature_tree, child, visited));
+            children.push(build_feature_node(
+                feature_tree,
+                child,
+                visited,
+                tip_seq_by_body,
+            ));
         }
     }
 
-    children.sort_by_key(|n| n.created_at_ms);
+    children.sort_by_key(|n| n.seq);
+
+    let tip = node.body.and_then(|b| tip_seq_by_body.get(&b));
+    let is_tip = tip.map(|(id, _)| *id == node.id).unwrap_or(false);
+    let after_tip = tip.map(|(_, seq)| node.seq > *seq).unwrap_or(false);
 
     TreeNode {
         id: TreeItemId::Feature(node.id),
         label: node.name.clone(),
         badge: Some(format_workbench_tag(node.workbench_id.as_str())),
-        tooltip: Some(feature_tooltip(node)),
+        tooltip: Some(feature_tooltip(node, after_tip)),
         dirty: node.dirty,
         visible: node.visible,
         suppressed: node.suppressed,
-        created_at_ms: node.created_at,
+        error: node.error.clone(),
+        is_tip,
+        after_tip,
+        feature_menu: Some(node.id),
+        seq: node.seq,
         children,
         imported_object_id: None,
     }
@@ -170,7 +219,11 @@ fn build_body_node(body: &Body) -> TreeNode {
         dirty: false,
         visible: true,
         suppressed: false,
-        created_at_ms: body.created_at,
+        error: None,
+        is_tip: false,
+        after_tip: false,
+        feature_menu: None,
+        seq: 0,
         children: Vec::new(),
         imported_object_id: None,
     }
@@ -204,7 +257,11 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         dirty: false,
         visible: imported.visible,
         suppressed: false,
-        created_at_ms: 0,
+        error: None,
+        is_tip: false,
+        after_tip: false,
+        feature_menu: None,
+        seq: 0,
         children,
         imported_object_id: Some(imported.id),
     })
@@ -257,6 +314,7 @@ fn draw_node(
             } else {
                 ui.selectable_label(is_selected, label)
             };
+            let response = attach_feature_menu(response, node, result);
             handle_response(response, node.id, result);
         });
     } else {
@@ -272,9 +330,77 @@ fn draw_node(
                     }
                 });
 
-            handle_response(collapsing.header_response, node.id, result);
+            let response = attach_feature_menu(collapsing.header_response, node, result);
+            handle_response(response, node.id, result);
         });
     }
+}
+
+/// History context menu on feature rows (right-click).
+fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiResult) -> Response {
+    let Some(feature_id) = node.feature_menu else {
+        return response;
+    };
+    let mut command = None;
+    response.context_menu(|ui| {
+        let suppress_label = if node.suppressed {
+            "Unsuppress"
+        } else {
+            "Suppress"
+        };
+        if ui.button(suppress_label).clicked() {
+            command = Some(TreeFeatureCommand::Suppress(!node.suppressed));
+            ui.close();
+        }
+        let visible_label = if node.visible { "Hide" } else { "Show" };
+        if ui.button(visible_label).clicked() {
+            command = Some(TreeFeatureCommand::SetVisible(!node.visible));
+            ui.close();
+        }
+        ui.separator();
+        if ui
+            .button("Move up")
+            .on_hover_text("Swap with the previous feature in the build history")
+            .clicked()
+        {
+            command = Some(TreeFeatureCommand::MoveUp);
+            ui.close();
+        }
+        if ui
+            .button("Move down")
+            .on_hover_text("Swap with the next feature in the build history")
+            .clicked()
+        {
+            command = Some(TreeFeatureCommand::MoveDown);
+            ui.close();
+        }
+        if node.is_tip {
+            if ui
+                .button("Clear tip")
+                .on_hover_text("Expose the full history again")
+                .clicked()
+            {
+                command = Some(TreeFeatureCommand::ClearTip);
+                ui.close();
+            }
+        } else if ui
+            .button("Set as tip")
+            .on_hover_text("Preview the history up to this feature; later features are excluded")
+            .clicked()
+        {
+            command = Some(TreeFeatureCommand::SetTip);
+            ui.close();
+        }
+        ui.separator();
+        if ui.button("Delete").clicked() {
+            command = Some(TreeFeatureCommand::Delete);
+            ui.close();
+        }
+    });
+    if let Some(command) = command {
+        result.feature_command = Some((feature_id, command));
+    }
+    response
 }
 
 fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult) {
@@ -304,23 +430,34 @@ fn maybe_draw_imported_visibility_toggle(ui: &mut Ui, node: &TreeNode, result: &
 
 fn compose_label(node: &TreeNode) -> RichText {
     let mut pieces = Vec::new();
+    if node.error.is_some() {
+        pieces.push("⚠".to_string());
+    }
     if let Some(tag) = &node.badge {
         pieces.push(format!("[{}]", tag));
     }
     pieces.push(node.label.clone());
+    if node.is_tip {
+        pieces.push("◄ tip".into());
+    }
     if node.dirty {
         pieces.push("•dirty".into());
     }
     let text = pieces.join(" ");
 
     let mut rich = RichText::new(text);
-    if node.suppressed || !node.visible {
+    if node.error.is_some() {
+        rich = rich.color(Color32::from_rgb(240, 90, 90));
+    } else if node.suppressed || !node.visible || node.after_tip {
         rich = rich.color(Color32::from_gray(150)).italics();
+    }
+    if node.suppressed {
+        rich = rich.strikethrough();
     }
     rich
 }
 
-fn feature_tooltip(node: &FeatureNode) -> String {
+fn feature_tooltip(node: &FeatureNode, after_tip: bool) -> String {
     let mut parts = Vec::new();
     parts.push(format!(
         "Workbench: {}",
@@ -330,6 +467,12 @@ fn feature_tooltip(node: &FeatureNode) -> String {
     parts.push(format!("Suppressed: {}", node.suppressed));
     if node.dirty {
         parts.push("Pending recompute".into());
+    }
+    if after_tip {
+        parts.push("After the tip: excluded from the build".into());
+    }
+    if let Some(error) = &node.error {
+        parts.push(format!("Error: {error}"));
     }
     parts.join("\n")
 }

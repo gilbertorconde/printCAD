@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Mirror: half shape, dash-dot axis, reflected ghost -->
+  <path d="M9.5 6.5l-5 10.5h5z" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.2"/>
+  <path d="M14.5 6.5l5 10.5h-5z" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.08" opacity="0.45"/>
+  <path d="M12 3.5v17" stroke="#F5A623" stroke-width="1.5"
+        stroke-dasharray="4 2 1.5 2" stroke-linecap="round" fill="none"/>
+</svg>

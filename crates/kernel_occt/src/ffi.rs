@@ -71,11 +71,16 @@ pub(crate) struct PrintcadOcctBrepImportResult {
 /// One profile segment in sketch-plane (u, v) millimetre coordinates.
 /// `kind` 0 = line (`d = [su, sv, eu, ev, 0, 0]`), 1 = arc through three
 /// on-curve points (`d = [su, sv, mu, mv, eu, ev]`), 2 = circle
-/// (`d = [cu, cv, radius, 0, 0, 0]`).
+/// (`d = [cu, cv, radius, 0, 0, 0]`), 3 = ellipse
+/// (`d = [cu, cv, mu, mv, ratio, 0]`), 4 = ellipse arc (d as 3, `extra` =
+/// start/end params), 5 = B-spline (`d[0]` = periodic, `extra` = flat uv
+/// control points).
 #[repr(C)]
 pub(crate) struct PcadProfileSegment {
     pub(crate) kind: i32,
     pub(crate) d: [c_double; 6],
+    pub(crate) extra: *const c_double,
+    pub(crate) extra_count: usize,
 }
 
 #[repr(C)]
@@ -92,13 +97,15 @@ pub(crate) struct PcadProfilePlane {
     pub(crate) normal: [c_double; 3],
 }
 
-/// Result of one solid-sweep step: `brep_blob` always on success; `mesh_*`
-/// arrays only when the call requested a mesh. Freed via
-/// `printcad_occt_free_sweep_result`.
+/// Result of one solid-op step: `brep_blob` always on success, `tool_blob`
+/// when the op produced a standalone tool solid, `mesh_*` arrays only when
+/// requested. Freed via `printcad_occt_free_sweep_result`.
 #[repr(C)]
 pub(crate) struct PrintcadOcctSweepResult {
     pub(crate) brep_blob: *mut u8,
     pub(crate) brep_len: usize,
+    pub(crate) tool_blob: *mut u8,
+    pub(crate) tool_len: usize,
     pub(crate) mesh_positions: *mut f32,
     pub(crate) mesh_normals: *mut f32,
     pub(crate) mesh_indices: *mut u32,
@@ -107,6 +114,62 @@ pub(crate) struct PrintcadOcctSweepResult {
     pub(crate) mesh_index_count: usize,
     pub(crate) mesh_edge_count: usize,
     pub(crate) error: *mut c_char,
+}
+
+/// Tessellation request shared by every solid-op entry point.
+#[repr(C)]
+pub(crate) struct PcadMeshOptions {
+    pub(crate) want_mesh: c_int,
+    pub(crate) linear_deflection_mode: c_int,
+    pub(crate) linear_value: c_double,
+    pub(crate) angular_deflection_rad: c_double,
+    pub(crate) weld_cross_face: c_int,
+    pub(crate) weld_angle_threshold_rad: c_double,
+    pub(crate) generate_boundary_edges: c_int,
+}
+
+/// Extrusion termination: `kind` 0 = blind, 1 = through-all, 2 = up-to-plane,
+/// 3 = to-first, 4 = to-last.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub(crate) struct PcadTermination {
+    pub(crate) kind: i32,
+    pub(crate) distance: c_double,
+    pub(crate) plane_point: [c_double; 3],
+    pub(crate) plane_normal: [c_double; 3],
+    pub(crate) offset: c_double,
+}
+
+/// Sweep description: `kind` 0 = extrude, 1 = revolve, 2 = helix.
+#[repr(C)]
+pub(crate) struct PcadSweepDesc {
+    pub(crate) kind: i32,
+    pub(crate) term: PcadTermination,
+    pub(crate) term2: PcadTermination,
+    pub(crate) has_term2: i32,
+    pub(crate) symmetric: i32,
+    pub(crate) reversed: i32,
+    pub(crate) taper_deg: c_double,
+    pub(crate) direction: [c_double; 3],
+    pub(crate) has_direction: i32,
+    pub(crate) axis_origin: [c_double; 2],
+    pub(crate) axis_dir: [c_double; 2],
+    pub(crate) angle_deg: c_double,
+    pub(crate) angle2_deg: c_double,
+    pub(crate) has_angle2: i32,
+    pub(crate) midplane: i32,
+    pub(crate) pitch: c_double,
+    pub(crate) height: c_double,
+    pub(crate) cone_angle_deg: c_double,
+    pub(crate) left_handed: i32,
+}
+
+/// One tool solid re-applied by a pattern.
+#[repr(C)]
+pub(crate) struct PcadToolSolid {
+    pub(crate) brep: *const u8,
+    pub(crate) len: usize,
+    pub(crate) subtractive: i32,
 }
 
 extern "C" {
@@ -144,27 +207,106 @@ extern "C" {
         generate_boundary_edges: c_int,
     ) -> PrintcadOcctImportResult;
 
-    /// Sweep one profile into a solid and combine it with an optional base.
-    /// `sweep_kind` 0 = extrude (`params[0]` = distance, `symmetric` applies),
-    /// 1 = revolve (`params[0..2]` = axis origin uv, `params[2..4]` = axis
-    /// direction uv, `params[4]` = angle in degrees, required in (0, 360]).
-    pub(crate) fn printcad_occt_sweep_profile(
+    pub(crate) fn printcad_occt_solid_sweep(
         base_brep: *const u8,
         base_brep_len: usize,
         plane: *const PcadProfilePlane,
         wires: *const PcadProfileWire,
         wire_count: usize,
-        sweep_kind: i32,
-        params: *const c_double,
-        symmetric: c_int,
+        desc: *const PcadSweepDesc,
         op: i32,
-        want_mesh: c_int,
-        linear_deflection_mode: c_int,
-        linear_value: c_double,
-        angular_deflection_rad: c_double,
-        weld_cross_face: c_int,
-        weld_angle_threshold_rad: c_double,
-        generate_boundary_edges: c_int,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_solid_loft(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        planes: *const PcadProfilePlane,
+        wires: *const PcadProfileWire,
+        wire_offsets: *const usize,
+        wire_counts: *const usize,
+        section_count: usize,
+        ruled: c_int,
+        closed: c_int,
+        op: i32,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_solid_pipe(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        profile_plane: *const PcadProfilePlane,
+        profile_wires: *const PcadProfileWire,
+        profile_wire_count: usize,
+        spine_plane: *const PcadProfilePlane,
+        spine_wire: *const PcadProfileWire,
+        frenet: c_int,
+        op: i32,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_solid_primitive(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        kind: i32,
+        params: *const c_double,
+        param_count: usize,
+        placement: *const c_double,
+        op: i32,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_dressup(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        kind: i32,
+        params: *const c_double,
+        param_count: usize,
+        selection_mode: i32,
+        points: *const c_double,
+        point_count: usize,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_draft(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        angle_deg: c_double,
+        neutral_point: *const c_double,
+        neutral_normal: *const c_double,
+        pull_dir: *const c_double,
+        face_points: *const c_double,
+        face_point_count: usize,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_thickness(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        value: c_double,
+        inward: c_int,
+        face_points: *const c_double,
+        face_point_count: usize,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_pattern(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        tools: *const PcadToolSolid,
+        tool_count: usize,
+        transforms: *const c_double,
+        transform_count: usize,
+        mesh: *const PcadMeshOptions,
+    ) -> PrintcadOcctSweepResult;
+
+    pub(crate) fn printcad_occt_boolean(
+        base_brep: *const u8,
+        base_brep_len: usize,
+        tool_brep: *const u8,
+        tool_len: usize,
+        kind: i32,
+        mesh: *const PcadMeshOptions,
     ) -> PrintcadOcctSweepResult;
 
     pub(crate) fn printcad_occt_free_result(result: PrintcadOcctImportResult);

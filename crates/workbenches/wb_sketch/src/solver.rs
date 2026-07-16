@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::sketch::{Constraint, GeometryElement, Sketch, Vec2D};
+use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2D};
 
 /// Maximum number of outer (Jacobian) iterations.
 const MAX_ITERATIONS: usize = 100;
@@ -141,6 +141,87 @@ pub fn dof_estimate(sketch: &Sketch) -> i32 {
     n - jacobian_rank(jac) as i32
 }
 
+/// Above this many solver-relevant constraints `diagnose` skips the
+/// per-constraint analysis (it is O(n · solve)) and only reports the DoF.
+const MAX_DIAGNOSED_CONSTRAINTS: usize = 60;
+
+/// Constraint-level health report for the panel.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Diagnosis {
+    /// Remaining degrees of freedom (`dof_estimate`).
+    pub dof: i32,
+    /// Constraints whose removal does not change the Jacobian rank — they
+    /// add nothing the others don't already enforce.
+    pub redundant: Vec<Uuid>,
+    /// Constraints whose individual removal lets the solve converge.
+    pub conflicting: Vec<Uuid>,
+    /// False when the sketch had too many constraints to analyze.
+    pub analyzed: bool,
+}
+
+/// Diagnose the sketch's constraint system. Solves a clone first; on failure
+/// each constraint is removed in turn and the solve retried (removal fixing
+/// convergence marks it conflicting). After success, a constraint whose
+/// exclusion leaves the Jacobian rank unchanged is redundant.
+pub fn diagnose(sketch: &Sketch) -> Diagnosis {
+    let dof = dof_estimate(sketch);
+    let ids: Vec<Uuid> = sketch
+        .constraints
+        .iter()
+        .filter(|c| c.is_solved())
+        .map(|c| c.id)
+        .collect();
+    if ids.len() > MAX_DIAGNOSED_CONSTRAINTS {
+        return Diagnosis {
+            dof,
+            analyzed: false,
+            ..Diagnosis::default()
+        };
+    }
+
+    let mut probe = sketch.clone();
+    let outcome = solve(&mut probe);
+    let mut diagnosis = Diagnosis {
+        dof,
+        analyzed: true,
+        ..Diagnosis::default()
+    };
+
+    match outcome {
+        SolveOutcome::NotConverged { .. } => {
+            for &id in &ids {
+                let mut without = sketch.clone();
+                without.constraints.retain(|c| c.id != id);
+                if matches!(
+                    solve(&mut without),
+                    SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve
+                ) {
+                    diagnosis.conflicting.push(id);
+                }
+            }
+        }
+        SolveOutcome::Converged { .. } | SolveOutcome::NothingToSolve => {
+            // Redundancy is rank-based at the solved configuration: equal
+            // rank without a constraint means its rows were dependent.
+            let full = build_system(&probe);
+            if !full.specs.is_empty() && !full.vars.is_empty() {
+                let full_rank = jacobian_rank(jacobian(&full, &full.vars));
+                for &id in &ids {
+                    let sys = build_system_excluding(&probe, Some(id));
+                    if sys.residual_len == full.residual_len {
+                        continue; // constraint resolved to no rows anyway
+                    }
+                    let rank = jacobian_rank(jacobian(&sys, &sys.vars));
+                    if rank == full_rank {
+                        diagnosis.redundant.push(id);
+                    }
+                }
+            }
+        }
+    }
+    diagnosis
+}
+
 /// One resolved constraint residual, expressed in variable indices.
 enum ResidualSpec {
     /// p - pos (2 residuals).
@@ -157,6 +238,15 @@ enum ResidualSpec {
     Distance { p1: usize, p2: usize, d: f64 },
     /// r - radius.
     Radius { r: usize, radius: f64 },
+    /// 2r - diameter.
+    Diameter { r: usize, diameter: f64 },
+    /// |coord(b) - coord(a)| - value, on one axis. `a`/`b` index the exact
+    /// variable (x or y already applied); `b = None` measures from origin.
+    CoordDistance {
+        a: usize,
+        b: Option<usize>,
+        value: f64,
+    },
     /// r1 - r2.
     EqualRadius { r1: usize, r2: usize },
     /// |line1| - |line2|.
@@ -191,6 +281,20 @@ enum ResidualSpec {
         s2: usize,
         e2: usize,
         angle: f64,
+    },
+    /// wrap(atan2(dy, dx) - target): line direction against a fixed target
+    /// angle (axis constraints; the axis offset is folded into `target`).
+    AngleToTarget { s: usize, e: usize, target: f64 },
+    /// Approximate point-on-ellipse: the normalized ellipse equation scaled
+    /// by the minor radius, ≈ signed distance near the boundary. The
+    /// ellipse's shape (major vector, ratio) is fixed; only the point and
+    /// center move.
+    PointOnEllipse {
+        p: usize,
+        c: usize,
+        major_x: f64,
+        major_y: f64,
+        ratio: f64,
     },
     /// Implicit arc consistency: |endpoint - center| - r.
     ArcEndpoint { p: usize, c: usize, r: usize },
@@ -253,6 +357,14 @@ impl ResidualSpec {
                 out.push(segment_length(v, p1, p2) - d);
             }
             ResidualSpec::Radius { r, radius } => out.push(v[r] - radius),
+            ResidualSpec::Diameter { r, diameter } => out.push(2.0 * v[r] - diameter),
+            ResidualSpec::CoordDistance { a, b, value } => {
+                let d = match b {
+                    Some(b) => v[b] - v[a],
+                    None => v[a],
+                };
+                out.push(d.abs() - value);
+            }
             ResidualSpec::EqualRadius { r1, r2 } => out.push(v[r1] - v[r2]),
             ResidualSpec::EqualLength { s1, e1, s2, e2 } => {
                 out.push(segment_length(v, s1, e1) - segment_length(v, s2, e2));
@@ -290,6 +402,29 @@ impl ResidualSpec {
                 let cross = d1.0 * d2.1 - d1.1 * d2.0;
                 let dot = d1.0 * d2.0 + d1.1 * d2.1;
                 out.push(wrap_angle(cross.atan2(dot) - angle));
+            }
+            ResidualSpec::AngleToTarget { s, e, target } => {
+                let dy = v[e + 1] - v[s + 1];
+                let dx = v[e] - v[s];
+                out.push(wrap_angle(dy.atan2(dx) - target));
+            }
+            ResidualSpec::PointOnEllipse {
+                p,
+                c,
+                major_x,
+                major_y,
+                ratio,
+            } => {
+                let a = (major_x * major_x + major_y * major_y).sqrt().max(MIN_LEN);
+                let b = (a * ratio).max(MIN_LEN);
+                // Rotate the point into the ellipse frame.
+                let (cos_t, sin_t) = (major_x / a, major_y / a);
+                let dx = v[p] - v[c];
+                let dy = v[p + 1] - v[c + 1];
+                let u = dx * cos_t + dy * sin_t;
+                let w = -dx * sin_t + dy * cos_t;
+                let q = ((u / a).powi(2) + (w / b).powi(2)).sqrt();
+                out.push((q - 1.0) * b);
             }
             ResidualSpec::TangentLineCircle { s, e, c, r } => {
                 out.push(point_line_distance(v, c, s, e).abs() - v[r]);
@@ -377,8 +512,15 @@ struct System {
 
 /// Resolve the sketch into variables and residual specs. Constraints that
 /// reference missing geometry ids (or geometry of the wrong kind) are
-/// silently skipped, so malformed input never panics.
+/// silently skipped, so malformed input never panics. Inactive constraints
+/// and reference (non-driving) dimensions contribute nothing.
 fn build_system(sketch: &Sketch) -> System {
+    build_system_excluding(sketch, None)
+}
+
+/// `build_system` minus the constraint with id `exclude` (diagnostics probe
+/// the system with individual constraints removed).
+fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
     let mut vars = Vec::new();
     let mut point_vars = HashMap::new();
     let mut radius_vars = HashMap::new();
@@ -397,7 +539,11 @@ fn build_system(sketch: &Sketch) -> System {
                 radius_vars.insert(a.id, vars.len());
                 vars.push(f64::from(a.radius));
             }
-            GeometryElement::Line(_) => {}
+            // Lines are fully defined by their endpoint variables; ellipse
+            // shape and spline control points carry no residuals (yet).
+            GeometryElement::Line(_)
+            | GeometryElement::Ellipse(_)
+            | GeometryElement::BSpline(_) => {}
         }
     }
 
@@ -421,8 +567,11 @@ fn build_system(sketch: &Sketch) -> System {
 
     let mut specs = Vec::new();
     for constraint in &sketch.constraints {
-        match *constraint {
-            Constraint::FixedPoint { point, position } => {
+        if !constraint.is_solved() || exclude == Some(constraint.id) {
+            continue;
+        }
+        match constraint.kind {
+            ConstraintKind::FixedPoint { point, position } => {
                 if let Some(p) = point_var(point) {
                     specs.push(ResidualSpec::FixedPoint {
                         p,
@@ -431,27 +580,27 @@ fn build_system(sketch: &Sketch) -> System {
                     });
                 }
             }
-            Constraint::Coincident { point1, point2 } => {
+            ConstraintKind::Coincident { point1, point2 } => {
                 if let (Some(p1), Some(p2)) = (point_var(point1), point_var(point2)) {
                     specs.push(ResidualSpec::Coincident { p1, p2 });
                 }
             }
-            Constraint::Parallel { line1, line2 } => {
+            ConstraintKind::Parallel { line1, line2 } => {
                 if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
                     specs.push(ResidualSpec::Parallel { s1, e1, s2, e2 });
                 }
             }
-            Constraint::Perpendicular { line1, line2 } => {
+            ConstraintKind::Perpendicular { line1, line2 } => {
                 if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
                     specs.push(ResidualSpec::Perpendicular { s1, e1, s2, e2 });
                 }
             }
-            Constraint::EqualLength { line1, line2 } => {
+            ConstraintKind::EqualLength { line1, line2 } => {
                 if let (Some((s1, e1)), Some((s2, e2))) = (line_vars(line1), line_vars(line2)) {
                     specs.push(ResidualSpec::EqualLength { s1, e1, s2, e2 });
                 }
             }
-            Constraint::Length { line, length } => {
+            ConstraintKind::Length { line, length } => {
                 if let Some((s, e)) = line_vars(line) {
                     specs.push(ResidualSpec::Length {
                         s,
@@ -460,12 +609,12 @@ fn build_system(sketch: &Sketch) -> System {
                     });
                 }
             }
-            Constraint::EqualRadius { circle1, circle2 } => {
+            ConstraintKind::EqualRadius { circle1, circle2 } => {
                 if let (Some(r1), Some(r2)) = (radius_var(circle1), radius_var(circle2)) {
                     specs.push(ResidualSpec::EqualRadius { r1, r2 });
                 }
             }
-            Constraint::Radius { circle, radius } => {
+            ConstraintKind::Radius { circle, radius } => {
                 if let Some(r) = radius_var(circle) {
                     specs.push(ResidualSpec::Radius {
                         r,
@@ -473,27 +622,58 @@ fn build_system(sketch: &Sketch) -> System {
                     });
                 }
             }
-            Constraint::PointOnLine { point, line } => {
+            ConstraintKind::Diameter { circle, diameter } => {
+                if let Some(r) = radius_var(circle) {
+                    specs.push(ResidualSpec::Diameter {
+                        r,
+                        diameter: f64::from(diameter),
+                    });
+                }
+            }
+            ConstraintKind::PointOnLine { point, line } => {
                 if let (Some(p), Some((s, e))) = (point_var(point), line_vars(line)) {
                     specs.push(ResidualSpec::PointOnLine { p, s, e });
                 }
             }
-            Constraint::PointOnCircle { point, circle } => {
+            ConstraintKind::PointOnCircle { point, circle } => {
                 if let (Some(p), Some((c, r))) = (point_var(point), circle_vars(circle)) {
                     specs.push(ResidualSpec::PointOnCircle { p, c, r });
                 }
             }
-            Constraint::Horizontal { element } => {
+            ConstraintKind::Horizontal { element } => {
                 if let Some((s, e)) = line_vars(element) {
                     specs.push(ResidualSpec::Horizontal { s, e });
                 }
             }
-            Constraint::Vertical { element } => {
+            ConstraintKind::Vertical { element } => {
                 if let Some((s, e)) = line_vars(element) {
                     specs.push(ResidualSpec::Vertical { s, e });
                 }
             }
-            Constraint::Distance {
+            ConstraintKind::Block { element } => {
+                if let Some(geom) = sketch.get_geometry(element) {
+                    // Fix every referenced point (and the element itself,
+                    // for standalone points) at its current position, plus
+                    // the radius when the element has one.
+                    let mut ids = Sketch::curve_point_ids(geom);
+                    if let GeometryElement::Point(p) = geom {
+                        ids.push(p.id);
+                    }
+                    for pid in ids {
+                        if let (Some(p), Some(pos)) = (point_var(pid), sketch.point_position(pid)) {
+                            specs.push(ResidualSpec::FixedPoint {
+                                p,
+                                x: f64::from(pos.x),
+                                y: f64::from(pos.y),
+                            });
+                        }
+                    }
+                    if let Some(&r) = radius_vars.get(&element) {
+                        specs.push(ResidualSpec::Radius { r, radius: vars[r] });
+                    }
+                }
+            }
+            ConstraintKind::Distance {
                 point1,
                 point2,
                 distance,
@@ -506,7 +686,25 @@ fn build_system(sketch: &Sketch) -> System {
                     });
                 }
             }
-            Constraint::Angle {
+            ConstraintKind::DistanceX { a, b, value } => {
+                if let (Some(pa), Some(pb)) = (point_var(a), resolve_opt(b, &point_var)) {
+                    specs.push(ResidualSpec::CoordDistance {
+                        a: pa,
+                        b: pb,
+                        value: f64::from(value),
+                    });
+                }
+            }
+            ConstraintKind::DistanceY { a, b, value } => {
+                if let (Some(pa), Some(pb)) = (point_var(a), resolve_opt(b, &point_var)) {
+                    specs.push(ResidualSpec::CoordDistance {
+                        a: pa + 1,
+                        b: pb.map(|i| i + 1),
+                        value: f64::from(value),
+                    });
+                }
+            }
+            ConstraintKind::Angle {
                 line1,
                 line2,
                 angle_rad,
@@ -521,7 +719,39 @@ fn build_system(sketch: &Sketch) -> System {
                     });
                 }
             }
-            Constraint::Tangent {
+            ConstraintKind::AngleToAxis {
+                line,
+                axis,
+                angle_rad,
+            } => {
+                if let Some((s, e)) = line_vars(line) {
+                    let base = match axis {
+                        AxisDirection::Horizontal => 0.0,
+                        AxisDirection::Vertical => std::f64::consts::FRAC_PI_2,
+                    };
+                    specs.push(ResidualSpec::AngleToTarget {
+                        s,
+                        e,
+                        target: base + f64::from(angle_rad),
+                    });
+                }
+            }
+            ConstraintKind::PointOnEllipse { point, ellipse } => {
+                if let (Some(p), Some(GeometryElement::Ellipse(el))) =
+                    (point_var(point), sketch.get_geometry(ellipse))
+                {
+                    if let Some(c) = point_var(el.center) {
+                        specs.push(ResidualSpec::PointOnEllipse {
+                            p,
+                            c,
+                            major_x: f64::from(el.major.x),
+                            major_y: f64::from(el.major.y),
+                            ratio: f64::from(el.ratio),
+                        });
+                    }
+                }
+            }
+            ConstraintKind::Tangent {
                 line_or_circle1,
                 item2,
             } => {
@@ -556,7 +786,7 @@ fn build_system(sketch: &Sketch) -> System {
                     specs.push(spec);
                 }
             }
-            Constraint::Symmetric {
+            ConstraintKind::Symmetric {
                 point1,
                 point2,
                 line,
@@ -567,7 +797,19 @@ fn build_system(sketch: &Sketch) -> System {
                     specs.push(ResidualSpec::Symmetric { p1, p2, s, e });
                 }
             }
-            Constraint::Midpoint { point, line } => {
+            ConstraintKind::SymmetricAboutPoint {
+                point1,
+                point2,
+                center,
+            } => {
+                // center = (p1 + p2) / 2: exactly the Midpoint residual.
+                if let (Some(s), Some(e), Some(p)) =
+                    (point_var(point1), point_var(point2), point_var(center))
+                {
+                    specs.push(ResidualSpec::Midpoint { p, s, e });
+                }
+            }
+            ConstraintKind::Midpoint { point, line } => {
                 if let (Some(p), Some((s, e))) = (point_var(point), line_vars(line)) {
                     specs.push(ResidualSpec::Midpoint { p, s, e });
                 }
@@ -606,6 +848,18 @@ fn build_system(sketch: &Sketch) -> System {
         radius_vars,
         specs,
         residual_len,
+    }
+}
+
+/// Resolve an optional point reference: absent is fine (measure from the
+/// origin), present-but-unresolvable skips the whole constraint (`None`).
+fn resolve_opt(
+    id: Option<Uuid>,
+    point_var: &impl Fn(Uuid) -> Option<usize>,
+) -> Option<Option<usize>> {
+    match id {
+        None => Some(None),
+        Some(id) => point_var(id).map(Some),
     }
 }
 
@@ -800,7 +1054,9 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
                     a.radius = x[i] as f32;
                 }
             }
-            GeometryElement::Line(_) => {}
+            GeometryElement::Line(_)
+            | GeometryElement::Ellipse(_)
+            | GeometryElement::BSpline(_) => {}
         }
     }
 }
@@ -808,7 +1064,7 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sketch::{Arc, Circle, Line, Point};
+    use crate::sketch::{Arc, Circle, Constraint, Ellipse, Line, Point};
     use std::f32::consts::PI;
 
     fn add_point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
@@ -820,7 +1076,7 @@ mod tests {
     }
 
     fn fix(sketch: &mut Sketch, point: Uuid, x: f32, y: f32) {
-        sketch.constraints.push(Constraint::FixedPoint {
+        sketch.add_constraint(ConstraintKind::FixedPoint {
             point,
             position: Vec2D::new(x, y),
         });
@@ -866,19 +1122,17 @@ mod tests {
     fn constraints_on_missing_geometry_are_skipped() {
         let mut sketch = Sketch::new("missing");
         add_point(&mut sketch, 1.0, 2.0);
-        sketch.constraints.push(Constraint::Length {
+        sketch.add_constraint(ConstraintKind::Length {
             line: Uuid::new_v4(),
             length: 5.0,
         });
-        sketch.constraints.push(Constraint::Coincident {
+        sketch.add_constraint(ConstraintKind::Coincident {
             point1: Uuid::new_v4(),
             point2: Uuid::new_v4(),
         });
         // Horizontal on a non-line element is also skipped.
         let p = add_point(&mut sketch, 3.0, 4.0);
-        sketch
-            .constraints
-            .push(Constraint::Horizontal { element: p });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: p });
         assert_eq!(solve(&mut sketch), SolveOutcome::NothingToSolve);
     }
 
@@ -900,9 +1154,7 @@ mod tests {
         let b = add_point(&mut sketch, 10.0, 2.0);
         let line = add_line(&mut sketch, a, b);
         fix(&mut sketch, a, 0.0, 0.0);
-        sketch
-            .constraints
-            .push(Constraint::Horizontal { element: line });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: line });
         assert_converged(solve(&mut sketch));
         assert_near(pos(&sketch, b).y, pos(&sketch, a).y, 1e-4);
         // The end's x stays free, so the sketch is not fully constrained.
@@ -916,9 +1168,7 @@ mod tests {
         let b = add_point(&mut sketch, 2.0, 10.0);
         let line = add_line(&mut sketch, a, b);
         fix(&mut sketch, a, 0.0, 0.0);
-        sketch
-            .constraints
-            .push(Constraint::Vertical { element: line });
+        sketch.add_constraint(ConstraintKind::Vertical { element: line });
         assert_converged(solve(&mut sketch));
         assert_near(pos(&sketch, b).x, pos(&sketch, a).x, 1e-4);
     }
@@ -930,9 +1180,7 @@ mod tests {
         let b = add_point(&mut sketch, 3.0, 4.0);
         let line = add_line(&mut sketch, a, b);
         fix(&mut sketch, a, 0.0, 0.0);
-        sketch
-            .constraints
-            .push(Constraint::Length { line, length: 10.0 });
+        sketch.add_constraint(ConstraintKind::Length { line, length: 10.0 });
         assert_converged(solve(&mut sketch));
         let dir = (pos(&sketch, b) - pos(&sketch, a)).normalize();
         assert_near((pos(&sketch, b) - pos(&sketch, a)).length(), 10.0, 1e-3);
@@ -945,7 +1193,7 @@ mod tests {
         let mut sketch = Sketch::new("coincident");
         let p1 = add_point(&mut sketch, 0.0, 0.0);
         let p2 = add_point(&mut sketch, 2.0, 2.0);
-        sketch.constraints.push(Constraint::Coincident {
+        sketch.add_constraint(ConstraintKind::Coincident {
             point1: p1,
             point2: p2,
         });
@@ -959,7 +1207,7 @@ mod tests {
         let p1 = add_point(&mut sketch, 0.0, 0.0);
         let p2 = add_point(&mut sketch, 1.0, 0.0);
         fix(&mut sketch, p1, 0.0, 0.0);
-        sketch.constraints.push(Constraint::Distance {
+        sketch.add_constraint(ConstraintKind::Distance {
             point1: p1,
             point2: p2,
             distance: 5.0,
@@ -973,7 +1221,7 @@ mod tests {
         let mut sketch = Sketch::new("radius");
         let center = add_point(&mut sketch, 1.0, 1.0);
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle,
             radius: 5.0,
         });
@@ -988,9 +1236,7 @@ mod tests {
         let c2 = add_point(&mut sketch, 10.0, 0.0);
         let circle1 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c1, 2.0)));
         let circle2 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c2, 6.0)));
-        sketch
-            .constraints
-            .push(Constraint::EqualRadius { circle1, circle2 });
+        sketch.add_constraint(ConstraintKind::EqualRadius { circle1, circle2 });
         assert_converged(solve(&mut sketch));
         assert_near(
             circle_radius(&sketch, circle1),
@@ -1011,9 +1257,7 @@ mod tests {
         fix(&mut sketch, a, 0.0, 0.0);
         fix(&mut sketch, b, 10.0, 0.0);
         fix(&mut sketch, c, 0.0, 5.0);
-        sketch
-            .constraints
-            .push(Constraint::EqualLength { line1, line2 });
+        sketch.add_constraint(ConstraintKind::EqualLength { line1, line2 });
         assert_converged(solve(&mut sketch));
         assert_near((pos(&sketch, d) - pos(&sketch, c)).length(), 10.0, 1e-3);
     }
@@ -1031,7 +1275,7 @@ mod tests {
         let d = add_point(&mut sketch, 8.0, 4.0);
         let para = add_line(&mut sketch, c, d);
         fix(&mut sketch, c, 0.0, 2.0);
-        sketch.constraints.push(Constraint::Parallel {
+        sketch.add_constraint(ConstraintKind::Parallel {
             line1: base,
             line2: para,
         });
@@ -1040,7 +1284,7 @@ mod tests {
         let f = add_point(&mut sketch, 6.0, 9.0);
         let perp = add_line(&mut sketch, e, f);
         fix(&mut sketch, e, 5.0, 1.0);
-        sketch.constraints.push(Constraint::Perpendicular {
+        sketch.add_constraint(ConstraintKind::Perpendicular {
             line1: base,
             line2: perp,
         });
@@ -1061,9 +1305,7 @@ mod tests {
         fix(&mut sketch, a, 0.0, 0.0);
         fix(&mut sketch, b, 10.0, 0.0);
         let p = add_point(&mut sketch, 4.0, 3.0);
-        sketch
-            .constraints
-            .push(Constraint::PointOnLine { point: p, line });
+        sketch.add_constraint(ConstraintKind::PointOnLine { point: p, line });
         assert_converged(solve(&mut sketch));
         assert_near(pos(&sketch, p).y, 0.0, 1e-3);
     }
@@ -1074,14 +1316,12 @@ mod tests {
         let center = add_point(&mut sketch, 0.0, 0.0);
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 5.0)));
         fix(&mut sketch, center, 0.0, 0.0);
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle,
             radius: 5.0,
         });
         let p = add_point(&mut sketch, 8.0, 0.0);
-        sketch
-            .constraints
-            .push(Constraint::PointOnCircle { point: p, circle });
+        sketch.add_constraint(ConstraintKind::PointOnCircle { point: p, circle });
         assert_converged(solve(&mut sketch));
         assert_near((pos(&sketch, p) - pos(&sketch, center)).length(), 5.0, 1e-3);
     }
@@ -1098,7 +1338,7 @@ mod tests {
         let d = add_point(&mut sketch, 10.0, 1.0);
         let rotated = add_line(&mut sketch, c, d);
         fix(&mut sketch, c, 0.0, 0.0);
-        sketch.constraints.push(Constraint::Angle {
+        sketch.add_constraint(ConstraintKind::Angle {
             line1: base,
             line2: rotated,
             angle_rad: PI / 4.0,
@@ -1121,23 +1361,15 @@ mod tests {
         let top = add_line(&mut sketch, c, d);
         let left = add_line(&mut sketch, d, a);
         fix(&mut sketch, a, 0.0, 0.0);
-        sketch
-            .constraints
-            .push(Constraint::Horizontal { element: bottom });
-        sketch
-            .constraints
-            .push(Constraint::Horizontal { element: top });
-        sketch
-            .constraints
-            .push(Constraint::Vertical { element: right });
-        sketch
-            .constraints
-            .push(Constraint::Vertical { element: left });
-        sketch.constraints.push(Constraint::Length {
+        sketch.add_constraint(ConstraintKind::Horizontal { element: bottom });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: top });
+        sketch.add_constraint(ConstraintKind::Vertical { element: right });
+        sketch.add_constraint(ConstraintKind::Vertical { element: left });
+        sketch.add_constraint(ConstraintKind::Length {
             line: bottom,
             length: 4.0,
         });
-        sketch.constraints.push(Constraint::Length {
+        sketch.add_constraint(ConstraintKind::Length {
             line: right,
             length: 3.0,
         });
@@ -1171,12 +1403,8 @@ mod tests {
         fix(&mut sketch, a, 0.0, 0.0);
         fix(&mut sketch, b, 10.0, 0.0);
         // Redundant but consistent with the fixed endpoints.
-        sketch
-            .constraints
-            .push(Constraint::Length { line, length: 10.0 });
-        sketch
-            .constraints
-            .push(Constraint::Horizontal { element: line });
+        sketch.add_constraint(ConstraintKind::Length { line, length: 10.0 });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: line });
         assert_converged(solve(&mut sketch));
         assert_near((pos(&sketch, b) - pos(&sketch, a)).length(), 10.0, 1e-3);
         assert!(sketch.is_fully_constrained);
@@ -1189,12 +1417,8 @@ mod tests {
         let b = add_point(&mut sketch, 6.0, 0.0);
         let line = add_line(&mut sketch, a, b);
         fix(&mut sketch, a, 0.0, 0.0);
-        sketch
-            .constraints
-            .push(Constraint::Length { line, length: 5.0 });
-        sketch
-            .constraints
-            .push(Constraint::Length { line, length: 8.0 });
+        sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        sketch.add_constraint(ConstraintKind::Length { line, length: 8.0 });
         match solve(&mut sketch) {
             SolveOutcome::NotConverged { residual } => assert!(residual > 1e-3),
             other => panic!("expected NotConverged, got {other:?}"),
@@ -1210,7 +1434,7 @@ mod tests {
         let end = add_point(&mut sketch, 0.0, 5.0);
         let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(center, start, end, 5.0)));
         fix(&mut sketch, center, 0.0, 0.0);
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle: arc,
             radius: 3.0,
         });
@@ -1240,11 +1464,11 @@ mod tests {
         fix(&mut sketch, b, 10.0, 0.0);
         let center = add_point(&mut sketch, 5.0, 3.0);
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle,
             radius: 2.0,
         });
-        sketch.constraints.push(Constraint::Tangent {
+        sketch.add_constraint(ConstraintKind::Tangent {
             line_or_circle1: line,
             item2: circle,
         });
@@ -1267,7 +1491,7 @@ mod tests {
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
         fix(&mut sketch, center, 5.0, 3.0);
         // Circle first, line second: the radius adapts instead.
-        sketch.constraints.push(Constraint::Tangent {
+        sketch.add_constraint(ConstraintKind::Tangent {
             line_or_circle1: circle,
             item2: line,
         });
@@ -1283,15 +1507,15 @@ mod tests {
         let circle1 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c1, 3.0)));
         let circle2 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c2, 4.0)));
         fix(&mut sketch, c1, 0.0, 0.0);
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle: circle1,
             radius: 3.0,
         });
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle: circle2,
             radius: 4.0,
         });
-        sketch.constraints.push(Constraint::Tangent {
+        sketch.add_constraint(ConstraintKind::Tangent {
             line_or_circle1: circle1,
             item2: circle2,
         });
@@ -1309,15 +1533,15 @@ mod tests {
         let circle1 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c1, 3.0)));
         let circle2 = sketch.add_geometry(GeometryElement::Circle(Circle::new(c2, 4.0)));
         fix(&mut sketch, c1, 0.0, 0.0);
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle: circle1,
             radius: 3.0,
         });
-        sketch.constraints.push(Constraint::Radius {
+        sketch.add_constraint(ConstraintKind::Radius {
             circle: circle2,
             radius: 4.0,
         });
-        sketch.constraints.push(Constraint::Tangent {
+        sketch.add_constraint(ConstraintKind::Tangent {
             line_or_circle1: circle1,
             item2: circle2,
         });
@@ -1338,7 +1562,7 @@ mod tests {
         let p1 = add_point(&mut sketch, 3.0, 4.0);
         let p2 = add_point(&mut sketch, 5.0, -2.0);
         fix(&mut sketch, p1, 3.0, 4.0);
-        sketch.constraints.push(Constraint::Symmetric {
+        sketch.add_constraint(ConstraintKind::Symmetric {
             point1: p1,
             point2: p2,
             line,
@@ -1360,7 +1584,7 @@ mod tests {
         let p1 = add_point(&mut sketch, 6.0, 2.0);
         let p2 = add_point(&mut sketch, 1.0, 5.0);
         fix(&mut sketch, p1, 6.0, 2.0);
-        sketch.constraints.push(Constraint::Symmetric {
+        sketch.add_constraint(ConstraintKind::Symmetric {
             point1: p1,
             point2: p2,
             line,
@@ -1380,9 +1604,7 @@ mod tests {
         fix(&mut sketch, a, 0.0, 0.0);
         fix(&mut sketch, b, 10.0, 4.0);
         let p = add_point(&mut sketch, 7.0, 7.0);
-        sketch
-            .constraints
-            .push(Constraint::Midpoint { point: p, line });
+        sketch.add_constraint(ConstraintKind::Midpoint { point: p, line });
         assert_converged(solve(&mut sketch));
         assert_near(pos(&sketch, p).x, 5.0, 1e-3);
         assert_near(pos(&sketch, p).y, 2.0, 1e-3);
@@ -1414,12 +1636,342 @@ mod tests {
         let a = add_point(&mut sketch, 0.0, 0.0);
         let b = add_point(&mut sketch, 10.0, 0.0);
         let line = add_line(&mut sketch, a, b);
-        sketch
-            .constraints
-            .push(Constraint::Horizontal { element: line });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: line });
         assert_eq!(
             solve(&mut sketch),
             SolveOutcome::Converged { iterations: 0 }
         );
+    }
+
+    #[test]
+    fn diameter_constraint_resizes_circle() {
+        let mut sketch = Sketch::new("diameter");
+        let center = add_point(&mut sketch, 1.0, 1.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
+        sketch.add_constraint(ConstraintKind::Diameter {
+            circle,
+            diameter: 9.0,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(circle_radius(&sketch, circle), 4.5, 1e-4);
+    }
+
+    #[test]
+    fn distance_x_and_y_between_points() {
+        let mut sketch = Sketch::new("dxdy");
+        let p1 = add_point(&mut sketch, 0.0, 0.0);
+        let p2 = add_point(&mut sketch, 1.0, 1.0);
+        fix(&mut sketch, p1, 0.0, 0.0);
+        sketch.add_constraint(ConstraintKind::DistanceX {
+            a: p1,
+            b: Some(p2),
+            value: 7.0,
+        });
+        sketch.add_constraint(ConstraintKind::DistanceY {
+            a: p1,
+            b: Some(p2),
+            value: 3.0,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near((pos(&sketch, p2).x - pos(&sketch, p1).x).abs(), 7.0, 1e-3);
+        assert_near((pos(&sketch, p2).y - pos(&sketch, p1).y).abs(), 3.0, 1e-3);
+        assert!(sketch.is_fully_constrained);
+    }
+
+    #[test]
+    fn distance_x_from_origin() {
+        let mut sketch = Sketch::new("dx_origin");
+        let p = add_point(&mut sketch, 2.0, 5.0);
+        sketch.add_constraint(ConstraintKind::DistanceX {
+            a: p,
+            b: None,
+            value: 6.0,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, p).x.abs(), 6.0, 1e-3);
+        assert_near(pos(&sketch, p).y, 5.0, 1e-4);
+    }
+
+    #[test]
+    fn block_freezes_line_while_other_geometry_moves() {
+        let mut sketch = Sketch::new("block");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        add_line(&mut sketch, a, b);
+        let blocked_line = sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Line(l) => Some(l.id),
+                _ => None,
+            })
+            .unwrap();
+        sketch.add_constraint(ConstraintKind::Block {
+            element: blocked_line,
+        });
+        // A free point pulled onto the blocked endpoint: only the point moves.
+        let p = add_point(&mut sketch, 3.0, 4.0);
+        sketch.add_constraint(ConstraintKind::Coincident {
+            point1: p,
+            point2: b,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, a).x, 0.0, 1e-4);
+        assert_near(pos(&sketch, b).x, 10.0, 1e-4);
+        assert_near(pos(&sketch, b).y, 0.0, 1e-4);
+        assert_near(pos(&sketch, p).x, 10.0, 1e-3);
+        assert_near(pos(&sketch, p).y, 0.0, 1e-3);
+    }
+
+    #[test]
+    fn length_on_blocked_line_conflicts() {
+        let mut sketch = Sketch::new("block_conflict");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        sketch.add_constraint(ConstraintKind::Block { element: line });
+        sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        assert!(matches!(
+            solve(&mut sketch),
+            SolveOutcome::NotConverged { .. }
+        ));
+    }
+
+    #[test]
+    fn symmetric_about_point_centers_pair() {
+        let mut sketch = Sketch::new("sym_point");
+        let p1 = add_point(&mut sketch, 2.0, 3.0);
+        let center = add_point(&mut sketch, 5.0, 5.0);
+        let p2 = add_point(&mut sketch, 9.0, 9.0);
+        fix(&mut sketch, p1, 2.0, 3.0);
+        fix(&mut sketch, center, 5.0, 5.0);
+        sketch.add_constraint(ConstraintKind::SymmetricAboutPoint {
+            point1: p1,
+            point2: p2,
+            center,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, p2).x, 8.0, 1e-3);
+        assert_near(pos(&sketch, p2).y, 7.0, 1e-3);
+    }
+
+    #[test]
+    fn angle_to_axis_rotates_line() {
+        let mut sketch = Sketch::new("angle_axis");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 1.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        sketch.add_constraint(ConstraintKind::AngleToAxis {
+            line,
+            axis: AxisDirection::Horizontal,
+            angle_rad: PI / 4.0,
+        });
+        assert_converged(solve(&mut sketch));
+        let dir = pos(&sketch, b) - pos(&sketch, a);
+        assert_near(dir.y.atan2(dir.x), PI / 4.0, 1e-3);
+
+        // Vertical axis, zero angle: the line becomes vertical.
+        let c = add_point(&mut sketch, 20.0, 0.0);
+        let d = add_point(&mut sketch, 21.0, 10.0);
+        let line2 = add_line(&mut sketch, c, d);
+        fix(&mut sketch, c, 20.0, 0.0);
+        sketch.add_constraint(ConstraintKind::AngleToAxis {
+            line: line2,
+            axis: AxisDirection::Vertical,
+            angle_rad: 0.0,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, d).x, pos(&sketch, c).x, 1e-3);
+    }
+
+    #[test]
+    fn tangent_line_arc_moves_arc_center() {
+        let mut sketch = Sketch::new("tangent_arc");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 0.0);
+        let center = add_point(&mut sketch, 5.0, 3.0);
+        let start = add_point(&mut sketch, 7.0, 3.0);
+        let end = add_point(&mut sketch, 5.0, 5.0);
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(center, start, end, 2.0)));
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: arc,
+            radius: 2.0,
+        });
+        sketch.add_constraint(ConstraintKind::Tangent {
+            line_or_circle1: line,
+            item2: arc,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, center).y, 2.0, 1e-3);
+        // Implicit arc consistency: endpoints follow the radius.
+        assert_near(
+            (pos(&sketch, start) - pos(&sketch, center)).length(),
+            2.0,
+            1e-3,
+        );
+    }
+
+    #[test]
+    fn tangent_arc_arc_separates_centers() {
+        let mut sketch = Sketch::new("tangent_arcs");
+        let make_arc = |sketch: &mut Sketch, cx: f32, r: f32| {
+            let c = add_point(sketch, cx, 0.0);
+            let s = add_point(sketch, cx + r, 0.0);
+            let e = add_point(sketch, cx, r);
+            let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, r)));
+            (c, arc)
+        };
+        let (c1, arc1) = make_arc(&mut sketch, 0.0, 3.0);
+        let (c2, arc2) = make_arc(&mut sketch, 10.0, 4.0);
+        fix(&mut sketch, c1, 0.0, 0.0);
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: arc1,
+            radius: 3.0,
+        });
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: arc2,
+            radius: 4.0,
+        });
+        sketch.add_constraint(ConstraintKind::Tangent {
+            line_or_circle1: arc1,
+            item2: arc2,
+        });
+        assert_converged(solve(&mut sketch));
+        assert_near((pos(&sketch, c2) - pos(&sketch, c1)).length(), 7.0, 1e-3);
+    }
+
+    #[test]
+    fn point_on_ellipse_pulls_point_to_boundary() {
+        let mut sketch = Sketch::new("point_on_ellipse");
+        let center = add_point(&mut sketch, 0.0, 0.0);
+        fix(&mut sketch, center, 0.0, 0.0);
+        let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
+            center,
+            Vec2D::new(4.0, 0.0),
+            0.5,
+        )));
+        // Off the minor vertex: pulled to (0, 2).
+        let p = add_point(&mut sketch, 0.0, 3.0);
+        sketch.add_constraint(ConstraintKind::PointOnEllipse { point: p, ellipse });
+        assert_converged(solve(&mut sketch));
+        assert_near(pos(&sketch, p).x, 0.0, 1e-3);
+        assert_near(pos(&sketch, p).y, 2.0, 1e-3);
+    }
+
+    #[test]
+    fn reference_dimension_does_not_constrain() {
+        let mut sketch = Sketch::new("reference");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 6.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        let mut reference = Constraint::new(ConstraintKind::Length { line, length: 10.0 });
+        reference.driving = false;
+        sketch.constraints.push(reference);
+        assert_converged(solve(&mut sketch));
+        // The line keeps its 6-long geometry; the reference only measures.
+        assert_near((pos(&sketch, b) - pos(&sketch, a)).length(), 6.0, 1e-4);
+        assert_near(
+            crate::sketch::measured_value(&sketch, &sketch.constraints[1].kind).unwrap(),
+            6.0,
+            1e-4,
+        );
+    }
+
+    #[test]
+    fn inactive_constraint_is_skipped() {
+        let mut sketch = Sketch::new("inactive");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 6.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        let mut disabled = Constraint::new(ConstraintKind::Length { line, length: 8.0 });
+        disabled.active = false;
+        sketch.constraints.push(disabled);
+        // With the contradictory 8-length disabled, the solve converges.
+        assert_converged(solve(&mut sketch));
+        assert_near((pos(&sketch, b) - pos(&sketch, a)).length(), 5.0, 1e-3);
+    }
+
+    #[test]
+    fn diagnose_flags_conflicting_lengths() {
+        let mut sketch = Sketch::new("diag_conflict");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 6.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        let len5 = sketch.add_constraint(ConstraintKind::Length { line, length: 5.0 });
+        let len8 = sketch.add_constraint(ConstraintKind::Length { line, length: 8.0 });
+        let diag = diagnose(&sketch);
+        assert!(diag.analyzed);
+        assert!(diag.conflicting.contains(&len5));
+        assert!(diag.conflicting.contains(&len8));
+        // The anchor is not part of the conflict: removing it doesn't help.
+        assert_eq!(diag.conflicting.len(), 2);
+    }
+
+    #[test]
+    fn diagnose_flags_redundant_duplicate_parallel() {
+        let mut sketch = Sketch::new("diag_redundant");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let base = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        fix(&mut sketch, b, 10.0, 0.0);
+        let c = add_point(&mut sketch, 0.0, 2.0);
+        let d = add_point(&mut sketch, 8.0, 2.0);
+        let other = add_line(&mut sketch, c, d);
+        fix(&mut sketch, c, 0.0, 2.0);
+        let par1 = sketch.add_constraint(ConstraintKind::Parallel {
+            line1: base,
+            line2: other,
+        });
+        let par2 = sketch.add_constraint(ConstraintKind::Parallel {
+            line1: base,
+            line2: other,
+        });
+        let diag = diagnose(&sketch);
+        assert!(diag.analyzed);
+        assert!(diag.conflicting.is_empty());
+        // Either copy can go without losing rank: both are flagged.
+        assert!(diag.redundant.contains(&par1));
+        assert!(diag.redundant.contains(&par2));
+        // The fixes are all independent: none flagged.
+        assert_eq!(diag.redundant.len(), 2);
+    }
+
+    #[test]
+    fn diagnose_healthy_sketch_reports_nothing() {
+        let mut sketch = Sketch::new("diag_ok");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = add_line(&mut sketch, a, b);
+        fix(&mut sketch, a, 0.0, 0.0);
+        sketch.add_constraint(ConstraintKind::Horizontal { element: line });
+        let diag = diagnose(&sketch);
+        assert!(diag.analyzed);
+        assert!(diag.conflicting.is_empty() && diag.redundant.is_empty());
+        assert_eq!(diag.dof, 1, "the free endpoint's x remains");
+    }
+
+    #[test]
+    fn diagnose_early_outs_above_constraint_limit() {
+        let mut sketch = Sketch::new("diag_limit");
+        let center = add_point(&mut sketch, 0.0, 0.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 5.0)));
+        for _ in 0..61 {
+            sketch.add_constraint(ConstraintKind::Radius {
+                circle,
+                radius: 5.0,
+            });
+        }
+        let diag = diagnose(&sketch);
+        assert!(!diag.analyzed, "too many constraints to analyze");
+        assert!(diag.conflicting.is_empty() && diag.redundant.is_empty());
     }
 }

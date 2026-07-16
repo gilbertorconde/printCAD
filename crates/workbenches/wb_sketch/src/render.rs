@@ -144,16 +144,12 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                 if let (Some(center), Some(start), Some(end)) =
                     (center_point, start_point, end_point)
                 {
-                    // Calculate angles
-                    let start_vec = start - center;
-                    let end_vec = end - center;
-                    let start_angle = start_vec.y.atan2(start_vec.x);
-                    let mut end_angle = end_vec.y.atan2(end_vec.x);
-
-                    // Ensure we go the shorter way
-                    if end_angle < start_angle {
-                        end_angle += 2.0 * std::f32::consts::PI;
-                    }
+                    // CCW sweep, matching every other consumer of arcs
+                    // (overlay, profile extraction, hit-testing).
+                    let (start_angle, sweep) = crate::snap::arc_angles(
+                        (start - center).to_glam(),
+                        (end - center).to_glam(),
+                    );
 
                     // Tessellate arc
                     let segments = 16;
@@ -161,7 +157,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
 
                     for i in 0..=segments {
                         let t = i as f32 / segments as f32;
-                        let angle = start_angle + t * (end_angle - start_angle);
+                        let angle = start_angle + t * sweep;
                         let offset = Vec2D::new(arc.radius * angle.cos(), arc.radius * angle.sin());
                         let point_world = to_world(center + offset);
 
@@ -181,6 +177,40 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                     }
                 }
             }
+            GeometryElement::Ellipse(ellipse) => {
+                if let Some(center) = sketch.point_position(ellipse.center) {
+                    let pts =
+                        crate::geom2d::ellipse_points(center, ellipse.major, ellipse.ratio, 48);
+                    add_polyline(
+                        &mut positions,
+                        &mut normals,
+                        &mut indices,
+                        &mut vertex_offset,
+                        &pts,
+                        &to_world,
+                        plane_normal,
+                    );
+                }
+            }
+            GeometryElement::BSpline(spline) => {
+                let ctrl: Option<Vec<Vec2D>> = spline
+                    .control_points
+                    .iter()
+                    .map(|id| sketch.point_position(*id))
+                    .collect();
+                if let Some(ctrl) = ctrl {
+                    let pts = crate::geom2d::bspline_points(&ctrl, spline.periodic, 64);
+                    add_polyline(
+                        &mut positions,
+                        &mut normals,
+                        &mut indices,
+                        &mut vertex_offset,
+                        &pts,
+                        &to_world,
+                        plane_normal,
+                    );
+                }
+            }
         }
     }
 
@@ -190,6 +220,31 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
         indices,
         edges: Vec::new(),
         colors: Vec::new(),
+    }
+}
+
+/// Add a sampled 2D polyline as consecutive thin quads.
+#[allow(clippy::too_many_arguments)]
+fn add_polyline(
+    positions: &mut Vec<[f32; 3]>,
+    normals: &mut Vec<[f32; 3]>,
+    indices: &mut Vec<u32>,
+    vertex_offset: &mut u32,
+    pts: &[Vec2D],
+    to_world: &impl Fn(Vec2D) -> [f32; 3],
+    plane_normal: glam::Vec3,
+) {
+    for pair in pts.windows(2) {
+        add_line_quad(
+            positions,
+            normals,
+            indices,
+            vertex_offset,
+            to_world(pair[0]),
+            to_world(pair[1]),
+            0.1,
+            plane_normal,
+        );
     }
 }
 

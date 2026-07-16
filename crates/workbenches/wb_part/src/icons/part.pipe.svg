@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Pipe: profile swept along a green path -->
+  <circle cx="5.5" cy="18" r="2.5" stroke="#D8DEE9" stroke-width="1.5"
+          fill="#D8DEE9" fill-opacity="0.2"/>
+  <path d="M5.5 15.5C5.5 10 10 6 16.5 6M14.3 4.4L17 6l-2.7 1.6" stroke="#6BCB77"
+        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

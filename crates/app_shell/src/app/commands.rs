@@ -9,7 +9,9 @@ use crate::app::doc_io::FileDialogKind;
 use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
-use crate::ui::{ActiveWorkbench, FileCommand, TreeItemId, UiCommand};
+use core_document::WorkbenchFeature;
+
+use crate::ui::{ActiveWorkbench, FileCommand, TreeFeatureCommand, TreeItemId, UiCommand};
 use crate::PrintCadApp;
 
 /// Phase 1 of the two-phase dispatch: commands folded into per-frame
@@ -27,6 +29,7 @@ struct FrameIntents {
     set_visibility: Vec<(uuid::Uuid, bool)>,
     select_tree_item: Option<TreeItemId>,
     activate_tree_item: Option<TreeItemId>,
+    tree_feature: Option<(core_document::FeatureId, TreeFeatureCommand)>,
     new_document: bool,
     file_dialog: Option<FileDialogKind>,
     workbench_switch: Option<(ActiveWorkbench, ActiveWorkbench)>,
@@ -74,6 +77,9 @@ impl PrintCadApp {
                 UiCommand::ApplyCameraSettings => intents.apply_camera_settings = true,
                 UiCommand::SelectTreeItem(item) => intents.select_tree_item = Some(item),
                 UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
+                UiCommand::TreeFeature { feature, command } => {
+                    intents.tree_feature = Some((feature, command));
+                }
                 UiCommand::SetImportedVisibility { node, visible } => {
                     intents.set_visibility.push((node, visible));
                 }
@@ -135,7 +141,10 @@ impl PrintCadApp {
             self.apply_tree_selection(selection);
         }
         if let Some(item) = intents.activate_tree_item {
-            self.log_tree_activation(item);
+            self.apply_tree_activation(item);
+        }
+        if let Some((feature, command)) = intents.tree_feature {
+            self.apply_tree_feature_command(feature, command);
         }
 
         if let Some(req) = intents.orient_to_plane {
@@ -291,21 +300,101 @@ impl PrintCadApp {
         }
     }
 
-    fn log_tree_activation(&self, item: TreeItemId) {
-        match item {
-            TreeItemId::Feature(id) => {
-                app_log::info(format!("Activated feature {:?} (double-click in tree)", id));
+    /// Double-click "jump" semantics: a sketch opens straight in the
+    /// sketcher's edit mode; a part feature or datum jumps to the Part
+    /// Design panel with its settings editor open.
+    fn apply_tree_activation(&mut self, item: TreeItemId) {
+        let TreeItemId::Feature(id) = item else {
+            return;
+        };
+        let Some(node) = self.document.get_feature_meta(id) else {
+            return;
+        };
+        let workbench = node.workbench_id.clone();
+        self.apply_tree_selection(item);
+        match workbench.as_str() {
+            "wb.sketch" => {
+                // The sketcher enters edit mode when the active document
+                // object is one of its sketches.
+                if self.active_workbench.0.as_str() != "wb.sketch" {
+                    self.switch_workbench_for_flow(core_document::WorkbenchId::from("wb.sketch"));
+                }
+                self.active_document_object = Some(id);
             }
-            TreeItemId::Body(id) => {
-                app_log::info(format!("Activated body {:?} (double-click in tree)", id));
+            "wb.part" | "core.datum" => {
+                if self.active_workbench.0.as_str() != "wb.part" {
+                    self.switch_workbench_for_flow(core_document::WorkbenchId::from("wb.part"));
+                }
+                self.active_document_object = Some(id);
             }
-            TreeItemId::ImportedObject(id) => {
-                app_log::info(format!(
-                    "Activated imported object {} (double-click in tree)",
-                    id
-                ));
+            _ => {}
+        }
+    }
+
+    /// Apply a history context-menu action from the feature tree.
+    fn apply_tree_feature_command(
+        &mut self,
+        feature: core_document::FeatureId,
+        command: TreeFeatureCommand,
+    ) {
+        let body = self.document.get_feature_meta(feature).and_then(|n| n.body);
+        match command {
+            TreeFeatureCommand::Suppress(suppressed) => {
+                self.document.set_feature_suppressed(feature, suppressed);
+                self.document.mark_feature_dirty(feature);
+                self.undo.commit(&self.document, "Suppress feature");
             }
-            TreeItemId::DocumentRoot => {}
+            TreeFeatureCommand::SetVisible(visible) => {
+                self.document.set_feature_visible(feature, visible);
+            }
+            TreeFeatureCommand::Delete => {
+                // Reveal sketches the feature consumed so they stay usable.
+                let sketches = self
+                    .document
+                    .get_feature_data(feature)
+                    .and_then(|d| wb_part::PartFeature::from_json(d).ok())
+                    .map(|f: wb_part::PartFeature| f.sketches())
+                    .unwrap_or_default();
+                if self.document.remove_feature(feature).is_ok() {
+                    for sketch in sketches {
+                        self.document.set_feature_visible(sketch, true);
+                    }
+                    if let Some(body) = body {
+                        match wb_part::part_feature_ids(&self.document, body).first() {
+                            Some(first) => self.document.mark_feature_dirty(*first),
+                            None => self.document.remove_imported_geometry(body),
+                        }
+                    }
+                    if self.active_document_object == Some(feature) {
+                        self.active_document_object = None;
+                    }
+                    self.undo.commit(&self.document, "Delete feature");
+                    app_log::info("Deleted feature");
+                }
+            }
+            TreeFeatureCommand::MoveUp | TreeFeatureCommand::MoveDown => {
+                let up = command == TreeFeatureCommand::MoveUp;
+                if self.document.move_feature_in_history(feature, up) {
+                    self.undo.commit(&self.document, "Reorder history");
+                    app_log::info("Reordered build history");
+                } else {
+                    app_log::warn(
+                        "Cannot move: already at the end, or the move would break a dependency",
+                    );
+                }
+            }
+            TreeFeatureCommand::SetTip | TreeFeatureCommand::ClearTip => {
+                let Some(body) = body else {
+                    return;
+                };
+                let tip = (command == TreeFeatureCommand::SetTip).then_some(feature);
+                self.document.set_body_tip(body, tip);
+                // The chain changes shape: rebuild from the first feature.
+                if let Some(first) = wb_part::part_feature_ids(&self.document, body).first() {
+                    self.document.mark_feature_dirty(*first);
+                }
+                self.undo.commit(&self.document, "Move tip");
+            }
         }
     }
 }

@@ -29,9 +29,12 @@ pub enum KernelRequest {
         detail: TessellationSettings,
     },
     /// Rebuild a body's solid from its Part Design feature chain.
+    /// `op_features` maps each op index to its owning feature id so a
+    /// failure can be pinned on the culprit in the tree.
     BuildSolid {
         body_id: Uuid,
         ops: Vec<SolidOp>,
+        op_features: Vec<Uuid>,
         detail: TessellationSettings,
     },
     /// Tessellate one body's BRep snapshot on the kernel thread. The blob
@@ -73,6 +76,7 @@ pub enum KernelResponse {
     },
     SolidFailed {
         body_id: Uuid,
+        failed_feature: Option<Uuid>,
         error: String,
     },
     BodyTessellateFailed {
@@ -128,6 +132,7 @@ impl KernelWorker {
         &mut self,
         body_id: Uuid,
         ops: Vec<SolidOp>,
+        op_features: Vec<Uuid>,
         detail: TessellationSettings,
     ) {
         if self
@@ -135,6 +140,7 @@ impl KernelWorker {
             .send(KernelRequest::BuildSolid {
                 body_id,
                 ops,
+                op_features,
                 detail,
             })
             .is_ok()
@@ -230,6 +236,7 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
             KernelRequest::BuildSolid {
                 body_id,
                 ops,
+                op_features,
                 detail,
             } => {
                 let started = Instant::now();
@@ -241,7 +248,8 @@ fn worker_loop(rx: Receiver<KernelRequest>, tx: Sender<KernelResponse>) {
                     },
                     Err(err) => KernelResponse::SolidFailed {
                         body_id,
-                        error: err.to_string(),
+                        failed_feature: op_features.get(err.op_index).copied(),
+                        error: err.message,
                     },
                 };
                 if tx.send(resp).is_err() {

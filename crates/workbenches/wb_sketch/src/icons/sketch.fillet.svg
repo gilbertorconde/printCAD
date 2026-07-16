@@ -1,7 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Two perpendicular lines joined by a tangent arc (rounded corner) -->
-  <path d="M5 6 V12 A6 6 0 0 0 11 18 H19"
-        fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
-  <circle cx="5" cy="6" r="1.5" fill="#FFFFFF"/>
-  <circle cx="19" cy="18" r="1.5" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Sketch fillet: sharp corner replaced by amber arc -->
+  <path d="M6 11.5V18.5H13" stroke="#D8DEE9" stroke-width="1.5" stroke-linecap="round"
+        stroke-linejoin="round" stroke-dasharray="2.5 2" fill="none" opacity="0.5"/>
+  <path d="M6 4.5v7M13 18.5h7" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linecap="round" fill="none"/>
+  <path d="M6 11.5a7 7 0 0 0 7 7" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" fill="none"/>
 </svg>

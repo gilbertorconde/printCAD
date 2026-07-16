@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Ellipse: outline with center point and dashed major axis -->
+  <ellipse cx="12" cy="12" rx="8.5" ry="5.5" stroke="#D8DEE9" stroke-width="1.5" fill="none"/>
+  <path d="M12 12h7" stroke="#5E9BF5" stroke-width="1.5"
+        stroke-dasharray="2.5 2" stroke-linecap="round" fill="none"/>
+  <circle cx="12" cy="12" r="2" fill="#5E9BF5"/>
+</svg>

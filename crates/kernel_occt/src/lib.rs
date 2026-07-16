@@ -12,8 +12,9 @@ use std::path::Path;
 use std::time::Instant;
 
 use kernel_api::{
-    BodyHandle, BooleanOp, ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind, Kernel,
-    KernelError, KernelResult, LinearDeflectionMode, ProfilePlane, ProfileSegment, RebuildRequest,
+    BodyHandle, BoolKind, BooleanOp, ChainError, ChamferSpec, EdgeSelection, ExtrudeTermination,
+    ImportedBody, ImportedModel, ImportedNode, ImportedNodeKind, Kernel, KernelError, KernelResult,
+    LinearDeflectionMode, PrimitiveKind, Profile, ProfilePlane, ProfileSegment, RebuildRequest,
     RebuildResponse, SolidBuildResult, SolidOp, SweepKind, TessellationSettings, TriMesh,
 };
 use tracing::info;
@@ -82,17 +83,21 @@ impl OcctKernel {
         import_step_full_mesh_internal(path, detail)
     }
 
-    /// Execute a body's solid-op chain: the first op must be NewSolid; each
-    /// subsequent op fuses/cuts against the accumulated solid. Each op sweeps
-    /// its sketch profile per [`SweepKind`] (linear extrude, optionally
-    /// symmetric about the sketch plane, or revolve about an in-plane axis).
-    /// Returns the final solid's BRep snapshot + render mesh.
+    /// Execute a body's solid-op chain: the first op must be a
+    /// shape-producing NewSolid; each subsequent op fuses/cuts a new tool
+    /// solid against the accumulated solid or modifies it directly
+    /// (dress-ups, patterns, booleans). Errors are attributed to the failing
+    /// op's chain index. Returns the final solid's BRep snapshot + render
+    /// mesh.
     pub fn execute_solid_chain(
         &mut self,
         ops: &[SolidOp],
         detail: &TessellationSettings,
-    ) -> Result<SolidBuildResult, KernelError> {
-        self.initialize()?;
+    ) -> Result<SolidBuildResult, ChainError> {
+        self.initialize().map_err(|e| ChainError {
+            op_index: 0,
+            message: e.to_string(),
+        })?;
         execute_solid_chain_internal(ops, detail)
     }
 }
@@ -195,23 +200,6 @@ fn tessellate_brep_internal(
     Ok(mesh)
 }
 
-fn profile_segment_to_ffi(segment: &ProfileSegment) -> ffi::PcadProfileSegment {
-    match *segment {
-        ProfileSegment::Line { start, end } => ffi::PcadProfileSegment {
-            kind: 0,
-            d: [start[0], start[1], end[0], end[1], 0.0, 0.0],
-        },
-        ProfileSegment::Arc { start, mid, end } => ffi::PcadProfileSegment {
-            kind: 1,
-            d: [start[0], start[1], mid[0], mid[1], end[0], end[1]],
-        },
-        ProfileSegment::Circle { center, radius } => ffi::PcadProfileSegment {
-            kind: 2,
-            d: [center[0], center[1], radius, 0.0, 0.0, 0.0],
-        },
-    }
-}
-
 fn profile_plane_to_ffi(plane: &ProfilePlane) -> ffi::PcadProfilePlane {
     ffi::PcadProfilePlane {
         origin: plane.origin,
@@ -229,156 +217,664 @@ fn boolean_op_to_ffi(op: BooleanOp) -> i32 {
     }
 }
 
-/// Pack a [`SweepKind`] into its C ABI encoding: `(kind, params[5], symmetric)`.
-///
-/// Extrude: `params[0]` = distance; a negative distance extrudes backwards.
-/// With `symmetric` the C++ shim translates the profile face by `-distance/2`
-/// along the unit normal before sweeping the full distance, so negative and
-/// positive distances of equal magnitude produce the identical solid.
-///
-/// Revolve: `params[0..2]` = axis origin (u, v), `params[2..4]` = axis
-/// direction (u, v) — both in sketch-plane coordinates — and `params[4]` =
-/// angle in degrees, validated by the shim to be in `(0, 360]`.
-fn sweep_kind_to_ffi(kind: &SweepKind) -> (i32, [f64; 5], c_int) {
-    match *kind {
-        SweepKind::Extrude {
-            distance,
-            symmetric,
-        } => (
-            0,
-            [distance, 0.0, 0.0, 0.0, 0.0],
-            if symmetric { 1 } else { 0 },
-        ),
-        SweepKind::Revolve {
-            axis_origin,
-            axis_dir,
-            angle_deg,
-        } => (
-            1,
-            [
-                axis_origin[0],
-                axis_origin[1],
-                axis_dir[0],
-                axis_dir[1],
-                angle_deg,
-            ],
-            0,
-        ),
-    }
+/// Owned FFI marshalling for one or more profiles. Variable-length segment
+/// payloads (B-spline control points, ellipse-arc params) live in separately
+/// boxed slices so their addresses stay stable while the outer vectors grow.
+#[derive(Default)]
+struct ProfileFfi {
+    extras: Vec<Box<[f64]>>,
+    segments: Vec<Vec<ffi::PcadProfileSegment>>,
+    wires: Vec<ffi::PcadProfileWire>,
+    planes: Vec<ffi::PcadProfilePlane>,
+    wire_offsets: Vec<usize>,
+    wire_counts: Vec<usize>,
 }
 
-fn execute_solid_chain_internal(
-    ops: &[SolidOp],
-    detail: &TessellationSettings,
-) -> KernelResult<SolidBuildResult> {
-    if ops.is_empty() {
-        return Err(KernelError::InvalidInput("solid-op chain is empty".into()));
-    }
-    if ops[0].op != BooleanOp::NewSolid {
-        return Err(KernelError::InvalidInput(
-            "first solid op in a chain must be NewSolid".into(),
-        ));
-    }
-    if let Some(offset) = ops[1..].iter().position(|op| op.op == BooleanOp::NewSolid) {
-        return Err(KernelError::InvalidInput(format!(
-            "solid op {} is NewSolid but only the first op in a chain may be",
-            offset + 1
-        )));
+impl ProfileFfi {
+    fn new(profile: &Profile) -> Self {
+        let mut ffi = Self::default();
+        ffi.push_profile(profile);
+        ffi
     }
 
-    let (linear_mode, linear_value) = tessellation_linear_for_ffi(detail);
-    let angular = (detail.angular_tolerance_deg.max(0.5) as f64).to_radians();
-    let weld_cross_face = if detail.weld_cross_face { 1 } else { 0 };
-    let weld_angle_rad = (detail.weld_angle_threshold_deg.max(0.0) as f64).to_radians();
-    let gen_edges = boundary_edges_for_ffi(detail);
-
-    let mut current_blob: Vec<u8> = Vec::new();
-    let mut final_mesh = TriMesh::default();
-
-    for (index, solid_op) in ops.iter().enumerate() {
-        if solid_op.wires.is_empty() {
-            return Err(KernelError::InvalidInput(format!(
-                "solid op {index} has no profile wires"
-            )));
+    fn from_sections(sections: &[Profile]) -> Self {
+        let mut ffi = Self::default();
+        for section in sections {
+            ffi.push_profile(section);
         }
+        ffi
+    }
 
-        // Segment arrays must outlive the FFI call; wires borrow into them.
-        let segment_storage: Vec<Vec<ffi::PcadProfileSegment>> = solid_op
-            .wires
-            .iter()
-            .map(|wire| wire.segments.iter().map(profile_segment_to_ffi).collect())
-            .collect();
-        let ffi_wires: Vec<ffi::PcadProfileWire> = segment_storage
+    fn push_profile(&mut self, profile: &Profile) {
+        self.planes.push(profile_plane_to_ffi(&profile.plane));
+        self.wire_offsets.push(self.segments.len());
+        self.wire_counts.push(profile.wires.len());
+        for wire in &profile.wires {
+            let segments: Vec<ffi::PcadProfileSegment> = wire
+                .segments
+                .iter()
+                .map(|segment| self.segment_to_ffi(segment))
+                .collect();
+            self.segments.push(segments);
+        }
+        // Wire descriptors are rebuilt last so segment vectors are final.
+        self.wires = self
+            .segments
             .iter()
             .map(|segments| ffi::PcadProfileWire {
                 segments: segments.as_ptr(),
                 count: segments.len(),
             })
             .collect();
-        let plane = profile_plane_to_ffi(&solid_op.plane);
-        let (sweep_kind, sweep_params, symmetric) = sweep_kind_to_ffi(&solid_op.kind);
+    }
 
+    fn segment_to_ffi(&mut self, segment: &ProfileSegment) -> ffi::PcadProfileSegment {
+        let no_extra = (std::ptr::null(), 0usize);
+        let (kind, d, (extra, extra_count)) = match segment {
+            ProfileSegment::Line { start, end } => {
+                (0, [start[0], start[1], end[0], end[1], 0.0, 0.0], no_extra)
+            }
+            ProfileSegment::Arc { start, mid, end } => (
+                1,
+                [start[0], start[1], mid[0], mid[1], end[0], end[1]],
+                no_extra,
+            ),
+            ProfileSegment::Circle { center, radius } => {
+                (2, [center[0], center[1], *radius, 0.0, 0.0, 0.0], no_extra)
+            }
+            ProfileSegment::Ellipse {
+                center,
+                major,
+                ratio,
+            } => (
+                3,
+                [center[0], center[1], major[0], major[1], *ratio, 0.0],
+                no_extra,
+            ),
+            ProfileSegment::EllipseArc {
+                center,
+                major,
+                ratio,
+                start_param,
+                end_param,
+            } => (
+                4,
+                [center[0], center[1], major[0], major[1], *ratio, 0.0],
+                self.stash_extra(vec![*start_param, *end_param]),
+            ),
+            ProfileSegment::BSpline {
+                control_points,
+                periodic,
+            } => (
+                5,
+                [if *periodic { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0, 0.0, 0.0],
+                self.stash_extra(control_points.iter().flatten().copied().collect()),
+            ),
+        };
+        ffi::PcadProfileSegment {
+            kind,
+            d,
+            extra,
+            extra_count,
+        }
+    }
+
+    fn stash_extra(&mut self, values: Vec<f64>) -> (*const c_double, usize) {
+        let boxed: Box<[f64]> = values.into_boxed_slice();
+        let ptr = boxed.as_ptr();
+        let len = boxed.len();
+        self.extras.push(boxed);
+        (ptr, len)
+    }
+}
+
+fn mesh_options_for_ffi(detail: &TessellationSettings, want_mesh: bool) -> ffi::PcadMeshOptions {
+    let (linear_mode, linear_value) = tessellation_linear_for_ffi(detail);
+    ffi::PcadMeshOptions {
+        want_mesh: if want_mesh { 1 } else { 0 },
+        linear_deflection_mode: linear_mode,
+        linear_value,
+        angular_deflection_rad: (detail.angular_tolerance_deg.max(0.5) as f64).to_radians(),
+        weld_cross_face: if detail.weld_cross_face { 1 } else { 0 },
+        weld_angle_threshold_rad: (detail.weld_angle_threshold_deg.max(0.0) as f64).to_radians(),
+        generate_boundary_edges: boundary_edges_for_ffi(detail),
+    }
+}
+
+fn termination_to_ffi(term: &ExtrudeTermination) -> ffi::PcadTermination {
+    match *term {
+        ExtrudeTermination::Blind { distance } => ffi::PcadTermination {
+            kind: 0,
+            distance,
+            ..Default::default()
+        },
+        ExtrudeTermination::ThroughAll => ffi::PcadTermination {
+            kind: 1,
+            ..Default::default()
+        },
+        ExtrudeTermination::UpToPlane {
+            point,
+            normal,
+            offset,
+        } => ffi::PcadTermination {
+            kind: 2,
+            plane_point: point,
+            plane_normal: normal,
+            offset,
+            ..Default::default()
+        },
+        ExtrudeTermination::ToFirst => ffi::PcadTermination {
+            kind: 3,
+            ..Default::default()
+        },
+        ExtrudeTermination::ToLast => ffi::PcadTermination {
+            kind: 4,
+            ..Default::default()
+        },
+    }
+}
+
+fn sweep_desc_to_ffi(kind: &SweepKind) -> ffi::PcadSweepDesc {
+    let mut desc = ffi::PcadSweepDesc {
+        kind: 0,
+        term: ffi::PcadTermination::default(),
+        term2: ffi::PcadTermination::default(),
+        has_term2: 0,
+        symmetric: 0,
+        reversed: 0,
+        taper_deg: 0.0,
+        direction: [0.0; 3],
+        has_direction: 0,
+        axis_origin: [0.0; 2],
+        axis_dir: [0.0; 2],
+        angle_deg: 0.0,
+        angle2_deg: 0.0,
+        has_angle2: 0,
+        midplane: 0,
+        pitch: 0.0,
+        height: 0.0,
+        cone_angle_deg: 0.0,
+        left_handed: 0,
+    };
+    match kind {
+        SweepKind::Extrude {
+            termination,
+            second_side,
+            symmetric,
+            reversed,
+            taper_deg,
+            direction,
+        } => {
+            desc.kind = 0;
+            desc.term = termination_to_ffi(termination);
+            if let Some(second) = second_side {
+                desc.term2 = termination_to_ffi(second);
+                desc.has_term2 = 1;
+            }
+            desc.symmetric = *symmetric as i32;
+            desc.reversed = *reversed as i32;
+            desc.taper_deg = *taper_deg;
+            if let Some(dir) = direction {
+                desc.direction = *dir;
+                desc.has_direction = 1;
+            }
+        }
+        SweepKind::Revolve {
+            axis_origin,
+            axis_dir,
+            angle_deg,
+            second_angle_deg,
+            midplane,
+            reversed,
+        } => {
+            desc.kind = 1;
+            desc.axis_origin = *axis_origin;
+            desc.axis_dir = *axis_dir;
+            desc.angle_deg = *angle_deg;
+            if let Some(second) = second_angle_deg {
+                desc.angle2_deg = *second;
+                desc.has_angle2 = 1;
+            }
+            desc.midplane = *midplane as i32;
+            desc.reversed = *reversed as i32;
+        }
+        SweepKind::Helix {
+            axis_origin,
+            axis_dir,
+            pitch,
+            height,
+            left_handed,
+            cone_angle_deg,
+            reversed,
+        } => {
+            desc.kind = 2;
+            desc.axis_origin = *axis_origin;
+            desc.axis_dir = *axis_dir;
+            desc.pitch = *pitch;
+            desc.height = *height;
+            desc.left_handed = *left_handed as i32;
+            desc.cone_angle_deg = *cone_angle_deg;
+            desc.reversed = *reversed as i32;
+        }
+    }
+    desc
+}
+
+fn primitive_to_ffi(kind: &PrimitiveKind) -> (i32, Vec<f64>) {
+    match *kind {
+        PrimitiveKind::Box {
+            length,
+            width,
+            height,
+        } => (0, vec![length, width, height]),
+        PrimitiveKind::Cylinder {
+            radius,
+            height,
+            angle_deg,
+        } => (1, vec![radius, height, angle_deg]),
+        PrimitiveKind::Sphere {
+            radius,
+            angle1_deg,
+            angle2_deg,
+            angle3_deg,
+        } => (2, vec![radius, angle1_deg, angle2_deg, angle3_deg]),
+        PrimitiveKind::Cone {
+            radius1,
+            radius2,
+            height,
+            angle_deg,
+        } => (3, vec![radius1, radius2, height, angle_deg]),
+        PrimitiveKind::Torus {
+            radius1,
+            radius2,
+            angle1_deg,
+            angle2_deg,
+            angle3_deg,
+        } => (
+            4,
+            vec![radius1, radius2, angle1_deg, angle2_deg, angle3_deg],
+        ),
+        PrimitiveKind::Ellipsoid {
+            radius1,
+            radius2,
+            radius3,
+        } => (5, vec![radius1, radius2, radius3]),
+        PrimitiveKind::Prism {
+            sides,
+            circumradius,
+            height,
+        } => (6, vec![sides as f64, circumradius, height]),
+        PrimitiveKind::Wedge {
+            xmin,
+            xmax,
+            ymin,
+            ymax,
+            zmin,
+            zmax,
+            x2min,
+            x2max,
+            z2min,
+            z2max,
+        } => (
+            7,
+            vec![
+                xmin, xmax, ymin, ymax, zmin, zmax, x2min, x2max, z2min, z2max,
+            ],
+        ),
+    }
+}
+
+fn edge_selection_to_ffi(edges: &EdgeSelection) -> (i32, Vec<f64>) {
+    match edges {
+        EdgeSelection::All => (0, Vec::new()),
+        EdgeSelection::OfFaces(points) => (1, points.iter().flatten().copied().collect()),
+        EdgeSelection::Near(points) => (2, points.iter().flatten().copied().collect()),
+    }
+}
+
+/// One executed chain step's reusable tool solid (`None` for modifiers).
+struct ToolSnapshot {
+    brep: Vec<u8>,
+    subtractive: bool,
+}
+
+/// (result BRep, optional tool BRep, optional render mesh) of one chain step.
+type StepOutput = (Vec<u8>, Option<Vec<u8>>, Option<TriMesh>);
+
+fn take_sweep_result(
+    result: ffi::PrintcadOcctSweepResult,
+    op_index: usize,
+    want_mesh: bool,
+) -> Result<StepOutput, ChainError> {
+    if !result.error.is_null() {
+        let message = unsafe { CStr::from_ptr(result.error) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { ffi::printcad_occt_free_sweep_result(result) };
+        return Err(ChainError { op_index, message });
+    }
+    if result.brep_blob.is_null() || result.brep_len == 0 {
+        unsafe { ffi::printcad_occt_free_sweep_result(result) };
+        return Err(ChainError {
+            op_index,
+            message: "op returned no BRep snapshot".into(),
+        });
+    }
+    let blob = unsafe { std::slice::from_raw_parts(result.brep_blob, result.brep_len) }.to_vec();
+    let tool = (!result.tool_blob.is_null() && result.tool_len > 0)
+        .then(|| unsafe { std::slice::from_raw_parts(result.tool_blob, result.tool_len) }.to_vec());
+    let mesh = want_mesh.then(|| TriMesh {
+        positions: copy_vec3_array(result.mesh_positions, result.mesh_vertex_count),
+        normals: copy_vec3_array(result.mesh_normals, result.mesh_vertex_count),
+        indices: copy_u32_array(result.mesh_indices, result.mesh_index_count),
+        edges: copy_u32_array(result.mesh_edges, result.mesh_edge_count * 2),
+        colors: Vec::new(),
+    });
+    unsafe { ffi::printcad_occt_free_sweep_result(result) };
+    Ok((blob, tool, mesh))
+}
+
+fn execute_solid_chain_internal(
+    ops: &[SolidOp],
+    detail: &TessellationSettings,
+) -> Result<SolidBuildResult, ChainError> {
+    let chain_err = |op_index: usize, message: &str| ChainError {
+        op_index,
+        message: message.into(),
+    };
+    if ops.is_empty() {
+        return Err(chain_err(0, "solid-op chain is empty"));
+    }
+    match ops[0].boolean_op() {
+        Some(BooleanOp::NewSolid) => {}
+        Some(_) => return Err(chain_err(0, "first solid op in a chain must be NewSolid")),
+        None => {
+            return Err(chain_err(
+                0,
+                "first solid op in a chain must produce a shape",
+            ))
+        }
+    }
+    for (index, op) in ops.iter().enumerate().skip(1) {
+        if op.boolean_op() == Some(BooleanOp::NewSolid) {
+            return Err(chain_err(
+                index,
+                "only the first op in a chain may be NewSolid",
+            ));
+        }
+    }
+
+    let mut current_blob: Vec<u8> = Vec::new();
+    let mut final_mesh = TriMesh::default();
+    let mut tools: Vec<Option<ToolSnapshot>> = Vec::with_capacity(ops.len());
+
+    for (index, solid_op) in ops.iter().enumerate() {
         let is_last = index + 1 == ops.len();
+        let mesh_opts = mesh_options_for_ffi(detail, is_last);
         let (base_ptr, base_len) = if index == 0 {
             (std::ptr::null(), 0)
         } else {
             (current_blob.as_ptr(), current_blob.len())
         };
 
-        let result = unsafe {
-            ffi::printcad_occt_sweep_profile(
-                base_ptr,
-                base_len,
-                &plane,
-                ffi_wires.as_ptr(),
-                ffi_wires.len(),
-                sweep_kind,
-                sweep_params.as_ptr(),
-                symmetric,
-                boolean_op_to_ffi(solid_op.op),
-                if is_last { 1 } else { 0 },
-                linear_mode,
-                linear_value,
-                angular,
-                weld_cross_face,
-                weld_angle_rad,
-                gen_edges,
-            )
+        let raw = match solid_op {
+            SolidOp::Sweep { profile, kind, op } => {
+                let marshalled = ProfileFfi::new(profile);
+                let desc = sweep_desc_to_ffi(kind);
+                unsafe {
+                    ffi::printcad_occt_solid_sweep(
+                        base_ptr,
+                        base_len,
+                        marshalled.planes.as_ptr(),
+                        marshalled.wires.as_ptr(),
+                        marshalled.wires.len(),
+                        &desc,
+                        boolean_op_to_ffi(*op),
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Loft {
+                sections,
+                ruled,
+                closed,
+                op,
+            } => {
+                let marshalled = ProfileFfi::from_sections(sections);
+                unsafe {
+                    ffi::printcad_occt_solid_loft(
+                        base_ptr,
+                        base_len,
+                        marshalled.planes.as_ptr(),
+                        marshalled.wires.as_ptr(),
+                        marshalled.wire_offsets.as_ptr(),
+                        marshalled.wire_counts.as_ptr(),
+                        marshalled.planes.len(),
+                        *ruled as c_int,
+                        *closed as c_int,
+                        boolean_op_to_ffi(*op),
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Pipe {
+                profile,
+                spine,
+                frenet,
+                op,
+            } => {
+                let profile_ffi = ProfileFfi::new(profile);
+                let spine_ffi = ProfileFfi::new(spine);
+                unsafe {
+                    ffi::printcad_occt_solid_pipe(
+                        base_ptr,
+                        base_len,
+                        profile_ffi.planes.as_ptr(),
+                        profile_ffi.wires.as_ptr(),
+                        profile_ffi.wires.len(),
+                        spine_ffi.planes.as_ptr(),
+                        spine_ffi.wires.as_ptr(),
+                        *frenet as c_int,
+                        boolean_op_to_ffi(*op),
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Primitive {
+                kind,
+                placement,
+                op,
+            } => {
+                let (prim_kind, params) = primitive_to_ffi(kind);
+                let placement_ffi: [f64; 9] = [
+                    placement.origin[0],
+                    placement.origin[1],
+                    placement.origin[2],
+                    placement.x_axis[0],
+                    placement.x_axis[1],
+                    placement.x_axis[2],
+                    placement.z_axis[0],
+                    placement.z_axis[1],
+                    placement.z_axis[2],
+                ];
+                unsafe {
+                    ffi::printcad_occt_solid_primitive(
+                        base_ptr,
+                        base_len,
+                        prim_kind,
+                        params.as_ptr(),
+                        params.len(),
+                        placement_ffi.as_ptr(),
+                        boolean_op_to_ffi(*op),
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Fillet { radius, edges } => {
+                let (mode, points) = edge_selection_to_ffi(edges);
+                let params = [*radius];
+                unsafe {
+                    ffi::printcad_occt_dressup(
+                        base_ptr,
+                        base_len,
+                        0,
+                        params.as_ptr(),
+                        params.len(),
+                        mode,
+                        points.as_ptr(),
+                        points.len() / 3,
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Chamfer { spec, flip, edges } => {
+                let (mode, points) = edge_selection_to_ffi(edges);
+                let params = match *spec {
+                    ChamferSpec::EqualDistance { distance } => [0.0, distance, 0.0, 0.0],
+                    ChamferSpec::TwoDistances {
+                        distance1,
+                        distance2,
+                    } => [1.0, distance1, distance2, *flip as i32 as f64],
+                    ChamferSpec::DistanceAngle {
+                        distance,
+                        angle_deg,
+                    } => [2.0, distance, angle_deg, *flip as i32 as f64],
+                };
+                unsafe {
+                    ffi::printcad_occt_dressup(
+                        base_ptr,
+                        base_len,
+                        1,
+                        params.as_ptr(),
+                        params.len(),
+                        mode,
+                        points.as_ptr(),
+                        points.len() / 3,
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Draft {
+                angle_deg,
+                neutral_point,
+                neutral_normal,
+                pull_dir,
+                faces,
+            } => {
+                let face_points: Vec<f64> = faces.iter().flatten().copied().collect();
+                let pull: Option<[f64; 3]> = *pull_dir;
+                unsafe {
+                    ffi::printcad_occt_draft(
+                        base_ptr,
+                        base_len,
+                        *angle_deg,
+                        neutral_point.as_ptr(),
+                        neutral_normal.as_ptr(),
+                        pull.as_ref().map_or(std::ptr::null(), |dir| dir.as_ptr()),
+                        face_points.as_ptr(),
+                        face_points.len() / 3,
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Thickness {
+                value,
+                open_faces,
+                inward,
+            } => {
+                let face_points: Vec<f64> = open_faces.iter().flatten().copied().collect();
+                unsafe {
+                    ffi::printcad_occt_thickness(
+                        base_ptr,
+                        base_len,
+                        *value,
+                        *inward as c_int,
+                        face_points.as_ptr(),
+                        face_points.len() / 3,
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Transform {
+                transforms,
+                originals,
+            } => {
+                // Whole-body mode (no originals) re-applies the current solid.
+                let whole_body;
+                let mut tool_solids: Vec<ffi::PcadToolSolid> = Vec::new();
+                if originals.is_empty() {
+                    whole_body = current_blob.clone();
+                    tool_solids.push(ffi::PcadToolSolid {
+                        brep: whole_body.as_ptr(),
+                        len: whole_body.len(),
+                        subtractive: 0,
+                    });
+                } else {
+                    for &orig in originals {
+                        let snapshot =
+                            tools.get(orig).and_then(|t| t.as_ref()).ok_or_else(|| {
+                                chain_err(
+                                    index,
+                                    "pattern references an op with no reusable tool solid",
+                                )
+                            })?;
+                        tool_solids.push(ffi::PcadToolSolid {
+                            brep: snapshot.brep.as_ptr(),
+                            len: snapshot.brep.len(),
+                            subtractive: snapshot.subtractive as i32,
+                        });
+                    }
+                }
+                let flat: Vec<f64> = transforms
+                    .iter()
+                    .flat_map(|m| m.iter().flatten().copied())
+                    .collect();
+                unsafe {
+                    ffi::printcad_occt_pattern(
+                        base_ptr,
+                        base_len,
+                        tool_solids.as_ptr(),
+                        tool_solids.len(),
+                        flat.as_ptr(),
+                        flat.len() / 16,
+                        &mesh_opts,
+                    )
+                }
+            }
+            SolidOp::Boolean { tool_brep, kind } => {
+                let kind_ffi = match kind {
+                    BoolKind::Fuse => 0,
+                    BoolKind::Cut => 1,
+                    BoolKind::Common => 2,
+                };
+                unsafe {
+                    ffi::printcad_occt_boolean(
+                        base_ptr,
+                        base_len,
+                        tool_brep.as_ptr(),
+                        tool_brep.len(),
+                        kind_ffi,
+                        &mesh_opts,
+                    )
+                }
+            }
         };
 
-        if !result.error.is_null() {
-            let message = unsafe { CStr::from_ptr(result.error) }
-                .to_string_lossy()
-                .into_owned();
-            unsafe { ffi::printcad_occt_free_sweep_result(result) };
-            return Err(KernelError::InvalidInput(format!(
-                "solid op {index}: {message}"
-            )));
+        let (blob, tool, mesh) = take_sweep_result(raw, index, is_last)?;
+        current_blob = blob;
+        tools.push(tool.map(|brep| ToolSnapshot {
+            brep,
+            subtractive: solid_op.boolean_op() == Some(BooleanOp::Cut),
+        }));
+        if let Some(mesh) = mesh {
+            final_mesh = mesh;
         }
-        if result.brep_blob.is_null() || result.brep_len == 0 {
-            unsafe { ffi::printcad_occt_free_sweep_result(result) };
-            return Err(KernelError::InvalidInput(format!(
-                "solid op {index} returned no BRep snapshot"
-            )));
-        }
-
-        current_blob =
-            unsafe { std::slice::from_raw_parts(result.brep_blob, result.brep_len) }.to_vec();
-        if is_last {
-            final_mesh = TriMesh {
-                positions: copy_vec3_array(result.mesh_positions, result.mesh_vertex_count),
-                normals: copy_vec3_array(result.mesh_normals, result.mesh_vertex_count),
-                indices: copy_u32_array(result.mesh_indices, result.mesh_index_count),
-                edges: copy_u32_array(result.mesh_edges, result.mesh_edge_count * 2),
-                colors: Vec::new(),
-            };
-        }
-        unsafe { ffi::printcad_occt_free_sweep_result(result) };
     }
 
     if final_mesh.positions.is_empty() || final_mesh.indices.is_empty() {
-        return Err(KernelError::InvalidInput(
-            "solid-op chain produced an empty render mesh".into(),
+        return Err(chain_err(
+            ops.len() - 1,
+            "solid-op chain produced an empty render mesh",
         ));
     }
 

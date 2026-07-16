@@ -140,13 +140,19 @@ PrintcadOcctImportResult printcad_occt_tessellate_brep(
 // ---- Sketch-profile solid sweeps (pad/pocket/revolve/groove) ----
 
 // One profile segment in sketch-plane (u, v) millimetre coordinates.
-// kind 0 = line:   d = { start_u, start_v, end_u, end_v, 0, 0 }
-// kind 1 = arc:    d = { start_u, start_v, mid_u, mid_v, end_u, end_v }
-//                  (three on-curve points: start -> mid -> end)
-// kind 2 = circle: d = { center_u, center_v, radius, 0, 0, 0 }
+// kind 0 = line:    d = { start_u, start_v, end_u, end_v, 0, 0 }
+// kind 1 = arc:     d = { start_u, start_v, mid_u, mid_v, end_u, end_v }
+//                   (three on-curve points: start -> mid -> end)
+// kind 2 = circle:  d = { center_u, center_v, radius, 0, 0, 0 }
+// kind 3 = ellipse: d = { center_u, center_v, major_u, major_v, ratio, 0 }
+//                   (major = vector center -> major vertex, minor = |major|*ratio)
+// kind 4 = ellipse arc: d as kind 3, extra = { start_param, end_param } (radians)
+// kind 5 = cubic B-spline: d[0] != 0 => periodic, extra = flat (u, v) control points
 typedef struct PcadProfileSegment {
     int32_t kind;
     double d[6];
+    const double* extra;
+    size_t extra_count;
 } PcadProfileSegment;
 
 // A closed loop of consecutive segments (a single circle is a wire by itself).
@@ -164,14 +170,18 @@ typedef struct PcadProfilePlane {
     double normal[3];
 } PcadProfilePlane;
 
-// Result of one solid-sweep step. On success `error` is null and `brep_blob`
-// holds the `BRepTools::Write` snapshot of the resulting solid; the `mesh_*`
-// arrays are populated only when `want_mesh != 0` (same layout as
-// `PrintcadOcctBody`, no per-vertex colours). On failure `error` is a malloc'd
-// string and every other field is null/zero.
+// Result of one solid-op step. On success `error` is null, `brep_blob` holds
+// the `BRepTools::Write` snapshot of the resulting solid, and `tool_blob`
+// (when the op produced a standalone tool solid before the boolean) holds the
+// raw tool shape for later re-use by patterns. The `mesh_*` arrays are
+// populated only when meshing was requested (same layout as
+// `PrintcadOcctBody`, no per-vertex colours). On failure `error` is a
+// malloc'd string and every other field is null/zero.
 typedef struct PrintcadOcctSweepResult {
     uint8_t* brep_blob;
     size_t brep_len;
+    uint8_t* tool_blob;
+    size_t tool_len;
     float* mesh_positions;
     float* mesh_normals;
     uint32_t* mesh_indices;
@@ -182,45 +192,192 @@ typedef struct PrintcadOcctSweepResult {
     char* error;
 } PrintcadOcctSweepResult;
 
-// Sweep a closed sketch profile into a solid and combine it with an optional
-// base solid. The largest-area wire is the outer boundary; the remaining
-// wires become holes.
-//
-// `sweep_kind` selects how the profile face becomes a solid, with the scalar
-// parameters packed into `params[5]`:
-//   0 = extrude: params[0] = distance along `plane->normal` (may be negative
-//       to extrude backwards). When `symmetric != 0` the profile face is
-//       first translated by -distance/2 along the (unit) normal and then
-//       swept by the full distance so the solid straddles the sketch plane.
-//       Note a negative distance with `symmetric` shifts forwards and sweeps
-//       backwards, producing exactly the same solid as the positive distance.
-//   1 = revolve: params[0..1] = axis origin (u, v) and params[2..3] = axis
-//       direction (u, v), both in sketch-plane coordinates (the axis lies in
-//       the sketch plane); params[4] = angle in degrees, required in
-//       (0, 360]. Angles >= 359.999 degrees revolve a full turn. `symmetric`
-//       is ignored. A zero axis direction or an out-of-range angle fails
-//       with `error`; profiles crossing the axis surface OCCT's own failure.
-//
-// `op`: 0 = new solid (base_brep must be NULL), 1 = fuse, 2 = cut (base_brep
-// required for 1/2). Tessellation parameters mirror
-// `printcad_occt_tessellate_brep` and are only used when `want_mesh != 0`.
-PrintcadOcctSweepResult printcad_occt_sweep_profile(
+// Tessellation request shared by every solid-op entry point. Parameters
+// mirror `printcad_occt_tessellate_brep`; the mesh is only produced when
+// `want_mesh != 0`.
+typedef struct PcadMeshOptions {
+    int want_mesh;
+    int linear_deflection_mode;
+    double linear_value;
+    double angular_deflection_rad;
+    int weld_cross_face;
+    double weld_angle_threshold_rad;
+    int generate_boundary_edges;
+} PcadMeshOptions;
+
+// Where a one-directional extrusion stops.
+// kind 0 = blind (`distance` mm), 1 = through-all (past the base bbox),
+// 2 = up-to-plane (`plane_point`/`plane_normal` shifted by `offset`),
+// 3 = to-first / 4 = to-last planar base face hit along the sweep direction.
+typedef struct PcadTermination {
+    int32_t kind;
+    double distance;
+    double plane_point[3];
+    double plane_normal[3];
+    double offset;
+} PcadTermination;
+
+// How a profile becomes a solid. `kind`: 0 = extrude, 1 = revolve, 2 = helix.
+// Extrude uses term/term2 (+`has_term2` for two-sided), `symmetric`,
+// `reversed`, `taper_deg`, and optional custom `direction`. Revolve uses the
+// sketch-plane axis, `angle_deg` (+optional `angle2_deg`), `midplane`,
+// `reversed`. Helix uses the axis plus `pitch`/`height`/`cone_angle_deg`/
+// `left_handed`.
+typedef struct PcadSweepDesc {
+    int32_t kind;
+    PcadTermination term;
+    PcadTermination term2;
+    int32_t has_term2;
+    int32_t symmetric;
+    int32_t reversed;
+    double taper_deg;
+    double direction[3];
+    int32_t has_direction;
+    double axis_origin[2];
+    double axis_dir[2];
+    double angle_deg;
+    double angle2_deg;
+    int32_t has_angle2;
+    int32_t midplane;
+    double pitch;
+    double height;
+    double cone_angle_deg;
+    int32_t left_handed;
+} PcadSweepDesc;
+
+// `op` for every shape-producing entry point below:
+// 0 = new solid (base_brep must be NULL), 1 = fuse, 2 = cut
+// (base required for 1/2).
+
+// Sweep a closed sketch profile into a solid (extrude / revolve / helix) and
+// combine it with the optional base. The largest-area wire is the outer
+// boundary; the remaining wires become holes.
+PrintcadOcctSweepResult printcad_occt_solid_sweep(
     const uint8_t* base_brep,
     size_t base_brep_len,
     const PcadProfilePlane* plane,
     const PcadProfileWire* wires,
     size_t wire_count,
-    int32_t sweep_kind,
-    const double params[5],
-    int symmetric,
+    const PcadSweepDesc* desc,
     int32_t op,
-    int want_mesh,
-    int linear_deflection_mode,
-    double linear_value,
-    double angular_deflection_rad,
-    int weld_cross_face,
-    double weld_angle_threshold_rad,
-    int generate_boundary_edges);
+    const PcadMeshOptions* mesh);
+
+// Loft through 2+ section profiles (planes[i] owns wires starting at
+// wire_offsets[i], wire_counts[i] wires). Hole wires loft pairwise (by
+// descending area) only when every section has the same wire count.
+// `closed != 0` loops the last section back to the first.
+PrintcadOcctSweepResult printcad_occt_solid_loft(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadProfilePlane* planes,
+    const PcadProfileWire* wires,
+    const size_t* wire_offsets,
+    const size_t* wire_counts,
+    size_t section_count,
+    int ruled,
+    int closed,
+    int32_t op,
+    const PcadMeshOptions* mesh);
+
+// Sweep a profile along a spine wire from another sketch. The spine may be
+// open or closed; `frenet != 0` uses a Frenet frame, otherwise the corrected
+// frame.
+PrintcadOcctSweepResult printcad_occt_solid_pipe(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadProfilePlane* profile_plane,
+    const PcadProfileWire* profile_wires,
+    size_t profile_wire_count,
+    const PcadProfilePlane* spine_plane,
+    const PcadProfileWire* spine_wire,
+    int frenet,
+    int32_t op,
+    const PcadMeshOptions* mesh);
+
+// Parametric primitive. `placement` = origin[3], x_axis[3], z_axis[3].
+// kind / params:
+// 0 box{l,w,h} 1 cylinder{r,h,angle} 2 sphere{r,a1,a2,a3} 3 cone{r1,r2,h,angle}
+// 4 torus{r1,r2,a1,a2,a3} 5 ellipsoid{r1,r2,r3} 6 prism{sides,circumradius,h}
+// 7 wedge{xmin,xmax,ymin,ymax,zmin,zmax,x2min,x2max,z2min,z2max}
+// (angles degrees).
+PrintcadOcctSweepResult printcad_occt_solid_primitive(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    int32_t kind,
+    const double* params,
+    size_t param_count,
+    const double placement[9],
+    int32_t op,
+    const PcadMeshOptions* mesh);
+
+// Fillet or chamfer edges of the base solid, selected geometrically.
+// `kind`: 0 = fillet (params = {radius}), 1 = chamfer (params = {mode, d1,
+// d2_or_angle_deg, flip}; mode 0 equal-distance, 1 two-distances,
+// 2 distance+angle). `selection_mode`: 0 = all edges, 1 = edges of the faces
+// nearest each xyz in `points`, 2 = the single edge nearest each point.
+PrintcadOcctSweepResult printcad_occt_dressup(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    int32_t kind,
+    const double* params,
+    size_t param_count,
+    int32_t selection_mode,
+    const double* points,
+    size_t point_count,
+    const PcadMeshOptions* mesh);
+
+// Tilt the faces nearest each xyz in `face_points` by `angle_deg` about the
+// neutral plane. `pull_dir` may be NULL (defaults to the neutral normal).
+PrintcadOcctSweepResult printcad_occt_draft(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    double angle_deg,
+    const double neutral_point[3],
+    const double neutral_normal[3],
+    const double* pull_dir,
+    const double* face_points,
+    size_t face_point_count,
+    const PcadMeshOptions* mesh);
+
+// Hollow the base solid to a wall of `value` mm, removing the faces nearest
+// each xyz in `face_points`. `inward != 0` keeps the outer surface in place.
+PrintcadOcctSweepResult printcad_occt_thickness(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    double value,
+    int inward,
+    const double* face_points,
+    size_t face_point_count,
+    const PcadMeshOptions* mesh);
+
+// One tool solid re-applied by a pattern.
+typedef struct PcadToolSolid {
+    const uint8_t* brep;
+    size_t len;
+    int32_t subtractive;
+} PcadToolSolid;
+
+// Re-apply the tool solids under each transform (row-major 4x4, `transforms`
+// holds 16 * transform_count doubles): additive tools fuse into the base,
+// subtractive tools cut. Non-rigid transforms (e.g. scaling) are supported.
+PrintcadOcctSweepResult printcad_occt_pattern(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadToolSolid* tools,
+    size_t tool_count,
+    const double* transforms,
+    size_t transform_count,
+    const PcadMeshOptions* mesh);
+
+// Boolean between the base and an external tool solid.
+// `kind`: 0 = fuse, 1 = cut, 2 = common.
+PrintcadOcctSweepResult printcad_occt_boolean(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const uint8_t* tool_brep,
+    size_t tool_len,
+    int32_t kind,
+    const PcadMeshOptions* mesh);
 
 // Free helpers — every output buffer must be released exactly once.
 void printcad_occt_free_string(char* str);

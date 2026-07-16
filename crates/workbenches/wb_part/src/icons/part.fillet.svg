@@ -1,10 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Fillet: L-corner with rounded inner edge -->
-  <path d="M6 6 H16 V16"
-        fill="none" stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
-  <path d="M10 16 A6 6 0 0 1 16 10"
-        fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Fillet: solid corner rounded, amber highlight on the arc -->
+  <path d="M13.5 4.5H20V11" stroke="#D8DEE9" stroke-width="1.5" stroke-linecap="round"
+        stroke-linejoin="round" stroke-dasharray="2.5 2" fill="none" opacity="0.5"/>
+  <path d="M4.5 20V4.5h9A6.5 6.5 0 0 1 20 11v9z" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.15"/>
+  <path d="M13.5 4.5A6.5 6.5 0 0 1 20 11" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" fill="none"/>
 </svg>
-
-
-

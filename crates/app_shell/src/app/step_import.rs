@@ -147,7 +147,11 @@ impl PrintCadApp {
                         elapsed.as_secs_f64() * 1000.0
                     ));
                 }
-                KernelResponse::SolidFailed { body_id, error } => {
+                KernelResponse::SolidFailed {
+                    body_id,
+                    failed_feature,
+                    error,
+                } => {
                     let name = self
                         .document
                         .bodies()
@@ -155,6 +159,14 @@ impl PrintCadApp {
                         .find(|b| b.id == BodyId(body_id))
                         .map(|b| b.name.clone())
                         .unwrap_or_else(|| "body".to_string());
+                    // Pin the failure on the culprit feature; the panel and
+                    // tree surface it. Downstream keeps the last good solid.
+                    if let Some(feature) = failed_feature {
+                        self.document.set_feature_error(
+                            core_document::FeatureId(feature),
+                            Some(error.clone()),
+                        );
+                    }
                     app_log::error(format!("Rebuild of `{name}` failed: {error}"));
                 }
             }

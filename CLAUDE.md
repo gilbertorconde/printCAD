@@ -26,19 +26,30 @@ cargo fmt --all                   # CI enforces --check
 
 ## Crate map / dataflow
 
-- `kernel_api` — pure data contract (TriMesh, ProfileWire, SolidOp/SweepKind,
-  TessellationSettings). No geometry code.
+- `kernel_api` — pure data contract (TriMesh, ProfileWire w/ ellipse+B-spline
+  segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
+  ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
 - `kernel_occt` — OCCT FFI (`cpp/step_loader.cpp`, one TU). STEP import +
-  `execute_solid_chain` (extrude/revolve + fuse/cut). All errors cross the FFI
-  as strings; never unwind across it.
-- `core_document` — Document (feature tree DAG, bodies, tar `.prtcad`
+  `execute_solid_chain`: per-op FFI entry points (`printcad_occt_solid_*`,
+  `_dressup`, `_draft`, `_thickness`, `_pattern`, `_boolean`) threaded on the
+  running BRep blob; shape ops also return a `tool_blob` that patterns
+  re-apply. Errors cross the FFI as strings and carry the failing op index
+  (`ChainError`); never unwind across it. Profile wires group by containment:
+  nested = holes, disjoint = separate solids.
+- `core_document` — Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context, snapshot undo
-  (`undo.rs`), workbench registry (`service.rs`).
-- `workbenches/wb_sketch` — sketcher: `tools.rs` (state machine), `snap.rs`,
-  `solver.rs` (Gauss-Newton/LM, 17 constraint types), `profile.rs` (closed-wire
-  extraction), `overlay.rs` (screen-space rendering while editing).
-- `workbenches/wb_part` — Pad/Pocket/Revolution/Groove features; `build.rs`
-  translates a body's feature history into kernel `SolidOp` chains.
+  (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
+  plane/line/point + attachment + offset, shared across workbenches).
+- `workbenches/wb_sketch` — sketcher: `tools.rs` + `tools/{draw,modify,
+  transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
+  `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
+  `profile.rs` (closed-wire extraction), `overlay.rs` (screen-space rendering
+  while editing).
+- `workbenches/wb_part` — Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
+  Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
+  (`feature.rs`), per-feature panel editors (`editors.rs`); `build.rs`
+  translates a body's feature history into kernel `SolidOp` chains
+  (`BuildPlan` maps op index → feature for error attribution).
 - `render_vk` — data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
 - `app_shell` — binary. `app/` modules: `frame.rs` (per-frame loop),
@@ -112,8 +123,15 @@ disabled; pan/zoom/roll allowed).
 ## Known approximations / roadmap
 
 - Faces are identified geometrically (coplanar triangle regions), not
-  topologically — coplanar-but-disjoint faces select together. OCCT face/edge
-  ids through the render mesh is the next big unlock (solid fillet/chamfer,
-  true sketch-on-face references).
-- "Through all" pocket = ±1e5 mm symmetric cut (`THROUGH_ALL_MM`).
+  topologically — coplanar-but-disjoint faces select together. Dress-up edge
+  selection and up-to-face terminations therefore reference faces by a sample
+  point + normal (`FacePick`), re-resolved against the current solid each
+  rebuild. OCCT face/edge ids through the render mesh is still the next big
+  unlock (per-edge picking, true sketch-on-face references).
+- "Through all" derives its length from the base solid's bounding box; up-to-
+  face trims with a half-space, so only PLANAR target faces terminate exactly
+  (curved to-first/to-last faces stop at the profile-centroid hit distance).
+- Helix with height 0 (flat spiral) is rejected; use a small pitch instead.
+- Hole threads are standards data only (tap-drill / ISO 273 clearance
+  diameters); no helical thread geometry is generated.
 - `orientation_cube/mod.rs` (1340 LOC) still needs the camera-style split.

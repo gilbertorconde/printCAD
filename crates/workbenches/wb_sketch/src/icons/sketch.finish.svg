@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Finish sketch: sheet with a green confirmation check -->
+  <rect x="3.5" y="4.5" width="12.5" height="16" rx="1.5"
+        fill="#D8DEE9" fill-opacity="0.1" stroke="#D8DEE9" stroke-width="1.5"/>
+  <path d="M8 13l4.5 4.5L20.5 7" stroke="#6BCB77" stroke-width="2.2"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

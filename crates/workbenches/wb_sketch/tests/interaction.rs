@@ -161,9 +161,28 @@ impl Harness {
                 GeometryElement::Line(_) => l += 1,
                 GeometryElement::Circle(_) => c += 1,
                 GeometryElement::Arc(_) => a += 1,
+                _ => {}
             }
         }
         (p, l, c, a)
+    }
+
+    fn right_click(&mut self, x: f32, y: f32, tool: &str) {
+        let viewport_pos = self.px_of(x, y);
+        self.event(
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Right,
+                viewport_pos,
+            },
+            Some(tool),
+        );
+    }
+
+    /// Select elements by dragging a box over them (select mode).
+    fn box_select(&mut self, x0: f32, y0: f32, x1: f32, y1: f32) {
+        self.click(x0, y0, "sketch.select");
+        self.mouse_move(x1, y1, "sketch.select");
+        self.release(x1, y1, "sketch.select");
     }
 }
 
@@ -705,7 +724,7 @@ fn construction_toggle_on_mixed_selection_flips_each_individually() {
 
 #[test]
 fn editing_a_dimension_constraint_re_solves_the_sketch() {
-    use wb_sketch::sketch::Constraint;
+    use wb_sketch::sketch::{Constraint, ConstraintKind};
 
     let mut h = Harness::new();
     let id = h.create_sketch();
@@ -726,11 +745,11 @@ fn editing_a_dimension_constraint_re_solves_the_sketch() {
         .unwrap();
     let anchor = sketch.point_position(line.start).unwrap();
     let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    feature.sketch.constraints.push(Constraint::FixedPoint {
+    feature.sketch.add_constraint(ConstraintKind::FixedPoint {
         point: line.start,
         position: anchor,
     });
-    feature.sketch.constraints.push(Constraint::Length {
+    feature.sketch.add_constraint(ConstraintKind::Length {
         line: line.id,
         length: 10.0,
     });
@@ -745,10 +764,10 @@ fn editing_a_dimension_constraint_re_solves_the_sketch() {
     h.wb.update_constraint(
         &mut ctx,
         constraint_idx,
-        Constraint::Length {
+        Constraint::new(ConstraintKind::Length {
             line: line.id,
             length: 20.0,
-        },
+        }),
     );
 
     let sketch = h.sketch();
@@ -761,8 +780,8 @@ fn editing_a_dimension_constraint_re_solves_the_sketch() {
     );
     assert!(
         matches!(
-            sketch.constraints[constraint_idx],
-            Constraint::Length { length, .. } if (length - 20.0).abs() < 1e-6
+            sketch.constraints[constraint_idx].kind,
+            ConstraintKind::Length { length, .. } if (length - 20.0).abs() < 1e-6
         ),
         "constraint value stored"
     );
@@ -1043,6 +1062,383 @@ fn box_selection_covers_circles_and_arcs() {
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, _, _, a) = h.counts();
     assert_eq!((p, a), (0, 0), "arc and its points deleted");
+}
+
+#[test]
+fn ellipse_tool_extracts_ellipse_profile() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.ellipse"); // center
+    h.click(10.0, 0.0, "sketch.ellipse"); // major vertex
+    h.click(5.0, 4.0, "sketch.ellipse"); // minor extent → ratio 0.4
+    let sketch = h.sketch();
+    let ellipse = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .expect("ellipse created");
+    assert!(
+        (ellipse.ratio - 0.4).abs() < 0.01,
+        "ratio {}",
+        ellipse.ratio
+    );
+    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert!(matches!(
+        &wires[0].segments[0],
+        kernel_api::ProfileSegment::Ellipse { major, ratio, .. }
+            if (major[0] - 10.0).abs() < 0.05 && (ratio - 0.4).abs() < 0.01
+    ));
+}
+
+#[test]
+fn bspline_draw_closes_profile_with_line() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // Three control points, finished with a right click.
+    h.click(0.0, 0.0, "sketch.bspline");
+    h.click(5.0, 6.0, "sketch.bspline");
+    h.click(10.0, 0.0, "sketch.bspline");
+    h.right_click(10.0, 0.0, "sketch.bspline");
+    // Close the open spline with a line snapped to its end control points.
+    h.click(10.0, 0.0, "sketch.line");
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    assert_eq!(sketch.geometry.len(), 5, "3 points + spline + line");
+    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 2);
+    assert!(wires[0].segments.iter().any(|s| matches!(
+        s,
+        kernel_api::ProfileSegment::BSpline { control_points, periodic: false }
+            if control_points.len() == 3
+    )));
+}
+
+#[test]
+fn trim_middle_span_leaves_two_lines_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // Horizontal target and two vertical cutters.
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(20.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(5.0, -5.0, "sketch.line");
+    h.click(5.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(15.0, -5.0, "sketch.line");
+    h.click(15.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    assert_eq!(h.counts(), (6, 3, 0, 0));
+
+    h.click(10.0, 0.0, "sketch.trim");
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (8, 4), "middle span removed, two halves left");
+}
+
+#[test]
+fn extend_line_to_intersection_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(5.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(10.0, -5.0, "sketch.line");
+    h.click(10.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Click the end half of the short line.
+    h.click(4.0, 0.0, "sketch.extend");
+    let sketch = h.sketch();
+    let reached = sketch.geometry.iter().any(|g| match g {
+        GeometryElement::Point(p) => {
+            (p.position.x - 10.0).abs() < 0.05 && p.position.y.abs() < 0.05
+        }
+        _ => false,
+    });
+    assert!(reached, "endpoint moved onto the wall");
+    assert_eq!(h.counts(), (4, 2, 0, 0), "no new geometry, endpoint moved");
+}
+
+#[test]
+fn split_line_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    h.click(4.0, 0.0, "sketch.split");
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (3, 2), "split point shared by both halves");
+}
+
+#[test]
+fn offset_rectangle_end_to_end_produces_closed_loop() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    h.box_select(-2.0, -2.0, 14.0, 10.0);
+    h.wb.tool_params_mut().offset_distance = 2.0;
+    // Click inside the rectangle: the offset loop shrinks inward.
+    h.click(6.0, 4.0, "sketch.offset");
+
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (8, 8));
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 2, "original + offset are both closed loops");
+    let inset = h.sketch().geometry.iter().any(|g| match g {
+        GeometryElement::Point(p) => {
+            (p.position.x - 2.0).abs() < 0.05 && (p.position.y - 2.0).abs() < 0.05
+        }
+        _ => false,
+    });
+    assert!(inset, "offset corner 2mm inside the original");
+}
+
+#[test]
+fn translate_copy_makes_n_copies_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(8.0, 3.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(4.0, 1.5, "sketch.select"); // select the line
+    h.wb.tool_params_mut().copies = 2;
+
+    h.click(0.0, 15.0, "sketch.translate"); // base
+    h.click(10.0, 15.0, "sketch.translate"); // destination: Δ = (10, 0)
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (6, 3), "original + 2 copies");
+    // Second copy endpoint at (28, 3).
+    let far = h.sketch().geometry.iter().any(|g| match g {
+        GeometryElement::Point(p) => {
+            (p.position.x - 28.0).abs() < 0.05 && (p.position.y - 3.0).abs() < 0.05
+        }
+        _ => false,
+    });
+    assert!(far, "second copy landed at 2Δ");
+}
+
+#[test]
+fn mirror_about_line_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // Mirror axis along the x-axis, subject line above it.
+    h.click(-10.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(2.0, 2.0, "sketch.line");
+    h.click(8.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(5.0, 3.5, "sketch.select"); // select the subject line
+
+    // One click on the axis line (away from any point) mirrors immediately.
+    h.click(0.0, 0.0, "sketch.mirror");
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (6, 3), "mirrored copy added");
+    let mirrored = h.sketch().geometry.iter().any(|g| match g {
+        GeometryElement::Point(p) => {
+            (p.position.x - 8.0).abs() < 0.05 && (p.position.y + 5.0).abs() < 0.05
+        }
+        _ => false,
+    });
+    assert!(mirrored, "endpoint mirrored to (8, -5)");
+}
+
+#[test]
+fn arc3_and_circle3_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(5.0, 0.0, "sketch.arc3");
+    h.click(0.0, 5.0, "sketch.arc3");
+    h.click(3.5355, 3.5355, "sketch.arc3"); // rim point on the CCW side
+    h.click(12.0, 0.0, "sketch.circle3");
+    h.click(18.0, 0.0, "sketch.circle3");
+    h.click(12.0, 8.0, "sketch.circle3");
+    let (_, _, c, a) = h.counts();
+    assert_eq!((c, a), (1, 1));
+    let sketch = h.sketch();
+    let arc_r = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Arc(arc) => Some(arc.radius),
+            _ => None,
+        })
+        .unwrap();
+    // The circumcircle is sensitive to the pixel-rounded rim click.
+    assert!((arc_r - 5.0).abs() < 0.2, "arc radius {arc_r}");
+    let circle_r = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Circle(c) => Some(c.radius),
+            _ => None,
+        })
+        .unwrap();
+    assert!((circle_r - 5.0).abs() < 0.05, "circle radius {circle_r}");
+}
+
+#[test]
+fn rect_center_tool_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(5.0, 3.0, "sketch.rect_center");
+    h.click(9.0, 5.0, "sketch.rect_center");
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (4, 4));
+    assert_eq!(h.sketch().constraints.len(), 4, "H/V constraints as rect");
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 4);
+}
+
+#[test]
+fn arc_slot_tool_end_to_end_closed_profile() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.arc_slot"); // arc center
+    h.click(8.0, 0.0, "sketch.arc_slot"); // centerline start (r = 8)
+    h.click(0.0, 8.0, "sketch.arc_slot"); // quarter-turn end
+    let (p, l, _, a) = h.counts();
+    assert_eq!((p, l, a), (7, 0, 4), "rails + caps");
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 4);
+}
+
+#[test]
+fn chamfer_tool_end_to_end() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.rect");
+    h.click(12.0, 8.0, "sketch.chamfer"); // default length 2
+    let (p, l, _, a) = h.counts();
+    assert_eq!((p, l, a), (5, 5, 0), "corner replaced by chamfer line");
+    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 5);
+}
+
+#[test]
+fn trim_hover_highlights_removable_span() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Hover the line with the trim tool active.
+    h.mouse_move(5.0, 0.0, "sketch.trim");
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.active_document_object = h.active_object;
+    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let highlight = overlays
+        .iter()
+        .filter(|o| o.thickness > 2.5 && o.color[0] > 0.9 && o.color[1] < 0.5)
+        .count();
+    assert!(
+        highlight >= 1,
+        "trim hover draws the removable span in the trim color"
+    );
+}
+
+#[test]
+fn clicking_near_a_line_attaches_new_point_onto_it() {
+    use wb_sketch::sketch::ConstraintKind;
+
+    let mut h = Harness::new();
+    h.create_sketch();
+    // Base line along X (gets an auto Horizontal from the axis snap).
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(20.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Start a new line just off the base line's mid-span (no point nearby):
+    // the start point is projected ONTO the line and constrained to it.
+    h.click(10.0, 0.5, "sketch.line");
+    h.click(14.0, 8.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    let on_line = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::PointOnLine { point, line } => Some((point, line)),
+            _ => None,
+        })
+        .expect("curve snap auto-added a point-on-line constraint");
+    let (point, _line) = on_line;
+    let p = sketch.point_position(point).unwrap();
+    assert!(
+        (p.x - 10.0).abs() < 0.1 && p.y.abs() < 1e-3,
+        "start point projected onto the base line, got ({}, {})",
+        p.x,
+        p.y
+    );
+    // The shared-endpoint path is untouched: no coincident duplicates.
+    let (points, lines, _, _) = h.counts();
+    assert_eq!((points, lines), (4, 2));
+}
+
+#[test]
+fn fully_constrained_sketch_renders_green() {
+    use wb_sketch::sketch::{Constraint, ConstraintKind, Vec2D};
+
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Fix both endpoints on the stored feature, then trigger the panel's
+    // re-solve path so `is_fully_constrained` updates.
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    let points: Vec<(uuid::Uuid, Vec2D)> = feature
+        .sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some((p.id, p.position)),
+            _ => None,
+        })
+        .collect();
+    for (point, position) in &points {
+        feature.sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: *point,
+            position: *position,
+        });
+    }
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    let first = h.sketch().constraints[0].clone();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.active_document_object = h.active_object;
+    h.wb.update_constraint(&mut ctx, 0, Constraint::new(first.kind.clone()));
+
+    assert!(h.sketch().is_fully_constrained);
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.active_document_object = h.active_object;
+    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let green = overlays
+        .iter()
+        .filter(|o| o.color[1] > 0.85 && o.color[0] < 0.3 && o.color[2] < 0.3)
+        .count();
+    assert!(
+        green >= 1,
+        "fully constrained geometry drawn in the fully-constrained green"
+    );
 }
 
 #[test]

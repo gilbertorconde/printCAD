@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Datum point: blue crosshair point -->
+  <g stroke="#5E9BF5" stroke-width="1.5" stroke-linecap="round" fill="none">
+    <path d="M12 4v4M12 16v4M4 12h4M16 12h4"/>
+  </g>
+  <circle cx="12" cy="12" r="2.2" fill="#5E9BF5"/>
+</svg>

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Boolean: two overlapping shapes, intersection filled -->
+  <circle cx="9" cy="12" r="5.5" stroke="#D8DEE9" stroke-width="1.5" fill="none"/>
+  <circle cx="15" cy="12" r="5.5" stroke="#D8DEE9" stroke-width="1.5" fill="none"/>
+  <path d="M12 7.4A5.5 5.5 0 0 1 12 16.6 5.5 5.5 0 0 1 12 7.4z"
+        stroke="#6BCB77" stroke-width="1.5" stroke-linejoin="round"
+        fill="#6BCB77" fill-opacity="0.35"/>
+</svg>

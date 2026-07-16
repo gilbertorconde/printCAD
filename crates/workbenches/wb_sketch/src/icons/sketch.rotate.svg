@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Rotate: shape inside an amber circular arrow -->
+  <rect x="9.5" y="9.5" width="5" height="5" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.15"/>
+  <path d="M12 5a7 7 0 1 0 7 7" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" fill="none"/>
+  <path d="M17.2 14.4L19 11.8l1.8 2.6" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

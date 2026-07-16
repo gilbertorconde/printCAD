@@ -87,6 +87,10 @@ pub struct FeatureNode {
     /// ties would otherwise order nondeterministically.
     #[serde(default)]
     pub seq: u64,
+    /// Last recompute error for this feature. Derived state: set by the
+    /// recompute driver, never persisted.
+    #[serde(skip)]
+    pub error: Option<String>,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
 }
@@ -106,6 +110,7 @@ impl FeatureNode {
                 .unwrap()
                 .as_millis() as i64,
             seq: 0,
+            error: None,
             data: feature.to_json(),
         }
     }
@@ -326,6 +331,7 @@ mod tests {
             dirty: false,
             created_at: 0,
             seq: 0,
+            error: None,
             data: serde_json::Value::Null,
         }
     }

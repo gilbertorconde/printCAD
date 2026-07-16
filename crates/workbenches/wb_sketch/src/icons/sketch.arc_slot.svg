@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Arc slot: curved stadium with dashed center arc -->
+  <path d="M2.47 14.5A11 11 0 0 1 21.53 14.5 3.25 3.25 0 0 1 15.9 17.75 4.5 4.5 0 0 0 8.1 17.75 3.25 3.25 0 0 1 2.47 14.5z"
+        stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" fill="none"/>
+  <path d="M5.29 16.12A7.75 7.75 0 0 1 18.71 16.12" stroke="#5E9BF5" stroke-width="1.5"
+        stroke-dasharray="2.5 2" stroke-linecap="round" fill="none"/>
+</svg>

@@ -1,9 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Circle outline with center mark -->
-  <circle cx="12" cy="12" r="7"
-          fill="none" stroke="#FFFFFF" stroke-width="2"/>
-  <circle cx="12" cy="12" r="1.5" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Circle (center + radius) -->
+  <circle cx="12" cy="12" r="7.5" stroke="#D8DEE9" stroke-width="1.5" fill="none"/>
+  <path d="M12 12l5.3-5.3" stroke="#5E9BF5" stroke-width="1.5"
+        stroke-dasharray="2.5 2" stroke-linecap="round" fill="none"/>
+  <circle cx="12" cy="12" r="2" fill="#5E9BF5"/>
 </svg>
-
-
-

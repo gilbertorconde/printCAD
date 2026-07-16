@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Extend: existing segment continued by an amber arrow -->
+  <path d="M4 12h9" stroke="#D8DEE9" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <circle cx="4" cy="12" r="2" fill="#D8DEE9"/>
+  <circle cx="13" cy="12" r="1.8" fill="#D8DEE9"/>
+  <path d="M13 12h6.5M16.5 9.4l3 2.6-3 2.6" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Loft: two different sections skinned by green walls -->
+  <ellipse cx="12" cy="5.5" rx="5" ry="1.8" stroke="#D8DEE9" stroke-width="1.5"
+           fill="#D8DEE9" fill-opacity="0.25"/>
+  <path d="M5.5 17L12 20l6.5-3L12 14z" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.12"/>
+  <path d="M7 5.8C6 9.5 5.5 13 5.5 17M17 5.8c1 3.7 1.5 7.2 1.5 11.2"
+        stroke="#6BCB77" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+</svg>

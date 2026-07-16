@@ -1,7 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Profile revolved about a vertical axis -->
-  <line x1="12" y1="3" x2="12" y2="21" stroke="#FFFFFF" stroke-width="1.2" stroke-dasharray="2.5 2"/>
-  <path d="M14 6 L19 6 L19 14 L14 14 Z" fill="none" stroke="#FFFFFF" stroke-width="1.8" stroke-linejoin="round"/>
-  <path d="M9 18 A7 3 0 1 1 15 18.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
-  <path d="M15 18.5 L13.6 16.8 M15 18.5 L17 17.9" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Revolution: profile revolved around a dash-dot axis, green sweep -->
+  <path d="M5.5 3.5v17" stroke="#5E9BF5" stroke-width="1.5"
+        stroke-dasharray="5 2 1.5 2" stroke-linecap="round" fill="none"/>
+  <rect x="9.5" y="10.5" width="6.5" height="8" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.15"/>
+  <path d="M18 6.5A6 2.2 0 0 1 6 6.5M4.6 8.8L6 6.2l1.7 2.5" stroke="#6BCB77"
+        stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
 </svg>

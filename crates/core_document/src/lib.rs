@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod datum;
 pub mod feature;
 pub mod registration;
 pub mod runtime;
@@ -18,6 +19,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
+pub use datum::{
+    datums_of_body, AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame,
+    DatumShape,
+};
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use kernel_api::TriMesh;
 pub use runtime::{
@@ -106,6 +111,11 @@ pub struct Body {
     pub id: BodyId,
     pub name: String,
     pub created_at: i64,
+    /// Feature exposed as the body's shape. `None` means the last feature in
+    /// the history; setting an earlier feature previews that history state
+    /// (features after the tip are excluded from the build).
+    #[serde(default)]
+    pub tip: Option<FeatureId>,
 }
 
 /// Tessellated geometry produced by an external import (STEP, STL, ...).
@@ -268,6 +278,7 @@ impl Document {
                 .unwrap()
                 .as_millis() as i64,
             seq,
+            error: None,
             data: feature.to_json(),
         };
 
@@ -369,6 +380,94 @@ impl Document {
         }
     }
 
+    /// Set (or clear) the feature exposed as a body's shape. Features after
+    /// the tip are excluded from the build until the tip moves back.
+    pub fn set_body_tip(&mut self, body: BodyId, tip: Option<FeatureId>) {
+        if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == body) {
+            if entry.tip != tip {
+                entry.tip = tip;
+                self.mark_dirty();
+            }
+        }
+    }
+
+    /// Swap a feature with its history neighbour (previous when `up`, next
+    /// otherwise) among same-workbench features of its body. Refuses moves
+    /// that would place a feature before one of its dependencies (or after a
+    /// dependent). Returns whether the order changed.
+    pub fn move_feature_in_history(&mut self, feature_id: FeatureId, up: bool) -> bool {
+        let Some(node) = self.feature_tree.get_node(feature_id) else {
+            return false;
+        };
+        let (workbench, body, seq) = (node.workbench_id.clone(), node.body, node.seq);
+
+        // Ordered peers = same body + same workbench, sorted by seq.
+        let mut peers: Vec<(u64, FeatureId)> = self
+            .feature_tree
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id == workbench && n.body == body)
+            .map(|(id, n)| (n.seq, *id))
+            .collect();
+        peers.sort_by_key(|(s, _)| *s);
+        let position = peers.iter().position(|(s, _)| *s == seq).unwrap_or(0);
+        let neighbour_pos = if up {
+            position.checked_sub(1)
+        } else {
+            (position + 1 < peers.len()).then_some(position + 1)
+        };
+        let Some(neighbour_pos) = neighbour_pos else {
+            return false;
+        };
+        let (neighbour_seq, neighbour_id) = peers[neighbour_pos];
+
+        // Dependency guard: after the swap every dependency must still come
+        // earlier. The swap only reorders these two features, so it suffices
+        // to check the pair against each other.
+        let deps_of = |id: FeatureId| self.feature_tree.dependencies(id);
+        let violates = if up {
+            deps_of(feature_id).contains(&neighbour_id)
+        } else {
+            deps_of(neighbour_id).contains(&feature_id)
+        };
+        if violates {
+            return false;
+        }
+
+        if let Some(n) = self.feature_tree.get_node_mut(feature_id) {
+            n.seq = neighbour_seq;
+        }
+        if let Some(n) = self.feature_tree.get_node_mut(neighbour_id) {
+            n.seq = seq;
+        }
+        // Order changes results: rebuild the whole history.
+        self.feature_tree.mark_dirty(feature_id);
+        self.feature_tree.mark_dirty(neighbour_id);
+        self.mark_dirty();
+        true
+    }
+
+    /// Record (or clear) a recompute error on a feature. Derived state: no
+    /// dirty-marking, the error is display-only and refreshed every rebuild.
+    pub fn set_feature_error(&mut self, feature_id: FeatureId, error: Option<String>) {
+        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+            node.error = error;
+        }
+    }
+
+    /// Clear recompute errors on every feature of a body (a rebuild is
+    /// starting; failures will re-flag the culprit).
+    pub fn clear_body_feature_errors(&mut self, body: BodyId) {
+        let ids: Vec<FeatureId> = self
+            .feature_tree
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(body))
+            .map(|(id, _)| *id)
+            .collect();
+        for id in ids {
+            self.set_feature_error(id, None);
+        }
+    }
+
     /// Remove a feature node. Features that depended on it are marked dirty
     /// so their owners can react to the missing input.
     pub fn remove_feature(&mut self, feature_id: FeatureId) -> DocumentResult<()> {
@@ -453,6 +552,7 @@ impl Document {
             id,
             name: body_name,
             created_at,
+            tip: None,
         };
         self.bodies.push(body);
         self.mark_dirty();

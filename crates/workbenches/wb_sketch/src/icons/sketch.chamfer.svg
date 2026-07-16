@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Sketch chamfer: sharp corner replaced by amber straight cut -->
+  <path d="M6 11.5V18.5H13" stroke="#D8DEE9" stroke-width="1.5" stroke-linecap="round"
+        stroke-linejoin="round" stroke-dasharray="2.5 2" fill="none" opacity="0.5"/>
+  <path d="M6 4.5v7M13 18.5h7" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linecap="round" fill="none"/>
+  <path d="M6 11.5l7 7" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" fill="none"/>
+</svg>

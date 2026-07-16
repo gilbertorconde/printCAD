@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Split: curve broken at an amber point -->
+  <path d="M4 17a9 9 0 0 1 6.5-4.75M13.5 12.25A9 9 0 0 1 20 17" stroke="#D8DEE9"
+        stroke-width="1.5" stroke-linecap="round" fill="none"/>
+  <circle cx="12" cy="12" r="2.1" fill="#F5A623"/>
+  <path d="M12 8.5v-2.7M9.9 9.3L8 7.4M14.1 9.3L16 7.4" stroke="#F5A623" stroke-width="1.5"
+        stroke-linecap="round" fill="none" opacity="0.85"/>
+</svg>

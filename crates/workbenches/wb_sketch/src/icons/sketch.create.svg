@@ -1,12 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Simple "new sketch" icon: a sheet with a plus sign -->
-  <rect x="4" y="3" width="14" height="18" rx="2" ry="2"
-        fill="none" stroke="#FFFFFF" stroke-width="1.5"/>
-  <line x1="11" y1="10" x2="11" y2="17"
-        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
-  <line x1="7.5" y1="13.5" x2="14.5" y2="13.5"
-        stroke="#FFFFFF" stroke-width="1.5" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- New sketch: sheet with sketch geometry + green plus badge -->
+  <rect x="3.5" y="4.5" width="12.5" height="16" rx="1.5"
+        fill="#D8DEE9" fill-opacity="0.1" stroke="#D8DEE9" stroke-width="1.5"/>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linecap="round" fill="none" opacity="0.85">
+    <circle cx="8.5" cy="10" r="2.4"/>
+    <path d="M6.5 17.5l6.5-4"/>
+  </g>
+  <path d="M19 4.3v5.4M16.3 7h5.4"
+        stroke="#6BCB77" stroke-width="1.8" stroke-linecap="round" fill="none"/>
 </svg>
-
-
-

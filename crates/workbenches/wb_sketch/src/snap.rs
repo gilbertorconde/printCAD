@@ -112,7 +112,41 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
                 Some((p - s).length().min((p - e).length()))
             }
         }
+        // Sampled curves: distance to the tessellated polyline is accurate
+        // to well under any click tolerance.
+        GeometryElement::Ellipse(e) => {
+            let center = sketch.point_position(e.center)?;
+            polyline_distance(
+                &crate::geom2d::ellipse_points(center, e.major, e.ratio, 48),
+                p,
+            )
+        }
+        GeometryElement::BSpline(b) => {
+            let ctrl: Option<Vec<Vec2D>> = b
+                .control_points
+                .iter()
+                .map(|id| sketch.point_position(*id))
+                .collect();
+            polyline_distance(&crate::geom2d::bspline_points(&ctrl?, b.periodic, 64), p)
+        }
     }
+}
+
+/// Distance from `p` to a sampled polyline. `None` for fewer than 2 samples.
+fn polyline_distance(pts: &[Vec2D], p: glam::Vec2) -> Option<f32> {
+    pts.windows(2)
+        .map(|w| {
+            let a = w[0].to_glam();
+            let ab = w[1].to_glam() - a;
+            let len_sq = ab.length_squared();
+            if len_sq < 1e-12 {
+                (p - a).length()
+            } else {
+                let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+                (p - (a + ab * t)).length()
+            }
+        })
+        .min_by(f32::total_cmp)
 }
 
 /// CCW start angle and sweep (0..TAU) for an arc from `start_vec` to
@@ -125,6 +159,76 @@ pub fn arc_angles(start_vec: glam::Vec2, end_vec: glam::Vec2) -> (f32, f32) {
         sweep += std::f32::consts::TAU;
     }
     (start_angle, sweep)
+}
+
+/// Projection of `pos` onto a curve element (`None` off the curve's range
+/// or for kinds without an on-curve constraint: points, ellipses, splines).
+fn project_to_curve(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<Vec2D> {
+    let p = pos.to_glam();
+    match geom {
+        GeometryElement::Line(line) => {
+            let a = sketch.point_position(line.start)?.to_glam();
+            let b = sketch.point_position(line.end)?.to_glam();
+            let ab = b - a;
+            let len_sq = ab.length_squared();
+            if len_sq < 1e-12 {
+                return None;
+            }
+            let t = ((p - a).dot(ab) / len_sq).clamp(0.0, 1.0);
+            Some(Vec2D::from_glam(a + ab * t))
+        }
+        GeometryElement::Circle(circle) => {
+            let c = sketch.point_position(circle.center)?.to_glam();
+            let dir = p - c;
+            if dir.length() < 1e-6 {
+                return None;
+            }
+            Some(Vec2D::from_glam(c + dir.normalize() * circle.radius))
+        }
+        GeometryElement::Arc(arc) => {
+            let c = sketch.point_position(arc.center)?.to_glam();
+            let s = sketch.point_position(arc.start)?.to_glam();
+            let e = sketch.point_position(arc.end)?.to_glam();
+            let dir = p - c;
+            if dir.length() < 1e-6 {
+                return None;
+            }
+            let (start_angle, sweep) = arc_angles(s - c, e - c);
+            let mut rel = dir.y.atan2(dir.x) - start_angle;
+            while rel < 0.0 {
+                rel += std::f32::consts::TAU;
+            }
+            (rel <= sweep).then(|| Vec2D::from_glam(c + dir.normalize() * (s - c).length()))
+        }
+        _ => None,
+    }
+}
+
+/// Snap `cursor` onto the nearest curve (line, circle or arc rim) within
+/// `tol`, returning the curve id and the projected position. Callers check
+/// `snap_to_point` first — a nearby point always wins (id reuse). The
+/// projected position is what makes the matching PointOnLine/PointOnCircle
+/// auto-constraint start satisfied.
+pub fn snap_to_curve(
+    sketch: &Sketch,
+    cursor: Vec2D,
+    tol: f32,
+    exclude: &[Uuid],
+) -> Option<(Uuid, Vec2D)> {
+    let mut best: Option<(Uuid, Vec2D, f32)> = None;
+    for geom in &sketch.geometry {
+        if exclude.contains(&geom.id()) {
+            continue;
+        }
+        let Some(proj) = project_to_curve(sketch, geom, cursor) else {
+            continue;
+        };
+        let d = (proj - cursor).to_glam().length();
+        if d <= tol && best.as_ref().map(|(_, _, bd)| d < *bd).unwrap_or(true) {
+            best = Some((geom.id(), proj, d));
+        }
+    }
+    best.map(|(id, proj, _)| (id, proj))
 }
 
 /// Distance from `pos` to the nearest CURVE of the sketch (lines, arcs,
@@ -236,6 +340,25 @@ mod tests {
         assert!((d - 2.0).abs() < 1e-5);
         let empty = Sketch::new("e");
         assert!(nearest_curve_distance(&empty, Vec2D::new(0.0, 0.0)).is_none());
+    }
+
+    #[test]
+    fn snap_to_curve_projects_onto_line_and_circle() {
+        let (mut sketch, _, _, l) = sketch_with_line();
+        // Near the line's mid-span: projected straight down onto it.
+        let (id, proj) = snap_to_curve(&sketch, Vec2D::new(5.0, 0.3), 0.5, &[]).unwrap();
+        assert_eq!(id, l);
+        assert!((proj.x - 5.0).abs() < 1e-5 && proj.y.abs() < 1e-5);
+        // Too far: no snap.
+        assert!(snap_to_curve(&sketch, Vec2D::new(5.0, 3.0), 0.5, &[]).is_none());
+        // Excluded: no snap.
+        assert!(snap_to_curve(&sketch, Vec2D::new(5.0, 0.3), 0.5, &[l]).is_none());
+
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 20.0))));
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 5.0)));
+        let (id, proj) = snap_to_curve(&sketch, Vec2D::new(4.8, 20.0), 0.5, &[]).unwrap();
+        assert_eq!(id, circle);
+        assert!((proj.x - 5.0).abs() < 1e-5 && (proj.y - 20.0).abs() < 1e-5);
     }
 
     #[test]

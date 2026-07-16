@@ -1,9 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Rectangle with corner vertices -->
-  <rect x="5" y="7" width="14" height="10" fill="none"
-        stroke="#FFFFFF" stroke-width="2" stroke-linejoin="round"/>
-  <circle cx="5" cy="7" r="1.5" fill="#FFFFFF"/>
-  <circle cx="19" cy="7" r="1.5" fill="#FFFFFF"/>
-  <circle cx="19" cy="17" r="1.5" fill="#FFFFFF"/>
-  <circle cx="5" cy="17" r="1.5" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Rectangle: corner-to-corner with defining corner dots -->
+  <rect x="4.5" y="6" width="15" height="12" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="none"/>
+  <circle cx="4.5" cy="6" r="2" fill="#D8DEE9"/>
+  <circle cx="19.5" cy="18" r="2" fill="#D8DEE9"/>
 </svg>

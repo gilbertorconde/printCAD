@@ -1,5 +1,6 @@
 mod commands;
 mod feature_tree;
+mod icons;
 mod inputs;
 mod layout;
 mod settings_panel;
@@ -136,6 +137,7 @@ impl UiLayer {
         let mut tree_selection = None;
         let mut tree_activation = None;
         let mut imported_visibility_change = None;
+        let mut tree_feature_command = None;
         let mut open_requested = false;
         let mut new_requested = false;
         let mut save_requested = false;
@@ -195,6 +197,7 @@ impl UiLayer {
             }
             tree_activation = left_panel.tree_activation;
             imported_visibility_change = left_panel.imported_visibility_change;
+            tree_feature_command = left_panel.tree_feature_command;
             finish_requested |= layout::draw_right_panel(
                 ui,
                 active_workbench.clone(),
@@ -316,6 +319,9 @@ impl UiLayer {
         if let Some((node, visible)) = imported_visibility_change {
             commands.push(UiCommand::SetImportedVisibility { node, visible });
         }
+        if let Some((feature, command)) = tree_feature_command {
+            commands.push(UiCommand::TreeFeature { feature, command });
+        }
         match step_import_dialog {
             StepImportDialogAction::Confirmed => commands.push(UiCommand::ConfirmStepImport),
             StepImportDialogAction::Cancelled => commands.push(UiCommand::CancelStepImport),
@@ -348,4 +354,4 @@ impl UiLayer {
     }
 }
 
-pub use feature_tree::TreeItemId;
+pub use feature_tree::{TreeFeatureCommand, TreeItemId};

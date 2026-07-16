@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Mirrored: solid, dash-dot plane, ghost copy -->
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M6.5 8l3 1.5-3 1.5-3-1.5z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M3.5 9.5l3 1.5v5l-3-1.5z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M9.5 9.5v5l-3 1.5v-5z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.4">
+    <path d="M17.5 8l3 1.5-3 1.5-3-1.5z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M20.5 9.5l-3 1.5v5l3-1.5z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M14.5 9.5v5l3 1.5v-5z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <path d="M12 3.5v17" stroke="#F5A623" stroke-width="1.5"
+        stroke-dasharray="4 2 1.5 2" stroke-linecap="round" fill="none"/>
+</svg>

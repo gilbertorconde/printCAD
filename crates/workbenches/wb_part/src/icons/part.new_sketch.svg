@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Tilted sketch plane with a plus badge -->
-  <path d="M4 16 L10 6 L20 6 L14 16 Z" fill="none"
-        stroke="#FFFFFF" stroke-width="1.8" stroke-linejoin="round"/>
-  <line x1="17.5" y1="15" x2="17.5" y2="21" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
-  <line x1="14.5" y1="18" x2="20.5" y2="18" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- New sketch: plane sheet + green pencil -->
+  <path d="M3.5 17L8 8.5h10.5L14 17z" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.12"/>
+  <path d="M11.5 16.5l.9-3.2 5.6-5.6 2.3 2.3-5.6 5.6z" stroke="#6BCB77" stroke-width="1.5"
+        stroke-linejoin="round" fill="#6BCB77" fill-opacity="0.25"/>
 </svg>

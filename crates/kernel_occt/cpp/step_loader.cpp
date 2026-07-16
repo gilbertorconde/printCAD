@@ -25,21 +25,56 @@
 #include <IMeshTools_Parameters.hxx>
 #include <Bnd_Box.hxx>
 #include <BRepBndLib.hxx>
+#include <BRepAlgoAPI_Common.hxx>
 #include <BRepAlgoAPI_Cut.hxx>
 #include <BRepAlgoAPI_Fuse.hxx>
+#include <BRepBuilderAPI_GTransform.hxx>
+#include <BRepClass_FaceClassifier.hxx>
 #include <BRepBuilderAPI_MakeEdge.hxx>
 #include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepBuilderAPI_MakeSolid.hxx>
+#include <BRepBuilderAPI_MakeVertex.hxx>
 #include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakePolygon.hxx>
 #include <BRepBuilderAPI_Transform.hxx>
+#include <BRepExtrema_DistShapeShape.hxx>
+#include <BRepFilletAPI_MakeChamfer.hxx>
+#include <BRepFilletAPI_MakeFillet.hxx>
 #include <BRepGProp.hxx>
+#include <BRepLib.hxx>
+#include <BRepOffsetAPI_DraftAngle.hxx>
+#include <BRepOffsetAPI_MakeOffset.hxx>
+#include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepOffsetAPI_MakeThickSolid.hxx>
+#include <BRepOffsetAPI_ThruSections.hxx>
+#include <BRepPrimAPI_MakeBox.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeHalfSpace.hxx>
 #include <BRepPrimAPI_MakePrism.hxx>
 #include <BRepPrimAPI_MakeRevol.hxx>
+#include <BRepPrimAPI_MakeSphere.hxx>
+#include <BRepPrimAPI_MakeTorus.hxx>
+#include <BRepPrimAPI_MakeWedge.hxx>
 #include <GC_MakeArcOfCircle.hxx>
+#include <GC_MakeArcOfEllipse.hxx>
 #include <GC_MakeSegment.hxx>
 #include <GProp_GProps.hxx>
+#include <Geom2d_Line.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <Geom_ConicalSurface.hxx>
+#include <Geom_CylindricalSurface.hxx>
+#include <Geom_Ellipse.hxx>
 #include <Geom_TrimmedCurve.hxx>
+#include <IntCurvesFace_ShapeIntersector.hxx>
 #include <ShapeFix_Face.hxx>
 #include <ShapeUpgrade_UnifySameDomain.hxx>
+#include <TColStd_Array1OfInteger.hxx>
+#include <TColStd_Array1OfReal.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#include <gp_Elips.hxx>
+#include <gp_GTrsf.hxx>
+#include <gp_Lin.hxx>
 #include <TopoDS_Edge.hxx>
 #include <TopoDS_Wire.hxx>
 #include <gp_Ax1.hxx>
@@ -1958,16 +1993,85 @@ static gp_Pnt profile_point(const PcadProfilePlane& plane, double u, double v) {
         plane.origin[2] + u * plane.x_axis[2] + v * plane.y_axis[2]);
 }
 
-// Build one closed TopoDS_Wire from a profile wire description. Returns false
-// with a diagnostic in `err` on degenerate segments, disconnected segments, or
-// an open loop.
+// Ellipse frame for segment kinds 3/4: world-space gp_Elips from a sketch-uv
+// center, major-vertex vector, and minor/major ratio.
+static bool profile_ellipse(
+    const PcadProfilePlane& plane,
+    const gp_Dir& normal_dir,
+    const PcadProfileSegment& seg,
+    gp_Elips& out,
+    std::string& err) {
+    const double major_len = std::hypot(seg.d[2], seg.d[3]);
+    const double ratio = seg.d[4];
+    if (!(major_len > Precision::Confusion()) || !(ratio > 0.0) || ratio > 1.0) {
+        err = "profile ellipse needs a positive major axis and ratio in (0, 1]";
+        return false;
+    }
+    const gp_Pnt center = profile_point(plane, seg.d[0], seg.d[1]);
+    const gp_Pnt major_vertex =
+        profile_point(plane, seg.d[0] + seg.d[2], seg.d[1] + seg.d[3]);
+    const gp_Dir major_dir(gp_Vec(center, major_vertex));
+    out = gp_Elips(gp_Ax2(center, normal_dir, major_dir), major_len, major_len * ratio);
+    return true;
+}
+
+// Cubic (or lower-degree) B-spline edge through flat (u, v) control points.
+static bool profile_bspline_edge(
+    const PcadProfilePlane& plane,
+    const PcadProfileSegment& seg,
+    TopoDS_Edge& out,
+    std::string& err) {
+    const bool periodic = seg.d[0] != 0.0;
+    const size_t n = seg.extra_count / 2;
+    if (seg.extra == nullptr || n < 2 || (periodic && n < 3)) {
+        err = "profile B-spline needs at least 2 control points (3 when periodic)";
+        return false;
+    }
+    TColgp_Array1OfPnt poles(1, static_cast<Standard_Integer>(n));
+    for (size_t i = 0; i < n; ++i) {
+        poles.SetValue(
+            static_cast<Standard_Integer>(i + 1),
+            profile_point(plane, seg.extra[2 * i], seg.extra[2 * i + 1]));
+    }
+    const Standard_Integer degree =
+        std::min<Standard_Integer>(3, static_cast<Standard_Integer>(n) - (periodic ? 0 : 1));
+    Handle(Geom_BSplineCurve) curve;
+    if (periodic) {
+        // Periodic form: one knot per pole plus the wrap knot, all simple.
+        const Standard_Integer nk = static_cast<Standard_Integer>(n) + 1;
+        TColStd_Array1OfReal knots(1, nk);
+        TColStd_Array1OfInteger mults(1, nk);
+        for (Standard_Integer i = 1; i <= nk; ++i) {
+            knots.SetValue(i, static_cast<Standard_Real>(i - 1));
+            mults.SetValue(i, 1);
+        }
+        curve = new Geom_BSplineCurve(poles, knots, mults, degree, Standard_True);
+    } else {
+        // Clamped uniform: end knots at multiplicity degree+1.
+        const Standard_Integer nk = static_cast<Standard_Integer>(n) - degree + 1;
+        TColStd_Array1OfReal knots(1, nk);
+        TColStd_Array1OfInteger mults(1, nk);
+        for (Standard_Integer i = 1; i <= nk; ++i) {
+            knots.SetValue(i, static_cast<Standard_Real>(i - 1) / (nk - 1));
+            mults.SetValue(i, (i == 1 || i == nk) ? degree + 1 : 1);
+        }
+        curve = new Geom_BSplineCurve(poles, knots, mults, degree, Standard_False);
+    }
+    out = BRepBuilderAPI_MakeEdge(curve).Edge();
+    return !out.IsNull();
+}
+
+// Build one TopoDS_Wire from a profile wire description. Returns false with a
+// diagnostic in `err` on degenerate or disconnected segments, or — unless
+// `require_closed` is false (spine paths) — an open loop.
 static bool build_profile_wire(
     const PcadProfilePlane& plane,
     const gp_Dir& normal_dir,
     const gp_Dir& x_dir,
     const PcadProfileWire& wire_in,
     TopoDS_Wire& out_wire,
-    std::string& err) {
+    std::string& err,
+    bool require_closed = true) {
     if (wire_in.segments == nullptr || wire_in.count == 0) {
         err = "profile wire has no segments";
         return false;
@@ -2016,18 +2120,53 @@ static bool build_profile_wire(
                 edge = BRepBuilderAPI_MakeEdge(circ).Edge();
                 break;
             }
+            case 3: { // full ellipse
+                gp_Elips elips;
+                if (!profile_ellipse(plane, normal_dir, seg, elips, err)) {
+                    return false;
+                }
+                edge = BRepBuilderAPI_MakeEdge(elips).Edge();
+                break;
+            }
+            case 4: { // elliptical arc between two parameter angles
+                if (seg.extra == nullptr || seg.extra_count < 2) {
+                    err = "elliptical arc segment is missing its parameter range";
+                    return false;
+                }
+                gp_Elips elips;
+                if (!profile_ellipse(plane, normal_dir, seg, elips, err)) {
+                    return false;
+                }
+                GC_MakeArcOfEllipse mk(elips, seg.extra[0], seg.extra[1], Standard_True);
+                if (!mk.IsDone()) {
+                    err = "failed to build elliptical arc segment for profile";
+                    return false;
+                }
+                edge = BRepBuilderAPI_MakeEdge(mk.Value()).Edge();
+                break;
+            }
+            case 5: { // cubic B-spline through control points
+                if (!profile_bspline_edge(plane, seg, edge, err)) {
+                    return false;
+                }
+                break;
+            }
             default:
                 err = "unknown profile segment kind " + std::to_string(seg.kind);
                 return false;
         }
         maker.Add(edge);
         if (!maker.IsDone()) {
-            err = "profile segments do not form a connected closed wire";
+            err = "profile segments do not form a connected wire";
             return false;
         }
     }
     TopoDS_Wire wire = maker.Wire();
-    if (wire.IsNull() || !BRep_Tool::IsClosed(wire)) {
+    if (wire.IsNull()) {
+        err = "profile wire construction failed";
+        return false;
+    }
+    if (require_closed && !BRep_Tool::IsClosed(wire)) {
         err = "profile wire is not closed";
         return false;
     }
@@ -2047,38 +2186,103 @@ static double planar_wire_area(const gp_Pln& pln, const TopoDS_Wire& wire) {
     return std::abs(props.Mass());
 }
 
-// Build the profile face: the wire with the largest absolute enclosed area is
-// the outer boundary, every other wire becomes a hole. A ShapeFix_Face pass
-// afterwards orients the hole wires opposite to the outer boundary.
-static bool build_profile_face(
+// One outer boundary and the hole wires directly nested inside it.
+struct WireGroup {
+    TopoDS_Wire outer;
+    std::vector<TopoDS_Wire> holes;
+};
+
+// True when `inner` lies inside the face bounded by `container` alone.
+static bool wire_inside_wire(
     const gp_Pln& pln,
-    const std::vector<TopoDS_Wire>& wires,
-    TopoDS_Face& out_face,
-    std::string& err) {
-    size_t outer = 0;
-    double best_area = -1.0;
-    for (size_t i = 0; i < wires.size(); ++i) {
-        const double area = planar_wire_area(pln, wires[i]);
-        if (area > best_area) {
-            best_area = area;
-            outer = i;
-        }
-    }
-    if (!(best_area > 0.0)) {
-        err = "profile encloses no area";
+    const TopoDS_Wire& inner,
+    const TopoDS_Wire& container) {
+    BRepBuilderAPI_MakeFace maker(pln, container, Standard_True);
+    if (!maker.IsDone()) {
         return false;
     }
+    TopExp_Explorer vertex_it(inner, TopAbs_VERTEX);
+    if (!vertex_it.More()) {
+        return false;
+    }
+    const gp_Pnt probe = BRep_Tool::Pnt(TopoDS::Vertex(vertex_it.Current()));
+    BRepClass_FaceClassifier classifier(maker.Face(), probe, Precision::Confusion());
+    return classifier.State() == TopAbs_IN;
+}
 
-    BRepBuilderAPI_MakeFace maker(pln, wires[outer], Standard_True);
+// Group wires by containment: a wire nested at even depth is an outer
+// boundary (disjoint wires become separate solids); odd depth makes it a
+// hole of its immediate container.
+static bool group_profile_wires(
+    const gp_Pln& pln,
+    const std::vector<TopoDS_Wire>& wires,
+    std::vector<WireGroup>& out_groups,
+    std::string& err) {
+    const size_t n = wires.size();
+    std::vector<double> areas(n);
+    for (size_t i = 0; i < n; ++i) {
+        areas[i] = planar_wire_area(pln, wires[i]);
+        if (!(areas[i] > 0.0)) {
+            err = "a profile wire encloses no area";
+            return false;
+        }
+    }
+
+    // Immediate container = smallest-area wire strictly containing this one.
+    std::vector<int> parent(n, -1);
+    std::vector<int> depth(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        for (size_t j = 0; j < n; ++j) {
+            if (i == j || areas[j] <= areas[i]) {
+                continue;
+            }
+            if (!wire_inside_wire(pln, wires[i], wires[j])) {
+                continue;
+            }
+            if (parent[i] < 0 || areas[j] < areas[static_cast<size_t>(parent[i])]) {
+                parent[i] = static_cast<int>(j);
+            }
+        }
+    }
+    for (size_t i = 0; i < n; ++i) {
+        int p = parent[i];
+        while (p >= 0) {
+            ++depth[i];
+            p = parent[static_cast<size_t>(p)];
+        }
+    }
+
+    std::vector<int> group_of(n, -1);
+    for (size_t i = 0; i < n; ++i) {
+        if (depth[i] % 2 == 0) {
+            group_of[i] = static_cast<int>(out_groups.size());
+            out_groups.push_back(WireGroup{wires[i], {}});
+        }
+    }
+    for (size_t i = 0; i < n; ++i) {
+        if (depth[i] % 2 == 1) {
+            const int container = parent[i];
+            out_groups[static_cast<size_t>(group_of[static_cast<size_t>(container)])]
+                .holes.push_back(wires[i]);
+        }
+    }
+    return true;
+}
+
+// Face for one wire group (outer boundary + its holes), hole orientation
+// fixed by ShapeFix_Face.
+static bool build_group_face(
+    const gp_Pln& pln,
+    const WireGroup& group,
+    TopoDS_Face& out_face,
+    std::string& err) {
+    BRepBuilderAPI_MakeFace maker(pln, group.outer, Standard_True);
     if (!maker.IsDone()) {
         err = "failed to build profile face from outer wire";
         return false;
     }
-    for (size_t i = 0; i < wires.size(); ++i) {
-        if (i == outer) {
-            continue;
-        }
-        maker.Add(wires[i]);
+    for (const TopoDS_Wire& hole : group.holes) {
+        maker.Add(hole);
         if (!maker.IsDone()) {
             err = "failed to add hole wire to profile face";
             return false;
@@ -2096,6 +2300,39 @@ static bool build_profile_face(
         return false;
     }
     out_face = face;
+    return true;
+}
+
+// Build the profile as one face per outer wire (a compound when the profile
+// has several disjoint regions).
+static bool build_profile_face(
+    const gp_Pln& pln,
+    const std::vector<TopoDS_Wire>& wires,
+    TopoDS_Shape& out_shape,
+    std::vector<WireGroup>& out_groups,
+    std::string& err) {
+    if (!group_profile_wires(pln, wires, out_groups, err)) {
+        return false;
+    }
+    if (out_groups.size() == 1) {
+        TopoDS_Face face;
+        if (!build_group_face(pln, out_groups[0], face, err)) {
+            return false;
+        }
+        out_shape = face;
+        return true;
+    }
+    TopoDS_Compound compound;
+    BRep_Builder builder;
+    builder.MakeCompound(compound);
+    for (const WireGroup& group : out_groups) {
+        TopoDS_Face face;
+        if (!build_group_face(pln, group, face, err)) {
+            return false;
+        }
+        builder.Add(compound, face);
+    }
+    out_shape = compound;
     return true;
 }
 
@@ -2641,252 +2878,790 @@ extern "C" PrintcadOcctImportResult printcad_occt_tessellate_brep(
     }
 }
 
-extern "C" PrintcadOcctSweepResult printcad_occt_sweep_profile(
+// ---- Solid-op suite ----
+
+static constexpr double kPi = 3.14159265358979323846;
+
+static double deg_to_rad(double deg) {
+    return deg * kPi / 180.0;
+}
+
+// Serialize the result (and optional tool solid) and tessellate on request.
+// Consumes nothing; on failure returns an error result with everything freed.
+static PrintcadOcctSweepResult finish_solid_result(
+    TopoDS_Shape result_shape,
+    const TopoDS_Shape* tool_shape,
+    const PcadMeshOptions* mesh) {
+    if (count_faces(result_shape) == 0) {
+        return make_sweep_error(
+            "solid op result contains no faces (boolean removed all material?)");
+    }
+
+    std::vector<uint8_t> blob;
+    if (!brep_write_to_vector(result_shape, blob)) {
+        return make_sweep_error("BRepTools::Write failed while serializing solid result");
+    }
+
+    PrintcadOcctSweepResult result{};
+    result.brep_len = blob.size();
+    result.brep_blob = static_cast<uint8_t*>(std::malloc(blob.size()));
+    if (result.brep_blob == nullptr) {
+        return make_sweep_error("Out of memory while allocating solid BRep blob");
+    }
+    std::memcpy(result.brep_blob, blob.data(), blob.size());
+
+    if (tool_shape != nullptr && !tool_shape->IsNull()) {
+        std::vector<uint8_t> tool_bytes;
+        if (brep_write_to_vector(*tool_shape, tool_bytes)) {
+            result.tool_len = tool_bytes.size();
+            result.tool_blob = static_cast<uint8_t*>(std::malloc(tool_bytes.size()));
+            if (result.tool_blob != nullptr) {
+                std::memcpy(result.tool_blob, tool_bytes.data(), tool_bytes.size());
+            } else {
+                result.tool_len = 0;
+            }
+        }
+    }
+
+    if (mesh != nullptr && mesh->want_mesh != 0) {
+        const double linear_abs = resolve_linear_deflection_abs(
+            result_shape, mesh->linear_deflection_mode, mesh->linear_value);
+        const double ang =
+            mesh->angular_deflection_rad > 0.0 ? mesh->angular_deflection_rad : 0.5;
+        brepmesh_incremental(result_shape, linear_abs, ang);
+
+        const float weld_angle_cos = static_cast<float>(
+            std::cos(std::max(0.0, mesh->weld_angle_threshold_rad)));
+        const std::vector<std::array<float, 3>> rgbs(
+            count_faces(result_shape), std::array<float, 3>{{1.0f, 1.0f, 1.0f}});
+        std::vector<PrintcadOcctBody> bodies;
+        mesh_shape_from_precolored_faces(
+            result_shape,
+            rgbs,
+            bodies,
+            0,
+            mesh->weld_cross_face != 0,
+            weld_angle_cos,
+            mesh->generate_boundary_edges != 0);
+        if (bodies.size() != 1 || bodies[0].vertex_count == 0) {
+            for (auto& body : bodies) {
+                std::free(body.positions);
+                std::free(body.normals);
+                std::free(body.colors);
+                std::free(body.indices);
+                std::free(body.edges);
+                std::free(body.name);
+            }
+            std::free(result.brep_blob);
+            std::free(result.tool_blob);
+            return make_sweep_error(
+                "tessellation of solid result produced no mesh geometry");
+        }
+        PrintcadOcctBody& mb = bodies[0];
+        std::free(mb.name);
+        std::free(mb.colors);
+        result.mesh_positions = mb.positions;
+        result.mesh_normals = mb.normals;
+        result.mesh_indices = mb.indices;
+        result.mesh_edges = mb.edges;
+        result.mesh_vertex_count = mb.vertex_count;
+        result.mesh_index_count = mb.index_count;
+        result.mesh_edge_count = mb.edge_count;
+    }
+
+    result.error = nullptr;
+    return result;
+}
+
+// Validate the boolean role and (for fuse/cut) load the base solid.
+static bool load_base_for_op(
+    int32_t op,
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    TopoDS_Shape& out_base,
+    std::string& err) {
+    if (op < 0 || op > 2) {
+        err = "unknown boolean op " + std::to_string(op)
+              + " (expected 0=new, 1=fuse, 2=cut)";
+        return false;
+    }
+    if (op == 0) {
+        if (base_brep != nullptr) {
+            err = "new-solid op must not receive a base BRep";
+            return false;
+        }
+        return true;
+    }
+    if (base_brep == nullptr || base_brep_len == 0) {
+        err = "fuse/cut op requires a non-empty base BRep";
+        return false;
+    }
+    if (!brep_read_from_bytes(base_brep, base_brep_len, out_base)) {
+        err = "BRepTools::Read failed (invalid or unsupported base BRep blob)";
+        return false;
+    }
+    return true;
+}
+
+// Merge coplanar faces / colinear edges a boolean left behind so later
+// features (fillets, further booleans) see clean topology.
+static TopoDS_Shape unify_domain(const TopoDS_Shape& shape) {
+    ShapeUpgrade_UnifySameDomain unify(shape, Standard_True, Standard_True, Standard_False);
+    unify.Build();
+    return unify.Shape().IsNull() ? shape : unify.Shape();
+}
+
+static bool combine_with_base(
+    int32_t op,
+    const TopoDS_Shape& base,
+    const TopoDS_Shape& tool,
+    TopoDS_Shape& out,
+    std::string& err) {
+    if (op == 0) {
+        out = tool;
+        return true;
+    }
+    TopoDS_Shape combined;
+    if (op == 1) {
+        BRepAlgoAPI_Fuse boolean_op(base, tool);
+        if (!boolean_op.IsDone()) {
+            err = "fuse boolean operation failed";
+            return false;
+        }
+        combined = boolean_op.Shape();
+    } else {
+        BRepAlgoAPI_Cut boolean_op(base, tool);
+        if (!boolean_op.IsDone()) {
+            err = "cut boolean operation failed";
+            return false;
+        }
+        combined = boolean_op.Shape();
+    }
+    if (combined.IsNull()) {
+        err = "boolean operation produced a null shape";
+        return false;
+    }
+    out = unify_domain(combined);
+    return true;
+}
+
+// Parse plane + wires into OCCT form. `require_closed=false` admits open
+// spine paths.
+static bool parse_profile(
+    const PcadProfilePlane* plane,
+    const PcadProfileWire* wires,
+    size_t wire_count,
+    gp_Pln& out_pln,
+    gp_Dir& out_normal,
+    std::vector<TopoDS_Wire>& out_wires,
+    std::string& err,
+    bool require_closed = true) {
+    if (plane == nullptr) {
+        err = "profile plane is null";
+        return false;
+    }
+    if (wires == nullptr || wire_count == 0) {
+        err = "solid op has no profile wires";
+        return false;
+    }
+    const gp_Dir normal_dir(plane->normal[0], plane->normal[1], plane->normal[2]);
+    const gp_Dir x_dir(plane->x_axis[0], plane->x_axis[1], plane->x_axis[2]);
+    const gp_Pnt origin(plane->origin[0], plane->origin[1], plane->origin[2]);
+    out_pln = gp_Pln(gp_Ax3(origin, normal_dir, x_dir));
+    out_normal = normal_dir;
+
+    out_wires.clear();
+    out_wires.reserve(wire_count);
+    for (size_t i = 0; i < wire_count; ++i) {
+        TopoDS_Wire wire;
+        if (!build_profile_wire(*plane, normal_dir, x_dir, wires[i], wire, err, require_closed)) {
+            return false;
+        }
+        out_wires.push_back(wire);
+    }
+    return true;
+}
+
+static gp_Pnt face_centroid(const TopoDS_Shape& face) {
+    GProp_GProps props;
+    BRepGProp::SurfaceProperties(face, props);
+    return props.CentreOfMass();
+}
+
+static double shape_bbox_diagonal(const TopoDS_Shape& shape) {
+    Bnd_Box box;
+    BRepBndLib::Add(shape, box);
+    if (box.IsVoid()) {
+        return 1.0;
+    }
+    Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+    box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+    return gp_Pnt(xmin, ymin, zmin).Distance(gp_Pnt(xmax, ymax, zmax));
+}
+
+// Length that guarantees a prism from `from` along `dir` passes fully through
+// `solid`.
+static double through_all_length(const TopoDS_Shape& solid, const gp_Pnt& from, const gp_Dir& dir) {
+    Bnd_Box box;
+    BRepBndLib::Add(solid, box);
+    double furthest = 0.0;
+    if (!box.IsVoid()) {
+        Standard_Real xmin, ymin, zmin, xmax, ymax, zmax;
+        box.Get(xmin, ymin, zmin, xmax, ymax, zmax);
+        const double xs[2] = {xmin, xmax};
+        const double ys[2] = {ymin, ymax};
+        const double zs[2] = {zmin, zmax};
+        for (int i = 0; i < 2; ++i) {
+            for (int j = 0; j < 2; ++j) {
+                for (int k = 0; k < 2; ++k) {
+                    const gp_Vec to_corner(from, gp_Pnt(xs[i], ys[j], zs[k]));
+                    furthest = std::max(furthest, to_corner.Dot(gp_Vec(dir)));
+                }
+            }
+        }
+    }
+    return std::max(furthest, 0.0) + shape_bbox_diagonal(solid) * 0.1 + 1.0;
+}
+
+// Keep only the material on `keep_point`'s side of `cut_pln`.
+static bool trim_with_halfspace(
+    const TopoDS_Shape& shape,
+    const gp_Pln& cut_pln,
+    const gp_Pnt& keep_point,
+    TopoDS_Shape& out,
+    std::string& err) {
+    const TopoDS_Face plane_face = BRepBuilderAPI_MakeFace(cut_pln).Face();
+    BRepPrimAPI_MakeHalfSpace half_maker(plane_face, keep_point);
+    BRepAlgoAPI_Common common(shape, half_maker.Solid());
+    if (!common.IsDone() || common.Shape().IsNull()) {
+        err = "trimming the sweep at the target plane failed";
+        return false;
+    }
+    out = common.Shape();
+    return true;
+}
+
+// Straight or tapered prism of the whole profile from the sketch plane along
+// `dir` by `distance`. A tapered prism lofts each wire to its planar offset
+// at the far end: outer boundaries grow, holes shrink.
+static bool prism_solid(
+    const gp_Pln& pln,
+    const std::vector<WireGroup>& groups,
+    const TopoDS_Shape& profile_shape,
+    const gp_Dir& dir,
+    double distance,
+    double taper_deg,
+    TopoDS_Shape& out,
+    std::string& err) {
+    if (!(distance > Precision::Confusion())) {
+        err = "extrusion distance must be positive";
+        return false;
+    }
+    const gp_Vec sweep = gp_Vec(dir) * distance;
+    if (std::abs(taper_deg) <= 1e-9) {
+        BRepPrimAPI_MakePrism prism(profile_shape, sweep);
+        if (!prism.IsDone() || prism.Shape().IsNull()) {
+            err = "prism extrusion failed";
+            return false;
+        }
+        out = prism.Shape();
+        return true;
+    }
+    if (std::abs(taper_deg) >= 89.9) {
+        err = "taper angle must be below 90 degrees";
+        return false;
+    }
+
+    gp_Trsf move;
+    move.SetTranslation(sweep);
+    auto tapered_wire_loft = [&](const TopoDS_Wire& wire, double grow,
+                                 TopoDS_Shape& solid) -> bool {
+        BRepOffsetAPI_MakeOffset offsetter(
+            BRepBuilderAPI_MakeFace(pln, wire, Standard_True).Face(),
+            GeomAbs_Intersection);
+        offsetter.Perform(grow);
+        if (!offsetter.IsDone() || offsetter.Shape().IsNull()) {
+            err = "taper offset failed (the profile may collapse at this angle)";
+            return false;
+        }
+        TopExp_Explorer wire_it(offsetter.Shape(), TopAbs_WIRE);
+        if (!wire_it.More()) {
+            err = "taper offset produced no wire (the profile collapses at this angle)";
+            return false;
+        }
+        const TopoDS_Wire far_wire = TopoDS::Wire(
+            BRepBuilderAPI_Transform(wire_it.Current(), move, Standard_True).Shape());
+
+        BRepOffsetAPI_ThruSections loft(Standard_True, Standard_True);
+        loft.CheckCompatibility(Standard_False);
+        loft.AddWire(wire);
+        loft.AddWire(far_wire);
+        loft.Build();
+        if (!loft.IsDone() || loft.Shape().IsNull()) {
+            err = "tapered prism loft failed";
+            return false;
+        }
+        solid = loft.Shape();
+        return true;
+    };
+
+    const double grow = std::tan(deg_to_rad(taper_deg)) * distance;
+    TopoDS_Shape result;
+    for (const WireGroup& group : groups) {
+        TopoDS_Shape group_solid;
+        if (!tapered_wire_loft(group.outer, grow, group_solid)) {
+            return false;
+        }
+        for (const TopoDS_Wire& hole : group.holes) {
+            TopoDS_Shape hole_solid;
+            if (!tapered_wire_loft(hole, -grow, hole_solid)) {
+                return false;
+            }
+            BRepAlgoAPI_Cut cut(group_solid, hole_solid);
+            if (!cut.IsDone() || cut.Shape().IsNull()) {
+                err = "subtracting a tapered hole from the prism failed";
+                return false;
+            }
+            group_solid = cut.Shape();
+        }
+        if (result.IsNull()) {
+            result = group_solid;
+        } else {
+            BRepAlgoAPI_Fuse fuse(result, group_solid);
+            if (!fuse.IsDone() || fuse.Shape().IsNull()) {
+                err = "fusing tapered profile regions failed";
+                return false;
+            }
+            result = fuse.Shape();
+        }
+    }
+    out = result;
+    return true;
+}
+
+// Build the solid for one extrusion side. `base` may be null except for
+// through-all / to-first / to-last terminations.
+static bool extrude_one_side(
+    const gp_Pln& pln,
+    const std::vector<WireGroup>& groups,
+    const TopoDS_Shape& profile_shape,
+    const gp_Dir& dir,
+    const PcadTermination& term,
+    double taper_deg,
+    const TopoDS_Shape* base,
+    TopoDS_Shape& out,
+    std::string& err) {
+    const gp_Pnt centroid = face_centroid(profile_shape);
+    switch (term.kind) {
+        case 0: // blind
+            return prism_solid(
+                pln, groups, profile_shape, dir, term.distance, taper_deg, out, err);
+        case 1: { // through all
+            if (base == nullptr || base->IsNull()) {
+                err = "a through-all extrusion needs existing material to pass through";
+                return false;
+            }
+            const double d = through_all_length(*base, centroid, dir);
+            return prism_solid(pln, groups, profile_shape, dir, d, taper_deg, out, err);
+        }
+        case 2: { // up to plane
+            const gp_Dir plane_normal(
+                term.plane_normal[0], term.plane_normal[1], term.plane_normal[2]);
+            const gp_Pnt plane_point =
+                gp_Pnt(term.plane_point[0], term.plane_point[1], term.plane_point[2])
+                    .Translated(gp_Vec(plane_normal) * term.offset);
+            const double denom = gp_Vec(dir).Dot(gp_Vec(plane_normal));
+            if (std::abs(denom) <= 1e-9) {
+                err = "the target plane is parallel to the extrusion direction";
+                return false;
+            }
+            const double t = gp_Vec(centroid, plane_point).Dot(gp_Vec(plane_normal)) / denom;
+            if (t <= Precision::Confusion()) {
+                err = "the target plane lies behind the sketch along the extrusion direction";
+                return false;
+            }
+            const double reach = t + shape_bbox_diagonal(profile_shape) + 1.0;
+            TopoDS_Shape long_prism;
+            if (!prism_solid(
+                    pln, groups, profile_shape, dir, reach, taper_deg, long_prism, err)) {
+                return false;
+            }
+            return trim_with_halfspace(
+                long_prism, gp_Pln(plane_point, plane_normal), centroid, out, err);
+        }
+        case 3:
+        case 4: { // to first / to last base face hit along the direction
+            if (base == nullptr || base->IsNull()) {
+                err = "a to-first/to-last extrusion needs existing material to stop at";
+                return false;
+            }
+            IntCurvesFace_ShapeIntersector intersector;
+            intersector.Load(*base, Precision::Confusion());
+            intersector.Perform(gp_Lin(centroid, dir), Precision::Confusion(), RealLast());
+            int best = -1;
+            double best_w = 0.0;
+            for (Standard_Integer i = 1; i <= intersector.NbPnt(); ++i) {
+                const double w = intersector.WParameter(i);
+                const bool better = best < 0
+                    || (term.kind == 3 ? w < best_w : w > best_w);
+                if (w > Precision::Confusion() && better) {
+                    best = i;
+                    best_w = w;
+                }
+            }
+            if (best < 0) {
+                err = "the extrusion direction does not hit the existing material";
+                return false;
+            }
+            BRepAdaptor_Surface hit_surface(intersector.Face(best));
+            if (hit_surface.GetType() == GeomAbs_Plane) {
+                PcadTermination up_to{};
+                up_to.kind = 2;
+                const gp_Pln hit_pln = hit_surface.Plane();
+                const gp_Pnt loc = hit_pln.Location();
+                const gp_Dir n = hit_pln.Axis().Direction();
+                up_to.plane_point[0] = loc.X();
+                up_to.plane_point[1] = loc.Y();
+                up_to.plane_point[2] = loc.Z();
+                up_to.plane_normal[0] = n.X();
+                up_to.plane_normal[1] = n.Y();
+                up_to.plane_normal[2] = n.Z();
+                return extrude_one_side(
+                    pln, groups, profile_shape, dir, up_to, taper_deg, base, out, err);
+            }
+            // Curved terminating face: stop at the centroid hit distance.
+            return prism_solid(pln, groups, profile_shape, dir, best_w, taper_deg, out, err);
+        }
+        default:
+            err = "unknown extrusion termination kind " + std::to_string(term.kind);
+            return false;
+    }
+}
+
+static bool fuse_shapes(
+    const TopoDS_Shape& a,
+    const TopoDS_Shape& b,
+    TopoDS_Shape& out,
+    std::string& err) {
+    BRepAlgoAPI_Fuse fuse(a, b);
+    if (!fuse.IsDone() || fuse.Shape().IsNull()) {
+        err = "fusing the two sweep sides failed";
+        return false;
+    }
+    out = fuse.Shape();
+    return true;
+}
+
+// World-space axis from a sketch-plane (uv point, uv direction) pair.
+static bool sketch_plane_axis(
+    const PcadProfilePlane& plane,
+    const double origin_uv[2],
+    const double dir_uv[2],
+    gp_Ax1& out,
+    std::string& err) {
+    const gp_Vec axis_vec(
+        dir_uv[0] * plane.x_axis[0] + dir_uv[1] * plane.y_axis[0],
+        dir_uv[0] * plane.x_axis[1] + dir_uv[1] * plane.y_axis[1],
+        dir_uv[0] * plane.x_axis[2] + dir_uv[1] * plane.y_axis[2]);
+    if (axis_vec.Magnitude() <= Precision::Confusion()) {
+        err = "axis direction is (near) zero in the sketch plane";
+        return false;
+    }
+    out = gp_Ax1(profile_point(plane, origin_uv[0], origin_uv[1]), gp_Dir(axis_vec));
+    return true;
+}
+
+static bool revolve_face(
+    const TopoDS_Shape& face,
+    const gp_Ax1& axis,
+    double angle_deg,
+    TopoDS_Shape& out,
+    std::string& err) {
+    if (!(angle_deg > 0.0) || angle_deg > 360.0) {
+        err = "revolve angle must be in (0, 360] degrees, got " + std::to_string(angle_deg);
+        return false;
+    }
+    // Treat anything within a millidegree of a full turn as 360°.
+    if (angle_deg >= 359.999) {
+        BRepPrimAPI_MakeRevol revol(face, axis);
+        if (!revol.IsDone() || revol.Shape().IsNull()) {
+            err = "revolve operation failed";
+            return false;
+        }
+        out = revol.Shape();
+        return true;
+    }
+    BRepPrimAPI_MakeRevol revol(face, axis, deg_to_rad(angle_deg));
+    if (!revol.IsDone() || revol.Shape().IsNull()) {
+        err = "revolve operation failed";
+        return false;
+    }
+    out = revol.Shape();
+    return true;
+}
+
+// Sweep every profile wire group along the spine (outer sweeps minus hole
+// sweeps, disjoint regions fused). `binormal` fixes the profile orientation
+// (helix); otherwise `frenet` selects the Frenet vs corrected frame.
+static bool sweep_wires_along_spine(
+    const TopoDS_Wire& spine,
+    const std::vector<WireGroup>& groups,
+    const gp_Dir* binormal,
+    bool frenet,
+    TopoDS_Shape& out,
+    std::string& err) {
+    auto pipe_one = [&](const TopoDS_Wire& wire, TopoDS_Shape& solid) -> bool {
+        BRepOffsetAPI_MakePipeShell shell(spine);
+        if (binormal != nullptr) {
+            shell.SetMode(*binormal);
+        } else {
+            shell.SetMode(frenet ? Standard_True : Standard_False);
+        }
+        shell.SetTransitionMode(BRepBuilderAPI_RightCorner);
+        shell.Add(wire);
+        shell.Build();
+        if (!shell.IsDone() || shell.Shape().IsNull()) {
+            err = "pipe sweep failed (the profile may self-intersect along the path)";
+            return false;
+        }
+        if (!shell.MakeSolid()) {
+            err = "pipe sweep could not be closed into a solid";
+            return false;
+        }
+        solid = shell.Shape();
+        return true;
+    };
+
+    TopoDS_Shape result;
+    for (const WireGroup& group : groups) {
+        TopoDS_Shape group_solid;
+        if (!pipe_one(group.outer, group_solid)) {
+            return false;
+        }
+        for (const TopoDS_Wire& hole : group.holes) {
+            TopoDS_Shape hole_solid;
+            if (!pipe_one(hole, hole_solid)) {
+                return false;
+            }
+            BRepAlgoAPI_Cut cut(group_solid, hole_solid);
+            if (!cut.IsDone() || cut.Shape().IsNull()) {
+                err = "subtracting a hole sweep from the pipe failed";
+                return false;
+            }
+            group_solid = cut.Shape();
+        }
+        if (result.IsNull()) {
+            result = group_solid;
+        } else {
+            BRepAlgoAPI_Fuse fuse(result, group_solid);
+            if (!fuse.IsDone() || fuse.Shape().IsNull()) {
+                err = "fusing pipe profile regions failed";
+                return false;
+            }
+            result = fuse.Shape();
+        }
+    }
+    out = result;
+    return true;
+}
+
+// Helix spine on a cylinder/cone around `axis`, starting at the closest point
+// on the axis to `start` (profile centroid), running `height` with `pitch`
+// per turn.
+static bool build_helix_spine(
+    const gp_Ax1& axis,
+    const gp_Pnt& start,
+    double pitch,
+    double height,
+    double cone_angle_deg,
+    bool left_handed,
+    bool reversed,
+    TopoDS_Wire& out,
+    std::string& err) {
+    if (!(pitch > Precision::Confusion()) || !(height > Precision::Confusion())) {
+        err = "helix pitch and height must be positive";
+        return false;
+    }
+    const gp_Vec to_start(axis.Location(), start);
+    const gp_Vec along = gp_Vec(axis.Direction()) * to_start.Dot(gp_Vec(axis.Direction()));
+    const gp_Vec radial = to_start - along;
+    const double radius = radial.Magnitude();
+    if (radius <= Precision::Confusion()) {
+        err = "the profile sits on the helix axis (zero radius)";
+        return false;
+    }
+
+    gp_Dir axis_dir = axis.Direction();
+    if (reversed) {
+        axis_dir.Reverse();
+    }
+    const gp_Pnt base_point = start.Translated(-radial);
+    const gp_Ax3 frame(base_point, axis_dir, gp_Dir(radial));
+
+    const double turns = height / pitch;
+    const double du = 2.0 * kPi * turns * (left_handed ? -1.0 : 1.0);
+    Handle(Geom_Surface) surface;
+    double dv;
+    if (std::abs(cone_angle_deg) <= 1e-9) {
+        surface = new Geom_CylindricalSurface(frame, radius);
+        dv = height;
+    } else {
+        if (std::abs(cone_angle_deg) >= 89.0) {
+            err = "helix cone angle must be below 89 degrees";
+            return false;
+        }
+        const double semi = deg_to_rad(cone_angle_deg);
+        surface = new Geom_ConicalSurface(frame, semi, radius);
+        // The cone's V parameter runs along the slant, not the axis.
+        dv = height / std::cos(semi);
+    }
+
+    const gp_Dir2d dir2d(du, dv);
+    Handle(Geom2d_Line) param_line = new Geom2d_Line(gp_Pnt2d(0.0, 0.0), dir2d);
+    const double param_len = std::hypot(du, dv);
+    TopoDS_Edge edge = BRepBuilderAPI_MakeEdge(param_line, surface, 0.0, param_len).Edge();
+    BRepLib::BuildCurves3d(edge);
+    out = BRepBuilderAPI_MakeWire(edge).Wire();
+    if (out.IsNull()) {
+        err = "building the helix spine failed";
+        return false;
+    }
+    return true;
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_solid_sweep(
     const uint8_t* base_brep,
     size_t base_brep_len,
     const PcadProfilePlane* plane,
     const PcadProfileWire* wires,
     size_t wire_count,
-    int32_t sweep_kind,
-    const double params[5],
-    int symmetric,
+    const PcadSweepDesc* desc,
     int32_t op,
-    int want_mesh,
-    int linear_deflection_mode,
-    double linear_value,
-    double angular_deflection_rad,
-    int weld_cross_face,
-    double weld_angle_threshold_rad,
-    int generate_boundary_edges) {
-    if (plane == nullptr) {
-        return make_sweep_error("profile plane is null");
+    const PcadMeshOptions* mesh) {
+    if (desc == nullptr) {
+        return make_sweep_error("sweep description is null");
     }
-    if (wires == nullptr || wire_count == 0) {
-        return make_sweep_error("solid op has no profile wires");
-    }
-    if (params == nullptr) {
-        return make_sweep_error("sweep parameter array is null");
-    }
-    if (sweep_kind != 0 && sweep_kind != 1) {
-        return make_sweep_error(
-            "unknown sweep kind " + std::to_string(sweep_kind)
-            + " (expected 0=extrude, 1=revolve)");
-    }
-    if (op < 0 || op > 2) {
-        return make_sweep_error(
-            "unknown boolean op " + std::to_string(op) + " (expected 0=new, 1=fuse, 2=cut)");
-    }
-    if (op == 0 && base_brep != nullptr) {
-        return make_sweep_error("new-solid op must not receive a base BRep");
-    }
-    if (op != 0 && (base_brep == nullptr || base_brep_len == 0)) {
-        return make_sweep_error("fuse/cut op requires a non-empty base BRep");
-    }
-
     try {
-        // gp_Dir normalizes and throws on near-zero vectors (caught below).
-        const gp_Dir normal_dir(plane->normal[0], plane->normal[1], plane->normal[2]);
-        const gp_Dir x_dir(plane->x_axis[0], plane->x_axis[1], plane->x_axis[2]);
-        const gp_Pnt origin(plane->origin[0], plane->origin[1], plane->origin[2]);
-        const gp_Pln pln(gp_Ax3(origin, normal_dir, x_dir));
-
         std::string err;
-        std::vector<TopoDS_Wire> topo_wires;
-        topo_wires.reserve(wire_count);
-        for (size_t i = 0; i < wire_count; ++i) {
-            TopoDS_Wire wire;
-            if (!build_profile_wire(*plane, normal_dir, x_dir, wires[i], wire, err)) {
-                return make_sweep_error(err);
-            }
-            topo_wires.push_back(wire);
-        }
-
-        TopoDS_Face face;
-        if (!build_profile_face(pln, topo_wires, face, err)) {
+        TopoDS_Shape base;
+        if (!load_base_for_op(op, base_brep, base_brep_len, base, err)) {
             return make_sweep_error(err);
         }
 
+        gp_Pln pln;
+        gp_Dir normal_dir;
+        std::vector<TopoDS_Wire> topo_wires;
+        if (!parse_profile(plane, wires, wire_count, pln, normal_dir, topo_wires, err)) {
+            return make_sweep_error(err);
+        }
+        TopoDS_Shape face;
+        std::vector<WireGroup> groups;
+        if (!build_profile_face(pln, topo_wires, face, groups, err)) {
+            return make_sweep_error(err);
+        }
+        const TopoDS_Shape* base_ptr = base.IsNull() ? nullptr : &base;
+
         TopoDS_Shape tool;
-        if (sweep_kind == 0) {
-            // Linear extrusion along the plane normal.
-            const double distance = params[0];
-            if (std::abs(distance) <= Precision::Confusion()) {
-                return make_sweep_error("extrusion distance is zero");
-            }
-
-            TopoDS_Shape sweep_profile = face;
-            if (symmetric != 0) {
-                // Shift the profile back by half the distance so the prism
-                // straddles the sketch plane. With a negative distance the
-                // shift is forwards (+|d|/2) and the sweep runs backwards,
-                // producing exactly the same solid as the positive distance.
-                gp_Vec half_back(normal_dir);
-                half_back *= -distance * 0.5;
-                gp_Trsf shift;
-                shift.SetTranslation(half_back);
-                BRepBuilderAPI_Transform mover(face, shift, Standard_True);
-                if (!mover.IsDone() || mover.Shape().IsNull()) {
-                    return make_sweep_error(
-                        "failed to translate profile face for symmetric extrusion");
+        switch (desc->kind) {
+            case 0: { // extrude
+                gp_Dir dir = normal_dir;
+                if (desc->has_direction != 0) {
+                    const gp_Vec custom(
+                        desc->direction[0], desc->direction[1], desc->direction[2]);
+                    if (custom.Magnitude() <= Precision::Confusion()) {
+                        return make_sweep_error("custom extrusion direction is (near) zero");
+                    }
+                    if (std::abs(custom.Normalized().Dot(gp_Vec(normal_dir)))
+                        <= Precision::Confusion()) {
+                        return make_sweep_error(
+                            "custom extrusion direction is parallel to the sketch plane");
+                    }
+                    dir = gp_Dir(custom);
                 }
-                sweep_profile = mover.Shape();
-            }
+                if (desc->reversed != 0) {
+                    dir.Reverse();
+                }
 
-            gp_Vec sweep(normal_dir);
-            sweep *= distance;
-            BRepPrimAPI_MakePrism prism(sweep_profile, sweep);
-            if (!prism.IsDone()) {
-                return make_sweep_error("prism extrusion failed");
+                if (!extrude_one_side(
+                        pln, groups, face, dir, desc->term, desc->taper_deg,
+                        base_ptr, tool, err)) {
+                    return make_sweep_error(err);
+                }
+                if (desc->has_term2 != 0) {
+                    TopoDS_Shape back;
+                    if (!extrude_one_side(
+                            pln, groups, face, dir.Reversed(), desc->term2,
+                            desc->taper_deg, base_ptr, back, err)) {
+                        return make_sweep_error(err);
+                    }
+                    if (!fuse_shapes(tool, back, tool, err)) {
+                        return make_sweep_error(err);
+                    }
+                } else if (desc->symmetric != 0 && desc->term.kind == 0) {
+                    gp_Trsf shift;
+                    shift.SetTranslation(gp_Vec(dir) * (-desc->term.distance * 0.5));
+                    tool = BRepBuilderAPI_Transform(tool, shift, Standard_True).Shape();
+                }
+                break;
             }
-            tool = prism.Shape();
-            if (tool.IsNull()) {
-                return make_sweep_error("prism extrusion produced no shape");
+            case 1: { // revolve
+                gp_Ax1 axis;
+                if (!sketch_plane_axis(*plane, desc->axis_origin, desc->axis_dir, axis, err)) {
+                    return make_sweep_error(err);
+                }
+                if (desc->reversed != 0) {
+                    axis.Reverse();
+                }
+                double forward = desc->angle_deg;
+                double backward = desc->has_angle2 != 0 ? desc->angle2_deg : 0.0;
+                if (desc->midplane != 0) {
+                    forward = desc->angle_deg * 0.5;
+                    backward = desc->angle_deg * 0.5;
+                }
+                TopoDS_Shape sweep_face = face;
+                if (backward > 0.0) {
+                    // Pre-rotate so the sweep covers [-backward, +forward].
+                    gp_Trsf pre;
+                    pre.SetRotation(axis, -deg_to_rad(backward));
+                    sweep_face = BRepBuilderAPI_Transform(face, pre, Standard_True).Shape();
+                }
+                if (!revolve_face(sweep_face, axis, forward + backward, tool, err)) {
+                    return make_sweep_error(err);
+                }
+                break;
             }
-        } else {
-            // Revolution about an axis lying in the sketch plane.
-            const double axis_origin_u = params[0];
-            const double axis_origin_v = params[1];
-            const double axis_dir_u = params[2];
-            const double axis_dir_v = params[3];
-            const double angle_deg = params[4];
-            if (!(angle_deg > 0.0) || angle_deg > 360.0) {
+            case 2: { // helix
+                gp_Ax1 axis;
+                if (!sketch_plane_axis(*plane, desc->axis_origin, desc->axis_dir, axis, err)) {
+                    return make_sweep_error(err);
+                }
+                TopoDS_Wire spine;
+                if (!build_helix_spine(
+                        axis, face_centroid(face), desc->pitch, desc->height,
+                        desc->cone_angle_deg, desc->left_handed != 0,
+                        desc->reversed != 0, spine, err)) {
+                    return make_sweep_error(err);
+                }
+                const gp_Dir binormal = axis.Direction();
+                if (!sweep_wires_along_spine(spine, groups, &binormal, false, tool, err)) {
+                    return make_sweep_error(err);
+                }
+                break;
+            }
+            default:
                 return make_sweep_error(
-                    "revolve angle must be in (0, 360] degrees, got "
-                    + std::to_string(angle_deg));
-            }
-
-            const gp_Vec axis_vec(
-                axis_dir_u * plane->x_axis[0] + axis_dir_v * plane->y_axis[0],
-                axis_dir_u * plane->x_axis[1] + axis_dir_v * plane->y_axis[1],
-                axis_dir_u * plane->x_axis[2] + axis_dir_v * plane->y_axis[2]);
-            if (axis_vec.Magnitude() <= Precision::Confusion()) {
-                return make_sweep_error(
-                    "revolve axis direction is (near) zero in the sketch plane");
-            }
-            const gp_Pnt axis_point =
-                profile_point(*plane, axis_origin_u, axis_origin_v);
-            const gp_Ax1 axis(axis_point, gp_Dir(axis_vec));
-
-            // Treat anything within a millidegree of a full turn as 360°.
-            const bool full_turn = angle_deg >= 359.999;
-            const double angle_rad = angle_deg / 180.0 * 3.14159265358979323846;
-            if (full_turn) {
-                BRepPrimAPI_MakeRevol revol(face, axis);
-                if (!revol.IsDone()) {
-                    return make_sweep_error("revolve operation failed");
-                }
-                tool = revol.Shape();
-            } else {
-                BRepPrimAPI_MakeRevol revol(face, axis, angle_rad);
-                if (!revol.IsDone()) {
-                    return make_sweep_error("revolve operation failed");
-                }
-                tool = revol.Shape();
-            }
-            if (tool.IsNull()) {
-                return make_sweep_error("revolve produced no shape");
-            }
+                    "unknown sweep kind " + std::to_string(desc->kind)
+                    + " (expected 0=extrude, 1=revolve, 2=helix)");
+        }
+        if (tool.IsNull()) {
+            return make_sweep_error("sweep produced no shape");
         }
 
         TopoDS_Shape result_shape;
-        if (op == 0) {
-            result_shape = tool;
-        } else {
-            TopoDS_Shape base;
-            if (!brep_read_from_bytes(base_brep, base_brep_len, base)) {
-                return make_sweep_error(
-                    "BRepTools::Read failed (invalid or unsupported base BRep blob)");
-            }
-            if (op == 1) {
-                BRepAlgoAPI_Fuse boolean_op(base, tool);
-                if (!boolean_op.IsDone()) {
-                    return make_sweep_error("fuse boolean operation failed");
-                }
-                result_shape = boolean_op.Shape();
-            } else {
-                BRepAlgoAPI_Cut boolean_op(base, tool);
-                if (!boolean_op.IsDone()) {
-                    return make_sweep_error("cut boolean operation failed");
-                }
-                result_shape = boolean_op.Shape();
-            }
-            if (result_shape.IsNull()) {
-                return make_sweep_error("boolean operation produced a null shape");
-            }
-            // Merge coplanar faces / colinear edges the boolean left behind so
-            // later features (fillets, further booleans) see clean topology.
-            ShapeUpgrade_UnifySameDomain unify(
-                result_shape, Standard_True, Standard_True, Standard_False);
-            unify.Build();
-            if (!unify.Shape().IsNull()) {
-                result_shape = unify.Shape();
-            }
+        if (!combine_with_base(op, base, tool, result_shape, err)) {
+            return make_sweep_error(err);
         }
-        if (count_faces(result_shape) == 0) {
-            return make_sweep_error(
-                "sweep result contains no faces (boolean removed all material?)");
-        }
-
-        std::vector<uint8_t> blob;
-        if (!brep_write_to_vector(result_shape, blob)) {
-            return make_sweep_error("BRepTools::Write failed while serializing sweep result");
-        }
-
-        PrintcadOcctSweepResult result{};
-        result.brep_len = blob.size();
-        result.brep_blob = static_cast<uint8_t*>(std::malloc(blob.size()));
-        if (result.brep_blob == nullptr) {
-            return make_sweep_error("Out of memory while allocating sweep BRep blob");
-        }
-        std::memcpy(result.brep_blob, blob.data(), blob.size());
-
-        if (want_mesh != 0) {
-            const double linear_abs = resolve_linear_deflection_abs(
-                result_shape, linear_deflection_mode, linear_value);
-            const double ang =
-                angular_deflection_rad > 0.0 ? angular_deflection_rad : 0.5;
-            brepmesh_incremental(result_shape, linear_abs, ang);
-
-            const float weld_angle_cos =
-                static_cast<float>(std::cos(std::max(0.0, weld_angle_threshold_rad)));
-            const std::vector<std::array<float, 3>> rgbs(
-                count_faces(result_shape), std::array<float, 3>{{1.0f, 1.0f, 1.0f}});
-            std::vector<PrintcadOcctBody> bodies;
-            mesh_shape_from_precolored_faces(
-                result_shape,
-                rgbs,
-                bodies,
-                0,
-                weld_cross_face != 0,
-                weld_angle_cos,
-                generate_boundary_edges != 0);
-            if (bodies.size() != 1 || bodies[0].vertex_count == 0) {
-                for (auto& body : bodies) {
-                    std::free(body.positions);
-                    std::free(body.normals);
-                    std::free(body.colors);
-                    std::free(body.indices);
-                    std::free(body.edges);
-                    std::free(body.name);
-                }
-                std::free(result.brep_blob);
-                return make_sweep_error(
-                    "tessellation of sweep result produced no mesh geometry");
-            }
-            PrintcadOcctBody& mb = bodies[0];
-            std::free(mb.name);
-            std::free(mb.colors);
-            result.mesh_positions = mb.positions;
-            result.mesh_normals = mb.normals;
-            result.mesh_indices = mb.indices;
-            result.mesh_edges = mb.edges;
-            result.mesh_vertex_count = mb.vertex_count;
-            result.mesh_index_count = mb.index_count;
-            result.mesh_edge_count = mb.edge_count;
-        }
-
-        result.error = nullptr;
-        return result;
+        return finish_solid_result(result_shape, &tool, mesh);
     } catch (Standard_Failure const& ex) {
         return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
     } catch (std::exception const& ex) {
@@ -2896,8 +3671,833 @@ extern "C" PrintcadOcctSweepResult printcad_occt_sweep_profile(
     }
 }
 
+extern "C" PrintcadOcctSweepResult printcad_occt_solid_loft(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadProfilePlane* planes,
+    const PcadProfileWire* wires,
+    const size_t* wire_offsets,
+    const size_t* wire_counts,
+    size_t section_count,
+    int ruled,
+    int closed,
+    int32_t op,
+    const PcadMeshOptions* mesh) {
+    if (planes == nullptr || wires == nullptr || wire_offsets == nullptr
+        || wire_counts == nullptr) {
+        return make_sweep_error("loft input arrays are null");
+    }
+    if (section_count < 2) {
+        return make_sweep_error("a loft needs at least two sections");
+    }
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(op, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        // Per section: wires sorted by descending area so index 0 is the
+        // outer boundary and hole ranks correspond across sections.
+        std::vector<std::vector<TopoDS_Wire>> sections(section_count);
+        bool holes_matched = true;
+        for (size_t s = 0; s < section_count; ++s) {
+            gp_Pln pln;
+            gp_Dir normal;
+            if (!parse_profile(
+                    &planes[s], wires + wire_offsets[s], wire_counts[s], pln, normal,
+                    sections[s], err)) {
+                return make_sweep_error("loft section " + std::to_string(s + 1) + ": " + err);
+            }
+            std::sort(
+                sections[s].begin(), sections[s].end(),
+                [&pln](const TopoDS_Wire& a, const TopoDS_Wire& b) {
+                    return planar_wire_area(pln, a) > planar_wire_area(pln, b);
+                });
+            if (sections[s].size() != sections[0].size()) {
+                holes_matched = false;
+            }
+        }
+
+        const size_t rank_count = holes_matched ? sections[0].size() : 1;
+        TopoDS_Shape tool;
+        std::vector<TopoDS_Shape> hole_solids;
+        for (size_t rank = 0; rank < rank_count; ++rank) {
+            BRepOffsetAPI_ThruSections loft(Standard_True, ruled != 0);
+            loft.CheckCompatibility(Standard_False);
+            for (size_t s = 0; s < section_count; ++s) {
+                loft.AddWire(sections[s][rank]);
+            }
+            if (closed != 0) {
+                loft.AddWire(sections[0][rank]);
+            }
+            loft.Build();
+            if (!loft.IsDone() || loft.Shape().IsNull()) {
+                return make_sweep_error(
+                    "loft failed (check section compatibility and ordering)");
+            }
+            if (rank == 0) {
+                tool = loft.Shape();
+            } else {
+                hole_solids.push_back(loft.Shape());
+            }
+        }
+        for (const TopoDS_Shape& hole : hole_solids) {
+            BRepAlgoAPI_Cut cut(tool, hole);
+            if (!cut.IsDone() || cut.Shape().IsNull()) {
+                return make_sweep_error("subtracting a hole loft failed");
+            }
+            tool = cut.Shape();
+        }
+
+        TopoDS_Shape result_shape;
+        if (!combine_with_base(op, base, tool, result_shape, err)) {
+            return make_sweep_error(err);
+        }
+        return finish_solid_result(result_shape, &tool, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while lofting");
+    }
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_solid_pipe(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadProfilePlane* profile_plane,
+    const PcadProfileWire* profile_wires,
+    size_t profile_wire_count,
+    const PcadProfilePlane* spine_plane,
+    const PcadProfileWire* spine_wire,
+    int frenet,
+    int32_t op,
+    const PcadMeshOptions* mesh) {
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(op, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        gp_Pln profile_pln;
+        gp_Dir profile_normal;
+        std::vector<TopoDS_Wire> topo_wires;
+        if (!parse_profile(
+                profile_plane, profile_wires, profile_wire_count, profile_pln,
+                profile_normal, topo_wires, err)) {
+            return make_sweep_error(err);
+        }
+        std::vector<WireGroup> groups;
+        if (!group_profile_wires(profile_pln, topo_wires, groups, err)) {
+            return make_sweep_error(err);
+        }
+
+        gp_Pln spine_pln;
+        gp_Dir spine_normal;
+        std::vector<TopoDS_Wire> spine_wires;
+        if (!parse_profile(
+                spine_plane, spine_wire, 1, spine_pln, spine_normal, spine_wires, err,
+                /*require_closed=*/false)) {
+            return make_sweep_error("pipe spine: " + err);
+        }
+
+        TopoDS_Shape tool;
+        if (!sweep_wires_along_spine(
+                spine_wires[0], groups, nullptr, frenet != 0, tool, err)) {
+            return make_sweep_error(err);
+        }
+
+        TopoDS_Shape result_shape;
+        if (!combine_with_base(op, base, tool, result_shape, err)) {
+            return make_sweep_error(err);
+        }
+        return finish_solid_result(result_shape, &tool, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while sweeping along a path");
+    }
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_solid_primitive(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    int32_t kind,
+    const double* params,
+    size_t param_count,
+    const double placement[9],
+    int32_t op,
+    const PcadMeshOptions* mesh) {
+    if (params == nullptr || placement == nullptr) {
+        return make_sweep_error("primitive parameters are null");
+    }
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(op, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        const gp_Pnt origin(placement[0], placement[1], placement[2]);
+        const gp_Vec x_raw(placement[3], placement[4], placement[5]);
+        const gp_Vec z_raw(placement[6], placement[7], placement[8]);
+        if (x_raw.Magnitude() <= Precision::Confusion()
+            || z_raw.Magnitude() <= Precision::Confusion()) {
+            return make_sweep_error("primitive placement axes are (near) zero");
+        }
+        const gp_Dir z_dir(z_raw);
+        // Re-orthogonalize X against Z so slightly-off inputs still work.
+        gp_Vec x_ortho = x_raw - gp_Vec(z_dir) * x_raw.Dot(gp_Vec(z_dir));
+        if (x_ortho.Magnitude() <= Precision::Confusion()) {
+            return make_sweep_error("primitive placement axes are (near) parallel");
+        }
+        const gp_Ax2 frame(origin, z_dir, gp_Dir(x_ortho));
+
+        auto need = [&](size_t n) -> bool { return param_count >= n; };
+        auto positive = [](double v) -> bool { return v > Precision::Confusion(); };
+
+        TopoDS_Shape tool;
+        switch (kind) {
+            case 0: { // box
+                if (!need(3) || !positive(params[0]) || !positive(params[1])
+                    || !positive(params[2])) {
+                    return make_sweep_error("box needs positive length/width/height");
+                }
+                tool = BRepPrimAPI_MakeBox(frame, params[0], params[1], params[2]).Shape();
+                break;
+            }
+            case 1: { // cylinder
+                if (!need(3) || !positive(params[0]) || !positive(params[1])) {
+                    return make_sweep_error("cylinder needs positive radius/height");
+                }
+                const double angle = params[2];
+                if (angle >= 359.999 || angle <= 0.0) {
+                    tool = BRepPrimAPI_MakeCylinder(frame, params[0], params[1]).Shape();
+                } else {
+                    tool = BRepPrimAPI_MakeCylinder(
+                               frame, params[0], params[1], deg_to_rad(angle))
+                               .Shape();
+                }
+                break;
+            }
+            case 2: { // sphere
+                if (!need(4) || !positive(params[0])) {
+                    return make_sweep_error("sphere needs a positive radius");
+                }
+                const double a1 = deg_to_rad(params[1]);
+                const double a2 = deg_to_rad(params[2]);
+                const double a3 = params[3];
+                const bool full_lat = params[1] <= -89.999 && params[2] >= 89.999;
+                if (full_lat && a3 >= 359.999) {
+                    tool = BRepPrimAPI_MakeSphere(frame, params[0]).Shape();
+                } else if (full_lat) {
+                    tool = BRepPrimAPI_MakeSphere(frame, params[0], deg_to_rad(a3)).Shape();
+                } else {
+                    tool = BRepPrimAPI_MakeSphere(frame, params[0], a1, a2, deg_to_rad(a3))
+                               .Shape();
+                }
+                break;
+            }
+            case 3: { // cone
+                if (!need(4) || params[0] < 0.0 || params[1] < 0.0 || !positive(params[2])) {
+                    return make_sweep_error(
+                        "cone needs non-negative radii and a positive height");
+                }
+                if (std::abs(params[0] - params[1]) <= Precision::Confusion()) {
+                    return make_sweep_error(
+                        "cone radii must differ (use a cylinder for equal radii)");
+                }
+                const double angle = params[3];
+                if (angle >= 359.999 || angle <= 0.0) {
+                    tool = BRepPrimAPI_MakeCone(frame, params[0], params[1], params[2]).Shape();
+                } else {
+                    tool = BRepPrimAPI_MakeCone(
+                               frame, params[0], params[1], params[2], deg_to_rad(angle))
+                               .Shape();
+                }
+                break;
+            }
+            case 4: { // torus
+                if (!need(5) || !positive(params[0]) || !positive(params[1])) {
+                    return make_sweep_error("torus needs positive radii");
+                }
+                const double a1 = params[2];
+                const double a2 = params[3];
+                const double a3 = params[4];
+                const bool full_section = a1 <= -179.999 && a2 >= 179.999;
+                if (full_section && a3 >= 359.999) {
+                    tool = BRepPrimAPI_MakeTorus(frame, params[0], params[1]).Shape();
+                } else if (full_section) {
+                    tool = BRepPrimAPI_MakeTorus(frame, params[0], params[1], deg_to_rad(a3))
+                               .Shape();
+                } else {
+                    tool = BRepPrimAPI_MakeTorus(
+                               frame, params[0], params[1], deg_to_rad(a1), deg_to_rad(a2),
+                               deg_to_rad(a3))
+                               .Shape();
+                }
+                break;
+            }
+            case 5: { // ellipsoid: unit sphere scaled per-axis, then placed
+                if (!need(3) || !positive(params[0]) || !positive(params[1])
+                    || !positive(params[2])) {
+                    return make_sweep_error("ellipsoid needs three positive radii");
+                }
+                const TopoDS_Shape sphere = BRepPrimAPI_MakeSphere(1.0).Shape();
+                gp_GTrsf scale;
+                scale.SetVectorialPart(gp_Mat(
+                    params[0], 0.0, 0.0,
+                    0.0, params[1], 0.0,
+                    0.0, 0.0, params[2]));
+                BRepBuilderAPI_GTransform scaler(sphere, scale, Standard_True);
+                if (!scaler.IsDone() || scaler.Shape().IsNull()) {
+                    return make_sweep_error("ellipsoid scaling failed");
+                }
+                gp_Trsf place;
+                place.SetTransformation(gp_Ax3(frame), gp_Ax3());
+                tool = BRepBuilderAPI_Transform(scaler.Shape(), place, Standard_True).Shape();
+                break;
+            }
+            case 6: { // regular prism
+                if (!need(3) || params[0] < 3.0 || !positive(params[1])
+                    || !positive(params[2])) {
+                    return make_sweep_error(
+                        "prism needs at least 3 sides and positive radius/height");
+                }
+                const int sides = static_cast<int>(params[0]);
+                BRepBuilderAPI_MakePolygon polygon;
+                for (int i = 0; i < sides; ++i) {
+                    const double a = 2.0 * kPi * i / sides;
+                    const gp_Vec offset =
+                        gp_Vec(frame.XDirection()) * (std::cos(a) * params[1])
+                        + gp_Vec(frame.YDirection()) * (std::sin(a) * params[1]);
+                    polygon.Add(origin.Translated(offset));
+                }
+                polygon.Close();
+                const TopoDS_Face face =
+                    BRepBuilderAPI_MakeFace(gp_Pln(origin, z_dir), polygon.Wire()).Face();
+                BRepPrimAPI_MakePrism prism(face, gp_Vec(z_dir) * params[2]);
+                if (!prism.IsDone() || prism.Shape().IsNull()) {
+                    return make_sweep_error("prism extrusion failed");
+                }
+                tool = prism.Shape();
+                break;
+            }
+            case 7: { // wedge
+                if (!need(10)) {
+                    return make_sweep_error("wedge needs 10 span parameters");
+                }
+                const double dx = params[1] - params[0];
+                const double dy = params[3] - params[2];
+                const double dz = params[5] - params[4];
+                if (!positive(dx) || !positive(dy) || !positive(dz)) {
+                    return make_sweep_error("wedge spans must have positive extent");
+                }
+                const double top_xmin = params[6] - params[0];
+                const double top_xmax = params[7] - params[0];
+                const double top_zmin = params[8] - params[4];
+                const double top_zmax = params[9] - params[4];
+                if (top_xmax < top_xmin || top_zmax < top_zmin) {
+                    return make_sweep_error("wedge top spans are inverted");
+                }
+                BRepPrimAPI_MakeWedge wedge(
+                    frame, dx, dy, dz, top_xmin, top_zmin, top_xmax, top_zmax);
+                tool = wedge.Shape();
+                // Shift so the placement origin corresponds to (0,0,0) of the
+                // requested min corner, matching the span-based input.
+                gp_Trsf shift;
+                shift.SetTranslation(
+                    gp_Vec(frame.XDirection()) * params[0]
+                    + gp_Vec(frame.YDirection()) * params[2]
+                    + gp_Vec(z_dir) * params[4]);
+                tool = BRepBuilderAPI_Transform(tool, shift, Standard_True).Shape();
+                break;
+            }
+            default:
+                return make_sweep_error("unknown primitive kind " + std::to_string(kind));
+        }
+        if (tool.IsNull()) {
+            return make_sweep_error("primitive construction produced no shape");
+        }
+
+        TopoDS_Shape result_shape;
+        if (!combine_with_base(op, base, tool, result_shape, err)) {
+            return make_sweep_error(err);
+        }
+        return finish_solid_result(result_shape, &tool, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while building a primitive");
+    }
+}
+
+// Nearest sub-shape of `type` in `shape` to a world point.
+static TopoDS_Shape nearest_subshape(
+    const TopoDS_Shape& shape,
+    TopAbs_ShapeEnum type,
+    const gp_Pnt& point) {
+    const TopoDS_Shape probe = BRepBuilderAPI_MakeVertex(point).Shape();
+    TopoDS_Shape best;
+    double best_dist = 0.0;
+    for (TopExp_Explorer it(shape, type); it.More(); it.Next()) {
+        BRepExtrema_DistShapeShape dist(probe, it.Current());
+        if (!dist.IsDone() || dist.NbSolution() == 0) {
+            continue;
+        }
+        if (best.IsNull() || dist.Value() < best_dist) {
+            best = it.Current();
+            best_dist = dist.Value();
+        }
+    }
+    return best;
+}
+
+// Resolve a dress-up edge selection into a deduplicated edge list.
+static bool collect_dressup_edges(
+    const TopoDS_Shape& base,
+    int32_t selection_mode,
+    const double* points,
+    size_t point_count,
+    TopTools_IndexedMapOfShape& out_edges,
+    std::string& err) {
+    if (selection_mode == 0) {
+        TopExp::MapShapes(base, TopAbs_EDGE, out_edges);
+    } else {
+        if (points == nullptr || point_count == 0) {
+            err = "edge selection needs at least one reference point";
+            return false;
+        }
+        for (size_t i = 0; i < point_count; ++i) {
+            const gp_Pnt p(points[3 * i], points[3 * i + 1], points[3 * i + 2]);
+            if (selection_mode == 1) {
+                const TopoDS_Shape face = nearest_subshape(base, TopAbs_FACE, p);
+                if (face.IsNull()) {
+                    err = "no face found near an edge-selection reference point";
+                    return false;
+                }
+                for (TopExp_Explorer it(face, TopAbs_EDGE); it.More(); it.Next()) {
+                    out_edges.Add(it.Current());
+                }
+            } else {
+                const TopoDS_Shape edge = nearest_subshape(base, TopAbs_EDGE, p);
+                if (edge.IsNull()) {
+                    err = "no edge found near an edge-selection reference point";
+                    return false;
+                }
+                out_edges.Add(edge);
+            }
+        }
+    }
+    if (out_edges.IsEmpty()) {
+        err = "edge selection resolved to no edges";
+        return false;
+    }
+    return true;
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_dressup(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    int32_t kind,
+    const double* params,
+    size_t param_count,
+    int32_t selection_mode,
+    const double* points,
+    size_t point_count,
+    const PcadMeshOptions* mesh) {
+    if (params == nullptr || param_count == 0) {
+        return make_sweep_error("dress-up parameters are null");
+    }
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(1, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        TopTools_IndexedMapOfShape edges;
+        if (!collect_dressup_edges(base, selection_mode, points, point_count, edges, err)) {
+            return make_sweep_error(err);
+        }
+
+        TopoDS_Shape result_shape;
+        if (kind == 0) { // fillet
+            const double radius = params[0];
+            if (!(radius > Precision::Confusion())) {
+                return make_sweep_error("fillet radius must be positive");
+            }
+            BRepFilletAPI_MakeFillet fillet(base);
+            for (Standard_Integer i = 1; i <= edges.Extent(); ++i) {
+                fillet.Add(radius, TopoDS::Edge(edges.FindKey(i)));
+            }
+            fillet.Build();
+            if (!fillet.IsDone() || fillet.Shape().IsNull()) {
+                return make_sweep_error(
+                    "fillet failed (radius may be too large for these edges)");
+            }
+            result_shape = fillet.Shape();
+        } else if (kind == 1) { // chamfer
+            if (param_count < 4) {
+                return make_sweep_error("chamfer needs mode, two sizes, and a flip flag");
+            }
+            const int mode = static_cast<int>(params[0]);
+            const double d1 = params[1];
+            const double d2_or_angle = params[2];
+            const bool flip = params[3] != 0.0;
+            if (!(d1 > Precision::Confusion())) {
+                return make_sweep_error("chamfer size must be positive");
+            }
+
+            TopTools_IndexedDataMapOfShapeListOfShape edge_faces;
+            TopExp::MapShapesAndAncestors(base, TopAbs_EDGE, TopAbs_FACE, edge_faces);
+            BRepFilletAPI_MakeChamfer chamfer(base);
+            for (Standard_Integer i = 1; i <= edges.Extent(); ++i) {
+                const TopoDS_Edge edge = TopoDS::Edge(edges.FindKey(i));
+                if (mode == 0) {
+                    chamfer.Add(d1, edge);
+                    continue;
+                }
+                const Standard_Integer fi = edge_faces.FindIndex(edge);
+                if (fi < 1 || edge_faces.FindFromIndex(fi).IsEmpty()) {
+                    return make_sweep_error("chamfer could not find a face for an edge");
+                }
+                const TopTools_ListOfShape& faces = edge_faces.FindFromIndex(fi);
+                TopoDS_Face ref_face = TopoDS::Face(faces.First());
+                if (flip && faces.Extent() > 1) {
+                    ref_face = TopoDS::Face(faces.Last());
+                }
+                if (mode == 1) {
+                    const double d2 = flip ? d1 : d2_or_angle;
+                    const double d1_eff = flip ? d2_or_angle : d1;
+                    chamfer.Add(d1_eff, d2, edge, ref_face);
+                } else {
+                    chamfer.AddDA(d1, deg_to_rad(d2_or_angle), edge, ref_face);
+                }
+            }
+            chamfer.Build();
+            if (!chamfer.IsDone() || chamfer.Shape().IsNull()) {
+                return make_sweep_error(
+                    "chamfer failed (size may be too large for these edges)");
+            }
+            result_shape = chamfer.Shape();
+        } else {
+            return make_sweep_error("unknown dress-up kind " + std::to_string(kind));
+        }
+
+        return finish_solid_result(result_shape, nullptr, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while applying a dress-up");
+    }
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_draft(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    double angle_deg,
+    const double neutral_point[3],
+    const double neutral_normal[3],
+    const double* pull_dir,
+    const double* face_points,
+    size_t face_point_count,
+    const PcadMeshOptions* mesh) {
+    if (neutral_point == nullptr || neutral_normal == nullptr) {
+        return make_sweep_error("draft neutral plane is null");
+    }
+    if (face_points == nullptr || face_point_count == 0) {
+        return make_sweep_error("draft needs at least one face reference point");
+    }
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(1, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        const gp_Dir neutral_dir(neutral_normal[0], neutral_normal[1], neutral_normal[2]);
+        const gp_Pln neutral_pln(
+            gp_Pnt(neutral_point[0], neutral_point[1], neutral_point[2]), neutral_dir);
+        const gp_Dir pull =
+            pull_dir != nullptr ? gp_Dir(pull_dir[0], pull_dir[1], pull_dir[2]) : neutral_dir;
+
+        BRepOffsetAPI_DraftAngle draft(base);
+        for (size_t i = 0; i < face_point_count; ++i) {
+            const gp_Pnt p(face_points[3 * i], face_points[3 * i + 1], face_points[3 * i + 2]);
+            const TopoDS_Shape face = nearest_subshape(base, TopAbs_FACE, p);
+            if (face.IsNull()) {
+                return make_sweep_error("no face found near a draft reference point");
+            }
+            draft.Add(TopoDS::Face(face), pull, deg_to_rad(angle_deg), neutral_pln);
+            if (!draft.AddDone()) {
+                return make_sweep_error(
+                    "draft rejected a face (it may be tangent-connected or parallel "
+                    "to the pull direction)");
+            }
+        }
+        draft.Build();
+        if (!draft.IsDone() || draft.Shape().IsNull()) {
+            return make_sweep_error("draft failed");
+        }
+        return finish_solid_result(draft.Shape(), nullptr, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while drafting faces");
+    }
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_thickness(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    double value,
+    int inward,
+    const double* face_points,
+    size_t face_point_count,
+    const PcadMeshOptions* mesh) {
+    if (face_points == nullptr || face_point_count == 0) {
+        return make_sweep_error("thickness needs at least one face to open");
+    }
+    if (!(value > Precision::Confusion())) {
+        return make_sweep_error("wall thickness must be positive");
+    }
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(1, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        TopTools_ListOfShape open_faces;
+        TopTools_IndexedMapOfShape seen;
+        for (size_t i = 0; i < face_point_count; ++i) {
+            const gp_Pnt p(face_points[3 * i], face_points[3 * i + 1], face_points[3 * i + 2]);
+            const TopoDS_Shape face = nearest_subshape(base, TopAbs_FACE, p);
+            if (face.IsNull()) {
+                return make_sweep_error("no face found near a thickness reference point");
+            }
+            if (seen.Add(face) > 0) {
+                open_faces.Append(face);
+            }
+        }
+
+        BRepOffsetAPI_MakeThickSolid thick;
+        thick.MakeThickSolidByJoin(
+            base, open_faces, inward != 0 ? -value : value, 1e-3,
+            BRepOffset_Skin, Standard_False, Standard_False, GeomAbs_Arc);
+        if (!thick.IsDone() || thick.Shape().IsNull()) {
+            return make_sweep_error(
+                "hollowing failed (wall may be too thick for this shape)");
+        }
+        return finish_solid_result(thick.Shape(), nullptr, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while hollowing");
+    }
+}
+
+// Row-major 4x4 -> OCCT transform; scaling/shear falls back to GTransform.
+static TopoDS_Shape transform_shape_4x4(
+    const TopoDS_Shape& shape,
+    const double* m,
+    std::string& err) {
+    // Rigid check: the 3x3 part times its transpose should be identity.
+    bool rigid = true;
+    for (int r = 0; r < 3 && rigid; ++r) {
+        for (int c = 0; c < 3 && rigid; ++c) {
+            double dot = 0.0;
+            for (int k = 0; k < 3; ++k) {
+                dot += m[r * 4 + k] * m[c * 4 + k];
+            }
+            if (std::abs(dot - (r == c ? 1.0 : 0.0)) > 1e-7) {
+                rigid = false;
+            }
+        }
+    }
+    if (rigid) {
+        gp_Trsf trsf;
+        trsf.SetValues(
+            m[0], m[1], m[2], m[3],
+            m[4], m[5], m[6], m[7],
+            m[8], m[9], m[10], m[11]);
+        BRepBuilderAPI_Transform mover(shape, trsf, Standard_True);
+        if (!mover.IsDone() || mover.Shape().IsNull()) {
+            err = "applying a pattern transform failed";
+            return TopoDS_Shape();
+        }
+        return mover.Shape();
+    }
+    gp_GTrsf gtrsf;
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 4; ++c) {
+            gtrsf.SetValue(r + 1, c + 1, m[r * 4 + c]);
+        }
+    }
+    BRepBuilderAPI_GTransform mover(shape, gtrsf, Standard_True);
+    if (!mover.IsDone() || mover.Shape().IsNull()) {
+        err = "applying a scaling pattern transform failed";
+        return TopoDS_Shape();
+    }
+    return mover.Shape();
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_pattern(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const PcadToolSolid* tools,
+    size_t tool_count,
+    const double* transforms,
+    size_t transform_count,
+    const PcadMeshOptions* mesh) {
+    if (tools == nullptr || tool_count == 0) {
+        return make_sweep_error("pattern has no tool solids");
+    }
+    if (transforms == nullptr || transform_count == 0) {
+        return make_sweep_error("pattern has no transforms");
+    }
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(1, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+
+        std::vector<std::pair<TopoDS_Shape, bool>> tool_shapes;
+        tool_shapes.reserve(tool_count);
+        for (size_t i = 0; i < tool_count; ++i) {
+            TopoDS_Shape shape;
+            if (!brep_read_from_bytes(tools[i].brep, tools[i].len, shape)) {
+                return make_sweep_error("failed to read a pattern tool BRep");
+            }
+            tool_shapes.emplace_back(shape, tools[i].subtractive != 0);
+        }
+
+        TopTools_ListOfShape fuse_list;
+        TopTools_ListOfShape cut_list;
+        for (size_t t = 0; t < transform_count; ++t) {
+            for (const auto& [shape, subtractive] : tool_shapes) {
+                const TopoDS_Shape moved =
+                    transform_shape_4x4(shape, transforms + 16 * t, err);
+                if (moved.IsNull()) {
+                    return make_sweep_error(err);
+                }
+                (subtractive ? cut_list : fuse_list).Append(moved);
+            }
+        }
+
+        TopoDS_Shape result_shape = base;
+        if (!fuse_list.IsEmpty()) {
+            BRepAlgoAPI_Fuse fuse;
+            TopTools_ListOfShape args;
+            args.Append(result_shape);
+            fuse.SetArguments(args);
+            fuse.SetTools(fuse_list);
+            fuse.Build();
+            if (!fuse.IsDone() || fuse.Shape().IsNull()) {
+                return make_sweep_error("fusing pattern occurrences failed");
+            }
+            result_shape = fuse.Shape();
+        }
+        if (!cut_list.IsEmpty()) {
+            BRepAlgoAPI_Cut cut;
+            TopTools_ListOfShape args;
+            args.Append(result_shape);
+            cut.SetArguments(args);
+            cut.SetTools(cut_list);
+            cut.Build();
+            if (!cut.IsDone() || cut.Shape().IsNull()) {
+                return make_sweep_error("cutting pattern occurrences failed");
+            }
+            result_shape = cut.Shape();
+        }
+
+        return finish_solid_result(unify_domain(result_shape), nullptr, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while patterning");
+    }
+}
+
+extern "C" PrintcadOcctSweepResult printcad_occt_boolean(
+    const uint8_t* base_brep,
+    size_t base_brep_len,
+    const uint8_t* tool_brep,
+    size_t tool_len,
+    int32_t kind,
+    const PcadMeshOptions* mesh) {
+    try {
+        std::string err;
+        TopoDS_Shape base;
+        if (!load_base_for_op(1, base_brep, base_brep_len, base, err)) {
+            return make_sweep_error(err);
+        }
+        TopoDS_Shape tool;
+        if (!brep_read_from_bytes(tool_brep, tool_len, tool)) {
+            return make_sweep_error("failed to read the boolean tool BRep");
+        }
+
+        TopoDS_Shape result_shape;
+        switch (kind) {
+            case 0: {
+                BRepAlgoAPI_Fuse boolean_op(base, tool);
+                if (!boolean_op.IsDone() || boolean_op.Shape().IsNull()) {
+                    return make_sweep_error("fuse boolean operation failed");
+                }
+                result_shape = boolean_op.Shape();
+                break;
+            }
+            case 1: {
+                BRepAlgoAPI_Cut boolean_op(base, tool);
+                if (!boolean_op.IsDone() || boolean_op.Shape().IsNull()) {
+                    return make_sweep_error("cut boolean operation failed");
+                }
+                result_shape = boolean_op.Shape();
+                break;
+            }
+            case 2: {
+                BRepAlgoAPI_Common boolean_op(base, tool);
+                if (!boolean_op.IsDone() || boolean_op.Shape().IsNull()) {
+                    return make_sweep_error("common boolean operation failed");
+                }
+                result_shape = boolean_op.Shape();
+                break;
+            }
+            default:
+                return make_sweep_error(
+                    "unknown boolean kind " + std::to_string(kind)
+                    + " (expected 0=fuse, 1=cut, 2=common)");
+        }
+        return finish_solid_result(unify_domain(result_shape), nullptr, mesh);
+    } catch (Standard_Failure const& ex) {
+        return make_sweep_error(std::string("OCCT exception: ") + ex.GetMessageString());
+    } catch (std::exception const& ex) {
+        return make_sweep_error(std::string("std::exception: ") + ex.what());
+    } catch (...) {
+        return make_sweep_error("Unknown exception while combining bodies");
+    }
+}
+
 extern "C" void printcad_occt_free_sweep_result(PrintcadOcctSweepResult result) {
     std::free(result.brep_blob);
+    std::free(result.tool_blob);
     std::free(result.mesh_positions);
     std::free(result.mesh_normals);
     std::free(result.mesh_indices);

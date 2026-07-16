@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Move: shape with amber displacement arrow -->
+  <rect x="4.5" y="11.5" width="8" height="8" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linejoin="round" fill="#D8DEE9" fill-opacity="0.15"/>
+  <path d="M11.5 11.5L19 4M19 4l-4.2 1M19 4l-1 4.2" stroke="#F5A623" stroke-width="1.8"
+        stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

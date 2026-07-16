@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Multi transform: grid of cubes + amber rotate arrow -->
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M5.5 9.5l2 1-2 1-2-1z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M3.5 10.5l2 1v2.8l-2-1z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M7.5 10.5v2.8l-2 1v-2.8z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.75">
+    <path d="M10.5 9.5l2 1-2 1-2-1z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M8.5 10.5l2 1v2.8l-2-1z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M12.5 10.5v2.8l-2 1v-2.8z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.75">
+    <path d="M5.5 15l2 1-2 1-2-1z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M3.5 16l2 1v2.8l-2-1z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M7.5 16v2.8l-2 1v-2.8z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.5">
+    <path d="M10.5 15l2 1-2 1-2-1z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M8.5 16l2 1v2.8l-2-1z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M12.5 16v2.8l-2 1v-2.8z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <path d="M16.8 3.5A3.5 3.5 0 1 0 20.3 7M18.7 9.4l1.6-2.7 1.6 2.7"
+        stroke="#F5A623" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round" fill="none"/>
+</svg>

@@ -32,18 +32,26 @@ impl PrintCadApp {
                 self.document.clear_feature_dirty(id);
             }
 
+            self.document.clear_body_feature_errors(body_id);
             match wb_part::body_build_ops(&self.document, body_id) {
-                Ok(ops) if ops.is_empty() => {
+                Ok(plan) if plan.ops.is_empty() => {
                     self.document.remove_imported_geometry(body_id);
                 }
-                Ok(ops) => {
+                Ok(plan) => {
                     self.kernel_worker.request_build_solid(
                         body_id.0,
-                        ops,
+                        plan.ops,
+                        plan.op_features.iter().map(|id| id.0).collect(),
                         TessellationSettings::default(),
                     );
                 }
-                Err(err) => app_log::warn(format!("Recompute skipped: {err}")),
+                Err(err) => {
+                    if let Some(feature) = err.feature {
+                        self.document
+                            .set_feature_error(feature, Some(err.message.clone()));
+                    }
+                    app_log::warn(format!("Recompute skipped: {err}"));
+                }
             }
         }
     }

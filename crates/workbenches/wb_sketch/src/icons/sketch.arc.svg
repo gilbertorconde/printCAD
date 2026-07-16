@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Arc segment with endpoints -->
-  <path d="M6 17 A7 7 0 0 1 18 11"
-        fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round"/>
-  <circle cx="6" cy="17" r="1.5" fill="#FFFFFF"/>
-  <circle cx="18" cy="11" r="1.5" fill="#FFFFFF"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Arc (center + radius): arc with dashed construction radius -->
+  <path d="M18 18A12 12 0 0 0 6 6" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linecap="round" fill="none"/>
+  <path d="M6 18l8.5-8.5" stroke="#5E9BF5" stroke-width="1.5"
+        stroke-dasharray="2.5 2" stroke-linecap="round" fill="none"/>
+  <circle cx="6" cy="18" r="2" fill="#5E9BF5"/>
+  <circle cx="18" cy="18" r="2" fill="#D8DEE9"/>
+  <circle cx="6" cy="6" r="2" fill="#D8DEE9"/>
 </svg>
-
-
-

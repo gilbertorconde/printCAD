@@ -278,7 +278,7 @@ pub struct ImportedModel {
 /// One segment of a closed 2D profile wire, in sketch-plane coordinates
 /// (millimetres). Arcs are encoded as three on-curve points so consumers
 /// never have to agree on a winding convention.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ProfileSegment {
     Line {
         start: [f64; 2],
@@ -293,6 +293,28 @@ pub enum ProfileSegment {
     Circle {
         center: [f64; 2],
         radius: f64,
+    },
+    /// Full ellipse. `major` is the vector from the center to a major-axis
+    /// vertex; the minor radius is `|major| * ratio` with `ratio` in (0, 1].
+    Ellipse {
+        center: [f64; 2],
+        major: [f64; 2],
+        ratio: f64,
+    },
+    /// Elliptical arc between two parameter angles (radians, counter-clockwise
+    /// in the ellipse frame where the major axis is at parameter 0).
+    EllipseArc {
+        center: [f64; 2],
+        major: [f64; 2],
+        ratio: f64,
+        start_param: f64,
+        end_param: f64,
+    },
+    /// Cubic B-spline through the given control points. A periodic spline
+    /// closes smoothly on itself; an open one runs first → last control point.
+    BSpline {
+        control_points: Vec<[f64; 2]>,
+        periodic: bool,
     },
 }
 
@@ -323,14 +345,53 @@ pub enum BooleanOp {
     Cut,
 }
 
-/// How a profile is swept into a solid.
+/// A set of closed wires on one plane. The largest-area wire is the outer
+/// boundary, the rest become holes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Profile {
+    pub plane: ProfilePlane,
+    pub wires: Vec<ProfileWire>,
+}
+
+/// Where a one-directional extrusion stops.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ExtrudeTermination {
+    /// Fixed length in millimetres.
+    Blind { distance: f64 },
+    /// Extend well past the base solid's bounding box in this direction.
+    ThroughAll,
+    /// Stop on the given world-space plane, shifted by `offset` along its
+    /// normal (a picked planar face plus an offset-to-face value).
+    UpToPlane {
+        point: [f64; 3],
+        normal: [f64; 3],
+        offset: f64,
+    },
+    /// Stop at the first planar face of the base solid hit along the
+    /// extrusion direction.
+    ToFirst,
+    /// Stop at the last planar face of the base solid hit along the
+    /// extrusion direction.
+    ToLast,
+}
+
+/// How a profile is swept into a solid.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SweepKind {
-    /// Linear extrusion along `plane.normal`; negative extrudes backwards.
+    /// Linear extrusion along `plane.normal` (or `direction` when set).
     Extrude {
-        distance: f64,
-        /// Extrude half the distance to each side of the sketch plane.
+        termination: ExtrudeTermination,
+        /// Independent termination for the opposite side of the sketch plane
+        /// (two-sided extrusion). `None` extrudes one side only.
+        second_side: Option<ExtrudeTermination>,
+        /// Extrude half the blind distance to each side of the sketch plane.
         symmetric: bool,
+        /// Swap which side of the sketch plane is "forward".
+        reversed: bool,
+        /// Draft angle applied along the sweep; positive widens the far end.
+        taper_deg: f64,
+        /// Custom world-space sweep direction; `None` uses the plane normal.
+        direction: Option<[f64; 3]>,
     },
     /// Revolution about an axis lying IN the sketch plane, given in sketch
     /// 2D coordinates (point + direction). `angle_deg` in (0, 360].
@@ -338,18 +399,217 @@ pub enum SweepKind {
         axis_origin: [f64; 2],
         axis_dir: [f64; 2],
         angle_deg: f64,
+        /// Independent sweep angle for the opposite rotation direction.
+        second_angle_deg: Option<f64>,
+        /// Center the sweep on the sketch plane (half the angle each way).
+        midplane: bool,
+        reversed: bool,
+    },
+    /// Sweep the profile along a helix whose axis lies in the sketch plane.
+    /// `height == 0` produces a flat spiral driven by `cone_angle_deg`.
+    Helix {
+        axis_origin: [f64; 2],
+        axis_dir: [f64; 2],
+        pitch: f64,
+        height: f64,
+        left_handed: bool,
+        cone_angle_deg: f64,
+        reversed: bool,
     },
 }
 
-/// A single sketch-profile solid step in a body's build history.
+/// Parametric primitive shapes (dimensions in millimetres, angles degrees).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum PrimitiveKind {
+    Box {
+        length: f64,
+        width: f64,
+        height: f64,
+    },
+    Cylinder {
+        radius: f64,
+        height: f64,
+        angle_deg: f64,
+    },
+    Sphere {
+        radius: f64,
+        /// Latitude range and longitude sweep, matching OCCT's three angles.
+        angle1_deg: f64,
+        angle2_deg: f64,
+        angle3_deg: f64,
+    },
+    Cone {
+        radius1: f64,
+        radius2: f64,
+        height: f64,
+        angle_deg: f64,
+    },
+    Torus {
+        radius1: f64,
+        radius2: f64,
+        angle1_deg: f64,
+        angle2_deg: f64,
+        angle3_deg: f64,
+    },
+    Ellipsoid {
+        radius1: f64,
+        radius2: f64,
+        radius3: f64,
+    },
+    Prism {
+        sides: u32,
+        circumradius: f64,
+        height: f64,
+    },
+    /// Box with an independently sized top rectangle (zero top spans give a
+    /// pyramid). Spans are along local X (`x2*`) and Z (`z2*`) at height Y.
+    Wedge {
+        xmin: f64,
+        xmax: f64,
+        ymin: f64,
+        ymax: f64,
+        zmin: f64,
+        zmax: f64,
+        x2min: f64,
+        x2max: f64,
+        z2min: f64,
+        z2max: f64,
+    },
+}
+
+/// A right-handed placement frame in world coordinates (millimetres).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Placement {
+    pub origin: [f64; 3],
+    pub x_axis: [f64; 3],
+    pub z_axis: [f64; 3],
+}
+
+impl Default for Placement {
+    fn default() -> Self {
+        Self {
+            origin: [0.0; 3],
+            x_axis: [1.0, 0.0, 0.0],
+            z_axis: [0.0, 0.0, 1.0],
+        }
+    }
+}
+
+/// Which edges of the current solid a dress-up applies to. Edges are
+/// identified geometrically: by a face they border (sample point on the
+/// face) or by a point near the edge itself.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SolidOp {
-    pub plane: ProfilePlane,
-    /// Closed wires; the largest-area wire is the outer boundary, the rest
-    /// become holes.
-    pub wires: Vec<ProfileWire>,
-    pub kind: SweepKind,
-    pub op: BooleanOp,
+pub enum EdgeSelection {
+    All,
+    OfFaces(Vec<[f64; 3]>),
+    Near(Vec<[f64; 3]>),
+}
+
+/// Chamfer sizing, mirroring the three standard input styles.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum ChamferSpec {
+    EqualDistance { distance: f64 },
+    TwoDistances { distance1: f64, distance2: f64 },
+    DistanceAngle { distance: f64, angle_deg: f64 },
+}
+
+/// Boolean between the running solid and an external tool solid.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BoolKind {
+    Fuse,
+    Cut,
+    Common,
+}
+
+/// One step in a body's build history. Shape-producing steps (`Sweep`,
+/// `Loft`, `Pipe`, `Primitive`) carry a [`BooleanOp`]; the remaining steps
+/// modify or combine the running solid directly.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SolidOp {
+    Sweep {
+        profile: Profile,
+        kind: SweepKind,
+        op: BooleanOp,
+    },
+    /// Skin through two or more section profiles (in order).
+    Loft {
+        sections: Vec<Profile>,
+        ruled: bool,
+        closed: bool,
+        op: BooleanOp,
+    },
+    /// Sweep a profile along an open or closed spine wire from another
+    /// sketch. `frenet` uses a Frenet frame instead of the corrected frame.
+    Pipe {
+        profile: Profile,
+        spine: Profile,
+        frenet: bool,
+        op: BooleanOp,
+    },
+    Primitive {
+        kind: PrimitiveKind,
+        placement: Placement,
+        op: BooleanOp,
+    },
+    Fillet {
+        radius: f64,
+        edges: EdgeSelection,
+    },
+    Chamfer {
+        spec: ChamferSpec,
+        flip: bool,
+        edges: EdgeSelection,
+    },
+    /// Tilt the selected faces by `angle_deg` about their intersection with
+    /// the neutral plane.
+    Draft {
+        angle_deg: f64,
+        neutral_point: [f64; 3],
+        neutral_normal: [f64; 3],
+        pull_dir: Option<[f64; 3]>,
+        faces: Vec<[f64; 3]>,
+    },
+    /// Hollow the solid, removing the faces sampled by `open_faces`.
+    Thickness {
+        value: f64,
+        open_faces: Vec<[f64; 3]>,
+        inward: bool,
+    },
+    /// Re-apply earlier steps' tool solids (or the whole current solid when
+    /// `originals` is empty) under each transform, fusing additive tools and
+    /// cutting subtractive ones. `originals` holds chain indices of earlier
+    /// shape-producing steps.
+    Transform {
+        transforms: Vec<[[f64; 4]; 4]>,
+        originals: Vec<usize>,
+    },
+    /// Boolean against an external solid (another body's BRep snapshot).
+    Boolean {
+        tool_brep: Vec<u8>,
+        kind: BoolKind,
+    },
+}
+
+impl SolidOp {
+    /// The boolean role of a shape-producing step; `None` for modifiers.
+    pub fn boolean_op(&self) -> Option<BooleanOp> {
+        match self {
+            SolidOp::Sweep { op, .. }
+            | SolidOp::Loft { op, .. }
+            | SolidOp::Pipe { op, .. }
+            | SolidOp::Primitive { op, .. } => Some(*op),
+            _ => None,
+        }
+    }
+}
+
+/// Error from executing a body's solid-op chain, attributed to the failing
+/// step so the caller can mark the matching feature.
+#[derive(Debug, Clone, Error)]
+#[error("op {op_index}: {message}")]
+pub struct ChainError {
+    pub op_index: usize,
+    pub message: String,
 }
 
 /// Result of executing a body's solid-op chain.

@@ -1,7 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
-  <!-- Revolved cut: axis + notched profile -->
-  <line x1="12" y1="3" x2="12" y2="21" stroke="#FFFFFF" stroke-width="1.2" stroke-dasharray="2.5 2"/>
-  <path d="M14 6 L19 6 L19 9 L16.5 9 L16.5 12 L19 12 L19 15 L14 15 Z"
-        fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linejoin="round"/>
-  <path d="M9 18 A7 3 0 1 1 15 18.5" fill="none" stroke="#FFFFFF" stroke-width="1.6" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Groove: red ring cut into a cylinder, minus badge -->
+  <path d="M5.5 6v11.5M16.5 6v11.5" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linecap="round" fill="none"/>
+  <path d="M5.5 17.5a5.5 2 0 0 0 11 0" stroke="#D8DEE9" stroke-width="1.5"
+        stroke-linecap="round" fill="none"/>
+  <ellipse cx="11" cy="6" rx="5.5" ry="2" stroke="#D8DEE9" stroke-width="1.5"
+           fill="#D8DEE9" fill-opacity="0.3"/>
+  <path d="M5.5 10.5a5.5 2 0 0 0 11 0v2.5a5.5 2 0 0 1-11 0z" stroke="#E5534B"
+        stroke-width="1.5" stroke-linejoin="round" fill="#E5534B" fill-opacity="0.2"/>
+  <path d="M17.2 4.5h4.6" stroke="#E5534B" stroke-width="1.8"
+        stroke-linecap="round" fill="none"/>
 </svg>

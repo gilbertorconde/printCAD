@@ -361,22 +361,12 @@ struct IconCache {
     handles: HashMap<String, TextureHandle>,
 }
 
-fn workbench_id_to_crate_folder(id: &str) -> String {
-    // Map workbench IDs to crate folder names.
-    // Convention:
-    //   - "wb.sketch" -> "wb_sketch"
-    //   - "wb.part"   -> "wb_part"
-    //
-    // Implementation: replace '.' with '_' and keep the full id.
-    id.replace('.', "_")
-}
-
 fn load_svg_icon(
     ctx: &Context,
     cache_id: Id,
     cache_key: &str,
     texture_name_prefix: &str,
-    path: &std::path::Path,
+    svg: &str,
 ) -> Option<TextureHandle> {
     // Try cache first
     if let Some(handle) = ctx.data(|data| {
@@ -386,8 +376,9 @@ fn load_svg_icon(
         return Some(handle);
     }
 
-    let svg = std::fs::read_to_string(path).ok()?;
-    let image = rasterize_svg(&svg)?;
+    // Icon SVGs declare a 48px natural size over a 24px viewBox, so they
+    // rasterize at 2x the display size for crisp HiDPI rendering.
+    let image = rasterize_svg(svg)?;
 
     let tex_name = format!("{texture_name_prefix}{cache_key}");
     let texture = ctx.load_texture(tex_name, image, TextureOptions::LINEAR);
@@ -410,19 +401,11 @@ fn get_tool_icon_for(
     let key = format!("tool::{}::{}", workbench_id.as_str(), tool_id);
     let cache_id = Id::new("icon_cache");
 
-    // Derive crate folder from workbench id
-    let crate_folder = workbench_id_to_crate_folder(workbench_id.as_str());
-    let file_name = format!("{tool_id}.svg");
+    // Icons are embedded at compile time so loading never depends on the
+    // process working directory.
+    let svg = super::icons::embedded_tool_svg(workbench_id.as_str(), tool_id)?;
 
-    // Path: crates/workbenches/<crate_folder>/src/icons/<tool_id>.svg
-    let candidate = std::path::PathBuf::from("crates")
-        .join("workbenches")
-        .join(crate_folder)
-        .join("src")
-        .join("icons")
-        .join(&file_name);
-
-    load_svg_icon(ctx, cache_id, &key, "tool_icon_", &candidate)
+    load_svg_icon(ctx, cache_id, &key, "tool_icon_", svg)
 }
 
 #[derive(Default)]
@@ -436,6 +419,8 @@ pub struct LeftPanelResult {
     pub tree_selection: Option<feature_tree::TreeItemId>,
     pub tree_activation: Option<feature_tree::TreeItemId>,
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
+    /// History context-menu action on a tree feature row.
+    pub tree_feature_command: Option<(core_document::FeatureId, feature_tree::TreeFeatureCommand)>,
 }
 
 pub fn draw_left_panel(
@@ -462,6 +447,7 @@ pub fn draw_left_panel(
                 panel_result.tree_selection = tree_ui_result.selection;
                 panel_result.tree_activation = tree_ui_result.activation;
                 panel_result.imported_visibility_change = tree_ui_result.imported_visibility_change;
+                panel_result.tree_feature_command = tree_ui_result.feature_command;
             });
 
             ui.separator();

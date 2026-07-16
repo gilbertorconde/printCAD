@@ -5,8 +5,8 @@
 //! and BRep snapshot round-trips.
 
 use kernel_api::{
-    BooleanOp, ProfilePlane, ProfileSegment, ProfileWire, SolidOp, SweepKind, TessellationSettings,
-    TriMesh,
+    BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire, SolidOp,
+    SweepKind, TessellationSettings, TriMesh,
 };
 use kernel_occt::OcctKernel;
 use std::sync::{Mutex, MutexGuard};
@@ -71,28 +71,37 @@ fn circle_wire(cx: f64, cy: f64, radius: f64) -> ProfileWire {
     }
 }
 
-fn pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> SolidOp {
-    SolidOp {
-        plane: xy_plane(),
-        wires,
+/// Blind pad on a given plane; a negative distance extrudes backwards
+/// (mapped to the `reversed` flag of the new sweep contract).
+fn pad_on_plane(
+    plane: ProfilePlane,
+    wires: Vec<ProfileWire>,
+    distance: f64,
+    symmetric: bool,
+    op: BooleanOp,
+) -> SolidOp {
+    SolidOp::Sweep {
+        profile: Profile { plane, wires },
         kind: SweepKind::Extrude {
-            distance,
-            symmetric: false,
+            termination: ExtrudeTermination::Blind {
+                distance: distance.abs(),
+            },
+            second_side: None,
+            symmetric,
+            reversed: distance < 0.0,
+            taper_deg: 0.0,
+            direction: None,
         },
         op,
     }
 }
 
+fn pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> SolidOp {
+    pad_on_plane(xy_plane(), wires, distance, false, op)
+}
+
 fn symmetric_pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> SolidOp {
-    SolidOp {
-        plane: xy_plane(),
-        wires,
-        kind: SweepKind::Extrude {
-            distance,
-            symmetric: true,
-        },
-        op,
-    }
+    pad_on_plane(xy_plane(), wires, distance, true, op)
 }
 
 fn revolve(
@@ -102,13 +111,18 @@ fn revolve(
     angle_deg: f64,
     op: BooleanOp,
 ) -> SolidOp {
-    SolidOp {
-        plane: xy_plane(),
-        wires,
+    SolidOp::Sweep {
+        profile: Profile {
+            plane: xy_plane(),
+            wires,
+        },
         kind: SweepKind::Revolve {
             axis_origin,
             axis_dir,
             angle_deg,
+            second_angle_deg: None,
+            midplane: false,
+            reversed: false,
         },
         op,
     }
@@ -454,15 +468,13 @@ fn offset_plane_places_pad_at_origin_height() {
         origin: [0.0, 0.0, 7.0],
         ..xy_plane()
     };
-    let ops = [SolidOp {
+    let ops = [pad_on_plane(
         plane,
-        wires: vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
-        kind: SweepKind::Extrude {
-            distance: 5.0,
-            symmetric: false,
-        },
-        op: BooleanOp::NewSolid,
-    }];
+        vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
+        5.0,
+        false,
+        BooleanOp::NewSolid,
+    )];
     let result = kernel
         .execute_solid_chain(&ops, &detail)
         .expect("pad on offset plane");

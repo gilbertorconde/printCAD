@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Datum line: blue dash-dot reference axis -->
+  <path d="M5 19L19 5" stroke="#5E9BF5" stroke-width="1.5"
+        stroke-dasharray="5 2 1.5 2" stroke-linecap="round" fill="none"/>
+  <circle cx="5" cy="19" r="1.8" fill="#5E9BF5"/>
+  <circle cx="19" cy="5" r="1.8" fill="#5E9BF5"/>
+</svg>

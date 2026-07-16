@@ -2,7 +2,7 @@
 //! were triggered. Adding a new UI action = one enum variant here + one
 //! match arm in `PrintCadApp::apply_ui_commands`.
 
-use super::feature_tree::TreeItemId;
+use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 use super::ActiveWorkbench;
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
 
@@ -28,6 +28,11 @@ pub enum UiCommand {
     ApplyCameraSettings,
     SelectTreeItem(TreeItemId),
     ActivateTreeItem(TreeItemId),
+    /// History context-menu action on a tree feature row.
+    TreeFeature {
+        feature: core_document::FeatureId,
+        command: TreeFeatureCommand,
+    },
     SetImportedVisibility {
         node: uuid::Uuid,
         visible: bool,

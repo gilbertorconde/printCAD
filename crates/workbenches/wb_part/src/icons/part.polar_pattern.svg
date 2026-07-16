@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24">
+  <!-- Polar pattern: cubes around an axis, amber rotation arc -->
+  <circle cx="12" cy="12" r="1.6" fill="#F5A623"/>
+  <path d="M7.05 16.95A7 7 0 0 0 16.95 16.95M15.9 19.8L16.95 16.95 14.1 18"
+        stroke="#F5A623" stroke-width="1.8" stroke-linecap="round"
+        stroke-linejoin="round" fill="none"/>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round">
+    <path d="M12 3.5l2.5 1.25L12 6 9.5 4.75z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M9.5 4.75l2.5 1.25v4L9.5 8.75z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M14.5 4.75v4L12 10V6z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.7">
+    <path d="M5 12.5l2.5 1.25L5 15l-2.5-1.25z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M2.5 13.75L5 15v4l-2.5-1.25z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M7.5 13.75v4L5 19v-4z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+  <g stroke="#D8DEE9" stroke-width="1.5" stroke-linejoin="round" opacity="0.7">
+    <path d="M19 12.5l2.5 1.25L19 15l-2.5-1.25z" fill="#D8DEE9" fill-opacity="0.35"/>
+    <path d="M16.5 13.75L19 15v4l-2.5-1.25z" fill="#D8DEE9" fill-opacity="0.15"/>
+    <path d="M21.5 13.75v4L19 19v-4z" fill="#D8DEE9" fill-opacity="0.08"/>
+  </g>
+</svg>

@@ -132,6 +132,53 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     },
                 });
             }
+            // A full ellipse is a closed wire by itself, like a circle.
+            GeometryElement::Ellipse(e) => {
+                let center = sketch
+                    .point_position(e.center)
+                    .ok_or(ProfileError::MissingPoint(e.center))?;
+                wires.push(ProfileWire {
+                    segments: vec![ProfileSegment::Ellipse {
+                        center: v2(center),
+                        major: [f64::from(e.major.x), f64::from(e.major.y)],
+                        ratio: f64::from(e.ratio),
+                    }],
+                });
+            }
+            // Periodic B-splines close on themselves; open ones connect via
+            // their first/last control point like any other curve.
+            GeometryElement::BSpline(b) => {
+                if b.control_points.len() < 2 {
+                    continue; // degenerate: nothing to contribute
+                }
+                let control_points = b
+                    .control_points
+                    .iter()
+                    .map(|id| {
+                        sketch
+                            .point_position(*id)
+                            .map(v2)
+                            .ok_or(ProfileError::MissingPoint(*id))
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                let segment = ProfileSegment::BSpline {
+                    control_points,
+                    periodic: b.periodic,
+                };
+                if b.periodic {
+                    wires.push(ProfileWire {
+                        segments: vec![segment],
+                    });
+                } else {
+                    edges.push(EdgeCurve {
+                        ends: (
+                            b.control_points[0],
+                            *b.control_points.last().expect("len >= 2"),
+                        ),
+                        segment,
+                    });
+                }
+            }
         }
     }
 
@@ -167,7 +214,7 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
         loop {
             used[current_idx] = true;
             let edge = &edges[current_idx];
-            segments.push(edge.segment);
+            segments.push(edge.segment.clone());
             // Advance to the far end of this edge.
             current_point = if edge.ends.0 == current_point {
                 edge.ends.1
