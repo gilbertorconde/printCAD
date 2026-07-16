@@ -127,6 +127,18 @@ pub fn arc_angles(start_vec: glam::Vec2, end_vec: glam::Vec2) -> (f32, f32) {
     (start_angle, sweep)
 }
 
+/// Distance from `pos` to the nearest CURVE of the sketch (lines, arcs,
+/// circles — points excluded, they're too small to be a click target for
+/// feature-level selection). `None` for a sketch with no curves.
+pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f32> {
+    sketch
+        .geometry
+        .iter()
+        .filter(|g| !matches!(g, GeometryElement::Point(_)))
+        .filter_map(|g| distance_to_element(sketch, g, pos))
+        .min_by(|a, b| a.total_cmp(b))
+}
+
 /// Topmost element within `tol` of `pos`, preferring points over curves so
 /// endpoints stay clickable on top of their lines.
 pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<Uuid> {
@@ -214,6 +226,16 @@ mod tests {
         // Mid-span: only the line is close.
         assert_eq!(hit_test(&sketch, Vec2D::new(5.0, 0.1), 0.5), Some(l));
         assert_eq!(hit_test(&sketch, Vec2D::new(5.0, 3.0), 0.5), None);
+    }
+
+    #[test]
+    fn nearest_curve_distance_ignores_points() {
+        let (sketch, _, _, _) = sketch_with_line();
+        // Mid-span, 2 units off the line.
+        let d = nearest_curve_distance(&sketch, Vec2D::new(5.0, 2.0)).unwrap();
+        assert!((d - 2.0).abs() < 1e-5);
+        let empty = Sketch::new("e");
+        assert!(nearest_curve_distance(&empty, Vec2D::new(0.0, 0.0)).is_none());
     }
 
     #[test]

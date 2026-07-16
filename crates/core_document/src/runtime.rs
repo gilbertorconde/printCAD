@@ -183,20 +183,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     /// Returns `None` when no `view_proj` was provided, the viewport is
     /// degenerate, or the point is behind the camera.
     pub fn world_to_viewport(&self, world_pos: [f32; 3]) -> Option<(f32, f32)> {
-        let view_proj = glam::Mat4::from_cols_array_2d(&self.view_proj?);
-        let (_, _, w, h) = self.viewport;
-        if w == 0 || h == 0 {
-            return None;
-        }
-        let clip = view_proj * glam::Vec3::from_array(world_pos).extend(1.0);
-        if clip.w <= 0.0 {
-            return None;
-        }
-        let ndc = clip.truncate() / clip.w;
-        Some((
-            (ndc.x + 1.0) * 0.5 * w as f32,
-            (ndc.y + 1.0) * 0.5 * h as f32,
-        ))
+        world_to_viewport(self.view_proj?, self.viewport, world_pos)
     }
 
     /// Convert viewport-local pixel coordinates to a world-space ray.
@@ -206,26 +193,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     /// Depth follows the Vulkan convention (near plane at NDC z = 0, far at
     /// z = 1); the ray origin sits on the near plane.
     pub fn viewport_to_ray(&self, viewport_pos: (f32, f32)) -> Option<([f32; 3], [f32; 3])> {
-        let view_proj = glam::Mat4::from_cols_array_2d(&self.view_proj?);
-        let (_, _, w, h) = self.viewport;
-        if w == 0 || h == 0 {
-            return None;
-        }
-        let ndc_x = (viewport_pos.0 / w as f32) * 2.0 - 1.0;
-        let ndc_y = (viewport_pos.1 / h as f32) * 2.0 - 1.0;
-        let inv = view_proj.inverse();
-        let near_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
-        let far_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
-        if near_clip.w.abs() < 1e-12 || far_clip.w.abs() < 1e-12 {
-            return None;
-        }
-        let near_world = near_clip.truncate() / near_clip.w;
-        let far_world = far_clip.truncate() / far_clip.w;
-        let dir = far_world - near_world;
-        if dir.length_squared() < 1e-24 {
-            return None;
-        }
-        Some((near_world.to_array(), dir.normalize().to_array()))
+        viewport_to_ray(self.view_proj?, self.viewport, viewport_pos)
     }
 
     /// Convert viewport-local pixel coordinates to the intersection of the
@@ -237,20 +205,90 @@ impl<'a> WorkbenchRuntimeContext<'a> {
         plane_origin: [f32; 3],
         plane_normal: [f32; 3],
     ) -> Option<[f32; 3]> {
-        let (origin, dir) = self.viewport_to_ray(viewport_pos)?;
-        let origin = glam::Vec3::from_array(origin);
-        let dir = glam::Vec3::from_array(dir);
-        let normal = glam::Vec3::from_array(plane_normal).normalize();
-        let denom = dir.dot(normal);
-        if denom.abs() < 1e-6 {
-            return None;
-        }
-        let t = (glam::Vec3::from_array(plane_origin) - origin).dot(normal) / denom;
-        if t < 0.0 {
-            return None;
-        }
-        Some((origin + dir * t).to_array())
+        viewport_to_plane(
+            self.view_proj?,
+            self.viewport,
+            viewport_pos,
+            plane_origin,
+            plane_normal,
+        )
     }
+}
+
+/// Free-function variants of the context's transform helpers, for hosts
+/// that need the math outside a workbench hook (all take viewport-local
+/// pixel coordinates; NDC is Y-down with the Vulkan flip baked into
+/// `view_proj`).
+pub fn world_to_viewport(
+    view_proj: [[f32; 4]; 4],
+    viewport: (u32, u32, u32, u32),
+    world_pos: [f32; 3],
+) -> Option<(f32, f32)> {
+    let view_proj = glam::Mat4::from_cols_array_2d(&view_proj);
+    let (_, _, w, h) = viewport;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let clip = view_proj * glam::Vec3::from_array(world_pos).extend(1.0);
+    if clip.w <= 0.0 {
+        return None;
+    }
+    let ndc = clip.truncate() / clip.w;
+    Some((
+        (ndc.x + 1.0) * 0.5 * w as f32,
+        (ndc.y + 1.0) * 0.5 * h as f32,
+    ))
+}
+
+/// See [`WorkbenchRuntimeContext::viewport_to_ray`].
+pub fn viewport_to_ray(
+    view_proj: [[f32; 4]; 4],
+    viewport: (u32, u32, u32, u32),
+    viewport_pos: (f32, f32),
+) -> Option<([f32; 3], [f32; 3])> {
+    let view_proj = glam::Mat4::from_cols_array_2d(&view_proj);
+    let (_, _, w, h) = viewport;
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let ndc_x = (viewport_pos.0 / w as f32) * 2.0 - 1.0;
+    let ndc_y = (viewport_pos.1 / h as f32) * 2.0 - 1.0;
+    let inv = view_proj.inverse();
+    let near_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+    let far_clip = inv * glam::Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+    if near_clip.w.abs() < 1e-12 || far_clip.w.abs() < 1e-12 {
+        return None;
+    }
+    let near_world = near_clip.truncate() / near_clip.w;
+    let far_world = far_clip.truncate() / far_clip.w;
+    let dir = far_world - near_world;
+    if dir.length_squared() < 1e-24 {
+        return None;
+    }
+    Some((near_world.to_array(), dir.normalize().to_array()))
+}
+
+/// See [`WorkbenchRuntimeContext::viewport_to_plane`].
+pub fn viewport_to_plane(
+    view_proj: [[f32; 4]; 4],
+    viewport: (u32, u32, u32, u32),
+    viewport_pos: (f32, f32),
+    plane_origin: [f32; 3],
+    plane_normal: [f32; 3],
+) -> Option<[f32; 3]> {
+    let (origin, dir) = viewport_to_ray(view_proj, viewport, viewport_pos)?;
+    let origin = glam::Vec3::from_array(origin);
+    let dir = glam::Vec3::from_array(dir);
+    let normal = glam::Vec3::from_array(plane_normal).normalize();
+    let denom = dir.dot(normal);
+    if denom.abs() < 1e-6 {
+        return None;
+    }
+    let t = (glam::Vec3::from_array(plane_origin) - origin).dot(normal) / denom;
+    if t < 0.0 {
+        return None;
+    }
+    Some((origin + dir * t).to_array())
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@ mod overlay;
 pub mod profile;
 pub mod render;
 pub mod sketch;
-mod snap;
+pub mod snap;
 mod solver;
 mod tools;
 
