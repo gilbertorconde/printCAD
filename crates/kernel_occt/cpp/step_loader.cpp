@@ -464,7 +464,7 @@ static bool try_vis_material_shape_label(
     if (!XCAFDoc_VisMaterialTool::GetShapeMaterial(shape_label, matL)) {
         return Standard_False;
     }
-    return vis_material_to_quantity_color(XCAFDoc_VisMaterialTool::GetMaterial(matL), qc);
+    return vis_material_to_quantity_color(vis_tool->GetMaterial(matL), qc);
 }
 
 //! Walk label → Father() chain for `XCAFDoc_ColorTool` / vis material bindings.
@@ -476,24 +476,24 @@ static bool walk_label_ancestors_for_color(
     Quantity_ColorRGBA rgba;
     for (; !L.IsNull(); L = L.Father()) {
         if (!color_tool.IsNull()) {
-            if (XCAFDoc_ColorTool::GetColor(L, XCAFDoc_ColorSurf, qc)) {
+            if (color_tool->GetColor(L, XCAFDoc_ColorSurf, qc)) {
                 return Standard_True;
             }
-            if (XCAFDoc_ColorTool::GetColor(L, XCAFDoc_ColorGen, qc)) {
+            if (color_tool->GetColor(L, XCAFDoc_ColorGen, qc)) {
                 return Standard_True;
             }
-            if (XCAFDoc_ColorTool::GetColor(L, XCAFDoc_ColorSurf, rgba)) {
+            if (color_tool->GetColor(L, XCAFDoc_ColorSurf, rgba)) {
                 qc = rgba.GetRGB();
                 return Standard_True;
             }
-            if (XCAFDoc_ColorTool::GetColor(L, XCAFDoc_ColorGen, rgba)) {
+            if (color_tool->GetColor(L, XCAFDoc_ColorGen, rgba)) {
                 qc = rgba.GetRGB();
                 return Standard_True;
             }
-            if (XCAFDoc_ColorTool::GetColor(L, XCAFDoc_ColorCurv, qc)) {
+            if (color_tool->GetColor(L, XCAFDoc_ColorCurv, qc)) {
                 return Standard_True;
             }
-            if (XCAFDoc_ColorTool::GetColor(L, XCAFDoc_ColorCurv, rgba)) {
+            if (color_tool->GetColor(L, XCAFDoc_ColorCurv, rgba)) {
                 qc = rgba.GetRGB();
                 return Standard_True;
             }
