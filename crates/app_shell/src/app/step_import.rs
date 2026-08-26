@@ -162,7 +162,7 @@ impl PrintCadApp {
         path: &Path,
         imported: ImportedModel,
         raw_bytes: Vec<u8>,
-        _detail: TessellationSettings,
+        detail: TessellationSettings,
         elapsed: Duration,
     ) -> Result<()> {
         let apply_start = Instant::now();
@@ -200,7 +200,7 @@ impl PrintCadApp {
                 "body_count": imported_bodies.len(),
             }),
         );
-        let asset_id = self.document.add_asset_with_data(asset, raw_bytes);
+        let asset_id = asset.id;
 
         let pending_note = if imported_bodies
             .iter()
@@ -214,15 +214,33 @@ impl PrintCadApp {
         let mut total_triangles: usize = 0;
         let mut combined_min = [f32::INFINITY; 3];
         let mut combined_max = [f32::NEG_INFINITY; 3];
-        let mut first_body: Option<BodyId> = None;
-        let mut body_ids_by_import_index: Vec<BodyId> = Vec::with_capacity(imported_bodies.len());
 
-        for body in imported_bodies {
-            let body_id = self.document.create_body(body.name.clone());
-            body_ids_by_import_index.push(body_id);
-            if first_body.is_none() {
-                first_body = Some(body_id);
-            }
+        // Identities are resolved here, before any document write, so the
+        // whole import can land as ONE op with the derived geometry keyed
+        // to the same ids afterwards.
+        let import_epoch_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let mut unnamed_index = self.document.bodies().len();
+        let body_inits: Vec<core_document::op::ImportedBodyInit> = imported_bodies
+            .iter()
+            .map(|body| {
+                let name = body.name.clone().unwrap_or_else(|| {
+                    unnamed_index += 1;
+                    format!("body{unnamed_index}")
+                });
+                core_document::op::ImportedBodyInit {
+                    id: BodyId::new(),
+                    name,
+                    created_at: import_epoch_ms,
+                }
+            })
+            .collect();
+        let body_ids_by_import_index: Vec<BodyId> = body_inits.iter().map(|init| init.id).collect();
+        let first_body = body_ids_by_import_index.first().copied();
+
+        for body in &imported_bodies {
             total_triangles += body.mesh.indices.len() / 3;
             if let Some((min, max)) = body.bounds_mm {
                 for axis in 0..3 {
@@ -235,23 +253,6 @@ impl PrintCadApp {
                     combined_max[axis] = combined_max[axis].max(max[axis]);
                 }
             }
-
-            let has_brep = !body.brep_blob.is_empty();
-            self.document
-                .set_imported_brep_data(body_id, body.brep_blob, body.face_colors.clone());
-            self.document.set_imported_geometry(
-                body_id,
-                ImportedGeometry {
-                    mesh: Arc::new(body.mesh),
-                    source_asset: Some(asset_id),
-                    revision: 0,
-                    bounds_mm: body.bounds_mm,
-                    brep_blob_path: None,
-                    face_colors_path: None,
-                },
-            );
-
-            let _ = has_brep;
         }
 
         let mut roots = Vec::new();
@@ -315,8 +316,44 @@ impl PrintCadApp {
                 }
             }
         }
-        if !nodes_map.is_empty() {
-            self.document.append_imported_object_graph(roots, nodes_map);
+        // On a fresh document the file's declared unit becomes the display
+        // unit, and it rides inside the import op; on a working document the
+        // user's choice stands.
+        let adopt_unit = if was_fresh_document {
+            detected_unit
+        } else {
+            None
+        };
+
+        // The whole import is one atomic op: asset + bytes + bodies + graph
+        // + unit. Geometry lands separately below — derived, not replicated.
+        self.document.apply_import(
+            asset,
+            raw_bytes,
+            detail.clone(),
+            body_inits,
+            roots,
+            nodes_map.into_values().collect(),
+            adopt_unit,
+        );
+
+        for (body, body_id) in imported_bodies.into_iter().zip(&body_ids_by_import_index) {
+            self.document.set_imported_brep_data(
+                *body_id,
+                body.brep_blob,
+                body.face_colors.clone(),
+            );
+            self.document.set_imported_geometry(
+                *body_id,
+                ImportedGeometry {
+                    mesh: Arc::new(body.mesh),
+                    source_asset: Some(asset_id),
+                    revision: 0,
+                    bounds_mm: body.bounds_mm,
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                },
+            );
         }
 
         if combined_min[0] <= combined_max[0] {
@@ -337,19 +374,12 @@ impl PrintCadApp {
             self.selected_body = Some(body_id.0);
         }
 
-        // On a fresh document, adopt the STEP file's declared unit as the
-        // document's display unit. Otherwise leave the user's choice intact —
-        // mixing two STEP files with different units shouldn't silently flip
-        // the active document's display.
-        if was_fresh_document {
-            if let Some(unit) = detected_unit {
-                self.document.set_display_unit(unit);
-                app_log::info(format!(
-                    "Display unit set to {} from imported STEP `{}`",
-                    unit.short_label(),
-                    path.display()
-                ));
-            }
+        if let Some(unit) = adopt_unit {
+            app_log::info(format!(
+                "Display unit set to {} from imported STEP `{}`",
+                unit.short_label(),
+                path.display()
+            ));
         }
 
         crate::app::doc_io::write_recent_dir(path);

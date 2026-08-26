@@ -722,6 +722,34 @@ impl Document {
         id
     }
 
+    /// Apply one STEP import as a single atomic op: the asset with its
+    /// source bytes, the bodies it created (identities resolved by the
+    /// caller), the object hierarchy, and — on a fresh document — the
+    /// file's display unit. Geometry is derived state and is written
+    /// separately by the host; a replica re-derives it from the bytes.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_import(
+        &mut self,
+        asset: AssetReference,
+        bytes: Vec<u8>,
+        detail: kernel_api::TessellationSettings,
+        bodies: Vec<op::ImportedBodyInit>,
+        roots: Vec<Uuid>,
+        mut nodes: Vec<ImportedObjectNode>,
+        display_unit: Option<Unit>,
+    ) {
+        nodes.sort_by_key(|n| n.id);
+        self.record_and_apply(op::DocumentOp::ImportModel {
+            asset,
+            bytes: op::BlobPayload::new(bytes),
+            detail,
+            bodies,
+            roots,
+            nodes,
+            display_unit,
+        });
+    }
+
     /// Add an asset reference to the document.
     pub fn add_asset(&mut self, asset: AssetReference) -> Uuid {
         let id = asset.id;
