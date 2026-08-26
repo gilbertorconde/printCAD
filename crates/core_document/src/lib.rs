@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod datum;
 pub mod feature;
+pub mod op;
 pub mod registration;
 pub mod runtime;
 pub mod service;
@@ -104,6 +105,10 @@ pub struct Document {
     /// Not persisted; only compared for equality within one process.
     #[serde(skip)]
     mutation_seq: u64,
+    /// Captured-but-undrained user-edit ops (the outbox). Skipped by serde
+    /// and cleared by `Clone`: snapshots carry state, never the outbox.
+    #[serde(skip)]
+    pending_ops: op::OpBuffer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +193,7 @@ impl Document {
             imported_brep_face_colors: HashMap::new(),
             imported_body_to_object: HashMap::new(),
             mutation_seq: 0,
+            pending_ops: op::OpBuffer::default(),
         }
     }
 
@@ -200,8 +206,7 @@ impl Document {
     /// persisted on the next save.
     pub fn set_display_unit(&mut self, unit: Unit) {
         if self.display_unit != unit {
-            self.display_unit = unit;
-            self.mark_dirty();
+            self.record_and_apply(op::DocumentOp::SetDisplayUnit { unit });
         }
     }
 
@@ -216,8 +221,7 @@ impl Document {
     pub fn set_name(&mut self, name: impl Into<String>) {
         let name = name.into();
         if self.metadata.name != name {
-            self.metadata.name = name;
-            self.mark_dirty();
+            self.record_and_apply(op::DocumentOp::SetDocumentName { name });
         }
     }
 
@@ -230,6 +234,222 @@ impl Document {
         self.mutation_seq = self.mutation_seq.wrapping_add(1);
     }
 
+    /// Record a resolved op into the outbox and apply it. The single path
+    /// every user-edit mutator funnels through — replay and live edits run
+    /// the same `apply_op` code.
+    fn record_and_apply(&mut self, operation: op::DocumentOp) {
+        self.apply_op(&operation);
+        self.pending_ops.record(operation);
+    }
+
+    /// Ops captured since the last take. Drained once per frame by the host
+    /// and handed to the document server.
+    pub fn take_pending_ops(&mut self) -> Vec<op::DocumentOp> {
+        self.pending_ops.take()
+    }
+
+    /// Apply a resolved op **without recording it** — the path a remote or
+    /// replayed op takes. Every effect here must be a pure function of
+    /// (current state, op); anything nondeterministic was resolved into the
+    /// op at capture. Dirty-marking is apply-side policy: applying an op
+    /// that changes build inputs marks the affected features dirty, which is
+    /// what triggers this replica's own recompute.
+    pub fn apply_op(&mut self, operation: &op::DocumentOp) {
+        use op::DocumentOp as Op;
+        match operation {
+            Op::SetDocumentName { name } => {
+                self.metadata.name.clone_from(name);
+            }
+            Op::SetDisplayUnit { unit } => {
+                self.display_unit = *unit;
+            }
+            Op::CreateBody {
+                id,
+                name,
+                created_at,
+            } => {
+                self.bodies.push(Body {
+                    id: *id,
+                    name: name.clone(),
+                    created_at: *created_at,
+                    tip: None,
+                });
+            }
+            Op::RenameBody { id, name } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.name.clone_from(name);
+                }
+            }
+            Op::SetBodyTip { id, tip } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.tip = *tip;
+                }
+            }
+            Op::AddFeature {
+                id,
+                workbench_id,
+                name,
+                body,
+                deps,
+                data,
+                seq,
+                created_at,
+            } => {
+                self.feature_tree.add_node(FeatureNode {
+                    id: *id,
+                    workbench_id: workbench_id.clone(),
+                    name: name.clone(),
+                    body: *body,
+                    visible: true,
+                    suppressed: false,
+                    dirty: false,
+                    created_at: *created_at,
+                    seq: *seq,
+                    error: None,
+                    data: data.clone(),
+                });
+                for dep in deps {
+                    self.feature_tree.add_dependency(*id, *dep);
+                }
+            }
+            Op::UpdateFeatureData { id, data } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    node.data = data.clone();
+                }
+            }
+            Op::RenameFeature { id, name } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    node.name.clone_from(name);
+                }
+            }
+            Op::SetFeatureVisible { id, visible } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    node.visible = *visible;
+                }
+            }
+            Op::SetFeatureSuppressed { id, suppressed } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    node.suppressed = *suppressed;
+                }
+            }
+            Op::SetFeatureDependencies { id, deps } => {
+                self.feature_tree.set_dependencies(*id, deps.clone());
+                self.feature_tree.mark_dirty(*id);
+            }
+            Op::SwapFeatureSeq { a, b } => {
+                let (Some(seq_a), Some(seq_b)) = (
+                    self.feature_tree.get_node(*a).map(|n| n.seq),
+                    self.feature_tree.get_node(*b).map(|n| n.seq),
+                ) else {
+                    return;
+                };
+                if let Some(n) = self.feature_tree.get_node_mut(*a) {
+                    n.seq = seq_b;
+                }
+                if let Some(n) = self.feature_tree.get_node_mut(*b) {
+                    n.seq = seq_a;
+                }
+                // Order changes results: rebuild the whole history.
+                self.feature_tree.mark_dirty(*a);
+                self.feature_tree.mark_dirty(*b);
+            }
+            Op::RemoveFeature { id } => {
+                for dep in self.feature_tree.dependents(*id) {
+                    self.feature_tree.mark_dirty(dep);
+                }
+                self.feature_tree.remove_node(*id);
+            }
+            Op::AddAsset { asset, bytes } => {
+                self.assets.insert(asset.id, asset.clone());
+                if let Some(payload) = bytes {
+                    self.asset_blobs
+                        .insert(asset.id, std::sync::Arc::clone(&payload.0));
+                }
+            }
+            Op::ImportModel {
+                asset,
+                bytes,
+                detail: _,
+                bodies,
+                roots,
+                nodes,
+                display_unit,
+            } => {
+                self.assets.insert(asset.id, asset.clone());
+                self.asset_blobs
+                    .insert(asset.id, std::sync::Arc::clone(&bytes.0));
+                for init in bodies {
+                    self.bodies.push(Body {
+                        id: init.id,
+                        name: init.name.clone(),
+                        created_at: init.created_at,
+                        tip: None,
+                    });
+                }
+                self.imported_object_roots.extend(roots.iter().copied());
+                for node in nodes {
+                    self.imported_objects.insert(node.id, node.clone());
+                }
+                self.rebuild_imported_body_index();
+                if let Some(unit) = display_unit {
+                    self.display_unit = *unit;
+                }
+            }
+            Op::AppendImportedObjectGraph { roots, nodes } => {
+                self.imported_object_roots.extend(roots.iter().copied());
+                for node in nodes {
+                    self.imported_objects.insert(node.id, node.clone());
+                }
+                self.rebuild_imported_body_index();
+            }
+            Op::SetImportedObjectVisibility { id, visible } => {
+                if let Some(node) = self.imported_objects.get_mut(id) {
+                    node.visible = *visible;
+                }
+            }
+            Op::ClearImportedObjectGraph => {
+                self.imported_object_roots.clear();
+                self.imported_objects.clear();
+                self.imported_body_to_object.clear();
+            }
+        }
+        self.mark_dirty();
+    }
+
+    /// The state that must converge across replicas: the serialized document
+    /// minus per-replica derivations — dirty flags, recompute errors,
+    /// revision history, and the imported-geometry sidecars (meshes are
+    /// re-derived from asset bytes on each replica). Determinism tests
+    /// compare projections, not raw serializations.
+    pub fn replicated_projection(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).expect("document serializes");
+        fn strip_key_recursively(value: &mut serde_json::Value, key: &str) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    map.remove(key);
+                    for child in map.values_mut() {
+                        strip_key_recursively(child, key);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for child in items.iter_mut() {
+                        strip_key_recursively(child, key);
+                    }
+                }
+                _ => {}
+            }
+        }
+        strip_key_recursively(&mut value, "dirty");
+        if let Some(map) = value.as_object_mut() {
+            map.remove("history");
+            map.remove("imported_meshes");
+            if let Some(meta) = map.get_mut("metadata").and_then(|m| m.as_object_mut()) {
+                meta.remove("revision");
+            }
+        }
+        value
+    }
+
     /// See the `mutation_seq` field: bumped on every `mark_dirty`.
     pub fn mutation_seq(&self) -> u64 {
         self.mutation_seq
@@ -237,11 +457,6 @@ impl Document {
 
     pub fn mark_clean(&mut self) {
         self.metadata.dirty = false;
-    }
-
-    pub fn push_revision(&mut self, revision: DocumentRevision) {
-        self.history.push(revision);
-        self.metadata.revision += 1;
     }
 
     /// Add a feature to the tree without attaching it to a body.
@@ -261,35 +476,19 @@ impl Document {
         name: String,
         body: Option<BodyId>,
     ) -> DocumentResult<FeatureId> {
+        // Everything is resolved here — id, timestamp, seq — so the op is a
+        // pure effect and replays identically on a peer.
         let id = FeatureId::new();
-        let deps = feature.dependencies();
-        let seq = self.feature_tree.next_seq();
-
-        let node = FeatureNode {
+        self.record_and_apply(op::DocumentOp::AddFeature {
             id,
             workbench_id: F::workbench_id(),
             name,
             body,
-            visible: true,
-            suppressed: false,
-            dirty: false,
-            created_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_millis() as i64,
-            seq,
-            error: None,
+            deps: feature.dependencies(),
             data: feature.to_json(),
-        };
-
-        self.feature_tree.add_node(node);
-
-        // Add dependencies
-        for dep in deps {
-            self.feature_tree.add_dependency(id, dep);
-        }
-
-        self.mark_dirty();
+            seq: self.feature_tree.next_seq(),
+            created_at: epoch_ms_now(),
+        });
         Ok(id)
     }
 
@@ -309,13 +508,11 @@ impl Document {
         id: FeatureId,
         data: serde_json::Value,
     ) -> DocumentResult<()> {
-        if let Some(node) = self.feature_tree.get_node_mut(id) {
-            node.data = data;
-            self.mark_dirty();
-            Ok(())
-        } else {
-            Err(DocumentError::FeatureNotFound(id))
+        if self.feature_tree.get_node(id).is_none() {
+            return Err(DocumentError::FeatureNotFound(id));
         }
+        self.record_and_apply(op::DocumentOp::UpdateFeatureData { id, data });
+        Ok(())
     }
 
     /// Mark feature dirty (triggers recomputation).
@@ -334,48 +531,55 @@ impl Document {
 
     /// Show/hide a feature (e.g. hide a sketch once a pad consumes it).
     pub fn set_feature_visible(&mut self, feature_id: FeatureId, visible: bool) {
-        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+        if let Some(node) = self.feature_tree.get_node(feature_id) {
             if node.visible != visible {
-                node.visible = visible;
-                self.mark_dirty();
+                self.record_and_apply(op::DocumentOp::SetFeatureVisible {
+                    id: feature_id,
+                    visible,
+                });
             }
         }
     }
 
     /// Rewire a feature's dependencies (marks it dirty for recompute).
     pub fn set_feature_dependencies(&mut self, feature_id: FeatureId, deps: Vec<FeatureId>) {
-        self.feature_tree.set_dependencies(feature_id, deps);
-        self.mark_feature_dirty(feature_id);
+        self.record_and_apply(op::DocumentOp::SetFeatureDependencies {
+            id: feature_id,
+            deps,
+        });
     }
 
     /// Rename a feature (user-facing name in the tree and panels).
     pub fn rename_feature(&mut self, feature_id: FeatureId, name: impl Into<String>) {
-        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
-            let name = name.into();
+        let name = name.into();
+        if let Some(node) = self.feature_tree.get_node(feature_id) {
             if node.name != name && !name.trim().is_empty() {
-                node.name = name;
-                self.mark_dirty();
+                self.record_and_apply(op::DocumentOp::RenameFeature {
+                    id: feature_id,
+                    name,
+                });
             }
         }
     }
 
     /// Rename a body.
     pub fn rename_body(&mut self, body: BodyId, name: impl Into<String>) {
-        if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == body) {
-            let name = name.into();
+        let name = name.into();
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body) {
             if entry.name != name && !name.trim().is_empty() {
-                entry.name = name;
-                self.mark_dirty();
+                self.record_and_apply(op::DocumentOp::RenameBody { id: body, name });
             }
         }
     }
 
     /// Suppress/unsuppress a feature (excluded from builds while suppressed).
     pub fn set_feature_suppressed(&mut self, feature_id: FeatureId, suppressed: bool) {
-        if let Some(node) = self.feature_tree.get_node_mut(feature_id) {
+        if let Some(node) = self.feature_tree.get_node(feature_id) {
             if node.suppressed != suppressed {
-                node.suppressed = suppressed;
-                self.mark_dirty();
+                self.record_and_apply(op::DocumentOp::SetFeatureSuppressed {
+                    id: feature_id,
+                    suppressed,
+                });
             }
         }
     }
@@ -383,10 +587,9 @@ impl Document {
     /// Set (or clear) the feature exposed as a body's shape. Features after
     /// the tip are excluded from the build until the tip moves back.
     pub fn set_body_tip(&mut self, body: BodyId, tip: Option<FeatureId>) {
-        if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == body) {
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body) {
             if entry.tip != tip {
-                entry.tip = tip;
-                self.mark_dirty();
+                self.record_and_apply(op::DocumentOp::SetBodyTip { id: body, tip });
             }
         }
     }
@@ -418,7 +621,7 @@ impl Document {
         let Some(neighbour_pos) = neighbour_pos else {
             return false;
         };
-        let (neighbour_seq, neighbour_id) = peers[neighbour_pos];
+        let (_, neighbour_id) = peers[neighbour_pos];
 
         // Dependency guard: after the swap every dependency must still come
         // earlier. The swap only reorders these two features, so it suffices
@@ -433,16 +636,11 @@ impl Document {
             return false;
         }
 
-        if let Some(n) = self.feature_tree.get_node_mut(feature_id) {
-            n.seq = neighbour_seq;
-        }
-        if let Some(n) = self.feature_tree.get_node_mut(neighbour_id) {
-            n.seq = seq;
-        }
-        // Order changes results: rebuild the whole history.
-        self.feature_tree.mark_dirty(feature_id);
-        self.feature_tree.mark_dirty(neighbour_id);
-        self.mark_dirty();
+        // The guard ran above; the op is the resolved swap, pure on replay.
+        self.record_and_apply(op::DocumentOp::SwapFeatureSeq {
+            a: feature_id,
+            b: neighbour_id,
+        });
         true
     }
 
@@ -471,16 +669,11 @@ impl Document {
     /// Remove a feature node. Features that depended on it are marked dirty
     /// so their owners can react to the missing input.
     pub fn remove_feature(&mut self, feature_id: FeatureId) -> DocumentResult<()> {
-        let dependents = self.feature_tree.dependents(feature_id);
-        for dep in &dependents {
-            self.feature_tree.mark_dirty(*dep);
+        if self.feature_tree.get_node(feature_id).is_none() {
+            return Err(DocumentError::FeatureNotFound(feature_id));
         }
-        if self.feature_tree.remove_node(feature_id) {
-            self.mark_dirty();
-            Ok(())
-        } else {
-            Err(DocumentError::FeatureNotFound(feature_id))
-        }
+        self.record_and_apply(op::DocumentOp::RemoveFeature { id: feature_id });
+        Ok(())
     }
 
     /// Get all dirty features.
@@ -499,31 +692,9 @@ impl Document {
         self.workbench_storage.get(wb_id.as_str())
     }
 
-    /// Get mutable workbench storage.
-    pub fn get_workbench_storage_mut(
-        &mut self,
-        wb_id: &WorkbenchId,
-    ) -> Option<&mut WorkbenchStorage> {
-        self.workbench_storage.get_mut(wb_id.as_str())
-    }
-
-    /// Set workbench storage.
-    pub fn set_workbench_storage(&mut self, wb_id: WorkbenchId, data: serde_json::Value) {
-        self.workbench_storage.insert(
-            wb_id.as_str().to_string(),
-            WorkbenchStorage::new(wb_id, data),
-        );
-        self.mark_dirty();
-    }
-
     /// Get the feature tree.
     pub fn feature_tree(&self) -> &FeatureTree {
         &self.feature_tree
-    }
-
-    /// Get mutable feature tree.
-    pub fn feature_tree_mut(&mut self) -> &mut FeatureTree {
-        &mut self.feature_tree
     }
 
     /// All document bodies.
@@ -539,31 +710,22 @@ impl Document {
     /// Create a new body entry in the document.
     pub fn create_body(&mut self, name: Option<String>) -> BodyId {
         let id = BodyId::new();
-        let created_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
-        let body_name = match name {
+        let name = match name {
             Some(explicit) => explicit,
             None => next_indexed_name("body", self.bodies.iter().map(|b| b.name.as_str())),
         };
-        let body = Body {
+        self.record_and_apply(op::DocumentOp::CreateBody {
             id,
-            name: body_name,
-            created_at,
-            tip: None,
-        };
-        self.bodies.push(body);
-        self.mark_dirty();
+            name,
+            created_at: epoch_ms_now(),
+        });
         id
     }
 
     /// Add an asset reference to the document.
     pub fn add_asset(&mut self, asset: AssetReference) -> Uuid {
         let id = asset.id;
-        self.assets.insert(id, asset);
-        self.mark_dirty();
+        self.record_and_apply(op::DocumentOp::AddAsset { asset, bytes: None });
         id
     }
 
@@ -572,9 +734,10 @@ impl Document {
     /// the archive.
     pub fn add_asset_with_data(&mut self, asset: AssetReference, data: Vec<u8>) -> Uuid {
         let id = asset.id;
-        self.assets.insert(id, asset);
-        self.asset_blobs.insert(id, std::sync::Arc::new(data));
-        self.mark_dirty();
+        self.record_and_apply(op::DocumentOp::AddAsset {
+            asset,
+            bytes: Some(op::BlobPayload::new(data)),
+        });
         id
     }
 
@@ -671,10 +834,9 @@ impl Document {
         roots: Vec<Uuid>,
         nodes: HashMap<Uuid, ImportedObjectNode>,
     ) {
-        self.imported_object_roots = roots;
-        self.imported_objects = nodes;
-        self.rebuild_imported_body_index();
-        self.mark_dirty();
+        // Replacement = clear + append, so both are expressible as ops.
+        self.record_and_apply(op::DocumentOp::ClearImportedObjectGraph);
+        self.append_imported_object_graph(roots, nodes);
     }
 
     /// Append imported hierarchy nodes (used when importing multiple STEP files).
@@ -683,20 +845,18 @@ impl Document {
         roots: Vec<Uuid>,
         nodes: HashMap<Uuid, ImportedObjectNode>,
     ) {
-        self.imported_object_roots.extend(roots);
-        for (id, node) in nodes {
-            self.imported_objects.insert(id, node);
-        }
-        self.rebuild_imported_body_index();
-        self.mark_dirty();
+        // Sorted into a vec so the op serializes in a stable order.
+        let mut node_list: Vec<ImportedObjectNode> = nodes.into_values().collect();
+        node_list.sort_by_key(|n| n.id);
+        self.record_and_apply(op::DocumentOp::AppendImportedObjectGraph {
+            roots,
+            nodes: node_list,
+        });
     }
 
     /// Remove imported hierarchy metadata.
     pub fn clear_imported_object_graph(&mut self) {
-        self.imported_object_roots.clear();
-        self.imported_objects.clear();
-        self.imported_body_to_object.clear();
-        self.mark_dirty();
+        self.record_and_apply(op::DocumentOp::ClearImportedObjectGraph);
     }
 
     pub fn imported_object_roots(&self) -> &[Uuid] {
@@ -712,15 +872,12 @@ impl Document {
     }
 
     pub fn set_imported_object_visibility(&mut self, id: Uuid, visible: bool) -> bool {
-        let mut changed = false;
-        if let Some(node) = self.imported_objects.get_mut(&id) {
-            if node.visible != visible {
-                node.visible = visible;
-                changed = true;
-            }
-        }
+        let changed = self
+            .imported_objects
+            .get(&id)
+            .is_some_and(|node| node.visible != visible);
         if changed {
-            self.mark_dirty();
+            self.record_and_apply(op::DocumentOp::SetImportedObjectVisibility { id, visible });
         }
         changed
     }
@@ -1019,6 +1176,15 @@ fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {
         ]);
     }
     Some(out)
+}
+
+/// Milliseconds since the epoch, resolved at op-capture time so replay
+/// carries the moment rather than re-asking the clock.
+fn epoch_ms_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn next_indexed_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) -> String {
