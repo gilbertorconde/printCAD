@@ -54,7 +54,7 @@ pub fn import_step(
         let shown = faces
             .iter()
             .take(16)
-            .map(u64::to_string)
+            .map(|f| f.entity.to_string())
             .collect::<Vec<_>>();
         warn!(
             target: "printcad.kernel",
@@ -74,7 +74,7 @@ pub fn import_step(
     }
 
     if !import.report.untrimmed_faces.is_empty() {
-        let healed = heal_untrimmed_faces(&mut import.document, &import.solids);
+        let healed = heal_untrimmed_faces(&mut import.document, &import.report.untrimmed_faces);
         if healed > 0 {
             info!(
                 target: "printcad.kernel",
@@ -190,40 +190,30 @@ fn unit_from_scale(scale_mm: f64) -> Option<LengthUnit> {
 
 /// Fit the trims the reader refused, at a wider cap than its own.
 ///
-/// The reader heals boundary slop up to a millimetre and names the faces it
-/// would not (`report.untrimmed_faces`, STEP entity ids); those faces refuse
-/// to triangulate and draw as gaps. `fix_face_pcurves` is the instructed
+/// The reader heals boundary slop up to a millimetre and hands over the
+/// faces it would not (`report.untrimmed_faces`); those faces refuse to
+/// triangulate and draw as gaps. `fix_face_pcurves` is the instructed
 /// follow-up — the same projection fit at the caller's cap, each fitted
 /// edge's tolerance widened to the offset actually measured, so the model
 /// records what it now knows. A face past even this cap stays a gap and is
 /// logged with its measured distance; silently stretching it into place
 /// would misstate the geometry.
 ///
-/// Returns how many of the named faces now carry full trims.
-fn heal_untrimmed_faces(document: &mut Document, solids: &[Shape]) -> usize {
+/// Returns how many of the handed-over faces now carry full trims.
+fn heal_untrimmed_faces(
+    document: &mut Document,
+    untrimmed: &[ogeom::io::step::UntrimmedFace],
+) -> usize {
     /// Generous against exporter slop, small against part scale: an edge
     /// this far off its surface is file damage worth drawing anyway; beyond
     /// it the gap is more honest than the stretch.
     const HEAL_CAP_MM: f64 = 5.0;
 
-    // The report names STEP face entities, but a shape's `identity_of`
-    // carries its geometry's provenance (the surface entity), so the ids
-    // cannot be cross-referenced (ogeom-rs#34). Probe every face instead:
-    // `fix_face_pcurves` leaves a face whose trims are complete alone, and
-    // the sweep only runs when the reader refused something.
-    let mut faces_to_heal = Vec::new();
-    for solid in solids {
-        let Ok(faces) = explore(document.model(), solid, Filter::OfType(ShapeType::Face)) else {
-            continue;
-        };
-        faces_to_heal.extend(faces);
-    }
-
     let mut healed = 0usize;
-    for face in &faces_to_heal {
+    for refused in untrimmed {
         match ogeom::heal::fix_face_pcurves(
             document.model_mut(),
-            face,
+            &refused.face,
             HEAL_CAP_MM,
             tess::tolerances(),
         ) {
@@ -233,6 +223,7 @@ fn heal_untrimmed_faces(document: &mut Document, solids: &[Shape]) -> usize {
                         healed += 1;
                         info!(
                             target: "printcad.kernel",
+                            entity = refused.entity,
                             fitted = report.fitted,
                             worst_mm = report.worst,
                             "face healed: trims fitted at the import cap"
@@ -242,6 +233,7 @@ fn heal_untrimmed_faces(document: &mut Document, solids: &[Shape]) -> usize {
                     for (_, offset) in &report.refused {
                         warn!(
                             target: "printcad.kernel",
+                            entity = refused.entity,
                             offset_mm = offset,
                             cap_mm = HEAL_CAP_MM,
                             "edge beyond the healing cap; its face keeps drawing with a gap"
@@ -250,7 +242,11 @@ fn heal_untrimmed_faces(document: &mut Document, solids: &[Shape]) -> usize {
                 }
             }
             Err(err) => {
-                warn!(target: "printcad.kernel", "face heal failed: {err}");
+                warn!(
+                    target: "printcad.kernel",
+                    entity = refused.entity,
+                    "face heal failed: {err}"
+                );
             }
         }
     }
