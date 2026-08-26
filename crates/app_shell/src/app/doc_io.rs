@@ -62,6 +62,12 @@ pub(crate) enum DocumentOpenMsg {
     Failed(String),
 }
 
+/// Outcome of a save running on a worker thread.
+pub(crate) enum DocumentSaveMsg {
+    Saved,
+    Failed(String),
+}
+
 pub(crate) enum FileDialogKind {
     Open,
     Save,
@@ -302,11 +308,13 @@ impl PrintCadApp {
                     core_document::Compression::None
                 };
 
-                self.document
-                    .save_to_file(path, compression)
-                    .with_context(|| {
-                        format!("Failed to save .prtcad document {}", path.display())
-                    })?;
+                // A `.prtcad` carries every snapshot blob and the source
+                // file, so writing it takes seconds on a large import. Hand
+                // it to a worker; the rest of the bookkeeping happens in
+                // `drain_document_save_responses` when it lands.
+                self.document_saved_at_seq = Some(self.document.mutation_seq());
+                self.spawn_document_save(path.to_path_buf(), compression);
+                return Ok(());
             }
         }
 
@@ -315,6 +323,67 @@ impl PrintCadApp {
         self.document.mark_clean();
         app_log::info(format!("Saved document to {}", path.display()));
         Ok(())
+    }
+
+    /// Write the document to `path` on a worker thread.
+    ///
+    /// The payloads that make a save slow — snapshot blobs, the source STEP —
+    /// live behind `Arc`s, so the clone handed to the worker is a handful of
+    /// refcount bumps rather than a copy of the geometry. The UI keeps
+    /// rendering; the status bar says a save is running.
+    fn spawn_document_save(&mut self, path: PathBuf, compression: core_document::Compression) {
+        let mut snapshot = self.document.clone();
+        let tx = self.document_save_tx.clone();
+        self.document_save_in_flight = self.document_save_in_flight.saturating_add(1);
+        app_log::info(format!("Saving `{}`...", path.display()));
+        let target = path.clone();
+        let handle = std::thread::spawn(move || {
+            let msg = match snapshot.save_to_file(&target, compression) {
+                Ok(()) => DocumentSaveMsg::Saved,
+                Err(err) => DocumentSaveMsg::Failed(format!("{err:#}")),
+            };
+            let _ = tx.send((target, msg));
+        });
+        self.document_save_threads.retain(|h| !h.is_finished());
+        self.document_save_threads.push(handle);
+    }
+
+    /// Block until every queued write has finished, then report them.
+    ///
+    /// Only worth doing on the way out: the process exiting would kill a
+    /// writer mid-file and leave a truncated document behind.
+    pub(crate) fn wait_for_document_saves(&mut self) {
+        if !self.document_save_threads.is_empty() {
+            app_log::info("Finishing document save before exit…");
+        }
+        for handle in std::mem::take(&mut self.document_save_threads) {
+            let _ = handle.join();
+        }
+        self.drain_document_save_responses();
+    }
+
+    /// Apply finished saves. Called once a frame beside the other drains.
+    pub(crate) fn drain_document_save_responses(&mut self) {
+        while let Ok((path, msg)) = self.document_save_rx.try_recv() {
+            let path: PathBuf = path;
+            self.document_save_in_flight = self.document_save_in_flight.saturating_sub(1);
+            match msg {
+                DocumentSaveMsg::Saved => {
+                    // Only call the document clean if nothing was edited while
+                    // the write was in flight; otherwise those edits would be
+                    // silently marked as saved.
+                    if self.document_saved_at_seq == Some(self.document.mutation_seq()) {
+                        self.document.mark_clean();
+                    }
+                    self.current_file = Some(path.clone());
+                    write_recent_dir(&path);
+                    app_log::info(format!("Saved document to {}", path.display()));
+                }
+                DocumentSaveMsg::Failed(error) => {
+                    app_log::error(format!("Failed to save {}: {error}", path.display()));
+                }
+            }
+        }
     }
 
     /// Drain a finished file-dialog thread's result, if any.

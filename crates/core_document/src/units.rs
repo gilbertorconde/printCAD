@@ -1,7 +1,7 @@
 //! Per-document display units.
 //!
 //! All printCAD geometry is stored internally in **millimetres** (matching
-//! OCCT's STEP import output). This module only describes how to *show* a
+//! the kernel's STEP import output). This module only describes how to *show* a
 //! length to the user — conversion is purely a formatting concern.
 
 use std::fmt;

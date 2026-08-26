@@ -34,7 +34,16 @@ pub struct UiFrameInputs<'a> {
     pub active_document_object: Option<core_document::FeatureId>,
     pub selected_body_id: Option<core_document::BodyId>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
+    pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],
     pub pending_imports: u32,
     pub pending_document_open: u32,
+    /// What the kernel worker is doing right now, for the status bar.
+    pub kernel_status: Option<String>,
+    /// Whether the running kernel job can be stopped.
+    pub kernel_cancellable: bool,
+    /// `(done, total)` of the current kernel stage, when counts are known.
+    pub kernel_progress: Option<(u64, u64)>,
+    /// A document write is in flight.
+    pub document_saving: bool,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
 }

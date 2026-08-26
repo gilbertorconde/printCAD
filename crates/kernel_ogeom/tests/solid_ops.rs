@@ -5,24 +5,12 @@ use kernel_api::{
     BoolKind, BooleanOp, ChamferSpec, EdgeSelection, ExtrudeTermination, Placement, PrimitiveKind,
     Profile, ProfilePlane, ProfileSegment, ProfileWire, SolidOp, SweepKind, TessellationSettings,
 };
-use kernel_occt::OcctKernel;
-use std::sync::{Mutex, MutexGuard};
+use kernel_ogeom::OgeomKernel;
 
-/// OCCT's modelling machinery relies on process-global state and is not safe
-/// across concurrent kernels in one process, so the tests in this binary
-/// serialize on this mutex.
-static OCCT_SERIAL: Mutex<()> = Mutex::new(());
-
-fn occt_guard() -> MutexGuard<'static, ()> {
-    OCCT_SERIAL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn new_kernel() -> OcctKernel {
+fn new_kernel() -> OgeomKernel {
     use kernel_api::Kernel;
-    let mut kernel = OcctKernel::new();
-    kernel.initialize().expect("initialize OCCT kernel");
+    let mut kernel = OgeomKernel::new();
+    kernel.initialize().expect("initialize kernel");
     kernel
 }
 
@@ -110,7 +98,6 @@ fn assert_close(actual: f32, expected: f32, tol: f32, what: &str) {
 
 #[test]
 fn through_all_pocket_pierces_the_pad() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -142,7 +129,6 @@ fn through_all_pocket_pierces_the_pad() {
 
 #[test]
 fn two_lengths_extrude_spans_both_sides() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -171,7 +157,6 @@ fn two_lengths_extrude_spans_both_sides() {
 
 #[test]
 fn up_to_plane_extrude_stops_on_the_plane() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -195,7 +180,6 @@ fn up_to_plane_extrude_stops_on_the_plane() {
 
 #[test]
 fn to_last_pad_reaches_the_far_face() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -224,7 +208,6 @@ fn to_last_pad_reaches_the_far_face() {
 
 #[test]
 fn tapered_pad_widens_the_far_end() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -255,7 +238,6 @@ fn tapered_pad_widens_the_far_end() {
 
 #[test]
 fn disjoint_profile_regions_become_separate_solids() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -277,7 +259,6 @@ fn disjoint_profile_regions_become_separate_solids() {
 
 #[test]
 fn ellipse_and_bspline_profiles_pad() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -321,7 +302,6 @@ fn ellipse_and_bspline_profiles_pad() {
 
 #[test]
 fn loft_skins_between_two_rectangles() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -348,7 +328,6 @@ fn loft_skins_between_two_rectangles() {
 
 #[test]
 fn pipe_sweeps_profile_along_l_path() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -393,7 +372,6 @@ fn pipe_sweeps_profile_along_l_path() {
 
 #[test]
 fn helix_sweep_builds_a_spring() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -430,7 +408,6 @@ fn helix_sweep_builds_a_spring() {
 
 #[test]
 fn primitives_build_with_expected_bounds() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -536,7 +513,6 @@ fn primitives_build_with_expected_bounds() {
 
 #[test]
 fn fillet_and_chamfer_modify_all_edges() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -588,7 +564,6 @@ fn fillet_and_chamfer_modify_all_edges() {
 
 #[test]
 fn fillet_of_faces_selection_uses_nearest_face() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -616,7 +591,6 @@ fn fillet_of_faces_selection_uses_nearest_face() {
 
 #[test]
 fn thickness_hollows_the_box() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -662,7 +636,6 @@ fn thickness_hollows_the_box() {
 
 #[test]
 fn draft_tilts_side_faces() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -697,7 +670,6 @@ fn draft_tilts_side_faces() {
 
 #[test]
 fn linear_pattern_repeats_the_tool_solid() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -735,7 +707,6 @@ fn linear_pattern_repeats_the_tool_solid() {
 
 #[test]
 fn pattern_of_subtractive_tool_repeats_the_cut() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -798,7 +769,6 @@ fn pattern_of_subtractive_tool_repeats_the_cut() {
 
 #[test]
 fn mirror_transform_of_whole_body_doubles_the_extent() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -830,7 +800,6 @@ fn mirror_transform_of_whole_body_doubles_the_extent() {
 
 #[test]
 fn scaling_transform_uses_general_transform_path() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -863,7 +832,6 @@ fn scaling_transform_uses_general_transform_path() {
 
 #[test]
 fn body_boolean_combines_external_solid() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -936,7 +904,6 @@ fn body_boolean_combines_external_solid() {
 
 #[test]
 fn chain_error_reports_failing_op_index() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 

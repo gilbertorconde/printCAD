@@ -340,6 +340,52 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
     }
 }
 
+/// Editable value of a dimensional kind in display units (degrees for
+/// angles, mm otherwise); `None` for non-dimensional kinds.
+pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
+    match *kind {
+        ConstraintKind::Length { length, .. } => Some(length),
+        ConstraintKind::Radius { radius, .. } => Some(radius),
+        ConstraintKind::Diameter { diameter, .. } => Some(diameter),
+        ConstraintKind::Distance { distance, .. } => Some(distance),
+        ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } => {
+            Some(value)
+        }
+        ConstraintKind::Angle { angle_rad, .. } | ConstraintKind::AngleToAxis { angle_rad, .. } => {
+            Some(angle_rad.to_degrees())
+        }
+        _ => None,
+    }
+}
+
+/// The kind with its dimensional value replaced (display units, see
+/// `dimension_value`). Non-dimensional kinds are returned unchanged.
+pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
+    let mut kind = kind.clone();
+    match &mut kind {
+        ConstraintKind::Length { length, .. } => *length = v,
+        ConstraintKind::Radius { radius, .. } => *radius = v,
+        ConstraintKind::Diameter { diameter, .. } => *diameter = v,
+        ConstraintKind::Distance { distance, .. } => *distance = v,
+        ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } => {
+            *value = v
+        }
+        ConstraintKind::Angle { angle_rad, .. } | ConstraintKind::AngleToAxis { angle_rad, .. } => {
+            *angle_rad = v.to_radians()
+        }
+        _ => {}
+    }
+    kind
+}
+
+/// Whether a dimensional kind is angular (displayed in degrees).
+pub fn is_angular(kind: &ConstraintKind) -> bool {
+    matches!(
+        kind,
+        ConstraintKind::Angle { .. } | ConstraintKind::AngleToAxis { .. }
+    )
+}
+
 /// Reference plane for a sketch (2D coordinate system in 3D space).
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct SketchPlane {
@@ -601,6 +647,10 @@ pub struct Constraint {
     pub active: bool,
     /// Optional user-facing name (falls back to the kind label).
     pub name: Option<String>,
+    /// Viewport-glyph offset from the anchor, in sketch units (dimensional
+    /// constraints; set by dragging the label).
+    #[serde(default)]
+    pub label_offset: Option<Vec2D>,
 }
 
 impl Constraint {
@@ -611,6 +661,7 @@ impl Constraint {
             driving: true,
             active: true,
             name: None,
+            label_offset: None,
         }
     }
 
@@ -652,6 +703,8 @@ impl<'de> Deserialize<'de> for Constraint {
                 active: bool,
                 #[serde(default)]
                 name: Option<String>,
+                #[serde(default)]
+                label_offset: Option<Vec2D>,
             },
             Legacy(ConstraintKind),
         }
@@ -663,12 +716,14 @@ impl<'de> Deserialize<'de> for Constraint {
                 driving,
                 active,
                 name,
+                label_offset,
             } => Constraint {
                 id,
                 kind,
                 driving,
                 active,
                 name,
+                label_offset,
             },
             Repr::Legacy(kind) => Constraint::new(kind),
         })
@@ -882,6 +937,32 @@ mod constraint_record_tests {
             ConstraintKind::Length { line: l, length } if l == line && (length - 12.5).abs() < 1e-6
         ));
         assert!(c.driving && c.active && c.name.is_none());
+    }
+
+    #[test]
+    fn full_record_without_label_offset_deserializes() {
+        // A record saved before `label_offset` existed.
+        let json = serde_json::json!({
+            "id": Uuid::new_v4(),
+            "kind": { "Horizontal": { "element": Uuid::new_v4() } },
+            "driving": true,
+            "active": true,
+            "name": null,
+        });
+        let c: Constraint = serde_json::from_value(json).expect("pre-offset record loads");
+        assert!(c.label_offset.is_none());
+    }
+
+    #[test]
+    fn label_offset_round_trips() {
+        let mut c = Constraint::new(ConstraintKind::Horizontal {
+            element: Uuid::new_v4(),
+        });
+        c.label_offset = Some(Vec2D::new(-3.5, 2.0));
+        let json = serde_json::to_value(&c).unwrap();
+        let back: Constraint = serde_json::from_value(json).unwrap();
+        let off = back.label_offset.unwrap();
+        assert!((off.x + 3.5).abs() < 1e-6 && (off.y - 2.0).abs() < 1e-6);
     }
 
     #[test]

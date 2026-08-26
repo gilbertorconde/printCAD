@@ -27,7 +27,7 @@ pub struct RebuildResponse {
     pub diagnostics: Vec<String>,
 }
 
-/// How linear (chord) deflection is chosen for OCCT meshing.
+/// How linear (chord) deflection is chosen for kernel meshing.
 ///
 /// The default is **bbox-scaled** deflection: absolute chord height is derived
 /// from the sum of the shape's bounding-box extents and a dimensionless
@@ -71,15 +71,15 @@ pub struct TessellationSettings {
     /// Defaults to 30° (common cross-face weld preset).
     #[serde(default = "default_weld_angle_threshold_deg")]
     pub weld_angle_threshold_deg: f32,
-    /// When true, import serializes each body with `BRepTools::Write` into
+    /// When true, import serializes each body's shape snapshot into
     /// `brep_blob` (in memory) and leaves mesh fields empty until a follow-up
     /// tessellation job runs on the kernel thread. **This is the recommended
     /// default for large STEP files:** work is split across read/serialize vs
     /// meshing, the UI can show 0 triangles then a tessellation log line, and
     /// you avoid a single multi‑minute inline mesh+transfer FFI call.
-    /// When false, the importer tessellates **during** the import call (no BRep
-    /// blob); small parts can feel simpler, but huge models block one long step
-    /// (`inline_mesh_ms` in `[printcad_import_brep_cpp]` on stderr).
+    /// When false, the importer tessellates **during** the import call (no
+    /// shape blob); small parts can feel simpler, but huge models block one
+    /// long step.
     /// Serialization can still take minutes on massive assemblies; the STEP
     /// asset remains available in the document regardless.
     #[serde(default = "default_persist_brep_snapshot")]
@@ -189,13 +189,14 @@ pub struct ImportedBody {
     /// Tessellated mesh ready for the viewport (empty while tessellation is pending).
     #[serde(default)]
     pub mesh: TriMesh,
-    /// Serialized BRep (e.g. `BRepTools::Write`) for this body when the fast
-    /// STEP path was used.
+    /// Serialized shape snapshot for this body when the fast STEP path was
+    /// used: ogeom native-format text bytes (`ogeom::io::native`, one root
+    /// shape per blob).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub brep_blob: Vec<u8>,
-    /// Per-face linear RGB albedo in the same order as `TopExp_Explorer` over
-    /// faces on the matching BRep (used when serializing BRep without an XCAF
-    /// document for deferred tessellation).
+    /// Per-face linear RGB albedo in face-exploration order
+    /// (`ogeom::topo::explore` with a Face filter) over the matching shape
+    /// snapshot (used for deferred tessellation).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub face_colors: Vec<[f32; 3]>,
     /// Axis-aligned bounds in millimetres from the raw BRep (before tessellation).
@@ -433,7 +434,7 @@ pub enum PrimitiveKind {
     },
     Sphere {
         radius: f64,
-        /// Latitude range and longitude sweep, matching OCCT's three angles.
+        /// Latitude range and longitude sweep (three-angle parameterization).
         angle1_deg: f64,
         angle2_deg: f64,
         angle3_deg: f64,
@@ -583,7 +584,8 @@ pub enum SolidOp {
         transforms: Vec<[[f64; 4]; 4]>,
         originals: Vec<usize>,
     },
-    /// Boolean against an external solid (another body's BRep snapshot).
+    /// Boolean against an external solid (another body's shape snapshot,
+    /// ogeom native-format text bytes).
     Boolean {
         tool_brep: Vec<u8>,
         kind: BoolKind,
@@ -615,8 +617,8 @@ pub struct ChainError {
 /// Result of executing a body's solid-op chain.
 #[derive(Debug, Clone, Default)]
 pub struct SolidBuildResult {
-    /// OCCT BRep snapshot of the final solid (for later re-tessellation,
-    /// persistence, and downstream booleans).
+    /// Native-format shape snapshot of the final solid (for later
+    /// re-tessellation, persistence, and downstream booleans).
     pub brep_blob: Vec<u8>,
     /// Render mesh of the final solid.
     pub mesh: TriMesh,

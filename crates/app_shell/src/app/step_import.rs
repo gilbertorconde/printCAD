@@ -43,6 +43,13 @@ impl PrintCadApp {
 
     /// Drain any STEP responses that have arrived from the kernel worker and
     /// fold them into the document. Called once per frame in `about_to_wait`.
+    /// Whether a kernel error is the user's own cancellation rather than a
+    /// geometry failure. The kernel reports it as an ordinary `Err` carrying
+    /// `OgeomError::Cancelled`'s message, so match on that.
+    fn is_cancellation(error: &str) -> bool {
+        error.contains("cancelled")
+    }
+
     pub(crate) fn drain_kernel_responses(&mut self) {
         for response in self.kernel_worker.drain() {
             match response {
@@ -63,49 +70,15 @@ impl PrintCadApp {
                     }
                 }
                 KernelResponse::StepFailed { path, error } => {
+                    if Self::is_cancellation(&error) {
+                        app_log::info(format!("STEP import cancelled `{}`", path.display()));
+                        continue;
+                    }
                     app_log::error(format!(
                         "STEP import failed `{}`: {}",
                         path.display(),
                         error
                     ));
-                }
-                KernelResponse::BodyTessellated {
-                    body_id,
-                    mesh,
-                    elapsed,
-                } => {
-                    let bid = BodyId(body_id);
-                    let Some(prev) = self.document.imported_geometry(bid) else {
-                        continue;
-                    };
-                    let source_asset = prev.source_asset;
-                    let bounds_mm = prev.bounds_mm;
-                    let brep_blob_path = prev.brep_blob_path.clone();
-                    let face_colors_path = prev.face_colors_path.clone();
-                    self.document.set_imported_geometry(
-                        bid,
-                        ImportedGeometry {
-                            mesh: Arc::new(mesh),
-                            source_asset,
-                            revision: 0,
-                            bounds_mm,
-                            brep_blob_path,
-                            face_colors_path,
-                        },
-                    );
-                    app_log::info(format!(
-                        "Tessellated `{}` in {:.0}ms (worker)",
-                        self.document
-                            .bodies()
-                            .iter()
-                            .find(|b| b.id == bid)
-                            .map(|b| b.name.as_str())
-                            .unwrap_or("body"),
-                        elapsed.as_secs_f64() * 1000.0
-                    ));
-                }
-                KernelResponse::BodyTessellateFailed { body_id, error } => {
-                    app_log::error(format!("Tessellation failed for body {}: {error}", body_id));
                 }
                 KernelResponse::SolidBuilt {
                     body_id,
@@ -159,6 +132,13 @@ impl PrintCadApp {
                         .find(|b| b.id == BodyId(body_id))
                         .map(|b| b.name.clone())
                         .unwrap_or_else(|| "body".to_string());
+                    // A cancellation is not a defect: leave the feature
+                    // unbadged and the body on its last good solid. The next
+                    // edit marks it dirty and rebuilds.
+                    if Self::is_cancellation(&error) {
+                        app_log::info(format!("Rebuild of `{name}` cancelled"));
+                        continue;
+                    }
                     // Pin the failure on the culprit feature; the panel and
                     // tree surface it. Downstream keeps the last good solid.
                     if let Some(feature) = failed_feature {
@@ -182,7 +162,7 @@ impl PrintCadApp {
         path: &Path,
         imported: ImportedModel,
         raw_bytes: Vec<u8>,
-        detail: TessellationSettings,
+        _detail: TessellationSettings,
         elapsed: Duration,
     ) -> Result<()> {
         let apply_start = Instant::now();
@@ -271,16 +251,7 @@ impl PrintCadApp {
                 },
             );
 
-            if has_brep {
-                if let Some(blob) = self.document.imported_brep_blob_arc(body_id) {
-                    self.kernel_worker.request_tessellate_body(
-                        body_id.0,
-                        blob,
-                        body.face_colors,
-                        detail.clone(),
-                    );
-                }
-            }
+            let _ = has_brep;
         }
 
         let mut roots = Vec::new();

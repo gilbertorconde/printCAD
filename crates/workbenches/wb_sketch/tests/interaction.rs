@@ -167,6 +167,38 @@ impl Harness {
         (p, l, c, a)
     }
 
+    /// Screen-space labels (constraint glyphs + on-view readouts), exactly
+    /// as the app shell fetches them each frame.
+    fn labels(&mut self) -> Vec<core_document::ScreenSpaceLabel> {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(self.vp);
+        ctx.active_document_object = self.active_object;
+        self.wb.get_screen_space_labels(&ctx, self.active_object)
+    }
+
+    /// Press/release at raw viewport pixels (glyph clicks: labels report
+    /// their position in pixels, not sketch coordinates).
+    fn press_px(&mut self, pos: (f32, f32)) {
+        self.event(
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Left,
+                viewport_pos: pos,
+            },
+            Some("sketch.select"),
+        );
+    }
+
+    fn release_px(&mut self, pos: (f32, f32)) {
+        self.event(
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                viewport_pos: pos,
+            },
+            Some("sketch.select"),
+        );
+    }
+
     fn right_click(&mut self, x: f32, y: f32, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event(
@@ -1455,4 +1487,547 @@ fn no_geometry_created_without_active_sketch() {
     );
     assert!(h.active_object.is_none());
     assert_eq!(h.doc.feature_tree().all_nodes().count(), 0);
+}
+
+// ---------------------------------------------------------------------------
+// On-view parameters (type-to-constrain)
+// ---------------------------------------------------------------------------
+
+use wb_sketch::sketch::ConstraintKind;
+
+fn distance_constraints(sketch: &Sketch) -> Vec<(f32, bool)> {
+    sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::Distance { distance, .. } => Some((distance, c.driving)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn typed_length_enter_creates_line_with_driving_distance() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (2, 1), "Enter committed the pending point");
+    let sketch = h.sketch();
+    let pts: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(pt) => Some(pt.position),
+            _ => None,
+        })
+        .collect();
+    let len = (pts[1] - pts[0]).to_glam().length();
+    assert!((len - 25.0).abs() < 1e-3, "line length {len}");
+    let dims = distance_constraints(&sketch);
+    assert_eq!(dims.len(), 1);
+    assert!((dims[0].0 - 25.0).abs() < 1e-5 && dims[0].1, "driving 25");
+}
+
+#[test]
+fn tab_focuses_angle_field_and_click_commits_typed_angle_only() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Tab, Some("sketch.line")); // focus: angle
+    h.key(KeyCode::Key4, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.click(10.0, 0.0, "sketch.line"); // length from cursor, direction typed
+
+    let sketch = h.sketch();
+    assert!(distance_constraints(&sketch).is_empty(), "no length typed");
+    let angle = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::AngleToAxis { angle_rad, .. } => Some(angle_rad.to_degrees()),
+            _ => None,
+        })
+        .expect("typed angle became an AngleToAxis constraint");
+    assert!((angle - 45.0).abs() < 1e-3, "angle {angle}");
+    let end = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
+        .find(|p| p.to_glam().length() > 1.0)
+        .unwrap();
+    let want = 10.0 * std::f32::consts::FRAC_1_SQRT_2;
+    assert!(
+        (end.x - want).abs() < 0.1 && (end.y - want).abs() < 0.1,
+        "end followed the typed 45° direction: ({}, {})",
+        end.x,
+        end.y
+    );
+}
+
+#[test]
+fn typed_length_and_angle_commit_exact_polar() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key0, Some("sketch.line"));
+    h.key(KeyCode::Tab, Some("sketch.line"));
+    h.key(KeyCode::Key9, Some("sketch.line"));
+    h.key(KeyCode::Key0, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    let end = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
+        .find(|p| p.to_glam().length() > 1.0)
+        .expect("end point");
+    assert!(end.x.abs() < 1e-3 && (end.y - 20.0).abs() < 1e-3);
+    assert_eq!(distance_constraints(&sketch), vec![(20.0, true)]);
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::AngleToAxis { angle_rad, .. }
+            if (angle_rad.to_degrees() - 90.0).abs() < 1e-3
+    )));
+}
+
+#[test]
+fn rect_typed_width_height_creates_distance_xy_constraints() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.key(KeyCode::Key1, Some("sketch.rect"));
+    h.key(KeyCode::Key2, Some("sketch.rect"));
+    h.key(KeyCode::Tab, Some("sketch.rect"));
+    h.key(KeyCode::Key8, Some("sketch.rect"));
+    h.key(KeyCode::Enter, Some("sketch.rect"));
+
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (4, 4));
+    let sketch = h.sketch();
+    let corner = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(pt) => Some(pt.position),
+            _ => None,
+        })
+        .find(|p| (p.x - 12.0).abs() < 1e-3 && (p.y - 8.0).abs() < 1e-3);
+    assert!(corner.is_some(), "opposite corner at typed (12, 8)");
+    let dx = sketch.constraints.iter().find_map(|c| match c.kind {
+        ConstraintKind::DistanceX { value, .. } => Some(value),
+        _ => None,
+    });
+    let dy = sketch.constraints.iter().find_map(|c| match c.kind {
+        ConstraintKind::DistanceY { value, .. } => Some(value),
+        _ => None,
+    });
+    assert_eq!((dx, dy), (Some(12.0), Some(8.0)));
+    assert_eq!(sketch.constraints.len(), 6, "4 H/V + DistanceX + DistanceY");
+}
+
+#[test]
+fn circle_typed_diameter_creates_diameter_constraint() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.circle");
+    h.key(KeyCode::Key1, Some("sketch.circle"));
+    h.key(KeyCode::Key0, Some("sketch.circle"));
+    h.key(KeyCode::Enter, Some("sketch.circle"));
+
+    let sketch = h.sketch();
+    let radius = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Circle(c) => Some(c.radius),
+            _ => None,
+        })
+        .expect("circle committed");
+    assert!((radius - 5.0).abs() < 1e-3, "radius {radius}");
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::Diameter { diameter, .. } if (diameter - 10.0).abs() < 1e-5
+    ) && c.driving));
+}
+
+#[test]
+fn slot_typed_length_creates_center_distance_constraint() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.slot");
+    h.key(KeyCode::Key1, Some("sketch.slot"));
+    h.key(KeyCode::Key2, Some("sketch.slot"));
+    h.key(KeyCode::Enter, Some("sketch.slot"));
+
+    let (p, l, _, a) = h.counts();
+    assert_eq!((p, l, a), (6, 2, 2), "slot committed");
+    assert_eq!(distance_constraints(&h.sketch()), vec![(12.0, true)]);
+}
+
+#[test]
+fn arc_typed_radius_defers_constraint_until_arc_commits() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.arc"); // center
+    h.key(KeyCode::Key5, Some("sketch.arc"));
+    h.key(KeyCode::Enter, Some("sketch.arc")); // start point at typed radius
+    assert!(
+        h.sketch().constraints.is_empty(),
+        "no arc yet, no constraint"
+    );
+    h.click(0.0, 5.0, "sketch.arc"); // end click materializes the arc
+
+    let sketch = h.sketch();
+    let radius = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.radius),
+            _ => None,
+        })
+        .expect("arc committed");
+    assert!((radius - 5.0).abs() < 1e-3, "radius {radius}");
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::Radius { radius, .. } if (radius - 5.0).abs() < 1e-5
+    )));
+}
+
+#[test]
+fn polygon_typed_radius_creates_construction_circumcircle() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.polygon");
+    h.key(KeyCode::Key6, Some("sketch.polygon"));
+    h.key(KeyCode::Enter, Some("sketch.polygon"));
+
+    let sketch = h.sketch();
+    let (p, l, c, _) = h.counts();
+    assert_eq!((p, l, c), (7, 6, 1), "hexagon + center + circumcircle");
+    let circle = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Circle(circ) => Some(circ),
+            _ => None,
+        })
+        .unwrap();
+    assert!((circle.radius - 6.0).abs() < 1e-3);
+    assert!(
+        sketch.is_construction(circle.id),
+        "circumcircle is construction"
+    );
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::Radius { radius, .. } if (radius - 6.0).abs() < 1e-5
+    )));
+    // The vertices sit on the typed circumradius.
+    let on_radius = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(pt) => Some(pt.position),
+            _ => None,
+        })
+        .filter(|p| (p.to_glam().length() - 6.0).abs() < 1e-3)
+        .count();
+    assert_eq!(on_radius, 6);
+}
+
+#[test]
+fn escape_clears_typed_buffer_then_cancels_tool() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key9, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line")); // clears the buffer only
+    h.click(10.0, 6.0, "sketch.line"); // commits at the cursor, unconstrained
+
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (2, 1), "tool survived the first Escape");
+    assert!(
+        h.sketch().constraints.is_empty(),
+        "typed value was discarded"
+    );
+
+    h.key(KeyCode::Escape, Some("sketch.line")); // empty buffer: cancels chain
+    h.key(KeyCode::Escape, Some("sketch.line")); // idempotent
+    assert_eq!(h.counts(), (2, 1, 0, 0));
+}
+
+#[test]
+fn backspace_edits_typed_buffer_before_deleting_geometry() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key9, Some("sketch.line"));
+    h.key(KeyCode::Backspace, Some("sketch.line")); // "29" → "2"
+    h.key(KeyCode::Key0, Some("sketch.line")); // "20"
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    assert_eq!(distance_constraints(&h.sketch()), vec![(20.0, true)]);
+}
+
+// ---------------------------------------------------------------------------
+// Constraint glyphs
+// ---------------------------------------------------------------------------
+
+#[test]
+fn glyph_click_selects_constraint_and_delete_removes_it() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(15.0, 0.05, "sketch.line"); // axis snap → auto Horizontal
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    assert_eq!(h.sketch().constraints.len(), 1);
+
+    let labels = h.labels();
+    let glyph = labels
+        .iter()
+        .find(|l| l.text == "H")
+        .expect("H glyph drawn");
+    h.press_px((glyph.pos[0], glyph.pos[1]));
+    h.key(KeyCode::Delete, Some("sketch.select"));
+
+    assert!(h.sketch().constraints.is_empty(), "constraint deleted");
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (2, 1), "geometry untouched");
+}
+
+#[test]
+fn geometry_delete_still_works_when_no_constraint_selected() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(15.0, 0.05, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Click the line away from its H glyph (which sits near the midpoint).
+    h.click(3.0, 0.0, "sketch.select");
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (2, 0), "line deleted");
+    assert!(
+        h.sketch().constraints.is_empty(),
+        "constraint cascaded away"
+    );
+}
+
+#[test]
+fn dimension_label_drag_updates_label_offset() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line")); // end the chain
+
+    let labels = h.labels();
+    let dim = labels
+        .iter()
+        .find(|l| l.background && l.text == "25")
+        .expect("dimension label drawn");
+    h.press_px((dim.pos[0], dim.pos[1]));
+    h.mouse_move(5.0, 8.0, "sketch.select");
+    h.release(5.0, 8.0, "sketch.select");
+
+    let sketch = h.sketch();
+    let offset = sketch
+        .constraints
+        .iter()
+        .find(|c| matches!(c.kind, ConstraintKind::Distance { .. }))
+        .and_then(|c| c.label_offset)
+        .expect("drag stored a label offset");
+    // The label lands where the cursor stopped: offset = cursor − anchor,
+    // anchor being the line midpoint (12.5, 0).
+    assert!(
+        (offset.x + 7.5).abs() < 0.2 && (offset.y - 8.0).abs() < 0.2,
+        "offset ({}, {})",
+        offset.x,
+        offset.y
+    );
+}
+
+#[test]
+fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let labels = h.labels();
+    let dim = labels
+        .iter()
+        .find(|l| l.background && l.text == "25")
+        .expect("dimension label drawn");
+    let pos = (dim.pos[0], dim.pos[1]);
+    h.press_px(pos);
+    h.release_px(pos);
+    h.press_px(pos);
+
+    let edit =
+        h.wb.pending_dim_edit()
+            .expect("double-click opened the editor");
+    assert_eq!(edit.text, "25");
+    assert!(edit.driving);
+
+    // Type a new value and commit through the same path the popup uses.
+    h.wb.pending_dim_edit_mut().unwrap().text = "30".to_string();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.active_document_object = h.active_object;
+    h.wb.commit_dim_edit(&mut ctx);
+
+    let sketch = h.sketch();
+    assert!(h.wb.pending_dim_edit().is_none(), "editor closed on commit");
+    assert_eq!(distance_constraints(&sketch), vec![(30.0, true)]);
+    let pts: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
+        .collect();
+    let len = (pts[1] - pts[0]).to_glam().length();
+    assert!(
+        (len - 30.0).abs() < 1e-2,
+        "re-solved to the edited value: {len}"
+    );
+}
+
+#[test]
+fn dim_edit_cancel_leaves_constraint_untouched() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let labels = h.labels();
+    let dim = labels.iter().find(|l| l.background).unwrap();
+    let pos = (dim.pos[0], dim.pos[1]);
+    h.press_px(pos);
+    h.release_px(pos);
+    h.press_px(pos);
+    assert!(h.wb.pending_dim_edit().is_some());
+    h.wb.pending_dim_edit_mut().unwrap().text = "99".to_string();
+    h.wb.cancel_dim_edit();
+    assert!(h.wb.pending_dim_edit().is_none());
+    assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
+}
+
+#[test]
+fn ctrl_glyph_click_keeps_geometry_selection() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(15.0, 0.05, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Select the line, then ctrl-click the H glyph: both stay selected, so
+    // Delete removes the constraint (constraints win) but keeps the line.
+    h.click(3.0, 0.0, "sketch.select");
+    let labels = h.labels();
+    let glyph = labels.iter().find(|l| l.text == "H").unwrap();
+    let pos = (glyph.pos[0], glyph.pos[1]);
+    h.event_with_ctrl(
+        WorkbenchInputEvent::MousePress {
+            button: MouseButton::Left,
+            viewport_pos: pos,
+        },
+        Some("sketch.select"),
+        true,
+    );
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert!(
+        h.sketch().constraints.is_empty(),
+        "constraint deleted first"
+    );
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (2, 1), "geometry kept for the next Delete");
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    let (p, l, _, _) = h.counts();
+    assert_eq!((p, l), (2, 0), "geometry Delete still works afterwards");
+}
+
+#[test]
+fn selected_constraint_highlights_glyph_and_geometry() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(15.0, 0.05, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let labels = h.labels();
+    let glyph = labels.iter().find(|l| l.text == "H").unwrap();
+    let pos = (glyph.pos[0], glyph.pos[1]);
+    h.press_px(pos);
+
+    // Glyph turns selection green.
+    let labels = h.labels();
+    let glyph = labels.iter().find(|l| l.text == "H").unwrap();
+    assert!(
+        glyph.color[1] > 0.9 && glyph.color[0] < 0.4,
+        "selected glyph tinted, got {:?}",
+        glyph.color
+    );
+    // Referenced line drawn in the selection color.
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.active_document_object = h.active_object;
+    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let selected_lines = overlays
+        .iter()
+        .filter(|o| o.color[1] > 0.9 && o.color[0] < 0.4 && o.color[2] < 0.5)
+        .count();
+    assert!(selected_lines >= 1, "referenced geometry highlighted");
+}
+
+#[test]
+fn live_readout_labels_follow_the_cursor_while_drawing() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.mouse_move(3.0, 4.0, "sketch.line");
+    let labels = h.labels();
+    let length = labels
+        .iter()
+        .find(|l| l.text.contains("L ") && l.text.contains("mm"))
+        .expect("length readout");
+    assert!(length.text.contains("5.00"), "live length: {}", length.text);
+    assert!(
+        labels.iter().any(|l| l.text.contains('°')),
+        "angle readout present"
+    );
+
+    // Typing highlights the focused field with the typed buffer.
+    h.key(KeyCode::Key7, Some("sketch.line"));
+    let labels = h.labels();
+    assert!(
+        labels
+            .iter()
+            .any(|l| l.text.contains("7 mm") && l.background),
+        "typed buffer shown on a pill: {:?}",
+        labels.iter().map(|l| &l.text).collect::<Vec<_>>()
+    );
 }

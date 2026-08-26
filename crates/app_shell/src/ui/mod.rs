@@ -111,8 +111,13 @@ impl UiLayer {
             active_document_object,
             selected_body_id,
             screen_space_overlays,
+            screen_space_labels,
             pending_imports,
             pending_document_open,
+            kernel_status,
+            kernel_cancellable,
+            kernel_progress,
+            document_saving,
             mut step_import_pending,
         } = inputs;
 
@@ -138,6 +143,7 @@ impl UiLayer {
         let mut tree_activation = None;
         let mut imported_visibility_change = None;
         let mut tree_feature_command = None;
+        let mut cancel_kernel_requested = false;
         let mut open_requested = false;
         let mut new_requested = false;
         let mut save_requested = false;
@@ -217,7 +223,7 @@ impl UiLayer {
             settings_changed |= settings_outcome.any;
             camera_settings_changed |= settings_outcome.camera_prefs;
             layout::draw_log_panel(ui, settings.rendering.show_log_panel);
-            layout::draw_bottom_panel(
+            cancel_kernel_requested = layout::draw_bottom_panel(
                 ui,
                 fps,
                 hovered_point,
@@ -225,6 +231,10 @@ impl UiLayer {
                 document.display_unit(),
                 pending_imports,
                 pending_document_open,
+                kernel_status.as_deref(),
+                kernel_cancellable,
+                kernel_progress,
+                document_saving,
             );
 
             viewport_rect_logical = ui.available_rect_before_wrap();
@@ -235,6 +245,7 @@ impl UiLayer {
                 viewport_rect_logical,
                 screen_space_overlays,
             );
+            layout::draw_screen_space_labels(ui.ctx(), viewport_rect_logical, screen_space_labels);
 
             if let Some(input) = orientation_input {
                 cube_result =
@@ -294,6 +305,9 @@ impl UiLayer {
         }
         if reset_view_requested {
             commands.push(UiCommand::FitView);
+        }
+        if cancel_kernel_requested {
+            commands.push(UiCommand::CancelKernelJob);
         }
         if quit_requested {
             commands.push(UiCommand::Quit);

@@ -162,6 +162,9 @@ impl PrintCadApp {
         match event {
             WindowEvent::CloseRequested => {
                 if self.confirm_discard_or_save() {
+                    // Let any queued write finish; exiting mid-file would
+                    // leave a truncated document.
+                    self.wait_for_document_saves();
                     event_loop.exit();
                 }
             }
@@ -320,6 +323,9 @@ impl PrintCadApp {
                         "7" => core_document::KeyCode::Key7,
                         "8" => core_document::KeyCode::Key8,
                         "9" => core_document::KeyCode::Key9,
+                        "." => core_document::KeyCode::Period,
+                        "," => core_document::KeyCode::Comma,
+                        "-" => core_document::KeyCode::Minus,
                         _ => core_document::KeyCode::Unknown,
                     },
                     _ => core_document::KeyCode::Unknown,
@@ -535,7 +541,7 @@ pub(crate) fn face_ref_from_mesh(
 
 /// Coplanar-region sub-mesh extracted around a face hit, used to render a
 /// single-face selection highlight. Approximation: coplanar-but-disjoint
-/// regions of the same solid highlight together (no OCCT face ids in the
+/// regions of the same solid highlight together (no kernel face ids in the
 /// mesh yet).
 pub(crate) struct FaceHighlight {
     pub body: Uuid,

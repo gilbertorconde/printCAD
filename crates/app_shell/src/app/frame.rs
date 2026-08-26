@@ -167,6 +167,7 @@ impl PrintCadApp {
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
         self.drain_document_open_responses();
+        self.drain_document_save_responses();
         self.drive_part_recompute();
 
         if self.gfx.is_none() {
@@ -175,7 +176,7 @@ impl PrintCadApp {
 
         // Update camera animation and assemble this frame's scene submission
         // before the UI/render block takes its borrows on `gfx`.
-        let screen_space_overlays = self.build_scene_submission(dt_secs);
+        let (screen_space_overlays, screen_space_labels) = self.build_scene_submission(dt_secs);
 
         let commands;
 
@@ -219,8 +220,14 @@ impl PrintCadApp {
                         active_document_object: self.active_document_object,
                         selected_body_id: self.active_body_id,
                         screen_space_overlays: &screen_space_overlays,
+                        screen_space_labels: &screen_space_labels,
                         pending_imports: self.kernel_worker.in_flight(),
-                        pending_document_open: self.document_open_in_flight,
+                        pending_document_open: self.document_open_in_flight
+                            + self.document_save_in_flight,
+                        kernel_status: self.kernel_worker.status(),
+                        kernel_progress: self.kernel_worker.progress(),
+                        kernel_cancellable: self.kernel_worker.is_cancellable(),
+                        document_saving: self.document_save_in_flight > 0,
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
                 );
@@ -293,7 +300,13 @@ impl PrintCadApp {
                 .unwrap_or(false)
     }
 
-    fn build_scene_submission(&mut self, dt_secs: f32) -> Vec<core_document::ScreenSpaceOverlay> {
+    fn build_scene_submission(
+        &mut self,
+        dt_secs: f32,
+    ) -> (
+        Vec<core_document::ScreenSpaceOverlay>,
+        Vec<core_document::ScreenSpaceLabel>,
+    ) {
         self.camera.set_orbit_lock(self.sketch_editing_active());
         self.camera.flush_pending_wheel(&self.user_settings.camera);
         self.camera
@@ -436,13 +449,17 @@ impl PrintCadApp {
             })
             .collect();
 
-        // Screen-space overlays from the active workbench (constant-thickness lines)
+        // Screen-space overlays + labels from the active workbench
+        // (constant-thickness lines and constant-size text).
         let params = self.overlay_ctx_params();
-        let screen_space_overlays: Vec<core_document::ScreenSpaceOverlay> = self
+        let (screen_space_overlays, screen_space_labels) = self
             .with_workbench_ctx(&wb_id, params, |wb, ctx| {
-                wb.get_screen_space_overlays(ctx, ctx.active_document_object)
+                (
+                    wb.get_screen_space_overlays(ctx, ctx.active_document_object),
+                    wb.get_screen_space_labels(ctx, ctx.active_document_object),
+                )
             })
-            .map(|(overlays, _outcome)| overlays)
+            .map(|(pair, _outcome)| pair)
             .unwrap_or_default();
 
         // Combine sketch meshes, imported geometry, and overlay meshes.
@@ -468,6 +485,6 @@ impl PrintCadApp {
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
 
-        screen_space_overlays
+        (screen_space_overlays, screen_space_labels)
     }
 }

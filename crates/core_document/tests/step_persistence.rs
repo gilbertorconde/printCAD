@@ -77,7 +77,9 @@ fn brep_sidecars_roundtrip_through_prtcad() {
     let mut doc = Document::new("BrepPersistenceTest");
     let body_id = doc.create_body(Some("BRep Body".into()));
 
-    let brep = vec![0xABu8, 0xCD, 0xEF];
+    // Snapshot blobs are ogeom native-format text; the loader drops
+    // anything without the magic prefix as a pre-migration leftover.
+    let brep = b"ogeom 1\nunits 1.0\n".to_vec();
     let colors: Vec<[f32; 3]> = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     doc.set_imported_brep_data(body_id, brep.clone(), colors.clone());
 
@@ -198,5 +200,63 @@ fn imported_object_graph_and_visibility_roundtrip() {
     assert!(!loaded.imported_body_effective_visible(body_id));
     assert_eq!(loaded.imported_object_for_body(body_id), Some(child_id));
 
+    let _ = std::fs::remove_file(&tmp);
+}
+
+/// A save must be safe to run from a worker thread on a cloned document.
+///
+/// The app hands a clone to a writer thread so the UI keeps rendering. That
+/// only works if the clone is cheap (the payloads sit behind `Arc`s) and
+/// independent — edits to the original while the write runs must not change
+/// what lands on disk.
+#[test]
+fn a_cloned_document_saves_independently_from_another_thread() {
+    let mut doc = Document::new("async save");
+    let body_id = doc.create_body(Some("Body".into()));
+    let brep = b"ogeom 1\nunits 1.0\n".to_vec();
+    doc.set_imported_brep_data(body_id, brep.clone(), vec![[1.0, 0.0, 0.0]]);
+    doc.set_imported_geometry(
+        body_id,
+        ImportedGeometry {
+            mesh: Arc::new(TriMesh {
+                positions: vec![[0.0, 0.0, 0.0]],
+                normals: vec![[0.0, 0.0, 1.0]],
+                indices: Vec::new(),
+                edges: Vec::new(),
+                colors: Vec::new(),
+            }),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: Some(([0.0; 3], [1.0, 2.0, 3.0])),
+            brep_blob_path: None,
+            face_colors_path: None,
+        },
+    );
+
+    let mut snapshot = doc.clone();
+    let tmp =
+        std::env::temp_dir().join(format!("printcad_async_save_{}.prtcad", std::process::id()));
+    let target = tmp.clone();
+    let writer = std::thread::spawn(move || {
+        snapshot
+            .save_to_file(&target, Compression::None)
+            .expect("save from a worker thread");
+    });
+
+    // Mutate the original while the write is in flight; the snapshot the
+    // worker holds must be unaffected.
+    let _second = doc.create_body(Some("Added while saving".into()));
+    writer.join().expect("writer thread");
+
+    let loaded = Document::load_from_file(&tmp).expect("load what the worker wrote");
+    assert_eq!(
+        loaded.bodies().len(),
+        1,
+        "the file must hold the document as it was when the save was queued"
+    );
+    assert_eq!(
+        loaded.imported_brep_blob(body_id).expect("blob restored"),
+        brep.as_slice()
+    );
     let _ = std::fs::remove_file(&tmp);
 }

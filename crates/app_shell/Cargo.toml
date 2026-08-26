@@ -19,7 +19,7 @@ workbenches = { path = "../workbenches" }
 wb_part = { path = "../workbenches/wb_part", features = ["egui"] }
 wb_sketch = { path = "../workbenches/wb_sketch", features = ["egui"] }
 kernel_api = { path = "../kernel_api" }
-kernel_occt = { path = "../kernel_occt" }
+kernel_ogeom = { path = "../kernel_ogeom" }
 settings = { path = "../settings" }
 glam.workspace = true
 uuid.workspace = true

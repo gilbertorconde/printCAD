@@ -70,6 +70,10 @@ impl PrintCadApp {
                     }
                 }
                 UiCommand::Quit => intents.quit = true,
+                UiCommand::CancelKernelJob => {
+                    self.kernel_worker.cancel_current();
+                    crate::log_panel::info("Cancelling the running kernel job…");
+                }
                 UiCommand::FitView => intents.fit_view = true,
                 UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
                 UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
@@ -199,6 +203,9 @@ impl PrintCadApp {
         // (rendering, picks, dialogs) finishes cleanly before the loop ends.
         if intents.quit && self.confirm_discard_or_save() {
             app_log::info("Quit requested via menu / shortcut");
+            // A save started by the dialog above is still being written; the
+            // exit would kill it mid-file.
+            self.wait_for_document_saves();
             event_loop.exit();
         }
     }

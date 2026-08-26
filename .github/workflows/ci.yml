@@ -17,14 +17,10 @@ jobs:
       - name: Install system dependencies
         # libvulkan-dev: ash uses the "linked" feature (links libvulkan at build time).
         # glslc/libshaderc: render_vk's build.rs compiles GLSL via shaderc.
-        # libocct-*: kernel_occt links OpenCASCADE directly.
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            libvulkan-dev glslc libshaderc-dev \
-            libocct-foundation-dev libocct-modeling-algorithms-dev \
-            libocct-modeling-data-dev libocct-data-exchange-dev \
-            libocct-ocaf-dev libocct-visualization-dev
+            libvulkan-dev glslc libshaderc-dev
 
       - name: Install Rust toolchain (from rust-toolchain.toml)
         run: rustup show active-toolchain || rustup toolchain install

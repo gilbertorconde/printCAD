@@ -31,8 +31,10 @@ _Coming soon_
 
 - Rust 1.92 or later
 - Vulkan SDK and drivers
-- OpenCASCADE development headers (`opencascade` on Arch, `libocct-*-dev` on Debian/Ubuntu)
 - Linux with Wayland (X11/XWayland fallback supported)
+
+The geometry kernel ([ogeom](https://github.com/gilbertorconde/ogeom-rs)) is
+pure Rust and builds with the workspace — no system CAD libraries needed.
 
 ### Build & Run
 
@@ -60,7 +62,7 @@ printCAD/
 │   ├── app_shell/       # Main application, windowing, UI
 │   ├── core_document/   # Document model and feature tree
 │   ├── kernel_api/      # Geometry kernel abstraction trait
-│   ├── kernel_occt/     # OpenCASCADE kernel implementation
+│   ├── kernel_ogeom/    # ogeom (pure-Rust B-rep) kernel implementation
 │   ├── render_vk/       # Vulkan rendering backend
 │   ├── settings/        # Application settings persistence
 │   └── workbenches/
@@ -124,7 +126,7 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 - [x] GPU selection for hybrid or multi gpu systems
 - [ ] Sketch workbench with constraint solver
 - [ ] Part Design workbench (pad, pocket, revolve)
-- [x] STEP/STP import (OpenCASCADE) — experimental; export and full solid history still planned
+- [x] STEP/STP import — experimental; export still planned
 - [ ] Full parametric feature tree
 - [x] Undo/redo system (snapshot-based; Ctrl+Z / Ctrl+Shift+Z)
 
@@ -135,7 +137,7 @@ See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
 - **Graphics**: Vulkan via ash
 - **UI**: egui
 - **Math**: glam
-- **Geometry Kernel**: OpenCASCADE (STEP import; parametric modelling still planned)
+- **Geometry Kernel**: [ogeom](https://github.com/gilbertorconde/ogeom-rs) — pure-Rust B-rep modelling and STEP exchange
 
 ## License
 

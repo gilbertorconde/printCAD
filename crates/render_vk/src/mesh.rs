@@ -1041,7 +1041,7 @@ fn create_mesh_pipeline(
     };
     // Back-face culling is intentionally disabled on the solid pass.
     //
-    // STEP files imported via OCCT's `STEPControl_Reader` regularly contain
+    // STEP files from mainstream CAD exporters regularly contain
     // faces whose triangulation is wound inward instead of outward, and we
     // can't reliably detect that from `face.Orientation()` alone (the
     // parametric → 3D mapping plus shell composition can flip the winding

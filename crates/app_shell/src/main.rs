@@ -6,7 +6,7 @@ mod orientation_cube;
 mod ui;
 
 use anyhow::{Context, Result};
-use app::doc_io::{DocumentOpenMsg, FileDialogResult};
+use app::doc_io::{DocumentOpenMsg, DocumentSaveMsg, FileDialogResult};
 use camera::CameraController;
 use core_document::{BodyId, Document, DocumentService, WorkbenchId};
 use kernel_api::TessellationSettings;
@@ -151,7 +151,7 @@ struct PrintCadApp {
     current_file: Option<PathBuf>,
     // Pending file dialog result from background thread.
     file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
-    // Background worker that owns the OCCT kernel. STEP imports run there
+    // Background worker that owns the geometry kernel. STEP imports run there
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
     kernel_worker: KernelWorker,
@@ -159,6 +159,18 @@ struct PrintCadApp {
     /// channel. `document_load_epoch` invalidates in-flight work after New
     /// Document so late responses are ignored.
     document_open_tx: Sender<(u64, PathBuf, DocumentOpenMsg)>,
+    document_save_tx: Sender<(PathBuf, DocumentSaveMsg)>,
+    document_save_rx: mpsc::Receiver<(PathBuf, DocumentSaveMsg)>,
+    /// Saves the worker is writing right now. Drives the status bar, and
+    /// blocks a second save of the same document from racing the first.
+    document_save_in_flight: u32,
+    /// The document's mutation counter when the running save was queued, so
+    /// edits made while it wrote are not marked as saved.
+    document_saved_at_seq: Option<u64>,
+    /// Writers still running. The worker owns an independent snapshot, so
+    /// editing during a save is safe — but exiting would kill it mid-file,
+    /// so quitting joins these first.
+    document_save_threads: Vec<std::thread::JoinHandle<()>>,
     document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
     document_load_epoch: u64,
     document_open_in_flight: u32,
@@ -207,6 +219,7 @@ impl PrintCadApp {
     ) -> Self {
         let camera = CameraController::new(&user_settings.camera, (1, 1));
         let (document_open_tx, document_open_rx) = mpsc::channel();
+        let (document_save_tx, document_save_rx) = mpsc::channel();
         let undo = core_document::undo::UndoHistory::new(&document, 64);
 
         Self {
@@ -237,9 +250,14 @@ impl PrintCadApp {
             file_dialog_rx: None,
             kernel_worker: KernelWorker::spawn(),
             document_open_tx,
+            document_save_tx,
+            document_save_rx,
             document_open_rx,
             document_load_epoch: 0,
             document_open_in_flight: 0,
+            document_save_in_flight: 0,
+            document_saved_at_seq: None,
+            document_save_threads: Vec::new(),
             step_import_pending: None,
             last_step_import_detail: TessellationSettings::default(),
             undo,

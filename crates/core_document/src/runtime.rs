@@ -480,6 +480,10 @@ pub enum KeyCode {
     X,
     Y,
     Z,
+    // Punctuation used by numeric entry
+    Period,
+    Comma,
+    Minus,
     // Numbers
     Key0,
     Key1,

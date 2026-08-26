@@ -57,6 +57,22 @@ impl ScreenSpaceOverlay {
     }
 }
 
+/// A screen-space text label rendered in the viewport (dimension values,
+/// constraint glyphs, on-view parameter readouts).
+#[derive(Debug, Clone)]
+pub struct ScreenSpaceLabel {
+    /// Label center in screen coordinates (x, y) in pixels, relative to the
+    /// viewport origin.
+    pub pos: [f32; 2],
+    pub text: String,
+    /// RGB color [r, g, b] in range 0.0-1.0.
+    pub color: [f32; 3],
+    /// Font size in pixels.
+    pub size: f32,
+    /// Draw a rounded background pill behind the text (dimension values).
+    pub background: bool,
+}
+
 /// User-facing description provided by workbenches to populate menus.
 #[derive(Debug, Clone)]
 pub struct WorkbenchDescriptor {
@@ -203,6 +219,17 @@ pub trait Workbench: Send {
         _ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceOverlay> {
+        Vec::new()
+    }
+
+    /// Get screen-space text labels for constant-size viewport annotations
+    /// (dimension values, constraint glyphs, on-view parameter readouts).
+    /// Same coordinate convention as [`Self::get_screen_space_overlays`].
+    fn get_screen_space_labels(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceLabel> {
         Vec::new()
     }
 }

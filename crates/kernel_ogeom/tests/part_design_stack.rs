@@ -1,22 +1,13 @@
 //! Full-stack Part Design test: sketch geometry → Pad/Pocket features →
-//! `wb_part::body_build_ops` → `OcctKernel::execute_solid_chain` → mesh.
+//! `wb_part::body_build_ops` → `OgeomKernel::execute_solid_chain` → mesh.
 //! This exercises the exact pipeline the app's recompute driver runs.
-
-use std::sync::{Mutex, MutexGuard};
 
 use core_document::{BodyId, Document, FeatureId};
 use kernel_api::TessellationSettings;
-use kernel_occt::OcctKernel;
+use kernel_ogeom::OgeomKernel;
 use wb_part::PartFeature;
 use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 use wb_sketch::SketchFeature;
-
-/// OCCT is not thread-safe across concurrent kernel use in one process.
-static OCCT_SERIAL: Mutex<()> = Mutex::new(());
-
-fn occt_guard() -> MutexGuard<'static, ()> {
-    OCCT_SERIAL.lock().unwrap_or_else(|p| p.into_inner())
-}
 
 fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32) -> SketchFeature {
     let mut sketch = Sketch::new("s");
@@ -104,7 +95,6 @@ fn mesh_bounds(mesh: &kernel_api::TriMesh) -> ([f32; 3], [f32; 3]) {
 
 #[test]
 fn pad_feature_builds_a_box_through_the_full_stack() {
-    let _serial = occt_guard();
     let (mut doc, body, sketch_id) = setup(10.0, 5.0);
     doc.add_feature_in_body(
         pad_feature(sketch_id, 8.0, false, false),
@@ -114,7 +104,7 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
     .unwrap();
 
     let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -132,7 +122,6 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
 /// pocket must cut against that normal (into the pad) by default.
 #[test]
 fn pocket_feature_cuts_into_the_pad() {
-    let _serial = occt_guard();
     let (mut doc, body, rect_id) = setup(20.0, 20.0);
     // The hole sketch sits on the pad's top face (z = 6, normal +Z), exactly
     // as produced by clicking the face and choosing "Selected face".
@@ -156,7 +145,7 @@ fn pocket_feature_cuts_into_the_pad() {
     let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
     assert_eq!(ops.len(), 2);
 
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let detail = TessellationSettings::default();
 
     // Pad only.
@@ -180,7 +169,6 @@ fn pocket_feature_cuts_into_the_pad() {
 
 #[test]
 fn pad_on_front_plane_extrudes_along_minus_y() {
-    let _serial = occt_guard();
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     // Front (XZ) plane: sketch x → world X, sketch y → world Z, normal -Y.
@@ -199,7 +187,7 @@ fn pad_on_front_plane_extrudes_along_minus_y() {
     .unwrap();
 
     let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -212,7 +200,6 @@ fn pad_on_front_plane_extrudes_along_minus_y() {
 
 #[test]
 fn editing_the_pad_length_changes_the_solid() {
-    let _serial = occt_guard();
     let (mut doc, body, sketch_id) = setup(10.0, 5.0);
     let pad_id = doc
         .add_feature_in_body(
@@ -230,7 +217,7 @@ fn editing_the_pad_length_changes_the_solid() {
     assert_eq!(wb_part::pending_body_rebuilds(&doc), vec![body]);
 
     let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -241,7 +228,6 @@ fn editing_the_pad_length_changes_the_solid() {
 
 #[test]
 fn revolution_feature_builds_a_ring_through_the_full_stack() {
-    let _serial = occt_guard();
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     // Rectangle x ∈ [5, 8], y ∈ [0, 2]: revolving about the sketch Y axis
@@ -273,7 +259,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
     .unwrap();
 
     let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
@@ -293,7 +279,6 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
 
 #[test]
 fn fillet_feature_rounds_the_pad_through_the_full_stack() {
-    let _serial = occt_guard();
     let (mut doc, body, sketch_id) = setup(20.0, 20.0);
     doc.add_feature_in_body(
         pad_feature(sketch_id, 10.0, false, false),
@@ -302,7 +287,7 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
     )
     .unwrap();
 
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let detail = TessellationSettings::default();
     let plain = kernel
         .execute_solid_chain(&wb_part::body_build_ops(&doc, body).unwrap().ops, &detail)
@@ -328,7 +313,6 @@ fn fillet_feature_rounds_the_pad_through_the_full_stack() {
 
 #[test]
 fn hole_feature_drills_the_pad_through_the_full_stack() {
-    let _serial = occt_guard();
     let (mut doc, body, rect_id) = setup(30.0, 20.0);
     doc.add_feature_in_body(
         pad_feature(rect_id, 6.0, false, false),
@@ -369,7 +353,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     )
     .unwrap();
 
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let plan = wb_part::body_build_ops(&doc, body).unwrap();
     let result = kernel
         .execute_solid_chain(&plan.ops, &TessellationSettings::default())
@@ -382,7 +366,6 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
 
 #[test]
 fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
-    let _serial = occt_guard();
     let (mut doc, body, plate_id) = setup(60.0, 20.0);
     doc.add_feature_in_body(
         pad_feature(plate_id, 4.0, false, false),
@@ -423,7 +406,7 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
     )
     .unwrap();
 
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let plan = wb_part::body_build_ops(&doc, body).unwrap();
     assert_eq!(plan.ops.len(), 3);
     let result = kernel
@@ -437,7 +420,6 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
 
 #[test]
 fn symmetric_pad_straddles_the_sketch_plane() {
-    let _serial = occt_guard();
     let (mut doc, body, sketch_id) = setup(10.0, 5.0);
     doc.add_feature_in_body(
         pad_feature(sketch_id, 8.0, false, true),
@@ -446,7 +428,7 @@ fn symmetric_pad_straddles_the_sketch_plane() {
     )
     .unwrap();
     let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
-    let mut kernel = OcctKernel::new();
+    let mut kernel = OgeomKernel::new();
     let result = kernel
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();

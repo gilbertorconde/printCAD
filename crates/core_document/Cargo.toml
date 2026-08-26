@@ -10,6 +10,7 @@ default = []
 egui = ["dep:egui"]
 
 [dependencies]
+tracing = { workspace = true }
 serde.workspace = true
 thiserror.workspace = true
 serde_json.workspace = true

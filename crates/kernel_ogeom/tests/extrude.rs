@@ -1,4 +1,4 @@
-//! Sketch-profile solid-op (pad/pocket/revolve) tests for the OCCT kernel.
+//! Sketch-profile solid-op (pad/pocket/revolve) tests for the kernel.
 //!
 //! Every test builds simple analytic profiles (rectangles, circles, arcs) and
 //! checks the resulting solid via its render-mesh bounds, triangle counts,
@@ -8,25 +8,12 @@ use kernel_api::{
     BooleanOp, ExtrudeTermination, Profile, ProfilePlane, ProfileSegment, ProfileWire, SolidOp,
     SweepKind, TessellationSettings, TriMesh,
 };
-use kernel_occt::OcctKernel;
-use std::sync::{Mutex, MutexGuard};
+use kernel_ogeom::OgeomKernel;
 
-/// OCCT's modelling machinery relies on process-global state and is not safe
-/// across concurrent kernels in one process, so the tests in this binary
-/// serialize on this mutex. The production app is safe because all OCCT work
-/// funnels through the single kernel-worker thread.
-static OCCT_SERIAL: Mutex<()> = Mutex::new(());
-
-fn occt_guard() -> MutexGuard<'static, ()> {
-    OCCT_SERIAL
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-}
-
-fn new_kernel() -> OcctKernel {
+fn new_kernel() -> OgeomKernel {
     use kernel_api::Kernel;
-    let mut kernel = OcctKernel::new();
-    kernel.initialize().expect("initialize OCCT kernel");
+    let mut kernel = OgeomKernel::new();
+    kernel.initialize().expect("initialize kernel");
     kernel
 }
 
@@ -138,7 +125,7 @@ fn assert_close(actual: f32, expected: f32, tol: f32, what: &str) {
 /// Re-tessellate a solid-chain BRep snapshot. Swept shapes do not expose their
 /// face count through `SolidBuildResult`, so probe the all-white colour-table
 /// size until the shim accepts it (it requires an exact face-count match).
-fn retessellate(kernel: &OcctKernel, blob: &[u8], detail: &TessellationSettings) -> TriMesh {
+fn retessellate(kernel: &OgeomKernel, blob: &[u8], detail: &TessellationSettings) -> TriMesh {
     for face_count in 1..=32 {
         let colors = vec![[1.0_f32, 1.0, 1.0]; face_count];
         if let Ok(mesh) = kernel.tessellate_step_brep(blob, &colors, detail) {
@@ -150,7 +137,6 @@ fn retessellate(kernel: &OcctKernel, blob: &[u8], detail: &TessellationSettings)
 
 #[test]
 fn pads_rectangle_to_box() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -188,7 +174,6 @@ fn pads_rectangle_to_box() {
 
 #[test]
 fn pads_circle_to_cylinder() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -212,7 +197,6 @@ fn pads_circle_to_cylinder() {
 
 #[test]
 fn rectangle_with_circular_hole_keeps_bounds_and_adds_triangles() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -255,7 +239,6 @@ fn rectangle_with_circular_hole_keeps_bounds_and_adds_triangles() {
 
 #[test]
 fn cut_pocket_keeps_outer_bounds() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -290,7 +273,6 @@ fn cut_pocket_keeps_outer_bounds() {
 
 #[test]
 fn fuse_grows_bounds() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -315,7 +297,6 @@ fn fuse_grows_bounds() {
 
 #[test]
 fn negative_distance_extrudes_backwards() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -336,7 +317,6 @@ fn negative_distance_extrudes_backwards() {
 
 #[test]
 fn invalid_chains_error_instead_of_crashing() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -385,7 +365,6 @@ fn invalid_chains_error_instead_of_crashing() {
 
 #[test]
 fn arc_profile_pads_successfully() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -425,7 +404,6 @@ fn arc_profile_pads_successfully() {
 
 #[test]
 fn brep_blob_round_trips_through_step_brep_tessellation() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -460,7 +438,6 @@ fn brep_blob_round_trips_through_step_brep_tessellation() {
 
 #[test]
 fn offset_plane_places_pad_at_origin_height() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -486,7 +463,6 @@ fn offset_plane_places_pad_at_origin_height() {
 
 #[test]
 fn symmetric_extrude_straddles_sketch_plane() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -528,7 +504,6 @@ fn symmetric_extrude_straddles_sketch_plane() {
 
 #[test]
 fn full_revolve_of_offset_rectangle_makes_ring() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -570,7 +545,6 @@ fn full_revolve_of_offset_rectangle_makes_ring() {
 
 #[test]
 fn partial_revolve_sweeps_half_space_only() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -604,7 +578,6 @@ fn partial_revolve_sweeps_half_space_only() {
 
 #[test]
 fn groove_cut_by_revolve_keeps_box_bounds() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -671,7 +644,6 @@ fn groove_cut_by_revolve_keeps_box_bounds() {
 
 #[test]
 fn revolve_angle_out_of_range_errors() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 
@@ -697,7 +669,6 @@ fn revolve_angle_out_of_range_errors() {
 
 #[test]
 fn revolve_zero_axis_direction_errors() {
-    let _serial = occt_guard();
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
 

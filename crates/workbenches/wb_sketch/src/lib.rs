@@ -1,6 +1,8 @@
 mod feature;
 mod geom2d;
+mod glyphs;
 mod overlay;
+mod ovp;
 pub mod profile;
 pub mod render;
 pub mod sketch;
@@ -9,13 +11,16 @@ mod solver;
 mod tools;
 
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use core_document::{
-    BodyId, CommandDescriptor, FeatureId, InputResult, ToolDescriptor, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    BodyId, CommandDescriptor, FeatureId, InputResult, KeyCode, ScreenSpaceLabel, ToolDescriptor,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 pub use feature::SketchFeature;
 use overlay::SketchProjector;
+use ovp::DimCapture;
 use sketch::{
     AxisDirection, Constraint, ConstraintKind, GeometryElement, Sketch, SketchPlane, Vec2D,
 };
@@ -83,6 +88,36 @@ struct DragState {
     additive: bool,
 }
 
+/// In-progress drag of a dimension label (select mode).
+struct LabelDrag {
+    constraint: Uuid,
+    /// Cursor position (sketch coords) at press time.
+    grab: Vec2D,
+    /// `label_offset` at press time, restored on Escape.
+    original: Option<Vec2D>,
+    /// Offset the glyph was drawn with at press time (default when unset).
+    base: Vec2D,
+}
+
+/// An in-viewport dimension edit (opened by double-clicking a dimensional
+/// glyph; drawn as an egui window from the left-panel hook).
+pub struct DimEdit {
+    pub constraint: Uuid,
+    /// Label position at open time, viewport px.
+    pub screen_pos: [f32; 2],
+    pub text: String,
+    pub driving: bool,
+}
+
+/// A constraint glyph resolved under a click.
+struct GlyphHit {
+    constraint: Uuid,
+    dimensional: bool,
+    pos: [f32; 2],
+}
+
+const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
+
 /// Sketch workbench: 2D drawing with constraints.
 #[derive(Default)]
 pub struct SketchWorkbench {
@@ -125,6 +160,16 @@ pub struct SketchWorkbench {
     /// The current `hovered` came from the elements panel (cleared when the
     /// panel stops hovering, so viewport hover can take over again).
     hover_from_panel: bool,
+    /// Selected constraint ids (glyph click; ctrl additive).
+    selected_constraints: HashSet<Uuid>,
+    /// Dimension label being dragged (select mode).
+    label_drag: Option<LabelDrag>,
+    /// Pending in-viewport dimension edit.
+    dim_edit: Option<DimEdit>,
+    /// Last glyph press, for double-click detection.
+    last_glyph_click: Option<(Uuid, Instant)>,
+    /// On-view parameter capture for the active drawing tool.
+    dim_capture: DimCapture,
 }
 
 impl SketchWorkbench {
@@ -173,6 +218,7 @@ impl SketchWorkbench {
             }
         } else {
             self.selected.clear();
+            self.selected_constraints.clear();
             self.selected.insert(id);
         }
     }
@@ -187,6 +233,11 @@ impl SketchWorkbench {
         self.box_select = None;
         self.last_diagnosis = None;
         self.pending_focus = None;
+        self.selected_constraints.clear();
+        self.label_drag = None;
+        self.dim_edit = None;
+        self.last_glyph_click = None;
+        self.dim_capture = DimCapture::default();
     }
 
     fn sync_active_sketch_from_ctx(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -290,13 +341,89 @@ impl SketchWorkbench {
         }
     }
 
+    /// Advance the active drawing tool with a click at `cursor` (sketch
+    /// coords): typed on-view parameters override the position and become
+    /// driving constraints after the shape commits.
+    fn apply_tool_click(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: &str,
+        cursor: Vec2D,
+    ) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let plane = feature.plane;
+        let tol = Self::snap_tolerance(ctx, &plane);
+        self.dim_capture.sync(&self.tool_state);
+        let typed = self.dim_capture.typed();
+        let cursor = if typed.is_empty() {
+            cursor
+        } else {
+            ovp::override_cursor(&self.tool_state, &feature.sketch, cursor, &typed)
+        };
+        // Remember which geometry existed so construction mode can
+        // flag everything the tool created, regardless of which
+        // tool ran (an id set, not a Vec index: the fillet tool
+        // also *removes* the corner point, shifting indices).
+        let before: Option<HashSet<Uuid>> = self.construction_mode.then(|| {
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect()
+        });
+        let state_before = self.tool_state.clone();
+        let effect = tools::handle_click(
+            &mut self.tool_state,
+            tool,
+            &mut feature.sketch,
+            cursor,
+            tol,
+            &self.tool_params,
+            &self.selected,
+        );
+        if let Some(before) = before {
+            let new_ids: Vec<Uuid> = feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .filter(|id| !before.contains(id))
+                .collect();
+            for id in new_ids {
+                feature.sketch.set_construction(id, true);
+            }
+        }
+        let added = ovp::apply_typed_constraints(
+            &mut self.dim_capture,
+            &mut feature.sketch,
+            &state_before,
+            &self.tool_state,
+            effect.changed,
+            &typed,
+        );
+        if effect.changed {
+            self.dim_capture.clear_buffers();
+        }
+        if effect.changed || added > 0 {
+            self.solve(ctx, &mut feature);
+            if let Some(log) = effect.log {
+                ctx.log_info(log);
+            }
+            self.store_sketch(ctx, feature);
+        }
+        InputResult::consumed()
+    }
+
     fn handle_left_click(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         tool: Option<&str>,
         viewport_pos: (f32, f32),
     ) -> InputResult {
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
         let plane = feature.plane;
@@ -307,56 +434,18 @@ impl SketchWorkbench {
         self.cursor = Some(cursor);
 
         match tool {
-            Some(t) if t != "sketch.select" => {
-                // Remember which geometry existed so construction mode can
-                // flag everything the tool created, regardless of which
-                // tool ran (an id set, not a Vec index: the fillet tool
-                // also *removes* the corner point, shifting indices).
-                let before: Option<HashSet<Uuid>> = self.construction_mode.then(|| {
-                    feature
-                        .sketch
-                        .geometry
-                        .iter()
-                        .map(GeometryElement::id)
-                        .collect()
-                });
-                let effect = tools::handle_click(
-                    &mut self.tool_state,
-                    t,
-                    &mut feature.sketch,
-                    cursor,
-                    tol,
-                    &self.tool_params,
-                    &self.selected,
-                );
-                if let Some(before) = before {
-                    let new_ids: Vec<Uuid> = feature
-                        .sketch
-                        .geometry
-                        .iter()
-                        .map(GeometryElement::id)
-                        .filter(|id| !before.contains(id))
-                        .collect();
-                    for id in new_ids {
-                        feature.sketch.set_construction(id, true);
-                    }
-                }
-                if effect.changed {
-                    self.solve(ctx, &mut feature);
-                    if let Some(log) = effect.log {
-                        ctx.log_info(log);
-                    }
-                    self.store_sketch(ctx, feature);
-                }
-                InputResult::consumed()
-            }
+            Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor),
             _ => {
-                // Select mode. Pressing on a point begins a drag (the
-                // release decides between "click to select" and "drag
+                // Select mode. Constraint glyphs sit on top of geometry, so
+                // they win the hit-test. Pressing on a point begins a drag
+                // (the release decides between "click to select" and "drag
                 // finished"); curves select immediately. A plain click
                 // REPLACES the selection, ctrl+click toggles the element
                 // in/out of it (multi-select). Empty space starts a box
                 // selection (resolved on release).
+                if let Some(hit) = self.glyph_hit(ctx, &feature, viewport_pos) {
+                    return self.handle_glyph_press(ctx, &feature, hit, cursor);
+                }
                 match snap::hit_test(&feature.sketch, cursor, tol) {
                     Some(id) if feature.sketch.point_position(id).is_some() => {
                         self.dragging = Some(DragState {
@@ -387,6 +476,81 @@ impl SketchWorkbench {
         }
     }
 
+    /// The constraint glyph under a viewport click, if any.
+    fn glyph_hit(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        viewport_pos: (f32, f32),
+    ) -> Option<GlyphHit> {
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints);
+        glyphs::hit_test(&glyphs, [viewport_pos.0, viewport_pos.1]).map(|g| GlyphHit {
+            constraint: g.constraint,
+            dimensional: g.dimensional,
+            pos: g.pos,
+        })
+    }
+
+    /// Click on a constraint glyph: select it (ctrl additive), start a
+    /// label drag on dimension labels, open the value editor on
+    /// double-click.
+    fn handle_glyph_press(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        hit: GlyphHit,
+        cursor: Vec2D,
+    ) -> InputResult {
+        let now = Instant::now();
+        let double = self.last_glyph_click.take().is_some_and(|(id, t)| {
+            id == hit.constraint && now.duration_since(t) < DOUBLE_CLICK_WINDOW
+        });
+        self.last_glyph_click = Some((hit.constraint, now));
+        let constraint = feature
+            .sketch
+            .constraints
+            .iter()
+            .find(|c| c.id == hit.constraint);
+
+        if double && hit.dimensional {
+            if let Some(c) = constraint {
+                self.dim_edit = Some(DimEdit {
+                    constraint: c.id,
+                    screen_pos: hit.pos,
+                    text: sketch::dimension_value(&c.kind)
+                        .map(glyphs::fmt_num)
+                        .unwrap_or_default(),
+                    driving: c.driving,
+                });
+            }
+            self.label_drag = None;
+            return InputResult::consumed();
+        }
+
+        if ctx.ctrl_down {
+            if !self.selected_constraints.remove(&hit.constraint) {
+                self.selected_constraints.insert(hit.constraint);
+            }
+        } else {
+            self.selected.clear();
+            self.selected_constraints.clear();
+            self.selected_constraints.insert(hit.constraint);
+        }
+        if hit.dimensional {
+            let proj = SketchProjector::new(ctx, feature.plane);
+            let base = glyphs::default_label_offset(proj.units_per_px());
+            let original = constraint.and_then(|c| c.label_offset);
+            self.label_drag = Some(LabelDrag {
+                constraint: hit.constraint,
+                grab: cursor,
+                original,
+                base: original.unwrap_or(base),
+            });
+        }
+        InputResult::consumed()
+    }
+
     fn handle_mouse_move(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -399,6 +563,18 @@ impl SketchWorkbench {
         let plane = feature.plane;
         self.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
 
+        // Dimension label drag: purely cosmetic, no solver run needed.
+        if let Some(ld) = &self.label_drag {
+            if let Some(cursor) = self.cursor {
+                let offset = ld.base + (cursor - ld.grab);
+                let id = ld.constraint;
+                if let Some(c) = feature.sketch.constraints.iter_mut().find(|c| c.id == id) {
+                    c.label_offset = Some(offset);
+                    self.store_sketch(ctx, feature);
+                }
+            }
+            return InputResult::consumed();
+        }
         // Constraint-aware point drag: move the point to the cursor and let
         // the solver re-project it onto whatever its constraints allow.
         // Consumed so the camera doesn't orbit underneath the drag.
@@ -437,6 +613,9 @@ impl SketchWorkbench {
     }
 
     fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.label_drag.take().is_some() {
+            return InputResult::consumed();
+        }
         if let Some(bs) = self.box_select.take() {
             return self.finish_box_select(ctx, bs);
         }
@@ -467,6 +646,7 @@ impl SketchWorkbench {
         if (bs.current - bs.anchor).to_glam().length() <= tol {
             if !bs.additive {
                 self.selected.clear();
+                self.selected_constraints.clear();
             }
             return InputResult::consumed();
         }
@@ -474,6 +654,7 @@ impl SketchWorkbench {
         let max = Vec2D::new(bs.anchor.x.max(bs.current.x), bs.anchor.y.max(bs.current.y));
         if !bs.additive {
             self.selected.clear();
+            self.selected_constraints.clear();
         }
         for geom in &feature.sketch.geometry {
             if element_fully_inside(&feature.sketch, geom, min, max) {
@@ -572,6 +753,24 @@ impl SketchWorkbench {
     }
 
     fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        if self.dim_edit.take().is_some() {
+            return InputResult::consumed();
+        }
+        if let Some(ld) = self.label_drag.take() {
+            // Restore the pre-drag label offset.
+            if let Some(mut feature) = self.get_active_sketch(ctx) {
+                if let Some(c) = feature
+                    .sketch
+                    .constraints
+                    .iter_mut()
+                    .find(|c| c.id == ld.constraint)
+                {
+                    c.label_offset = ld.original;
+                    self.store_sketch(ctx, feature);
+                }
+            }
+            return InputResult::consumed();
+        }
         if self.box_select.take().is_some() {
             // Cancel the box; the selection it would have replaced stays.
             return InputResult::consumed();
@@ -598,10 +797,129 @@ impl SketchWorkbench {
         if !self.tool_state.is_idle() {
             self.tool_state = ToolState::Idle;
             ctx.log_info("Sketch: cancelled current tool operation");
-        } else if !self.selected.is_empty() {
+        } else if !self.selected.is_empty() || !self.selected_constraints.is_empty() {
             self.selected.clear();
+            self.selected_constraints.clear();
         }
         InputResult::consumed()
+    }
+
+    /// Delete the selected constraints (glyph selection) and re-solve.
+    fn delete_selected_constraints(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let doomed: HashSet<Uuid> = self.selected_constraints.drain().collect();
+        let before = feature.sketch.constraints.len();
+        feature
+            .sketch
+            .constraints
+            .retain(|c| !doomed.contains(&c.id));
+        let removed = before - feature.sketch.constraints.len();
+        if removed == 0 {
+            return InputResult::consumed();
+        }
+        self.solve(ctx, &mut feature);
+        ctx.log_info(format!("Deleted {removed} constraint(s)"));
+        self.store_sketch(ctx, feature);
+        InputResult::consumed()
+    }
+
+    /// Enter with typed on-view parameters: commit the pending click at the
+    /// derived position without a mouse click.
+    fn commit_typed_enter(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: Option<&str>,
+    ) -> InputResult {
+        let Some(tool) = tool.filter(|t| *t != "sketch.select") else {
+            return InputResult::ignored();
+        };
+        // Anchor the derived position on the last known cursor; the
+        // override falls back to the +x direction when it is degenerate.
+        let cursor = self.cursor.unwrap_or(Vec2D::new(0.0, 0.0));
+        self.apply_tool_click(ctx, tool, cursor)
+    }
+
+    /// Consolidated key handling: on-view parameter capture first (typing
+    /// digits into the focused dimension field), then the global keys.
+    fn handle_key_press(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: Option<&str>,
+        key: KeyCode,
+    ) -> InputResult {
+        self.dim_capture.sync(&self.tool_state);
+        if self.dim_capture.is_active() {
+            match key {
+                KeyCode::Enter if self.dim_capture.has_typed_input() => {
+                    return self.commit_typed_enter(ctx, tool);
+                }
+                KeyCode::Escape if self.dim_capture.has_typed_input() => {
+                    self.dim_capture.clear_buffers();
+                    return InputResult::consumed();
+                }
+                _ => {
+                    if self.dim_capture.handle_key(key) {
+                        return InputResult::consumed();
+                    }
+                }
+            }
+        }
+        match key {
+            KeyCode::Escape => self.handle_escape(ctx),
+            KeyCode::Enter => self.handle_finish_gesture(ctx),
+            KeyCode::Delete | KeyCode::Backspace => {
+                if self.selected_constraints.is_empty() {
+                    self.delete_selected(ctx)
+                } else {
+                    self.delete_selected_constraints(ctx)
+                }
+            }
+            _ => InputResult::ignored(),
+        }
+    }
+
+    /// The pending in-viewport dimension edit, if one is open.
+    pub fn pending_dim_edit(&self) -> Option<&DimEdit> {
+        self.dim_edit.as_ref()
+    }
+
+    /// Mutable access to the pending dimension edit (text/driving fields).
+    pub fn pending_dim_edit_mut(&mut self) -> Option<&mut DimEdit> {
+        self.dim_edit.as_mut()
+    }
+
+    /// Close the pending dimension edit without applying it.
+    pub fn cancel_dim_edit(&mut self) {
+        self.dim_edit = None;
+    }
+
+    /// Commit the pending dimension edit: parse the value, update the
+    /// constraint's value and driving flag, re-solve and persist.
+    pub fn commit_dim_edit(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(edit) = self.dim_edit.take() else {
+            return;
+        };
+        let Ok(value) = edit.text.trim().parse::<f32>() else {
+            ctx.log_warn(format!("Not a number: {}", edit.text));
+            return;
+        };
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some(c) = feature
+            .sketch
+            .constraints
+            .iter_mut()
+            .find(|c| c.id == edit.constraint)
+        else {
+            return;
+        };
+        c.kind = sketch::with_dimension_value(&c.kind, value);
+        c.driving = edit.driving;
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// Replace the constraint at `idx` with `constraint`, then re-solve and
@@ -785,18 +1103,7 @@ impl Workbench for SketchWorkbench {
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
                 self.handle_mouse_move(ctx, tool, *viewport_pos)
             }
-            WorkbenchInputEvent::KeyPress {
-                key: core_document::KeyCode::Escape,
-            } => self.handle_escape(ctx),
-            WorkbenchInputEvent::KeyPress {
-                key: core_document::KeyCode::Enter,
-            } => self.handle_finish_gesture(ctx),
-            WorkbenchInputEvent::KeyPress {
-                key: core_document::KeyCode::Delete,
-            }
-            | WorkbenchInputEvent::KeyPress {
-                key: core_document::KeyCode::Backspace,
-            } => self.delete_selected(ctx),
+            WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
             _ => InputResult::ignored(),
         }
     }
@@ -804,6 +1111,7 @@ impl Workbench for SketchWorkbench {
     #[cfg(feature = "egui")]
     fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
         self.sync_active_sketch_from_ctx(ctx);
+        self.dim_edit_window(ui, ctx);
 
         ui.heading("Sketcher");
 
@@ -998,10 +1306,17 @@ impl Workbench for SketchWorkbench {
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let snap_tol = SNAP_TOLERANCE_PX * proj.units_per_px();
-        overlay::build_overlays(
+        // Selected constraints highlight their referenced geometry too.
+        let mut selected = self.selected.clone();
+        for c in &feature.sketch.constraints {
+            if self.selected_constraints.contains(&c.id) {
+                selected.extend(sketch::constraint_refs(&c.kind));
+            }
+        }
+        let mut out = overlay::build_overlays(
             &proj,
             &feature.sketch,
-            &self.selected,
+            &selected,
             self.hovered,
             &self.tool_state,
             self.cursor,
@@ -1009,12 +1324,90 @@ impl Workbench for SketchWorkbench {
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),
             self.last_tool.as_deref(),
             snap_tol,
-        )
+        );
+        let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints);
+        out.extend(glyphs::leader_overlays(&glyphs));
+        out
+    }
+
+    fn get_screen_space_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceLabel> {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return Vec::new();
+        };
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let mut out: Vec<ScreenSpaceLabel> =
+            glyphs::build(&feature.sketch, &proj, &self.selected_constraints)
+                .into_iter()
+                .map(glyphs::Glyph::into_label)
+                .collect();
+        // On-view parameter readouts stack next to the cursor.
+        if let Some(cursor) = self.cursor {
+            if let Some(px) = proj.to_px(cursor) {
+                out.extend(ovp::readout_labels(
+                    &self.dim_capture,
+                    &self.tool_state,
+                    &feature.sketch,
+                    cursor,
+                    px,
+                ));
+            }
+        }
+        out
     }
 }
 
 #[cfg(feature = "egui")]
 impl SketchWorkbench {
+    /// In-viewport dimension editor (opened by double-clicking a
+    /// dimensional glyph), drawn as a floating window near the label.
+    fn dim_edit_window(&mut self, ui: &egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(edit) = self.dim_edit.as_mut() else {
+            return;
+        };
+        let ppp = ui.ctx().pixels_per_point().max(0.1);
+        let (vx, vy, ..) = ctx.viewport;
+        let pos = egui::pos2(
+            (vx as f32 + edit.screen_pos[0]) / ppp + 12.0,
+            (vy as f32 + edit.screen_pos[1]) / ppp + 12.0,
+        );
+        let mut commit = false;
+        let mut cancel = false;
+        egui::Window::new("Dimension")
+            .id(egui::Id::new("sketch_dim_edit"))
+            .collapsible(false)
+            .resizable(false)
+            .fixed_pos(pos)
+            .show(ui.ctx(), |ui| {
+                let response =
+                    ui.add(egui::TextEdit::singleline(&mut edit.text).desired_width(80.0));
+                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    commit = true;
+                }
+                ui.checkbox(&mut edit.driving, "Driving")
+                    .on_hover_text("Off = reference dimension (measured, not enforced)");
+                ui.horizontal(|ui| {
+                    if ui.button("OK").clicked() {
+                        commit = true;
+                    }
+                    if ui.button("Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                    cancel = true;
+                }
+            });
+        if commit {
+            self.commit_dim_edit(ctx);
+        } else if cancel {
+            self.dim_edit = None;
+        }
+    }
+
     /// Settings for the active drawing tool (shown while it is selected).
     fn tool_settings_ui(&mut self, ui: &mut egui::Ui) {
         let mm_value = |ui: &mut egui::Ui, label: &str, value: &mut f32| {
@@ -1632,54 +2025,6 @@ enum RowFlag {
     Redundant,
 }
 
-/// Editable value of a dimensional kind in display units (degrees for
-/// angles, mm otherwise); `None` for non-dimensional kinds.
-#[cfg(feature = "egui")]
-fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
-    match *kind {
-        ConstraintKind::Length { length, .. } => Some(length),
-        ConstraintKind::Radius { radius, .. } => Some(radius),
-        ConstraintKind::Diameter { diameter, .. } => Some(diameter),
-        ConstraintKind::Distance { distance, .. } => Some(distance),
-        ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } => {
-            Some(value)
-        }
-        ConstraintKind::Angle { angle_rad, .. } | ConstraintKind::AngleToAxis { angle_rad, .. } => {
-            Some(angle_rad.to_degrees())
-        }
-        _ => None,
-    }
-}
-
-/// The kind with its dimensional value replaced (display units, see
-/// `dimension_value`). Non-dimensional kinds are returned unchanged.
-#[cfg(feature = "egui")]
-fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
-    let mut kind = kind.clone();
-    match &mut kind {
-        ConstraintKind::Length { length, .. } => *length = v,
-        ConstraintKind::Radius { radius, .. } => *radius = v,
-        ConstraintKind::Diameter { diameter, .. } => *diameter = v,
-        ConstraintKind::Distance { distance, .. } => *distance = v,
-        ConstraintKind::DistanceX { value, .. } | ConstraintKind::DistanceY { value, .. } => {
-            *value = v
-        }
-        ConstraintKind::Angle { angle_rad, .. } | ConstraintKind::AngleToAxis { angle_rad, .. } => {
-            *angle_rad = v.to_radians()
-        }
-        _ => {}
-    }
-    kind
-}
-
-#[cfg(feature = "egui")]
-fn is_angular(kind: &ConstraintKind) -> bool {
-    matches!(
-        kind,
-        ConstraintKind::Angle { .. } | ConstraintKind::AngleToAxis { .. }
-    )
-}
-
 /// One row of the constraint list: active toggle, (tinted) label, rename
 /// field, and — for dimensional constraints — either an editable value
 /// (driving) or the measured value in blue (reference), plus the driving
@@ -1721,8 +2066,8 @@ fn constraint_row(
     ui.colored_label(color, label)
         .on_hover_text(sketch::constraint_label(&constraint.kind));
 
-    if let Some(value) = dimension_value(&constraint.kind) {
-        let angular = is_angular(&constraint.kind);
+    if let Some(value) = sketch::dimension_value(&constraint.kind) {
+        let angular = sketch::is_angular(&constraint.kind);
         if constraint.driving && constraint.active {
             let mut v = value;
             let mut drag = egui::DragValue::new(&mut v).speed(if angular { 1.0 } else { 0.1 });
@@ -1737,7 +2082,7 @@ fn constraint_row(
                 response.scroll_to_me(None);
             }
             if response.changed() {
-                edit(&|c| c.kind = with_dimension_value(&c.kind, v));
+                edit(&|c| c.kind = sketch::with_dimension_value(&c.kind, v));
             }
         } else {
             // Reference dimension: measured, shown in blue (grey when the

@@ -580,6 +580,8 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
         });
 }
 
+/// Returns true when the user asked to stop the running kernel job.
+#[expect(clippy::too_many_arguments)]
 pub fn draw_bottom_panel(
     ui: &mut egui::Ui,
     fps: f32,
@@ -588,7 +590,12 @@ pub fn draw_bottom_panel(
     display_unit: Unit,
     pending_imports: u32,
     pending_document_open: u32,
-) {
+    kernel_status: Option<&str>,
+    kernel_cancellable: bool,
+    kernel_progress: Option<(u64, u64)>,
+    document_saving: bool,
+) -> bool {
+    let mut cancel_requested = false;
     egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
             let fps_text = if fps > 0.0 {
@@ -628,27 +635,94 @@ pub fn draw_bottom_panel(
                 ui.label(parts.join("  "));
             }
 
-            // Right-aligned activity indicator: spinner while the kernel worker
-            // imports STEP or a document loads from disk off the UI thread.
+            // Right-aligned activity indicator: spinner while the kernel
+            // worker builds geometry or a document loads from disk off the UI
+            // thread. The kernel announces its own stages, so prefer those
+            // over guessing from the job count.
             if pending_imports > 0 || pending_document_open > 0 {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut parts = Vec::new();
-                    if pending_imports > 0 {
-                        if pending_imports == 1 {
-                            parts.push("Importing STEP…".to_string());
-                        } else {
-                            parts.push(format!("Importing {pending_imports} STEPs…"));
+                    if kernel_cancellable && ui.small_button("Cancel").clicked() {
+                        cancel_requested = true;
+                    }
+                    // A stage that announced its counts earns a real bar;
+                    // anything else keeps the honest spinner.
+                    match kernel_progress {
+                        Some((done, total)) if total > 0 => {
+                            ui.add(
+                                egui::ProgressBar::new(done as f32 / total as f32)
+                                    .desired_width(120.0)
+                                    .text(format!("{done}/{total}")),
+                            );
+                        }
+                        _ => {
+                            ui.add(egui::Spinner::new());
                         }
                     }
-                    if pending_document_open > 0 {
+
+                    let mut parts = Vec::new();
+                    match kernel_status {
+                        Some(status) => parts.push(status.to_owned()),
+                        // Nothing announced yet: say only what we know for
+                        // certain, which is how many jobs are outstanding.
+                        None if pending_imports == 1 => parts.push("Working…".to_string()),
+                        None if pending_imports > 1 => {
+                            parts.push(format!("Working… ({pending_imports} jobs)"));
+                        }
+                        None => {}
+                    }
+                    if document_saving {
+                        parts.push("Saving document…".to_string());
+                    } else if pending_document_open > 0 {
                         parts.push("Opening document…".to_string());
                     }
                     ui.label(parts.join(" · "));
-                    ui.add(egui::Spinner::new());
                 });
             }
         });
     });
+    cancel_requested
+}
+
+/// Draw screen-space text labels in the viewport area (dimension values,
+/// constraint glyphs, on-view parameter readouts). Coordinates arrive in
+/// physical pixels relative to the viewport origin, like overlay lines.
+pub fn draw_screen_space_labels(
+    ctx: &egui::Context,
+    viewport_rect: egui::Rect,
+    labels: &[core_document::ScreenSpaceLabel],
+) {
+    if labels.is_empty() {
+        return;
+    }
+    let ppp = ctx.pixels_per_point();
+    let layer_id = egui::LayerId::new(
+        egui::Order::Background,
+        egui::Id::new("screen_space_labels"),
+    );
+    let painter = ctx.layer_painter(layer_id).with_clip_rect(viewport_rect);
+
+    for label in labels {
+        let pos = egui::pos2(
+            viewport_rect.min.x + label.pos[0] / ppp,
+            viewport_rect.min.y + label.pos[1] / ppp,
+        );
+        let color = Color32::from_rgb(
+            (label.color[0] * 255.0) as u8,
+            (label.color[1] * 255.0) as u8,
+            (label.color[2] * 255.0) as u8,
+        );
+        let font = egui::FontId::proportional(label.size / ppp);
+        let galley = painter.layout_no_wrap(label.text.clone(), font, color);
+        let rect = egui::Rect::from_center_size(pos, galley.size());
+        if label.background {
+            painter.rect_filled(
+                rect.expand2(egui::vec2(4.0, 2.0)),
+                3.0,
+                Color32::from_rgba_unmultiplied(20, 20, 24, 210),
+            );
+        }
+        painter.galley(rect.min, galley, color);
+    }
 }
 
 pub fn draw_pivot_indicator(ctx: &Context, x: f32, y: f32) {

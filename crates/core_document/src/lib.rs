@@ -32,8 +32,8 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use units::{format_length_mm, Unit};
 pub use workbench::{
-    CommandDescriptor, ScreenSpaceOverlay, ToolBehavior, ToolDescriptor, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
+    CommandDescriptor, ScreenSpaceLabel, ScreenSpaceOverlay, ToolBehavior, ToolDescriptor,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
 };
 
 /// Result type for document operations.
@@ -60,7 +60,7 @@ impl WorkbenchStorage {
 /// (optionally gzip- or zstd-compressed) containing:
 /// - `document.json` - This document structure (serialized)
 /// - `assets/` - External files (STEP, STL, etc.) referenced by the document
-/// - `brep/` - Per-body OCCT B-Rep snapshots and face-color sidecars
+/// - `brep/` - Per-body shape snapshots (ogeom native text) and face-color sidecars
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Document {
     metadata: DocumentMetadata,
@@ -859,12 +859,24 @@ impl Document {
             }
         }
 
-        // Restore BRep sidecars for imported geometry.
+        // Restore shape-snapshot sidecars for imported geometry. Blobs are
+        // ogeom native-format text ("ogeom" magic); snapshots written by the
+        // previous kernel are unreadable now — drop them with a clear log
+        // line rather than failing later with a parse error (the body's mesh
+        // still loads; re-import the STEP source to restore the solid).
         for (body_id, geom) in &doc.imported_meshes {
             if let Some(ref brep_path) = geom.brep_blob_path {
                 if let Some(bytes) = blobs_by_path.remove(brep_path) {
-                    doc.imported_brep_blobs
-                        .insert(*body_id, std::sync::Arc::new(bytes));
+                    if bytes.starts_with(b"ogeom") {
+                        doc.imported_brep_blobs
+                            .insert(*body_id, std::sync::Arc::new(bytes));
+                    } else {
+                        tracing::warn!(
+                            body = ?body_id,
+                            "shape snapshot predates the ogeom kernel; \
+                             re-import the STEP source to restore this body's solid"
+                        );
+                    }
                 }
             }
             if let Some(ref col_path) = geom.face_colors_path {

@@ -1,0 +1,19 @@
+[package]
+name = "kernel_ogeom"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+kernel_api = { path = "../kernel_api" }
+ogeom = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+core_document = { path = "../core_document" }
+wb_part = { path = "../workbenches/wb_part" }
+wb_sketch = { path = "../workbenches/wb_sketch" }

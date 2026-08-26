@@ -21,7 +21,7 @@
 - **Core services**:
   - Document manager with versioned history.
   - Feature/constraint graph engine with dependency tracking.
-  - Geometry kernel abstraction (`Kernel` trait) implemented initially with OCCT bindings.
+  - Geometry kernel abstraction (`Kernel` trait) implemented with the pure-Rust ogeom kernel.
   - Rendering service exposing a `RenderBackend` trait (default Vulkan).
   - Persistence service (project serialization in JSON + binary payloads).
 - **Workbench system**: Each workbench implements a `Workbench` trait that registers tools, commands, property panes, and feature nodes.
@@ -29,7 +29,7 @@
 
 ## Technology Choices
 
-- **Geometry kernel**: Start with OCCT for robust B-Rep, booleans, meshing, and STEP/IGES IO. Wrap through a dedicated `kernel_occt` crate. Keep the kernel behind traits so CGAL or custom kernels can be slotted in later.
+- **Geometry kernel**: [ogeom](https://github.com/gilbertorconde/ogeom-rs), a pure-Rust B-rep kernel (booleans, meshing, STEP IO), wrapped through a dedicated `kernel_ogeom` crate. The kernel stays behind traits so alternatives can be slotted in later.
 - **Math layer**: Use `nalgebra`/`glam` for light linear algebra; consider GLM-style APIs via `glam` if ergonomic needs arise. Eigen is unnecessary unless a C++ dependency mandates it.
 - **Constraint solving**: Lightweight solver built in Rust (e.g., `ncollide` + custom) for 2D sketches, with the option to integrate CGAL constraint solvers if needed.
 - **Rendering**: Vulkan with `vulkano` (higher-level, safer) or `ash` (lower-level control). Keep renderer modular for future Metal/OpenGL/OpenXR targets.
@@ -46,7 +46,7 @@
 ## File Format Strategy
 
 - **Native format**: `.prtcad`, a printCAD-exclusive package that stores the document graph, feature tree, workbench state, macro bindings, and cached tessellations. Implementation detail: tar archive (optionally compressed with gzip or zstd) bundling JSON metadata and binary blobs.
-- **STEP interoperability**: OCCT-powered STEP import/export remains primary for exchanging models. Optionally emit/refresh a `.step` snapshot on every project save.
+- **STEP interoperability**: kernel-powered STEP import/export remains primary for exchanging models. Optionally emit/refresh a `.step` snapshot on every project save.
 - **Round-trip behavior**: Loading `.prtcad` restores full parametric fidelity; importing `.step` creates base bodies without historical features, mirroring other CAD workflows.
 
 ## Workbench MVPs
@@ -58,7 +58,7 @@
 - **Part Design Workbench**
   - Feature stack: pad, pocket, revolve, fillet, chamfer.
   - Feature tree editor with parameter forms.
-  - Uses OCCT for B-Rep ops and tessellation for viewport display/export (STL/STEP).
+  - Uses the kernel for B-Rep ops and tessellation for viewport display/export (STL/STEP).
 
 ## Rendering & Interaction
 
@@ -77,7 +77,7 @@
 ## Roadmap & Needed Work
 
 1. **Foundation**
-   - Scaffold workspace with separate crates (`app_shell`, `core_document`, `render_vk`, `kernel_api`, `kernel_occt`, `wb_sketch`, `wb_part`).
+   - Scaffold workspace with separate crates (`app_shell`, `core_document`, `render_vk`, `kernel_api`, `kernel_ogeom`, `wb_sketch`, `wb_part`).
    - Bring up Wayland window + Vulkan swapchain, event loop integration, logging/telemetry.
    - Define core traits (workbench, kernel, render backend, document services) and establish serialization stubs.
 2. **Sketch MVP**
@@ -85,7 +85,7 @@
    - Build sketch UI tools (line/arc/circle, constraints palette) and viewport overlays.
    - Ensure param changes propagate to the document and mark dependent features dirty.
 3. **Part Design MVP**
-   - Integrate OCCT bindings; implement pad/pocket/revolve operations.
+   - Integrate the kernel; implement pad/pocket/revolve operations.
    - Create feature tree UI, parameter editors, and regen pipeline.
    - Generate triangulated meshes for viewport and STL export.
 4. **Parametric Engine**
@@ -95,7 +95,7 @@
 5. **Refinement**
    - Implement fillet/chamfer, shell, pattern features.
    - Improve selection/picking, add measurement tools, section views, and visual styles.
-   - Harden OCCT integration, optimize tessellation quality vs. performance, expand export/import formats.
+   - Harden kernel integration, optimize tessellation quality vs. performance, expand export/import formats.
 6. **Modularity Enhancements**
    - Dynamic workbench loading, feature toggles, and plugin discovery.
    - Renderer abstraction finalized and alternative backend proof-of-concept.
@@ -103,13 +103,13 @@
 
 ## Risks & Open Questions
 
-- OCCT binding maintenance and licensing considerations; need build automation.
+- Kernel co-evolution (ogeom lives in its own repo); pin revisions and bump deliberately.
 - Constraint solver performance for complex sketches—prototype early.
 - UI toolkit commitment (egui vs iced) affects docking and layout flexibility.
 - Future cross-platform requirements might necessitate different windowing/input stacks; keep layers clean.
 
 ## Immediate Next Steps
 
-1. Prototype OCCT binding and Vulkan + egui integration to derisk core tech choices.
+1. Prototype kernel and Vulkan + egui integration to derisk core tech choices.
 2. Lock crate layout and coding standards.
 3. Begin implementing Foundation milestone per roadmap.

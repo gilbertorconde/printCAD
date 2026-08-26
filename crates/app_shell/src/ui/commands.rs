@@ -22,6 +22,8 @@ pub enum UiCommand {
     FitView,
     CameraSnap(CameraSnapView),
     CameraRotate(RotateDelta),
+    /// Stop the kernel job that is running now.
+    CancelKernelJob,
     /// Settings were edited this frame; persist them to disk.
     PersistSettings,
     /// Camera preferences were edited; push them into the camera controller.

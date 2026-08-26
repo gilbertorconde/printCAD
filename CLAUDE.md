@@ -1,7 +1,8 @@
 # printCAD — agent notes
 
 Linux-native parametric CAD app aimed at FDM/SLA printing.
-Rust workspace + Vulkan (ash) + egui + OpenCASCADE via a hand-written C++ shim.
+Rust workspace + Vulkan (ash) + egui + the pure-Rust ogeom B-rep kernel
+(github.com/gilbertorconde/ogeom-rs, pinned by rev in `Cargo.toml`).
 
 **Never reference FreeCAD by name** anywhere in the project — no code,
 comments, identifiers, file or folder names, docs, UI strings, or commit
@@ -12,15 +13,26 @@ messages. Describe conventions on their own terms, not by attribution.
 
 ```bash
 cargo run -p app_shell            # launch the app (needs Vulkan + Wayland/X11)
+cargo run --release -p app_shell  # for real STEP files — see the profile note
 cargo test --workspace            # full suite (~200 tests)
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 ```
 
-- Requires OpenCASCADE dev headers (`opencascade` on Arch, `libocct-*-dev` on
-  Debian). `kernel_occt/build.rs` auto-detects TKDESTEP (≥7.8) vs legacy TKSTEP.
-- STEP tests use the bundled fixture `crates/kernel_occt/tests/data/box.step`;
-  set `PRINTCAD_TEST_STEP_FILE` to test against a richer model.
+- No system CAD libraries needed — the ogeom kernel is pure Rust, pulled as a
+  pinned git dependency (bump the rev in the workspace `Cargo.toml`; a
+  commented `[patch]` there points at a local checkout for kernel dev).
+- STEP tests use the bundled fixture
+  `crates/kernel_ogeom/tests/data/box_native.step`; set
+  `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an
+  OCCT-flavoured file kept for the ignored SURFACE_CURVE interop test.)
+- `[profile.dev.package."*"] opt-level = 3` in the workspace `Cargo.toml` is
+  load-bearing, not tidiness: the kernel is numeric code and runs ~26x slower
+  unoptimized, which made a large STEP import look like a hang. Our own crates
+  stay unoptimized (fast rebuilds, readable backtraces), so a debug build is
+  still ~1.4x slower than release — use `--release` when timing anything.
+- `crates/kernel_ogeom/examples/import_bench.rs` prints the phase breakdown of
+  an import; reference timings live in the import-performance memory.
 - Vulkan validation layers, when installed, are routed into `tracing`
   (target `printcad.vulkan`). Keep the app validation-clean.
 
@@ -29,13 +41,20 @@ cargo fmt --all                   # CI enforces --check
 - `kernel_api` — pure data contract (TriMesh, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
-- `kernel_occt` — OCCT FFI (`cpp/step_loader.cpp`, one TU). STEP import +
-  `execute_solid_chain`: per-op FFI entry points (`printcad_occt_solid_*`,
-  `_dressup`, `_draft`, `_thickness`, `_pattern`, `_boolean`) threaded on the
-  running BRep blob; shape ops also return a `tool_blob` that patterns
-  re-apply. Errors cross the FFI as strings and carry the failing op index
-  (`ChainError`); never unwind across it. Profile wires group by containment:
-  nested = holes, disjoint = separate solids.
+- `kernel_ogeom` — pure-Rust kernel adapter. STEP import builds bodies from
+  the document's **placed occurrences** (`Document::occurrences_of`), never
+  from `import.solids` — the latter are part-local, so an assembly built from
+  them puts every part at its own origin. The node walk mirrors the kernel's
+  preorder flatten so the n-th part leaf is the n-th body. (`import.rs`) +
+  `execute_solid_chain` (`chain.rs`): one in-memory ogeom `Model` per chain,
+  the running `Shape` threaded op-by-op (`ops/{sweep,primitive,dressup,
+  loft_pipe,pattern}.rs`); native-format text blobs only at the boundaries
+  (result out, `SolidOp::Boolean` tool in, via `io::native`). Errors carry the
+  failing op index (`ChainError`). Profile wires group by containment:
+  nested = holes, disjoint = separate solids (compounded when regions stay
+  disjoint). Patterns re-run the tool op under the transform rather than
+  instancing. Tests marked `#[ignore]` document kernel-side gaps — grep for
+  `kernel:` in `tests/` before assuming a feature is wired wrong.
 - `core_document` — Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context, snapshot undo
   (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
@@ -55,12 +74,57 @@ cargo fmt --all                   # CI enforces --check
 - `app_shell` — binary. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `workbench_host.rs` (ctx
-  plumbing), `kernel_worker.rs` (OCCT thread).
+  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive).
 
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) builds `SolidOp` chains →
 kernel worker thread → results land in the document's imported-geometry
 sidecar → rendered/picked like any body.
+
+Import performance: the per-solid work and each mesh's face pass go through
+`ogeom_core::parallel::map_ordered` (order-preserving, so output is identical
+at any thread count — `tests/step_import.rs` asserts that). Never nest two
+`map_ordered` passes: `tess::Faces::{Wide, Inline}` says which level owns the
+threads. Import meshes inline from the model already in memory; a deferred
+pass would have to parse every snapshot back, which cost more than the
+meshing. `crates/kernel_ogeom/examples/import_bench.rs` reports the phase
+breakdown — measure with it before optimizing. STEP text is decoded lossily
+(exporters emit Latin-1 in string literals).
+
+Progress/cancel: the worker installs one `Watch` per job
+(`kernel_ogeom::{Watch, watched, Canceller}`, re-exported so app code never
+depends on `ogeom` directly). `kernel_ogeom::progress::context` announces our
+own labels prefixed with `CONTEXT_PREFIX`; ogeom announces its own stages on
+the same thread-local channel. The worker's sink files them into a shared
+`Activity` slot (not a channel — `mpsc::Sender` is `Send` but not `Sync`), the
+status bar reads it each frame, and `Canceller` backs the Cancel button. Our
+op/face/solid loops call `progress::checkpoint()` themselves, since
+`triangulate_face` has no checkpoints of its own. Stages announcing
+`(done, total)` — kernel-side, or ours via `progress::stage_at` fed by a
+shared monotone counter in the parallel import loop — draw as a determinate
+bar instead of the spinner; a new context resets counts to unknown.
+`report.untrimmed_faces` (STEP entity ids of faces that will draw with gaps)
+is logged structured at import.
+
+## Kernel gap protocol
+
+The geometry kernel (ogeom) is developed by the project owner in its own
+repo. When a feature needs a kernel capability that ogeom lacks — missing
+API, refusal, wrong result — do NOT paper over it app-side (no mesh-level
+hacks, no silently degraded feature). Instead:
+
+1. Wire the op anyway; let the kernel's refusal surface as a clean
+   `ChainError` on the owning feature.
+2. Add a test for the intended behavior marked
+   `#[ignore = "kernel: <precise reason>"]` so it flips green when the fix
+   lands.
+3. **File an issue on the kernel repo**
+   (`gh issue create -R gilbertorconde/ogeom-rs`) with the desired
+   API/signature, its semantics, a minimal repro in ogeom API terms, and an
+   acceptance test — and reference the issue number in the test's ignore
+   reason (`kernel: ... (ogeom-rs#N)`).
+4. When the fix lands: bump the ogeom rev pin in the workspace `Cargo.toml`,
+   un-ignore the matching tests, rerun the full suite.
 
 ## Invariants — violate these and things break subtly
 
@@ -73,6 +137,11 @@ sidecar → rendered/picked like any body.
   through `LeftPanelResult`, never dropped.
 - **Adding a UI action** = one variant in `ui/commands.rs` + one arm in
   `app/commands.rs::apply_ui_commands` (two-phase dispatch preserves ordering).
+- **Saving runs on a worker thread** over a `Document::clone` — cheap because
+  blobs/meshes sit behind `Arc`s, and independent, so editing during a write
+  is safe. Two consequences: `mark_clean()` happens on completion and only if
+  `mutation_seq` is unchanged, and **every exit path must call
+  `wait_for_document_saves()`** or the process kills the writer mid-file.
 - **`FeatureNode.seq` is THE build-history ordering key.** `created_at` has
   millisecond ties that order randomly — never sort history by it.
 - **Undo is a memory clone, not serde** — serde would drop the
@@ -80,10 +149,9 @@ sidecar → rendered/picked like any body.
   must go through something that calls `mark_dirty()` (bumps `mutation_seq`,
   which undo uses for change detection). Solids are derived state: undo/redo
   re-marks all part features dirty.
-- **OCCT is not thread-safe across kernel instances in one process** (real
-  SIGSEGV). All OCCT work goes through the single kernel-worker thread;
-  kernel_occt tests serialize on the `OCCT_SERIAL` mutex — copy that pattern
-  into any new test file there.
+- Kernel shapes are plain `Send + Sync` data; tests run in parallel with no
+  serialization mutex. The kernel-worker thread exists for UI responsiveness,
+  not safety.
 - **Sketch endpoint snapping REUSES point ids** — that shared-vertex topology
   is what makes profiles closed for `profile::extract_wires`. Don't create
   coincident duplicate points.
@@ -100,6 +168,9 @@ sidecar → rendered/picked like any body.
   destruction goes through the `MeshCache` retire queue. Keep it that way.
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
+- Persisted shape blobs (`brep/<uuid>.bin` in `.prtcad`, `SolidOp::Boolean`
+  tools) are ogeom native-format text ("ogeom" magic); pre-migration blobs are
+  dropped on load with a warning.
 
 ## Interaction model (current bindings)
 
@@ -113,8 +184,8 @@ disabled; pan/zoom/roll allowed).
 
 - Sketcher end-to-end tests drive `on_input` with real viewport-pixel clicks:
   `wb_sketch/tests/interaction.rs` (reuse its `Harness`).
-- Full-stack sketch→feature→OCCT-solid pipelines:
-  `kernel_occt/tests/part_design_stack.rs` (dev-deps on wb_part/wb_sketch).
+- Full-stack sketch→feature→solid pipelines:
+  `kernel_ogeom/tests/part_design_stack.rs` (dev-deps on wb_part/wb_sketch).
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
@@ -126,8 +197,8 @@ disabled; pan/zoom/roll allowed).
   topologically — coplanar-but-disjoint faces select together. Dress-up edge
   selection and up-to-face terminations therefore reference faces by a sample
   point + normal (`FacePick`), re-resolved against the current solid each
-  rebuild. OCCT face/edge ids through the render mesh is still the next big
-  unlock (per-edge picking, true sketch-on-face references).
+  rebuild. Kernel face/edge ids through the render mesh is still the next
+  big unlock (per-edge picking, true sketch-on-face references).
 - "Through all" derives its length from the base solid's bounding box; up-to-
   face trims with a half-space, so only PLANAR target faces terminate exactly
   (curved to-first/to-last faces stop at the profile-centroid hit distance).
