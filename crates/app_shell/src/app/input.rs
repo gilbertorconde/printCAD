@@ -29,6 +29,32 @@ impl PrintCadApp {
             return;
         }
 
+        // Real user input restarts the render-on-demand tail: frames keep
+        // coming briefly after the last event, then the loop sleeps.
+        if matches!(
+            event,
+            WindowEvent::CursorMoved { .. }
+                | WindowEvent::MouseInput { .. }
+                | WindowEvent::MouseWheel { .. }
+                | WindowEvent::KeyboardInput { .. }
+                | WindowEvent::ModifiersChanged(..)
+                | WindowEvent::Touch(..)
+                | WindowEvent::PinchGesture { .. }
+                | WindowEvent::Resized(..)
+                | WindowEvent::ScaleFactorChanged { .. }
+                | WindowEvent::Focused(..)
+                | WindowEvent::CursorEntered { .. }
+                | WindowEvent::CursorLeft { .. }
+                | WindowEvent::DroppedFile(..)
+                | WindowEvent::HoveredFile(..)
+        ) {
+            self.last_input_time = Some(std::time::Instant::now());
+        }
+        // An OS-driven redraw (expose, resize damage) must render once.
+        if matches!(event, WindowEvent::RedrawRequested) {
+            self.redraw_needed = true;
+        }
+
         // Track modifiers and pressed-button count regardless of who consumes
         // the event: the undo system uses "no button held" as its snapshot
         // boundary, and a release swallowed by egui must still decrement.
@@ -96,7 +122,12 @@ impl PrintCadApp {
 
         if let Some(gfx) = self.gfx.as_mut() {
             let response = gfx.ui_layer.on_window_event(&gfx.window, &event);
-            if response.repaint {
+            // egui answers `repaint: true` to RedrawRequested itself;
+            // re-requesting there would chain compositor frame callbacks into
+            // a display-rate loop that never idles. That event is satisfied
+            // by the frame this wake is about to render.
+            if response.repaint && !matches!(event, WindowEvent::RedrawRequested) {
+                self.redraw_needed = true;
                 gfx.window.request_redraw();
             }
             // egui-winit marks MouseWheel consumed when `wants_pointer_input()` — true over most

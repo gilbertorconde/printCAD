@@ -172,6 +172,23 @@ hacks, no silently degraded feature). Instead:
   tools) are ogeom native-format text ("ogeom" magic); pre-migration blobs are
   dropped on load with a warning.
 
+## Render loop
+
+Frames are rendered **on demand**, not continuously: a frame is scheduled
+while input is fresh (150 ms tail), async work is pending (kernel jobs,
+document open/save, file dialog, deferred import), the camera tween or bench
+orbit is running, the last frame was drawn edge-suppressed (one restore
+frame), or egui asked for a repaint (`repaint_delay` == 0; finite delays
+become `WaitUntil`, e.g. caret blink). Otherwise the event loop sleeps in
+`ControlFlow::Wait` until the next OS event. Consequences: anything that
+completes on a background channel must be covered by one of the
+"work pending" flags or it will not surface until the next input event, and
+`fps_cap` now caps the *active* rate rather than implying continuous
+rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_BENCH_ORBIT` /
+`PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are bench hooks (frame.rs,
+mesh.rs); the 1 s `printcad.frame` log reports fps + phase costs while
+frames are being produced.
+
 ## Interaction model (current bindings)
 
 MMB drag = orbit (MMB click = pivot pick) · RMB drag = pan · wheel = zoom ·

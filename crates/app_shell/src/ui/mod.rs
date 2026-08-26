@@ -48,6 +48,10 @@ pub struct ViewportRect {
 /// list of actions the user triggered this frame.
 pub struct UiFrameOutput {
     pub submission: EguiSubmission,
+    /// egui's own repaint request: `Duration::ZERO` for "next frame please"
+    /// (animations), a finite delay for timed repaints (caret blink), and
+    /// effectively-infinite when content is static.
+    pub repaint_delay: std::time::Duration,
     pub viewport: ViewportRect,
     pub active_tool: ActiveTool,
     pub active_workbench: ActiveWorkbench,
@@ -354,12 +358,20 @@ impl UiLayer {
             });
         }
 
+        let repaint_delay = full_output
+            .viewport_output
+            .values()
+            .map(|v| v.repaint_delay)
+            .min()
+            .unwrap_or(std::time::Duration::MAX);
+
         UiFrameOutput {
             submission: EguiSubmission {
                 pixels_per_point: full_output.pixels_per_point,
                 textures_delta: full_output.textures_delta,
                 primitives,
             },
+            repaint_delay,
             viewport,
             active_tool,
             active_workbench,

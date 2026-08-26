@@ -181,6 +181,22 @@ struct PrintCadApp {
     /// camera moves the edge pass is skipped (see `FrameSubmission::
     /// suppress_edges`); the first still frame restores it.
     prev_view_proj: Option<[[f32; 4]; 4]>,
+    /// When user input last arrived. Frames keep coming for a short tail
+    /// after input so egui reactions and pick readbacks land, then the loop
+    /// sleeps until the next event (render on demand).
+    last_input_time: Option<Instant>,
+    /// Why the last frame scheduled another: (input, work, animating,
+    /// egui-zero-delay). Surfaced in the 1 s frame log while diagnosing
+    /// wake-loop bugs.
+    last_wake_reason: (bool, bool, bool, bool),
+    /// An explicit request for the next wake to render (scheduler, OS
+    /// expose, input handlers). `about_to_wait` fires on every event-loop
+    /// wake — including Wayland frame callbacks after each present — so
+    /// rendering must be gated on intent or presenting itself keeps the
+    /// loop hot forever.
+    redraw_needed: bool,
+    /// egui's repaint request from the last built frame.
+    pending_ui_repaint: std::time::Duration,
     document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
     document_load_epoch: u64,
     document_open_in_flight: u32,
@@ -271,6 +287,10 @@ impl PrintCadApp {
             bench_open_fired: false,
             frame_phase_accum: (0.0, 0.0, 0),
             prev_view_proj: None,
+            last_input_time: None,
+            last_wake_reason: (false, false, false, false),
+            redraw_needed: true,
+            pending_ui_repaint: std::time::Duration::MAX,
             step_import_pending: None,
             last_step_import_detail: TessellationSettings::default(),
             undo,

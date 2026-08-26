@@ -49,6 +49,11 @@ impl CameraTween {
         }
     }
 
+    /// Whether a view animation is in flight (needs frames until it lands).
+    pub(crate) fn is_active(&self) -> bool {
+        !matches!(self, CameraTween::None)
+    }
+
     pub(crate) fn cancel(&mut self) {
         *self = CameraTween::None;
     }

@@ -74,6 +74,11 @@ impl CameraController {
         }
     }
 
+    /// Whether a view transition is animating; such frames must keep coming.
+    pub fn is_animating(&self) -> bool {
+        self.tween.is_active()
+    }
+
     pub(crate) fn cancel_animation(&mut self) {
         self.tween.cancel();
     }

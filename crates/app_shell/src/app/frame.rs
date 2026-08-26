@@ -131,10 +131,38 @@ impl PrintCadApp {
                 }
             }
             event_loop.set_control_flow(ControlFlow::WaitUntil(now + target));
-        } else {
-            // Uncapped: run as fast as possible; vsync/driver may still limit FPS.
-            event_loop.set_control_flow(ControlFlow::Poll);
         }
+        // Uncapped: no control-flow decision here. The end of the frame
+        // schedules the next one only if something needs it (render on
+        // demand); an idle scene sleeps until the next event.
+
+        // `about_to_wait` runs on every loop wake, including compositor
+        // frame callbacks acknowledging our own presents. Render only when
+        // someone asked (scheduler, input, OS expose) or state demands it —
+        // otherwise presenting would wake us again and the loop never rests.
+        {
+            let input_active = self
+                .last_input_time
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(150));
+            let work_pending = self.kernel_worker.in_flight() > 0
+                || self.document_open_in_flight > 0
+                || self.document_save_in_flight > 0
+                || self.file_dialog_rx.is_some()
+                || self.step_import_pending.is_some();
+            let animating = self.camera.is_animating()
+                || self.frame_submission.suppress_edges
+                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some();
+            if !(self.redraw_needed
+                || input_active
+                || work_pending
+                || animating
+                || self.pending_ui_repaint.is_zero())
+            {
+                event_loop.set_control_flow(ControlFlow::Wait);
+                return;
+            }
+        }
+        self.redraw_needed = false;
 
         // Time since last *rendered* frame
         let dt_secs = if let Some(last) = self.last_frame_time {
@@ -166,6 +194,7 @@ impl PrintCadApp {
                             culled = stats.bodies_culled,
                             tri_idx = stats.triangle_indices,
                             edge_idx = stats.edge_indices,
+                            wake = ?self.last_wake_reason,
                             "frame phases (1s avg)"
                         );
                     }
@@ -201,6 +230,7 @@ impl PrintCadApp {
         }
 
         let mut new_body_requested = false;
+        let ui_repaint_delay;
 
         // Pull any STEP imports that the kernel worker finished off the
         // queue before we build this frame's submission, so freshly imported
@@ -275,6 +305,7 @@ impl PrintCadApp {
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
+                ui_repaint_delay = ui_result.repaint_delay;
                 self.frame_submission.egui = Some(ui_result.submission);
                 self.active_tool = ui_result.active_tool;
                 self.active_workbench = ui_result.active_workbench;
@@ -305,8 +336,6 @@ impl PrintCadApp {
                 commands = ui_result.commands;
             }
 
-            window.request_redraw();
-
             let render_started = Instant::now();
             if let Err(err) = renderer.render(&self.frame_submission) {
                 app_log::error(format!("Render failure: {err}"));
@@ -315,6 +344,44 @@ impl PrintCadApp {
             }
             self.frame_phase_accum.1 += render_started.elapsed().as_secs_f32() * 1000.0;
             self.frame_phase_accum.2 += 1;
+
+            // Render on demand: another frame is scheduled only while
+            // something is moving, pending, or animating. A short tail after
+            // input lets egui reactions and pick readbacks land; a frame
+            // drawn without edges gets one more to restore them; egui's own
+            // timed repaints (caret blink) become a timed wake-up. Otherwise
+            // the loop sleeps until the next OS event.
+            const INPUT_TAIL: Duration = Duration::from_millis(150);
+            let input_active = self
+                .last_input_time
+                .is_some_and(|t| t.elapsed() < INPUT_TAIL);
+            let work_pending = self.kernel_worker.in_flight() > 0
+                || self.document_open_in_flight > 0
+                || self.document_save_in_flight > 0
+                || self.file_dialog_rx.is_some()
+                || self.step_import_pending.is_some();
+            let animating = self.camera.is_animating()
+                || self.frame_submission.suppress_edges
+                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some();
+            self.pending_ui_repaint = ui_repaint_delay;
+            self.last_wake_reason = (
+                input_active,
+                work_pending,
+                animating,
+                ui_repaint_delay.is_zero(),
+            );
+            if input_active || work_pending || animating || ui_repaint_delay.is_zero() {
+                self.redraw_needed = true;
+                window.request_redraw();
+                event_loop.set_control_flow(ControlFlow::Wait);
+            } else if ui_repaint_delay < Duration::from_secs(10) {
+                // The timed wake (caret blink etc.) should render once.
+                self.redraw_needed = true;
+                event_loop
+                    .set_control_flow(ControlFlow::WaitUntil(Instant::now() + ui_repaint_delay));
+            } else if fps_cap <= 0.0 {
+                event_loop.set_control_flow(ControlFlow::Wait);
+            }
 
             // Retrieve pick result from GPU picking (processed during render)
             let pick_result = renderer.latest_pick_result();
