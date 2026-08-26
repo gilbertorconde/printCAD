@@ -58,7 +58,11 @@ fn main() {
     drop(text);
 
     // Phase 3: the whole import as the app calls it — parse again, plus the
-    // per-solid loop. Subtracting phase 2 gives the loop's own cost.
+    // per-solid loop. The import logs its OWN directly-measured phase
+    // breakdown (parse / bodies / total on one tracing line); that is the
+    // number to trust. This binary prints no subtraction across phases:
+    // deriving the loop as (total − phase-2 parse) once fabricated a 3.6×
+    // regression out of load variance between the two parses.
     let mut kernel = OgeomKernel::new();
     kernel.initialize().expect("initialize kernel");
     let mut detail = TessellationSettings::default();
@@ -71,10 +75,7 @@ fn main() {
         .import_step(std::path::Path::new(&path), &detail)
         .expect("import STEP");
     let import_ms = t.elapsed().as_secs_f64() * 1000.0;
-    println!(
-        "import total   {import_ms:9.0} ms  (per-solid loop ≈ {:.0} ms)",
-        import_ms - parse_ms - read_ms
-    );
+    println!("import total   {import_ms:9.0} ms  (phase breakdown on the tracing line above)");
 
     // The import now meshes from the model it already has in memory, so the
     // bodies come back ready to draw.
