@@ -198,6 +198,11 @@ struct PrintCadApp {
     /// The render loop decided to sleep and painted one closing frame whose
     /// FPS reads "idle" — a frozen number would look like a measurement.
     fps_display_idle: bool,
+    /// Exponentially smoothed frame time (seconds). Updated every rendered
+    /// frame, so the FPS display is live from the first measured interval
+    /// after a wake — no batching delay. `None` right after a sleep; the
+    /// next frame's dt seeds it with a real measurement.
+    smoothed_frame_s: Option<f32>,
     /// egui's repaint request from the last built frame.
     pending_ui_repaint: std::time::Duration,
     document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
@@ -294,6 +299,7 @@ impl PrintCadApp {
             last_wake_reason: (false, false, false, false),
             redraw_needed: true,
             fps_display_idle: false,
+            smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,
             step_import_pending: None,
             last_step_import_detail: TessellationSettings::default(),

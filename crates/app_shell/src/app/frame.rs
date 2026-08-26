@@ -170,18 +170,27 @@ impl PrintCadApp {
             let dt = elapsed.as_secs_f32();
 
             // Waking from an on-demand sleep: the gap is idle time, not a
-            // slow frame. Restart the average instead of folding it in.
+            // slow frame. Drop the seed so the next dt restarts the average;
+            // the displayed number stays live per frame below.
             if dt > 0.5 {
                 self.fps_accum_time = 0.0;
                 self.fps_frame_count = 0;
-                self.current_fps = 0.0;
-            } else
-            // FPS smoothing: accumulate over ~1s and update display once per second.
-            if dt > 0.0 {
+                self.smoothed_frame_s = None;
+            } else if dt > 0.0 {
+                // The display updates every frame from a smoothed frame time
+                // — a real number one frame after waking, without the jitter
+                // of raw per-frame values. The 1 s accumulator below only
+                // paces the log line.
+                let sft = match self.smoothed_frame_s {
+                    None => dt,
+                    Some(prev) => prev * 0.85 + dt * 0.15,
+                };
+                self.smoothed_frame_s = Some(sft);
+                self.current_fps = 1.0 / sft.max(1e-6);
+
                 self.fps_accum_time += dt;
                 self.fps_frame_count += 1;
                 if self.fps_accum_time >= 1.0 {
-                    self.current_fps = self.fps_frame_count as f32 / self.fps_accum_time.max(1e-3);
                     self.fps_accum_time = 0.0;
                     self.fps_frame_count = 0;
                     let (ui_ms, render_ms, frames) = self.frame_phase_accum;
