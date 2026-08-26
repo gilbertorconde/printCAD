@@ -70,6 +70,10 @@ pub struct PresenceState {
     /// The body this editor currently has selected, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_body: Option<uuid::Uuid>,
+    /// Where this editor's pointer hovers in world space (mm), quantized by
+    /// the sender so idle jitter does not spam the wire.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_world: Option<[f32; 3]>,
 }
 
 /// Server → client messages.

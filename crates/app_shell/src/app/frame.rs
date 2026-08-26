@@ -627,7 +627,7 @@ impl PrintCadApp {
         // Screen-space overlays + labels from the active workbench
         // (constant-thickness lines and constant-size text).
         let params = self.overlay_ctx_params();
-        let (screen_space_overlays, screen_space_labels) = self
+        let (screen_space_overlays, mut screen_space_labels) = self
             .with_workbench_ctx(&wb_id, params, |wb, ctx| {
                 (
                     wb.get_screen_space_overlays(ctx, ctx.active_document_object),
@@ -636,6 +636,28 @@ impl PrintCadApp {
             })
             .map(|(pair, _outcome)| pair)
             .unwrap_or_default();
+
+        // Peers' cursors: a named marker where each other editor points.
+        // Same projection the overlays use; a cursor behind the camera or
+        // outside the model simply has no marker this frame.
+        for state in self.peer_presence.values() {
+            let Some(world) = state.cursor_world else {
+                continue;
+            };
+            let Some((x, y)) = self
+                .camera
+                .world_to_screen(Vec3::new(world[0], world[1], world[2]))
+            else {
+                continue;
+            };
+            screen_space_labels.push(core_document::ScreenSpaceLabel {
+                pos: [x, y - 14.0],
+                text: format!("⯆ {}", state.display_name),
+                color: [0.35, 0.75, 0.95],
+                size: 12.0,
+                background: true,
+            });
+        }
 
         // Combine sketch meshes, imported geometry, and overlay meshes.
         let mut all_meshes = sketch_meshes;

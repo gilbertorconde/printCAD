@@ -321,6 +321,7 @@ fn presence_relays_and_dies_with_its_author() {
         core_document::server::PresenceState {
             display_name: "alice".into(),
             selected_body: Some(body),
+            cursor_world: Some([10.0, 20.0, 0.0]),
         },
     ));
     let state = wait_for(&mut bob, &mut bob_inbox, "presence", |m| match m {

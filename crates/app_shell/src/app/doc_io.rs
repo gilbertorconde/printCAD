@@ -509,9 +509,19 @@ impl PrintCadApp {
     /// Tell the server what we have selected — only when it changed. The
     /// display name is the login name; a settings field can refine it later.
     pub(crate) fn publish_presence(&mut self) {
+        // Centimetre quantization: enough to follow a hand, coarse enough
+        // that breathing on the mouse does not broadcast.
+        let cursor_world = self.hovered_world_pos.map(|p| {
+            [
+                (p[0] * 0.1).round() * 10.0,
+                (p[1] * 0.1).round() * 10.0,
+                (p[2] * 0.1).round() * 10.0,
+            ]
+        });
         let state = core_document::server::PresenceState {
             display_name: std::env::var("USER").unwrap_or_else(|_| "editor".to_string()),
             selected_body: self.selected_body,
+            cursor_world,
         };
         if self.last_sent_presence.as_ref() == Some(&state) {
             return;
