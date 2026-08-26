@@ -23,8 +23,8 @@ pub use direct::DirectFiles;
 use std::path::PathBuf;
 
 /// Where a document's daemon listens. One socket per document, keyed by a
-/// hash of its canonical path, under the user's runtime dir — the same
-/// per-resource-socket shape X11 uses for displays.
+/// hash of its canonical path, under the user's runtime dir — so any client
+/// that knows the document knows its server.
 pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};

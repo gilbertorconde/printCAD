@@ -215,7 +215,7 @@ impl PrintCadApp {
     }
 
     /// Move the server connection to `socket` — the document's own daemon
-    /// (one socket per file, the X11 model) or the session's untitled one.
+    /// (one socket per file) or the session's untitled one.
     /// The old connection is flushed first so no queued write is abandoned;
     /// on failure the old connection stays and the move is only logged: a
     /// working degraded connection beats a broken fresh one.

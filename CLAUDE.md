@@ -4,10 +4,13 @@ Linux-native parametric CAD app aimed at FDM/SLA printing.
 Rust workspace + Vulkan (ash) + egui + the pure-Rust ogeom B-rep kernel
 (github.com/gilbertorconde/ogeom-rs, pinned by rev in `Cargo.toml`).
 
-**Never reference FreeCAD by name** anywhere in the project — no code,
-comments, identifiers, file or folder names, docs, UI strings, or commit
-messages. Describe conventions on their own terms, not by attribution.
-(This line is the single sanctioned mention.)
+**Never name the tools or systems this project draws on** — FreeCAD, X11,
+or any other reference point — anywhere in the project: no code, comments,
+identifiers, file or folder names, docs, UI strings, or commit messages.
+Describe conventions and architectures on their own terms, not by
+attribution. Naming an actual platform requirement (e.g. the display systems
+the app runs on) is fine; naming an inspiration is not. (This paragraph is
+the single sanctioned mention.)
 
 ## Commands
 

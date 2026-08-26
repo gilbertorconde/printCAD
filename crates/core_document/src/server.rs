@@ -3,8 +3,8 @@
 //! printCAD is always-multiplayer in architecture: a *document server* owns
 //! the document's file and its op log, and the app is a client. By default
 //! the server is a local daemon (`printcad-serverd`, one per document, unix
-//! socket — the X11 model); a future plugin replaces the implementation with
-//! a remote transport. The trait is deliberately message-shaped: what
+//! socket); a future plugin replaces the implementation with a remote
+//! transport. The trait is deliberately message-shaped: what
 //! crosses [`DocumentServer::send`]/[`DocumentServer::poll`] **is** the wire
 //! protocol, serde-serialized verbatim by the socket transport, so promoting
 //! an implementation from in-process to daemon to remote changes transport,
