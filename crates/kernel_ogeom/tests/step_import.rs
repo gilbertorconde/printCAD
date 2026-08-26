@@ -339,3 +339,76 @@ fn assembly_parts_arrive_in_world_space() {
         imported.bodies.len()
     );
 }
+
+/// A face whose boundary hovers off its surface is named by the reader and
+/// healed by the import at its wider cap — the body draws whole instead of
+/// with a hole. The fixture is the kernel's own hovering-face acceptance
+/// file (a boundary 3 mm off a planar B-spline surface; the reader's own
+/// healing stops at 1 mm).
+#[test]
+fn an_untrimmed_face_is_healed_at_import_and_draws() {
+    let step = r#"ISO-10303-21;
+HEADER;
+FILE_DESCRIPTION((''),'2;1');
+FILE_NAME('hover','2026-08-26',(''),(''),'','','');
+FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));
+ENDSEC;
+DATA;
+#1=CARTESIAN_POINT('',(0.,0.,0.));
+#2=CARTESIAN_POINT('',(10.,0.,0.));
+#3=CARTESIAN_POINT('',(0.,10.,0.));
+#4=CARTESIAN_POINT('',(10.,10.,0.));
+#5=B_SPLINE_SURFACE_WITH_KNOTS('',1,1,((#1,#3),(#2,#4)),.UNSPECIFIED.,.F.,.F.,.F.,(2,2),(2,2),(0.,10.),(0.,10.),.UNSPECIFIED.);
+#10=CARTESIAN_POINT('',(0.,0.,3.));
+#11=CARTESIAN_POINT('',(10.,0.,3.));
+#12=CARTESIAN_POINT('',(10.,10.,3.));
+#13=CARTESIAN_POINT('',(0.,10.,3.));
+#14=VERTEX_POINT('',#10);
+#15=VERTEX_POINT('',#11);
+#16=VERTEX_POINT('',#12);
+#17=VERTEX_POINT('',#13);
+#20=DIRECTION('',(1.,0.,0.));
+#21=DIRECTION('',(0.,1.,0.));
+#22=DIRECTION('',(-1.,0.,0.));
+#23=DIRECTION('',(0.,-1.,0.));
+#24=VECTOR('',#20,1.);
+#25=VECTOR('',#21,1.);
+#26=VECTOR('',#22,1.);
+#27=VECTOR('',#23,1.);
+#30=LINE('',#10,#24);
+#31=LINE('',#11,#25);
+#32=LINE('',#12,#26);
+#33=LINE('',#13,#27);
+#40=EDGE_CURVE('',#14,#15,#30,.T.);
+#41=EDGE_CURVE('',#15,#16,#31,.T.);
+#42=EDGE_CURVE('',#16,#17,#32,.T.);
+#43=EDGE_CURVE('',#17,#14,#33,.T.);
+#50=ORIENTED_EDGE('',*,*,#40,.T.);
+#51=ORIENTED_EDGE('',*,*,#41,.T.);
+#52=ORIENTED_EDGE('',*,*,#42,.T.);
+#53=ORIENTED_EDGE('',*,*,#43,.T.);
+#54=EDGE_LOOP('',(#50,#51,#52,#53));
+#55=FACE_OUTER_BOUND('',#54,.T.);
+#56=ADVANCED_FACE('',(#55),#5,.T.);
+#57=CLOSED_SHELL('',(#56));
+#58=MANIFOLD_SOLID_BREP('',#57);
+ENDSEC;
+END-ISO-10303-21;
+"#;
+    let dir = std::env::temp_dir();
+    let path = dir.join(format!("printcad_heal_{}.step", std::process::id()));
+    std::fs::write(&path, step).expect("write fixture");
+
+    let mut kernel = OgeomKernel::new();
+    kernel.initialize().expect("initialize");
+    let imported = kernel
+        .import_step(&path, &TessellationSettings::default())
+        .expect("import with healing");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(imported.bodies.len(), 1);
+    assert!(
+        !imported.bodies[0].mesh.positions.is_empty(),
+        "the healed face must triangulate — an empty mesh means the gap survived"
+    );
+}

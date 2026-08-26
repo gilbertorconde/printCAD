@@ -38,7 +38,7 @@ pub fn import_step(
 
     let parse_start = Instant::now();
     progress::context("Reading STEP");
-    let import = ogeom::io::step::read_step(&text, tess::tolerances())
+    let mut import = ogeom::io::step::read_step(&text, tess::tolerances())
         .map_err(|e| KernelError::Import(format!("STEP read failed: {e}")))?;
     let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
 
@@ -71,6 +71,18 @@ pub fn import_step(
             skipped = ?import.report.skipped,
             "STEP entities not visited by the reader"
         );
+    }
+
+    if !import.report.untrimmed_faces.is_empty() {
+        let healed = heal_untrimmed_faces(&mut import.document, &import.solids);
+        if healed > 0 {
+            info!(
+                target: "printcad.kernel",
+                healed,
+                of = import.report.untrimmed_faces.len(),
+                "untrimmed faces healed at the import cap; they draw instead of leaving gaps"
+            );
+        }
     }
 
     let source_unit = unit_from_scale(import.report.scale_mm);
@@ -174,6 +186,75 @@ fn unit_from_scale(scale_mm: f64) -> Option<LengthUnit> {
     } else {
         None
     }
+}
+
+/// Fit the trims the reader refused, at a wider cap than its own.
+///
+/// The reader heals boundary slop up to a millimetre and names the faces it
+/// would not (`report.untrimmed_faces`, STEP entity ids); those faces refuse
+/// to triangulate and draw as gaps. `fix_face_pcurves` is the instructed
+/// follow-up — the same projection fit at the caller's cap, each fitted
+/// edge's tolerance widened to the offset actually measured, so the model
+/// records what it now knows. A face past even this cap stays a gap and is
+/// logged with its measured distance; silently stretching it into place
+/// would misstate the geometry.
+///
+/// Returns how many of the named faces now carry full trims.
+fn heal_untrimmed_faces(document: &mut Document, solids: &[Shape]) -> usize {
+    /// Generous against exporter slop, small against part scale: an edge
+    /// this far off its surface is file damage worth drawing anyway; beyond
+    /// it the gap is more honest than the stretch.
+    const HEAL_CAP_MM: f64 = 5.0;
+
+    // The report names STEP face entities, but a shape's `identity_of`
+    // carries its geometry's provenance (the surface entity), so the ids
+    // cannot be cross-referenced (ogeom-rs#34). Probe every face instead:
+    // `fix_face_pcurves` leaves a face whose trims are complete alone, and
+    // the sweep only runs when the reader refused something.
+    let mut faces_to_heal = Vec::new();
+    for solid in solids {
+        let Ok(faces) = explore(document.model(), solid, Filter::OfType(ShapeType::Face)) else {
+            continue;
+        };
+        faces_to_heal.extend(faces);
+    }
+
+    let mut healed = 0usize;
+    for face in &faces_to_heal {
+        match ogeom::heal::fix_face_pcurves(
+            document.model_mut(),
+            face,
+            HEAL_CAP_MM,
+            tess::tolerances(),
+        ) {
+            Ok(report) => {
+                if report.refused.is_empty() {
+                    if report.fitted > 0 {
+                        healed += 1;
+                        info!(
+                            target: "printcad.kernel",
+                            fitted = report.fitted,
+                            worst_mm = report.worst,
+                            "face healed: trims fitted at the import cap"
+                        );
+                    }
+                } else {
+                    for (_, offset) in &report.refused {
+                        warn!(
+                            target: "printcad.kernel",
+                            offset_mm = offset,
+                            cap_mm = HEAL_CAP_MM,
+                            "edge beyond the healing cap; its face keeps drawing with a gap"
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(target: "printcad.kernel", "face heal failed: {err}");
+            }
+        }
+    }
+    healed
 }
 
 /// One body to import: a shape, and who it belongs to.
