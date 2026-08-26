@@ -34,8 +34,29 @@ pub const OP_PROTOCOL_VERSION: u32 = 1;
 /// Today this serializes the bytes inline; the future wire split (ops carry
 /// a content hash, bytes travel separately) changes this type, not the shape
 /// of any op that uses it.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct BlobPayload(pub std::sync::Arc<Vec<u8>>);
+
+// Base64 on the wire and in the op log: a Vec<u8> would serialize as a JSON
+// array of numbers — a 27 MB STEP becoming a ~100 MB digit list. Base64 is
+// 4/3 the raw size and one string token.
+impl Serialize for BlobPayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use base64::Engine as _;
+        serializer.serialize_str(&base64::engine::general_purpose::STANDARD.encode(&*self.0))
+    }
+}
+
+impl<'de> Deserialize<'de> for BlobPayload {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        use base64::Engine as _;
+        let text = String::deserialize(deserializer)?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(text.as_bytes())
+            .map_err(serde::de::Error::custom)?;
+        Ok(Self(std::sync::Arc::new(bytes)))
+    }
+}
 
 impl BlobPayload {
     pub fn new(bytes: Vec<u8>) -> Self {

@@ -6,7 +6,7 @@ mod orientation_cube;
 mod ui;
 
 use anyhow::{Context, Result};
-use app::doc_io::{DocumentOpenMsg, DocumentSaveMsg, FileDialogResult};
+use app::doc_io::FileDialogResult;
 use camera::CameraController;
 use core_document::{BodyId, Document, DocumentService, WorkbenchId};
 use kernel_api::TessellationSettings;
@@ -15,7 +15,7 @@ use log_panel as app_log;
 use render_vk::{FrameSubmission, RenderBackend, RenderSettings, VulkanRenderer};
 use settings::{SettingsStore, UserSettings};
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Sender};
+
 use std::time::Instant;
 use tracing::error;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
@@ -155,22 +155,11 @@ struct PrintCadApp {
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
     kernel_worker: KernelWorker,
-    /// File > Open loads archives off the UI thread; results arrive on this
-    /// channel. `document_load_epoch` invalidates in-flight work after New
-    /// Document so late responses are ignored.
-    document_open_tx: Sender<(u64, PathBuf, DocumentOpenMsg)>,
-    document_save_tx: Sender<(PathBuf, DocumentSaveMsg)>,
-    document_save_rx: mpsc::Receiver<(PathBuf, DocumentSaveMsg)>,
-    /// Saves the worker is writing right now. Drives the status bar, and
-    /// blocks a second save of the same document from racing the first.
-    document_save_in_flight: u32,
-    /// The document's mutation counter when the running save was queued, so
-    /// edits made while it wrote are not marked as saved.
-    document_saved_at_seq: Option<u64>,
-    /// Writers still running. The worker owns an independent snapshot, so
-    /// editing during a save is safe — but exiting would kill it mid-file,
-    /// so quitting joins these first.
-    document_save_threads: Vec<std::thread::JoinHandle<()>>,
+    /// The document server connection — local daemon by default, direct
+    /// files when no daemon can run, a remote plugin someday. Everything
+    /// that crosses it is the wire protocol; `document_load_epoch` rides
+    /// Open requests as the token that invalidates late responses.
+    server: Box<dyn core_document::server::DocumentServer>,
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
@@ -205,9 +194,7 @@ struct PrintCadApp {
     smoothed_frame_s: Option<f32>,
     /// egui's repaint request from the last built frame.
     pending_ui_repaint: std::time::Duration,
-    document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
     document_load_epoch: u64,
-    document_open_in_flight: u32,
     /// Picked STEP path and draft tessellation settings until the user confirms import.
     step_import_pending: Option<(PathBuf, TessellationSettings)>,
     /// Reuse the last confirmed import options when opening the dialog again.
@@ -252,9 +239,21 @@ impl PrintCadApp {
         registry: DocumentService,
     ) -> Self {
         let camera = CameraController::new(&user_settings.camera, (1, 1));
-        let (document_open_tx, document_open_rx) = mpsc::channel();
-        let (document_save_tx, document_save_rx) = mpsc::channel();
         let undo = core_document::undo::UndoHistory::new(&document, 64);
+
+        // The document server: a per-session local daemon by default; plain
+        // in-process file I/O when the daemon cannot start. Same contract
+        // either way — the trait is the seam a remote plugin replaces.
+        let server: Box<dyn core_document::server::DocumentServer> =
+            match doc_server::DaemonClient::spawn_or_connect(&doc_server::socket_path_for_untitled())
+            {
+                Ok(client) => Box::new(client),
+                Err(err) => {
+                    tracing::warn!("document daemon unavailable ({err}); using direct file I/O");
+                    Box::new(doc_server::DirectFiles::new())
+                }
+            };
+        tracing::info!(server = server.name(), "document server connected");
 
         Self {
             settings,
@@ -283,15 +282,8 @@ impl PrintCadApp {
             current_file: None,
             file_dialog_rx: None,
             kernel_worker: KernelWorker::spawn(),
-            document_open_tx,
-            document_save_tx,
-            document_save_rx,
-            document_open_rx,
+            server,
             document_load_epoch: 0,
-            document_open_in_flight: 0,
-            document_save_in_flight: 0,
-            document_saved_at_seq: None,
-            document_save_threads: Vec::new(),
             bench_open_fired: false,
             frame_phase_accum: (0.0, 0.0, 0),
             prev_view_proj: None,

@@ -117,6 +117,7 @@ dependencies = [
  "anyhow",
  "axes",
  "core_document",
+ "doc_server",
  "egui",
  "egui-winit",
  "glam 0.32.1",
@@ -622,6 +623,7 @@ dependencies = [
 name = "core_document"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "egui",
  "flate2",
  "glam 0.32.1",

@@ -115,6 +115,17 @@ impl PrintCadApp {
     /// Body of `about_to_wait`: pace the frame, drain worker channels,
     /// assemble the scene, run the UI, render, read back the pick, and
     /// apply this frame's UI commands.
+    /// Every background source that must keep frames coming until it
+    /// settles. The wake gate and the end-of-frame scheduler share this —
+    /// a source listed in only one of them either burns CPU or sleeps
+    /// through its own completion.
+    fn async_work_pending(&self) -> bool {
+        self.kernel_worker.in_flight() > 0
+            || self.server.status().busy()
+            || self.file_dialog_rx.is_some()
+            || self.step_import_pending.is_some()
+    }
+
     pub(crate) fn frame(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         // Optional FPS cap from settings (0 = uncapped).
@@ -144,17 +155,12 @@ impl PrintCadApp {
             let input_active = self
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < Duration::from_millis(150));
-            let work_pending = self.kernel_worker.in_flight() > 0
-                || self.document_open_in_flight > 0
-                || self.document_save_in_flight > 0
-                || self.file_dialog_rx.is_some()
-                || self.step_import_pending.is_some();
             let animating = self.camera.is_animating()
                 || self.frame_submission.suppress_edges
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some();
             if !(self.redraw_needed
                 || input_active
-                || work_pending
+                || self.async_work_pending()
                 || animating
                 || self.pending_ui_repaint.is_zero())
             {
@@ -246,6 +252,7 @@ impl PrintCadApp {
         }
 
         let mut new_body_requested = false;
+        let server_status = self.server.status();
         let ui_repaint_delay;
 
         // Pull any STEP imports that the kernel worker finished off the
@@ -254,8 +261,7 @@ impl PrintCadApp {
         // the frame they actually became visible in. Has to happen before
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
-        self.drain_document_open_responses();
-        self.drain_document_save_responses();
+        self.drain_server_messages();
         self.drive_part_recompute();
 
         if self.gfx.is_none() {
@@ -311,12 +317,12 @@ impl PrintCadApp {
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_labels: &screen_space_labels,
                         pending_imports: self.kernel_worker.in_flight(),
-                        pending_document_open: self.document_open_in_flight
-                            + self.document_save_in_flight,
+                        pending_document_open: server_status.opens_in_flight
+                            + server_status.saves_in_flight,
                         kernel_status: self.kernel_worker.status(),
                         kernel_progress: self.kernel_worker.progress(),
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
-                        document_saving: self.document_save_in_flight > 0,
+                        document_saving: server_status.saves_in_flight > 0,
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
                 );
@@ -371,9 +377,12 @@ impl PrintCadApp {
             let input_active = self
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < INPUT_TAIL);
+            // Field-level reads, not `async_work_pending()`: a `&self`
+            // method call cannot coexist with the live `gfx` borrow, and
+            // this must be frame-END truth — a kernel job submitted during
+            // this frame has to keep the loop awake. Mirror the helper.
             let work_pending = self.kernel_worker.in_flight() > 0
-                || self.document_open_in_flight > 0
-                || self.document_save_in_flight > 0
+                || self.server.status().busy()
                 || self.file_dialog_rx.is_some()
                 || self.step_import_pending.is_some();
             let animating = self.camera.is_animating()
@@ -415,6 +424,15 @@ impl PrintCadApp {
 
         // Apply this frame's UI actions now that the renderer borrow is over.
         self.apply_ui_commands(commands, new_body_requested, event_loop);
+
+        // Everything this frame edited is in the outbox; hand it to the
+        // server. One send per frame keeps drags coalesced (the buffer
+        // collapsed them) and the wire quiet when nothing changed.
+        let ops = self.document.take_pending_ops();
+        if !ops.is_empty() {
+            self.server
+                .send(core_document::server::ClientMessage::Ops(ops));
+        }
 
         // Cut an undo boundary at frame end when no drag is in progress so
         // an entire drag interaction coalesces into one step.

@@ -56,18 +56,6 @@ const UNSAVED_CHANGES_SAVE: &str = "Save";
 const UNSAVED_CHANGES_DISCARD: &str = "Discard";
 const UNSAVED_CHANGES_CANCEL: &str = "Cancel";
 
-/// Load outcome sent from the background open thread (document is large I/O).
-pub(crate) enum DocumentOpenMsg {
-    Loaded(Box<Document>),
-    Failed(String),
-}
-
-/// Outcome of a save running on a worker thread.
-pub(crate) enum DocumentSaveMsg {
-    Saved,
-    Failed(String),
-}
-
 pub(crate) enum FileDialogKind {
     Open,
     Save,
@@ -145,9 +133,6 @@ impl PrintCadApp {
 
         self.document_load_epoch = self.document_load_epoch.wrapping_add(1);
         self.step_import_pending = None;
-        while self.document_open_rx.try_recv().is_ok() {
-            self.document_open_in_flight = self.document_open_in_flight.saturating_sub(1);
-        }
 
         let wb_id = self.active_workbench.0.clone();
         self.call_workbench_deactivate(&wb_id);
@@ -166,22 +151,25 @@ impl PrintCadApp {
         self.camera
             .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
         self.undo.reset(&self.document);
+        // The old document's history no longer describes this client.
+        let _ = self.document.take_pending_ops();
+        self.server
+            .send(core_document::server::ClientMessage::Rebase);
         app_log::info("New document");
     }
 
-    fn load_document_from_path(path: &Path) -> Result<Document> {
+    /// The server hands over opaque bytes; the client owns the parsing.
+    fn parse_document_bytes(path: &Path, bytes: Vec<u8>) -> Result<Document> {
         let document = match path
             .extension()
             .and_then(|s| s.to_str())
             .map(|s| s.to_ascii_lowercase())
         {
             Some(ext) if ext == "json" => {
-                let file = std::fs::File::open(path)
-                    .with_context(|| format!("Failed to open document file {}", path.display()))?;
-                serde_json::from_reader(file).with_context(|| "Failed to parse document JSON")?
+                serde_json::from_slice(&bytes).with_context(|| "Failed to parse document JSON")?
             }
-            _ => Document::load_from_file(path)
-                .with_context(|| format!("Failed to open .prtcad document {}", path.display()))?,
+            _ => Document::load_from_bytes(bytes)
+                .with_context(|| format!("Failed to parse .prtcad document {}", path.display()))?,
         };
         Ok(document)
     }
@@ -217,40 +205,70 @@ impl PrintCadApp {
                 .clamp_focal_to_settings(&self.user_settings.camera);
         }
         self.undo.reset(&self.document);
+        // A fresh baseline: whatever the server logged before no longer
+        // describes this client's state. (set_name above records an op into
+        // the new document; it flows normally on the next drain.)
+        self.server
+            .send(core_document::server::ClientMessage::Rebase);
         app_log::info(format!("Opened document from {}", path.display()));
     }
 
-    /// Decode a `.prtcad` / `.json` document off the UI thread. Completion is
-    /// handled in [`Self::drain_document_open_responses`].
+    /// Ask the server for a document's bytes. The load epoch rides as the
+    /// request token so a response landing after File > New is ignored.
     fn request_document_open(&mut self, path: PathBuf) {
-        let tx = self.document_open_tx.clone();
-        let epoch = self.document_load_epoch;
-        self.document_open_in_flight = self.document_open_in_flight.saturating_add(1);
         app_log::info(format!("Opening `{}`...", path.display()));
-        std::thread::spawn(move || {
-            let msg = match Self::load_document_from_path(&path) {
-                Ok(document) => DocumentOpenMsg::Loaded(Box::new(document)),
-                Err(err) => DocumentOpenMsg::Failed(format!("{err:#}")),
-            };
-            let _ = tx.send((epoch, path, msg));
-        });
+        self.server
+            .send(core_document::server::ClientMessage::OpenDocument {
+                path,
+                token: self.document_load_epoch,
+            });
     }
 
-    pub(crate) fn drain_document_open_responses(&mut self) {
-        while let Ok((epoch, path, msg)) = self.document_open_rx.try_recv() {
-            self.document_open_in_flight = self.document_open_in_flight.saturating_sub(1);
-            if epoch != self.document_load_epoch {
-                continue;
-            }
-            match msg {
-                DocumentOpenMsg::Loaded(document) => {
-                    self.apply_opened_document(path, *document);
+    /// Apply everything the server answered since last frame: opened
+    /// documents (parsed here — the server serves bytes, never meaning) and
+    /// save completions, whose `at_seq` decides whether the document is
+    /// truly clean or was edited mid-save.
+    pub(crate) fn drain_server_messages(&mut self) {
+        use core_document::server::ServerMessage;
+        for message in self.server.poll() {
+            match message {
+                ServerMessage::HelloOk { .. } => {}
+                ServerMessage::Opened { token, path, bytes } => {
+                    if token != self.document_load_epoch {
+                        continue;
+                    }
+                    match Self::parse_document_bytes(&path, bytes) {
+                        Ok(document) => self.apply_opened_document(path, document),
+                        Err(err) => {
+                            app_log::error(format!(
+                                "Failed to open document {}: {err:#}",
+                                path.display()
+                            ));
+                        }
+                    }
                 }
-                DocumentOpenMsg::Failed(error) => {
+                ServerMessage::OpenFailed { token, path, error } => {
+                    if token != self.document_load_epoch {
+                        continue;
+                    }
                     app_log::error(format!(
                         "Failed to open document {}: {error}",
                         path.display()
                     ));
+                }
+                ServerMessage::SaveCompleted { path, at_seq } => {
+                    // Only call the document clean if nothing was edited
+                    // while the write was in flight; otherwise those edits
+                    // would be silently marked as saved.
+                    if at_seq == self.document.mutation_seq() {
+                        self.document.mark_clean();
+                    }
+                    self.current_file = Some(path.clone());
+                    write_recent_dir(&path);
+                    app_log::info(format!("Saved document to {}", path.display()));
+                }
+                ServerMessage::SaveFailed { path, error } => {
+                    app_log::error(format!("Failed to save {}: {error}", path.display()));
                 }
             }
         }
@@ -309,11 +327,24 @@ impl PrintCadApp {
                 };
 
                 // A `.prtcad` carries every snapshot blob and the source
-                // file, so writing it takes seconds on a large import. Hand
-                // it to a worker; the rest of the bookkeeping happens in
-                // `drain_document_save_responses` when it lands.
-                self.document_saved_at_seq = Some(self.document.mutation_seq());
-                self.spawn_document_save(path.to_path_buf(), compression);
+                // file, so writing it takes seconds on a large import. The
+                // serialization is cheap (payloads sit behind Arcs in the
+                // clone); the server owns the actual write, and the rest of
+                // the bookkeeping happens in `drain_server_messages` when
+                // its completion lands.
+                let at_seq = self.document.mutation_seq();
+                let bytes = self
+                    .document
+                    .clone()
+                    .save_to_bytes(compression)
+                    .with_context(|| "Failed to serialize document")?;
+                app_log::info(format!("Saving `{}`...", path.display()));
+                self.server
+                    .send(core_document::server::ClientMessage::SaveDocument {
+                        path: path.to_path_buf(),
+                        bytes,
+                        at_seq,
+                    });
                 return Ok(());
             }
         }
@@ -325,65 +356,16 @@ impl PrintCadApp {
         Ok(())
     }
 
-    /// Write the document to `path` on a worker thread.
+    /// Block until the server has durably handled every queued write.
     ///
-    /// The payloads that make a save slow — snapshot blobs, the source STEP —
-    /// live behind `Arc`s, so the clone handed to the worker is a handful of
-    /// refcount bumps rather than a copy of the geometry. The UI keeps
-    /// rendering; the status bar says a save is running.
-    fn spawn_document_save(&mut self, path: PathBuf, compression: core_document::Compression) {
-        let mut snapshot = self.document.clone();
-        let tx = self.document_save_tx.clone();
-        self.document_save_in_flight = self.document_save_in_flight.saturating_add(1);
-        app_log::info(format!("Saving `{}`...", path.display()));
-        let target = path.clone();
-        let handle = std::thread::spawn(move || {
-            let msg = match snapshot.save_to_file(&target, compression) {
-                Ok(()) => DocumentSaveMsg::Saved,
-                Err(err) => DocumentSaveMsg::Failed(format!("{err:#}")),
-            };
-            let _ = tx.send((target, msg));
-        });
-        self.document_save_threads.retain(|h| !h.is_finished());
-        self.document_save_threads.push(handle);
-    }
-
-    /// Block until every queued write has finished, then report them.
-    ///
-    /// Only worth doing on the way out: the process exiting would kill a
-    /// writer mid-file and leave a truncated document behind.
+    /// Only worth doing on the way out: the process exiting would abandon a
+    /// write in flight and could leave a truncated document behind. Every
+    /// exit path must call this (CLAUDE.md invariant).
     pub(crate) fn wait_for_document_saves(&mut self) {
-        if !self.document_save_threads.is_empty() {
+        if self.server.status().busy() {
             app_log::info("Finishing document save before exit…");
         }
-        for handle in std::mem::take(&mut self.document_save_threads) {
-            let _ = handle.join();
-        }
-        self.drain_document_save_responses();
-    }
-
-    /// Apply finished saves. Called once a frame beside the other drains.
-    pub(crate) fn drain_document_save_responses(&mut self) {
-        while let Ok((path, msg)) = self.document_save_rx.try_recv() {
-            let path: PathBuf = path;
-            self.document_save_in_flight = self.document_save_in_flight.saturating_sub(1);
-            match msg {
-                DocumentSaveMsg::Saved => {
-                    // Only call the document clean if nothing was edited while
-                    // the write was in flight; otherwise those edits would be
-                    // silently marked as saved.
-                    if self.document_saved_at_seq == Some(self.document.mutation_seq()) {
-                        self.document.mark_clean();
-                    }
-                    self.current_file = Some(path.clone());
-                    write_recent_dir(&path);
-                    app_log::info(format!("Saved document to {}", path.display()));
-                }
-                DocumentSaveMsg::Failed(error) => {
-                    app_log::error(format!("Failed to save {}: {error}", path.display()));
-                }
-            }
-        }
+        self.server.flush();
     }
 
     /// Drain a finished file-dialog thread's result, if any.

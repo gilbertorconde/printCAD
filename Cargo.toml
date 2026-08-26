@@ -30,6 +30,7 @@ description = "Workspace for the printCAD parametric CAD application."
 [workspace.dependencies]
 anyhow = "1.0.100"
 ash = { version = "0.38", default-features = false, features = ["linked"] }
+base64 = "0.22"
 serde_json = "1.0.145"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 thiserror = "2.0.17"

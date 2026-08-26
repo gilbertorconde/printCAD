@@ -59,6 +59,10 @@ cargo fmt --all                   # CI enforces --check
   persistence), `Workbench` trait + runtime context, snapshot undo
   (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
   plane/line/point + attachment + offset, shared across workbenches).
+- `doc_server` — the document server: `printcad-serverd` binary +
+  `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
+  length-prefixed JSON frames (`framing.rs`), integration-tested against the
+  real spawned daemon (`tests/daemon.rs`).
 - `workbenches/wb_sketch` — sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
@@ -137,11 +141,26 @@ hacks, no silently degraded feature). Instead:
   through `LeftPanelResult`, never dropped.
 - **Adding a UI action** = one variant in `ui/commands.rs` + one arm in
   `app/commands.rs::apply_ui_commands` (two-phase dispatch preserves ordering).
-- **Saving runs on a worker thread** over a `Document::clone` — cheap because
-  blobs/meshes sit behind `Arc`s, and independent, so editing during a write
-  is safe. Two consequences: `mark_clean()` happens on completion and only if
-  `mutation_seq` is unchanged, and **every exit path must call
-  `wait_for_document_saves()`** or the process kills the writer mid-file.
+- **Every user-edit mutator on `Document` records exactly one op; derived
+  state never does.** Mutators follow validate → resolve (ids, timestamps,
+  seq) → build `DocumentOp` → `apply_op` → record; replay runs the same code
+  live edits ran (`core_document/src/op.rs`, tests in `tests/op_replay.rs`).
+  Dirty flags, recompute errors and imported-geometry sidecars are per-replica
+  consequences, excluded from the replicated projection. The outbox is
+  `#[serde(skip)]` and Clone-EMPTIES — snapshots carry state, never pending
+  ops. Never add a `&mut` escape hatch to `Document`; capture is only total
+  because none exists.
+- **The app is a client of a document server** (`core_document/src/server.rs`
+  trait = the wire protocol; `crates/doc_server` has the `printcad-serverd`
+  daemon — one per session, unix socket under `$XDG_RUNTIME_DIR/printcad`,
+  single client, exits on disconnect — plus the `DirectFiles` fallback). The
+  daemon stores opaque `.prtcad` bytes and op envelopes
+  (`<file>.oplog.jsonl`), never deserializing a `Document`. Saves cross as
+  client-serialized bytes with `at_seq`; `mark_clean()` only fires if
+  `at_seq` still equals `mutation_seq` on completion. Undo/redo/new/open send
+  `Rebase`. **Every exit path must call `wait_for_document_saves()`** (which
+  flushes the server) or a write in flight is abandoned mid-file.
+  `PRINTCAD_SERVERD` overrides the daemon binary for dev.
 - **`FeatureNode.seq` is THE build-history ordering key.** `created_at` has
   millisecond ties that order randomly — never sort history by it.
 - **Undo is a memory clone, not serde** — serde would drop the

@@ -7,6 +7,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+doc_server = { path = "../doc_server" }
 core_document = { path = "../core_document", features = ["egui"] }
 render_vk = { path = "../render_vk" }
 tracing.workspace = true

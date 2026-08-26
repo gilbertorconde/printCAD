@@ -14,6 +14,11 @@ impl PrintCadApp {
             Some(label) => {
                 app_log::info(format!("Undo: {label}"));
                 self.after_history_jump();
+                // The document jumped timelines; ops the server logged no
+                // longer describe it. (The restored snapshot's outbox is
+                // empty by construction — Clone empties it.)
+                self.server
+                    .send(core_document::server::ClientMessage::Rebase);
             }
             None => app_log::info("Nothing to undo"),
         }
@@ -27,6 +32,8 @@ impl PrintCadApp {
             Some(label) => {
                 app_log::info(format!("Redo: {label}"));
                 self.after_history_jump();
+                self.server
+                    .send(core_document::server::ClientMessage::Rebase);
             }
             None => app_log::info("Nothing to redo"),
         }
@@ -37,7 +44,7 @@ impl PrintCadApp {
     /// redo restoring a pre-tessellation placeholder whose response was
     /// already consumed). Block it; imports finish within moments.
     fn history_jump_allowed(&self) -> bool {
-        if self.kernel_worker.in_flight() > 0 || self.document_open_in_flight > 0 {
+        if self.kernel_worker.in_flight() > 0 || self.server.status().opens_in_flight > 0 {
             app_log::warn("Undo/redo unavailable while an import or open is in progress");
             return false;
         }
