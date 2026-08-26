@@ -121,6 +121,7 @@ impl UiLayer {
             kernel_status,
             kernel_cancellable,
             kernel_progress,
+            server_label,
             document_saving,
             mut step_import_pending,
         } = inputs;
@@ -238,6 +239,7 @@ impl UiLayer {
                 kernel_status.as_deref(),
                 kernel_cancellable,
                 kernel_progress,
+                &server_label,
                 document_saving,
             );
 

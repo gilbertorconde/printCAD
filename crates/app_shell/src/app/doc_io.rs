@@ -155,6 +155,7 @@ impl PrintCadApp {
         let _ = self.document.take_pending_ops();
         self.server
             .send(core_document::server::ClientMessage::Rebase);
+        self.switch_server_to(doc_server::socket_path_for_untitled());
         app_log::info("New document");
     }
 
@@ -213,10 +214,64 @@ impl PrintCadApp {
         app_log::info(format!("Opened document from {}", path.display()));
     }
 
+    /// Move the server connection to `socket` — the document's own daemon
+    /// (one socket per file, the X11 model) or the session's untitled one.
+    /// The old connection is flushed first so no queued write is abandoned;
+    /// on failure the old connection stays and the move is only logged: a
+    /// working degraded connection beats a broken fresh one.
+    pub(crate) fn switch_server_to(&mut self, socket: std::path::PathBuf) {
+        if self.server_socket == socket && self.server.status().connected {
+            return;
+        }
+        match doc_server::DaemonClient::spawn_or_connect(&socket) {
+            Ok(client) => {
+                self.server.flush();
+                self.server = Box::new(client);
+                self.server_socket = socket;
+                app_log::info(format!("Document server: {}", self.server.name()));
+            }
+            Err(err) => {
+                app_log::warn(format!(
+                    "Could not reach document daemon at {}: {err}; keeping {}",
+                    socket.display(),
+                    self.server.name()
+                ));
+            }
+        }
+    }
+
+    /// Gentle self-healing: when the connection is degraded, retry the
+    /// expected socket every few seconds. Also upgrades a DirectFiles
+    /// fallback to a real daemon once one can be spawned.
+    pub(crate) fn maybe_reconnect_server(&mut self) {
+        if self.server.status().connected {
+            return;
+        }
+        let due = self
+            .last_server_reconnect
+            .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(5));
+        if !due {
+            return;
+        }
+        self.last_server_reconnect = Some(std::time::Instant::now());
+        match doc_server::DaemonClient::spawn_or_connect(&self.server_socket.clone()) {
+            Ok(client) => {
+                self.server = Box::new(client);
+                app_log::info("Document server reconnected");
+            }
+            Err(err) => {
+                tracing::debug!("server reconnect attempt failed: {err}");
+            }
+        }
+    }
+
     /// Ask the server for a document's bytes. The load epoch rides as the
     /// request token so a response landing after File > New is ignored.
     fn request_document_open(&mut self, path: PathBuf) {
         app_log::info(format!("Opening `{}`...", path.display()));
+        // The document's own daemon owns its file (and, later, its other
+        // clients). Ask it, not the session daemon.
+        self.switch_server_to(doc_server::socket_path_for(&path));
         self.server
             .send(core_document::server::ClientMessage::OpenDocument {
                 path,
@@ -230,6 +285,7 @@ impl PrintCadApp {
     /// truly clean or was edited mid-save.
     pub(crate) fn drain_server_messages(&mut self) {
         use core_document::server::ServerMessage;
+        self.maybe_reconnect_server();
         for message in self.server.poll() {
             match message {
                 ServerMessage::HelloOk { .. } => {}
@@ -332,6 +388,11 @@ impl PrintCadApp {
                 // clone); the server owns the actual write, and the rest of
                 // the bookkeeping happens in `drain_server_messages` when
                 // its completion lands.
+                if self.current_file.as_deref() != Some(path) {
+                    // Save As gives the document a new identity — and a new
+                    // daemon to own it.
+                    self.switch_server_to(doc_server::socket_path_for(path));
+                }
                 let at_seq = self.document.mutation_seq();
                 let bytes = self
                     .document

@@ -120,8 +120,31 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
 static OPLOG_PATH: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 fn set_oplog_home(document: &Path) {
+    let home = document.with_extension("oplog.jsonl");
     let mut slot = OPLOG_PATH.lock().unwrap_or_else(|p| p.into_inner());
-    *slot = Some(document.with_extension("oplog.jsonl"));
+    if slot.as_deref() == Some(home.as_path()) {
+        return;
+    }
+    // Ops recorded before the document had a file live in the unhomed log;
+    // carry them over so the document's history starts at its beginning,
+    // not at its first save.
+    let orphan = crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl");
+    if let Ok(text) = std::fs::read_to_string(&orphan) {
+        if !text.is_empty() {
+            let appended = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&home)
+                .and_then(|mut file| file.write_all(text.as_bytes()));
+            match appended {
+                Ok(()) => {
+                    let _ = std::fs::write(&orphan, b"");
+                }
+                Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
+            }
+        }
+    }
+    *slot = Some(home);
 }
 
 fn oplog_path() -> PathBuf {

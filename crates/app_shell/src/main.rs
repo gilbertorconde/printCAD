@@ -160,6 +160,13 @@ struct PrintCadApp {
     /// that crosses it is the wire protocol; `document_load_epoch` rides
     /// Open requests as the token that invalidates late responses.
     server: Box<dyn core_document::server::DocumentServer>,
+    /// The socket the server connection is (or should be) on — per-document
+    /// once the document has a file, per-session for Untitled. Reconnects
+    /// and connection switches aim here.
+    server_socket: PathBuf,
+    /// Last reconnect attempt, so a dead daemon is retried at a gentle pace
+    /// instead of every frame.
+    last_server_reconnect: Option<Instant>,
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
@@ -244,9 +251,9 @@ impl PrintCadApp {
         // The document server: a per-session local daemon by default; plain
         // in-process file I/O when the daemon cannot start. Same contract
         // either way — the trait is the seam a remote plugin replaces.
+        let server_socket = doc_server::socket_path_for_untitled();
         let server: Box<dyn core_document::server::DocumentServer> =
-            match doc_server::DaemonClient::spawn_or_connect(&doc_server::socket_path_for_untitled())
-            {
+            match doc_server::DaemonClient::spawn_or_connect(&server_socket) {
                 Ok(client) => Box::new(client),
                 Err(err) => {
                     tracing::warn!("document daemon unavailable ({err}); using direct file I/O");
@@ -283,6 +290,8 @@ impl PrintCadApp {
             file_dialog_rx: None,
             kernel_worker: KernelWorker::spawn(),
             server,
+            server_socket,
+            last_server_reconnect: None,
             document_load_epoch: 0,
             bench_open_fired: false,
             frame_phase_accum: (0.0, 0.0, 0),

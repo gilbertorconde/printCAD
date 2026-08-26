@@ -593,11 +593,14 @@ pub fn draw_bottom_panel(
     kernel_status: Option<&str>,
     kernel_cancellable: bool,
     kernel_progress: Option<(u64, u64)>,
+    server_label: &str,
     document_saving: bool,
 ) -> bool {
     let mut cancel_requested = false;
     egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
+            ui.label(server_label);
+            ui.separator();
             let fps_text = match fps {
                 Some(fps) if fps > 0.0 => format!("FPS: {fps:.1}"),
                 Some(_) => "FPS: …".to_string(),

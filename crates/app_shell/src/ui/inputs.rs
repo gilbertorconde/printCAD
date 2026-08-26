@@ -48,5 +48,8 @@ pub struct UiFrameInputs<'a> {
     pub kernel_progress: Option<(u64, u64)>,
     /// A document write is in flight.
     pub document_saving: bool,
+    /// Which document server serves this session, with a degraded marker —
+    /// e.g. "local daemon" or "local daemon (disconnected)".
+    pub server_label: String,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
 }

@@ -323,6 +323,11 @@ impl PrintCadApp {
                         kernel_progress: self.kernel_worker.progress(),
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
                         document_saving: server_status.saves_in_flight > 0,
+                        server_label: if server_status.connected {
+                            self.server.name().to_string()
+                        } else {
+                            format!("{} (disconnected)", self.server.name())
+                        },
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
                 );
