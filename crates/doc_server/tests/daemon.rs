@@ -220,3 +220,64 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Big payloads leave the log for the content-addressed blob store, and the
+/// same bytes imported twice share one stored blob.
+#[test]
+fn large_blobs_are_extracted_and_deduplicated() {
+    daemon_env();
+    let home = TestHome::new("blobs");
+
+    let mut client = DaemonClient::spawn_or_connect(&home.socket()).expect("client");
+
+    // Home the log first so blobs land beside the document.
+    let mut doc = Document::new("Blobby");
+    let bytes = doc
+        .save_to_bytes(core_document::Compression::None)
+        .expect("serialize");
+    client.send(ClientMessage::SaveDocument {
+        path: home.document(),
+        bytes,
+        at_seq: doc.mutation_seq(),
+    });
+    wait_for(&mut client, "save", |m| match m {
+        ServerMessage::SaveCompleted { .. } => Some(()),
+        ServerMessage::SaveFailed { error, .. } => panic!("save failed: {error}"),
+        _ => None,
+    });
+
+    // An op with a payload comfortably over the extraction threshold, twice.
+    let big = vec![0xA5u8; 512 * 1024];
+    for _ in 0..2 {
+        let mut d = Document::new("x");
+        let _ = d.take_pending_ops();
+        d.add_asset_with_data(
+            core_document::AssetReference::new(
+                "assets/big.step".to_string(),
+                core_document::AssetType::Step,
+                serde_json::json!({}),
+            ),
+            big.clone(),
+        );
+        client.send(ClientMessage::Ops(d.take_pending_ops()));
+    }
+    client.flush();
+
+    let oplog = home.document().with_extension("oplog.jsonl");
+    let blob_dir = home.document().with_extension("oplog.blobs");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let log_ok = std::fs::read_to_string(&oplog)
+            .map(|t| t.lines().count() >= 2 && t.contains("blob:sha256:") && t.len() < 64 * 1024)
+            .unwrap_or(false);
+        let blobs: usize = std::fs::read_dir(&blob_dir).map(|d| d.count()).unwrap_or(0);
+        if log_ok && blobs == 1 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "expected a small log with blob markers and ONE stored blob; log_ok={log_ok}, blobs={blobs}"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}

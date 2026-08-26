@@ -239,6 +239,18 @@ fn set_oplog_home(document: &Path) {
             match appended {
                 Ok(()) => {
                     let _ = std::fs::write(&orphan, b"");
+                    // The log's blob markers reference the unhomed store;
+                    // the blobs move with the lines they back.
+                    let orphan_blobs = orphan.with_extension("blobs");
+                    let home_blobs = home.with_extension("blobs");
+                    if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
+                        let _ = std::fs::create_dir_all(&home_blobs);
+                        for entry in entries.flatten() {
+                            let _ =
+                                std::fs::rename(entry.path(), home_blobs.join(entry.file_name()));
+                        }
+                        let _ = std::fs::remove_dir(&orphan_blobs);
+                    }
                 }
                 Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
             }
@@ -253,27 +265,89 @@ fn oplog_path() -> PathBuf {
         .unwrap_or_else(|| crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl"))
 }
 
+/// Payload strings at or above this length are pulled out of the log into
+/// the content-addressed blob store. Well under any real import, well over
+/// any parameter payload.
+const BLOB_EXTRACT_THRESHOLD: usize = 256 * 1024;
+
+/// The log rotates once it passes this size; one previous generation is
+/// kept (`.oplog.jsonl.1`).
+const OPLOG_ROTATE_BYTES: u64 = 64 * 1024 * 1024;
+
 fn append_ops(actor: uuid::Uuid, ops: &[core_document::op::DocumentOp]) -> std::io::Result<()> {
     let _guard = lock(&OPLOG_WRITE);
     let path = oplog_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    // Rotation before append: a single import op can be large, but the cap
+    // is about unbounded sessions, not about splitting one op.
+    if std::fs::metadata(&path).is_ok_and(|m| m.len() > OPLOG_ROTATE_BYTES) {
+        let _ = std::fs::rename(&path, path.with_extension("jsonl.1"));
+    }
+    let blob_dir = path.with_extension("blobs");
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(path)?;
+        .open(&path)?;
     for op in ops {
+        let mut value = serde_json::to_value(op)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        extract_blobs(&mut value, &blob_dir);
         let envelope = serde_json::json!({
             "v": core_document::op::OP_PROTOCOL_VERSION,
             "actor": actor,
-            "op": op,
+            "op": value,
         });
         let line = serde_json::to_string(&envelope)
             .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
         writeln!(file, "{line}")?;
     }
     Ok(())
+}
+
+/// Pull large payload strings out of an op's JSON into the blob store,
+/// leaving a `blob:sha256:<hex>` marker. A generic walk over fields named
+/// `bytes`, not op knowledge — the daemon stays schema-blind, and two
+/// imports of the same file share one stored blob.
+fn extract_blobs(value: &mut serde_json::Value, blob_dir: &Path) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                if key == "bytes" {
+                    if let serde_json::Value::String(payload) = child {
+                        if payload.len() >= BLOB_EXTRACT_THRESHOLD {
+                            use base64::Engine as _;
+                            use sha2::Digest as _;
+                            let decoded = base64::engine::general_purpose::STANDARD
+                                .decode(payload.as_bytes())
+                                .unwrap_or_else(|_| payload.clone().into_bytes());
+                            let hash = hex_digest(sha2::Sha256::digest(&decoded));
+                            let target = blob_dir.join(&hash);
+                            let stored = target.exists()
+                                || (std::fs::create_dir_all(blob_dir).is_ok()
+                                    && std::fs::write(&target, &decoded).is_ok());
+                            if stored {
+                                *child = serde_json::Value::String(format!("blob:sha256:{hash}"));
+                            }
+                            continue;
+                        }
+                    }
+                }
+                extract_blobs(child, blob_dir);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for child in items.iter_mut() {
+                extract_blobs(child, blob_dir);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn hex_digest(digest: impl AsRef<[u8]>) -> String {
+    digest.as_ref().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 fn truncate_oplog() -> std::io::Result<()> {
