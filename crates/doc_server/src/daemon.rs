@@ -143,6 +143,7 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
                 if let Err(err) = append_ops(actor, &ops) {
                     tracing::error!("op log append failed: {err}");
                 }
+                lock(&OP_TAIL).push((actor, ops.clone()));
                 // Receive order is the total order; relaying inside this
                 // reader loop means no later op of this client can overtake
                 // these on any peer.
@@ -156,6 +157,7 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
                 if let Err(err) = truncate_oplog() {
                     tracing::error!("op log truncate failed: {err}");
                 }
+                lock(&OP_TAIL).clear();
             }
             ClientMessage::SaveDocument {
                 path,
@@ -165,6 +167,8 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
                 let reply = match write_atomically(&path, &bytes) {
                     Ok(()) => {
                         set_oplog_home(&path);
+                        // The snapshot embodies everything relayed so far.
+                        lock(&OP_TAIL).clear();
                         ServerMessage::SaveCompleted { path, at_seq }
                     }
                     Err(err) => ServerMessage::SaveFailed {
@@ -189,9 +193,28 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
                         error: err.to_string(),
                     },
                 };
+                let opened = matches!(reply, ServerMessage::Opened { .. });
                 let mut stream = lock(&writer);
                 if write_frame(&mut *stream, &reply).is_err() {
                     break;
+                }
+                if opened {
+                    // The file is the saved past; the tail is the unsaved
+                    // present. Sent on the same stream right after Opened,
+                    // so the joiner applies them in order.
+                    for (tail_actor, ops) in lock(&OP_TAIL).iter() {
+                        if write_frame(
+                            &mut *stream,
+                            &ServerMessage::Ops {
+                                actor: *tail_actor,
+                                ops: ops.clone(),
+                            },
+                        )
+                        .is_err()
+                        {
+                            break;
+                        }
+                    }
                 }
             }
         }
@@ -217,6 +240,14 @@ fn write_atomically(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
     std::fs::rename(&tmp, path)
 }
+
+// Ops since the last saved snapshot, in receive order. A client that joins
+// mid-session gets the file's bytes plus this tail — the unsaved present.
+// Cleared on save (the snapshot then embodies the tail) and on rebase. An
+// op racing a save may be cleared from the tail before the snapshot truly
+// contains it; the convergence milestone owns that window.
+static OP_TAIL: Mutex<Vec<(uuid::Uuid, Vec<core_document::op::DocumentOp>)>> =
+    Mutex::new(Vec::new());
 
 // The op log lives beside the document once we know where the document is.
 // Before the first save/open of a session it accumulates next to the socket.

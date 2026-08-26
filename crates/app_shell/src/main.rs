@@ -181,6 +181,11 @@ struct PrintCadApp {
     /// What each peer has selected, keyed by actor. Bodies in here render
     /// with the peer tint; entries die with their peer.
     peer_presence: std::collections::HashMap<uuid::Uuid, core_document::server::PresenceState>,
+    /// Relayed ops that arrived while an open was in flight. The daemon's
+    /// threads may interleave a relay before the Opened reply; applying it
+    /// to the document the open is about to replace would lose the edit,
+    /// so they wait here and apply right after the new document lands.
+    held_remote_ops: Vec<(uuid::Uuid, Vec<core_document::op::DocumentOp>)>,
     /// Last presence we told the server, so only changes cross the wire.
     last_sent_presence: Option<core_document::server::PresenceState>,
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
@@ -310,6 +315,7 @@ impl PrintCadApp {
             last_server_reconnect: None,
             remote_import_routes: std::collections::HashMap::new(),
             peer_presence: std::collections::HashMap::new(),
+            held_remote_ops: Vec::new(),
             last_sent_presence: None,
             document_load_epoch: 0,
             bench_open_fired: false,

@@ -5,7 +5,7 @@ use egui::{Color32, Response, RichText, Ui};
 use uuid::Uuid;
 
 /// Identifier for selectable items in the tree panel.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TreeItemId {
     DocumentRoot,
     Body(BodyId),
@@ -116,7 +116,7 @@ impl DocumentTree {
         // Sort feature roots within each body group by insertion order (the
         // history ordering key; creation times have millisecond ties).
         for nodes in roots_by_body.values_mut() {
-            nodes.sort_by_key(|n| n.seq);
+            nodes.sort_by_key(|n| (n.seq, n.id));
         }
 
         // Build body nodes and attach their feature subtrees. Bodies represented
@@ -186,7 +186,7 @@ fn build_feature_node(
         }
     }
 
-    children.sort_by_key(|n| n.seq);
+    children.sort_by_key(|n| (n.seq, n.id));
 
     let tip = node.body.and_then(|b| tip_seq_by_body.get(&b));
     let is_tip = tip.map(|(id, _)| *id == node.id).unwrap_or(false);

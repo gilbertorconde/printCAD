@@ -310,7 +310,13 @@ impl PrintCadApp {
                     });
                 }
                 ServerMessage::Ops { actor, ops } => {
-                    self.apply_remote_ops(actor, ops);
+                    if self.server.status().opens_in_flight > 0 {
+                        // An open will replace the document; these ops
+                        // describe the incoming one. Apply them after it.
+                        self.held_remote_ops.push((actor, ops));
+                    } else {
+                        self.apply_remote_ops(actor, ops);
+                    }
                 }
                 ServerMessage::PresencePeer { actor, state } => {
                     self.peer_presence.insert(actor, state);
@@ -323,7 +329,12 @@ impl PrintCadApp {
                         continue;
                     }
                     match Self::parse_document_bytes(&path, bytes) {
-                        Ok(document) => self.apply_opened_document(path, document),
+                        Ok(document) => {
+                            self.apply_opened_document(path, document);
+                            for (actor, ops) in std::mem::take(&mut self.held_remote_ops) {
+                                self.apply_remote_ops(actor, ops);
+                            }
+                        }
                         Err(err) => {
                             app_log::error(format!(
                                 "Failed to open document {}: {err:#}",
@@ -333,6 +344,7 @@ impl PrintCadApp {
                     }
                 }
                 ServerMessage::OpenFailed { token, path, error } => {
+                    self.held_remote_ops.clear();
                     if token != self.document_load_epoch {
                         continue;
                     }

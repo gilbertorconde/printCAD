@@ -763,7 +763,8 @@ impl Document {
             .filter(|(_, n)| n.workbench_id == workbench && n.body == body)
             .map(|(id, n)| (n.seq, *id))
             .collect();
-        peers.sort_by_key(|(s, _)| *s);
+        // Same tie-break as every seq sort: (seq, id) is the total order.
+        peers.sort_by_key(|(s, id)| (*s, *id));
         let position = peers.iter().position(|(s, _)| *s == seq).unwrap_or(0);
         let neighbour_pos = if up {
             position.checked_sub(1)

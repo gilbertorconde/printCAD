@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::{DocumentResult, WorkbenchId};
 
 /// Unique identifier for a feature in the document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct FeatureId(pub Uuid);
 
 impl FeatureId {
@@ -28,7 +28,7 @@ impl Default for FeatureId {
 }
 
 /// Unique identifier for a body in the document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 pub struct BodyId(pub Uuid);
 
 impl BodyId {

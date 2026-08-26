@@ -46,14 +46,31 @@ fn daemon_env() {
     std::env::set_var("PRINTCAD_SERVERD", &path);
 }
 
+/// Messages polled but not yet consumed by a `wait_for`. Poll batches can
+/// carry several messages; without this, waiting for one would silently
+/// discard the others in its batch.
+#[derive(Default)]
+struct Inbox(std::collections::VecDeque<ServerMessage>);
+
+impl Inbox {
+    fn next(&mut self, client: &mut DaemonClient) -> Option<ServerMessage> {
+        if let Some(message) = self.0.pop_front() {
+            return Some(message);
+        }
+        self.0.extend(client.poll());
+        self.0.pop_front()
+    }
+}
+
 fn wait_for<T>(
     client: &mut DaemonClient,
+    inbox: &mut Inbox,
     what: &str,
     mut pick: impl FnMut(&ServerMessage) -> Option<T>,
 ) -> T {
     let deadline = Instant::now() + Duration::from_secs(10);
     while Instant::now() < deadline {
-        for message in client.poll() {
+        while let Some(message) = inbox.next(client) {
             if let Some(found) = pick(&message) {
                 return found;
             }
@@ -69,6 +86,7 @@ fn a_session_round_trips_through_the_daemon() {
     let home = TestHome::new("roundtrip");
 
     let mut client = DaemonClient::spawn_or_connect(&home.socket()).expect("spawn daemon");
+    let mut inbox = Inbox::default();
     assert!(client.status().connected, "handshake completed");
 
     // Build a small document client-side, save it THROUGH the daemon.
@@ -87,7 +105,7 @@ fn a_session_round_trips_through_the_daemon() {
         bytes,
         at_seq: doc.mutation_seq(),
     });
-    let saved_seq = wait_for(&mut client, "save completion", |m| match m {
+    let saved_seq = wait_for(&mut client, &mut inbox, "save completion", |m| match m {
         ServerMessage::SaveCompleted { at_seq, .. } => Some(*at_seq),
         ServerMessage::SaveFailed { error, .. } => panic!("save failed: {error}"),
         _ => None,
@@ -122,7 +140,7 @@ fn a_session_round_trips_through_the_daemon() {
         path: home.document(),
         token: 42,
     });
-    let bytes = wait_for(&mut client, "open", |m| match m {
+    let bytes = wait_for(&mut client, &mut inbox, "open", |m| match m {
         ServerMessage::Opened { token, bytes, .. } => {
             assert_eq!(*token, 42);
             Some(bytes.clone())
@@ -168,7 +186,9 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
     let home = TestHome::new("relay");
 
     let mut alice = DaemonClient::spawn_or_connect(&home.socket()).expect("first client");
+    let _alice_inbox = Inbox::default();
     let mut bob = DaemonClient::spawn_or_connect(&home.socket()).expect("second client");
+    let mut bob_inbox = Inbox::default();
     assert_ne!(alice.actor(), bob.actor());
 
     // Both replicas start from the same baseline.
@@ -184,7 +204,7 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
     alice.send(ClientMessage::Ops(ops));
 
     // Bob hears them (and only them), attributed to Alice.
-    let relayed = wait_for(&mut bob, "relayed ops", |m| match m {
+    let relayed = wait_for(&mut bob, &mut bob_inbox, "relayed ops", |m| match m {
         ServerMessage::Ops { actor, ops } => {
             assert_eq!(*actor, alice_actor, "author must be preserved");
             Some(ops.clone())
@@ -229,6 +249,7 @@ fn large_blobs_are_extracted_and_deduplicated() {
     let home = TestHome::new("blobs");
 
     let mut client = DaemonClient::spawn_or_connect(&home.socket()).expect("client");
+    let mut inbox = Inbox::default();
 
     // Home the log first so blobs land beside the document.
     let mut doc = Document::new("Blobby");
@@ -240,7 +261,7 @@ fn large_blobs_are_extracted_and_deduplicated() {
         bytes,
         at_seq: doc.mutation_seq(),
     });
-    wait_for(&mut client, "save", |m| match m {
+    wait_for(&mut client, &mut inbox, "save", |m| match m {
         ServerMessage::SaveCompleted { .. } => Some(()),
         ServerMessage::SaveFailed { error, .. } => panic!("save failed: {error}"),
         _ => None,
@@ -290,7 +311,9 @@ fn presence_relays_and_dies_with_its_author() {
     let home = TestHome::new("presence");
 
     let mut alice = DaemonClient::spawn_or_connect(&home.socket()).expect("alice");
+    let _alice_inbox = Inbox::default();
     let mut bob = DaemonClient::spawn_or_connect(&home.socket()).expect("bob");
+    let mut bob_inbox = Inbox::default();
     let alice_actor = alice.actor();
 
     let body = uuid::Uuid::new_v4();
@@ -300,7 +323,7 @@ fn presence_relays_and_dies_with_its_author() {
             selected_body: Some(body),
         },
     ));
-    let state = wait_for(&mut bob, "presence", |m| match m {
+    let state = wait_for(&mut bob, &mut bob_inbox, "presence", |m| match m {
         ServerMessage::PresencePeer { actor, state } => {
             assert_eq!(*actor, alice_actor);
             Some(state.clone())
@@ -310,11 +333,87 @@ fn presence_relays_and_dies_with_its_author() {
     assert_eq!(state.selected_body, Some(body));
 
     drop(alice);
-    wait_for(&mut bob, "presence gone", |m| match m {
+    wait_for(&mut bob, &mut bob_inbox, "presence gone", |m| match m {
         ServerMessage::PresenceGone { actor } => {
             assert_eq!(*actor, alice_actor);
             Some(())
         }
         _ => None,
     });
+}
+
+/// A client joining mid-session gets the saved file PLUS the ops since the
+/// save — the unsaved present — and converges with the live editor.
+#[test]
+fn a_late_joiner_catches_up_to_the_unsaved_present() {
+    daemon_env();
+    let home = TestHome::new("latejoin");
+
+    let mut alice = DaemonClient::spawn_or_connect(&home.socket()).expect("alice");
+    let mut alice_inbox = Inbox::default();
+
+    // Alice saves a baseline, then keeps editing without saving.
+    let mut alice_doc = Document::new("Late");
+    let body = alice_doc.create_body(Some("Base".into()));
+    alice.send(ClientMessage::Ops(alice_doc.take_pending_ops()));
+    let bytes = alice_doc
+        .save_to_bytes(core_document::Compression::None)
+        .expect("serialize");
+    alice.send(ClientMessage::SaveDocument {
+        path: home.document(),
+        bytes,
+        at_seq: alice_doc.mutation_seq(),
+    });
+    wait_for(&mut alice, &mut alice_inbox, "save", |m| match m {
+        ServerMessage::SaveCompleted { .. } => Some(()),
+        ServerMessage::SaveFailed { error, .. } => panic!("save failed: {error}"),
+        _ => None,
+    });
+    alice_doc.rename_body(body, "Edited after save");
+    alice.send(ClientMessage::Ops(alice_doc.take_pending_ops()));
+    alice.flush();
+    // Wait until the daemon has processed the rename (observable in the
+    // log) so bob's join deterministically exercises the TAIL path rather
+    // than the live-relay path.
+    let oplog = home.document().with_extension("oplog.jsonl");
+    let seen = Instant::now() + Duration::from_secs(5);
+    while !std::fs::read_to_string(&oplog)
+        .map(|t| t.contains("Edited after save"))
+        .unwrap_or(false)
+    {
+        assert!(Instant::now() < seen, "rename never reached the daemon log");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // Bob joins and opens: file bytes, then the tail.
+    let mut bob = DaemonClient::spawn_or_connect(&home.socket()).expect("bob");
+    let mut bob_inbox = Inbox::default();
+    bob.send(ClientMessage::OpenDocument {
+        path: home.document(),
+        token: 1,
+    });
+    let file_bytes = wait_for(&mut bob, &mut bob_inbox, "opened", |m| match m {
+        ServerMessage::Opened { bytes, .. } => Some(bytes.clone()),
+        ServerMessage::OpenFailed { error, .. } => panic!("open failed: {error}"),
+        _ => None,
+    });
+    let mut bob_doc = Document::load_from_bytes(file_bytes).expect("parse");
+    assert_eq!(
+        bob_doc.bodies()[0].name,
+        "Base",
+        "the file is the saved past"
+    );
+
+    let tail = wait_for(&mut bob, &mut bob_inbox, "tail ops", |m| match m {
+        ServerMessage::Ops { ops, .. } => Some(ops.clone()),
+        _ => None,
+    });
+    for op in &tail {
+        bob_doc.apply_remote_op(op);
+    }
+    assert_eq!(
+        bob_doc.bodies()[0].name,
+        "Edited after save",
+        "the tail is the unsaved present"
+    );
 }

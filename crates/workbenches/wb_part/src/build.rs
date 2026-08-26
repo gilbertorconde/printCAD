@@ -52,7 +52,9 @@ pub fn part_features_of_body(document: &Document, body: BodyId) -> Vec<(FeatureI
         })
         .collect();
     // `seq` is the document's explicit insertion order — the build history.
-    features.sort_by_key(|(seq, _, _)| *seq);
+    // Ties (two replicas inserting concurrently) break on the feature id so
+    // every replica agrees on the order.
+    features.sort_by_key(|(seq, id, _)| (*seq, *id));
     features.into_iter().map(|(_, id, f)| (id, f)).collect()
 }
 
@@ -1137,7 +1139,7 @@ pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, St
         .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.body == Some(body))
         .map(|(id, n)| (n.seq, *id, n.name.clone()))
         .collect();
-    sketches.sort_by_key(|(seq, _, _)| *seq);
+    sketches.sort_by_key(|(seq, id, _)| (*seq, *id));
     sketches.into_iter().map(|(_, id, n)| (id, n)).collect()
 }
 

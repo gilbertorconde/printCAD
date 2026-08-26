@@ -149,3 +149,55 @@ fn remote_ops_mark_affected_features_dirty_here() {
         "bob's replica must know it has geometry to re-derive"
     );
 }
+
+/// Two replicas inserting features concurrently collide on `seq`; the
+/// (seq, id) total order must make every replica agree on history order
+/// regardless of which insert it saw first.
+#[test]
+fn concurrent_inserts_order_identically_on_every_replica() {
+    let mut alice = Document::new("Order");
+    let _ = alice.take_pending_ops();
+    let mut bob = alice.clone();
+    let body_ops = {
+        let _body = alice.create_body(Some("B".into()));
+        alice.take_pending_ops()
+    };
+    for op in &body_ops {
+        bob.apply_remote_op(op);
+    }
+    let body = alice.bodies()[0].id;
+
+    // Each replica inserts one feature without seeing the other's yet —
+    // both features get the same seq.
+    let _a = alice
+        .add_feature_in_body(datum(BasePlane::XY), "From alice".into(), Some(body))
+        .expect("alice add");
+    let _b = bob
+        .add_feature_in_body(datum(BasePlane::XZ), "From bob".into(), Some(body))
+        .expect("bob add");
+    let alice_ops = alice.take_pending_ops();
+    let bob_ops = bob.take_pending_ops();
+
+    // Cross-apply in OPPOSITE orders (what each replica actually observes).
+    for op in &bob_ops {
+        alice.apply_remote_op(op);
+    }
+    for op in &alice_ops {
+        bob.apply_remote_op(op);
+    }
+
+    let order = |doc: &Document| -> Vec<String> {
+        let mut nodes: Vec<_> = doc
+            .feature_tree()
+            .all_nodes()
+            .map(|(id, n)| (n.seq, *id, n.name.clone()))
+            .collect();
+        nodes.sort_by_key(|(seq, id, _)| (*seq, *id));
+        nodes.into_iter().map(|(_, _, name)| name).collect()
+    };
+    assert_eq!(
+        order(&alice),
+        order(&bob),
+        "replicas must agree on history order despite the seq collision"
+    );
+}
