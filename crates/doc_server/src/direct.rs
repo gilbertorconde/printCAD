@@ -109,6 +109,7 @@ impl DocumentServer for DirectFiles {
         ServerStatus {
             opens_in_flight: self.opens_in_flight,
             saves_in_flight: self.saves_in_flight,
+            peers: 0,
             connected: true,
             last_error: None,
         }

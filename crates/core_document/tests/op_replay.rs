@@ -118,3 +118,34 @@ fn a_drag_burst_coalesces_to_one_op() {
     let ops = doc.take_pending_ops();
     assert_eq!(ops.len(), 1, "a hundred drag frames, one op");
 }
+
+/// A foreign edit must trigger THIS replica's recompute: applying a remote
+/// op marks the features whose build inputs it changed as dirty.
+#[test]
+fn remote_ops_mark_affected_features_dirty_here() {
+    let mut alice = Document::new("Shared");
+    let _ = alice.take_pending_ops();
+    let mut bob = alice.clone();
+
+    let body = alice.create_body(Some("Base".into()));
+    let d = alice
+        .add_feature_in_body(datum(BasePlane::XY), "D".into(), Some(body))
+        .expect("add");
+    alice
+        .update_feature_data(d, serde_json::json!({"edited": true}))
+        .expect("update");
+    let ops = alice.take_pending_ops();
+
+    for op in &ops {
+        bob.apply_remote_op(op);
+    }
+    assert_eq!(
+        alice.replicated_projection(),
+        bob.replicated_projection(),
+        "replicas converge"
+    );
+    assert!(
+        bob.dirty_features().contains(&d),
+        "bob's replica must know it has geometry to re-derive"
+    );
+}

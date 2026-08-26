@@ -55,10 +55,17 @@ mod tests {
     #[test]
     fn a_frame_round_trips() {
         let mut wire = Vec::new();
-        write_frame(&mut wire, &ClientMessage::Hello { protocol: 7 }).expect("write");
+        write_frame(
+            &mut wire,
+            &ClientMessage::Hello {
+                protocol: 7,
+                actor: uuid::Uuid::nil(),
+            },
+        )
+        .expect("write");
         let back: ClientMessage = read_frame(wire.as_slice()).expect("read");
         match back {
-            ClientMessage::Hello { protocol } => assert_eq!(protocol, 7),
+            ClientMessage::Hello { protocol, .. } => assert_eq!(protocol, 7),
             other => panic!("wrong message: {other:?}"),
         }
     }

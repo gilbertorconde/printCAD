@@ -19,6 +19,9 @@ use crate::framing::{read_frame, write_frame};
 const SPAWN_WAIT: Duration = Duration::from_secs(5);
 
 pub struct DaemonClient {
+    /// This client's identity among the document's editors; relayed ops
+    /// name their author with it.
+    actor: uuid::Uuid,
     stream: UnixStream,
     /// Frames the reader thread has decoded, drained by `poll`.
     rx: Receiver<ServerMessage>,
@@ -26,11 +29,17 @@ pub struct DaemonClient {
     child: Option<std::process::Child>,
     opens_in_flight: u32,
     saves_in_flight: u32,
+    peers: u32,
     connected: bool,
     last_error: Option<String>,
 }
 
 impl DaemonClient {
+    /// This client's actor id (stable for the connection's lifetime).
+    pub fn actor(&self) -> uuid::Uuid {
+        self.actor
+    }
+
     /// Connect to the daemon for `socket`, spawning one if none listens.
     /// The handshake completes before this returns, so a protocol mismatch
     /// is a construction error, not a later surprise.
@@ -50,22 +59,26 @@ impl DaemonClient {
         mut stream: UnixStream,
         child: Option<std::process::Child>,
     ) -> std::io::Result<Self> {
+        let actor = uuid::Uuid::new_v4();
         write_frame(
             &mut stream,
             &ClientMessage::Hello {
                 protocol: SERVER_PROTOCOL_VERSION,
+                actor,
             },
         )?;
         let reply: ServerMessage = read_frame(&mut stream)?;
-        match reply {
-            ServerMessage::HelloOk { protocol } if protocol == SERVER_PROTOCOL_VERSION => {}
+        let peers = match reply {
+            ServerMessage::HelloOk { protocol, peers } if protocol == SERVER_PROTOCOL_VERSION => {
+                peers
+            }
             other => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
                     format!("handshake failed: {other:?}"),
                 ));
             }
-        }
+        };
 
         let (tx, rx): (Sender<ServerMessage>, Receiver<ServerMessage>) = channel();
         let reader = stream.try_clone()?;
@@ -86,11 +99,13 @@ impl DaemonClient {
             })?;
 
         Ok(Self {
+            actor,
             stream,
             rx,
             child,
             opens_in_flight: 0,
             saves_in_flight: 0,
+            peers,
             connected: true,
             last_error: None,
         })
@@ -141,6 +156,9 @@ impl DocumentServer for DaemonClient {
                         ServerMessage::SaveCompleted { .. } | ServerMessage::SaveFailed { .. } => {
                             self.saves_in_flight = self.saves_in_flight.saturating_sub(1);
                         }
+                        ServerMessage::Peers { peers } => {
+                            self.peers = *peers;
+                        }
                         _ => {}
                     }
                     out.push(message);
@@ -163,6 +181,7 @@ impl DocumentServer for DaemonClient {
         ServerStatus {
             opens_in_flight: self.opens_in_flight,
             saves_in_flight: self.saves_in_flight,
+            peers: if self.connected { self.peers } else { 0 },
             connected: self.connected,
             last_error: self.last_error.clone(),
         }

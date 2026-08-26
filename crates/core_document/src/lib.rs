@@ -417,6 +417,29 @@ impl Document {
         self.mark_dirty();
     }
 
+    /// Apply a peer's op: the effect plus this replica's own consequences.
+    ///
+    /// `apply_op` is the pure effect; on top of it, a foreign edit that
+    /// changes build inputs must mark the affected features dirty HERE,
+    /// because this replica is the one that has to re-derive the geometry
+    /// the peer's edit invalidated. (The peer marked its own copy dirty at
+    /// capture; dirty flags are per-replica, never part of the op.)
+    pub fn apply_remote_op(&mut self, operation: &op::DocumentOp) {
+        use op::DocumentOp as Op;
+        self.apply_op(operation);
+        match operation {
+            Op::AddFeature { id, .. }
+            | Op::UpdateFeatureData { id, .. }
+            | Op::SetFeatureSuppressed { id, .. } => {
+                self.mark_feature_dirty(*id);
+            }
+            Op::SetBodyTip { tip: Some(tip), .. } => {
+                self.mark_feature_dirty(*tip);
+            }
+            _ => {}
+        }
+    }
+
     /// The state that must converge across replicas: the serialized document
     /// minus per-replica derivations — dirty flags, recompute errors,
     /// revision history, and the imported-geometry sidecars (meshes are

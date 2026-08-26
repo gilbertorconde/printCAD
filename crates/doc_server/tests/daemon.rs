@@ -160,19 +160,63 @@ fn a_session_round_trips_through_the_daemon() {
     }
 }
 
+/// Two clients, one document: edits made by one arrive at the other in
+/// order, never echo back to their author, and both replicas converge.
 #[test]
-fn a_second_client_is_refused_while_the_first_holds_the_document() {
+fn a_peers_edits_relay_and_the_replicas_converge() {
     daemon_env();
-    let home = TestHome::new("secondclient");
+    let home = TestHome::new("relay");
 
-    let first = DaemonClient::spawn_or_connect(&home.socket()).expect("first client");
-    assert!(first.status().connected);
+    let mut alice = DaemonClient::spawn_or_connect(&home.socket()).expect("first client");
+    let mut bob = DaemonClient::spawn_or_connect(&home.socket()).expect("second client");
+    assert_ne!(alice.actor(), bob.actor());
 
-    // The daemon accepts the connection then drops it without HelloOk.
-    let second = DaemonClient::spawn_or_connect(&home.socket());
-    assert!(
-        second.is_err(),
-        "a second writer must be refused, got a connection"
+    // Both replicas start from the same baseline.
+    let mut alice_doc = Document::new("Shared");
+    let _ = alice_doc.take_pending_ops();
+    let mut bob_doc = alice_doc.clone();
+
+    // Alice edits; her ops go to the server.
+    let body = alice_doc.create_body(Some("Frame".into()));
+    alice_doc.rename_body(body, "Frame (alice)");
+    let ops = alice_doc.take_pending_ops();
+    let alice_actor = alice.actor();
+    alice.send(ClientMessage::Ops(ops));
+
+    // Bob hears them (and only them), attributed to Alice.
+    let relayed = wait_for(&mut bob, "relayed ops", |m| match m {
+        ServerMessage::Ops { actor, ops } => {
+            assert_eq!(*actor, alice_actor, "author must be preserved");
+            Some(ops.clone())
+        }
+        _ => None,
+    });
+    for op in &relayed {
+        bob_doc.apply_op(op);
+    }
+    assert_eq!(
+        alice_doc.replicated_projection(),
+        bob_doc.replicated_projection(),
+        "replicas must converge after relay"
     );
-    drop(first);
+
+    // Alice must never hear her own ops back.
+    std::thread::sleep(Duration::from_millis(200));
+    for message in alice.poll() {
+        assert!(
+            !matches!(message, ServerMessage::Ops { .. }),
+            "an author must not receive an echo of its own ops"
+        );
+    }
+
+    // Peer counts: each side sees one other editor.
+    assert_eq!(bob.status().peers, 1);
+
+    drop(bob);
+    drop(alice); // last client out; the daemon exits and removes its socket
+    let gone = Instant::now() + Duration::from_secs(5);
+    while home.socket().exists() {
+        assert!(Instant::now() < gone, "daemon lingered after last client");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

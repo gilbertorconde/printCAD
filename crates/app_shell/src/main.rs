@@ -114,6 +114,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+/// Where a re-derived remote import's meshes belong.
+pub(crate) struct RemoteImportRoute {
+    pub body_ids: Vec<core_document::BodyId>,
+    pub asset_id: uuid::Uuid,
+}
+
 struct PrintCadApp {
     settings: RenderSettings,
     frame_submission: FrameSubmission,
@@ -167,6 +173,11 @@ struct PrintCadApp {
     /// Last reconnect attempt, so a dead daemon is retried at a gentle pace
     /// instead of every frame.
     last_server_reconnect: Option<Instant>,
+    /// Remote imports being re-derived: a peer's ImportModel op created the
+    /// bodies; the kernel re-imports the carried bytes (written to a temp
+    /// file) and the resulting meshes are routed to those pre-existing
+    /// bodies by import order — deterministic at any thread count.
+    remote_import_routes: std::collections::HashMap<PathBuf, RemoteImportRoute>,
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
@@ -292,6 +303,7 @@ impl PrintCadApp {
             server,
             server_socket,
             last_server_reconnect: None,
+            remote_import_routes: std::collections::HashMap::new(),
             document_load_epoch: 0,
             bench_open_fired: false,
             frame_phase_accum: (0.0, 0.0, 0),

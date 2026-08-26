@@ -60,7 +60,13 @@ impl PrintCadApp {
                     detail,
                     elapsed,
                 } => {
-                    if let Err(err) =
+                    if let Some(route) = self.remote_import_routes.remove(&path) {
+                        // A peer's import, re-derived locally: the bodies
+                        // already exist (their ImportModel op made them);
+                        // only the derived geometry lands here.
+                        self.apply_remote_import_geometry(route, model);
+                        let _ = std::fs::remove_file(&path);
+                    } else if let Err(err) =
                         self.apply_step_import(&path, model, raw_bytes, detail, elapsed)
                     {
                         app_log::error(format!(
@@ -157,6 +163,46 @@ impl PrintCadApp {
     /// frame the camera around the new geometry. Mirrors the behaviour of
     /// the previous synchronous `import_step_at` but runs entirely on the UI
     /// thread after the heavy CPU work has completed in the worker.
+    /// Land a re-derived remote import's meshes on the bodies the peer's
+    /// op created. Import order is the correspondence — the kernel is
+    /// deterministic at any thread count, so the n-th imported body is the
+    /// n-th id the op carried.
+    fn apply_remote_import_geometry(
+        &mut self,
+        route: crate::RemoteImportRoute,
+        imported: ImportedModel,
+    ) {
+        let bodies = imported.bodies;
+        if bodies.len() != route.body_ids.len() {
+            app_log::error(format!(
+                "Remote import mismatch: peer created {} bodies, re-derivation produced {} — geometry left empty",
+                route.body_ids.len(),
+                bodies.len()
+            ));
+            return;
+        }
+        let count = bodies.len();
+        for (body, body_id) in bodies.into_iter().zip(&route.body_ids) {
+            self.document.set_imported_brep_data(
+                *body_id,
+                body.brep_blob,
+                body.face_colors.clone(),
+            );
+            self.document.set_imported_geometry(
+                *body_id,
+                ImportedGeometry {
+                    mesh: Arc::new(body.mesh),
+                    source_asset: Some(route.asset_id),
+                    revision: 0,
+                    bounds_mm: body.bounds_mm,
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                },
+            );
+        }
+        app_log::info(format!("Remote import materialized: {count} bodies"));
+    }
+
     fn apply_step_import(
         &mut self,
         path: &Path,

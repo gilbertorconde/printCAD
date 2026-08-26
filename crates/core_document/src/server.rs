@@ -23,13 +23,18 @@ use crate::op::DocumentOp;
 
 /// Version of the client↔server protocol; the `Hello` handshake refuses a
 /// mismatch loudly rather than misreading frames quietly.
-pub const SERVER_PROTOCOL_VERSION: u32 = 1;
+///
+/// v2: `Hello` carries the client's actor id; the server relays each
+/// client's ops to every *other* client as [`ServerMessage::Ops`].
+pub const SERVER_PROTOCOL_VERSION: u32 = 2;
 
 /// Client → server messages.
 #[derive(Debug, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// First message on a connection; anything else first is an error.
-    Hello { protocol: u32 },
+    /// `actor` identifies this client among the document's editors — it is
+    /// how relayed ops name their author.
+    Hello { protocol: u32, actor: uuid::Uuid },
     /// User edits drained from the document's outbox, in order.
     Ops(Vec<DocumentOp>),
     /// The client's document history jumped (undo/redo/new/open): ops
@@ -56,6 +61,19 @@ pub enum ClientMessage {
 pub enum ServerMessage {
     HelloOk {
         protocol: u32,
+        /// How many other clients are editing this document right now.
+        peers: u32,
+    },
+    /// Another client's edits, relayed in the order the server received
+    /// them. The server never echoes a client's own ops back to it, so
+    /// applying these verbatim is echo-safe.
+    Ops {
+        actor: uuid::Uuid,
+        ops: Vec<DocumentOp>,
+    },
+    /// A peer joined or left; `peers` counts the *other* editors.
+    Peers {
+        peers: u32,
     },
     Opened {
         token: u64,
@@ -83,6 +101,8 @@ pub enum ServerMessage {
 pub struct ServerStatus {
     pub opens_in_flight: u32,
     pub saves_in_flight: u32,
+    /// Other clients currently editing the same document.
+    pub peers: u32,
     /// False when the transport is degraded (daemon died, socket gone).
     pub connected: bool,
     pub last_error: Option<String>,

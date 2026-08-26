@@ -267,6 +267,11 @@ impl PrintCadApp {
 
     /// Ask the server for a document's bytes. The load epoch rides as the
     /// request token so a response landing after File > New is ignored.
+    /// Public face of [`Self::request_document_open`] for startup hooks.
+    pub(crate) fn open_document_at(&mut self, path: PathBuf) {
+        self.request_document_open(path);
+    }
+
     fn request_document_open(&mut self, path: PathBuf) {
         app_log::info(format!("Opening `{}`...", path.display()));
         // The document's own daemon owns its file (and, later, its other
@@ -289,6 +294,19 @@ impl PrintCadApp {
         for message in self.server.poll() {
             match message {
                 ServerMessage::HelloOk { .. } => {}
+                ServerMessage::Peers { peers } => {
+                    app_log::info(if peers == 0 {
+                        "Editing alone".to_string()
+                    } else {
+                        format!(
+                            "{peers} other editor{} on this document",
+                            if peers == 1 { "" } else { "s" }
+                        )
+                    });
+                }
+                ServerMessage::Ops { actor, ops } => {
+                    self.apply_remote_ops(actor, ops);
+                }
                 ServerMessage::Opened { token, path, bytes } => {
                     if token != self.document_load_epoch {
                         continue;
@@ -415,6 +433,58 @@ impl PrintCadApp {
         self.document.mark_clean();
         app_log::info(format!("Saved document to {}", path.display()));
         Ok(())
+    }
+
+    /// Apply a peer's relayed edits. The ops are resolved effects — the
+    /// same `apply_op` replay path the determinism tests pin — and the
+    /// daemon never echoes our own ops, so everything here is foreign.
+    /// Marking dirty is apply-side policy: it is what makes THIS replica
+    /// re-derive the geometry the peer's edit invalidated.
+    fn apply_remote_ops(&mut self, _actor: uuid::Uuid, ops: Vec<core_document::op::DocumentOp>) {
+        use core_document::op::DocumentOp as Op;
+        if ops.is_empty() {
+            return;
+        }
+        for op in &ops {
+            self.document.apply_remote_op(op);
+            if let Op::ImportModel {
+                asset,
+                bytes,
+                detail,
+                bodies,
+                ..
+            } = op
+            {
+                // The op created the bodies; the geometry is derived state
+                // we re-compute from the carried bytes. The kernel import
+                // is deterministic, so meshes land on the peer's
+                // pre-allocated body ids by import order.
+                let temp = std::env::temp_dir()
+                    .join(format!("printcad_remote_{}.step", asset.id.simple()));
+                match std::fs::write(&temp, bytes.as_slice()) {
+                    Ok(()) => {
+                        self.remote_import_routes.insert(
+                            temp.clone(),
+                            crate::RemoteImportRoute {
+                                body_ids: bodies.iter().map(|b| b.id).collect(),
+                                asset_id: asset.id,
+                            },
+                        );
+                        self.kernel_worker.request_step_import(temp, detail.clone());
+                    }
+                    Err(err) => {
+                        app_log::error(format!("Remote import: could not stage bytes: {err}"));
+                    }
+                }
+            }
+        }
+        // Marking replayed edits dirty above; mark_feature_dirty bumped the
+        // seq too. Snapshot undo cannot distinguish a peer's edits from
+        // ours, and undoing a peer's work would be wrong — drop local undo
+        // history when foreign edits land (op-based per-user undo is the
+        // proper fix, tracked).
+        self.undo.reset(&self.document);
+        app_log::info(format!("{} remote edit(s) applied", ops.len()));
     }
 
     /// Block until the server has durably handled every queued write.

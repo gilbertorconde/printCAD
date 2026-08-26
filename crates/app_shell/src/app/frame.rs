@@ -242,12 +242,16 @@ impl PrintCadApp {
             );
         }
 
-        // Dev/bench hook: import one file at startup without a dialog.
+        // Dev/bench hooks: import a STEP or open a document at startup
+        // without a dialog.
         if !self.bench_open_fired {
             self.bench_open_fired = true;
             if let Ok(path) = std::env::var("PRINTCAD_OPEN_FILE") {
                 let detail = self.last_step_import_detail.clone();
                 self.import_step_at(std::path::Path::new(&path), detail);
+            }
+            if let Ok(path) = std::env::var("PRINTCAD_OPEN_DOC") {
+                self.open_document_at(std::path::PathBuf::from(path));
             }
         }
 
@@ -323,10 +327,11 @@ impl PrintCadApp {
                         kernel_progress: self.kernel_worker.progress(),
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
                         document_saving: server_status.saves_in_flight > 0,
-                        server_label: if server_status.connected {
-                            self.server.name().to_string()
-                        } else {
-                            format!("{} (disconnected)", self.server.name())
+                        server_label: match (server_status.connected, server_status.peers) {
+                            (false, _) => format!("{} (disconnected)", self.server.name()),
+                            (true, 0) => self.server.name().to_string(),
+                            (true, 1) => format!("{} · 1 peer", self.server.name()),
+                            (true, n) => format!("{} · {n} peers", self.server.name()),
                         },
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
