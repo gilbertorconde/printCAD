@@ -169,6 +169,13 @@ impl PrintCadApp {
             let elapsed = now - last;
             let dt = elapsed.as_secs_f32();
 
+            // Waking from an on-demand sleep: the gap is idle time, not a
+            // slow frame. Restart the average instead of folding it in.
+            if dt > 0.5 {
+                self.fps_accum_time = 0.0;
+                self.fps_frame_count = 0;
+                self.current_fps = 0.0;
+            } else
             // FPS smoothing: accumulate over ~1s and update display once per second.
             if dt > 0.0 {
                 self.fps_accum_time += dt;
@@ -283,7 +290,7 @@ impl PrintCadApp {
                         document: &mut self.document,
                         registry: &mut self.registry,
                         orientation_input: Some(&orientation_input),
-                        fps: self.current_fps,
+                        fps: (!self.fps_display_idle).then_some(self.current_fps),
                         gpu_name: self.gpu_name.as_deref(),
                         gpus: &self.available_gpus,
                         hovered_point: self.hovered_world_pos,
@@ -371,6 +378,14 @@ impl PrintCadApp {
                 ui_repaint_delay.is_zero(),
             );
             if input_active || work_pending || animating || ui_repaint_delay.is_zero() {
+                self.fps_display_idle = false;
+                self.redraw_needed = true;
+                window.request_redraw();
+                event_loop.set_control_flow(ControlFlow::Wait);
+            } else if !self.fps_display_idle {
+                // Going idle: paint one closing frame whose FPS display says
+                // so, then sleep for real.
+                self.fps_display_idle = true;
                 self.redraw_needed = true;
                 window.request_redraw();
                 event_loop.set_control_flow(ControlFlow::Wait);

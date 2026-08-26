@@ -24,7 +24,10 @@ pub struct UiFrameInputs<'a> {
     pub document: &'a mut core_document::Document,
     pub registry: &'a mut core_document::DocumentService,
     pub orientation_input: Option<&'a OrientationCubeInput>,
-    pub fps: f32,
+    /// Smoothed frames-per-second while rendering; `None` when the
+    /// render loop is about to sleep (render on demand), so the display
+    /// can say "idle" instead of freezing at the last busy number.
+    pub fps: Option<f32>,
     pub gpu_name: Option<&'a str>,
     pub gpus: &'a [String],
     pub hovered_point: Option<[f32; 3]>,

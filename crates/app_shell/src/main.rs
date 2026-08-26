@@ -195,6 +195,9 @@ struct PrintCadApp {
     /// rendering must be gated on intent or presenting itself keeps the
     /// loop hot forever.
     redraw_needed: bool,
+    /// The render loop decided to sleep and painted one closing frame whose
+    /// FPS reads "idle" — a frozen number would look like a measurement.
+    fps_display_idle: bool,
     /// egui's repaint request from the last built frame.
     pending_ui_repaint: std::time::Duration,
     document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
@@ -290,6 +293,7 @@ impl PrintCadApp {
             last_input_time: None,
             last_wake_reason: (false, false, false, false),
             redraw_needed: true,
+            fps_display_idle: false,
             pending_ui_repaint: std::time::Duration::MAX,
             step_import_pending: None,
             last_step_import_detail: TessellationSettings::default(),

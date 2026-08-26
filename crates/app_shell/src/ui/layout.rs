@@ -584,7 +584,7 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
 #[expect(clippy::too_many_arguments)]
 pub fn draw_bottom_panel(
     ui: &mut egui::Ui,
-    fps: f32,
+    fps: Option<f32>,
     hovered_point: Option<[f32; 3]>,
     axis_system: AxisSystem,
     display_unit: Unit,
@@ -598,10 +598,12 @@ pub fn draw_bottom_panel(
     let mut cancel_requested = false;
     egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
         ui.horizontal(|ui| {
-            let fps_text = if fps > 0.0 {
-                format!("FPS: {:.1}", fps)
-            } else {
-                "FPS: …".to_string()
+            let fps_text = match fps {
+                Some(fps) if fps > 0.0 => format!("FPS: {fps:.1}"),
+                Some(_) => "FPS: …".to_string(),
+                // The loop is about to sleep; a frozen number would read as
+                // a live measurement.
+                None => "FPS: idle".to_string(),
             };
             ui.label(fps_text);
             ui.separator();
