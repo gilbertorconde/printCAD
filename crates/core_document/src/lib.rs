@@ -4,6 +4,7 @@ pub mod feature;
 pub mod op;
 pub mod registration;
 pub mod runtime;
+pub mod server;
 pub mod service;
 pub mod undo;
 pub mod units;
@@ -933,8 +934,21 @@ impl Document {
 
     /// Save document to a .prtcad file (tar archive, optionally compressed).
     pub fn save_to_file(&mut self, path: &Path, compression: Compression) -> DocumentResult<()> {
-        Self::sync_brep_paths_for_archive(self);
         let file = File::create(path)?;
+        self.save_to_writer(file, compression)
+    }
+
+    /// Serialize the whole `.prtcad` container into memory — what a client
+    /// hands a document server that owns the file but never parses it.
+    pub fn save_to_bytes(&mut self, compression: Compression) -> DocumentResult<Vec<u8>> {
+        let mut bytes = Vec::new();
+        self.save_to_writer(&mut bytes, compression)?;
+        Ok(bytes)
+    }
+
+    fn save_to_writer<W: Write>(&mut self, out: W, compression: Compression) -> DocumentResult<()> {
+        Self::sync_brep_paths_for_archive(self);
+        let file = out;
 
         match compression {
             Compression::None => {
@@ -995,6 +1009,27 @@ impl Document {
             Compression::None
         };
 
+        Self::load_from_reader(file, compression)
+    }
+
+    /// Parse a `.prtcad` container from memory — the client side of a
+    /// byte-serving document server. Compression is detected from the magic
+    /// bytes alone (no filename to consult).
+    pub fn load_from_bytes(bytes: Vec<u8>) -> DocumentResult<Self> {
+        let compression = if bytes.starts_with(&[0x1f, 0x8b]) {
+            Compression::Gzip
+        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+            Compression::Zstd
+        } else {
+            Compression::None
+        };
+        Self::load_from_reader(std::io::Cursor::new(bytes), compression)
+    }
+
+    fn load_from_reader<R: Read + 'static>(
+        file: R,
+        compression: Compression,
+    ) -> DocumentResult<Self> {
         let mut archive: Archive<Box<dyn Read>> = match compression {
             Compression::None => Archive::new(Box::new(file)),
             Compression::Gzip => {
@@ -1002,7 +1037,7 @@ impl Document {
                 Archive::new(Box::new(decoder))
             }
             Compression::Zstd => {
-                let decoder = zstd::Decoder::new(file)
+                let decoder = zstd::Decoder::new(std::io::BufReader::new(file))
                     .map_err(|e| DocumentError::Compression(e.to_string()))?;
                 Archive::new(Box::new(decoder))
             }

@@ -2,6 +2,7 @@
 members = [
   "crates/app_shell",
   "crates/core_document",
+    "crates/doc_server",
   "crates/kernel_api",
   "crates/kernel_ogeom",
   "crates/render_vk",

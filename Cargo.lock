@@ -766,6 +766,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "doc_server"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "serde",
+ "serde_json",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
