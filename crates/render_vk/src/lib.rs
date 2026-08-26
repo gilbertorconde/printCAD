@@ -5,7 +5,7 @@ mod picking;
 mod surface;
 mod util;
 
-pub use mesh::{GpuLight, LightingData};
+pub use mesh::{DrawStats, GpuLight, LightingData};
 
 use ash::vk;
 use egui::{ClippedPrimitive, TexturesDelta};
@@ -220,6 +220,11 @@ pub struct FrameSubmission {
     pub egui: Option<EguiSubmission>,
     /// The 3D viewport rect (area where mesh should be rendered)
     pub viewport_rect: Option<ViewportRect>,
+    /// Skip the edge-line pass this frame. Set while the camera is moving:
+    /// the line raster is the most expensive part of a dense assembly frame,
+    /// and during interaction the hairlines read as noise anyway. The first
+    /// still frame draws them again.
+    pub suppress_edges: bool,
 }
 
 impl Default for FrameSubmission {
@@ -231,6 +236,7 @@ impl Default for FrameSubmission {
             lighting: LightingData::default(),
             egui: None,
             viewport_rect: None,
+            suppress_edges: false,
         }
     }
 }
@@ -360,6 +366,14 @@ impl RenderBackend for VulkanRenderer {
 
 impl VulkanRenderer {
     /// Request a pick at the given screen coordinates (will be processed next frame)
+    /// What the mesh renderer actually submitted last frame.
+    pub fn last_draw_stats(&self) -> DrawStats {
+        self.core
+            .as_ref()
+            .map(|c| c.last_draw_stats())
+            .unwrap_or_default()
+    }
+
     pub fn request_pick(&mut self, x: u32, y: u32) {
         if let Some(core) = self.core.as_mut() {
             core.request_pick(x, y);

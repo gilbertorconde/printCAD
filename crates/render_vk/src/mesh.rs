@@ -166,7 +166,86 @@ const PARALLEL_PACK_THRESHOLD: usize = 16_384;
 /// GPU buffers for a single body, kept alive across frames so a static mesh
 /// only ever uploads once. Keyed by `BodySubmission::id` and invalidated when
 /// `BodySubmission::revision` advances.
+/// The six clip planes of a column-vector `view_proj`, Gribb–Hartmann form:
+/// each plane is `[a, b, c, d]` with `a·x + b·y + c·z + d >= 0` inside.
+/// Works for any convention baked into the matrix (including our Y-flip),
+/// because the planes are extracted from the very matrix the vertex shader
+/// applies.
+fn frustum_planes(m: &[[f32; 4]; 4]) -> [[f32; 4]; 6] {
+    // m is column-major (as handed to the GPU): m[col][row].
+    let row = |r: usize| [m[0][r], m[1][r], m[2][r], m[3][r]];
+    let (r0, r1, r2, r3) = (row(0), row(1), row(2), row(3));
+    let add = |a: [f32; 4], b: [f32; 4]| [a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3]];
+    let sub = |a: [f32; 4], b: [f32; 4]| [a[0] - b[0], a[1] - b[1], a[2] - b[2], a[3] - b[3]];
+    [
+        add(r3, r0), // left
+        sub(r3, r0), // right
+        add(r3, r1), // bottom
+        sub(r3, r1), // top
+        r2,          // near (Vulkan depth 0..1)
+        sub(r3, r2), // far
+    ]
+}
+
+/// Approximate on-screen extent of an AABB, in pixels: the NDC spread of its
+/// corners scaled by the viewport. Corners behind the camera make the answer
+/// conservative (large), never small — a body near the eye keeps its edges.
+fn aabb_screen_px(
+    m: &[[f32; 4]; 4],
+    lo: [f32; 3],
+    hi: [f32; 3],
+    vp_width: f32,
+    vp_height: f32,
+) -> f32 {
+    let mut min = [f32::INFINITY; 2];
+    let mut max = [f32::NEG_INFINITY; 2];
+    for i in 0..8 {
+        let p = [
+            if i & 1 == 0 { lo[0] } else { hi[0] },
+            if i & 2 == 0 { lo[1] } else { hi[1] },
+            if i & 4 == 0 { lo[2] } else { hi[2] },
+        ];
+        // Column-major multiply: clip = M · p
+        let clip: [f32; 4] =
+            core::array::from_fn(|r| m[0][r] * p[0] + m[1][r] * p[1] + m[2][r] * p[2] + m[3][r]);
+        if clip[3] <= 1e-6 {
+            return f32::INFINITY;
+        }
+        let ndc = [clip[0] / clip[3], clip[1] / clip[3]];
+        for a in 0..2 {
+            min[a] = min[a].min(ndc[a]);
+            max[a] = max[a].max(ndc[a]);
+        }
+    }
+    (((max[0] - min[0]) * 0.5 * vp_width).abs()).max(((max[1] - min[1]) * 0.5 * vp_height).abs())
+}
+
+/// Conservative AABB-vs-frustum test: true when the box is entirely outside
+/// at least one plane (definitely invisible); false means "maybe visible".
+fn aabb_outside_frustum(planes: &[[f32; 4]; 6], lo: [f32; 3], hi: [f32; 3]) -> bool {
+    planes.iter().any(|p| {
+        // The box corner farthest along the plane normal; if even that corner
+        // is behind the plane, the whole box is.
+        let x = if p[0] >= 0.0 { hi[0] } else { lo[0] };
+        let y = if p[1] >= 0.0 { hi[1] } else { lo[1] };
+        let z = if p[2] >= 0.0 { hi[2] } else { lo[2] };
+        p[0] * x + p[1] * y + p[2] * z + p[3] < 0.0
+    })
+}
+
+/// What the last `draw` actually submitted, for the frame log.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DrawStats {
+    pub bodies_drawn: u32,
+    pub bodies_culled: u32,
+    pub triangle_indices: u64,
+    pub edge_indices: u64,
+}
+
 pub(crate) struct CachedMesh {
+    /// Object-space AABB of the uploaded positions, for frustum culling.
+    /// `None` for an empty mesh.
+    pub(crate) bounds: Option<([f32; 3], [f32; 3])>,
     pub(crate) vertex_buffer: vk::Buffer,
     pub(crate) vertex_memory: vk::DeviceMemory,
     pub(crate) vertex_count: u32,
@@ -308,6 +387,7 @@ impl MeshCache {
         let edge_bytes = edge_count * size_of::<u32>();
 
         let entry = self.entries.entry(body.id).or_insert_with(|| CachedMesh {
+            bounds: None,
             vertex_buffer: vk::Buffer::null(),
             vertex_memory: vk::DeviceMemory::null(),
             vertex_count: 0,
@@ -443,6 +523,14 @@ impl MeshCache {
         entry.vertex_count = vertex_count as u32;
         entry.index_count = index_count as u32;
         entry.edge_index_count = edge_count as u32;
+        entry.bounds = mesh.positions.iter().fold(None, |acc, p| {
+            let (mut lo, mut hi) = acc.unwrap_or((*p, *p));
+            for a in 0..3 {
+                lo[a] = lo[a].min(p[a]);
+                hi[a] = hi[a].max(p[a]);
+            }
+            Some((lo, hi))
+        });
         entry.revision = body.revision;
         Ok(())
     }
@@ -691,14 +779,15 @@ impl MeshRenderer {
         view_proj: [[f32; 4]; 4],
         camera_pos: [f32; 3],
         lighting: &LightingData,
-    ) -> Result<(), RenderError> {
+        suppress_edges: bool,
+    ) -> Result<DrawStats, RenderError> {
         // Make sure every body has fresh GPU buffers in the cache.
         for body in bodies {
             cache.ensure_uploaded(&self.device, &self.memory_properties, body)?;
         }
 
         if bodies.is_empty() {
-            return Ok(());
+            return Ok(DrawStats::default());
         }
 
         let (vp_x, vp_y, vp_width, vp_height) = match viewport_rect {
@@ -736,10 +825,54 @@ impl MeshRenderer {
 
         let frame_pc = MeshFramePushConstants::new(view_proj, camera_pos, lighting);
 
+        // Cull whole bodies against the frustum before any pass; every pass
+        // below shares the verdict. Conservative: an AABB that straddles a
+        // plane still draws.
+        let planes = frustum_planes(&view_proj);
+        let mut stats = DrawStats::default();
+        // Below this on-screen size a body's edge hairlines are subpixel
+        // noise; skipping them buys back the line-raster cost on assemblies
+        // where most parts are small. Override for experiments via
+        // PRINTCAD_EDGE_MIN_PX (0 disables the threshold).
+        let edge_min_px = std::env::var("PRINTCAD_EDGE_MIN_PX")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or(24.0);
+        let visible: Vec<bool> = bodies
+            .iter()
+            .map(|body| {
+                let outside = cache
+                    .get(&body.id)
+                    .and_then(|c| c.bounds)
+                    .is_some_and(|(lo, hi)| aabb_outside_frustum(&planes, lo, hi));
+                if outside {
+                    stats.bodies_culled += 1;
+                }
+                !outside
+            })
+            .collect();
+        let edges_eligible: Vec<bool> = bodies
+            .iter()
+            .zip(&visible)
+            .map(|(body, v)| {
+                *v && cache
+                    .get(&body.id)
+                    .and_then(|c| c.bounds)
+                    .is_none_or(|(lo, hi)| {
+                        edge_min_px <= 0.0
+                            || aabb_screen_px(&view_proj, lo, hi, vp_width, vp_height)
+                                >= edge_min_px
+                    })
+            })
+            .collect();
+
         // Solid pass: bind solid pipeline once, draw every non-wireframe body
         // sequentially. Wireframes get a second pass with the depth-biased
         // pipeline, edges a third with line-list topology.
-        let has_solid = bodies.iter().any(|b| !b.is_wireframe);
+        let has_solid = bodies
+            .iter()
+            .zip(&visible)
+            .any(|(b, v)| *v && !b.is_wireframe);
         if has_solid {
             unsafe {
                 self.device.cmd_bind_pipeline(
@@ -751,11 +884,17 @@ impl MeshRenderer {
                 self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 self.push_frame_constants(command_buffer, &frame_pc);
             }
-            for body in bodies.iter().filter(|b| !b.is_wireframe) {
+            for (body, _) in bodies
+                .iter()
+                .zip(&visible)
+                .filter(|(b, v)| **v && !b.is_wireframe)
+            {
                 let cached = match cache.get(&body.id) {
                     Some(c) if c.index_count > 0 => c,
                     _ => continue,
                 };
+                stats.bodies_drawn += 1;
+                stats.triangle_indices += u64::from(cached.index_count);
                 self.draw_body(command_buffer, cached, body, false);
             }
         }
@@ -763,10 +902,15 @@ impl MeshRenderer {
         // Edges after solids: biased + LEQUAL depth test (see
         // `MeshPipelineMode::Edges`). Each body has its own edge index buffer
         // pointing into its own vertex buffer.
-        let has_edges = bodies
-            .iter()
-            .filter(|b| !b.is_wireframe)
-            .any(|b| matches!(cache.get(&b.id), Some(c) if c.edge_index_count > 0));
+        // Experiment hook: PRINTCAD_NO_EDGES=1 skips the edge pass so its
+        // cost can be measured; not a user-facing setting.
+        let no_edges = suppress_edges || std::env::var_os("PRINTCAD_NO_EDGES").is_some();
+        let has_edges = !no_edges
+            && bodies
+                .iter()
+                .zip(&edges_eligible)
+                .filter(|(b, v)| **v && !b.is_wireframe)
+                .any(|(b, _)| matches!(cache.get(&b.id), Some(c) if c.edge_index_count > 0));
         if has_edges {
             unsafe {
                 self.device.cmd_bind_pipeline(
@@ -782,16 +926,24 @@ impl MeshRenderer {
                 self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 self.push_frame_constants(command_buffer, &frame_pc);
             }
-            for body in bodies.iter().filter(|b| !b.is_wireframe) {
+            for (body, _) in bodies
+                .iter()
+                .zip(&edges_eligible)
+                .filter(|(b, v)| **v && !b.is_wireframe)
+            {
                 let cached = match cache.get(&body.id) {
                     Some(c) if c.edge_index_count > 0 => c,
                     _ => continue,
                 };
+                stats.edge_indices += u64::from(cached.edge_index_count);
                 self.draw_body_edges(command_buffer, cached, lighting);
             }
         }
 
-        let has_wireframe = bodies.iter().any(|b| b.is_wireframe);
+        let has_wireframe = bodies
+            .iter()
+            .zip(&visible)
+            .any(|(b, v)| *v && b.is_wireframe);
         if has_wireframe {
             unsafe {
                 self.device.cmd_bind_pipeline(
@@ -803,16 +955,22 @@ impl MeshRenderer {
                 self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
                 self.push_frame_constants(command_buffer, &frame_pc);
             }
-            for body in bodies.iter().filter(|b| b.is_wireframe) {
+            for (body, _) in bodies
+                .iter()
+                .zip(&visible)
+                .filter(|(b, v)| **v && b.is_wireframe)
+            {
                 let cached = match cache.get(&body.id) {
                     Some(c) if c.index_count > 0 => c,
                     _ => continue,
                 };
+                stats.bodies_drawn += 1;
+                stats.triangle_indices += u64::from(cached.index_count);
                 self.draw_body(command_buffer, cached, body, true);
             }
         }
 
-        Ok(())
+        Ok(stats)
     }
 
     fn push_frame_constants(

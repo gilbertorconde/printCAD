@@ -171,6 +171,16 @@ struct PrintCadApp {
     /// editing during a save is safe — but exiting would kill it mid-file,
     /// so quitting joins these first.
     document_save_threads: Vec<std::thread::JoinHandle<()>>,
+    /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
+    /// startup, so a benchmark run needs no dialog interaction.
+    bench_open_fired: bool,
+    /// Rolling per-phase frame cost, emitted once a second alongside the FPS
+    /// counter (target `printcad.frame`): (ui ms, render ms, frames).
+    frame_phase_accum: (f32, f32, u32),
+    /// Last frame's view-projection, to detect camera motion. While the
+    /// camera moves the edge pass is skipped (see `FrameSubmission::
+    /// suppress_edges`); the first still frame restores it.
+    prev_view_proj: Option<[[f32; 4]; 4]>,
     document_open_rx: mpsc::Receiver<(u64, PathBuf, DocumentOpenMsg)>,
     document_load_epoch: u64,
     document_open_in_flight: u32,
@@ -258,6 +268,9 @@ impl PrintCadApp {
             document_save_in_flight: 0,
             document_saved_at_seq: None,
             document_save_threads: Vec::new(),
+            bench_open_fired: false,
+            frame_phase_accum: (0.0, 0.0, 0),
+            prev_view_proj: None,
             step_import_pending: None,
             last_step_import_detail: TessellationSettings::default(),
             undo,

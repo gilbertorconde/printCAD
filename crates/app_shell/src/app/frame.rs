@@ -149,6 +149,27 @@ impl PrintCadApp {
                     self.current_fps = self.fps_frame_count as f32 / self.fps_accum_time.max(1e-3);
                     self.fps_accum_time = 0.0;
                     self.fps_frame_count = 0;
+                    let (ui_ms, render_ms, frames) = self.frame_phase_accum;
+                    if frames > 0 {
+                        let stats = self
+                            .gfx
+                            .as_ref()
+                            .map(|g| g.renderer.last_draw_stats())
+                            .unwrap_or_default();
+                        tracing::info!(
+                            target: "printcad.frame",
+                            fps = self.current_fps,
+                            ui_ms = ui_ms / frames as f32,
+                            render_ms = render_ms / frames as f32,
+                            bodies = self.frame_submission.bodies.len(),
+                            drawn = stats.bodies_drawn,
+                            culled = stats.bodies_culled,
+                            tri_idx = stats.triangle_indices,
+                            edge_idx = stats.edge_indices,
+                            "frame phases (1s avg)"
+                        );
+                    }
+                    self.frame_phase_accum = (0.0, 0.0, 0);
                 }
             }
             dt
@@ -157,6 +178,27 @@ impl PrintCadApp {
         };
 
         self.last_frame_time = Some(now);
+
+        // Dev/bench hook: orbit continuously so frame measurements cover the
+        // moving-camera case (the one the user feels).
+        if std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some() {
+            self.camera.apply_rotate_delta(
+                &crate::orientation_cube::RotateDelta {
+                    axis: crate::orientation_cube::RotateAxis::ScreenY,
+                    degrees: 0.5,
+                },
+                &self.user_settings.camera,
+            );
+        }
+
+        // Dev/bench hook: import one file at startup without a dialog.
+        if !self.bench_open_fired {
+            self.bench_open_fired = true;
+            if let Ok(path) = std::env::var("PRINTCAD_OPEN_FILE") {
+                let detail = self.last_step_import_detail.clone();
+                self.import_step_at(std::path::Path::new(&path), detail);
+            }
+        }
 
         let mut new_body_requested = false;
 
@@ -201,6 +243,7 @@ impl PrintCadApp {
                     .camera
                     .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
+                let ui_started = Instant::now();
                 let ui_result = ui_layer.run(
                     window,
                     ui::UiFrameInputs {
@@ -231,6 +274,7 @@ impl PrintCadApp {
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
                 );
+                self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
                 self.frame_submission.egui = Some(ui_result.submission);
                 self.active_tool = ui_result.active_tool;
                 self.active_workbench = ui_result.active_workbench;
@@ -263,11 +307,14 @@ impl PrintCadApp {
 
             window.request_redraw();
 
+            let render_started = Instant::now();
             if let Err(err) = renderer.render(&self.frame_submission) {
                 app_log::error(format!("Render failure: {err}"));
                 event_loop.exit();
                 return;
             }
+            self.frame_phase_accum.1 += render_started.elapsed().as_secs_f32() * 1000.0;
+            self.frame_phase_accum.2 += 1;
 
             // Retrieve pick result from GPU picking (processed during render)
             let pick_result = renderer.latest_pick_result();
@@ -482,6 +529,14 @@ impl PrintCadApp {
 
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();
+        // Edge lines are the most expensive part of a dense frame; while the
+        // camera moves they read as flicker anyway. Skip them during motion,
+        // restore them on the first still frame.
+        let moving = self
+            .prev_view_proj
+            .is_some_and(|prev| prev != self.frame_submission.view_proj);
+        self.prev_view_proj = Some(self.frame_submission.view_proj);
+        self.frame_submission.suppress_edges = moving;
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
 

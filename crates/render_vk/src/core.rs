@@ -81,6 +81,8 @@ pub(crate) struct RendererCore {
     pick_renderer: Option<PickRenderer>,
     /// Pick request from the app; consumed by the next recorded frame.
     pending_pick: Option<(u32, u32)>,
+    /// What the mesh renderer submitted last frame, for diagnostics.
+    last_draw_stats: crate::mesh::DrawStats,
     /// Per-in-flight-frame readbacks recorded into command buffers; each
     /// resolves at the top of `draw_frame` once its frame's fence is waited.
     pick_in_flight: Vec<Option<PendingPick>>,
@@ -237,6 +239,7 @@ impl RendererCore {
             memory_properties,
             pick_renderer: None,
             pending_pick: None,
+            last_draw_stats: crate::mesh::DrawStats::default(),
             pick_in_flight: vec![None; MAX_FRAMES_IN_FLIGHT],
             last_pick_result: PickResult::default(),
         };
@@ -334,6 +337,10 @@ impl RendererCore {
 
     pub(crate) fn available_gpus(&self) -> &[String] {
         &self.available_gpus
+    }
+
+    pub(crate) fn last_draw_stats(&self) -> crate::mesh::DrawStats {
+        self.last_draw_stats
     }
 
     pub(crate) fn request_pick(&mut self, x: u32, y: u32) {
@@ -1149,7 +1156,7 @@ impl RendererCore {
         }
 
         if let Some(mesh_renderer) = self.mesh_renderer.as_mut() {
-            mesh_renderer.draw(
+            self.last_draw_stats = mesh_renderer.draw(
                 &mut self.mesh_cache,
                 command_buffer,
                 self.swapchain_extent,
@@ -1158,6 +1165,7 @@ impl RendererCore {
                 frame.view_proj,
                 frame.camera_pos,
                 &frame.lighting,
+                frame.suppress_edges,
             )?;
         }
 
