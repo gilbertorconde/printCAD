@@ -215,11 +215,20 @@ impl DocumentServer for DaemonClient {
 
 impl Drop for DaemonClient {
     fn drop(&mut self) {
-        // Closing the stream is the daemon's exit signal; reap it if we
-        // spawned it so no zombie lingers.
+        // Closing the stream tells the daemon we left. Reap it briefly if
+        // we spawned it — but only briefly: other clients may be keeping it
+        // alive, and blocking here would deadlock the spawner on its own
+        // daemon. An unreaped child that exits later is a zombie until our
+        // process ends; with one daemon per document that stays a handful.
         let _ = self.stream.shutdown(std::net::Shutdown::Both);
         if let Some(child) = &mut self.child {
-            let _ = child.wait();
+            for _ in 0..20 {
+                match child.try_wait() {
+                    Ok(Some(_)) => return,
+                    Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+                    Err(_) => return,
+                }
+            }
         }
     }
 }

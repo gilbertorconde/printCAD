@@ -46,7 +46,8 @@ impl DocumentServer for DirectFiles {
     fn send(&mut self, msg: ClientMessage) {
         self.workers.retain(|handle| !handle.is_finished());
         match msg {
-            ClientMessage::Hello { .. } | ClientMessage::Rebase => {}
+            // No peers without a daemon; presence has no audience.
+            ClientMessage::Hello { .. } | ClientMessage::Rebase | ClientMessage::Presence(_) => {}
             ClientMessage::Ops(ops) => {
                 self.ops_dropped += ops.len() as u64;
             }

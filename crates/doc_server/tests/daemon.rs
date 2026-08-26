@@ -281,3 +281,40 @@ fn large_blobs_are_extracted_and_deduplicated() {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+/// Presence relays to peers and dies with its author — and never touches
+/// the op log.
+#[test]
+fn presence_relays_and_dies_with_its_author() {
+    daemon_env();
+    let home = TestHome::new("presence");
+
+    let mut alice = DaemonClient::spawn_or_connect(&home.socket()).expect("alice");
+    let mut bob = DaemonClient::spawn_or_connect(&home.socket()).expect("bob");
+    let alice_actor = alice.actor();
+
+    let body = uuid::Uuid::new_v4();
+    alice.send(ClientMessage::Presence(
+        core_document::server::PresenceState {
+            display_name: "alice".into(),
+            selected_body: Some(body),
+        },
+    ));
+    let state = wait_for(&mut bob, "presence", |m| match m {
+        ServerMessage::PresencePeer { actor, state } => {
+            assert_eq!(*actor, alice_actor);
+            Some(state.clone())
+        }
+        _ => None,
+    });
+    assert_eq!(state.selected_body, Some(body));
+
+    drop(alice);
+    wait_for(&mut bob, "presence gone", |m| match m {
+        ServerMessage::PresenceGone { actor } => {
+            assert_eq!(*actor, alice_actor);
+            Some(())
+        }
+        _ => None,
+    });
+}

@@ -148,6 +148,10 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
                 // these on any peer.
                 roster.broadcast_except(id, &ServerMessage::Ops { actor, ops });
             }
+            ClientMessage::Presence(state) => {
+                // Now-state, not history: relayed, never logged.
+                roster.broadcast_except(id, &ServerMessage::PresencePeer { actor, state });
+            }
             ClientMessage::Rebase => {
                 if let Err(err) = truncate_oplog() {
                     tracing::error!("op log truncate failed: {err}");
@@ -195,6 +199,7 @@ fn serve_client(stream: UnixStream, id: u64, roster: Roster) {
 
     roster.leave(id);
     roster.announce_peers();
+    roster.broadcast_except(id, &ServerMessage::PresenceGone { actor });
     tracing::info!(%actor, "client left");
 }
 

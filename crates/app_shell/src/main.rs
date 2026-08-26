@@ -178,6 +178,11 @@ struct PrintCadApp {
     /// file) and the resulting meshes are routed to those pre-existing
     /// bodies by import order — deterministic at any thread count.
     remote_import_routes: std::collections::HashMap<PathBuf, RemoteImportRoute>,
+    /// What each peer has selected, keyed by actor. Bodies in here render
+    /// with the peer tint; entries die with their peer.
+    peer_presence: std::collections::HashMap<uuid::Uuid, core_document::server::PresenceState>,
+    /// Last presence we told the server, so only changes cross the wire.
+    last_sent_presence: Option<core_document::server::PresenceState>,
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
@@ -304,6 +309,8 @@ impl PrintCadApp {
             server_socket,
             last_server_reconnect: None,
             remote_import_routes: std::collections::HashMap::new(),
+            peer_presence: std::collections::HashMap::new(),
+            last_sent_presence: None,
             document_load_epoch: 0,
             bench_open_fired: false,
             frame_phase_accum: (0.0, 0.0, 0),

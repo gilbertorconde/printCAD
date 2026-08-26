@@ -171,6 +171,9 @@ pub enum HighlightState {
     Hovered,
     Selected,
     HoveredAndSelected,
+    /// Another editor has this body selected — a cool tint, visually
+    /// subordinate to the local selection.
+    PeerSelected,
 }
 
 /// Render-ready body. The mesh is shared via `Arc<TriMesh>` so the renderer

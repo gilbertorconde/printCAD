@@ -54,6 +54,22 @@ pub enum ClientMessage {
     /// with the request that asked for it (an open may be abandoned by a
     /// newer one).
     OpenDocument { path: PathBuf, token: u64 },
+    /// Ephemeral presence — who this editor is and what they have selected.
+    /// Relayed to peers, never logged: presence is now-state, not history.
+    Presence(PresenceState),
+}
+
+/// What a peer sees of another editor. Deliberately selection-level, not
+/// cursor-level: a selected body is stable, meaningful across viewports,
+/// and cheap; live cursors can layer on later without protocol changes
+/// (this struct just grows fields with serde defaults).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PresenceState {
+    /// Human-facing name (login name by default).
+    pub display_name: String,
+    /// The body this editor currently has selected, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_body: Option<uuid::Uuid>,
 }
 
 /// Server → client messages.
@@ -74,6 +90,15 @@ pub enum ServerMessage {
     /// A peer joined or left; `peers` counts the *other* editors.
     Peers {
         peers: u32,
+    },
+    /// A peer's presence changed.
+    PresencePeer {
+        actor: uuid::Uuid,
+        state: PresenceState,
+    },
+    /// A peer disconnected; forget its presence.
+    PresenceGone {
+        actor: uuid::Uuid,
     },
     Opened {
         token: u64,

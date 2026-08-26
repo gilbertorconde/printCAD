@@ -38,6 +38,11 @@ fn apply_highlight_color(base: [f32; 3], highlight: HighlightState) -> [f32; 3] 
             (base[1] * 1.2 + 0.15).min(1.0),
             (base[2] * 1.2 + 0.2).min(1.0),
         ],
+        HighlightState::PeerSelected => [
+            (base[0] * 0.6 + 0.05).min(1.0),
+            (base[1] * 0.7 + 0.25).min(1.0),
+            (base[2] * 0.7 + 0.35).min(1.0),
+        ],
         HighlightState::Selected => [
             (base[0] * 0.7 + 0.3).min(1.0),
             (base[1] * 0.7 + 0.2).min(1.0),

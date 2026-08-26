@@ -228,6 +228,9 @@ impl PrintCadApp {
                 self.server.flush();
                 self.server = Box::new(client);
                 self.server_socket = socket;
+                // New room, new roommates.
+                self.peer_presence.clear();
+                self.last_sent_presence = None;
                 app_log::info(format!("Document server: {}", self.server.name()));
             }
             Err(err) => {
@@ -247,6 +250,8 @@ impl PrintCadApp {
         if self.server.status().connected {
             return;
         }
+        // Nobody is on the other end; stale tints would lie.
+        self.peer_presence.clear();
         let due = self
             .last_server_reconnect
             .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(5));
@@ -306,6 +311,12 @@ impl PrintCadApp {
                 }
                 ServerMessage::Ops { actor, ops } => {
                     self.apply_remote_ops(actor, ops);
+                }
+                ServerMessage::PresencePeer { actor, state } => {
+                    self.peer_presence.insert(actor, state);
+                }
+                ServerMessage::PresenceGone { actor } => {
+                    self.peer_presence.remove(&actor);
                 }
                 ServerMessage::Opened { token, path, bytes } => {
                     if token != self.document_load_epoch {
@@ -481,6 +492,23 @@ impl PrintCadApp {
         // Per-user undo survives foreign edits: the journal holds only OUR
         // gestures, and their inverses target only what we touched.
         app_log::info(format!("{} remote edit(s) applied", ops.len()));
+    }
+
+    /// Tell the server what we have selected — only when it changed. The
+    /// display name is the login name; a settings field can refine it later.
+    pub(crate) fn publish_presence(&mut self) {
+        let state = core_document::server::PresenceState {
+            display_name: std::env::var("USER").unwrap_or_else(|_| "editor".to_string()),
+            selected_body: self.selected_body,
+        };
+        if self.last_sent_presence.as_ref() == Some(&state) {
+            return;
+        }
+        self.server
+            .send(core_document::server::ClientMessage::Presence(
+                state.clone(),
+            ));
+        self.last_sent_presence = Some(state);
     }
 
     /// Block until the server has durably handled every queued write.

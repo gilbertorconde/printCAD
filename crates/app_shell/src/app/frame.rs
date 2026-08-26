@@ -435,6 +435,8 @@ impl PrintCadApp {
         // Apply this frame's UI actions now that the renderer borrow is over.
         self.apply_ui_commands(commands, new_body_requested, event_loop);
 
+        self.publish_presence();
+
         // Everything this frame edited is in the outbox; hand it to the
         // server. One send per frame keeps drags coalesced (the buffer
         // collapsed them) and the wire quiet when nothing changed.
@@ -560,10 +562,17 @@ impl PrintCadApp {
                     .unwrap_or(false);
                 let is_selected = self.selected_body == Some(body_id.0) && !face_only;
                 let is_hovered = self.hovered_body == Some(body_id.0);
+                // A peer's selection tints too — subordinate to anything
+                // local, so your own interaction always wins visually.
+                let is_peer_selected = self
+                    .peer_presence
+                    .values()
+                    .any(|p| p.selected_body == Some(body_id.0));
                 let highlight = match (is_selected, is_hovered) {
                     (true, true) => HighlightState::HoveredAndSelected,
                     (true, false) => HighlightState::Selected,
                     (false, true) => HighlightState::Hovered,
+                    (false, false) if is_peer_selected => HighlightState::PeerSelected,
                     (false, false) => HighlightState::None,
                 };
                 let use_vertex_albedo = geometry.mesh.colors.len() == geometry.mesh.positions.len()
