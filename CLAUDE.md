@@ -166,11 +166,16 @@ hacks, no silently degraded feature). Instead:
   `PRINTCAD_SERVERD` overrides the daemon binary for dev.
 - **`FeatureNode.seq` is THE build-history ordering key.** `created_at` has
   millisecond ties that order randomly — never sort history by it.
-- **Undo is a memory clone, not serde** — serde would drop the
-  `#[serde(skip)]` sidecars (asset/BRep blobs, Arc'd). Every document mutation
-  must go through something that calls `mark_dirty()` (bumps `mutation_seq`,
-  which undo uses for change detection). Solids are derived state: undo/redo
-  re-marks all part features dirty.
+- **Undo is per-user inverse ops, not snapshots** (`core_document/src/
+  history.rs`). Each mutator computes its inverse from pre-apply state;
+  gestures close at journal boundaries (mouse-up frames, labeled commands).
+  Undo/redo apply ordinary forward ops — they flow to the server and peers,
+  never send `Rebase`, and never replace the document. Non-invertible ops
+  (imports, asset adds) are barriers that clear history. Coalescing keeps
+  the LAST op with the FIRST inverse. `Document::clone` still preserves the
+  `#[serde(skip)]` sidecars (save snapshots depend on it; `undo.rs` tests
+  pin it). Solids stay derived: `after_history_jump` re-marks part features
+  dirty.
 - Kernel shapes are plain `Send + Sync` data; tests run in parallel with no
   serialization mutex. The kernel-worker thread exists for UI responsiveness,
   not safety.

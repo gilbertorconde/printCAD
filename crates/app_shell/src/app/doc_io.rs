@@ -150,7 +150,7 @@ impl PrintCadApp {
 
         self.camera
             .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
-        self.undo.reset(&self.document);
+        self.journal.reset(&mut self.document);
         // The old document's history no longer describes this client.
         let _ = self.document.take_pending_ops();
         self.server
@@ -205,7 +205,7 @@ impl PrintCadApp {
             self.camera
                 .clamp_focal_to_settings(&self.user_settings.camera);
         }
-        self.undo.reset(&self.document);
+        self.journal.reset(&mut self.document);
         // A fresh baseline: whatever the server logged before no longer
         // describes this client's state. (set_name above records an op into
         // the new document; it flows normally on the next drain.)
@@ -478,12 +478,8 @@ impl PrintCadApp {
                 }
             }
         }
-        // Marking replayed edits dirty above; mark_feature_dirty bumped the
-        // seq too. Snapshot undo cannot distinguish a peer's edits from
-        // ours, and undoing a peer's work would be wrong — drop local undo
-        // history when foreign edits land (op-based per-user undo is the
-        // proper fix, tracked).
-        self.undo.reset(&self.document);
+        // Per-user undo survives foreign edits: the journal holds only OUR
+        // gestures, and their inverses target only what we touched.
         app_log::info(format!("{} remote edit(s) applied", ops.len()));
     }
 

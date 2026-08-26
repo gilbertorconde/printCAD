@@ -95,6 +95,11 @@ pub enum DocumentOp {
         id: BodyId,
         name: String,
     },
+    /// Exists as the inverse of `CreateBody` (per-user undo); the UI offers
+    /// no direct body deletion yet. Any features still attached go with it.
+    RemoveBody {
+        id: BodyId,
+    },
     SetBodyTip {
         id: BodyId,
         tip: Option<FeatureId>,
@@ -213,6 +218,55 @@ impl OpBuffer {
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
+    }
+}
+
+/// (op, inverse) pairs since the last journal boundary. `None` inverse =
+/// history barrier (the op cannot be inverted; undo history clears).
+///
+/// Same clone-empty rule as [`OpBuffer`]: snapshots carry state, never
+/// journal material. Coalescing keeps the LAST op with the FIRST inverse —
+/// a drag undoes to where it started, not to its second-to-last frame.
+#[derive(Debug, Default)]
+pub struct JournalBuffer {
+    pairs: Vec<(DocumentOp, DocumentOp)>,
+    barrier: bool,
+}
+
+impl Clone for JournalBuffer {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
+}
+
+impl JournalBuffer {
+    pub fn record(&mut self, op: &DocumentOp, inverse: Option<DocumentOp>) {
+        let Some(inverse) = inverse else {
+            self.barrier = true;
+            self.pairs.clear();
+            return;
+        };
+        if let DocumentOp::UpdateFeatureData { id, .. } = op {
+            if let Some((DocumentOp::UpdateFeatureData { id: tail_id, .. }, _)) = self.pairs.last()
+            {
+                if tail_id == id {
+                    // Latest payload forward, oldest payload back.
+                    self.pairs.last_mut().expect("tail exists").0 = op.clone();
+                    return;
+                }
+            }
+        }
+        self.pairs.push((op.clone(), inverse));
+    }
+
+    /// Everything since the last take, plus whether a barrier was crossed.
+    pub fn take(&mut self) -> (Vec<(DocumentOp, DocumentOp)>, bool) {
+        let barrier = std::mem::take(&mut self.barrier);
+        (std::mem::take(&mut self.pairs), barrier)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.pairs.is_empty() && !self.barrier
     }
 }
 

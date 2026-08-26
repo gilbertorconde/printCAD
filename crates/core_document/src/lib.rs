@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod datum;
 pub mod feature;
+pub mod history;
 pub mod op;
 pub mod registration;
 pub mod runtime;
@@ -110,6 +111,14 @@ pub struct Document {
     /// and cleared by `Clone`: snapshots carry state, never the outbox.
     #[serde(skip)]
     pending_ops: op::OpBuffer,
+    /// (op, inverse) pairs since the last journal boundary — the raw
+    /// material of per-user undo. Same clone-empty rule as the outbox.
+    #[serde(skip)]
+    journal_pending: op::JournalBuffer,
+    /// True while history traversal or remote application drives the
+    /// document: those must not journal themselves.
+    #[serde(skip)]
+    history_suppressed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -195,6 +204,8 @@ impl Document {
             imported_body_to_object: HashMap::new(),
             mutation_seq: 0,
             pending_ops: op::OpBuffer::default(),
+            journal_pending: op::JournalBuffer::default(),
+            history_suppressed: false,
         }
     }
 
@@ -237,16 +248,118 @@ impl Document {
 
     /// Record a resolved op into the outbox and apply it. The single path
     /// every user-edit mutator funnels through — replay and live edits run
-    /// the same `apply_op` code.
+    /// the same `apply_op` code. The inverse is computed from the state the
+    /// op is ABOUT to change, so per-user undo can restore it later without
+    /// ever snapshotting the document.
     fn record_and_apply(&mut self, operation: op::DocumentOp) {
+        if !self.history_suppressed {
+            let inverse = self.invert_op(&operation);
+            self.journal_pending.record(&operation, inverse);
+        }
         self.apply_op(&operation);
         self.pending_ops.record(operation);
+    }
+
+    /// Apply an op produced by history traversal (undo/redo): the effect,
+    /// this replica's dirty-marking consequences, and the outbox — peers
+    /// hear an undo as ordinary ops — but never the journal, which is being
+    /// walked, not written.
+    pub(crate) fn apply_history_op(&mut self, operation: &op::DocumentOp) {
+        self.apply_remote_op(operation);
+        self.pending_ops.record(operation.clone());
+    }
+
+    /// The op that would restore the state `operation` is about to change.
+    /// `None` marks a history barrier: the op is not invertible (imports,
+    /// asset registration) and undo history clears rather than lie.
+    fn invert_op(&self, operation: &op::DocumentOp) -> Option<op::DocumentOp> {
+        use op::DocumentOp as Op;
+        Some(match operation {
+            Op::SetDocumentName { .. } => Op::SetDocumentName {
+                name: self.metadata.name.clone(),
+            },
+            Op::SetDisplayUnit { .. } => Op::SetDisplayUnit {
+                unit: self.display_unit,
+            },
+            Op::CreateBody { id, .. } => Op::RemoveBody { id: *id },
+            Op::RemoveBody { .. } => return None,
+            Op::RenameBody { id, .. } => Op::RenameBody {
+                id: *id,
+                name: self.bodies.iter().find(|b| b.id == *id)?.name.clone(),
+            },
+            Op::SetBodyTip { id, .. } => Op::SetBodyTip {
+                id: *id,
+                tip: self.bodies.iter().find(|b| b.id == *id)?.tip,
+            },
+            Op::AddFeature { id, .. } => Op::RemoveFeature { id: *id },
+            Op::UpdateFeatureData { id, .. } => Op::UpdateFeatureData {
+                id: *id,
+                data: self.feature_tree.get_node(*id)?.data.clone(),
+            },
+            Op::RenameFeature { id, .. } => Op::RenameFeature {
+                id: *id,
+                name: self.feature_tree.get_node(*id)?.name.clone(),
+            },
+            Op::SetFeatureVisible { id, .. } => Op::SetFeatureVisible {
+                id: *id,
+                visible: self.feature_tree.get_node(*id)?.visible,
+            },
+            Op::SetFeatureSuppressed { id, .. } => Op::SetFeatureSuppressed {
+                id: *id,
+                suppressed: self.feature_tree.get_node(*id)?.suppressed,
+            },
+            Op::SetFeatureDependencies { id, .. } => Op::SetFeatureDependencies {
+                id: *id,
+                deps: self.feature_tree.dependencies(*id),
+            },
+            Op::SwapFeatureSeq { a, b } => Op::SwapFeatureSeq { a: *a, b: *b },
+            Op::RemoveFeature { id } => {
+                let node = self.feature_tree.get_node(*id)?;
+                Op::AddFeature {
+                    id: node.id,
+                    workbench_id: node.workbench_id.clone(),
+                    name: node.name.clone(),
+                    body: node.body,
+                    deps: self.feature_tree.dependencies(*id),
+                    data: node.data.clone(),
+                    seq: node.seq,
+                    created_at: node.created_at,
+                }
+            }
+            Op::SetImportedObjectVisibility { id, .. } => Op::SetImportedObjectVisibility {
+                id: *id,
+                visible: self.imported_objects.get(id)?.visible,
+            },
+            // History barriers: an import (or raw graph write) is not worth
+            // lying about — clearing undo beats a wrong inverse.
+            Op::AddAsset { .. }
+            | Op::ImportModel { .. }
+            | Op::AppendImportedObjectGraph { .. }
+            | Op::ClearImportedObjectGraph => return None,
+        })
     }
 
     /// Ops captured since the last take. Drained once per frame by the host
     /// and handed to the document server.
     pub fn take_pending_ops(&mut self) -> Vec<op::DocumentOp> {
         self.pending_ops.take()
+    }
+
+    /// Journal material since the last boundary: (op, inverse) pairs and
+    /// whether a non-invertible op crossed. Consumed by the op journal at
+    /// gesture boundaries (mouse-up, explicit commits).
+    pub fn take_journal_pairs(&mut self) -> (Vec<(op::DocumentOp, op::DocumentOp)>, bool) {
+        self.journal_pending.take()
+    }
+
+    /// Run `f` with journal capture off — history traversal and remote
+    /// application drive the document without journaling themselves.
+    pub(crate) fn without_journal<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> R {
+        let previous = self.history_suppressed;
+        self.history_suppressed = true;
+        let result = f(self);
+        self.history_suppressed = previous;
+        result
     }
 
     /// Apply a resolved op **without recording it** — the path a remote or
@@ -280,6 +393,21 @@ impl Document {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.name.clone_from(name);
                 }
+            }
+            Op::RemoveBody { id } => {
+                self.bodies.retain(|b| b.id != *id);
+                let orphaned: Vec<FeatureId> = self
+                    .feature_tree
+                    .all_nodes()
+                    .filter(|(_, n)| n.body == Some(*id))
+                    .map(|(fid, _)| *fid)
+                    .collect();
+                for fid in orphaned {
+                    self.feature_tree.remove_node(fid);
+                }
+                self.imported_meshes.remove(id);
+                self.imported_brep_blobs.remove(id);
+                self.imported_brep_face_colors.remove(id);
             }
             Op::SetBodyTip { id, tip } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {

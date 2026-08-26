@@ -10,15 +10,12 @@ impl PrintCadApp {
         if !self.history_jump_allowed() {
             return;
         }
-        match self.undo.undo(&mut self.document) {
+        match self.journal.undo(&mut self.document) {
             Some(label) => {
                 app_log::info(format!("Undo: {label}"));
                 self.after_history_jump();
-                // The document jumped timelines; ops the server logged no
-                // longer describe it. (The restored snapshot's outbox is
-                // empty by construction — Clone empties it.)
-                self.server
-                    .send(core_document::server::ClientMessage::Rebase);
+                // No Rebase: an op-journal undo IS ordinary forward ops —
+                // the server log stays truthful and peers hear the undo.
             }
             None => app_log::info("Nothing to undo"),
         }
@@ -28,12 +25,10 @@ impl PrintCadApp {
         if !self.history_jump_allowed() {
             return;
         }
-        match self.undo.redo(&mut self.document) {
+        match self.journal.redo(&mut self.document) {
             Some(label) => {
                 app_log::info(format!("Redo: {label}"));
                 self.after_history_jump();
-                self.server
-                    .send(core_document::server::ClientMessage::Rebase);
             }
             None => app_log::info("Nothing to redo"),
         }

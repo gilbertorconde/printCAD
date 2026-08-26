@@ -448,7 +448,8 @@ impl PrintCadApp {
             total_triangles,
         ));
 
-        self.undo.commit(&self.document, "Import STEP");
+        // ImportModel is a history barrier; closing the boundary clears undo.
+        self.journal.note(&mut self.document);
 
         Ok(())
     }

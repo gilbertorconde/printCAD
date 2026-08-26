@@ -447,7 +447,7 @@ impl PrintCadApp {
         // Cut an undo boundary at frame end when no drag is in progress so
         // an entire drag interaction coalesces into one step.
         if self.mouse_buttons_down == 0 {
-            self.undo.note(&self.document);
+            self.journal.note(&mut self.document);
         }
     }
 

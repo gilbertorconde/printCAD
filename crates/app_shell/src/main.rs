@@ -219,7 +219,7 @@ struct PrintCadApp {
     last_step_import_detail: TessellationSettings,
     /// Snapshot-based undo/redo. `note()` is called once per frame while no
     /// mouse button is held, so drags coalesce into single steps.
-    undo: core_document::undo::UndoHistory,
+    journal: core_document::history::OpJournal,
     /// Pressed-mouse-button count; nonzero suppresses undo boundaries.
     mouse_buttons_down: u32,
     /// Index-stable UUIDs for workbench overlay meshes (slot i -> pool[i]),
@@ -257,7 +257,7 @@ impl PrintCadApp {
         registry: DocumentService,
     ) -> Self {
         let camera = CameraController::new(&user_settings.camera, (1, 1));
-        let undo = core_document::undo::UndoHistory::new(&document, 64);
+        let journal = core_document::history::OpJournal::new(64);
 
         // The document server: a per-session local daemon by default; plain
         // in-process file I/O when the daemon cannot start. Same contract
@@ -316,7 +316,7 @@ impl PrintCadApp {
             pending_ui_repaint: std::time::Duration::MAX,
             step_import_pending: None,
             last_step_import_detail: TessellationSettings::default(),
-            undo,
+            journal,
             mouse_buttons_down: 0,
             overlay_id_pool: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),

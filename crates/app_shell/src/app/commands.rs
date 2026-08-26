@@ -221,7 +221,8 @@ impl PrintCadApp {
         self.active_document_object = None;
         self.tree_selection = Some(TreeItemId::Body(body_id));
         self.selected_body = Some(body_id.0);
-        self.undo.commit(&self.document, "Create body");
+        self.journal.label_next("Create body");
+        self.journal.note(&mut self.document);
     }
 
     /// End the active workbench's editing session (e.g. Exit Sketch Mode)
@@ -349,7 +350,8 @@ impl PrintCadApp {
             TreeFeatureCommand::Suppress(suppressed) => {
                 self.document.set_feature_suppressed(feature, suppressed);
                 self.document.mark_feature_dirty(feature);
-                self.undo.commit(&self.document, "Suppress feature");
+                self.journal.label_next("Suppress feature");
+                self.journal.note(&mut self.document);
             }
             TreeFeatureCommand::SetVisible(visible) => {
                 self.document.set_feature_visible(feature, visible);
@@ -375,14 +377,16 @@ impl PrintCadApp {
                     if self.active_document_object == Some(feature) {
                         self.active_document_object = None;
                     }
-                    self.undo.commit(&self.document, "Delete feature");
+                    self.journal.label_next("Delete feature");
+                    self.journal.note(&mut self.document);
                     app_log::info("Deleted feature");
                 }
             }
             TreeFeatureCommand::MoveUp | TreeFeatureCommand::MoveDown => {
                 let up = command == TreeFeatureCommand::MoveUp;
                 if self.document.move_feature_in_history(feature, up) {
-                    self.undo.commit(&self.document, "Reorder history");
+                    self.journal.label_next("Reorder history");
+                    self.journal.note(&mut self.document);
                     app_log::info("Reordered build history");
                 } else {
                     app_log::warn(
@@ -400,7 +404,8 @@ impl PrintCadApp {
                 if let Some(first) = wb_part::part_feature_ids(&self.document, body).first() {
                     self.document.mark_feature_dirty(*first);
                 }
-                self.undo.commit(&self.document, "Move tip");
+                self.journal.label_next("Move tip");
+                self.journal.note(&mut self.document);
             }
         }
     }
