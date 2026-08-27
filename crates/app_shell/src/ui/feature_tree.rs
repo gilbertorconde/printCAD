@@ -274,13 +274,17 @@ fn format_workbench_tag(raw: &str) -> String {
 pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>) -> TreeUiResult {
     let mut result = TreeUiResult::default();
 
+    // One checkbox-width per level: deep assemblies stay readable instead of
+    // marching off the panel. (CollapsingHeader indents its body by this.)
+    ui.spacing_mut().indent = 12.0;
+
     // Document root behaves like a top-level collapsible item.
     let header_text = format!("Document: {}", model.document_label());
     let collapsing = egui::CollapsingHeader::new(header_text)
         .id_salt("document_root")
         .show(ui, |ui| {
             for node in model.nodes() {
-                draw_node(ui, node, 0, selected, &mut result);
+                draw_node(ui, node, selected, &mut result);
             }
         });
     handle_response(
@@ -295,16 +299,14 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>
 fn draw_node(
     ui: &mut Ui,
     node: &TreeNode,
-    depth: usize,
     selected: Option<TreeItemId>,
     result: &mut TreeUiResult,
 ) {
-    let indent = (depth as f32) * 14.0;
-
+    // Depth needs no manual spacing: every level already lives inside its
+    // parent's CollapsingHeader body, which carries the (shrunken) indent.
     // Nodes with children are rendered as collapsible tree branches; leaves as simple rows.
     if node.children.is_empty() {
         ui.horizontal(|ui| {
-            ui.add_space(indent);
             maybe_draw_imported_visibility_toggle(ui, node, result);
             let label = compose_label(node);
             let is_selected = selected == Some(node.id);
@@ -319,14 +321,13 @@ fn draw_node(
         });
     } else {
         ui.horizontal(|ui| {
-            ui.add_space(indent);
             maybe_draw_imported_visibility_toggle(ui, node, result);
             let label = compose_label(node);
             let collapsing = egui::CollapsingHeader::new(label)
                 .id_salt(format!("tree_node_{:?}", node.id))
                 .show(ui, |ui| {
                     for child in &node.children {
-                        draw_node(ui, child, depth + 1, selected, result);
+                        draw_node(ui, child, selected, result);
                     }
                 });
 
