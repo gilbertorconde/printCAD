@@ -25,13 +25,28 @@ fn main() {
     let doc = &import.document;
     let model = doc.model();
 
+    // Two sweeps: part-local shapes, then placed occurrences. A face that
+    // escapes only when placed points at transform-dependent triangulation.
+    let mut subjects: Vec<(String, ogeom::topo::Shape)> = Vec::new();
     for (_, product) in doc.products() {
-        let ProductKind::Part { shape } = &product.kind else {
+        if let ProductKind::Part { shape } = &product.kind {
+            if name_filter.is_empty() || product.name.to_lowercase().contains(&name_filter) {
+                subjects.push((format!("local `{}`", product.name), shape.clone()));
+            }
+        }
+    }
+    for root in doc.roots() {
+        let Ok(occs) = doc.occurrences_of(root) else {
             continue;
         };
-        if !name_filter.is_empty() && !product.name.to_lowercase().contains(&name_filter) {
-            continue;
+        for occ in occs {
+            if name_filter.is_empty() || occ.path.to_lowercase().contains(&name_filter) {
+                subjects.push((format!("placed `{}`", occ.path), occ.shape));
+            }
         }
+    }
+
+    for (label, shape) in &subjects {
         let Ok(faces) = explore(model, shape, Filter::OfType(ShapeType::Face)) else {
             continue;
         };
@@ -73,10 +88,9 @@ fn main() {
                     .map(|e| e.get().to_string())
                     .unwrap_or_else(|| "?".into());
                 println!(
-                    "part `{}`: face (surface entity #{entity}) escapes its boundary: \
+                    "{label}: face (surface entity #{entity}) escapes its boundary: \
                      vertex-hull diag {vdiag:.2} mm, mesh diag {mdiag:.2} mm ({:.1}x), \
                      {} triangles",
-                    product.name,
                     mdiag / vdiag,
                     mesh.triangles.len(),
                 );
