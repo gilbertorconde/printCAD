@@ -412,3 +412,44 @@ END-ISO-10303-21;
         "the healed face must triangulate — an empty mesh means the gap survived"
     );
 }
+
+/// Every face's triangulation must stay inside its own trimming boundary.
+///
+/// The fixture is two real parts whose periodic faces triangulate the long
+/// way around their seam — fans and lobes protruding ~30 mm from sub-mm
+/// features. The mesh AABB of a face may legitimately exceed its vertex
+/// hull a little (curved bulges); exceeding it severalfold means the trim
+/// was ignored.
+#[test]
+#[ignore = "kernel: faces triangulate past their trim, sweeping the periodic chart (ogeom-rs#36)"]
+fn face_triangulations_stay_inside_their_boundaries() {
+    let sample =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
+    let mut kernel = OgeomKernel::new();
+    kernel.initialize().expect("initialize ogeom kernel");
+    let imported = kernel
+        .import_step(&sample, &TessellationSettings::default())
+        .expect("import fixture");
+
+    // The two parts' true extent: every real feature fits inside the body
+    // bounds reported from the B-rep. A triangle escaping those bounds by
+    // millimetres came from a face swept past its trim.
+    for body in &imported.bodies {
+        let Some((lo, hi)) = body.bounds_mm else {
+            continue;
+        };
+        let slack = 1.0_f32; // mm; tessellation sag allowance
+        let mut escaped = 0usize;
+        for p in &body.mesh.positions {
+            if (0..3).any(|a| p[a] < lo[a] - slack || p[a] > hi[a] + slack) {
+                escaped += 1;
+            }
+        }
+        assert_eq!(
+            escaped,
+            0,
+            "body `{}` has {escaped} mesh vertices outside its own B-rep bounds",
+            body.name.as_deref().unwrap_or("?")
+        );
+    }
+}
