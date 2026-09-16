@@ -10,6 +10,13 @@ use super::host_ctx::HostCtxParams;
 use super::{ActiveTool, ActiveWorkbench};
 use crate::orientation_cube::OrientationCubeInput;
 
+/// The body under the cursor and the point hit on it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HoverCard {
+    pub title: String,
+    pub point_mm: [f32; 3],
+}
+
 /// Everything the UI needs to draw one frame. Constructed as a literal at
 /// the call site — the fields borrow disjoint pieces of `PrintCadApp`, which
 /// a `&mut self` builder method could not express.
@@ -49,6 +56,10 @@ pub struct UiFrameInputs<'a> {
     pub status_items: Option<core_document::StatusItems>,
     /// The active workbench's open task, if any.
     pub task: Option<core_document::TaskInfo>,
+    /// What sits under the cursor in the viewport.
+    pub hover_card: Option<HoverCard>,
+    /// "w × h × d" of the selected body, already formatted.
+    pub dimensions: Option<String>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],

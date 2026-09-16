@@ -64,4 +64,9 @@ pub enum UiCommand {
     RecomputeAll,
     /// The task panel closed with this outcome.
     TaskClosed(TaskOutcome),
+    /// The property panel's Label row renamed a tree item.
+    RenameTreeItem {
+        item: TreeItemId,
+        name: String,
+    },
 }

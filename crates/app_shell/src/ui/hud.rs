@@ -195,3 +195,46 @@ pub fn draw_viewport_hud(
             });
     }
 }
+
+/// The card that names what sits under the cursor, beside the pointer.
+pub fn draw_hover_card(
+    ctx: &Context,
+    viewport: egui::Rect,
+    card: &super::HoverCard,
+    unit: core_document::Unit,
+) {
+    let Some(pointer) = ctx.pointer_hover_pos() else {
+        return;
+    };
+    if !viewport.contains(pointer) {
+        return;
+    }
+    let pos =
+        (pointer + Vec2::new(14.0, 14.0)).min(viewport.right_bottom() - Vec2::new(200.0, 48.0));
+    let [x, y, z] = card.point_mm;
+    let coords = format!(
+        "({}, {}, {})",
+        core_document::format_length_mm(x, unit, 2),
+        core_document::format_length_mm(y, unit, 2),
+        core_document::format_length_mm(z, unit, 2)
+    );
+    Area::new(egui::Id::new("hud_hover_card"))
+        .order(Order::Tooltip)
+        .fixed_pos(pos)
+        .interactable(false)
+        .show(ctx, |ui| {
+            Card::floating()
+                .fill(egui::Color32::from_rgba_premultiplied(14, 17, 20, 235))
+                .padding(6.0)
+                .radius(5.0)
+                .show(ui, |ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.label(
+                        RichText::new(&card.title)
+                            .font(sans_medium(FONT_XS))
+                            .color(TEXT1),
+                    );
+                    mono_label(ui, coords, FONT_XS, TEXT3);
+                });
+        });
+}

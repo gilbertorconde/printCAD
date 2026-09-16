@@ -7,6 +7,7 @@ mod inputs;
 mod log_view;
 mod menu_bar;
 mod overlays;
+mod property_panel;
 mod settings_panel;
 mod status_bar;
 mod step_import_modal;
@@ -16,7 +17,7 @@ mod view_toolbar;
 
 pub use commands::{FileCommand, UiCommand};
 pub use host_ctx::HostCtxParams;
-pub use inputs::UiFrameInputs;
+pub use inputs::{HoverCard, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
 
 use core_document::WorkbenchId;
@@ -78,6 +79,8 @@ pub struct UiLayer {
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
     tree_filter: String,
+    property_tab: property_panel::PropertyTab,
+    rename_buffer: Option<(TreeItemId, String)>,
 }
 
 impl UiLayer {
@@ -102,6 +105,8 @@ impl UiLayer {
             show_settings: false,
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
+            property_tab: property_panel::PropertyTab::default(),
+            rename_buffer: None,
         }
     }
 
@@ -135,6 +140,8 @@ impl UiLayer {
             viewport_hud,
             status_items,
             task,
+            hover_card,
+            dimensions,
             screen_space_overlays,
             screen_space_marks,
             screen_space_labels,
@@ -239,8 +246,8 @@ impl UiLayer {
                     document_saving,
                     nav_style,
                     items: status_items.as_ref(),
-                    preselect: None,
-                    dimensions: None,
+                    preselect: hover_card.as_ref().map(|h| h.title.as_str()),
+                    dimensions: dimensions.as_deref(),
                 },
             );
             if cancel {
@@ -259,6 +266,8 @@ impl UiLayer {
                     active_document_object,
                     editing_feature,
                     filter: &mut self.tree_filter,
+                    property_tab: &mut self.property_tab,
+                    rename_buffer: &mut self.rename_buffer,
                 },
             );
             apply_writeback(&combo.writeback, &mut commands, &mut tree_selection);
@@ -274,6 +283,9 @@ impl UiLayer {
             }
             if let Some((feature, command)) = combo.tree_feature_command {
                 commands.push(UiCommand::TreeFeature { feature, command });
+            }
+            if let Some((item, name)) = combo.rename {
+                commands.push(UiCommand::RenameTreeItem { item, name });
             }
 
             let task_result = task_panel::draw_task_panel(
@@ -331,6 +343,14 @@ impl UiLayer {
                 viewport_hud.as_ref(),
                 &footer,
             );
+            if let Some(card) = &hover_card {
+                hud::draw_hover_card(
+                    ui.ctx(),
+                    viewport_rect_logical,
+                    card,
+                    document.display_unit(),
+                );
+            }
             view_toolbar::draw_view_toolbar(
                 ui.ctx(),
                 viewport_rect_logical,

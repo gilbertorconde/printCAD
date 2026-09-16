@@ -307,6 +307,8 @@ impl PrintCadApp {
             task,
             editing_feature,
         } = viewport_data;
+        let hover_card = self.hover_card();
+        let dimensions = self.selection_dimensions();
         let host_params = ui::HostCtxParams {
             camera_position: self.camera.position(),
             camera_target: self.camera.target(),
@@ -367,6 +369,8 @@ impl PrintCadApp {
                         viewport_hud,
                         status_items,
                         task,
+                        hover_card,
+                        dimensions,
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,
@@ -861,5 +865,71 @@ impl PrintCadApp {
             }
             Err(err) => app_log::error(format!("bench pad: {err}")),
         }
+    }
+}
+
+impl PrintCadApp {
+    /// The body under the cursor, named with its last feature, and the
+    /// point hit on it. Hidden while a button is down or a sketch is being
+    /// edited, when the card would only get in the way.
+    fn hover_card(&self) -> Option<ui::HoverCard> {
+        if self.mouse_buttons_down > 0 || self.sketch_editing_active() {
+            return None;
+        }
+        let body = core_document::BodyId(self.hovered_body?);
+        let point_mm = self.hovered_world_pos?;
+        let body_name = self
+            .document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body)
+            .map(|b| b.name.clone())?;
+        let feature = wb_part::part_features_of_body(&self.document, body)
+            .last()
+            .map(|(_, f)| f.kind_label());
+        let title = match feature {
+            Some(kind) => format!("{body_name} · {kind}"),
+            None => body_name,
+        };
+        Some(ui::HoverCard { title, point_mm })
+    }
+
+    /// "w × h × d" of the selected (else active) body in the display unit.
+    fn selection_dimensions(&mut self) -> Option<String> {
+        let body = self
+            .selected_body
+            .map(core_document::BodyId)
+            .or(self.active_body_id)?;
+        let geometry = self.document.imported_geometry(body)?;
+        let bounds = match geometry.bounds_mm {
+            Some(bounds) => bounds,
+            None => {
+                // The mesh scan is linear; keep it per revision.
+                match self.dimension_cache {
+                    Some((cached_body, revision, bounds))
+                        if cached_body == body && revision == geometry.revision =>
+                    {
+                        bounds
+                    }
+                    _ => {
+                        let bounds = geometry.mesh.bounds()?;
+                        self.dimension_cache = Some((body, geometry.revision, bounds));
+                        bounds
+                    }
+                }
+            }
+        };
+        let unit = self.document.display_unit();
+        let axes = self.camera.axis_system();
+        let lo = axes.world_to_canonical(Vec3::from_array(bounds.0));
+        let hi = axes.world_to_canonical(Vec3::from_array(bounds.1));
+        let size = (hi - lo).abs();
+        Some(format!(
+            "{:.1} × {:.1} × {:.1} {}",
+            unit.from_mm(size.x),
+            unit.from_mm(size.y),
+            unit.from_mm(size.z),
+            unit.short_label()
+        ))
     }
 }

@@ -43,6 +43,7 @@ struct FrameIntents {
     set_projection: Option<settings::ProjectionMode>,
     recompute_all: bool,
     task_closed: Option<core_document::TaskOutcome>,
+    rename: Option<(TreeItemId, String)>,
 }
 
 impl PrintCadApp {
@@ -108,6 +109,7 @@ impl PrintCadApp {
                 UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
+                UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
             }
         }
 
@@ -139,6 +141,13 @@ impl PrintCadApp {
                 core_document::TaskOutcome::Accepted { label } => app_log::info(label),
                 core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
                 core_document::TaskOutcome::Open => {}
+            }
+        }
+        if let Some((item, name)) = intents.rename {
+            match item {
+                TreeItemId::Feature(id) => self.document.rename_feature(id, name),
+                TreeItemId::Body(id) => self.document.rename_body(id, name),
+                TreeItemId::DocumentRoot | TreeItemId::ImportedObject(_) => {}
             }
         }
         if let Some(wb) = intents.request_workbench

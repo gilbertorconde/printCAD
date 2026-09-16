@@ -1,7 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
-use core_document::{Body, BodyId, Document, FeatureId, FeatureNode, FeatureTree};
-use egui::{Color32, Response, RichText, Ui};
+use core_document::{
+    Body, BodyId, Document, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature,
+};
+use egui::{Response, Ui, Vec2};
+use ui_kit::sans;
+use ui_kit::tokens::*;
 use uuid::Uuid;
 
 /// Identifier for selectable items in the tree panel.
@@ -72,6 +76,10 @@ struct TreeNode {
     seq: u64,
     children: Vec<TreeNode>,
     imported_object_id: Option<Uuid>,
+    /// The design set's icon for this item.
+    icon: &'static str,
+    /// Bodies and linked parts read their icon in accent.
+    accent_icon: bool,
 }
 
 impl DocumentTree {
@@ -232,6 +240,27 @@ fn build_feature_node(
         seq: node.seq,
         children,
         imported_object_id: None,
+        icon: feature_icon(node),
+        accent_icon: false,
+    }
+}
+
+/// The icon a feature row draws: the part feature's own, the datum's
+/// shape, or the sketch glyph.
+fn feature_icon(node: &FeatureNode) -> &'static str {
+    match node.workbench_id.as_str() {
+        "wb.sketch" => "tree-sketch",
+        "wb.part" => wb_part::PartFeature::from_json(&node.data)
+            .map(|f| f.icon())
+            .unwrap_or("tree-feature"),
+        "core.datum" => core_document::DatumFeature::from_json(&node.data)
+            .map(|d| match d.shape {
+                core_document::DatumShape::Plane { .. } => "datum-plane",
+                core_document::DatumShape::Line { .. } => "datum-line",
+                core_document::DatumShape::Point => "datum-point",
+            })
+            .unwrap_or("datum-plane"),
+        _ => "tree-feature",
     }
 }
 
@@ -251,6 +280,8 @@ fn build_body_node(body: &Body) -> TreeNode {
         seq: 0,
         children: Vec::new(),
         imported_object_id: None,
+        icon: "tree-body",
+        accent_icon: true,
     }
 }
 
@@ -326,10 +357,16 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         seq: 0,
         children,
         imported_object_id: Some(imported.id),
+        icon: match imported.kind {
+            kernel_api::ImportedNodeKind::Assembly => "tree-group",
+            kernel_api::ImportedNodeKind::Part => "tree-body",
+            kernel_api::ImportedNodeKind::Instance => "tree-feature",
+        },
+        accent_icon: imported.body_id.is_some(),
     })
 }
 
-fn describe_workbench(raw: &str) -> String {
+pub(crate) fn describe_workbench(raw: &str) -> String {
     match raw {
         "wb.sketch" => "Sketch".to_string(),
         "wb.part" => "Part design feature".to_string(),
@@ -364,81 +401,292 @@ fn matches_filter(node: &TreeNode, filter: &str) -> bool {
 
 pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>) -> TreeUiResult {
     let mut result = TreeUiResult::default();
-    let selected = options.selected;
+    ui.spacing_mut().item_spacing.y = 0.0;
 
-    // One checkbox-width per level: deep assemblies stay readable instead of
-    // marching off the panel. (CollapsingHeader indents its body by this.)
-    ui.spacing_mut().indent = 12.0;
-
-    // Document root behaves like a top-level collapsible item.
-    let header_text = format!("Document: {}", model.document_label());
-    let collapsing = egui::CollapsingHeader::new(header_text)
-        .id_salt("document_root")
-        .show(ui, |ui| {
-            for node in model.nodes() {
-                if matches_filter(node, options.filter) {
-                    draw_node(ui, node, selected, &options, &mut result);
-                }
+    let root = RowSpec {
+        id: TreeItemId::DocumentRoot,
+        depth: 0,
+        icon: "tree-document",
+        icon_tint: TEXT1,
+        label: model.document_label(),
+        has_children: !model.nodes().is_empty(),
+        muted: false,
+        strikethrough: false,
+        badges: Vec::new(),
+        eye: None,
+        tooltip: None,
+    };
+    let open = draw_row(ui, &root, &options, &mut result, None);
+    if open {
+        for node in model.nodes() {
+            if matches_filter(node, options.filter) {
+                draw_node(ui, node, 1, &options, &mut result);
             }
-        });
-    handle_response(
-        collapsing.header_response,
-        TreeItemId::DocumentRoot,
-        &mut result,
-    );
-
+        }
+    }
     result
+}
+
+/// A badge at the row's end.
+struct Badge {
+    text: &'static str,
+    color: egui::Color32,
+    tooltip: Option<String>,
+}
+
+/// Everything one row draws.
+struct RowSpec<'a> {
+    id: TreeItemId,
+    depth: usize,
+    icon: &'static str,
+    icon_tint: egui::Color32,
+    label: &'a str,
+    has_children: bool,
+    /// Hidden, suppressed or past the tip: drawn in the muted text color.
+    muted: bool,
+    strikethrough: bool,
+    badges: Vec<Badge>,
+    /// Visibility toggle at the row's end: `Some(visible)`.
+    eye: Option<bool>,
+    tooltip: Option<&'a str>,
+}
+
+const ROW_FONT: f32 = 12.5;
+
+fn open_state(ui: &Ui, id: TreeItemId) -> bool {
+    ui.data(|d| d.get_temp::<bool>(egui::Id::new(("tree_open", id))))
+        .unwrap_or(true)
+}
+
+fn set_open_state(ui: &Ui, id: TreeItemId, open: bool) {
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(("tree_open", id)), open));
+}
+
+fn paint_icon(ui: &Ui, name: &str, rect: egui::Rect, tint: egui::Color32) {
+    if let Some(tex) = ui_kit::icon::texture(ui.ctx(), name) {
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        ui.painter().image(tex.id(), rect, uv, tint);
+    }
+}
+
+/// Draw one row; returns whether its children are shown. `node` carries
+/// the feature context menu when the row is a feature.
+fn draw_row(
+    ui: &mut Ui,
+    spec: &RowSpec<'_>,
+    options: &TreeDrawOptions<'_>,
+    result: &mut TreeUiResult,
+    node: Option<&TreeNode>,
+) -> bool {
+    let selected = options.selected == Some(spec.id);
+    let (rect, response) = ui.allocate_exact_size(
+        Vec2::new(ui.available_width(), TREE_ROW),
+        egui::Sense::click(),
+    );
+    if selected {
+        ui.painter().rect_filled(rect, 0.0, ACCENT_DIM);
+        ui.painter().rect_filled(
+            egui::Rect::from_min_size(rect.left_top(), Vec2::new(2.0, rect.height())),
+            0.0,
+            ACCENT,
+        );
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, BG2);
+    }
+
+    let mut x = rect.left() + 8.0 + spec.depth as f32 * 16.0;
+    let cy = rect.center().y;
+
+    // The chevron toggles the branch without selecting the row.
+    let mut open = open_state(ui, spec.id);
+    if spec.has_children {
+        let chevron_rect = egui::Rect::from_center_size(egui::pos2(x + 6.0, cy), Vec2::splat(12.0));
+        let chevron = ui.interact(
+            chevron_rect.expand(3.0),
+            ui.id().with(("tree_chevron", spec.id)),
+            egui::Sense::click(),
+        );
+        if chevron.clicked() {
+            open = !open;
+            set_open_state(ui, spec.id, open);
+        }
+        let name = if open {
+            "chevron-down"
+        } else {
+            "chevron-right"
+        };
+        paint_icon(ui, name, chevron_rect, TEXT3);
+    }
+    x += 18.0;
+
+    let icon_rect = egui::Rect::from_center_size(egui::pos2(x + 8.0, cy), Vec2::splat(16.0));
+    let tint = if spec.muted { TEXT3 } else { spec.icon_tint };
+    paint_icon(ui, spec.icon, icon_rect, tint);
+    x += 22.0;
+
+    // Badges and the eye claim the right end first; the label gets what is
+    // left.
+    let mut right = rect.right() - 8.0;
+    if let Some(visible) = spec.eye {
+        let eye_rect = egui::Rect::from_center_size(egui::pos2(right - 7.0, cy), Vec2::splat(14.0));
+        let eye = ui.interact(
+            eye_rect.expand(3.0),
+            ui.id().with(("tree_eye", spec.id)),
+            egui::Sense::click(),
+        );
+        let shown = !visible || eye.hovered() || response.hovered() || selected;
+        if shown {
+            let name = if visible { "eye" } else { "eye-off" };
+            paint_icon(ui, name, eye_rect, TEXT3);
+        }
+        let eye = eye.on_hover_text(if visible { "Hide" } else { "Show" });
+        if eye.clicked() {
+            match spec.id {
+                TreeItemId::ImportedObject(id) => {
+                    result.imported_visibility_change = Some((id, !visible));
+                }
+                TreeItemId::Feature(id) => {
+                    result.feature_command = Some((id, TreeFeatureCommand::SetVisible(!visible)));
+                }
+                _ => {}
+            }
+        }
+        right -= 20.0;
+    }
+    for badge in spec.badges.iter().rev() {
+        let galley = ui.painter().layout_no_wrap(
+            badge.text.to_string(),
+            ui_kit::sans_semibold(10.0),
+            badge.color,
+        );
+        let w = galley.size().x + 8.0;
+        let badge_rect =
+            egui::Rect::from_min_max(egui::pos2(right - w, cy - 7.0), egui::pos2(right, cy + 7.0));
+        ui.painter().rect_stroke(
+            badge_rect,
+            RADIUS_SM,
+            egui::Stroke::new(1.0, with_alpha(badge.color, 0.4)),
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().galley(
+            egui::pos2(badge_rect.left() + 4.0, cy - galley.size().y / 2.0),
+            galley,
+            badge.color,
+        );
+        if let Some(tip) = &badge.tooltip {
+            ui.interact(
+                badge_rect,
+                ui.id().with(("tree_badge", spec.id, badge.text)),
+                egui::Sense::hover(),
+            )
+            .on_hover_text(tip);
+        }
+        right -= w + 6.0;
+    }
+
+    let label_rect =
+        egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(right, rect.bottom()));
+    let color = if spec.muted { TEXT3 } else { TEXT1 };
+    let galley = ui
+        .painter()
+        .layout_no_wrap(spec.label.to_string(), sans(ROW_FONT), color);
+    let text_width = galley.size().x.min(label_rect.width());
+    ui.painter().with_clip_rect(label_rect).galley(
+        egui::pos2(label_rect.left(), cy - galley.size().y / 2.0),
+        galley,
+        color,
+    );
+    if spec.strikethrough {
+        ui.painter().line_segment(
+            [egui::pos2(x, cy), egui::pos2(x + text_width, cy)],
+            egui::Stroke::new(1.0, color),
+        );
+    }
+
+    let response = match spec.tooltip {
+        Some(tip) => response.on_hover_text(tip),
+        None => response,
+    };
+    let response = match node {
+        Some(node) => attach_feature_menu(response, node, result),
+        None => response,
+    };
+    handle_response(response, spec.id, result);
+    open
 }
 
 fn draw_node(
     ui: &mut Ui,
     node: &TreeNode,
-    selected: Option<TreeItemId>,
+    depth: usize,
     options: &TreeDrawOptions<'_>,
     result: &mut TreeUiResult,
 ) {
     let editing_here =
         matches!((node.id, options.editing), (TreeItemId::Feature(a), Some(b)) if a == b);
-    // Depth needs no manual spacing: every level already lives inside its
-    // parent's CollapsingHeader body, which carries the (shrunken) indent.
-    // Nodes with children are rendered as collapsible tree branches; leaves as simple rows.
-    if node.children.is_empty() {
-        ui.horizontal(|ui| {
-            maybe_draw_imported_visibility_toggle(ui, node, result);
-            let label = compose_label(node);
-            let is_selected = selected == Some(node.id);
-            let response = if let Some(tooltip) = &node.tooltip {
-                ui.selectable_label(is_selected, label)
-                    .on_hover_text(tooltip)
-            } else {
-                ui.selectable_label(is_selected, label)
-            };
-            let response = attach_feature_menu(response, node, result);
-            if editing_here {
-                ui_kit::widgets::badge(ui, "EDITING", ui_kit::tokens::ACCENT);
-            }
-            handle_response(response, node.id, result);
+    let mut badges = Vec::new();
+    if node.is_tip {
+        badges.push(Badge {
+            text: "TIP",
+            color: SUCCESS,
+            tooltip: Some("The body's shape stops at this feature".to_string()),
         });
+    }
+    if editing_here {
+        badges.push(Badge {
+            text: "EDITING",
+            color: ACCENT,
+            tooltip: None,
+        });
+    }
+    if node.dirty {
+        badges.push(Badge {
+            text: "…",
+            color: TEXT3,
+            tooltip: Some("Pending recompute".to_string()),
+        });
+    }
+    if let Some(error) = &node.error {
+        badges.push(Badge {
+            text: "!",
+            color: DANGER,
+            tooltip: Some(error.clone()),
+        });
+    }
+    let dimmed_by_edit = options.editing.is_some() && !editing_here;
+    let eye = match node.id {
+        TreeItemId::ImportedObject(_) | TreeItemId::Feature(_) => Some(node.visible),
+        _ => None,
+    };
+    let icon_tint = if editing_here || node.accent_icon {
+        ACCENT
+    } else if node.error.is_some() {
+        DANGER
+    } else if node.is_tip {
+        SUCCESS
     } else {
-        ui.horizontal(|ui| {
-            maybe_draw_imported_visibility_toggle(ui, node, result);
-            let label = compose_label(node);
-            let collapsing = egui::CollapsingHeader::new(label)
-                .id_salt(format!("tree_node_{:?}", node.id))
-                .show(ui, |ui| {
-                    for child in &node.children {
-                        if matches_filter(child, options.filter) {
-                            draw_node(ui, child, selected, options, result);
-                        }
-                    }
-                });
-
-            let response = attach_feature_menu(collapsing.header_response, node, result);
-            if editing_here {
-                ui_kit::widgets::badge(ui, "EDITING", ui_kit::tokens::ACCENT);
+        TEXT2
+    };
+    let spec = RowSpec {
+        id: node.id,
+        depth,
+        icon: node.icon,
+        icon_tint,
+        label: &node.label,
+        has_children: !node.children.is_empty(),
+        muted: node.suppressed || !node.visible || node.after_tip || dimmed_by_edit,
+        strikethrough: node.suppressed,
+        badges,
+        eye,
+        tooltip: node.tooltip.as_deref(),
+    };
+    let open = draw_row(ui, &spec, options, result, Some(node));
+    if open {
+        for child in &node.children {
+            if matches_filter(child, options.filter) {
+                draw_node(ui, child, depth + 1, options, result);
             }
-            handle_response(response, node.id, result);
-        });
+        }
     }
 }
 
@@ -519,48 +767,6 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
     if response.double_clicked() {
         result.activation = Some(id);
     }
-}
-
-fn maybe_draw_imported_visibility_toggle(ui: &mut Ui, node: &TreeNode, result: &mut TreeUiResult) {
-    let Some(imported_id) = node.imported_object_id else {
-        return;
-    };
-    let mut visible = node.visible;
-    let resp = ui.checkbox(&mut visible, "");
-    if resp.changed() {
-        result.imported_visibility_change = Some((imported_id, visible));
-    }
-    resp.on_hover_text(if visible {
-        "Hide imported node"
-    } else {
-        "Show imported node"
-    });
-}
-
-fn compose_label(node: &TreeNode) -> RichText {
-    let mut pieces = Vec::new();
-    if node.error.is_some() {
-        pieces.push("⚠".to_string());
-    }
-    pieces.push(node.label.clone());
-    if node.is_tip {
-        pieces.push("◄ tip".into());
-    }
-    if node.dirty {
-        pieces.push("•dirty".into());
-    }
-    let text = pieces.join(" ");
-
-    let mut rich = RichText::new(text);
-    if node.error.is_some() {
-        rich = rich.color(Color32::from_rgb(240, 90, 90));
-    } else if node.suppressed || !node.visible || node.after_tip {
-        rich = rich.color(Color32::from_gray(150)).italics();
-    }
-    if node.suppressed {
-        rich = rich.strikethrough();
-    }
-    rich
 }
 
 fn feature_tooltip(node: &FeatureNode, after_tip: bool) -> String {
@@ -757,7 +963,7 @@ mod tests {
         );
         doc.set_imported_object_graph(vec![root], graph);
         let tree = DocumentTree::build(&doc);
-        let text = compose_label(&tree.nodes()[0]).text().to_string();
-        assert_eq!(text, "Asm");
+        assert_eq!(tree.nodes()[0].label, "Asm");
+        assert_eq!(tree.nodes()[0].icon, "tree-group");
     }
 }

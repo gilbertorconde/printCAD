@@ -9,6 +9,7 @@ use ui_kit::{sans, sans_medium};
 use super::ActiveWorkbench;
 use super::feature_tree::{self, TreeItemId};
 use super::host_ctx::{HostCtxParams, PanelWriteback, flush_ctx_logs, panel_ctx};
+use super::property_panel::{self, PropertyTab};
 
 #[derive(Default)]
 pub struct ComboViewResult {
@@ -17,6 +18,8 @@ pub struct ComboViewResult {
     pub tree_activation: Option<TreeItemId>,
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
     pub tree_feature_command: Option<(core_document::FeatureId, feature_tree::TreeFeatureCommand)>,
+    /// The property panel's Label row committed a new name.
+    pub rename: Option<(TreeItemId, String)>,
 }
 
 pub struct ComboViewInputs<'a> {
@@ -29,6 +32,9 @@ pub struct ComboViewInputs<'a> {
     pub editing_feature: Option<core_document::FeatureId>,
     /// UI-local substring filter over tree labels.
     pub filter: &'a mut String,
+    pub property_tab: &'a mut PropertyTab,
+    /// The Label row's in-progress edit.
+    pub rename_buffer: &'a mut Option<(TreeItemId, String)>,
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -41,6 +47,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         active_document_object,
         editing_feature,
         filter,
+        property_tab,
+        rename_buffer,
     } = inputs;
     let mut result = ComboViewResult::default();
 
@@ -101,17 +109,20 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             });
 
             ui.add_space(SPACE_1);
-            let tree_height = ui.available_height();
+            // The tree takes the upper part; the property panel the rest.
+            let total = ui.available_height();
+            let tree_height = (total * 0.55).max(120.0);
             let mut selected_detail: Option<String> = None;
+            let selected_id = active_tree_selection
+                .or_else(|| active_document_object.map(TreeItemId::from))
+                .unwrap_or(TreeItemId::DocumentRoot);
             egui::ScrollArea::vertical()
                 .id_salt("model_tree")
                 .max_height(tree_height)
-                .auto_shrink([false, true])
+                .min_scrolled_height(tree_height)
+                .auto_shrink([false, false])
                 .show(ui, |ui| {
                     let tree_model = feature_tree::DocumentTree::build(document);
-                    let selected_id = active_tree_selection
-                        .or_else(|| active_document_object.map(TreeItemId::from))
-                        .unwrap_or(TreeItemId::DocumentRoot);
                     let tree_ui = feature_tree::draw_tree(
                         ui,
                         &tree_model,
@@ -133,13 +144,21 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .or_else(|| tree_model.detail_for(selected_id));
                 });
 
-            if let Some(detail) = selected_detail {
-                ui.add_space(2.0);
-                ui.horizontal(|ui| {
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(detail).font(sans(FONT_XS)).color(TEXT3));
-                });
+            let props = property_panel::draw_property_panel(
+                ui,
+                document,
+                selected_id,
+                selected_detail.as_deref(),
+                property_tab,
+                rename_buffer,
+            );
+            if props.feature_command.is_some() {
+                result.tree_feature_command = props.feature_command;
             }
+            if props.imported_visibility.is_some() {
+                result.imported_visibility_change = props.imported_visibility;
+            }
+            result.rename = props.rename;
             let _ = vseparator;
 
             // The active workbench's own panel content.

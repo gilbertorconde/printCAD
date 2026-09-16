@@ -120,6 +120,9 @@ pub(crate) struct RemoteImportRoute {
     pub asset_id: uuid::Uuid,
 }
 
+/// Bounds of a body mesh, keyed by body and mesh revision.
+type DimensionCache = (core_document::BodyId, u64, ([f32; 3], [f32; 3]));
+
 struct PrintCadApp {
     settings: RenderSettings,
     frame_submission: FrameSubmission,
@@ -273,6 +276,8 @@ struct PrintCadApp {
     task_open: bool,
     /// The title the window currently shows; rewritten only on change.
     window_title: String,
+    /// Bounds of the last measured body mesh, keyed by body and revision.
+    dimension_cache: Option<DimensionCache>,
 }
 
 impl PrintCadApp {
@@ -364,6 +369,7 @@ impl PrintCadApp {
             return_workbench: None,
             task_open: false,
             window_title: String::new(),
+            dimension_cache: None,
         }
     }
 
