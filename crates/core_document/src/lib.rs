@@ -3,6 +3,7 @@ pub mod datum;
 pub mod feature;
 pub mod history;
 pub mod op;
+pub mod palette;
 pub mod registration;
 pub mod runtime;
 pub mod server;
@@ -28,6 +29,7 @@ pub use datum::{
 };
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use kernel_api::TriMesh;
+pub use palette::SketchPalette;
 pub use runtime::{
     CameraOrientRequest, FaceRef, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
     SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
@@ -35,8 +37,10 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use units::{Unit, format_length_mm};
 pub use workbench::{
-    CommandDescriptor, ScreenSpaceLabel, ScreenSpaceOverlay, ToolBehavior, ToolDescriptor,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
+    CommandDescriptor, MarkKind, OvpRow, OvpWidget, ScreenSpaceLabel, ScreenSpaceMark,
+    ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
+    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
 };
 
 /// Result type for document operations.

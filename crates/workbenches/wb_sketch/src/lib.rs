@@ -973,46 +973,52 @@ impl Workbench for SketchWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
-        context.register_tool(ToolDescriptor::new_action(
-            "sketch.create",
-            "Create Sketch",
-            Some("sketch"),
-        ));
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.create", "Create Sketch", Some("sketch"))
+                .icon("sketch-new"),
+        );
         // Radio tools, in toolbar order: select, drawing, editing, transforms.
         let radio_tools = [
-            ("sketch.select", "Select"),
-            ("sketch.point", "Point"),
-            ("sketch.line", "Line"),
-            ("sketch.arc", "Arc"),
-            ("sketch.arc3", "Arc (3 points)"),
-            ("sketch.circle", "Circle"),
-            ("sketch.circle3", "Circle (3 points)"),
-            ("sketch.ellipse", "Ellipse"),
-            ("sketch.bspline", "B-spline"),
-            ("sketch.rect", "Rectangle"),
-            ("sketch.rect_center", "Centered Rectangle"),
-            ("sketch.polygon", "Polygon"),
-            ("sketch.slot", "Slot"),
-            ("sketch.arc_slot", "Arc Slot"),
-            ("sketch.fillet", "Fillet"),
-            ("sketch.chamfer", "Chamfer"),
-            ("sketch.trim", "Trim"),
-            ("sketch.extend", "Extend"),
-            ("sketch.split", "Split"),
-            ("sketch.offset", "Offset"),
-            ("sketch.translate", "Move"),
-            ("sketch.rotate", "Rotate"),
-            ("sketch.scale", "Scale"),
-            ("sketch.mirror", "Mirror"),
+            ("sketch.select", "Select", "select"),
+            ("sketch.point", "Point", "point"),
+            ("sketch.line", "Line", "line"),
+            ("sketch.arc", "Arc", "arc"),
+            ("sketch.arc3", "Arc (3 points)", "arc-3pt"),
+            ("sketch.circle", "Circle", "circle"),
+            ("sketch.circle3", "Circle (3 points)", "circle-3pt"),
+            ("sketch.ellipse", "Ellipse", "ellipse"),
+            ("sketch.bspline", "B-spline", "bspline"),
+            ("sketch.rect", "Rectangle", "rectangle"),
+            (
+                "sketch.rect_center",
+                "Centered Rectangle",
+                "rectangle-centered",
+            ),
+            ("sketch.polygon", "Polygon", "regular-polygon"),
+            ("sketch.slot", "Slot", "slot"),
+            ("sketch.arc_slot", "Arc Slot", "arc-slot"),
+            ("sketch.fillet", "Fillet", "sketch-fillet"),
+            ("sketch.chamfer", "Chamfer", "sketch-chamfer"),
+            ("sketch.trim", "Trim", "trim"),
+            ("sketch.extend", "Extend", "extend"),
+            ("sketch.split", "Split", "split"),
+            ("sketch.offset", "Offset", "offset-geometry"),
+            ("sketch.translate", "Move", "move-geometry"),
+            ("sketch.rotate", "Rotate", "rotate-geometry"),
+            ("sketch.scale", "Scale", "scale-geometry"),
+            ("sketch.mirror", "Mirror", "symmetry-geometry"),
         ];
-        for (id, label) in radio_tools {
-            context.register_tool(ToolDescriptor::new(id, label, Some("sketch")));
+        for (id, label, icon) in radio_tools {
+            context.register_tool(ToolDescriptor::new(id, label, Some("sketch")).icon(icon));
         }
-        context.register_tool(ToolDescriptor::new_action(
-            "sketch.construction",
-            "Toggle Construction",
-            Some("sketch"),
-        ));
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.construction",
+                "Toggle Construction",
+                Some("sketch"),
+            )
+            .icon("construction-mode"),
+        );
         // The solver runs automatically after every geometry/constraint
         // edit, so no explicit solve command is registered.
         context.register_command(CommandDescriptor::new("sketch.finish", "Finish Sketch"));
@@ -2141,4 +2147,35 @@ fn element_label(element: &GeometryElement) -> String {
         GeometryElement::BSpline(_) => "B-spline",
     };
     format!("{kind} [{}]", &element.id().to_string()[..8])
+}
+
+#[cfg(all(test, feature = "egui"))]
+mod icon_coverage {
+    use super::*;
+    use core_document::{Workbench, WorkbenchContext};
+
+    #[test]
+    fn every_tool_names_an_icon_in_the_set() {
+        let mut ctx = WorkbenchContext::default();
+        SketchWorkbench::default().configure(&mut ctx);
+        for tool in ctx.tools() {
+            let icon = tool
+                .icon
+                .unwrap_or_else(|| panic!("{} has no icon", tool.id));
+            assert!(
+                ui_kit::icon::exists(icon),
+                "{}: unknown icon {icon}",
+                tool.id
+            );
+            for variant in &tool.variants {
+                assert!(
+                    ui_kit::icon::exists(variant.icon),
+                    "{}:{}: unknown icon {}",
+                    tool.id,
+                    variant.id,
+                    variant.icon
+                );
+            }
+        }
+    }
 }

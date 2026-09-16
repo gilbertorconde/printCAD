@@ -3661,6 +3661,7 @@ dependencies = [
  "kernel_api",
  "serde",
  "serde_json",
+ "ui_kit",
  "uuid",
  "wb_sketch",
 ]
@@ -3675,6 +3676,7 @@ dependencies = [
  "kernel_api",
  "serde",
  "serde_json",
+ "ui_kit",
  "uuid",
 ]
 

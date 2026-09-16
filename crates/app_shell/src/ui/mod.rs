@@ -1,6 +1,5 @@
 mod commands;
 mod feature_tree;
-mod icons;
 mod inputs;
 mod layout;
 mod settings_panel;
@@ -117,6 +116,7 @@ impl UiLayer {
             active_document_object,
             selected_body_id,
             screen_space_overlays,
+            screen_space_marks,
             screen_space_labels,
             pending_imports,
             pending_document_open,
@@ -254,6 +254,7 @@ impl UiLayer {
                 viewport_rect_logical,
                 screen_space_overlays,
             );
+            layout::draw_screen_space_marks(ui.ctx(), viewport_rect_logical, screen_space_marks);
             layout::draw_screen_space_labels(ui.ctx(), viewport_rect_logical, screen_space_labels);
 
             if let Some(input) = orientation_input {

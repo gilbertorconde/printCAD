@@ -47,6 +47,7 @@ impl Glyph {
             color: self.color,
             size: self.size,
             background: self.background,
+            mono: true,
         }
     }
 }

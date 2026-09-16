@@ -636,6 +636,7 @@ pub fn readout_labels(
             color,
             size: READOUT_SIZE,
             background,
+            mono: true,
         });
     }
     out

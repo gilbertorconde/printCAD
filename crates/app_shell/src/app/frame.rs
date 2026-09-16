@@ -294,7 +294,8 @@ impl PrintCadApp {
 
         // Update camera animation and assemble this frame's scene submission
         // before the UI/render block takes its borrows on `gfx`.
-        let (screen_space_overlays, screen_space_labels) = self.build_scene_submission(dt_secs);
+        let (screen_space_overlays, screen_space_marks, screen_space_labels) =
+            self.build_scene_submission(dt_secs);
 
         let commands;
 
@@ -340,6 +341,7 @@ impl PrintCadApp {
                         active_document_object: self.active_document_object,
                         selected_body_id: self.active_body_id,
                         screen_space_overlays: &screen_space_overlays,
+                        screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,
                         pending_imports: self.kernel_worker.in_flight(),
                         pending_document_open: server_status.opens_in_flight
@@ -506,6 +508,7 @@ impl PrintCadApp {
         dt_secs: f32,
     ) -> (
         Vec<core_document::ScreenSpaceOverlay>,
+        Vec<core_document::ScreenSpaceMark>,
         Vec<core_document::ScreenSpaceLabel>,
     ) {
         self.camera.set_orbit_lock(self.sketch_editing_active());
@@ -660,14 +663,15 @@ impl PrintCadApp {
         // Screen-space overlays + labels from the active workbench
         // (constant-thickness lines and constant-size text).
         let params = self.overlay_ctx_params();
-        let (screen_space_overlays, mut screen_space_labels) = self
+        let (screen_space_overlays, screen_space_marks, mut screen_space_labels) = self
             .with_workbench_ctx(&wb_id, params, |wb, ctx| {
                 (
                     wb.get_screen_space_overlays(ctx, ctx.active_document_object),
+                    wb.get_screen_space_marks(ctx, ctx.active_document_object),
                     wb.get_screen_space_labels(ctx, ctx.active_document_object),
                 )
             })
-            .map(|(pair, _outcome)| pair)
+            .map(|(triple, _outcome)| triple)
             .unwrap_or_default();
 
         // Peers' cursors: a named marker where each other editor points.
@@ -683,13 +687,15 @@ impl PrintCadApp {
             else {
                 continue;
             };
-            screen_space_labels.push(core_document::ScreenSpaceLabel {
-                pos: [x, y - 14.0],
-                text: format!("⯆ {}", state.display_name),
-                color: [0.35, 0.75, 0.95],
-                size: 12.0,
-                background: true,
-            });
+            screen_space_labels.push(
+                core_document::ScreenSpaceLabel::new(
+                    [x, y - 14.0],
+                    format!("⯆ {}", state.display_name),
+                    [0.35, 0.75, 0.95],
+                    12.0,
+                )
+                .pill(),
+            );
         }
 
         // Combine sketch meshes, imported geometry, and overlay meshes.
@@ -723,6 +729,10 @@ impl PrintCadApp {
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
 
-        (screen_space_overlays, screen_space_labels)
+        (
+            screen_space_overlays,
+            screen_space_marks,
+            screen_space_labels,
+        )
     }
 }

@@ -1,11 +1,8 @@
 use axes::AxisSystem;
 use core_document::{DocumentService, Unit, WorkbenchId, format_length_mm};
-use egui::{
-    self, Color32, Context, Id, Key, KeyboardShortcut, Modifiers, TextureHandle, TextureOptions,
-};
-use std::collections::HashMap;
+use egui::{self, Color32, Context, Key, KeyboardShortcut, Modifiers};
 
-use crate::{log_panel, orientation_cube::rasterize_svg};
+use crate::log_panel;
 use glam::Vec3;
 use workbenches::REGISTERED_WORKBENCHES;
 
@@ -292,30 +289,32 @@ pub fn draw_top_panel(
                     };
 
                     for tool in &tools {
-                        let is_active = active_tool.active_ids.contains(&tool.id);
+                        let is_active = active_tool.active_ids.contains(&tool.id)
+                            || workbench.tool_toggled(&tool.id);
                         let enabled = workbench.is_tool_enabled(&tool.id, &wb_ctx);
 
-                        // Icon convention: crates/workbenches/<crate>/src/icons/<tool_id>.svg.
-                        let icon = get_tool_icon_for(ui.ctx(), &active_workbench.0, &tool.id);
-
-                        let response = if let Some(icon) = icon {
-                            let mut button = egui::Button::image(egui::Image::from(&icon));
-                            if tool.behavior != core_document::ToolBehavior::Action && is_active {
-                                button = button.selected(true);
-                            }
-                            ui.add_enabled(enabled, button).on_hover_text(&tool.label)
-                        } else if tool.behavior == core_document::ToolBehavior::Action {
-                            ui.add_enabled(enabled, egui::Button::new(&tool.label))
-                                .on_hover_text(&tool.label)
-                        } else {
-                            ui.add_enabled(
-                                enabled,
-                                egui::Button::new(&tool.label).selected(is_active),
-                            )
-                            .on_hover_text(&tool.label)
+                        let response = match tool.icon {
+                            Some(icon) => ui_kit::widgets::tool_button(
+                                ui,
+                                icon,
+                                &tool.label,
+                                ui_kit::tokens::TOOLBAR_BUTTON,
+                                ui_kit::widgets::ToolButtonState {
+                                    enabled,
+                                    active: is_active,
+                                    planned: tool.planned,
+                                    menu: !tool.variants.is_empty(),
+                                },
+                            ),
+                            None => ui
+                                .add_enabled(
+                                    enabled && tool.planned.is_none(),
+                                    egui::Button::new(&tool.label).selected(is_active),
+                                )
+                                .on_hover_text(&tool.label),
                         };
 
-                        if response.clicked() && enabled {
+                        if response.clicked() && enabled && tool.planned.is_none() {
                             match tool.behavior {
                                 core_document::ToolBehavior::Action => {
                                     // Fire-and-forget: always (re)select the action tool for this
@@ -354,58 +353,6 @@ pub fn draw_top_panel(
             });
         });
     result
-}
-
-#[derive(Default, Clone)]
-struct IconCache {
-    handles: HashMap<String, TextureHandle>,
-}
-
-fn load_svg_icon(
-    ctx: &Context,
-    cache_id: Id,
-    cache_key: &str,
-    texture_name_prefix: &str,
-    svg: &str,
-) -> Option<TextureHandle> {
-    // Try cache first
-    if let Some(handle) = ctx.data(|data| {
-        data.get_temp::<IconCache>(cache_id)
-            .and_then(|cache| cache.handles.get(cache_key).cloned())
-    }) {
-        return Some(handle);
-    }
-
-    // Icon SVGs declare a 48px natural size over a 24px viewBox, so they
-    // rasterize at 2x the display size for crisp HiDPI rendering.
-    let image = rasterize_svg(svg)?;
-
-    let tex_name = format!("{texture_name_prefix}{cache_key}");
-    let texture = ctx.load_texture(tex_name, image, TextureOptions::LINEAR);
-
-    // Store in cache
-    ctx.data_mut(|data| {
-        let cache = data.get_temp_mut_or_insert_with(cache_id, IconCache::default);
-        cache.handles.insert(cache_key.to_string(), texture.clone());
-    });
-
-    Some(texture)
-}
-
-fn get_tool_icon_for(
-    ctx: &Context,
-    workbench_id: &WorkbenchId,
-    tool_id: &str,
-) -> Option<TextureHandle> {
-    // Unique cache key per workbench/tool pair
-    let key = format!("tool::{}::{}", workbench_id.as_str(), tool_id);
-    let cache_id = Id::new("icon_cache");
-
-    // Icons are embedded at compile time so loading never depends on the
-    // process working directory.
-    let svg = super::icons::embedded_tool_svg(workbench_id.as_str(), tool_id)?;
-
-    load_svg_icon(ctx, cache_id, &key, "tool_icon_", svg)
 }
 
 #[derive(Default)]
@@ -712,6 +659,19 @@ pub fn draw_bottom_panel(
     cancel_requested
 }
 
+/// Padding around a label's text when it draws a pill; shared with the
+/// sketcher's hit-testing so a click lands where the pill is painted.
+pub const PILL_PAD: egui::Vec2 = egui::vec2(5.0, 2.0);
+
+fn rgb(color: [f32; 3], alpha: f32) -> Color32 {
+    Color32::from_rgb(
+        (color[0] * 255.0) as u8,
+        (color[1] * 255.0) as u8,
+        (color[2] * 255.0) as u8,
+    )
+    .gamma_multiply(alpha)
+}
+
 /// Draw screen-space text labels in the viewport area (dimension values,
 /// constraint glyphs, on-view parameter readouts). Coordinates arrive in
 /// physical pixels relative to the viewport origin, like overlay lines.
@@ -735,22 +695,72 @@ pub fn draw_screen_space_labels(
             viewport_rect.min.x + label.pos[0] / ppp,
             viewport_rect.min.y + label.pos[1] / ppp,
         );
-        let color = Color32::from_rgb(
-            (label.color[0] * 255.0) as u8,
-            (label.color[1] * 255.0) as u8,
-            (label.color[2] * 255.0) as u8,
-        );
-        let font = egui::FontId::proportional(label.size / ppp);
+        let color = rgb(label.color, 1.0);
+        let font = if label.mono {
+            ui_kit::mono(label.size / ppp)
+        } else {
+            ui_kit::sans(label.size / ppp)
+        };
         let galley = painter.layout_no_wrap(label.text.clone(), font, color);
         let rect = egui::Rect::from_center_size(pos, galley.size());
         if label.background {
             painter.rect_filled(
-                rect.expand2(egui::vec2(4.0, 2.0)),
-                3.0,
-                Color32::from_rgba_unmultiplied(20, 20, 24, 210),
+                rect.expand2(PILL_PAD / ppp),
+                ui_kit::tokens::RADIUS_SM,
+                ui_kit::tokens::BG0,
             );
         }
         painter.galley(rect.min, galley, color);
+    }
+}
+
+/// Draw point markers and icon glyphs in the viewport area, above the
+/// overlay lines and beneath the labels.
+pub fn draw_screen_space_marks(
+    ctx: &egui::Context,
+    viewport_rect: egui::Rect,
+    marks: &[core_document::ScreenSpaceMark],
+) {
+    if marks.is_empty() {
+        return;
+    }
+    let ppp = ctx.pixels_per_point();
+    let layer_id = egui::LayerId::new(egui::Order::Background, egui::Id::new("screen_space_marks"));
+    let painter = ctx.layer_painter(layer_id).with_clip_rect(viewport_rect);
+    for mark in marks {
+        let pos = egui::pos2(
+            viewport_rect.min.x + mark.pos[0] / ppp,
+            viewport_rect.min.y + mark.pos[1] / ppp,
+        );
+        let color = rgb(mark.color, mark.alpha);
+        match mark.kind {
+            core_document::MarkKind::Dot { radius } => {
+                painter.circle_filled(pos, radius / ppp, color);
+            }
+            core_document::MarkKind::Crosshair { size } => {
+                let h = size / ppp / 2.0;
+                let stroke = egui::Stroke::new(1.0, color);
+                painter.line_segment(
+                    [egui::pos2(pos.x - h, pos.y), egui::pos2(pos.x + h, pos.y)],
+                    stroke,
+                );
+                painter.line_segment(
+                    [egui::pos2(pos.x, pos.y - h), egui::pos2(pos.x, pos.y + h)],
+                    stroke,
+                );
+            }
+            core_document::MarkKind::Icon { name, size } => {
+                if let Some(tex) = ui_kit::icon::texture(ctx, name) {
+                    let rect = egui::Rect::from_center_size(pos, egui::Vec2::splat(size / ppp));
+                    painter.image(
+                        tex.id(),
+                        rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        color,
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -805,33 +815,38 @@ pub fn draw_screen_space_overlays(
 
     let ppp = ctx.pixels_per_point();
 
-    // Use Background order to draw beneath UI panels, and clip to viewport area
+    // Background order draws beneath UI panels and on top of the 3D scene,
+    // which is composited separately; clip to the viewport area.
     let layer_id = egui::LayerId::new(
-        egui::Order::Background, // Draw beneath UI but on top of 3D scene (3D is rendered separately)
+        egui::Order::Background,
         egui::Id::new("screen_space_overlays"),
     );
     let painter = ctx.layer_painter(layer_id).with_clip_rect(viewport_rect);
 
     for overlay in overlays {
-        // Screen coordinates are already in pixels relative to the viewport origin (0,0)
-        // We need to convert them to egui logical coordinates and add the viewport offset
-        // The viewport_rect gives us the logical position of the viewport in the UI
-        let start_x = viewport_rect.min.x + (overlay.start[0] / ppp);
-        let start_y = viewport_rect.min.y + (overlay.start[1] / ppp);
-        let end_x = viewport_rect.min.x + (overlay.end[0] / ppp);
-        let end_y = viewport_rect.min.y + (overlay.end[1] / ppp);
-
-        let start = egui::pos2(start_x, start_y);
-        let end = egui::pos2(end_x, end_y);
-
-        // Convert RGB [0.0-1.0] to egui Color32
-        let r = (overlay.color[0] * 255.0) as u8;
-        let g = (overlay.color[1] * 255.0) as u8;
-        let b = (overlay.color[2] * 255.0) as u8;
-        let color = Color32::from_rgb(r, g, b);
-
-        // Draw line with constant screen-space thickness (convert pixels to logical points)
-        let stroke_width = overlay.thickness / ppp;
-        painter.line_segment([start, end], egui::Stroke::new(stroke_width, color));
+        // Coordinates arrive in physical pixels relative to the viewport
+        // origin; convert to logical points and add the viewport offset.
+        let start = egui::pos2(
+            viewport_rect.min.x + overlay.start[0] / ppp,
+            viewport_rect.min.y + overlay.start[1] / ppp,
+        );
+        let end = egui::pos2(
+            viewport_rect.min.x + overlay.end[0] / ppp,
+            viewport_rect.min.y + overlay.end[1] / ppp,
+        );
+        let stroke = egui::Stroke::new(overlay.thickness / ppp, rgb(overlay.color, overlay.alpha));
+        match overlay.dash {
+            Some((dash, gap)) => {
+                painter.add(egui::Shape::dashed_line(
+                    &[start, end],
+                    stroke,
+                    dash / ppp,
+                    gap / ppp,
+                ));
+            }
+            None => {
+                painter.line_segment([start, end], stroke);
+            }
+        }
     }
 }

@@ -43,17 +43,92 @@ pub struct ScreenSpaceOverlay {
     pub color: [f32; 3],
     /// Line thickness in pixels (constant screen-space).
     pub thickness: f32,
+    /// Opacity 0..=1.
+    pub alpha: f32,
+    /// `(dash, gap)` in pixels; the painter dashes after projection so the
+    /// pattern stays zoom-independent. `None` draws solid.
+    pub dash: Option<(f32, f32)>,
 }
 
 impl ScreenSpaceOverlay {
-    /// Create a new screen-space overlay line.
+    /// Create a new solid, opaque screen-space overlay line.
     pub fn new(start: [f32; 2], end: [f32; 2], color: [f32; 3], thickness: f32) -> Self {
         Self {
             start,
             end,
             color,
             thickness,
+            alpha: 1.0,
+            dash: None,
         }
+    }
+
+    pub fn with_alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
+        self
+    }
+
+    pub fn dashed(mut self, dash: f32, gap: f32) -> Self {
+        self.dash = Some((dash, gap));
+        self
+    }
+}
+
+/// A screen-space point marker or glyph drawn in the viewport.
+#[derive(Debug, Clone)]
+pub struct ScreenSpaceMark {
+    /// Center in screen coordinates (x, y) in pixels, relative to the
+    /// viewport origin.
+    pub pos: [f32; 2],
+    /// RGB color [r, g, b] in range 0.0-1.0.
+    pub color: [f32; 3],
+    /// Opacity 0..=1.
+    pub alpha: f32,
+    pub kind: MarkKind,
+}
+
+/// What a [`ScreenSpaceMark`] draws.
+#[derive(Debug, Clone)]
+pub enum MarkKind {
+    /// A filled circle of `radius` pixels.
+    Dot { radius: f32 },
+    /// An icon from the design system's set, `size` pixels square.
+    Icon { name: &'static str, size: f32 },
+    /// Two crossing 1px lines, `size` pixels long.
+    Crosshair { size: f32 },
+}
+
+impl ScreenSpaceMark {
+    pub fn dot(pos: [f32; 2], radius: f32, color: [f32; 3]) -> Self {
+        Self {
+            pos,
+            color,
+            alpha: 1.0,
+            kind: MarkKind::Dot { radius },
+        }
+    }
+
+    pub fn icon(pos: [f32; 2], name: &'static str, size: f32, color: [f32; 3]) -> Self {
+        Self {
+            pos,
+            color,
+            alpha: 1.0,
+            kind: MarkKind::Icon { name, size },
+        }
+    }
+
+    pub fn crosshair(pos: [f32; 2], size: f32, color: [f32; 3]) -> Self {
+        Self {
+            pos,
+            color,
+            alpha: 1.0,
+            kind: MarkKind::Crosshair { size },
+        }
+    }
+
+    pub fn with_alpha(mut self, alpha: f32) -> Self {
+        self.alpha = alpha;
+        self
     }
 }
 
@@ -71,6 +146,120 @@ pub struct ScreenSpaceLabel {
     pub size: f32,
     /// Draw a rounded background pill behind the text (dimension values).
     pub background: bool,
+    /// Set in the monospace face: numbers, units and identifiers.
+    pub mono: bool,
+}
+
+impl ScreenSpaceLabel {
+    pub fn new(pos: [f32; 2], text: impl Into<String>, color: [f32; 3], size: f32) -> Self {
+        Self {
+            pos,
+            text: text.into(),
+            color,
+            size,
+            background: false,
+            mono: false,
+        }
+    }
+
+    pub fn pill(mut self) -> Self {
+        self.background = true;
+        self
+    }
+
+    pub fn mono(mut self) -> Self {
+        self.mono = true;
+        self
+    }
+}
+
+/// The tool hint shown in the viewport's top-left corner while a tool is
+/// active: what it is and what the next click does.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ToolHint {
+    pub icon: &'static str,
+    pub name: String,
+    pub prompt: String,
+    /// `(key, meaning)` chips, e.g. `("Esc", "cancel")`.
+    pub keys: Vec<(&'static str, &'static str)>,
+}
+
+/// One row of the on-view parameter widget beside the cursor.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OvpRow {
+    /// Short mono label: `Ø`, `L`, `∠`.
+    pub label: &'static str,
+    pub value: String,
+    pub unit: &'static str,
+    /// Keyboard input goes to this row.
+    pub focused: bool,
+    /// The user typed a value; it will not follow the cursor.
+    pub locked: bool,
+}
+
+/// The on-view parameter widget: typed dimensions while drawing.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OvpWidget {
+    /// Top-left anchor in viewport pixels.
+    pub anchor: [f32; 2],
+    pub rows: Vec<OvpRow>,
+    pub hint: &'static str,
+}
+
+/// Everything a workbench wants drawn as widgets over the viewport.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ViewportHud {
+    pub tool: Option<ToolHint>,
+    /// Top-right badge: `(rgb, text)`, e.g. the solver's degrees of freedom.
+    pub badge: Option<([f32; 3], String)>,
+    /// Bottom-left legend of `(rgb, label)` swatches.
+    pub legend: Vec<([f32; 3], &'static str)>,
+    /// Bottom-right mono readouts.
+    pub footer: Vec<String>,
+    pub ovp: Option<OvpWidget>,
+}
+
+/// A workbench's contribution to the status bar.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct StatusItems {
+    /// The state dot and its title at the far left, e.g. the solver state.
+    pub state: Option<([f32; 3], String)>,
+    /// "Selected: …" summary.
+    pub selection: Option<String>,
+    /// Cursor coordinates in the workbench's own frame; replaces the world
+    /// readout while set.
+    pub coords: Option<String>,
+    /// Mode label at the far right, e.g. "Sketch edit mode".
+    pub mode: Option<String>,
+}
+
+/// What the task panel is currently editing.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskInfo {
+    pub title: String,
+    pub icon: &'static str,
+    /// Show OK and Cancel; otherwise a single Close.
+    pub confirmable: bool,
+}
+
+/// Host → workbench: the buttons or keys pressed on the task panel this
+/// frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TaskRequest {
+    pub accept: bool,
+    pub cancel: bool,
+}
+
+/// Workbench → host: what the task panel did this frame.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum TaskOutcome {
+    /// Nothing changed; the task stays open.
+    #[default]
+    Open,
+    /// The task closed keeping its edits; `label` names the undo entry.
+    Accepted { label: String },
+    /// The task closed and its edits were reverted.
+    Cancelled,
 }
 
 /// User-facing description provided by workbenches to populate menus.
@@ -139,6 +328,43 @@ pub trait Workbench: Send {
     /// Whether this workbench exposes right-panel UI.
     #[cfg(feature = "egui")]
     fn wants_right_panel(&self) -> bool {
+        false
+    }
+
+    /// What the task panel is editing, if anything. `Some` opens the panel.
+    fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        None
+    }
+
+    /// Draw the task panel body and react to the host's accept/cancel.
+    #[cfg(feature = "egui")]
+    fn ui_task_panel(
+        &mut self,
+        _ui: &mut egui::Ui,
+        _ctx: &mut WorkbenchRuntimeContext,
+        _request: TaskRequest,
+    ) -> TaskOutcome {
+        TaskOutcome::Open
+    }
+
+    /// Widgets to draw over the viewport this frame.
+    fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
+        None
+    }
+
+    /// The workbench's status-bar items this frame.
+    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
+        None
+    }
+
+    /// The feature whose edit session is open, for the tree to badge.
+    fn editing_feature(&self) -> Option<FeatureId> {
+        None
+    }
+
+    /// Whether an Action tool that acts as a toggle is currently on, so its
+    /// button can render pressed.
+    fn tool_toggled(&self, _tool_id: &str) -> bool {
         false
     }
 
@@ -232,6 +458,17 @@ pub trait Workbench: Send {
     ) -> Vec<ScreenSpaceLabel> {
         Vec::new()
     }
+
+    /// Point markers and icon glyphs drawn in the viewport, on top of the
+    /// overlay lines and beneath the labels. Same coordinate convention as
+    /// [`Self::get_screen_space_overlays`].
+    fn get_screen_space_marks(
+        &self,
+        _ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceMark> {
+        Vec::new()
+    }
 }
 
 /// Registry used by workbenches to declare the tools/commands they expose.
@@ -289,6 +526,55 @@ pub struct ToolDescriptor {
     /// Only one tool per group can be active at a time. If None, each tool is its own group.
     /// Ignored for Check and Action tools.
     pub group: Option<String>,
+    /// Name of the tool's icon in the design system's set.
+    pub icon: Option<&'static str>,
+    /// Present in the design but not built: the button renders disabled and
+    /// this note is its tooltip.
+    pub planned: Option<&'static str>,
+    /// Alternatives offered from a dropdown on the button. A picked variant
+    /// activates `"{id}:{variant.id}"`; the button remembers the last pick.
+    pub variants: Vec<ToolVariant>,
+    /// Toolbar row: 0 shares the row with the standard tools, 1 and 2 are
+    /// the workbench's own rows.
+    pub row: u8,
+    /// Push the button to the far right of its row.
+    pub align_end: bool,
+}
+
+/// One entry of a tool's variant dropdown.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolVariant {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub icon: &'static str,
+    /// Present in the design but not built.
+    pub planned: Option<&'static str>,
+}
+
+impl ToolVariant {
+    pub const fn new(id: &'static str, label: &'static str, icon: &'static str) -> Self {
+        Self {
+            id,
+            label,
+            icon,
+            planned: None,
+        }
+    }
+
+    pub const fn planned(mut self, note: &'static str) -> Self {
+        self.planned = Some(note);
+        self
+    }
+}
+
+/// The base tool id of an activated id, without a `:variant` suffix.
+pub fn base_tool_id(id: &str) -> &str {
+    id.split_once(':').map_or(id, |(base, _)| base)
+}
+
+/// The variant suffix of an activated id, if any.
+pub fn tool_variant(id: &str) -> Option<&str> {
+    id.split_once(':').map(|(_, v)| v)
 }
 
 impl ToolDescriptor {
@@ -305,6 +591,11 @@ impl ToolDescriptor {
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Radio,
             group: None, // Each tool is its own group by default
+            icon: None,
+            planned: None,
+            variants: Vec::new(),
+            row: 1,
+            align_end: false,
         }
     }
 
@@ -322,6 +613,11 @@ impl ToolDescriptor {
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Radio,
             group: Some(group.into()),
+            icon: None,
+            planned: None,
+            variants: Vec::new(),
+            row: 1,
+            align_end: false,
         }
     }
 
@@ -338,6 +634,11 @@ impl ToolDescriptor {
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Check,
             group: None, // Groups don't apply to Check tools
+            icon: None,
+            planned: None,
+            variants: Vec::new(),
+            row: 1,
+            align_end: false,
         }
     }
 
@@ -353,7 +654,37 @@ impl ToolDescriptor {
             category: category.map(|c| c.into()),
             behavior: ToolBehavior::Action,
             group: None, // Groups don't apply to Action tools
+            icon: None,
+            planned: None,
+            variants: Vec::new(),
+            row: 1,
+            align_end: false,
         }
+    }
+
+    pub fn icon(mut self, icon: &'static str) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn planned(mut self, note: &'static str) -> Self {
+        self.planned = Some(note);
+        self
+    }
+
+    pub fn variants(mut self, variants: Vec<ToolVariant>) -> Self {
+        self.variants = variants;
+        self
+    }
+
+    pub fn row(mut self, row: u8) -> Self {
+        self.row = row;
+        self
+    }
+
+    pub fn align_end(mut self) -> Self {
+        self.align_end = true;
+        self
     }
 }
 

@@ -88,6 +88,9 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// GPU pick landed on solid geometry (surface point + outward normal in
     /// world space). Lets "New Sketch" attach to the clicked face.
     pub selected_face: Option<FaceRef>,
+
+    /// Host → workbench: the colors sketch overlays draw in.
+    pub sketch_palette: crate::palette::SketchPalette,
 }
 
 /// A picked face on a solid body: a point on the surface and its outward
@@ -140,6 +143,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             start_sketch_on_body: None,
             selected_face: None,
             ctrl_down: false,
+            sketch_palette: crate::palette::SketchPalette::default(),
         }
     }
 

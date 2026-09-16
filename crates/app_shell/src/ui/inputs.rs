@@ -40,6 +40,7 @@ pub struct UiFrameInputs<'a> {
     pub active_document_object: Option<core_document::FeatureId>,
     pub selected_body_id: Option<core_document::BodyId>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
+    pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],
     pub pending_imports: u32,
     pub pending_document_open: u32,

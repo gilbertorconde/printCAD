@@ -445,48 +445,49 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        // (id, label, icon), grouped by toolbar category.
         let structure = [
-            ("part.new_body", "New Body"),
-            ("part.new_sketch", "New Sketch"),
-            ("part.datum_plane", "Datum Plane"),
-            ("part.datum_line", "Datum Line"),
-            ("part.datum_point", "Datum Point"),
+            ("part.new_body", "New Body", "body"),
+            ("part.new_sketch", "New Sketch", "sketch-new"),
+            ("part.datum_plane", "Datum Plane", "datum-plane"),
+            ("part.datum_line", "Datum Line", "datum-line"),
+            ("part.datum_point", "Datum Point", "datum-point"),
         ];
         let modeling = [
-            ("part.pad", "Pad (Extrude)"),
-            ("part.pocket", "Pocket (Cut)"),
-            ("part.revolve", "Revolution"),
-            ("part.groove", "Groove (Revolved Cut)"),
-            ("part.loft", "Loft"),
-            ("part.pipe", "Pipe (Sweep)"),
-            ("part.helix", "Helix"),
-            ("part.primitive", "Primitive"),
-            ("part.hole", "Hole"),
+            ("part.pad", "Pad (Extrude)", "pad"),
+            ("part.pocket", "Pocket (Cut)", "pocket"),
+            ("part.revolve", "Revolution", "revolution"),
+            ("part.groove", "Groove (Revolved Cut)", "groove"),
+            ("part.loft", "Loft", "additive-loft"),
+            ("part.pipe", "Pipe (Sweep)", "additive-pipe"),
+            ("part.helix", "Helix", "additive-helix"),
+            ("part.primitive", "Primitive", "additive-box"),
+            ("part.hole", "Hole", "hole"),
         ];
         let dressup = [
-            ("part.fillet", "Fillet"),
-            ("part.chamfer", "Chamfer"),
-            ("part.draft", "Draft"),
-            ("part.thickness", "Thickness (Shell)"),
+            ("part.fillet", "Fillet", "fillet"),
+            ("part.chamfer", "Chamfer", "chamfer"),
+            ("part.draft", "Draft", "draft"),
+            ("part.thickness", "Thickness (Shell)", "thickness"),
         ];
         let transform = [
-            ("part.mirror", "Mirrored"),
-            ("part.linear_pattern", "Linear Pattern"),
-            ("part.polar_pattern", "Polar Pattern"),
-            ("part.multi_transform", "Multi Transform"),
-            ("part.boolean", "Boolean"),
+            ("part.mirror", "Mirrored", "mirrored"),
+            ("part.linear_pattern", "Linear Pattern", "linear-pattern"),
+            ("part.polar_pattern", "Polar Pattern", "polar-pattern"),
+            ("part.multi_transform", "Multi Transform", "multi-transform"),
+            ("part.boolean", "Boolean", "boolean"),
         ];
-        for (id, label) in structure {
-            context.register_tool(ToolDescriptor::new_action(id, label, Some("structure")));
-        }
-        for (id, label) in modeling {
-            context.register_tool(ToolDescriptor::new_action(id, label, Some("modeling")));
-        }
-        for (id, label) in dressup {
-            context.register_tool(ToolDescriptor::new_action(id, label, Some("dressup")));
-        }
-        for (id, label) in transform {
-            context.register_tool(ToolDescriptor::new_action(id, label, Some("transform")));
+        for (category, tools) in [
+            ("structure", &structure[..]),
+            ("modeling", &modeling[..]),
+            ("dressup", &dressup[..]),
+            ("transform", &transform[..]),
+        ] {
+            for (id, label, icon) in tools {
+                context.register_tool(
+                    ToolDescriptor::new_action(*id, *label, Some(category)).icon(icon),
+                );
+            }
         }
     }
 
@@ -832,4 +833,35 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
         }
     }
     mesh
+}
+
+#[cfg(all(test, feature = "egui"))]
+mod icon_coverage {
+    use super::*;
+    use core_document::{Workbench, WorkbenchContext};
+
+    #[test]
+    fn every_tool_names_an_icon_in_the_set() {
+        let mut ctx = WorkbenchContext::default();
+        PartDesignWorkbench::default().configure(&mut ctx);
+        for tool in ctx.tools() {
+            let icon = tool
+                .icon
+                .unwrap_or_else(|| panic!("{} has no icon", tool.id));
+            assert!(
+                ui_kit::icon::exists(icon),
+                "{}: unknown icon {icon}",
+                tool.id
+            );
+            for variant in &tool.variants {
+                assert!(
+                    ui_kit::icon::exists(variant.icon),
+                    "{}:{}: unknown icon {}",
+                    tool.id,
+                    variant.id,
+                    variant.icon
+                );
+            }
+        }
+    }
 }
