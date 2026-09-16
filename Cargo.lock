@@ -2723,6 +2723,7 @@ version = "0.1.0"
 dependencies = [
  "axes",
  "directories",
+ "kernel_api",
  "serde",
  "serde_json",
  "thiserror 2.0.20",

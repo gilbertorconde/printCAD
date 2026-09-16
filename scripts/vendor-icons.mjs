@@ -19,7 +19,9 @@ const src = process.argv[2] ?? join(root, "ui-mockup", "icons");
 const dest = join(root, "crates", "ui_kit", "icons");
 const table = join(root, "crates", "ui_kit", "src", "icon_table.rs");
 
-const RENAME = new Map([["file-fcstd", "file-document"]]);
+// The source names its document icon after its own file format; the copy
+// carries a neutral name. Exactly one `file-*` icon is expected.
+const DOCUMENT_ICON = "file-document";
 const SKIP = new Set([
   "migrate", "sprocket", "involute-gear", "shape-binder", "sub-shape-binder",
   "constraint-refraction", "switch-virtual-space", "tree-spreadsheet",
@@ -42,7 +44,11 @@ for (const file of readdirSync(src).sort()) {
   if (!file.endsWith(".svg")) continue;
   const base = file.slice(0, -4);
   if (SKIP.has(base)) continue;
-  const name = RENAME.get(base) ?? base;
+  const name = base.startsWith("file-") ? DOCUMENT_ICON : base;
+  if (name === DOCUMENT_ICON && names.includes(DOCUMENT_ICON)) {
+    console.error(`vendor-icons: more than one file-* icon in the source set`);
+    process.exit(1);
+  }
   let svg = readFileSync(join(src, file), "utf8");
   svg = svg.replace(/<metadata>.*?<\/metadata>/s, "");
   svg = svg.replace(/\s+xmlns:c2pa="[^"]*"/, "");

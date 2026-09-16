@@ -66,22 +66,71 @@ cargo fmt --all                   # CI enforces --check
   `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
   length-prefixed JSON frames (`framing.rs`), integration-tested against the
   real spawned daemon (`tests/daemon.rs`).
+- `ui_kit` — the design system, below the workbenches so their panel code
+  can use it (behind their `egui` feature): `tokens` (the palette and
+  size constants, named after the design's variables), `theme`
+  (`apply_theme`, bundled IBM Plex Sans/Mono under `fonts/`, fetched by
+  `scripts/vendor-fonts.sh`; `sans/sans_medium/sans_semibold/mono` font
+  helpers), `widgets` (Card, overline, badge, key chip, toggle, check row,
+  note card, the button set, `tool_button`, `section_header`, `QtyField`,
+  `select_field`, `PrefRow` + `pref_group`, `planned`), `icon` (the SVG
+  set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a
+  generated `icon_table.rs`; `icon::texture/draw` rasterize with a
+  font-free usvg — the system-font scan is far too slow for 200 icons;
+  `select.svg` and `expression.svg` are hand-authored locals). A test
+  fails when the table and the directory disagree.
 - `workbenches/wb_sketch` — sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
   `profile.rs` (closed-wire extraction), `overlay.rs` (screen-space rendering
-  while editing).
+  while editing), `glyphs.rs` (constraint icons and dimension layouts),
+  `constrain.rs` (which constraint a toolbar action creates for the
+  selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
+  names per element/constraint kind).
 - `workbenches/wb_part` — Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
-  (`feature.rs`), per-feature panel editors (`editors.rs`); `build.rs`
-  translates a body's feature history into kernel `SolidOp` chains
-  (`BuildPlan` maps op index → feature for error attribution).
+  (`feature.rs`), per-feature panel editors (`editors.rs`), the task
+  lifecycle (`task.rs`: snapshot on open, live edits, Cancel restores or
+  deletes a tool-created feature); `build.rs` translates a body's feature
+  history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
+  for error attribution).
 - `render_vk` — data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
 - `app_shell` — binary. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `workbench_host.rs` (ctx
   plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive).
+  `ui/` is one module per region: `menu_bar`, `toolbar` (rows from
+  `ToolDescriptor.row`, variant dropdowns), `combo_view` (tree +
+  `property_panel`), `feature_tree`, `task_panel` (host of the workbench
+  task; OK/Cancel/Enter/Esc), `status_bar`, `view_toolbar` (floating
+  pill), `hud` (workbench HUD corners, OVP card, hover card), `overlays`
+  (line/mark/label painters), `start_page`, `preferences` (modal on a
+  draft `UserSettings`, committed by `CommitSettings`), `command_palette`
+  (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.
+
+The `Workbench` trait's UI surface: `configure` registers
+`ToolDescriptor`s (icon, row, category, variants, `planned` note);
+`is_tool_enabled`/`tool_toggled` decide button state each frame; `task()` +
+`ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
+`viewport_hud()`, `status_items()`, `editing_feature()`,
+`get_screen_space_overlays/marks/labels()` feed the viewport and chrome;
+`ui_settings()` draws the bench's Preferences page. Colors reach the
+workbenches through `WorkbenchRuntimeContext.sketch_palette`, never as
+literals.
+
+**Placeholders.** The design shows Part Design and Sketcher elements the app
+does not implement yet. They stay on screen as disabled controls with a
+`// PLANNED: <what it does when built>` comment next to them and a
+`ToolDescriptor::planned(note)` on tools (`tool_button` renders them dim,
+the host never dispatches a planned id). Nothing outside those two
+workbenches gets a placeholder.
+
+**Tasks and undo.** A feature edit is a task in the right panel: edits apply
+live, OK accepts, Cancel writes the opening snapshot back (or deletes the
+feature the tool just created). `frame.rs` skips the per-frame
+`journal.note` while a task is open, so one task is one undo entry;
+`TaskClosed` closes the gesture.
 
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) builds `SolidOp` chains →
@@ -228,10 +277,12 @@ become `WaitUntil`, e.g. caret blink). Otherwise the event loop sleeps in
 completes on a background channel must be covered by one of the
 "work pending" flags or it will not surface until the next input event, and
 `fps_cap` now caps the *active* rate rather than implying continuous
-rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_BENCH_ORBIT` /
-`PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are bench hooks (frame.rs,
-mesh.rs); the 1 s `printcad.frame` log reports fps + phase costs while
-frames are being produced.
+rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_OPEN_DOC` /
+`PRINTCAD_BENCH_ORBIT` / `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are
+bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
+constrained sketch for editing and `=pad` pads it and opens the Pad task.
+Any of these skips the start page. The 1 s `printcad.frame` log reports
+fps + phase costs while frames are being produced.
 
 **The 3D scene is cached between changes.** The scene pass resolves into a
 persistent scene image and runs only when `scene_fingerprint(frame)`
@@ -252,7 +303,22 @@ MMB drag = orbit (MMB click = pivot pick) · RMB drag = pan · wheel = zoom ·
 LMB = select (click sketch → tree-select; click solid → face-first, double
 click → whole body; LMB drag in sketch = box select; ctrl = additive).
 While editing a sketch the view is locked planar (orbit + cube rotation
-disabled; pan/zoom/roll allowed).
+disabled; pan/zoom/roll allowed). The window opens on the start page
+(`Screen::Start`); the recent list lives in `settings::recent`.
+
+## UI conventions
+
+- `ui_kit::tokens` and the font helpers are the only source of colors and
+  sizes in UI code: no color literals in panels (converting a palette or
+  settings color to `Color32` is fine).
+- Every icon is named in `ToolDescriptor::icon` or drawn through
+  `ui_kit::icon`; each workbench's tests assert every registered tool's
+  icon (and variant icon) exists. New icons go through `scripts/vendor-icons.mjs`, never by hand
+  (the script strips metadata and normalises the stroke color).
+- UI-local state (filters, drafts, palette query) lives on `UiLayer`;
+  anything the host mutates is seeded from `UiFrameInputs` every frame.
+- `ui-mockup/` is the design reference and stays untracked; only tokens,
+  icons and fonts are vendored from it.
 
 ## Testing conventions
 
@@ -263,7 +329,10 @@ disabled; pan/zoom/roll allowed).
 - Solver/geometry math is unit-tested next to the code. Assert geometric
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
-  short `cargo run` smoke check watching for `printcad.vulkan` output.
+  short `cargo run` smoke check watching for `printcad.vulkan` output. For
+  UI work, a headless capture of the release build (`PRINTCAD_BENCH_SKETCH=pad
+  PRINTCAD_EXIT_AFTER_MS=…`, `grim`, `ydotool` for keys) is the smoke
+  check; verify on a small STEP, never the huge assembly files.
 - Comments describe present behaviour, never the change that produced it.
   `node scripts/lint-comment-rot.mjs --all` gates this in CI (default mode
   lints only lines added against `origin/master`; `--pedantic` adds an

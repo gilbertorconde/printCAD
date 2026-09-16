@@ -223,18 +223,14 @@ pub fn draw_hover_card(
         .fixed_pos(pos)
         .interactable(false)
         .show(ctx, |ui| {
-            Card::floating()
-                .fill(egui::Color32::from_rgba_premultiplied(14, 17, 20, 235))
-                .padding(6.0)
-                .radius(5.0)
-                .show(ui, |ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.label(
-                        RichText::new(&card.title)
-                            .font(sans_medium(FONT_XS))
-                            .color(TEXT1),
-                    );
-                    mono_label(ui, coords, FONT_XS, TEXT3);
-                });
+            Card::floating().padding(6.0).radius(5.0).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                ui.label(
+                    RichText::new(&card.title)
+                        .font(sans_medium(FONT_XS))
+                        .color(TEXT1),
+                );
+                mono_label(ui, coords, FONT_XS, TEXT3);
+            });
         });
 }
