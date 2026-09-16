@@ -277,11 +277,12 @@ impl PartDesignWorkbench {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_2;
                 editors::label_cell(ui, "Plane");
-                ui.label(
-                    RichText::new(sketch_plane_description(ctx.document, sketch_id))
-                        .font(mono(FONT_XS))
-                        .color(TEXT3),
-                );
+                let description = sketch_plane_description(ctx.document, sketch_id);
+                ui.add(
+                    egui::Label::new(RichText::new(&description).font(mono(FONT_XS)).color(TEXT3))
+                        .truncate(),
+                )
+                .on_hover_text(description);
             });
         }
 

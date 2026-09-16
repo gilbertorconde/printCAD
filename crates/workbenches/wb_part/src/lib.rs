@@ -775,7 +775,7 @@ impl Workbench for PartDesignWorkbench {
 
     /// The Part Design preferences page: every row is planned.
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
         use ui_kit::widgets::{PrefRow, pref_group};
         // PLANNED: feature defaults applied when a feature is created.
         pref_group(
@@ -799,7 +799,7 @@ impl Workbench for PartDesignWorkbench {
                     true,
                 ),
             ],
-            "",
+            filter,
         );
         false
     }

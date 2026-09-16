@@ -72,7 +72,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         .resizable(false)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
-            let rect = ui.max_rect();
+            let rect = ui.max_rect().intersect(ui.clip_rect());
             ui.painter().vline(
                 rect.left() + 0.5,
                 rect.y_range(),

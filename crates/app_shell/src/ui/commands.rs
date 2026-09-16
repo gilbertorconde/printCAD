@@ -79,6 +79,9 @@ pub enum UiCommand {
         item: TreeItemId,
         name: String,
     },
+    /// A panel hook released the active document object (task accepted,
+    /// sketch closed): the selection falls back to the body.
+    ReleaseActiveObject,
     /// Leave the workspace for the start page.
     ShowStartPage,
     /// A start-page NEW card.

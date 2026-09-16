@@ -158,6 +158,8 @@ pub fn draw_menu_bar(
                 ui.add_space(4.0);
 
                 egui::MenuBar::new().ui(ui, |ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_2;
+                    ui.spacing_mut().button_padding = egui::vec2(SPACE_2, 4.0);
                     ui.menu_button(menu_title("File"), |ui| {
                         if item(ui, "New", Some(&sc_new)) {
                             commands.push(UiCommand::File(FileCommand::New));

@@ -1592,7 +1592,7 @@ impl Workbench for SketchWorkbench {
     /// The Sketcher preferences page: the snap toggle is live, the solver
     /// automation rows are planned, and the palette shows read-only.
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
+    fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
         use ui_kit::widgets::{PrefRow, pref_group};
         let mut snap = !self.snap_off;
         let changed = pref_group(
@@ -1619,7 +1619,7 @@ impl Workbench for SketchWorkbench {
                 PrefRow::toggle("Snap to objects", &mut snap)
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
             ],
-            "",
+            filter,
         );
         if changed {
             self.snap_off = !snap;
@@ -1638,7 +1638,7 @@ impl Workbench for SketchWorkbench {
                 PrefRow::swatch("Constraint", pal.constraint),
                 PrefRow::swatch("Reference dimension", pal.reference),
             ],
-            "",
+            filter,
         );
         changed
     }

@@ -48,6 +48,7 @@ struct FrameIntents {
     task_closed: Option<core_document::TaskOutcome>,
     rename: Option<(TreeItemId, String)>,
     show_start_page: bool,
+    release_active_object: bool,
     start_new: Option<StartKind>,
     open_recent: Option<std::path::PathBuf>,
     remove_recent: Vec<std::path::PathBuf>,
@@ -119,6 +120,7 @@ impl PrintCadApp {
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
                 UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
+                UiCommand::ReleaseActiveObject => intents.release_active_object = true,
                 UiCommand::ShowStartPage => intents.show_start_page = true,
                 UiCommand::StartNew(kind) => intents.start_new = Some(kind),
                 UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
@@ -155,6 +157,14 @@ impl PrintCadApp {
                 core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
                 core_document::TaskOutcome::Open => {}
             }
+        }
+        if intents.release_active_object {
+            self.active_document_object = None;
+            self.tree_selection = Some(
+                self.active_body_id
+                    .map(TreeItemId::Body)
+                    .unwrap_or(TreeItemId::DocumentRoot),
+            );
         }
         if let Some((item, name)) = intents.rename {
             match item {

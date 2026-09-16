@@ -437,6 +437,7 @@ impl UiLayer {
                 projection,
                 &mut commands,
             );
+            hud::draw_toasts(ui.ctx(), viewport_rect_logical);
 
             if let Some(input) = orientation_input {
                 cube_result =
@@ -552,8 +553,10 @@ fn apply_writeback(
     if let Some(req) = writeback.camera_orient_request.clone() {
         commands.push(UiCommand::OrientCameraToPlane(req));
     }
-    if let Some(Some(id)) = writeback.active_object_changed {
-        *tree_selection = Some(TreeItemId::Feature(id));
+    match writeback.active_object_changed {
+        Some(Some(id)) => *tree_selection = Some(TreeItemId::Feature(id)),
+        Some(None) => commands.push(UiCommand::ReleaseActiveObject),
+        None => {}
     }
     if let Some(wb) = writeback.workbench_switch_request.clone() {
         commands.push(UiCommand::RequestWorkbench(ActiveWorkbench(wb)));

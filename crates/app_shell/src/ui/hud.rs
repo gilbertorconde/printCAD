@@ -162,26 +162,32 @@ pub fn draw_viewport_hud(
                                     ),
                                 );
                                 let border = if row.focused { ACCENT } else { BORDER };
-                                egui::Frame::new()
-                                    .fill(BG2)
-                                    .stroke(egui::Stroke::new(1.0, border))
-                                    .corner_radius(4)
-                                    .inner_margin(egui::Margin::symmetric(8, 0))
-                                    .show(ui, |ui| {
-                                        ui.set_min_size(Vec2::new(80.0, INPUT - 4.0));
-                                        ui.centered_and_justified(|ui| {
-                                            let text = if row.unit.is_empty() {
-                                                row.value.clone()
-                                            } else {
-                                                format!("{} {}", row.value, row.unit)
-                                            };
-                                            ui.label(
-                                                RichText::new(text)
-                                                    .font(mono(FONT_SM))
-                                                    .color(TEXT1),
-                                            );
-                                        });
-                                    });
+                                // A fixed footprint: a box that sized itself to
+                                // the card would feed the card's width back
+                                // into itself every frame.
+                                let (rect, _) = ui.allocate_exact_size(
+                                    Vec2::new(96.0, INPUT - 4.0),
+                                    egui::Sense::hover(),
+                                );
+                                ui.painter().rect(
+                                    rect,
+                                    4.0,
+                                    BG2,
+                                    egui::Stroke::new(1.0, border),
+                                    egui::StrokeKind::Inside,
+                                );
+                                let text = if row.unit.is_empty() {
+                                    row.value.clone()
+                                } else {
+                                    format!("{} {}", row.value, row.unit)
+                                };
+                                ui.painter().text(
+                                    egui::pos2(rect.right() - 8.0, rect.center().y),
+                                    Align2::RIGHT_CENTER,
+                                    text,
+                                    mono(FONT_SM),
+                                    TEXT1,
+                                );
                                 let (rect, _) =
                                     ui.allocate_exact_size(Vec2::splat(14.0), egui::Sense::hover());
                                 let fill = if row.locked { ACCENT } else { BG4 };
@@ -232,5 +238,57 @@ pub fn draw_hover_card(
                 );
                 mono_label(ui, coords, FONT_XS, TEXT3);
             });
+        });
+}
+
+/// Warnings and errors from the last few seconds, as cards under the view
+/// toolbar, so a refused action is seen without reading the log.
+pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
+    const SHOW_FOR_SECS: u64 = 6;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let recent: Vec<crate::log_panel::LogEntry> = crate::log_panel::entries()
+        .into_iter()
+        .rev()
+        .filter(|e| {
+            !matches!(e.level, crate::log_panel::LogLevel::Info)
+                && now.saturating_sub(e.timestamp_secs) < SHOW_FOR_SECS
+        })
+        .take(3)
+        .collect();
+    if recent.is_empty() {
+        return;
+    }
+    // The card has to go away on its own, without waiting for input.
+    ctx.request_repaint_after(std::time::Duration::from_millis(500));
+    Area::new(egui::Id::new("hud_toasts"))
+        .order(Order::Foreground)
+        .fixed_pos(egui::pos2(viewport.center().x, viewport.top() + 52.0))
+        .pivot(Align2::CENTER_TOP)
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.spacing_mut().item_spacing.y = SPACE_1;
+            for entry in recent {
+                let (color, icon) = match entry.level {
+                    crate::log_panel::LogLevel::Warn => (WARNING, "warning"),
+                    _ => (DANGER, "error"),
+                };
+                Card::floating()
+                    .border(with_alpha(color, 0.6))
+                    .padding(SPACE_2)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = SPACE_2;
+                            ui_kit::icon::draw(ui, icon, 16.0, color);
+                            ui.label(
+                                RichText::new(&entry.message)
+                                    .font(sans_medium(FONT_SM))
+                                    .color(TEXT1),
+                            );
+                        });
+                    });
+            }
         });
 }

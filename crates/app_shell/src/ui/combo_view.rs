@@ -58,7 +58,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         .size_range(240.0..=420.0)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
-            let rect = ui.max_rect();
+            let rect = ui.max_rect().intersect(ui.clip_rect());
             ui.painter().vline(
                 rect.right() - 0.5,
                 rect.y_range(),
@@ -88,24 +88,31 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     .color(TEXT1),
             );
             h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                egui::Frame::new()
-                    .stroke(egui::Stroke::new(1.0, BORDER))
-                    .corner_radius(4)
-                    .inner_margin(egui::Margin::symmetric(6, 0))
-                    .show(ui, |ui| {
-                        ui.set_min_height(22.0);
-                        ui.horizontal_centered(|ui| {
-                            ui.spacing_mut().item_spacing.x = 4.0;
-                            ui_kit::icon::draw(ui, "search", 11.0, TEXT3);
-                            ui.add(
-                                egui::TextEdit::singleline(filter)
-                                    .desired_width(70.0)
-                                    .frame(egui::Frame::NONE)
-                                    .hint_text(RichText::new("Filter").color(TEXT3))
-                                    .font(sans(FONT_XS)),
-                            );
-                        });
-                    });
+                // An exact footprint: a frame grown inside the header would
+                // take the header's full height.
+                let (rect, _) =
+                    ui.allocate_exact_size(egui::Vec2::new(104.0, 22.0), egui::Sense::hover());
+                ui.painter().rect(
+                    rect,
+                    4.0,
+                    BG2,
+                    egui::Stroke::new(1.0, BORDER),
+                    egui::StrokeKind::Inside,
+                );
+                let mut inner = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect.shrink2(egui::Vec2::new(6.0, 0.0)))
+                        .layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                inner.spacing_mut().item_spacing.x = 4.0;
+                ui_kit::icon::draw(&mut inner, "search", 11.0, TEXT3);
+                inner.add(
+                    egui::TextEdit::singleline(filter)
+                        .desired_width(f32::INFINITY)
+                        .frame(egui::Frame::NONE)
+                        .hint_text(RichText::new("Filter").color(TEXT3))
+                        .font(sans(FONT_XS)),
+                );
             });
 
             ui.add_space(SPACE_1);

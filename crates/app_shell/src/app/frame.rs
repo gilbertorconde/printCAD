@@ -569,11 +569,11 @@ impl PrintCadApp {
         // The sketch currently being edited is drawn as crisp screen-space
         // overlays by the workbench; only sketches NOT under edit get the 3D
         // tessellation (drawing both would double-render the active one).
-        let editing_sketch = if self.active_workbench.0.as_str() == "wb.sketch" {
-            self.active_document_object
-        } else {
-            None
-        };
+        let editing_sketch = self
+            .registry
+            .workbench(&self.active_workbench.0)
+            .ok()
+            .and_then(|wb| wb.editing_feature());
         let sketch_meshes: Vec<BodySubmission> = self
             .document
             .feature_tree()
@@ -848,7 +848,7 @@ impl PrintCadApp {
         };
         // `pad` pads the sketch and opens the pad's task; anything else
         // opens the sketch for editing.
-        let pad = std::env::var("PRINTCAD_BENCH_SKETCH").is_ok_and(|v| v == "pad");
+        let pad = std::env::var("PRINTCAD_BENCH_SKETCH").is_ok_and(|v| v == "pad" || v == "pocket");
         if !pad {
             self.apply_tree_activation(crate::ui::TreeItemId::Feature(sketch_id));
             return;
@@ -864,13 +864,61 @@ impl PrintCadApp {
             up_to_face: None,
             up_to_offset: 0.0,
         };
-        match self.document.add_feature_in_body(pad, "Pad".into(), body) {
+        let pad_id = match self.document.add_feature_in_body(pad, "Pad".into(), body) {
             Ok(id) => {
                 self.document.mark_feature_dirty(id);
                 self.document.set_feature_visible(sketch_id, false);
                 self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                id
             }
-            Err(err) => app_log::error(format!("bench pad: {err}")),
+            Err(err) => {
+                app_log::error(format!("bench pad: {err}"));
+                return;
+            }
+        };
+        // `pocket` adds a face sketch on the pad's top and pockets it.
+        if std::env::var("PRINTCAD_BENCH_SKETCH").is_ok_and(|v| v == "pocket") {
+            let mut top = Sketch::new("sketch_1");
+            top.plane =
+                wb_sketch::sketch::SketchPlane::from_face([0.0, 0.0, 20.0], [0.0, 0.0, 1.0]);
+            let center =
+                top.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 12.0))));
+            top.add_geometry(GeometryElement::Circle(Circle::new(center, 5.0)));
+            let plane = top.plane;
+            let top_id = match self.document.add_feature_in_body(
+                wb_sketch::SketchFeature::new(top, plane),
+                "sketch_1".into(),
+                body,
+            ) {
+                Ok(id) => id,
+                Err(err) => {
+                    app_log::error(format!("bench face sketch: {err}"));
+                    return;
+                }
+            };
+            let pocket = wb_part::PartFeature::Pocket {
+                sketch: top_id,
+                depth: 5.0,
+                reversed: false,
+                through_all: false,
+                mode: wb_part::ExtrudeMode::Dimension,
+                depth2: 0.0,
+                taper_deg: 0.0,
+                up_to_face: None,
+                up_to_offset: 0.0,
+            };
+            match self
+                .document
+                .add_feature_in_body(pocket, "Pocket".into(), body)
+            {
+                Ok(id) => {
+                    let _ = pad_id;
+                    self.document.mark_feature_dirty(id);
+                    self.document.set_feature_visible(top_id, false);
+                    self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                }
+                Err(err) => app_log::error(format!("bench pocket: {err}")),
+            }
         }
     }
 }

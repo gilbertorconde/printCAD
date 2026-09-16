@@ -377,8 +377,10 @@ pub trait Workbench: Send {
 
     /// Draw custom settings UI in the Settings window.
     /// Called when the Settings window is open and this workbench's tab is selected.
+    /// `filter` is the dialog's lowercase search text; rows that do not
+    /// match it stay hidden (`ui_kit::widgets::pref_group` applies it).
     #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, _ui: &mut egui::Ui) -> bool {
+    fn ui_settings(&mut self, _ui: &mut egui::Ui, _filter: &str) -> bool {
         false // Return true if settings changed
     }
 

@@ -79,6 +79,8 @@ pub struct PreferencesState {
     pub draft: UserSettings,
     pub draft_unit: Unit,
     pub search: String,
+    /// The frame the dialog opened on: the search field takes focus once.
+    just_opened: bool,
 }
 
 impl Default for PreferencesState {
@@ -90,6 +92,7 @@ impl Default for PreferencesState {
             draft: UserSettings::default(),
             draft_unit: Unit::Mm,
             search: String::new(),
+            just_opened: false,
         }
     }
 }
@@ -101,6 +104,7 @@ impl PreferencesState {
             self.draft = current.clone();
             self.draft_unit = unit;
             self.search.clear();
+            self.just_opened = true;
         }
         self.open = true;
         self.group = group;
@@ -221,13 +225,17 @@ fn draw_header(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, close: &mu
         );
         inner.spacing_mut().item_spacing.x = SPACE_2;
         ui_kit::icon::draw(&mut inner, "search", 14.0, TEXT3);
-        inner.add(
+        let edit = inner.add(
             egui::TextEdit::singleline(&mut state.search)
                 .hint_text("Search settings…")
                 .frame(egui::Frame::NONE)
                 .font(sans(FONT_SM))
                 .desired_width(f32::INFINITY),
         );
+        if state.just_opened {
+            edit.request_focus();
+            state.just_opened = false;
+        }
     });
 }
 
@@ -320,11 +328,20 @@ fn draw_content(
                     ui.set_width(ui.available_width());
                     ui.spacing_mut().item_spacing.y = SPACE_2;
                     let filter = state.search.trim().to_lowercase();
+                    if !filter.is_empty() {
+                        // A search spans every group and tab.
+                        search_results(ui, state, inputs, &filter);
+                        return;
+                    }
                     match state.group {
                         PrefGroup::General => general_page(ui, state, inputs, &filter),
                         PrefGroup::Display => display_page(ui, state, inputs, &filter),
-                        PrefGroup::Sketcher => workbench_page(ui, inputs.registry, "wb.sketch"),
-                        PrefGroup::PartDesign => workbench_page(ui, inputs.registry, "wb.part"),
+                        PrefGroup::Sketcher => {
+                            workbench_page(ui, inputs.registry, "wb.sketch", &filter)
+                        }
+                        PrefGroup::PartDesign => {
+                            workbench_page(ui, inputs.registry, "wb.part", &filter)
+                        }
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
                         PrefGroup::Printing => {
@@ -368,11 +385,13 @@ fn draw_footer(
         },
         BG2,
     );
-    let mut f = region(
-        ui,
-        rect.shrink2(vec2(16.0, 0.0)),
-        Layout::left_to_right(Align::Center),
+    // A one-button-tall strip, centred: buttons do not stretch to the
+    // footer's height.
+    let strip = Rect::from_x_y_ranges(
+        (rect.left() + 16.0)..=(rect.right() - 16.0),
+        (rect.center().y - 14.0)..=(rect.center().y + 14.0),
     );
+    let mut f = region(ui, strip, Layout::left_to_right(Align::Center));
     if secondary_button(&mut f, "Reset page")
         .on_hover_text("Put this group's settings back to their defaults")
         .clicked()
@@ -754,9 +773,44 @@ fn display_page(
     }
 }
 
-fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, id: &str) {
+fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, id: &str, filter: &str) {
     if let Ok(wb) = registry.workbench_mut(&WorkbenchId::from(id)) {
-        wb.ui_settings(ui);
+        wb.ui_settings(ui, filter);
+    }
+}
+
+/// Every page in turn, each group filtered; pages with no match draw
+/// nothing, so only hits remain.
+fn search_results(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    inputs: &mut PreferencesInputs<'_>,
+    filter: &str,
+) {
+    let (group, tab) = (state.group, state.tab);
+    for g in PrefGroup::ALL {
+        for t in 0..g.tabs().len() {
+            state.group = g;
+            state.tab = t;
+            match g {
+                PrefGroup::General => general_page(ui, state, inputs, filter),
+                PrefGroup::Display => display_page(ui, state, inputs, filter),
+                PrefGroup::Sketcher => workbench_page(ui, inputs.registry, "wb.sketch", filter),
+                PrefGroup::PartDesign => workbench_page(ui, inputs.registry, "wb.part", filter),
+                PrefGroup::Units => units_page(ui, state, filter),
+                PrefGroup::ImportExport => import_page(ui, state, filter),
+                PrefGroup::Printing | PrefGroup::Updates => {}
+            }
+        }
+    }
+    state.group = group;
+    state.tab = tab;
+    if ui.min_rect().height() < 4.0 {
+        ui.label(
+            RichText::new("No setting matches.")
+                .font(sans(FONT_SM))
+                .color(TEXT3),
+        );
     }
 }
 
@@ -781,11 +835,13 @@ fn units_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         ],
         filter,
     );
-    ui.label(
-        RichText::new("Saved with the document, not the app.")
-            .font(mono(FONT_XS))
-            .color(TEXT3),
-    );
+    if filter.is_empty() {
+        ui.label(
+            RichText::new("Saved with the document, not the app.")
+                .font(mono(FONT_XS))
+                .color(TEXT3),
+        );
+    }
 }
 
 fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
@@ -841,9 +897,11 @@ fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
             .hint("Face boundaries as edge lines"),
     );
     pref_group(ui, "STEP import defaults", rows, filter);
-    ui.label(
-        RichText::new("The import dialog opens with these values.")
-            .font(mono(FONT_XS))
-            .color(TEXT3),
-    );
+    if filter.is_empty() {
+        ui.label(
+            RichText::new("The import dialog opens with these values.")
+                .font(mono(FONT_XS))
+                .color(TEXT3),
+        );
+    }
 }

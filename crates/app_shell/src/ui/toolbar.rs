@@ -347,6 +347,7 @@ pub fn draw_toolbars(
         .exact_size(height)
         .frame(row_frame())
         .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
             // Row 0: standard tools, the workbench switcher, the bench's
             // row-0 tools, then the tool search at the right.
             row(ui, 0, |ui| {
