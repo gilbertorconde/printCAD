@@ -1,20 +1,12 @@
 //! On-view parameters: live dimension readouts near the cursor and
 //! type-to-constrain numeric entry while a drawing tool is mid-flight.
 
-use core_document::{KeyCode, ScreenSpaceLabel};
+use core_document::KeyCode;
 
 use crate::geom2d;
 use crate::sketch::{AxisDirection, Circle, ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::SnapTarget;
 use crate::tools::ToolState;
-
-/// Untyped (cursor-implied) readout.
-const COLOR_READOUT: [f32; 3] = [0.72, 0.72, 0.72];
-/// Field with typed input (overrides the cursor on commit).
-const COLOR_TYPED: [f32; 3] = [1.0, 0.82, 0.3];
-const READOUT_SIZE: f32 = 13.0;
-const READOUT_OFFSET_PX: [f32; 2] = [22.0, -12.0];
-const READOUT_ROW_PX: f32 = 18.0;
 
 /// A dimension field the active tool exposes in its current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -586,60 +578,45 @@ pub fn apply_typed_constraints(
     added
 }
 
-/// Readout labels stacked next to the cursor: one row per field, grey live
-/// values, highlighted typed buffers, arrow on the focused row.
-pub fn readout_labels(
+/// The on-view parameter rows for the tool's current fields: the implied
+/// value while the cursor drives it, the typed buffer once the user types.
+pub fn readout_rows(
     capture: &DimCapture,
     state: &ToolState,
     sketch: &Sketch,
     cursor: Vec2D,
-    cursor_px: [f32; 2],
-) -> Vec<ScreenSpaceLabel> {
+) -> Vec<core_document::OvpRow> {
     let fields = fields_for(state);
     let synced = capture.fields == fields;
-    let mut out = Vec::new();
-    for (i, field) in fields.iter().enumerate() {
-        let buffer = if synced {
-            capture.buffers[i].as_str()
-        } else {
-            ""
-        };
-        let focused = synced && capture.focus == i;
-        let marker = if focused { "▸ " } else { "" };
-        let unit = if field.is_angle() { "°" } else { " mm" };
-        let (text, color, background) = if buffer.is_empty() {
-            let value = implied_value(state, sketch, cursor, *field);
-            let shown = match value {
-                Some(v) if field.is_angle() => format!("{v:.1}"),
-                Some(v) => format!("{v:.2}"),
-                None => "—".to_string(),
+    fields
+        .iter()
+        .enumerate()
+        .map(|(i, field)| {
+            let buffer = if synced {
+                capture.buffers[i].as_str()
+            } else {
+                ""
             };
-            let color = if focused { COLOR_TYPED } else { COLOR_READOUT };
-            (
-                format!("{marker}{} {shown}{unit}", field.short()),
-                color,
+            let focused = synced && capture.focus == i;
+            let unit = if field.is_angle() { "°" } else { "mm" };
+            let value = if buffer.is_empty() {
+                match implied_value(state, sketch, cursor, *field) {
+                    Some(v) if field.is_angle() => format!("{v:.1}"),
+                    Some(v) => format!("{v:.2}"),
+                    None => "—".to_string(),
+                }
+            } else {
+                buffer.to_string()
+            };
+            core_document::OvpRow {
+                label: field.short(),
+                value,
+                unit,
                 focused,
-            )
-        } else {
-            (
-                format!("{marker}{} {buffer}{unit}", field.short()),
-                COLOR_TYPED,
-                true,
-            )
-        };
-        out.push(ScreenSpaceLabel {
-            pos: [
-                cursor_px[0] + READOUT_OFFSET_PX[0],
-                cursor_px[1] + READOUT_OFFSET_PX[1] + i as f32 * READOUT_ROW_PX,
-            ],
-            text,
-            color,
-            size: READOUT_SIZE,
-            background,
-            mono: true,
-        });
-    }
-    out
+                locked: !buffer.is_empty(),
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

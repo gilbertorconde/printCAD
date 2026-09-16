@@ -273,6 +273,9 @@ impl PrintCadApp {
             if let Ok(path) = std::env::var("PRINTCAD_OPEN_DOC") {
                 self.open_document_at(std::path::PathBuf::from(path));
             }
+            if std::env::var_os("PRINTCAD_BENCH_SKETCH").is_some() {
+                self.bench_open_sketch();
+            }
         }
 
         let mut new_body_requested = false;
@@ -776,4 +779,57 @@ pub(crate) struct ViewportData {
     pub status: Option<core_document::StatusItems>,
     pub task: Option<core_document::TaskInfo>,
     pub editing_feature: Option<core_document::FeatureId>,
+}
+
+impl PrintCadApp {
+    /// Dev/bench hook: a body with a small constrained sketch, opened for
+    /// editing, so the sketcher can be exercised without clicking.
+    fn bench_open_sketch(&mut self) {
+        use wb_sketch::sketch::{
+            Circle, Constraint, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D,
+        };
+        self.create_new_body();
+        let body = self.active_body_id;
+        let mut sketch = Sketch::new("Sketch");
+        let p = |s: &mut Sketch, x: f32, y: f32| {
+            s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        };
+        let a = p(&mut sketch, 0.0, 0.0);
+        let b = p(&mut sketch, 80.0, 0.0);
+        let c = p(&mut sketch, 80.0, 24.0);
+        let d = p(&mut sketch, 0.0, 24.0);
+        let bottom = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let right = sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
+        sketch.add_geometry(GeometryElement::Line(Line::new(c, d)));
+        sketch.add_geometry(GeometryElement::Line(Line::new(d, a)));
+        let center = p(&mut sketch, 22.0, 12.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 7.2)));
+        for kind in [
+            ConstraintKind::Horizontal { element: bottom },
+            ConstraintKind::Vertical { element: right },
+            ConstraintKind::Length {
+                line: bottom,
+                length: 80.0,
+            },
+            ConstraintKind::Length {
+                line: right,
+                length: 24.0,
+            },
+            ConstraintKind::Diameter {
+                circle,
+                diameter: 14.4,
+            },
+        ] {
+            sketch.constraints.push(Constraint::new(kind));
+        }
+        let plane = sketch.plane;
+        match self.document.add_feature_in_body(
+            wb_sketch::SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            body,
+        ) {
+            Ok(id) => self.apply_tree_activation(crate::ui::TreeItemId::Feature(id)),
+            Err(err) => app_log::error(format!("bench sketch: {err}")),
+        }
+    }
 }

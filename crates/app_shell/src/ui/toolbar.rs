@@ -168,59 +168,57 @@ fn draw_tool(
         Some(i) => format!("{}:{}", tool.id, tool.variants[i].id),
         None => tool.id.clone(),
     };
-    let on_chevron_click = !tool.variants.is_empty()
-        && response
-            .interact_pointer_pos()
-            .is_some_and(|p| p.x > response.rect.right() - 12.0);
-    if response.clicked() && enabled && planned.is_none() && !on_chevron_click {
+    if tool.variants.is_empty() {
+        if response.clicked() && enabled && planned.is_none() {
+            activate_tool(active_tool, tools, tool, &activate_id);
+        }
+        return;
+    }
+
+    // The chevron strip at the button's end opens the variant list; the rest
+    // of the button activates the remembered variant. A right click or a
+    // long press opens the list from anywhere on the button.
+    let chevron = egui::Rect::from_min_max(
+        egui::pos2(response.rect.right() - 12.0, response.rect.top()),
+        response.rect.right_bottom(),
+    );
+    let chevron_response = ui.interact(chevron, response.id.with("chevron"), egui::Sense::click());
+    let popup_id = response.id.with("variants");
+    if response.clicked() && enabled && planned.is_none() {
         activate_tool(active_tool, tools, tool, &activate_id);
     }
-    if !tool.variants.is_empty() {
-        // A plain click activates the remembered variant; the chevron end
-        // of the button, a right click or a long press open the list.
-        let popup_id = response.id.with("variants");
-        let on_chevron = response
-            .interact_pointer_pos()
-            .is_some_and(|p| p.x > response.rect.right() - 12.0);
-        if response.secondary_clicked()
-            || response.long_touched()
-            || (response.clicked() && on_chevron)
-        {
-            Popup::open_id(ui.ctx(), popup_id);
-        }
-        Popup::from_response(&response)
-            .id(popup_id)
-            .kind(egui::PopupKind::Menu)
-            .close_behavior(egui::PopupCloseBehavior::CloseOnClick)
-            .show(|ui| {
-                for (i, variant) in tool.variants.iter().enumerate() {
-                    let row = ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = SPACE_2;
-                        ui_kit::icon::draw(ui, variant.icon, 16.0, TEXT2);
-                        let text = RichText::new(variant.label).font(sans(FONT_SM));
-                        ui.label(if variant.planned.is_some() {
-                            text.color(TEXT3)
-                        } else {
-                            text.color(TEXT1)
-                        });
-                    });
-                    let r = ui.interact(row.response.rect, ui.id().with(i), egui::Sense::click());
-                    if let Some(note) = variant.planned {
-                        r.on_hover_text(format!("{} — planned\n{note}", variant.label));
-                    } else if r.clicked() {
-                        remember_variant(ui.ctx(), &tool.id, i);
-                        if enabled {
-                            activate_tool(
-                                active_tool,
-                                tools,
-                                tool,
-                                &format!("{}:{}", tool.id, variant.id),
-                            );
-                        }
-                    }
-                }
-            });
+    if response.secondary_clicked() || response.long_touched() {
+        Popup::toggle_id(ui.ctx(), popup_id);
     }
+    Popup::menu(&chevron_response).id(popup_id).show(|ui| {
+        for (i, variant) in tool.variants.iter().enumerate() {
+            let row = ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_2;
+                ui_kit::icon::draw(ui, variant.icon, 16.0, TEXT2);
+                let text = RichText::new(variant.label).font(sans(FONT_SM));
+                ui.label(if variant.planned.is_some() {
+                    text.color(TEXT3)
+                } else {
+                    text.color(TEXT1)
+                });
+            });
+            let r = ui.interact(row.response.rect, ui.id().with(i), egui::Sense::click());
+            if let Some(note) = variant.planned {
+                r.on_hover_text(format!("{} — planned\n{note}", variant.label));
+            } else if r.clicked() {
+                remember_variant(ui.ctx(), &tool.id, i);
+                if enabled {
+                    activate_tool(
+                        active_tool,
+                        tools,
+                        tool,
+                        &format!("{}:{}", tool.id, variant.id),
+                    );
+                }
+                ui.close();
+            }
+        }
+    });
 }
 
 fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
@@ -231,34 +229,33 @@ fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
         .map(|wb| (wb.label.clone(), wb.description.clone()))
         .unwrap_or_else(|| ("(none)".to_string(), String::new()));
     let icon = workbench_icon(active_workbench.0.as_str());
-    let response = egui::Frame::new()
-        .fill(BG2)
-        .stroke(egui::Stroke::new(1.0, BORDER))
-        .corner_radius(5)
-        .inner_margin(egui::Margin::symmetric(8, 0))
-        .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(180.0, INPUT + 2.0));
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_2;
-                ui_kit::icon::draw(ui, icon, 16.0, ACCENT);
-                ui.label(RichText::new(&current.0).font(sans(FONT_SM)).color(TEXT1));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui_kit::icon::draw(ui, "chevron-down", 14.0, TEXT3);
-                });
-            });
-        })
-        .response;
-    let response = ui
-        .interact(
-            response.rect,
-            egui::Id::new("workbench_combo"),
-            egui::Sense::click(),
-        )
-        .on_hover_text(if current.1.is_empty() {
-            "Active workbench".to_string()
-        } else {
-            format!("Active workbench: {}", current.1)
-        });
+    // An exact footprint: a frame grown inside the row would claim the
+    // rest of it.
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(180.0, INPUT + 2.0), egui::Sense::click());
+    ui.painter().rect(
+        rect,
+        5.0,
+        BG2,
+        egui::Stroke::new(1.0, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut inner = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(8.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    inner.spacing_mut().item_spacing.x = SPACE_2;
+    ui_kit::icon::draw(&mut inner, icon, 16.0, ACCENT);
+    inner.label(RichText::new(&current.0).font(sans(FONT_SM)).color(TEXT1));
+    inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui_kit::icon::draw(ui, "chevron-down", 14.0, TEXT3);
+    });
+    let response = response.on_hover_text(if current.1.is_empty() {
+        "Active workbench".to_string()
+    } else {
+        format!("Active workbench: {}", current.1)
+    });
     Popup::menu(&response).show(|ui| {
         for wb in workbenches.iter() {
             let target = ActiveWorkbench(WorkbenchId::from(wb.id.as_str()));
@@ -454,32 +451,32 @@ fn draw_tools_of_row(
 }
 
 fn search_box(ui: &mut egui::Ui) -> egui::Response {
-    let response = egui::Frame::new()
-        .fill(BG2)
-        .stroke(egui::Stroke::new(1.0, BORDER))
-        .corner_radius(5)
-        .inner_margin(egui::Margin::symmetric(10, 0))
-        .show(ui, |ui| {
-            ui.set_min_size(Vec2::new(220.0, INPUT + 2.0));
-            ui.set_max_width(220.0);
-            ui.horizontal_centered(|ui| {
-                ui.spacing_mut().item_spacing.x = SPACE_2;
-                ui_kit::icon::draw(ui, "search", 14.0, TEXT3);
-                ui.label(
-                    RichText::new("Search tools…")
-                        .font(sans(FONT_SM))
-                        .color(TEXT3),
-                );
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui_kit::widgets::key_chip(ui, "Ctrl K");
-                });
-            });
-        })
-        .response;
-    ui.interact(
-        response.rect,
-        egui::Id::new("tool_search"),
-        egui::Sense::click(),
-    )
-    .on_hover_text("Search tools and commands")
+    // Allocate the exact footprint first: a frame grown inside a
+    // right-to-left layout reports its size after placement and overflows
+    // the row.
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(220.0, INPUT + 2.0), egui::Sense::click());
+    ui.painter().rect(
+        rect,
+        5.0,
+        BG2,
+        egui::Stroke::new(1.0, BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let mut inner = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(rect.shrink2(Vec2::new(10.0, 0.0)))
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    inner.spacing_mut().item_spacing.x = SPACE_2;
+    ui_kit::icon::draw(&mut inner, "search", 14.0, TEXT3);
+    inner.label(
+        RichText::new("Search tools…")
+            .font(sans(FONT_SM))
+            .color(TEXT3),
+    );
+    inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui_kit::widgets::key_chip(ui, "Ctrl K");
+    });
+    response.on_hover_text("Search tools and commands")
 }

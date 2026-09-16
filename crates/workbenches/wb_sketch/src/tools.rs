@@ -125,6 +125,12 @@ impl ToolState {
         matches!(self, ToolState::Idle)
     }
 
+    /// The viewport hint while a shape is in progress: the tool's name and
+    /// what the next click does.
+    pub fn hint(&self) -> Option<(&'static str, &'static str)> {
+        self.status().and_then(|s| s.split_once(": "))
+    }
+
     /// One-line status for the UI ("click end point…").
     pub fn status(&self) -> Option<&'static str> {
         match self {

@@ -4,8 +4,8 @@
 //! sketch plane by the workbench itself.
 
 use core_document::{
-    Document, FeatureId, KeyCode, MouseButton, Workbench, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette, Workbench,
+    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::{Mat4, Vec3};
 use wb_sketch::sketch::{GeometryElement, Sketch};
@@ -13,6 +13,19 @@ use wb_sketch::{SketchFeature, SketchWorkbench};
 
 const VIEWPORT: (u32, u32, u32, u32) = (0, 0, 800, 600);
 const CAM_POS: [f32; 3] = [0.0, 0.0, 50.0];
+
+fn pal() -> SketchPalette {
+    SketchPalette::default()
+}
+
+/// Colors match within the 8-bit rounding of the palette.
+fn same_color(a: [f32; 3], b: [f32; 3]) -> bool {
+    a.iter().zip(b).all(|(x, y)| (x - y).abs() < 0.01)
+}
+
+fn is_icon(mark: &ScreenSpaceMark, icon: &str) -> bool {
+    matches!(mark.kind, MarkKind::Icon { name, .. } if name == icon)
+}
 
 /// Vulkan-convention view-projection matching the app camera: perspective
 /// with the Y flip baked in, looking straight down +Z at the default XY
@@ -180,6 +193,25 @@ impl Harness {
         ctx.view_proj = Some(self.vp);
         ctx.active_document_object = self.active_object;
         self.wb.get_screen_space_labels(&ctx, self.active_object)
+    }
+
+    /// Screen-space marks (point dots, constraint icons), as the app shell
+    /// fetches them each frame.
+    fn marks(&mut self) -> Vec<ScreenSpaceMark> {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(self.vp);
+        ctx.active_document_object = self.active_object;
+        self.wb.get_screen_space_marks(&ctx, self.active_object)
+    }
+
+    /// The viewport HUD the workbench wants drawn this frame.
+    fn hud(&mut self) -> Option<core_document::ViewportHud> {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(self.vp);
+        ctx.active_document_object = self.active_object;
+        self.wb.viewport_hud(&ctx)
     }
 
     /// Press/release at raw viewport pixels (glyph clicks: labels report
@@ -485,12 +517,18 @@ fn overlays_are_generated_while_editing() {
     ctx.view_proj = Some(h.vp);
     ctx.active_document_object = h.active_object;
     let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
-    // 2 axis lines + 4 rectangle edges + 4 point markers (2 segments each).
+    // 2 axis lines + 4 rectangle edges; the 4 corner points are marks.
     assert!(
-        overlays.len() >= 2 + 4 + 8,
+        overlays.len() >= 2 + 4,
         "expected axes + rectangle overlays, got {}",
         overlays.len()
     );
+    let marks = h.wb.get_screen_space_marks(&ctx, h.active_object);
+    let dots = marks
+        .iter()
+        .filter(|m| matches!(m.kind, MarkKind::Dot { .. }))
+        .count();
+    assert!(dots >= 4, "corner points drawn as dots, got {dots}");
 }
 
 #[test]
@@ -501,13 +539,16 @@ fn construction_geometry_renders_dashed() {
     h.click(10.0, 7.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
-    let overlays_of = |h: &mut Harness| {
+    let dashed_of = |h: &mut Harness| {
         let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
         ctx.view_proj = Some(h.vp);
         ctx.active_document_object = h.active_object;
-        h.wb.get_screen_space_overlays(&ctx, h.active_object).len()
+        h.wb.get_screen_space_overlays(&ctx, h.active_object)
+            .iter()
+            .filter(|o| o.dash.is_some())
+            .count()
     };
-    let solid_count = overlays_of(&mut h);
+    let solid_count = dashed_of(&mut h);
 
     // Flag the line as construction directly on the stored feature (no
     // selection involved, so the element renders in its base style).
@@ -524,10 +565,11 @@ fn construction_geometry_renders_dashed() {
     feature.sketch.set_construction(line_id, true);
     h.doc.update_feature_data(id, feature.to_json()).unwrap();
 
-    let dashed_count = overlays_of(&mut h);
+    let dashed_count = dashed_of(&mut h);
+    assert_eq!(solid_count, 0, "normal geometry draws solid");
     assert!(
-        dashed_count > solid_count,
-        "construction line splits into dashes: {dashed_count} vs {solid_count} overlays"
+        dashed_count >= 1,
+        "construction line carries a dash pattern: {dashed_count} dashed overlays"
     );
 }
 
@@ -1038,9 +1080,10 @@ fn box_selection_draws_dashed_rectangle_overlay() {
     h.click(0.0, 0.0, "sketch.select");
     h.mouse_move(10.0, 8.0, "sketch.select");
     let box_count = overlays_of(&mut h);
-    assert!(
-        box_count > idle_count + 4,
-        "dashed box adds more than 4 solid edges: {box_count} vs {idle_count}"
+    assert_eq!(
+        box_count,
+        idle_count + 4,
+        "the box adds four dashed edges: {box_count} vs {idle_count}"
     );
     // Releasing removes the box again.
     h.release(10.0, 8.0, "sketch.select");
@@ -1381,7 +1424,7 @@ fn trim_hover_highlights_removable_span() {
     let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
     let highlight = overlays
         .iter()
-        .filter(|o| o.thickness > 2.5 && o.color[0] > 0.9 && o.color[1] < 0.5)
+        .filter(|o| o.thickness > 2.5 && same_color(o.color, pal().trim))
         .count();
     assert!(
         highlight >= 1,
@@ -1470,7 +1513,7 @@ fn fully_constrained_sketch_renders_green() {
     let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
     let green = overlays
         .iter()
-        .filter(|o| o.color[1] > 0.85 && o.color[0] < 0.3 && o.color[2] < 0.3)
+        .filter(|o| same_color(o.color, pal().fully_constrained))
         .count();
     assert!(
         green >= 1,
@@ -1799,10 +1842,10 @@ fn glyph_click_selects_constraint_and_delete_removes_it() {
     h.key(KeyCode::Escape, Some("sketch.line"));
     assert_eq!(h.sketch().constraints.len(), 1);
 
-    let labels = h.labels();
-    let glyph = labels
+    let marks = h.marks();
+    let glyph = marks
         .iter()
-        .find(|l| l.text == "H")
+        .find(|m| is_icon(m, "constraint-horizontal"))
         .expect("H glyph drawn");
     h.press_px((glyph.pos[0], glyph.pos[1]));
     h.key(KeyCode::Delete, Some("sketch.select"));
@@ -1952,8 +1995,11 @@ fn ctrl_glyph_click_keeps_geometry_selection() {
     // Select the line, then ctrl-click the H glyph: both stay selected, so
     // Delete removes the constraint (constraints win) but keeps the line.
     h.click(3.0, 0.0, "sketch.select");
-    let labels = h.labels();
-    let glyph = labels.iter().find(|l| l.text == "H").unwrap();
+    let marks = h.marks();
+    let glyph = marks
+        .iter()
+        .find(|m| is_icon(m, "constraint-horizontal"))
+        .unwrap();
     let pos = (glyph.pos[0], glyph.pos[1]);
     h.event_with_ctrl(
         WorkbenchInputEvent::MousePress {
@@ -1983,16 +2029,22 @@ fn selected_constraint_highlights_glyph_and_geometry() {
     h.click(15.0, 0.05, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
-    let labels = h.labels();
-    let glyph = labels.iter().find(|l| l.text == "H").unwrap();
+    let marks = h.marks();
+    let glyph = marks
+        .iter()
+        .find(|m| is_icon(m, "constraint-horizontal"))
+        .unwrap();
     let pos = (glyph.pos[0], glyph.pos[1]);
     h.press_px(pos);
 
     // Glyph turns selection green.
-    let labels = h.labels();
-    let glyph = labels.iter().find(|l| l.text == "H").unwrap();
+    let marks = h.marks();
+    let glyph = marks
+        .iter()
+        .find(|m| is_icon(m, "constraint-horizontal"))
+        .unwrap();
     assert!(
-        glyph.color[1] > 0.9 && glyph.color[0] < 0.4,
+        same_color(glyph.color, pal().selected),
         "selected glyph tinted, got {:?}",
         glyph.color
     );
@@ -2003,36 +2055,45 @@ fn selected_constraint_highlights_glyph_and_geometry() {
     let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
     let selected_lines = overlays
         .iter()
-        .filter(|o| o.color[1] > 0.9 && o.color[0] < 0.4 && o.color[2] < 0.5)
+        .filter(|o| same_color(o.color, pal().selected))
         .count();
     assert!(selected_lines >= 1, "referenced geometry highlighted");
 }
 
 #[test]
-fn live_readout_labels_follow_the_cursor_while_drawing() {
+fn live_readouts_follow_the_cursor_while_drawing() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
     h.mouse_move(3.0, 4.0, "sketch.line");
-    let labels = h.labels();
-    let length = labels
+    let hud = h.hud().expect("hud while editing");
+    let ovp = hud
+        .ovp
+        .expect("on-view parameters while a line is in progress");
+    let length = ovp
+        .rows
         .iter()
-        .find(|l| l.text.contains("L ") && l.text.contains("mm"))
+        .find(|r| r.label == "L")
         .expect("length readout");
-    assert!(length.text.contains("5.00"), "live length: {}", length.text);
     assert!(
-        labels.iter().any(|l| l.text.contains('°')),
+        length.value.contains("5.00"),
+        "live length: {}",
+        length.value
+    );
+    assert_eq!(length.unit, "mm");
+    assert!(
+        ovp.rows.iter().any(|r| r.label == "∠"),
         "angle readout present"
     );
+    let hint = hud.tool.expect("tool hint");
+    assert_eq!(hint.name, "Line");
 
-    // Typing highlights the focused field with the typed buffer.
+    // Typing locks the focused field with the typed buffer.
     h.key(KeyCode::Key7, Some("sketch.line"));
-    let labels = h.labels();
+    let ovp = h.hud().unwrap().ovp.unwrap();
+    let length = ovp.rows.iter().find(|r| r.label == "L").unwrap();
     assert!(
-        labels
-            .iter()
-            .any(|l| l.text.contains("7 mm") && l.background),
-        "typed buffer shown on a pill: {:?}",
-        labels.iter().map(|l| &l.text).collect::<Vec<_>>()
+        length.locked && length.value == "7",
+        "typed buffer shown: {length:?}"
     );
 }

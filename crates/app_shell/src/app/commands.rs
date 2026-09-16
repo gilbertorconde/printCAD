@@ -362,7 +362,7 @@ impl PrintCadApp {
     /// Double-click "jump" semantics: a sketch opens straight in the
     /// sketcher's edit mode; a part feature or datum jumps to the Part
     /// Design panel with its settings editor open.
-    fn apply_tree_activation(&mut self, item: TreeItemId) {
+    pub(crate) fn apply_tree_activation(&mut self, item: TreeItemId) {
         let TreeItemId::Feature(id) = item else {
             return;
         };

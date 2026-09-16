@@ -1,29 +1,32 @@
+mod constrain;
 mod feature;
 mod geom2d;
 mod glyphs;
 mod overlay;
 mod ovp;
+#[cfg(feature = "egui")]
+mod panel;
 pub mod profile;
 pub mod render;
 pub mod sketch;
 pub mod snap;
 mod solver;
+pub mod style;
 mod tools;
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use core_document::{
-    BodyId, CommandDescriptor, FeatureId, InputResult, KeyCode, ScreenSpaceLabel, ToolDescriptor,
+    BodyId, CommandDescriptor, FeatureId, InputResult, KeyCode, ScreenSpaceLabel, ScreenSpaceMark,
+    SketchPalette, StatusItems, TaskInfo, ToolDescriptor, ToolHint, ToolVariant, ViewportHud,
     Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use feature::SketchFeature;
 use overlay::SketchProjector;
 use ovp::DimCapture;
-use sketch::{
-    AxisDirection, Constraint, ConstraintKind, GeometryElement, Sketch, SketchPlane, Vec2D,
-};
+use sketch::{Constraint, ConstraintKind, GeometryElement, Sketch, SketchPlane, Vec2D};
 use solver::{Diagnosis, SolveOutcome};
 pub use tools::ToolParams;
 use tools::ToolState;
@@ -35,7 +38,7 @@ const SNAP_TOLERANCE_PX: f32 = 8.0;
 
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-enum ElementFilter {
+pub(crate) enum ElementFilter {
     #[default]
     All,
     Normal,
@@ -43,15 +46,7 @@ enum ElementFilter {
 }
 
 impl ElementFilter {
-    fn label(self) -> &'static str {
-        match self {
-            ElementFilter::All => "All",
-            ElementFilter::Normal => "Normal",
-            ElementFilter::Construction => "Construction",
-        }
-    }
-
-    fn accepts(self, sketch: &Sketch, id: Uuid) -> bool {
+    pub(crate) fn accepts(self, sketch: &Sketch, id: Uuid) -> bool {
         match self {
             ElementFilter::All => true,
             ElementFilter::Normal => !sketch.is_construction(id),
@@ -170,6 +165,120 @@ pub struct SketchWorkbench {
     last_glyph_click: Option<(Uuid, Instant)>,
     /// On-view parameter capture for the active drawing tool.
     dim_capture: DimCapture,
+    /// Object snapping is off (the toolbar toggle).
+    snap_off: bool,
+    /// The selection sorted by kind, refreshed each frame for tool
+    /// enablement.
+    selection_shape: constrain::SelectionShape,
+    /// The copy tool is armed: transforms leave the originals in place.
+    copy_mode: bool,
+    /// Constraint whose name is being edited inline in the task panel.
+    renaming_constraint: Option<Uuid>,
+    /// Substring filter over the constraint list.
+    constraint_filter: String,
+}
+
+/// The solver's verdict on the edited sketch, as the panel, HUD and status
+/// bar show it.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct SolverVerdict {
+    pub kind: SolverKind,
+    pub title: String,
+    pub body: String,
+    pub dof: i32,
+    /// Constraints whose geometry a click on the message selects.
+    pub offenders: Vec<Uuid>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SolverKind {
+    Empty,
+    Unanalyzed,
+    Conflicting,
+    Redundant,
+    Fully,
+    Under,
+}
+
+impl SolverKind {
+    pub(crate) fn color(self, pal: &SketchPalette) -> [f32; 3] {
+        match self {
+            SolverKind::Fully => pal.fully_constrained,
+            SolverKind::Conflicting => pal.trim,
+            SolverKind::Redundant => pal.constraint,
+            SolverKind::Empty | SolverKind::Unanalyzed | SolverKind::Under => pal.reference,
+        }
+    }
+}
+
+/// Tool ids, labels and icons of the geometry row, in toolbar order.
+const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
+    ("sketch.select", "Select", "select"),
+    ("sketch.point", "Point", "point"),
+    ("sketch.line", "Line", "line"),
+    ("sketch.arc", "Arc", "arc"),
+    ("sketch.circle", "Circle", "circle"),
+    ("sketch.ellipse", "Ellipse", "ellipse"),
+    ("sketch.bspline", "B-spline", "bspline"),
+    ("sketch.rect", "Rectangle", "rectangle"),
+    ("sketch.polygon", "Regular polygon", "regular-polygon"),
+    ("sketch.slot", "Slot", "slot"),
+    ("sketch.fillet", "Fillet", "sketch-fillet"),
+    ("sketch.trim", "Trim", "trim"),
+    ("sketch.extend", "Extend", "extend"),
+    ("sketch.split", "Split", "split"),
+    ("sketch.copy", "Copy", "copy-geometry"),
+    ("sketch.translate", "Move", "move-geometry"),
+    ("sketch.rotate", "Rotate", "rotate-geometry"),
+    ("sketch.scale", "Scale", "scale-geometry"),
+    ("sketch.offset", "Offset", "offset-geometry"),
+    ("sketch.mirror", "Symmetry", "symmetry-geometry"),
+];
+
+/// The icon of a canonical tool id, for the viewport hint.
+fn tool_icon(tool: &str) -> &'static str {
+    match tool {
+        "sketch.arc3" => "arc-3pt",
+        "sketch.circle3" => "circle-3pt",
+        "sketch.rect_center" => "rectangle-centered",
+        "sketch.arc_slot" => "arc-slot",
+        "sketch.chamfer" => "sketch-chamfer",
+        _ => GEOMETRY_TOOLS
+            .iter()
+            .find(|(id, _, _)| *id == tool)
+            .map(|(_, _, icon)| *icon)
+            .unwrap_or("sketch"),
+    }
+}
+
+/// The name and first prompt of a tool with no shape in progress.
+fn idle_hint(tool: &str) -> (&'static str, &'static str) {
+    match tool {
+        "sketch.point" => ("Point", "Click to place a point"),
+        "sketch.line" => ("Line", "Click the start point"),
+        "sketch.arc" => ("Arc", "Click the center"),
+        "sketch.arc3" => ("Arc", "Click the first endpoint"),
+        "sketch.circle" => ("Circle", "Click the center"),
+        "sketch.circle3" => ("Circle", "Click a first rim point"),
+        "sketch.ellipse" => ("Ellipse", "Click the center"),
+        "sketch.bspline" => ("B-spline", "Click the first control point"),
+        "sketch.rect" => ("Rectangle", "Click the first corner"),
+        "sketch.rect_center" => ("Rectangle", "Click the center"),
+        "sketch.polygon" => ("Polygon", "Click the center"),
+        "sketch.slot" => ("Slot", "Click the centerline start"),
+        "sketch.arc_slot" => ("Arc slot", "Click the arc center"),
+        "sketch.fillet" => ("Fillet", "Click a corner point"),
+        "sketch.chamfer" => ("Chamfer", "Click a corner point"),
+        "sketch.trim" => ("Trim", "Click the span to remove"),
+        "sketch.extend" => ("Extend", "Click the end to extend"),
+        "sketch.split" => ("Split", "Click where to split"),
+        "sketch.offset" => ("Offset", "Click the curve to offset"),
+        "sketch.translate" => ("Move", "Click the base point"),
+        "sketch.rotate" => ("Rotate", "Click the pivot"),
+        "sketch.scale" => ("Scale", "Click the base point"),
+        "sketch.mirror" => ("Symmetry", "Click a mirror line or its first point"),
+        _ => ("Select", "Click to select · drag for a box"),
+    }
 }
 
 impl SketchWorkbench {
@@ -354,7 +463,22 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let plane = feature.plane;
-        let tol = Self::snap_tolerance(ctx, &plane);
+        // Object snapping off: drawing tools never reuse or attach to
+        // existing geometry; modify tools keep their pick tolerance.
+        let tol = if self.snap_off && is_draw_tool(tool) {
+            0.0
+        } else {
+            Self::snap_tolerance(ctx, &plane)
+        };
+        // The copy tool is the move tool with at least one copy.
+        let params = if self.copy_mode {
+            ToolParams {
+                copies: self.tool_params.copies.max(1),
+                ..self.tool_params
+            }
+        } else {
+            self.tool_params
+        };
         self.dim_capture.sync(&self.tool_state);
         let typed = self.dim_capture.typed();
         let cursor = if typed.is_empty() {
@@ -381,7 +505,7 @@ impl SketchWorkbench {
             &mut feature.sketch,
             cursor,
             tol,
-            &self.tool_params,
+            &params,
             &self.selected,
         );
         if let Some(before) = before {
@@ -484,7 +608,12 @@ impl SketchWorkbench {
         viewport_pos: (f32, f32),
     ) -> Option<GlyphHit> {
         let proj = SketchProjector::new(ctx, feature.plane);
-        let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints);
+        let glyphs = glyphs::build(
+            &feature.sketch,
+            &proj,
+            &self.selected_constraints,
+            &ctx.sketch_palette,
+        );
         glyphs::hit_test(&glyphs, [viewport_pos.0, viewport_pos.1]).map(|g| GlyphHit {
             constraint: g.constraint,
             dimensional: g.dimensional,
@@ -973,55 +1102,372 @@ impl Workbench for SketchWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        // Row 0: sketch management, beside the standard tools.
         context.register_tool(
-            ToolDescriptor::new_action("sketch.create", "Create Sketch", Some("sketch"))
-                .icon("sketch-new"),
+            ToolDescriptor::new_action("sketch.create", "Create sketch", Some("sketch.manage"))
+                .icon("sketch-new")
+                .row(0),
         );
-        // Radio tools, in toolbar order: select, drawing, editing, transforms.
-        let radio_tools = [
-            ("sketch.select", "Select", "select"),
-            ("sketch.point", "Point", "point"),
-            ("sketch.line", "Line", "line"),
-            ("sketch.arc", "Arc", "arc"),
-            ("sketch.arc3", "Arc (3 points)", "arc-3pt"),
-            ("sketch.circle", "Circle", "circle"),
-            ("sketch.circle3", "Circle (3 points)", "circle-3pt"),
-            ("sketch.ellipse", "Ellipse", "ellipse"),
-            ("sketch.bspline", "B-spline", "bspline"),
-            ("sketch.rect", "Rectangle", "rectangle"),
+        // PLANNED: sketch management tools the design shows.
+        for (id, label, icon, note) in [
             (
-                "sketch.rect_center",
-                "Centered Rectangle",
-                "rectangle-centered",
+                "sketch.edit",
+                "Edit sketch",
+                "sketch-edit",
+                "double-click a sketch in the tree to edit it",
             ),
-            ("sketch.polygon", "Polygon", "regular-polygon"),
-            ("sketch.slot", "Slot", "slot"),
-            ("sketch.arc_slot", "Arc Slot", "arc-slot"),
-            ("sketch.fillet", "Fillet", "sketch-fillet"),
-            ("sketch.chamfer", "Chamfer", "sketch-chamfer"),
-            ("sketch.trim", "Trim", "trim"),
-            ("sketch.extend", "Extend", "extend"),
-            ("sketch.split", "Split", "split"),
-            ("sketch.offset", "Offset", "offset-geometry"),
-            ("sketch.translate", "Move", "move-geometry"),
-            ("sketch.rotate", "Rotate", "rotate-geometry"),
-            ("sketch.scale", "Scale", "scale-geometry"),
-            ("sketch.mirror", "Mirror", "symmetry-geometry"),
-        ];
-        for (id, label, icon) in radio_tools {
-            context.register_tool(ToolDescriptor::new(id, label, Some("sketch")).icon(icon));
+            (
+                "sketch.attach",
+                "Attach sketch",
+                "sketch-map",
+                "moves a sketch to another plane or face",
+            ),
+            (
+                "sketch.reorient",
+                "Reorient sketch",
+                "sketch-reorient",
+                "flips or rotates the sketch plane",
+            ),
+            (
+                "sketch.validate",
+                "Validate sketch",
+                "sketch-validate",
+                "checks for open profiles and stray points",
+            ),
+            (
+                "sketch.merge",
+                "Merge sketches",
+                "sketch-merge",
+                "joins several sketches into one",
+            ),
+            (
+                "sketch.mirror_sketch",
+                "Mirror sketch",
+                "sketch-mirror",
+                "creates a mirrored copy of a sketch",
+            ),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("sketch.manage"))
+                    .icon(icon)
+                    .planned(note)
+                    .row(0),
+            );
         }
         context.register_tool(
+            ToolDescriptor::new_action("sketch.finish", "Close sketch", Some("sketch.close"))
+                .icon("sketch-leave")
+                .row(0)
+                .align_end(),
+        );
+
+        // Row 1: geometry. Tools with variants offer them from a dropdown.
+        let variants = |id: &str| -> Vec<ToolVariant> {
+            match id {
+                "sketch.arc" => vec![
+                    ToolVariant::new("center", "Center and endpoints", "arc"),
+                    ToolVariant::new("3pt", "Three points", "arc-3pt"),
+                ],
+                "sketch.circle" => vec![
+                    ToolVariant::new("center", "Center and rim", "circle"),
+                    ToolVariant::new("3pt", "Three points", "circle-3pt"),
+                ],
+                "sketch.ellipse" => vec![
+                    ToolVariant::new("center", "Center and axes", "ellipse"),
+                    // PLANNED: further ellipse constructions.
+                    ToolVariant::new("3pt", "Three points", "ellipse-3pt")
+                        .planned("builds an ellipse from three rim points"),
+                    ToolVariant::new("arc", "Arc of ellipse", "arc-of-ellipse")
+                        .planned("draws an elliptical arc"),
+                ],
+                "sketch.bspline" => vec![
+                    ToolVariant::new("open", "Open", "bspline"),
+                    ToolVariant::new("periodic", "Periodic", "periodic-bspline"),
+                ],
+                "sketch.rect" => vec![
+                    ToolVariant::new("corners", "Two corners", "rectangle"),
+                    ToolVariant::new("center", "Center and corner", "rectangle-centered"),
+                    // PLANNED: a rectangle with rounded corners.
+                    ToolVariant::new("rounded", "Rounded", "rounded-rectangle")
+                        .planned("draws a rectangle with filleted corners"),
+                ],
+                "sketch.polygon" => vec![
+                    ToolVariant::new("3", "Triangle", "triangle"),
+                    ToolVariant::new("4", "Square", "square"),
+                    ToolVariant::new("5", "Pentagon", "pentagon"),
+                    ToolVariant::new("6", "Hexagon", "hexagon"),
+                    ToolVariant::new("7", "Heptagon", "heptagon"),
+                    ToolVariant::new("8", "Octagon", "octagon"),
+                ],
+                "sketch.slot" => vec![
+                    ToolVariant::new("straight", "Straight slot", "slot"),
+                    ToolVariant::new("arc", "Arc slot", "arc-slot"),
+                ],
+                "sketch.fillet" => vec![
+                    ToolVariant::new("fillet", "Fillet", "sketch-fillet"),
+                    ToolVariant::new("chamfer", "Chamfer", "sketch-chamfer"),
+                ],
+                _ => Vec::new(),
+            }
+        };
+        let category = |id: &str| -> &'static str {
+            match id {
+                "sketch.select" | "sketch.point" | "sketch.line" => "geometry.basic",
+                "sketch.arc" | "sketch.circle" | "sketch.ellipse" | "sketch.bspline" => {
+                    "geometry.curves"
+                }
+                "sketch.rect" | "sketch.polygon" | "sketch.slot" => "geometry.shapes",
+                "sketch.fillet" | "sketch.trim" | "sketch.extend" | "sketch.split" => {
+                    "geometry.modify"
+                }
+                _ => "geometry.transform",
+            }
+        };
+        for (id, label, icon) in GEOMETRY_TOOLS {
+            let mut tool = ToolDescriptor::new(*id, *label, Some(category(id)))
+                .icon(icon)
+                .variants(variants(id));
+            tool.row = 1;
+            if *id == "sketch.split" {
+                // The row's planned entries sit after split.
+                context.register_tool(tool);
+                // PLANNED: geometry the design shows and the sketcher lacks.
+                for (pid, plabel, picon, note) in [
+                    (
+                        "sketch.external",
+                        "External geometry",
+                        "external-geometry",
+                        "projects edges of the solid into the sketch",
+                    ),
+                    (
+                        "sketch.carbon_copy",
+                        "Carbon copy",
+                        "carbon-copy",
+                        "copies another sketch's geometry into this one",
+                    ),
+                ] {
+                    context.register_tool(
+                        ToolDescriptor::new_action(pid, plabel, Some("geometry.external"))
+                            .icon(picon)
+                            .planned(note)
+                            .row(1),
+                    );
+                }
+                context.register_tool(
+                    ToolDescriptor::new_action(
+                        "sketch.construction",
+                        "Toggle construction",
+                        Some("geometry.construction"),
+                    )
+                    .icon("construction-mode")
+                    .row(1),
+                );
+                continue;
+            }
+            if *id == "sketch.point" {
+                context.register_tool(tool);
+                // PLANNED: a chained polyline tool; the line tool chains
+                // segments today.
+                context.register_tool(
+                    ToolDescriptor::new("sketch.polyline", "Polyline", Some("geometry.basic"))
+                        .icon("polyline")
+                        .planned("draws connected lines and arcs in one gesture")
+                        .row(1),
+                );
+                continue;
+            }
+            context.register_tool(tool);
+        }
+        // PLANNED: a rectangular array of the selection.
+        context.register_tool(
             ToolDescriptor::new_action(
-                "sketch.construction",
-                "Toggle Construction",
-                Some("sketch"),
+                "sketch.array",
+                "Rectangular array",
+                Some("geometry.transform"),
             )
-            .icon("construction-mode"),
+            .icon("rectangular-array")
+            .planned("repeats the selection in rows and columns")
+            .row(1),
+        );
+        for (id, label, icon) in [
+            (
+                "sketch.delete_all_geometry",
+                "Delete all geometry",
+                "delete-all-geometry",
+            ),
+            (
+                "sketch.delete_all_constraints",
+                "Delete all constraints",
+                "delete-all-constraints",
+            ),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("geometry.delete"))
+                    .icon(icon)
+                    .row(1),
+            );
+        }
+
+        // Row 2: constraints, enabled by the shape of the selection.
+        let constraint = |id: &str, label: &str, icon: &'static str, category: &str| {
+            ToolDescriptor::new_action(format!("sketch.constrain.{id}"), label, Some(category))
+                .icon(icon)
+                .row(2)
+        };
+        for (id, label, icon) in [
+            ("coincident", "Coincident", "constraint-coincident"),
+            (
+                "point_on_object",
+                "Point on object",
+                "constraint-point-on-object",
+            ),
+            ("vertical", "Vertical", "constraint-vertical"),
+            ("horizontal", "Horizontal", "constraint-horizontal"),
+            ("parallel", "Parallel", "constraint-parallel"),
+            ("perpendicular", "Perpendicular", "constraint-perpendicular"),
+            ("tangent", "Tangent", "constraint-tangent"),
+            ("equal", "Equal", "constraint-equal"),
+            ("symmetric", "Symmetric", "constraint-symmetric"),
+            ("block", "Block", "constraint-block"),
+        ] {
+            let mut tool = constraint(id, label, icon, "constraints.geometric");
+            if id == "point_on_object" {
+                tool = tool.variants(vec![
+                    ToolVariant::new(
+                        "point_on_object",
+                        "Point on object",
+                        "constraint-point-on-object",
+                    ),
+                    ToolVariant::new("midpoint", "Midpoint", "constraint-point-on-object"),
+                ]);
+            }
+            context.register_tool(tool);
+        }
+        // PLANNED: one dimension tool that picks distance, radius or angle
+        // from the selection.
+        context.register_tool(
+            constraint(
+                "dimension",
+                "Dimension",
+                "dimensional-constraint",
+                "constraints.dimensional",
+            )
+            .planned("chooses distance, radius or angle from the selection"),
+        );
+        for (id, label, icon) in [
+            ("lock", "Lock", "constraint-lock"),
+            ("distance_x", "Horizontal distance", "constraint-distance-x"),
+            ("distance_y", "Vertical distance", "constraint-distance-y"),
+            ("distance", "Distance", "constraint-distance"),
+            ("radius", "Radius", "constraint-radius"),
+            ("diameter", "Diameter", "constraint-diameter"),
+            ("angle", "Angle", "constraint-angle"),
+        ] {
+            let mut tool = constraint(id, label, icon, "constraints.dimensional");
+            if id == "angle" {
+                tool = tool.variants(vec![
+                    ToolVariant::new("angle", "Between two lines", "constraint-angle"),
+                    ToolVariant::new("angle_x", "To the X axis", "constraint-angle"),
+                    ToolVariant::new("angle_y", "To the Y axis", "constraint-angle"),
+                ]);
+            }
+            context.register_tool(tool);
+        }
+        for (id, label, icon) in [
+            (
+                "sketch.toggle_driving",
+                "Toggle driving / reference",
+                "toggle-driving",
+            ),
+            ("sketch.toggle_active", "Toggle active", "toggle-active"),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("constraints.toggle"))
+                    .icon(icon)
+                    .row(2),
+            );
+        }
+        for (id, label, icon) in [
+            (
+                "sketch.select_conflicting",
+                "Select conflicting",
+                "select-conflicting",
+            ),
+            (
+                "sketch.select_redundant",
+                "Select redundant",
+                "select-redundant",
+            ),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("constraints.select"))
+                    .icon(icon)
+                    .row(2),
+            );
+        }
+        // PLANNED: further selection helpers from the design.
+        for (id, label, icon, note) in [
+            (
+                "sketch.select_malformed",
+                "Select malformed",
+                "select-malformed",
+                "selects constraints referencing missing geometry",
+            ),
+            (
+                "sketch.select_unconstrained",
+                "Select under-constrained",
+                "select-unconstrained",
+                "selects geometry with free degrees",
+            ),
+            (
+                "sketch.select_dof",
+                "Elements with DoF",
+                "select-elements-with-dof",
+                "highlights every element that can still move",
+            ),
+        ] {
+            context.register_tool(
+                ToolDescriptor::new_action(id, label, Some("constraints.select"))
+                    .icon(icon)
+                    .planned(note)
+                    .row(2),
+            );
+        }
+        // PLANNED: constraint visibility and a sketch grid.
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.show_constraints",
+                "Show/hide constraints",
+                Some("constraints.view"),
+            )
+            .icon("show-hide-constraints")
+            .planned("hides constraint glyphs in the viewport")
+            .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.grid", "Grid", Some("constraints.view"))
+                .icon("grid")
+                .planned("draws a grid on the sketch plane")
+                .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.snap", "Snap to objects", Some("constraints.view"))
+                .icon("snap")
+                .row(2),
+        );
+        context.register_tool(
+            ToolDescriptor::new_action(
+                "sketch.rendering_order",
+                "Rendering order",
+                Some("constraints.view"),
+            )
+            .icon("rendering-order")
+            .planned("draws construction or normal geometry on top")
+            .row(2),
         );
         // The solver runs automatically after every geometry/constraint
         // edit, so no explicit solve command is registered.
-        context.register_command(CommandDescriptor::new("sketch.finish", "Finish Sketch"));
+        context.register_command(CommandDescriptor::new("sketch.finish", "Close sketch"));
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -1039,17 +1485,15 @@ impl Workbench for SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         self.sync_active_sketch_from_ctx(ctx);
+        let base = active_tool.map(base_tool_id);
 
-        if active_tool == Some("sketch.finish") {
-            return if self.active_sketch_id.is_some() {
-                self.active_sketch_id = None;
-                self.clear_interaction_state();
-                ctx.log_info("Finished sketch editing");
-                InputResult::consumed()
+        if base == Some("sketch.finish") {
+            if self.active_sketch_id.is_some() {
+                self.finish_editing(ctx);
             } else {
                 ctx.log_warn("No active sketch to finish");
-                InputResult::consumed()
-            };
+            }
+            return InputResult::consumed();
         }
 
         // Another workbench (or the host) asked us to create a sketch on a
@@ -1061,7 +1505,7 @@ impl Workbench for SketchWorkbench {
             self.begin_sketch_creation(Some(BodyId(request.body)), face_plane);
         }
 
-        if active_tool == Some("sketch.create") {
+        if base == Some("sketch.create") {
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
                 let face_plane = ctx
                     .selected_face
@@ -1075,18 +1519,39 @@ impl Workbench for SketchWorkbench {
             return InputResult::ignored();
         }
 
-        // Action tool: flip the construction flag on the selection.
-        if active_tool == Some("sketch.construction") {
-            return self.toggle_construction_selected(ctx);
+        // Action tools that act on the selection or the whole sketch.
+        if let (Some(tool), Some(base)) = (active_tool, base) {
+            if let Some(rest) = base.strip_prefix("sketch.constrain.") {
+                let which = tool_variant(tool).unwrap_or(rest);
+                return self.apply_constraint_tool(ctx, which);
+            }
+            match base {
+                "sketch.construction" => return self.toggle_construction_selected(ctx),
+                "sketch.snap" => {
+                    self.snap_off = !self.snap_off;
+                    return InputResult::consumed();
+                }
+                "sketch.toggle_driving" => {
+                    return self.edit_selected_constraints(ctx, |c| c.driving = !c.driving);
+                }
+                "sketch.toggle_active" => {
+                    return self.edit_selected_constraints(ctx, |c| c.active = !c.active);
+                }
+                "sketch.select_conflicting" => return self.select_offenders(ctx, true),
+                "sketch.select_redundant" => return self.select_offenders(ctx, false),
+                "sketch.delete_all_geometry" => return self.delete_all(ctx, true),
+                "sketch.delete_all_constraints" => return self.delete_all(ctx, false),
+                _ => {}
+            }
         }
 
         // Every remaining interaction needs an editing sketch. `None`
-        // active tool behaves as select mode.
-        let tool = match active_tool {
-            Some(t) if t.starts_with("sketch.") => Some(t),
-            _ => None,
-        };
-        // Remember the tool so the left panel can surface its settings
+        // active tool behaves as select mode. Variants fold into the tool
+        // they specialise.
+        let canonical = active_tool.and_then(|t| self.canonical_tool(t));
+        let tool = canonical.as_deref();
+        self.copy_mode = base == Some("sketch.copy");
+        // Remember the tool so the task panel can surface its settings
         // (polygon sides, slot width, fillet radius).
         if self.last_tool.as_deref() != tool {
             self.last_tool = tool.map(str::to_string);
@@ -1113,177 +1578,87 @@ impl Workbench for SketchWorkbench {
         }
     }
 
+    /// The sketcher draws nothing under the tree: its UI lives in the
+    /// task panel.
     #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+    fn ui_left_panel(&mut self, _ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
         self.sync_active_sketch_from_ctx(ctx);
-        self.dim_edit_window(ui, ctx);
+    }
 
-        ui.heading("Sketcher");
-
-        // Plane picker for a pending sketch creation.
-        if let Some(pending) = &self.pending_creation {
-            let body = pending.body;
-            let face_plane = pending.face_plane;
-            ui.label("New sketch — choose a plane:");
-            let mut chosen: Option<SketchPlane> = None;
-            if let Some(face) = face_plane
-                && ui
-                    .button("▸ Selected face")
-                    .on_hover_text("Sketch on the face you clicked on the solid")
-                    .clicked()
-            {
-                chosen = Some(face);
-            }
-            ui.horizontal(|ui| {
-                if ui.button("Top (XY)").clicked() {
-                    chosen = Some(SketchPlane::xy());
-                }
-                if ui.button("Front (XZ)").clicked() {
-                    chosen = Some(SketchPlane::xz());
-                }
-                if ui.button("Side (YZ)").clicked() {
-                    chosen = Some(SketchPlane::yz());
-                }
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.pending_creation.is_some() {
+            return Some(TaskInfo {
+                title: "New sketch".to_string(),
+                icon: "sketch-new",
+                confirmable: false,
             });
-            // Datum planes of the target body attach the sketch to their
-            // resolved frame (toponaming-safe anchor).
-            if let Some(body) = body {
-                for (_, name, datum) in core_document::datums_of_body(ctx.document, body) {
-                    if !matches!(datum.shape, core_document::DatumShape::Plane { .. }) {
-                        continue;
-                    }
-                    if ui
-                        .button(format!("◇ {name}"))
-                        .on_hover_text("Sketch on this datum plane")
-                        .clicked()
-                    {
-                        let frame = datum.frame();
-                        chosen = Some(SketchPlane::from_frame(
-                            frame.origin,
-                            frame.normal,
-                            frame.x_axis,
-                        ));
-                    }
-                }
-            }
-            if ui.button("Cancel").clicked() {
-                self.pending_creation = None;
-            }
-            if let Some(plane) = chosen {
-                self.pending_creation = None;
-                self.create_sketch_on_plane(ctx, body, plane);
-            }
-            ui.separator();
         }
-
-        let Some(feature) = self.get_active_sketch(ctx) else {
-            if self.pending_creation.is_none() {
-                ui.label("Select a sketch in the tree or create a new one to begin editing.");
-            }
-            return;
-        };
-        let sketch = &feature.sketch;
-
-        ui.label(format!("Editing {}", sketch.name));
-        if self.construction_mode {
-            ui.colored_label(
-                egui::Color32::from_rgb(102, 140, 242),
-                "Construction mode ON (new geometry is construction)",
-            );
-        }
-        if let Some(status) = self.tool_state.status() {
-            ui.colored_label(egui::Color32::from_rgb(140, 190, 255), status);
-        }
-        self.tool_settings_ui(ui);
-
-        self.solver_message_line(ui, sketch);
-        ui.separator();
-
-        self.constraint_buttons(ui, ctx, sketch.clone());
-
-        ui.separator();
-        ui.heading("Constraints");
-        let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
-        let mut delete_constraint: Option<usize> = None;
-        let mut edited_constraint: Option<(usize, Constraint)> = None;
-        if sketch.constraints.is_empty() {
-            ui.label("None yet. Select geometry to add constraints.");
-        } else {
-            egui::ScrollArea::vertical()
-                .id_salt("sketch_constraints")
-                .max_height(160.0)
-                .show(ui, |ui| {
-                    for (idx, constraint) in sketch.constraints.iter().enumerate() {
-                        ui.horizontal(|ui| {
-                            if ui
-                                .small_button("✕")
-                                .on_hover_text("Remove constraint")
-                                .clicked()
-                            {
-                                delete_constraint = Some(idx);
-                            }
-                            let flag = if diagnosis.conflicting.contains(&constraint.id) {
-                                RowFlag::Conflicting
-                            } else if diagnosis.redundant.contains(&constraint.id) {
-                                RowFlag::Redundant
-                            } else {
-                                RowFlag::None
-                            };
-                            let focus = self.pending_focus == Some(constraint.id);
-                            if let Some(edited) =
-                                constraint_row(ui, sketch, constraint, flag, focus)
-                            {
-                                edited_constraint = Some((idx, edited));
-                            }
-                        });
-                    }
-                });
-            self.pending_focus = None; // one-shot: the row grabbed focus
-        }
-        if let Some(idx) = delete_constraint
-            && let Some(mut feature) = self.get_active_sketch(ctx)
-        {
-            feature.sketch.constraints.remove(idx);
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
-        }
-        if let Some((idx, constraint)) = edited_constraint {
-            self.update_constraint(ctx, idx, constraint);
-        }
-
-        ui.separator();
-        self.elements_panel(ui, ctx, sketch.clone());
+        let id = self.active_sketch_id?;
+        let name = ctx.document.get_feature_meta(id)?.name.clone();
+        Some(TaskInfo {
+            title: name,
+            icon: "sketch-edit",
+            confirmable: false,
+        })
     }
 
     #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        self.draw_task_panel(ui, ctx, request)
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.sync_active_sketch_from_ctx(ctx);
-        ui.heading("Sketch Info");
-        let Some(feature) = self.get_active_sketch(ctx) else {
-            ui.label("No sketch selected. Select one in the tree or create a new sketch.");
-            return;
+        self.selection_shape = match self.get_active_sketch(ctx) {
+            Some(feature) => constrain::SelectionShape::of(&feature.sketch, &self.selected),
+            None => constrain::SelectionShape::default(),
         };
-        ui.label(format!("Active sketch: {}", feature.sketch.name));
-        ui.label(format!("Geometry: {}", feature.sketch.geometry.len()));
-        ui.label(format!("Constraints: {}", feature.sketch.constraints.len()));
-        ui.label(format!("Selected: {}", self.selected.len()));
-        ui.separator();
-        ui.label("Del deletes selection · Esc cancels");
-        if ui.button("Exit Sketch Mode").clicked() {
-            ctx.finish_sketch_requested = true;
-        }
-    }
-
-    #[cfg(feature = "egui")]
-    fn wants_right_panel(&self) -> bool {
-        self.active_sketch_id.is_some()
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
+        let editing = self.active_sketch_id.is_some();
+        if let Some(rest) = tool_id.strip_prefix("sketch.constrain.") {
+            let which = tool_variant(tool_id).unwrap_or(rest);
+            return editing && constrain::fits(which, &self.selection_shape);
+        }
         match tool_id {
             "sketch.create" => ctx.selected_body_id.is_some(),
-            _ => self.active_sketch_id.is_some(),
+            "sketch.toggle_driving" | "sketch.toggle_active" => {
+                editing && !self.selected_constraints.is_empty()
+            }
+            "sketch.select_conflicting" => {
+                editing
+                    && self
+                        .last_diagnosis
+                        .as_ref()
+                        .is_some_and(|d| !d.conflicting.is_empty())
+            }
+            "sketch.select_redundant" => {
+                editing
+                    && self
+                        .last_diagnosis
+                        .as_ref()
+                        .is_some_and(|d| !d.redundant.is_empty())
+            }
+            _ => editing,
         }
+    }
+
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        match tool_id {
+            "sketch.construction" => self.construction_mode,
+            "sketch.snap" => !self.snap_off,
+            _ => false,
+        }
+    }
+
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.active_sketch_id
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -1300,6 +1675,109 @@ impl Workbench for SketchWorkbench {
         }
     }
 
+    fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
+        let feature = self.get_active_sketch(ctx)?;
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let pal = ctx.sketch_palette;
+        let tool = self.last_tool.as_deref().unwrap_or("sketch.select");
+        let (name, prompt) = match self.tool_state.hint() {
+            Some((name, prompt)) => (name, prompt),
+            None => idle_hint(tool),
+        };
+        let mut keys: Vec<(&'static str, &'static str)> = Vec::new();
+        if self.dim_capture.is_active() {
+            keys.push(("Tab", "next field"));
+            keys.push(("Enter", "lock value"));
+        } else if matches!(
+            self.tool_state,
+            ToolState::LineFrom { chain: true, .. } | ToolState::BSplineDraw { .. }
+        ) {
+            keys.push(("Enter", "finish"));
+        }
+        if tool == "sketch.select" {
+            keys.push(("Ctrl", "add to selection"));
+            keys.push(("Del", "delete"));
+        } else {
+            keys.push(("Esc", "cancel"));
+        }
+        let verdict = self.solver_verdict(&feature.sketch);
+        let zoom = 1.0 / proj.units_per_px().max(1e-6);
+        let ovp = self.cursor.and_then(|cursor| {
+            let px = proj.to_px(cursor)?;
+            let rows =
+                ovp::readout_rows(&self.dim_capture, &self.tool_state, &feature.sketch, cursor);
+            (!rows.is_empty()).then(|| core_document::OvpWidget {
+                anchor: [px[0] + 22.0, px[1] - 12.0],
+                rows,
+                hint: "Tab → next · Enter → lock",
+            })
+        });
+        Some(ViewportHud {
+            tool: Some(ToolHint {
+                icon: tool_icon(tool),
+                name: name.to_string(),
+                prompt: prompt.to_string(),
+                keys,
+            }),
+            badge: Some((verdict.kind.color(&pal), format!("{} DoF", verdict.dof))),
+            legend: vec![
+                (pal.geometry, "Normal"),
+                (pal.construction, "Construction"),
+                (pal.external, "External"),
+                (pal.fully_constrained, "Fully constrained"),
+                (pal.constraint, "Constraint"),
+            ],
+            footer: vec![
+                style::plane_label(&feature.plane).to_string(),
+                if self.snap_off {
+                    "Snap: off".to_string()
+                } else {
+                    "Snap: objects".to_string()
+                },
+                format!("Zoom {zoom:.1}×"),
+            ],
+            ovp,
+        })
+    }
+
+    fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
+        let feature = self.get_active_sketch(ctx)?;
+        let pal = ctx.sketch_palette;
+        let verdict = self.solver_verdict(&feature.sketch);
+        let mut names: Vec<String> = feature
+            .sketch
+            .geometry
+            .iter()
+            .filter(|g| self.selected.contains(&g.id()))
+            .map(|g| style::element_name(&feature.sketch, g.id()))
+            .collect();
+        names.extend(
+            feature
+                .sketch
+                .constraints
+                .iter()
+                .filter(|c| self.selected_constraints.contains(&c.id))
+                .map(|c| {
+                    c.name
+                        .clone()
+                        .unwrap_or_else(|| sketch::constraint_label(&c.kind))
+                }),
+        );
+        let selection = match names.len() {
+            0 => None,
+            n if n <= 3 => Some(names.join(" · ")),
+            n => Some(format!("{} · {} more", names[..2].join(" · "), n - 2)),
+        };
+        Some(StatusItems {
+            state: Some((verdict.kind.color(&pal), verdict.title)),
+            selection,
+            coords: self
+                .cursor
+                .map(|c| format!("X {:.2} · Y {:.2} mm", c.x, c.y)),
+            mode: Some("Sketch edit mode".to_string()),
+        })
+    }
+
     fn get_screen_space_overlays(
         &self,
         ctx: &WorkbenchRuntimeContext,
@@ -1309,28 +1787,29 @@ impl Workbench for SketchWorkbench {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
-        let snap_tol = SNAP_TOLERANCE_PX * proj.units_per_px();
-        // Selected constraints highlight their referenced geometry too.
-        let mut selected = self.selected.clone();
-        for c in &feature.sketch.constraints {
-            if self.selected_constraints.contains(&c.id) {
-                selected.extend(sketch::constraint_refs(&c.kind));
-            }
-        }
-        let mut out = overlay::build_overlays(
-            &proj,
-            &feature.sketch,
-            &selected,
-            self.hovered,
-            &self.tool_state,
-            self.cursor,
-            &self.tool_params,
-            self.box_select.as_ref().map(|b| (b.anchor, b.current)),
-            self.last_tool.as_deref(),
-            snap_tol,
+        let pal = ctx.sketch_palette;
+        let mut out = self.build_overlays(ctx, &feature, &proj, &pal).lines;
+        let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal);
+        out.extend(glyphs::dimension_overlays(&glyphs));
+        out
+    }
+
+    fn get_screen_space_marks(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<ScreenSpaceMark> {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return Vec::new();
+        };
+        let proj = SketchProjector::new(ctx, feature.plane);
+        let pal = ctx.sketch_palette;
+        let mut out = self.build_overlays(ctx, &feature, &proj, &pal).marks;
+        out.extend(
+            glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
+                .iter()
+                .filter_map(glyphs::Glyph::mark),
         );
-        let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints);
-        out.extend(glyphs::leader_overlays(&glyphs));
         out
     }
 
@@ -1343,604 +1822,272 @@ impl Workbench for SketchWorkbench {
             return Vec::new();
         };
         let proj = SketchProjector::new(ctx, feature.plane);
-        let mut out: Vec<ScreenSpaceLabel> =
-            glyphs::build(&feature.sketch, &proj, &self.selected_constraints)
-                .into_iter()
-                .map(glyphs::Glyph::into_label)
-                .collect();
-        // On-view parameter readouts stack next to the cursor.
-        if let Some(cursor) = self.cursor
-            && let Some(px) = proj.to_px(cursor)
-        {
-            out.extend(ovp::readout_labels(
-                &self.dim_capture,
-                &self.tool_state,
-                &feature.sketch,
-                cursor,
-                px,
-            ));
-        }
-        out
+        let pal = ctx.sketch_palette;
+        glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
+            .iter()
+            .filter_map(glyphs::Glyph::label)
+            .collect()
     }
 }
 
-#[cfg(feature = "egui")]
 impl SketchWorkbench {
-    /// In-viewport dimension editor (opened by double-clicking a
-    /// dimensional glyph), drawn as a floating window near the label.
-    fn dim_edit_window(&mut self, ui: &egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        let Some(edit) = self.dim_edit.as_mut() else {
-            return;
+    /// The geometry, previews and markers of one frame.
+    fn build_overlays(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        proj: &SketchProjector,
+        pal: &SketchPalette,
+    ) -> overlay::Overlays {
+        let _ = ctx;
+        let snap_tol = SNAP_TOLERANCE_PX * proj.units_per_px();
+        // Selected constraints highlight their referenced geometry too.
+        let mut selected = self.selected.clone();
+        for c in &feature.sketch.constraints {
+            if self.selected_constraints.contains(&c.id) {
+                selected.extend(sketch::constraint_refs(&c.kind));
+            }
+        }
+        overlay::build_overlays(
+            proj,
+            pal,
+            &feature.sketch,
+            &selected,
+            self.hovered,
+            &self.tool_state,
+            self.cursor,
+            &self.tool_params,
+            self.box_select.as_ref().map(|b| (b.anchor, b.current)),
+            self.last_tool.as_deref(),
+            snap_tol,
+        )
+    }
+
+    /// The solver's verdict from the cached diagnosis, or a cheap estimate
+    /// of the freedom left when none is cached yet.
+    pub(crate) fn solver_verdict(&self, sketch: &Sketch) -> SolverVerdict {
+        let not_converged = matches!(self.last_solve, Some(SolveOutcome::NotConverged { .. }));
+        let (dof, analyzed, conflicting, redundant) = match &self.last_diagnosis {
+            Some(d) => (
+                d.dof,
+                d.analyzed,
+                d.conflicting.clone(),
+                d.redundant.clone(),
+            ),
+            None => (solver::dof_estimate(sketch), true, Vec::new(), Vec::new()),
         };
-        let ppp = ui.ctx().pixels_per_point().max(0.1);
-        let (vx, vy, ..) = ctx.viewport;
-        let pos = egui::pos2(
-            (vx as f32 + edit.screen_pos[0]) / ppp + 12.0,
-            (vy as f32 + edit.screen_pos[1]) / ppp + 12.0,
-        );
-        let mut commit = false;
-        let mut cancel = false;
-        egui::Window::new("Dimension")
-            .id(egui::Id::new("sketch_dim_edit"))
-            .collapsible(false)
-            .resizable(false)
-            .fixed_pos(pos)
-            .show(ui.ctx(), |ui| {
-                let response =
-                    ui.add(egui::TextEdit::singleline(&mut edit.text).desired_width(80.0));
-                if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    commit = true;
-                }
-                ui.checkbox(&mut edit.driving, "Driving")
-                    .on_hover_text("Off = reference dimension (measured, not enforced)");
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
-                        commit = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        cancel = true;
-                    }
-                });
-                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    cancel = true;
-                }
-            });
-        if commit {
-            self.commit_dim_edit(ctx);
-        } else if cancel {
-            self.dim_edit = None;
+        let verdict = |kind, title: &str, body: String, offenders: Vec<Uuid>| SolverVerdict {
+            kind,
+            title: title.to_string(),
+            body,
+            dof,
+            offenders,
+        };
+        if sketch.geometry.is_empty() {
+            verdict(
+                SolverKind::Empty,
+                "Empty sketch",
+                "Draw geometry with the tools above.".into(),
+                Vec::new(),
+            )
+        } else if !analyzed {
+            verdict(
+                SolverKind::Unanalyzed,
+                "Not analyzed",
+                "Too many constraints to check for conflicts.".into(),
+                Vec::new(),
+            )
+        } else if not_converged || !conflicting.is_empty() {
+            verdict(
+                SolverKind::Conflicting,
+                "Conflicting constraints",
+                "Constraints contradict each other. Click to select their geometry.".into(),
+                conflicting,
+            )
+        } else if !redundant.is_empty() {
+            verdict(
+                SolverKind::Redundant,
+                "Redundant constraints",
+                "Some constraints add nothing the others do not already enforce.".into(),
+                redundant,
+            )
+        } else if dof == 0 && !sketch.constraints.is_empty() {
+            verdict(
+                SolverKind::Fully,
+                "Fully constrained",
+                "Sketch has 0 degrees of freedom.".into(),
+                Vec::new(),
+            )
+        } else {
+            verdict(
+                SolverKind::Under,
+                "Under-constrained",
+                format!("{dof} degrees of freedom remain. Add dimensions or constraints."),
+                Vec::new(),
+            )
         }
     }
 
-    /// Settings for the active drawing tool (shown while it is selected).
-    fn tool_settings_ui(&mut self, ui: &mut egui::Ui) {
-        let mm_value = |ui: &mut egui::Ui, label: &str, value: &mut f32| {
-            ui.horizontal(|ui| {
-                ui.label(label);
-                ui.add(
-                    egui::DragValue::new(value)
-                        .speed(0.1)
-                        .range(0.001..=1.0e6)
-                        .suffix(" mm"),
-                );
-            });
-        };
-        let copies_value = |ui: &mut egui::Ui, value: &mut u32| {
-            ui.horizontal(|ui| {
-                ui.label("Copies (0 = move):");
-                ui.add(egui::DragValue::new(value).speed(0.1).range(0..=64));
-            });
-        };
-        match self.last_tool.as_deref() {
-            Some("sketch.polygon") => {
-                ui.horizontal(|ui| {
-                    ui.label("Sides:");
-                    ui.add(
-                        egui::DragValue::new(&mut self.tool_params.polygon_sides)
-                            .speed(0.1)
-                            .range(3..=12),
-                    );
-                });
-            }
-            Some("sketch.slot" | "sketch.arc_slot") => {
-                mm_value(ui, "Width:", &mut self.tool_params.slot_width);
-            }
-            Some("sketch.fillet") => {
-                mm_value(ui, "Radius:", &mut self.tool_params.fillet_radius);
-            }
-            Some("sketch.chamfer") => {
-                mm_value(ui, "Length:", &mut self.tool_params.chamfer_length);
-            }
-            Some("sketch.offset") => {
-                mm_value(ui, "Distance:", &mut self.tool_params.offset_distance);
-            }
-            Some("sketch.translate" | "sketch.rotate") => {
-                copies_value(ui, &mut self.tool_params.copies);
-            }
-            Some("sketch.bspline") => {
-                ui.checkbox(&mut self.tool_params.bspline_periodic, "Periodic (closed)");
-            }
-            _ => {}
+    /// Fold a variant into the tool it specialises, applying the variant's
+    /// parameters (polygon sides, spline periodicity). Non-sketch tools
+    /// yield `None`.
+    fn canonical_tool(&mut self, tool: &str) -> Option<String> {
+        let base = base_tool_id(tool);
+        if !base.starts_with("sketch.") {
+            return None;
         }
+        Some(match (base, tool_variant(tool)) {
+            ("sketch.arc", Some("3pt")) => "sketch.arc3".to_string(),
+            ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
+            ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
+            ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
+            ("sketch.fillet", Some("chamfer")) => "sketch.chamfer".to_string(),
+            ("sketch.polygon", Some(sides)) => {
+                if let Ok(n) = sides.parse::<u32>() {
+                    self.tool_params.polygon_sides = n.clamp(3, 12);
+                }
+                "sketch.polygon".to_string()
+            }
+            ("sketch.bspline", Some(variant)) => {
+                self.tool_params.bspline_periodic = variant == "periodic";
+                "sketch.bspline".to_string()
+            }
+            ("sketch.copy", _) => "sketch.translate".to_string(),
+            (base, _) => base.to_string(),
+        })
     }
 
-    /// Solver status line at the top of the panel. Clicking it when there
-    /// are conflicting/redundant constraints selects the geometry those
-    /// constraints reference (highlighting it in the viewport).
-    fn solver_message_line(&mut self, ui: &mut egui::Ui, sketch: &Sketch) {
+    /// A constraint tool on the current selection: every kind it maps to
+    /// is added, dimensional ones at their measured value.
+    fn apply_constraint_tool(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        which: &str,
+    ) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let shape = constrain::SelectionShape::of(&feature.sketch, &self.selected);
+        match constrain::kinds_for(which, &shape, &feature.sketch) {
+            Some(kinds) => {
+                for kind in kinds {
+                    self.add_constraint(ctx, kind);
+                }
+            }
+            None => ctx.log_warn(format!(
+                "The {which} constraint does not fit the current selection"
+            )),
+        }
+        self.selection_shape = shape;
+        InputResult::consumed()
+    }
+
+    /// Apply `edit` to every selected constraint and re-solve.
+    fn edit_selected_constraints(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        edit: impl Fn(&mut Constraint),
+    ) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let mut changed = false;
+        for c in &mut feature.sketch.constraints {
+            if self.selected_constraints.contains(&c.id) {
+                edit(c);
+                changed = true;
+            }
+        }
+        if changed {
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        }
+        InputResult::consumed()
+    }
+
+    /// Select the geometry referenced by the conflicting (or redundant)
+    /// constraints of the last diagnosis.
+    fn select_offenders(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        conflicting: bool,
+    ) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
         let diag = match &self.last_diagnosis {
             Some(d) => d.clone(),
             None => {
-                let d = solver::diagnose(sketch);
+                let d = solver::diagnose(&feature.sketch);
                 self.last_diagnosis = Some(d.clone());
                 d
             }
         };
-        let not_converged = matches!(self.last_solve, Some(SolveOutcome::NotConverged { .. }));
-
-        let (text, color, offenders): (String, egui::Color32, &[Uuid]) =
-            if sketch.geometry.is_empty() {
-                ("Empty sketch".to_string(), egui::Color32::GRAY, &[])
-            } else if !diag.analyzed {
-                (
-                    format!("{} DOF — too many constraints to analyze", diag.dof),
-                    egui::Color32::GRAY,
-                    &[],
-                )
-            } else if not_converged || !diag.conflicting.is_empty() {
-                (
-                    "Over-constrained: conflicting constraints".to_string(),
-                    egui::Color32::from_rgb(240, 110, 90),
-                    &diag.conflicting,
-                )
-            } else if !diag.redundant.is_empty() {
-                (
-                    "Redundant constraints".to_string(),
-                    egui::Color32::from_rgb(240, 170, 60),
-                    &diag.redundant,
-                )
-            } else if diag.dof == 0 && !sketch.constraints.is_empty() {
-                (
-                    "Fully constrained ✓".to_string(),
-                    egui::Color32::from_rgb(90, 220, 110),
-                    &[],
-                )
-            } else {
-                (
-                    format!("Under-constrained: {} degrees of freedom", diag.dof),
-                    egui::Color32::from_rgb(240, 200, 90),
-                    &[],
-                )
-            };
-
-        let response = ui.colored_label(color, text);
-        if !offenders.is_empty()
-            && response
-                .interact(egui::Sense::click())
-                .on_hover_text("Click to highlight the offending constraints' geometry")
-                .clicked()
-        {
-            self.selected.clear();
-            for constraint in &sketch.constraints {
-                if offenders.contains(&constraint.id) {
-                    self.selected
-                        .extend(sketch::constraint_refs(&constraint.kind));
-                }
+        let offenders = if conflicting {
+            &diag.conflicting
+        } else {
+            &diag.redundant
+        };
+        self.selected.clear();
+        self.selected_constraints.clear();
+        for c in &feature.sketch.constraints {
+            if offenders.contains(&c.id) {
+                self.selected_constraints.insert(c.id);
+                self.selected.extend(sketch::constraint_refs(&c.kind));
             }
         }
+        InputResult::consumed()
     }
 
-    /// "Elements" section: one row per geometry element with construction
-    /// toggle, delete, click-to-select and hover-to-highlight.
-    fn elements_panel(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: Sketch,
-    ) {
-        ui.horizontal(|ui| {
-            ui.heading("Elements");
-            egui::ComboBox::from_id_salt("sketch_element_filter")
-                .selected_text(self.element_filter.label())
-                .show_ui(ui, |ui| {
-                    for filter in [
-                        ElementFilter::All,
-                        ElementFilter::Normal,
-                        ElementFilter::Construction,
-                    ] {
-                        ui.selectable_value(&mut self.element_filter, filter, filter.label());
-                    }
-                });
-        });
-        if sketch.geometry.is_empty() {
-            ui.label("No geometry yet. Use the toolbar tools to draw.");
-            return;
+    /// Remove every element (and the constraints on them), or every
+    /// constraint, then re-solve.
+    fn delete_all(&mut self, ctx: &mut WorkbenchRuntimeContext, geometry: bool) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        if geometry {
+            let ids: Vec<Uuid> = feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect();
+            let removed = feature.sketch.remove_geometry_cascade(&ids);
+            ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
+        } else {
+            let n = feature.sketch.constraints.len();
+            feature.sketch.constraints.clear();
+            ctx.log_info(format!("Deleted {n} constraint(s)"));
         }
-
-        let mut delete_element: Option<Uuid> = None;
-        let mut toggle_construction: Option<Uuid> = None;
-        let mut hovered_row: Option<Uuid> = None;
-        egui::ScrollArea::vertical()
-            .id_salt("sketch_elements")
-            .max_height(180.0)
-            .show(ui, |ui| {
-                for geom in &sketch.geometry {
-                    let id = geom.id();
-                    if !self.element_filter.accepts(&sketch, id) {
-                        continue;
-                    }
-                    ui.horizontal(|ui| {
-                        if ui
-                            .small_button("✕")
-                            .on_hover_text("Delete element")
-                            .clicked()
-                        {
-                            delete_element = Some(id);
-                        }
-                        let mut construction = sketch.is_construction(id);
-                        if ui
-                            .checkbox(&mut construction, "")
-                            .on_hover_text("Construction geometry")
-                            .changed()
-                        {
-                            toggle_construction = Some(id);
-                        }
-                        let response =
-                            ui.selectable_label(self.selected.contains(&id), element_label(geom));
-                        if response.hovered() {
-                            hovered_row = Some(id);
-                        }
-                        if response.clicked() && !self.selected.remove(&id) {
-                            self.selected.insert(id);
-                        }
-                    });
-                }
-            });
-
-        // Hover-in-list highlights in the viewport; when the panel stops
-        // hovering, release the highlight for the viewport hit-test.
-        if let Some(id) = hovered_row {
-            self.hovered = Some(id);
-            self.hover_from_panel = true;
-        } else if self.hover_from_panel {
-            self.hovered = None;
-            self.hover_from_panel = false;
-        }
-
-        if let Some(id) = delete_element
-            && let Some(mut feature) = self.get_active_sketch(ctx)
-        {
-            let removed = feature.sketch.remove_geometry_cascade(&[id]);
-            if !removed.is_empty() {
-                for rid in &removed {
-                    self.selected.remove(rid);
-                }
-                self.hovered = None;
-                self.solve(ctx, &mut feature);
-                ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
-                self.store_sketch(ctx, feature);
-            }
-        }
-        if let Some(id) = toggle_construction
-            && let Some(mut feature) = self.get_active_sketch(ctx)
-        {
-            let flag = !feature.sketch.is_construction(id);
-            feature.sketch.set_construction(id, flag);
-            self.store_sketch(ctx, feature);
-        }
-    }
-
-    /// Constraint buttons applicable to the current selection. Dimensional
-    /// constraints are created at the measured value (no geometry jump) and
-    /// their value field is focused for immediate typing.
-    fn constraint_buttons(
-        &mut self,
-        ui: &mut egui::Ui,
-        ctx: &mut WorkbenchRuntimeContext,
-        sketch: Sketch,
-    ) {
-        use GeometryElement as GE;
-
-        let selected: Vec<&GE> = sketch
-            .geometry
-            .iter()
-            .filter(|g| self.selected.contains(&g.id()))
-            .collect();
-        let lines: Vec<Uuid> = selected
-            .iter()
-            .filter(|g| matches!(g, GE::Line(_)))
-            .map(|g| g.id())
-            .collect();
-        let points: Vec<Uuid> = selected
-            .iter()
-            .filter(|g| matches!(g, GE::Point(_)))
-            .map(|g| g.id())
-            .collect();
-        let circles: Vec<Uuid> = selected
-            .iter()
-            .filter(|g| matches!(g, GE::Circle(_) | GE::Arc(_)))
-            .map(|g| g.id())
-            .collect();
-        let ellipses: Vec<Uuid> = selected
-            .iter()
-            .filter(|g| matches!(g, GE::Ellipse(_)))
-            .map(|g| g.id())
-            .collect();
-
-        ui.heading("Add Constraint");
-        if selected.is_empty() {
-            ui.label("Select geometry in the viewport first.");
-            return;
-        }
-
-        // Dimensional kinds start at the measured value; the panel focuses
-        // the new row's value field right after.
-        let measured = |kind: &ConstraintKind| sketch::measured_value(&sketch, kind).unwrap_or(0.0);
-        let mut pending: Vec<ConstraintKind> = Vec::new();
-
-        if lines.len() == 1 && selected.len() == 1 {
-            let line = lines[0];
-            ui.horizontal(|ui| {
-                if ui.button("Horizontal").clicked() {
-                    pending.push(ConstraintKind::Horizontal { element: line });
-                }
-                if ui.button("Vertical").clicked() {
-                    pending.push(ConstraintKind::Vertical { element: line });
-                }
-                if ui.button("Length").clicked() {
-                    let kind = ConstraintKind::Length { line, length: 0.0 };
-                    pending.push(ConstraintKind::Length {
-                        line,
-                        length: measured(&kind),
-                    });
-                }
-            });
-            ui.horizontal(|ui| {
-                for (label, axis) in [
-                    ("Angle to X axis", AxisDirection::Horizontal),
-                    ("Angle to Y axis", AxisDirection::Vertical),
-                ] {
-                    if ui.button(label).clicked() {
-                        let kind = ConstraintKind::AngleToAxis {
-                            line,
-                            axis,
-                            angle_rad: 0.0,
-                        };
-                        pending.push(ConstraintKind::AngleToAxis {
-                            line,
-                            axis,
-                            angle_rad: measured(&kind).to_radians(),
-                        });
-                    }
-                }
-            });
-        }
-        if lines.len() == 2 && selected.len() == 2 {
-            ui.horizontal(|ui| {
-                if ui.button("Parallel").clicked() {
-                    pending.push(ConstraintKind::Parallel {
-                        line1: lines[0],
-                        line2: lines[1],
-                    });
-                }
-                if ui.button("Perpendicular").clicked() {
-                    pending.push(ConstraintKind::Perpendicular {
-                        line1: lines[0],
-                        line2: lines[1],
-                    });
-                }
-                if ui.button("Equal").clicked() {
-                    pending.push(ConstraintKind::EqualLength {
-                        line1: lines[0],
-                        line2: lines[1],
-                    });
-                }
-                if ui.button("Angle").clicked() {
-                    let kind = ConstraintKind::Angle {
-                        line1: lines[0],
-                        line2: lines[1],
-                        angle_rad: 0.0,
-                    };
-                    pending.push(ConstraintKind::Angle {
-                        line1: lines[0],
-                        line2: lines[1],
-                        angle_rad: measured(&kind).to_radians(),
-                    });
-                }
-            });
-        }
-        if circles.len() == 1 && selected.len() == 1 {
-            ui.horizontal(|ui| {
-                if ui.button("Radius").clicked() {
-                    let kind = ConstraintKind::Radius {
-                        circle: circles[0],
-                        radius: 0.0,
-                    };
-                    pending.push(ConstraintKind::Radius {
-                        circle: circles[0],
-                        radius: measured(&kind),
-                    });
-                }
-                if ui.button("Diameter").clicked() {
-                    let kind = ConstraintKind::Diameter {
-                        circle: circles[0],
-                        diameter: 0.0,
-                    };
-                    pending.push(ConstraintKind::Diameter {
-                        circle: circles[0],
-                        diameter: measured(&kind),
-                    });
-                }
-            });
-        }
-        if circles.len() == 2 && selected.len() == 2 {
-            ui.horizontal(|ui| {
-                if ui.button("Equal radius").clicked() {
-                    pending.push(ConstraintKind::EqualRadius {
-                        circle1: circles[0],
-                        circle2: circles[1],
-                    });
-                }
-                if ui.button("Tangent").clicked() {
-                    pending.push(ConstraintKind::Tangent {
-                        line_or_circle1: circles[0],
-                        item2: circles[1],
-                    });
-                }
-            });
-        }
-        if lines.len() == 1
-            && circles.len() == 1
-            && selected.len() == 2
-            && ui.button("Tangent").clicked()
-        {
-            pending.push(ConstraintKind::Tangent {
-                line_or_circle1: lines[0],
-                item2: circles[0],
-            });
-        }
-        if points.len() == 1 && selected.len() == 1 {
-            ui.horizontal(|ui| {
-                if ui.button("Fix point").clicked() {
-                    let position = sketch
-                        .point_position(points[0])
-                        .unwrap_or(Vec2D::new(0.0, 0.0));
-                    pending.push(ConstraintKind::FixedPoint {
-                        point: points[0],
-                        position,
-                    });
-                }
-                for (label, horizontal) in [("Dist X to origin", true), ("Dist Y to origin", false)]
-                {
-                    if ui.button(label).clicked() {
-                        let kind = distance_axis_kind(horizontal, points[0], None, 0.0);
-                        pending.push(distance_axis_kind(
-                            horizontal,
-                            points[0],
-                            None,
-                            measured(&kind),
-                        ));
-                    }
-                }
-            });
-        }
-        if points.len() == 2 && selected.len() == 2 {
-            ui.horizontal(|ui| {
-                if ui.button("Coincident").clicked() {
-                    pending.push(ConstraintKind::Coincident {
-                        point1: points[0],
-                        point2: points[1],
-                    });
-                }
-                if ui.button("Distance").clicked() {
-                    let kind = ConstraintKind::Distance {
-                        point1: points[0],
-                        point2: points[1],
-                        distance: 0.0,
-                    };
-                    pending.push(ConstraintKind::Distance {
-                        point1: points[0],
-                        point2: points[1],
-                        distance: measured(&kind),
-                    });
-                }
-                for (label, horizontal) in [("Dist X", true), ("Dist Y", false)] {
-                    if ui.button(label).clicked() {
-                        let kind = distance_axis_kind(horizontal, points[0], Some(points[1]), 0.0);
-                        pending.push(distance_axis_kind(
-                            horizontal,
-                            points[0],
-                            Some(points[1]),
-                            measured(&kind),
-                        ));
-                    }
-                }
-            });
-        }
-        if points.len() == 1 && lines.len() == 1 && selected.len() == 2 {
-            ui.horizontal(|ui| {
-                if ui.button("Point on line").clicked() {
-                    pending.push(ConstraintKind::PointOnLine {
-                        point: points[0],
-                        line: lines[0],
-                    });
-                }
-                if ui.button("Midpoint").clicked() {
-                    pending.push(ConstraintKind::Midpoint {
-                        point: points[0],
-                        line: lines[0],
-                    });
-                }
-            });
-        }
-        if points.len() == 2
-            && lines.len() == 1
-            && selected.len() == 3
-            && ui.button("Symmetric").clicked()
-        {
-            pending.push(ConstraintKind::Symmetric {
-                point1: points[0],
-                point2: points[1],
-                line: lines[0],
-            });
-        }
-        if points.len() == 3
-            && selected.len() == 3
-            && ui
-                .button("Symmetric about point")
-                .on_hover_text("First two points mirror about the third")
-                .clicked()
-        {
-            pending.push(ConstraintKind::SymmetricAboutPoint {
-                point1: points[0],
-                point2: points[1],
-                center: points[2],
-            });
-        }
-        if points.len() == 1
-            && circles.len() == 1
-            && selected.len() == 2
-            && ui.button("Point on circle").clicked()
-        {
-            pending.push(ConstraintKind::PointOnCircle {
-                point: points[0],
-                circle: circles[0],
-            });
-        }
-        if points.len() == 1
-            && ellipses.len() == 1
-            && selected.len() == 2
-            && ui.button("Point on ellipse").clicked()
-        {
-            pending.push(ConstraintKind::PointOnEllipse {
-                point: points[0],
-                ellipse: ellipses[0],
-            });
-        }
-        if ui
-            .button("Block")
-            .on_hover_text("Freeze every selected element where it is now")
-            .clicked()
-        {
-            for geom in &selected {
-                pending.push(ConstraintKind::Block { element: geom.id() });
-            }
-        }
-
-        for kind in pending {
-            self.add_constraint(ctx, kind);
-        }
+        self.selected.clear();
+        self.selected_constraints.clear();
+        self.hovered = None;
+        self.tool_state = ToolState::Idle;
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        InputResult::consumed()
     }
 }
 
-/// DistanceX or DistanceY, by axis.
-#[cfg(feature = "egui")]
-fn distance_axis_kind(horizontal: bool, a: Uuid, b: Option<Uuid>, value: f32) -> ConstraintKind {
-    if horizontal {
-        ConstraintKind::DistanceX { a, b, value }
-    } else {
-        ConstraintKind::DistanceY { a, b, value }
-    }
+/// Tools that create geometry from clicks, for which object snapping can
+/// be switched off.
+fn is_draw_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "sketch.point"
+            | "sketch.line"
+            | "sketch.arc"
+            | "sketch.arc3"
+            | "sketch.circle"
+            | "sketch.circle3"
+            | "sketch.ellipse"
+            | "sketch.bspline"
+            | "sketch.rect"
+            | "sketch.rect_center"
+            | "sketch.polygon"
+            | "sketch.slot"
+            | "sketch.arc_slot"
+    )
 }
 
 fn point_in_rect(p: Vec2D, min: Vec2D, max: Vec2D) -> bool {
@@ -2018,135 +2165,6 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     } else {
         trimmed.parse().ok()
     }
-}
-
-/// Health flag for a constraint row (from the last diagnosis).
-#[cfg(feature = "egui")]
-#[derive(Clone, Copy, PartialEq)]
-enum RowFlag {
-    None,
-    Conflicting,
-    Redundant,
-}
-
-/// One row of the constraint list: active toggle, (tinted) label, rename
-/// field, and — for dimensional constraints — either an editable value
-/// (driving) or the measured value in blue (reference), plus the driving
-/// toggle. Returns the updated constraint when anything was edited.
-#[cfg(feature = "egui")]
-fn constraint_row(
-    ui: &mut egui::Ui,
-    sketch: &Sketch,
-    constraint: &Constraint,
-    flag: RowFlag,
-    focus: bool,
-) -> Option<Constraint> {
-    let mut updated: Option<Constraint> = None;
-    let mut edit = |f: &dyn Fn(&mut Constraint)| {
-        let mut c = constraint.clone();
-        f(&mut c);
-        updated = Some(c);
-    };
-
-    let mut active = constraint.active;
-    if ui
-        .checkbox(&mut active, "")
-        .on_hover_text("Active (off keeps the constraint but disables it)")
-        .changed()
-    {
-        edit(&|c| c.active = active);
-    }
-
-    let label = constraint
-        .name
-        .clone()
-        .unwrap_or_else(|| sketch::constraint_label(&constraint.kind));
-    let color = match flag {
-        RowFlag::Conflicting => egui::Color32::from_rgb(240, 110, 90),
-        RowFlag::Redundant => egui::Color32::from_rgb(240, 170, 60),
-        RowFlag::None if !constraint.active => egui::Color32::GRAY,
-        RowFlag::None => ui.visuals().text_color(),
-    };
-    ui.colored_label(color, label)
-        .on_hover_text(sketch::constraint_label(&constraint.kind));
-
-    if let Some(value) = sketch::dimension_value(&constraint.kind) {
-        let angular = sketch::is_angular(&constraint.kind);
-        if constraint.driving && constraint.active {
-            let mut v = value;
-            let mut drag = egui::DragValue::new(&mut v).speed(if angular { 1.0 } else { 0.1 });
-            drag = if angular {
-                drag.suffix("°")
-            } else {
-                drag.range(0.001..=1.0e6)
-            };
-            let response = ui.add(drag);
-            if focus {
-                response.request_focus();
-                response.scroll_to_me(None);
-            }
-            if response.changed() {
-                edit(&|c| c.kind = sketch::with_dimension_value(&c.kind, v));
-            }
-        } else {
-            // Reference dimension: measured, shown in blue (grey when the
-            // whole constraint is deactivated — kept, valued, disabled).
-            let measured = sketch::measured_value(sketch, &constraint.kind);
-            let text = match measured {
-                Some(m) if angular => format!("({m:.1}°)"),
-                Some(m) => format!("({m:.2})"),
-                None => "(—)".to_string(),
-            };
-            let value_color = if constraint.active {
-                egui::Color32::from_rgb(110, 170, 255)
-            } else {
-                egui::Color32::GRAY
-            };
-            ui.colored_label(value_color, text)
-                .on_hover_text("Measured value (reference dimension)");
-        }
-        let mut driving = constraint.driving;
-        if ui
-            .checkbox(&mut driving, "drv")
-            .on_hover_text("Driving dimension (off = reference: measured, not enforced)")
-            .changed()
-        {
-            edit(&|c| c.driving = driving);
-        }
-    }
-
-    let mut name = constraint.name.clone().unwrap_or_default();
-    let response = ui.add(
-        egui::TextEdit::singleline(&mut name)
-            .desired_width(56.0)
-            .hint_text("name"),
-    );
-    if response.changed() {
-        let name = name.clone();
-        edit(&move |c| {
-            c.name = if name.is_empty() {
-                None
-            } else {
-                Some(name.clone())
-            }
-        });
-    }
-
-    updated
-}
-
-/// Elements-panel row label: element type plus an id suffix.
-#[cfg(feature = "egui")]
-fn element_label(element: &GeometryElement) -> String {
-    let kind = match element {
-        GeometryElement::Point(_) => "Point",
-        GeometryElement::Line(_) => "Line",
-        GeometryElement::Arc(_) => "Arc",
-        GeometryElement::Circle(_) => "Circle",
-        GeometryElement::Ellipse(_) => "Ellipse",
-        GeometryElement::BSpline(_) => "B-spline",
-    };
-    format!("{kind} [{}]", &element.id().to_string()[..8])
 }
 
 #[cfg(all(test, feature = "egui"))]
