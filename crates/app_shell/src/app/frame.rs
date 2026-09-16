@@ -157,7 +157,8 @@ impl PrintCadApp {
                 .is_some_and(|t| t.elapsed() < Duration::from_millis(150));
             let animating = self.camera.is_animating()
                 || self.frame_submission.suppress_edges
-                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some();
+                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
+                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some();
             if !(self.redraw_needed
                 || input_active
                 || self.async_work_pending()
@@ -240,6 +241,20 @@ impl PrintCadApp {
                 },
                 &self.user_settings.camera,
             );
+        }
+
+        // Dev/bench hook: quit through the real exit path after a delay, so
+        // teardown can be timed on a loaded document without a dialog.
+        if let Some(after_ms) = std::env::var("PRINTCAD_EXIT_AFTER_MS")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+        {
+            if self.bench_started.elapsed().as_millis() as u64 >= after_ms {
+                tracing::info!(target: "printcad.frame", "bench exit requested");
+                self.wait_for_document_saves();
+                event_loop.exit();
+                return;
+            }
         }
 
         // Dev/bench hooks: import a STEP or open a document at startup
@@ -397,7 +412,8 @@ impl PrintCadApp {
                 || self.step_import_pending.is_some();
             let animating = self.camera.is_animating()
                 || self.frame_submission.suppress_edges
-                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some();
+                || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
+                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some();
             self.pending_ui_repaint = ui_repaint_delay;
             self.last_wake_reason = (
                 input_active,

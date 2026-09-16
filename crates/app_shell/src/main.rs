@@ -191,6 +191,8 @@ struct PrintCadApp {
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
+    /// Process start, for the `PRINTCAD_EXIT_AFTER_MS` bench hook.
+    bench_started: Instant,
     /// Rolling per-phase frame cost, emitted once a second alongside the FPS
     /// counter (target `printcad.frame`): (ui ms, render ms, frames).
     frame_phase_accum: (f32, f32, u32),
@@ -319,6 +321,7 @@ impl PrintCadApp {
             last_sent_presence: None,
             document_load_epoch: 0,
             bench_open_fired: false,
+            bench_started: Instant::now(),
             frame_phase_accum: (0.0, 0.0, 0),
             prev_view_proj: None,
             last_input_time: None,
@@ -358,6 +361,14 @@ impl PrintCadApp {
     fn call_workbench_activate(&mut self, wb_id: &WorkbenchId) {
         let params = self.interaction_ctx_params();
         self.with_workbench_ctx(wb_id, params, |wb, ctx| wb.on_activate(ctx));
+    }
+}
+
+impl Drop for PrintCadApp {
+    fn drop(&mut self) {
+        // Teardown timing: each big owner logs its own phase; this marks
+        // the start so the gaps between them are attributable.
+        tracing::info!(target: "printcad.frame", "app teardown begins");
     }
 }
 

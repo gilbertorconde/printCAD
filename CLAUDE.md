@@ -136,7 +136,16 @@ hacks, no silently degraded feature). Instead:
 ## Invariants — violate these and things break subtly
 
 - **`app/gfx.rs` field order IS the teardown contract** (struct fields drop in
-  *declaration* order): renderer before window. Do not reorder.
+  *declaration* order): renderer before window. Do not reorder. Inside the
+  renderer the same rule bites: anything that frees device objects in its own
+  `Drop` (the egui renderer) must be `take()`n and dropped in
+  `RendererCore::drop` BEFORE `destroy_device`, or it runs on a dead device —
+  a hang or segfault at exit plus a wall of "leaked objects".
+- **Vulkan validation layers default to debug builds only**
+  (`RenderSettings::default`); `PRINTCAD_VULKAN_VALIDATION=1` enables them for
+  a release run. `PRINTCAD_EXIT_AFTER_MS` quits through the real exit path
+  after a delay (keeps the loop awake) so teardown can be timed on a loaded
+  document.
 - **UiLayer must never own state the host mutates.** `active_tool` and
   `active_workbench` are seeded from `UiFrameInputs` every frame. A parallel
   copy in the UI caused an infinite New-Body loop once. Panel-hook ctx

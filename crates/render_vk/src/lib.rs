@@ -156,7 +156,11 @@ pub struct RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         Self {
-            prefer_validation_layers: true,
+            // Validation is a development tool: on in debug builds, off in
+            // release, where it taxes every frame and every teardown check.
+            // PRINTCAD_VULKAN_VALIDATION=1 turns it on for a release run.
+            prefer_validation_layers: cfg!(debug_assertions)
+                || std::env::var_os("PRINTCAD_VULKAN_VALIDATION").is_some(),
             preferred_gpu: None,
             msaa_samples: 4,
         }

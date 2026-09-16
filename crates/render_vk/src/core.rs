@@ -1328,9 +1328,18 @@ impl RendererCore {
 
 impl Drop for RendererCore {
     fn drop(&mut self) {
+        let started = std::time::Instant::now();
         unsafe {
             self.device.device_wait_idle().ok();
         }
+        // The egui renderer owns pipelines, per-frame buffers and textures
+        // created on our device, and frees them in its own Drop through a
+        // handle it holds. As a plain field it would drop AFTER this body —
+        // after `destroy_device` — freeing objects on a dead device: a
+        // segfault at exit, and every one of its allocations reported as
+        // leaked by the validation layer. Take it down first, explicitly.
+        drop(self.egui_renderer.take());
+        self.textures_to_free.clear();
         self.cleanup_swapchain();
         self.cleanup_sync_objects();
         if self.command_pool != vk::CommandPool::null() {
@@ -1357,6 +1366,11 @@ impl Drop for RendererCore {
         unsafe {
             self.instance.destroy_instance(None);
         }
+        tracing::debug!(
+            target: "printcad.frame",
+            ms = started.elapsed().as_millis() as u64,
+            "renderer torn down"
+        );
     }
 }
 
