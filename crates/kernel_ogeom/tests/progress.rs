@@ -106,9 +106,12 @@ fn a_rebuild_announces_each_feature_in_order() {
         ours.starts_with(&["Pad 1/2".to_string(), "Pad 2/2".to_string()]),
         "each op announces its feature name and position, in order: {ours:?}"
     );
+    // The mesh pass is a detail beneath the last op, not a context of its
+    // own: unprefixed, so a sink shows it while the pass runs and drops it
+    // the moment a counted stage takes the display.
     assert!(
-        ours.iter().any(|s| s.starts_with("Meshing ")),
-        "the final mesh is announced too: {ours:?}"
+        heard.iter().any(|s| s.starts_with("Meshing ")),
+        "the final mesh is announced as a detail: {heard:?}"
     );
 }
 

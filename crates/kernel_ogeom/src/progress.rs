@@ -13,7 +13,7 @@
 //! and library callers need not care.
 //!
 //! The kernel's sink carries only a name — no counts, no fraction — so any
-//! "3/7" in a label is counted on this side (ogeom-rs#9).
+//! "3/7" in a label is counted on this side.
 
 use std::fmt::Display;
 
@@ -27,14 +27,6 @@ pub fn context(label: impl Display) {
     ogeom::core::progress::stage(&format!("{CONTEXT_PREFIX}{label}"));
 }
 
-/// Offer the host a chance to stop, between items of one of our own loops.
-///
-/// The kernel checkpoints inside booleans, marching and its own import loops,
-/// but not inside `triangulate_face` — and our op, solid and face loops are
-/// the outer ones anyway, so they are the right place to ask.
-///
-/// Returns the kernel's `cancelled` message when the watch has been cancelled;
-/// free when unwatched.
 /// Announce a sub-stage beneath the current context — unprefixed, so a
 /// sink files it as detail like the kernel's own stages: shown while a
 /// sequential phase runs, ignored while our counted loop owns the display.
@@ -60,6 +52,14 @@ pub fn kernel_stage_at_for_tests(name: &str, done: u64, total: u64) {
     ogeom::core::progress::stage_at(name, done, total);
 }
 
+/// Offer the host a chance to stop, between items of one of our own loops.
+///
+/// The kernel checkpoints inside booleans, marching and its own import loops,
+/// but not inside `triangulate_face` — and our op, solid and face loops are
+/// the outer ones anyway, so they are the right place to ask.
+///
+/// Returns the kernel's `cancelled` message when the watch has been cancelled;
+/// free when unwatched.
 pub fn checkpoint() -> Result<(), String> {
     ogeom::core::progress::checkpoint().map_err(|e| e.to_string())
 }
