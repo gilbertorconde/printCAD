@@ -36,9 +36,9 @@ struct PickPushConstants {
 
 /// GPU-based picking renderer that renders object IDs to an offscreen buffer.
 ///
-/// As of the per-body cache refactor it no longer owns vertex/index buffers
-/// of its own — it draws straight out of the same `MeshCache` the solid pass
-/// uses, halving GPU memory and removing one full pack-and-upload per frame.
+/// It owns no vertex/index buffers of its own — it draws straight out of
+/// the same `MeshCache` the solid pass uses, so geometry lives on the GPU
+/// once and is packed and uploaded once per change, not once per pass.
 pub(crate) struct PickRenderer {
     // Offscreen framebuffer resources
     id_image: vk::Image,

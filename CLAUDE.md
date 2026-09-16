@@ -264,6 +264,14 @@ disabled; pan/zoom/roll allowed).
   properties (bounds, tangency, closure), not implementation details.
 - Before committing: fmt, clippy (zero warnings), full test suite, and a
   short `cargo run` smoke check watching for `printcad.vulkan` output.
+- Comments describe present behaviour, never the change that produced it.
+  `node scripts/lint-comment-rot.mjs --all` gates this in CI (default mode
+  lints only lines added against `origin/master`; `--pedantic` adds an
+  advisory tier). No "used to", "no longer", "since X landed", and no issue,
+  PR or commit references in comments — the one sanctioned place for a
+  kernel issue number is the `#[ignore = "kernel: … (ogeom-rs#N)"]` string.
+  `lint-comment-rot: ignore` on a line opts it out when a reference is
+  load-bearing.
 
 ## Known approximations / roadmap
 

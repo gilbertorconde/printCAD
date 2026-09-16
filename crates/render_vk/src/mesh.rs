@@ -318,8 +318,8 @@ pub(crate) struct MeshCache {
     entries: HashMap<Uuid, CachedMesh>,
     /// Buffers replaced by a regrow or dropped by GC. Destroyed
     /// MAX_FRAMES_IN_FLIGHT frames later in [`Self::begin_frame`], once no
-    /// in-flight command buffer can still reference them — this replaces the
-    /// device_wait_idle stalls the old code paid on every regrow/GC.
+    /// in-flight command buffer can still reference them — deferral is what
+    /// lets a regrow or GC pass run without a device_wait_idle stall.
     retired: Vec<RetiredBuffer>,
     /// Monotonic frame counter advanced by [`Self::begin_frame`].
     frame_counter: u64,

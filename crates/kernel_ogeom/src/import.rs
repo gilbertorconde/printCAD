@@ -195,7 +195,7 @@ fn unit_from_scale(scale_mm: f64) -> Option<LengthUnit> {
 /// triangulate and draw as gaps. `fix_face_pcurves` is the instructed
 /// follow-up — the same projection fit at the caller's cap, each fitted
 /// edge's tolerance widened to the offset actually measured, so the model
-/// records what it now knows. A face past even this cap stays a gap and is
+/// records the true fit. A face past even this cap stays a gap and is
 /// logged with its measured distance; silently stretching it into place
 /// would misstate the geometry.
 ///

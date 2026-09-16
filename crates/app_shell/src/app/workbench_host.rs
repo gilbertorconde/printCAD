@@ -1,6 +1,7 @@
 //! Shared plumbing for handing a [`WorkbenchRuntimeContext`] to workbench
-//! hooks. Every hook call site used to hand-roll context construction and
-//! write-back extraction; this module is the single place that shape lives.
+//! hooks. Context construction and write-back extraction have one shape,
+//! and this module is the single place it lives; hook call sites never
+//! build a context by hand.
 
 use core_document::{
     CameraOrientRequest, FeatureId, LogEntry, LogLevel, Workbench, WorkbenchId,

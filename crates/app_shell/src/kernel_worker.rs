@@ -6,9 +6,9 @@
 //! imports.
 //!
 //! The worker also performs the `std::fs::read(path)` that backs the
-//! document's asset blob — that I/O previously sat on the UI thread right
-//! after the kernel returned, and is naturally cheap to colocate with the
-//! kernel call since the worker is already off the hot path.
+//! document's asset blob — that I/O belongs off the UI thread, and is
+//! naturally cheap to colocate with the kernel call since the worker is
+//! already off the hot path.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};

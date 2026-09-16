@@ -527,8 +527,8 @@ impl PrintCadApp {
 ///
 /// The GPU pick reconstructs the position from the depth buffer, whose
 /// precision varies with view angle and distance — the raw point can sit a
-/// millimetre or more off the surface (which used to make face selection
-/// fail on some faces and silently fall back to whole-body selection). So:
+/// millimetre or more off the surface, far enough that a naive containment
+/// test misses the face and falls back to whole-body selection. So:
 /// find the nearest triangle, take the face plane from ITS exact vertices,
 /// and project the picked point onto that plane.
 pub(crate) fn face_ref_from_mesh(

@@ -996,8 +996,8 @@ impl RendererCore {
         self.cleanup_framebuffers();
 
         let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
-        // One framebuffer: the scene pass no longer targets the swapchain,
-        // it targets the persistent scene image that every frame copies in.
+        // One framebuffer: the scene pass targets the persistent scene
+        // image that every frame copies in, not the swapchain.
         let attachments = if using_msaa {
             // MSAA: [color_msaa, depth, resolve -> scene image]
             vec![

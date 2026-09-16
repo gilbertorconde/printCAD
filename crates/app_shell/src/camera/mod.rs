@@ -254,7 +254,7 @@ impl CameraController {
                     }
                 }
 
-                // LMB drag no longer orbits (the button belongs to selection)
+                // LMB drag does not orbit (the button belongs to selection)
                 // but still tracks the click-vs-drag threshold so a drag
                 // doesn't count as a selection click on release.
                 if self.lmb_was_down_scene && !self.lmb_dragging_scene {

@@ -683,11 +683,10 @@ fn draw_cube_interactive(
     // Orthographic projection from cube-local space to widget pixels:
     //   * +X (cube right) → +screen X (right of widget)
     //   * +Y (cube up)    → -screen Y (top of widget, since egui Y points down)
-    // Earlier versions negated X to compensate for a separate horizontal mirror
-    // in the main camera. With the camera's Vulkan Y-flip in place, the main
-    // viewport is no longer mirrored, so the cube must use a normal +X mapping
-    // — otherwise it appears L/R flipped and rotates in the opposite direction
-    // from the part when the camera orbits.
+    // The camera bakes the Vulkan Y-flip into its projection, so the main
+    // viewport is not mirrored and the cube must use a normal +X mapping.
+    // Negating X here would make it appear L/R flipped and rotate in the
+    // opposite direction from the part when the camera orbits.
     let project =
         |v: Vec3| -> Pos2 { Pos2::new(center.x + v.x * cube_scale, center.y - v.y * cube_scale) };
 

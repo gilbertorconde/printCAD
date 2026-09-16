@@ -88,9 +88,9 @@ fn orient_to_plane_puts_sketch_axes_screen_aligned() {
     use super::CameraController;
     use glam::Vec3;
 
-    // Default settings use the Z-up axis preset — the case that used to
-    // roll the view on sketch entry (the orientation was built against a
-    // hardcoded XYZ camera basis instead of the preset's).
+    // Default settings use the Z-up axis preset — the case where an
+    // orientation built against a hardcoded XYZ camera basis, instead of
+    // the preset's, rolls the view on sketch entry.
     let settings = CameraSettings::default();
     let mut cam = CameraController::new(&settings, (800, 600));
     cam.update_viewport((0, 0), (800, 600));
