@@ -246,9 +246,10 @@ impl PrintCadApp {
         self.registry
             .tools_for(wb_id)
             .map(|tools| {
-                tools
-                    .iter()
-                    .any(|t| t.id == tool_id && t.behavior == core_document::ToolBehavior::Action)
+                tools.iter().any(|t| {
+                    t.id == core_document::base_tool_id(tool_id)
+                        && t.behavior == core_document::ToolBehavior::Action
+                })
             })
             .unwrap_or(false)
     }

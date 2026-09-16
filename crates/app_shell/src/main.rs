@@ -268,6 +268,11 @@ struct PrintCadApp {
     /// Workbench to return to when sketch editing finishes, when the sketch
     /// flow was started from another workbench (e.g. Part Design).
     return_workbench: Option<ActiveWorkbench>,
+    /// A workbench task is open in the right panel; its edits form one undo
+    /// entry until it closes.
+    task_open: bool,
+    /// The title the window currently shows; rewritten only on change.
+    window_title: String,
 }
 
 impl PrintCadApp {
@@ -357,6 +362,8 @@ impl PrintCadApp {
             face_highlight_id: Uuid::new_v4(),
             last_select_click: None,
             return_workbench: None,
+            task_open: false,
+            window_title: String::new(),
         }
     }
 
@@ -412,9 +419,9 @@ impl PrintCadApp {
             return;
         }
 
-        let window = match event_loop.create_window(
-            WindowAttributes::default().with_title("printCAD (prototype)".to_string()),
-        ) {
+        let window = match event_loop
+            .create_window(WindowAttributes::default().with_title("printCAD".to_string()))
+        {
             Ok(window) => window,
             Err(err) => {
                 error!("failed to create window: {err}");

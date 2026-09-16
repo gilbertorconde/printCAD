@@ -36,6 +36,13 @@ struct FrameIntents {
     orient_to_plane: Option<core_document::CameraOrientRequest>,
     finish_sketch: bool,
     quit: bool,
+    request_workbench: Option<ActiveWorkbench>,
+    undo: bool,
+    redo: bool,
+    toggle_log_panel: bool,
+    set_projection: Option<settings::ProjectionMode>,
+    recompute_all: bool,
+    task_closed: Option<core_document::TaskOutcome>,
 }
 
 impl PrintCadApp {
@@ -94,7 +101,50 @@ impl PrintCadApp {
                 UiCommand::SwitchWorkbench { from, to } => {
                     intents.workbench_switch = Some((from, to));
                 }
+                UiCommand::RequestWorkbench(wb) => intents.request_workbench = Some(wb),
+                UiCommand::Undo => intents.undo = true,
+                UiCommand::Redo => intents.redo = true,
+                UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
+                UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
+                UiCommand::RecomputeAll => intents.recompute_all = true,
+                UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
             }
+        }
+
+        // Undo and redo first: they replace what every later intent acts on.
+        if intents.undo {
+            self.perform_undo();
+        }
+        if intents.redo {
+            self.perform_redo();
+        }
+        if intents.toggle_log_panel {
+            self.user_settings.rendering.show_log_panel =
+                !self.user_settings.rendering.show_log_panel;
+            intents.persist_settings = true;
+        }
+        if let Some(mode) = intents.set_projection {
+            self.user_settings.camera.projection = mode;
+            intents.persist_settings = true;
+            intents.apply_camera_settings = true;
+        }
+        if intents.recompute_all {
+            wb_part::mark_all_part_features_dirty(&mut self.document);
+            app_log::info("Recomputing every part feature");
+        }
+        if let Some(outcome) = intents.task_closed {
+            // The task's edits form one undo entry; a closed task ends it.
+            self.journal.note(&mut self.document);
+            match outcome {
+                core_document::TaskOutcome::Accepted { label } => app_log::info(label),
+                core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
+                core_document::TaskOutcome::Open => {}
+            }
+        }
+        if let Some(wb) = intents.request_workbench
+            && wb != self.active_workbench
+        {
+            intents.workbench_switch = Some((self.active_workbench.clone(), wb));
         }
 
         // ---- Phase 2: apply in legacy frame order ----
@@ -195,6 +245,7 @@ impl PrintCadApp {
         if let Some((old_wb, new_wb)) = intents.workbench_switch {
             // A deliberate user switch cancels any pending return-to-bench.
             self.return_workbench = None;
+            self.active_workbench = new_wb.clone();
             self.call_workbench_deactivate(&old_wb.0);
             self.call_workbench_activate(&new_wb.0);
         }

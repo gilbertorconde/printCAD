@@ -341,8 +341,30 @@ fn describe_workbench(raw: &str) -> String {
     }
 }
 
-pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>) -> TreeUiResult {
+/// What the tree draws with this frame.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct TreeDrawOptions<'a> {
+    pub selected: Option<TreeItemId>,
+    /// The feature whose edit session is open: badged `EDITING`, and every
+    /// other row dims.
+    pub editing: Option<FeatureId>,
+    /// Case-insensitive substring over labels; a branch stays visible when
+    /// any descendant matches.
+    pub filter: &'a str,
+}
+
+fn matches_filter(node: &TreeNode, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    let needle = filter.to_lowercase();
+    node.label.to_lowercase().contains(&needle)
+        || node.children.iter().any(|c| matches_filter(c, filter))
+}
+
+pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>) -> TreeUiResult {
     let mut result = TreeUiResult::default();
+    let selected = options.selected;
 
     // One checkbox-width per level: deep assemblies stay readable instead of
     // marching off the panel. (CollapsingHeader indents its body by this.)
@@ -354,7 +376,9 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>
         .id_salt("document_root")
         .show(ui, |ui| {
             for node in model.nodes() {
-                draw_node(ui, node, selected, &mut result);
+                if matches_filter(node, options.filter) {
+                    draw_node(ui, node, selected, &options, &mut result);
+                }
             }
         });
     handle_response(
@@ -370,8 +394,11 @@ fn draw_node(
     ui: &mut Ui,
     node: &TreeNode,
     selected: Option<TreeItemId>,
+    options: &TreeDrawOptions<'_>,
     result: &mut TreeUiResult,
 ) {
+    let editing_here =
+        matches!((node.id, options.editing), (TreeItemId::Feature(a), Some(b)) if a == b);
     // Depth needs no manual spacing: every level already lives inside its
     // parent's CollapsingHeader body, which carries the (shrunken) indent.
     // Nodes with children are rendered as collapsible tree branches; leaves as simple rows.
@@ -387,6 +414,9 @@ fn draw_node(
                 ui.selectable_label(is_selected, label)
             };
             let response = attach_feature_menu(response, node, result);
+            if editing_here {
+                ui_kit::widgets::badge(ui, "EDITING", ui_kit::tokens::ACCENT);
+            }
             handle_response(response, node.id, result);
         });
     } else {
@@ -397,11 +427,16 @@ fn draw_node(
                 .id_salt(format!("tree_node_{:?}", node.id))
                 .show(ui, |ui| {
                     for child in &node.children {
-                        draw_node(ui, child, selected, result);
+                        if matches_filter(child, options.filter) {
+                            draw_node(ui, child, selected, options, result);
+                        }
                     }
                 });
 
             let response = attach_feature_menu(collapsing.header_response, node, result);
+            if editing_here {
+                ui_kit::widgets::badge(ui, "EDITING", ui_kit::tokens::ACCENT);
+            }
             handle_response(response, node.id, result);
         });
     }

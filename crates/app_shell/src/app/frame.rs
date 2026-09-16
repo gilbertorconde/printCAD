@@ -294,8 +294,28 @@ impl PrintCadApp {
 
         // Update camera animation and assemble this frame's scene submission
         // before the UI/render block takes its borrows on `gfx`.
-        let (screen_space_overlays, screen_space_marks, screen_space_labels) =
-            self.build_scene_submission(dt_secs);
+        let viewport_data = self.build_scene_submission(dt_secs);
+        let ViewportData {
+            overlays: screen_space_overlays,
+            marks: screen_space_marks,
+            labels: screen_space_labels,
+            hud: viewport_hud,
+            status: status_items,
+            task,
+            editing_feature,
+        } = viewport_data;
+        let host_params = ui::HostCtxParams {
+            camera_position: self.camera.position(),
+            camera_target: self.camera.target(),
+            viewport: self
+                .frame_submission
+                .viewport_rect
+                .map(|r| (r.x, r.y, r.width, r.height))
+                .unwrap_or((0, 0, 1, 1)),
+            view_proj: Some(self.camera.view_projection()),
+            selected_body_id: self.active_body_id.map(|id| id.0),
+            selected_face: self.last_face_hit.as_ref().map(|(_, f)| *f),
+        };
 
         let commands;
 
@@ -329,6 +349,7 @@ impl PrintCadApp {
                         settings: &mut self.user_settings,
                         document: &mut self.document,
                         registry: &mut self.registry,
+                        host: host_params,
                         orientation_input: Some(&orientation_input),
                         fps: (!self.fps_display_idle).then_some(self.current_fps),
                         scene_redraws_per_s: self.scene_redraws_per_s,
@@ -339,7 +360,10 @@ impl PrintCadApp {
                         axis_system: self.camera.axis_system(),
                         tree_selection: self.tree_selection,
                         active_document_object: self.active_document_object,
-                        selected_body_id: self.active_body_id,
+                        editing_feature,
+                        viewport_hud,
+                        status_items,
+                        task,
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,
@@ -371,6 +395,18 @@ impl PrintCadApp {
                 self.frame_submission.egui = Some(ui_result.submission);
                 self.active_tool = ui_result.active_tool;
                 self.active_workbench = ui_result.active_workbench;
+                self.task_open = ui_result.task_open;
+
+                // The window title follows the document and its dirty state.
+                let title = if self.document.metadata().dirty() {
+                    format!("{} • — printCAD", self.document.name())
+                } else {
+                    format!("{} — printCAD", self.document.name())
+                };
+                if title != self.window_title {
+                    window.set_title(&title);
+                    self.window_title = title;
+                }
 
                 self.frame_submission.viewport_rect = Some(RenderViewportRect {
                     x: ui_result.viewport.x,
@@ -503,14 +539,7 @@ impl PrintCadApp {
                 .unwrap_or(false)
     }
 
-    fn build_scene_submission(
-        &mut self,
-        dt_secs: f32,
-    ) -> (
-        Vec<core_document::ScreenSpaceOverlay>,
-        Vec<core_document::ScreenSpaceMark>,
-        Vec<core_document::ScreenSpaceLabel>,
-    ) {
+    fn build_scene_submission(&mut self, dt_secs: f32) -> ViewportData {
         self.camera.set_orbit_lock(self.sketch_editing_active());
         self.camera.flush_pending_wheel(&self.user_settings.camera);
         self.camera
@@ -663,16 +692,19 @@ impl PrintCadApp {
         // Screen-space overlays + labels from the active workbench
         // (constant-thickness lines and constant-size text).
         let params = self.overlay_ctx_params();
-        let (screen_space_overlays, screen_space_marks, mut screen_space_labels) = self
-            .with_workbench_ctx(&wb_id, params, |wb, ctx| {
-                (
-                    wb.get_screen_space_overlays(ctx, ctx.active_document_object),
-                    wb.get_screen_space_marks(ctx, ctx.active_document_object),
-                    wb.get_screen_space_labels(ctx, ctx.active_document_object),
-                )
+        let mut data = self
+            .with_workbench_ctx(&wb_id, params, |wb, ctx| ViewportData {
+                overlays: wb.get_screen_space_overlays(ctx, ctx.active_document_object),
+                marks: wb.get_screen_space_marks(ctx, ctx.active_document_object),
+                labels: wb.get_screen_space_labels(ctx, ctx.active_document_object),
+                hud: wb.viewport_hud(ctx),
+                status: wb.status_items(ctx),
+                task: wb.task(ctx),
+                editing_feature: wb.editing_feature(),
             })
-            .map(|(triple, _outcome)| triple)
+            .map(|(data, _outcome)| data)
             .unwrap_or_default();
+        let screen_space_labels = &mut data.labels;
 
         // Peers' cursors: a named marker where each other editor points.
         // Same projection the overlays use; a cursor behind the camera or
@@ -729,10 +761,19 @@ impl PrintCadApp {
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
 
-        (
-            screen_space_overlays,
-            screen_space_marks,
-            screen_space_labels,
-        )
+        data
     }
+}
+
+/// Everything a workbench contributes to the viewport and chrome in one
+/// frame, gathered under a single fully populated runtime context.
+#[derive(Default)]
+pub(crate) struct ViewportData {
+    pub overlays: Vec<core_document::ScreenSpaceOverlay>,
+    pub marks: Vec<core_document::ScreenSpaceMark>,
+    pub labels: Vec<core_document::ScreenSpaceLabel>,
+    pub hud: Option<core_document::ViewportHud>,
+    pub status: Option<core_document::StatusItems>,
+    pub task: Option<core_document::TaskInfo>,
+    pub editing_feature: Option<core_document::FeatureId>,
 }

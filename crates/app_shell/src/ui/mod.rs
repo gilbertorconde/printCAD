@@ -1,11 +1,21 @@
+mod combo_view;
 mod commands;
 mod feature_tree;
+mod host_ctx;
+mod hud;
 mod inputs;
-mod layout;
+mod log_view;
+mod menu_bar;
+mod overlays;
 mod settings_panel;
+mod status_bar;
 mod step_import_modal;
+mod task_panel;
+mod toolbar;
+mod view_toolbar;
 
 pub use commands::{FileCommand, UiCommand};
+pub use host_ctx::HostCtxParams;
 pub use inputs::UiFrameInputs;
 pub use step_import_modal::StepImportDialogAction;
 
@@ -13,6 +23,7 @@ use core_document::WorkbenchId;
 use egui::Context;
 use egui_winit::{State, egui as egui_core};
 use render_vk::EguiSubmission;
+use settings::ProjectionMode;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::orientation_cube::{self, OrientationCubeConfig, OrientationCubeResult};
@@ -55,6 +66,8 @@ pub struct UiFrameOutput {
     pub active_tool: ActiveTool,
     pub active_workbench: ActiveWorkbench,
     pub commands: Vec<UiCommand>,
+    /// A workbench task is open in the right panel after this frame.
+    pub task_open: bool,
 }
 
 pub struct UiLayer {
@@ -63,6 +76,8 @@ pub struct UiLayer {
     settings_tab: settings_panel::SettingsTab,
     show_settings: bool,
     orientation_cube_config: OrientationCubeConfig,
+    /// Substring filter over the model tree; UI-local.
+    tree_filter: String,
 }
 
 impl UiLayer {
@@ -86,6 +101,7 @@ impl UiLayer {
             settings_tab: settings_panel::SettingsTab::Camera,
             show_settings: false,
             orientation_cube_config: OrientationCubeConfig::default(),
+            tree_filter: String::new(),
         }
     }
 
@@ -104,6 +120,7 @@ impl UiLayer {
             settings,
             document,
             registry,
+            host,
             orientation_input,
             fps,
             scene_redraws_per_s,
@@ -114,7 +131,10 @@ impl UiLayer {
             axis_system,
             tree_selection: active_tree_selection,
             active_document_object,
-            selected_body_id,
+            editing_feature,
+            viewport_hud,
+            status_items,
+            task,
             screen_space_overlays,
             screen_space_marks,
             screen_space_labels,
@@ -139,85 +159,140 @@ impl UiLayer {
         let mut settings_tab = self.settings_tab;
 
         let cube_config = self.orientation_cube_config.clone();
+        let mut commands: Vec<UiCommand> = Vec::new();
         let mut settings_changed = false;
         let mut camera_settings_changed = false;
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
-        let mut finish_requested = false;
-        let mut orient_request: Option<core_document::CameraOrientRequest> = None;
-
+        let mut task_open = false;
         let mut tree_selection = None;
-        let mut tree_activation = None;
-        let mut imported_visibility_change = None;
-        let mut tree_feature_command = None;
-        let mut cancel_kernel_requested = false;
-        let mut open_requested = false;
-        let mut new_requested = false;
-        let mut save_requested = false;
-        let mut save_as_requested = false;
-        let mut import_step_requested = false;
-        let mut reset_view_requested = false;
-        let mut quit_requested = false;
         let mut step_import_dialog = StepImportDialogAction::default();
 
+        let projection = settings.camera.projection;
+        let nav_style = match settings.camera.navigation_style {
+            settings::NavigationStyle::Gesture => "Gesture",
+            settings::NavigationStyle::Cad => "CAD",
+        };
+        let document_name = document.name().to_owned();
+        let document_dirty = document.metadata().dirty();
+        let breadcrumb = editing_feature
+            .and_then(|id| document.get_feature_meta(id))
+            .map(|node| node.name.clone());
+
         let full_output = self.ctx.run_ui(raw_input, |ui| {
-            let top = layout::draw_top_panel(
+            let menu = menu_bar::draw_menu_bar(
                 ui,
+                menu_bar::MenuBarInputs {
+                    registry,
+                    document_name: &document_name,
+                    document_dirty,
+                    breadcrumb: breadcrumb.as_deref(),
+                    show_log_panel: settings.rendering.show_log_panel,
+                    projection,
+                },
                 &mut active_workbench,
                 &mut active_tool,
-                registry,
-                document,
-                active_document_object,
-                selected_body_id,
+                &mut commands,
             );
-            new_requested = top.new_requested;
-            open_requested = top.open_requested;
-            save_requested = top.save_requested;
-            save_as_requested = top.save_as_requested;
-            import_step_requested = top.import_step_requested;
-            reset_view_requested = top.reset_view_requested;
-            quit_requested = top.quit_requested;
-
-            // Translate menu-driven Settings/About requests into the persistent
-            // window state owned by `UiLayer`. About forces the About tab so
-            // the user lands on the right page; Preferences keeps whatever
-            // tab they used last.
-            if top.show_about_requested {
+            // About forces the About tab so the user lands on the right
+            // page; Preferences keeps whatever tab they used last.
+            if menu.show_about {
                 show_settings = true;
                 settings_tab = settings_panel::SettingsTab::About;
             }
-            if top.show_settings_requested {
+            if menu.show_preferences {
                 show_settings = true;
             }
-            let left_panel = layout::draw_left_panel(
+            // PLANNED: the command palette opens from the search box and
+            // Ctrl+K; until it exists the request is dropped.
+            let mut open_palette = menu.open_palette;
+
+            toolbar::draw_toolbars(
                 ui,
-                active_workbench.clone(),
-                document,
-                registry,
-                active_tree_selection,
-                active_document_object,
+                toolbar::ToolbarInputs {
+                    registry,
+                    document,
+                    host,
+                    active_document_object,
+                },
+                &mut active_workbench,
+                &mut active_tool,
+                &mut commands,
+                &mut open_palette,
             );
-            finish_requested = left_panel.finish_sketch_requested;
-            orient_request = left_panel.camera_orient_request;
-            // A feature created from a panel becomes the tree selection so
-            // the host's active-object state follows.
-            if let Some(id) = left_panel.activated_feature {
-                tree_selection = Some(TreeItemId::Feature(id));
+
+            // Bottom bars before the side panels so they span the width.
+            let cancel = status_bar::draw_status_bar(
+                ui,
+                &status_bar::StatusBarInputs {
+                    fps,
+                    scene_redraws_per_s,
+                    hovered_point,
+                    axis_system,
+                    display_unit: document.display_unit(),
+                    pending_imports,
+                    pending_document_open,
+                    kernel_status: kernel_status.as_deref(),
+                    kernel_cancellable,
+                    kernel_progress,
+                    server_label: &server_label,
+                    document_saving,
+                    nav_style,
+                    items: status_items.as_ref(),
+                    preselect: None,
+                    dimensions: None,
+                },
+            );
+            if cancel {
+                commands.push(UiCommand::CancelKernelJob);
             }
+            log_view::draw_log_panel(ui, settings.rendering.show_log_panel);
+
+            let combo = combo_view::draw_combo_view(
+                ui,
+                combo_view::ComboViewInputs {
+                    active_workbench: active_workbench.clone(),
+                    document,
+                    registry,
+                    host,
+                    active_tree_selection,
+                    active_document_object,
+                    editing_feature,
+                    filter: &mut self.tree_filter,
+                },
+            );
+            apply_writeback(&combo.writeback, &mut commands, &mut tree_selection);
             // An explicit tree click wins over a panel-created feature.
-            if left_panel.tree_selection.is_some() {
-                tree_selection = left_panel.tree_selection;
+            if combo.tree_selection.is_some() {
+                tree_selection = combo.tree_selection;
             }
-            tree_activation = left_panel.tree_activation;
-            imported_visibility_change = left_panel.imported_visibility_change;
-            tree_feature_command = left_panel.tree_feature_command;
-            finish_requested |= layout::draw_right_panel(
+            if let Some(item) = combo.tree_activation {
+                commands.push(UiCommand::ActivateTreeItem(item));
+            }
+            if let Some((node, visible)) = combo.imported_visibility_change {
+                commands.push(UiCommand::SetImportedVisibility { node, visible });
+            }
+            if let Some((feature, command)) = combo.tree_feature_command {
+                commands.push(UiCommand::TreeFeature { feature, command });
+            }
+
+            let task_result = task_panel::draw_task_panel(
                 ui,
-                active_workbench.clone(),
-                document,
-                registry,
-                active_document_object,
+                task_panel::TaskPanelInputs {
+                    active_workbench: active_workbench.clone(),
+                    document,
+                    registry,
+                    host,
+                    active_document_object,
+                    task: task.as_ref(),
+                },
             );
+            apply_writeback(&task_result.writeback, &mut commands, &mut tree_selection);
+            if let Some(outcome) = task_result.outcome {
+                commands.push(UiCommand::TaskClosed(outcome));
+            }
+            task_open = task_result.open;
+
             let settings_outcome = settings_panel::draw_settings_window(
                 ui.ctx(),
                 settings,
@@ -229,33 +304,39 @@ impl UiLayer {
             );
             settings_changed |= settings_outcome.any;
             camera_settings_changed |= settings_outcome.camera_prefs;
-            layout::draw_log_panel(ui, settings.rendering.show_log_panel);
-            cancel_kernel_requested = layout::draw_bottom_panel(
-                ui,
-                fps,
-                scene_redraws_per_s,
-                hovered_point,
-                axis_system,
-                document.display_unit(),
-                pending_imports,
-                pending_document_open,
-                kernel_status.as_deref(),
-                kernel_cancellable,
-                kernel_progress,
-                &server_label,
-                document_saving,
-            );
 
             viewport_rect_logical = ui.available_rect_before_wrap();
 
-            // Draw screen-space overlays in the viewport area (before other overlays)
-            layout::draw_screen_space_overlays(
+            overlays::draw_screen_space_overlays(
                 ui.ctx(),
                 viewport_rect_logical,
                 screen_space_overlays,
             );
-            layout::draw_screen_space_marks(ui.ctx(), viewport_rect_logical, screen_space_marks);
-            layout::draw_screen_space_labels(ui.ctx(), viewport_rect_logical, screen_space_labels);
+            overlays::draw_screen_space_marks(ui.ctx(), viewport_rect_logical, screen_space_marks);
+            overlays::draw_screen_space_labels(
+                ui.ctx(),
+                viewport_rect_logical,
+                screen_space_labels,
+            );
+            let footer = [
+                match projection {
+                    ProjectionMode::Orthographic => "Orthographic".to_string(),
+                    ProjectionMode::Perspective => "Perspective".to_string(),
+                },
+                "Shaded + edges".to_string(),
+            ];
+            hud::draw_viewport_hud(
+                ui.ctx(),
+                viewport_rect_logical,
+                viewport_hud.as_ref(),
+                &footer,
+            );
+            view_toolbar::draw_view_toolbar(
+                ui.ctx(),
+                viewport_rect_logical,
+                projection,
+                &mut commands,
+            );
 
             if let Some(input) = orientation_input {
                 cube_result =
@@ -268,7 +349,7 @@ impl UiLayer {
             }
 
             if let Some((px, py)) = pivot_screen_pos {
-                layout::draw_pivot_indicator(ui.ctx(), px, py);
+                overlays::draw_pivot_indicator(ui.ctx(), px, py);
             }
         });
 
@@ -295,33 +376,8 @@ impl UiLayer {
             height: (viewport_rect_logical.height() * ppp).max(1.0) as u32,
         };
 
-        // Fold this frame's interactions into commands. Application order is
-        // decided by `apply_ui_commands`, not by the order of this list.
-        let mut commands = Vec::new();
-        if new_requested {
-            commands.push(UiCommand::File(FileCommand::New));
-        }
-        if open_requested {
-            commands.push(UiCommand::File(FileCommand::Open));
-        }
-        if save_requested {
-            commands.push(UiCommand::File(FileCommand::Save));
-        }
-        if save_as_requested {
-            commands.push(UiCommand::File(FileCommand::SaveAs));
-        }
-        if import_step_requested {
-            commands.push(UiCommand::File(FileCommand::ImportStep));
-        }
-        if reset_view_requested {
-            commands.push(UiCommand::FitView);
-        }
-        if cancel_kernel_requested {
-            commands.push(UiCommand::CancelKernelJob);
-        }
-        if quit_requested {
-            commands.push(UiCommand::Quit);
-        }
+        // Fold the remaining interactions into commands. Application order
+        // is decided by `apply_ui_commands`, not by the order of this list.
         if let Some(view) = cube_result.snap_to_view {
             commands.push(UiCommand::CameraSnap(view));
         }
@@ -337,25 +393,10 @@ impl UiLayer {
         if let Some(item) = tree_selection {
             commands.push(UiCommand::SelectTreeItem(item));
         }
-        if let Some(item) = tree_activation {
-            commands.push(UiCommand::ActivateTreeItem(item));
-        }
-        if let Some((node, visible)) = imported_visibility_change {
-            commands.push(UiCommand::SetImportedVisibility { node, visible });
-        }
-        if let Some((feature, command)) = tree_feature_command {
-            commands.push(UiCommand::TreeFeature { feature, command });
-        }
         match step_import_dialog {
             StepImportDialogAction::Confirmed => commands.push(UiCommand::ConfirmStepImport),
             StepImportDialogAction::Cancelled => commands.push(UiCommand::CancelStepImport),
             StepImportDialogAction::None => {}
-        }
-        if finish_requested {
-            commands.push(UiCommand::FinishSketch);
-        }
-        if let Some(req) = orient_request {
-            commands.push(UiCommand::OrientCameraToPlane(req));
         }
         if workbench_changed {
             commands.push(UiCommand::SwitchWorkbench {
@@ -382,7 +423,29 @@ impl UiLayer {
             active_tool,
             active_workbench,
             commands,
+            task_open,
         }
+    }
+}
+
+/// Turn a panel hook's write-backs into commands. A feature the hook
+/// created becomes the tree selection so the host's active object follows.
+fn apply_writeback(
+    writeback: &host_ctx::PanelWriteback,
+    commands: &mut Vec<UiCommand>,
+    tree_selection: &mut Option<TreeItemId>,
+) {
+    if writeback.finish_sketch_requested {
+        commands.push(UiCommand::FinishSketch);
+    }
+    if let Some(req) = writeback.camera_orient_request.clone() {
+        commands.push(UiCommand::OrientCameraToPlane(req));
+    }
+    if let Some(Some(id)) = writeback.active_object_changed {
+        *tree_selection = Some(TreeItemId::Feature(id));
+    }
+    if let Some(wb) = writeback.workbench_switch_request.clone() {
+        commands.push(UiCommand::RequestWorkbench(ActiveWorkbench(wb)));
     }
 }
 

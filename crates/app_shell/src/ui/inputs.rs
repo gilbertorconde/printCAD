@@ -6,6 +6,7 @@ use axes::AxisSystem;
 use settings::UserSettings;
 
 use super::feature_tree::TreeItemId;
+use super::host_ctx::HostCtxParams;
 use super::{ActiveTool, ActiveWorkbench};
 use crate::orientation_cube::OrientationCubeInput;
 
@@ -23,6 +24,8 @@ pub struct UiFrameInputs<'a> {
     pub settings: &'a mut UserSettings,
     pub document: &'a mut core_document::Document,
     pub registry: &'a mut core_document::DocumentService,
+    /// Camera and viewport facts for the contexts panel hooks receive.
+    pub host: HostCtxParams,
     pub orientation_input: Option<&'a OrientationCubeInput>,
     /// Smoothed frames-per-second while rendering; `None` when the
     /// render loop is about to sleep (render on demand), so the display
@@ -38,7 +41,14 @@ pub struct UiFrameInputs<'a> {
     pub axis_system: AxisSystem,
     pub tree_selection: Option<TreeItemId>,
     pub active_document_object: Option<core_document::FeatureId>,
-    pub selected_body_id: Option<core_document::BodyId>,
+    /// The feature whose edit session is open (tree badge, breadcrumb).
+    pub editing_feature: Option<core_document::FeatureId>,
+    /// The active workbench's viewport widgets this frame.
+    pub viewport_hud: Option<core_document::ViewportHud>,
+    /// The active workbench's status-bar items this frame.
+    pub status_items: Option<core_document::StatusItems>,
+    /// The active workbench's open task, if any.
+    pub task: Option<core_document::TaskInfo>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],

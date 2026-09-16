@@ -843,7 +843,7 @@ mod icon_coverage {
     #[test]
     fn every_tool_names_an_icon_in_the_set() {
         let mut ctx = WorkbenchContext::default();
-        PartDesignWorkbench::default().configure(&mut ctx);
+        PartDesignWorkbench.configure(&mut ctx);
         for tool in ctx.tools() {
             let icon = tool
                 .icon

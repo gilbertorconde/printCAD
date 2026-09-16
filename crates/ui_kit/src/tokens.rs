@@ -88,6 +88,11 @@ pub const TREE_ROW: f32 = 24.0;
 pub const INPUT: f32 = 26.0;
 pub const TAB_BAR: f32 = 30.0;
 
+/// Padding around a viewport label's text when it draws a pill, in pixels.
+/// Shared with the sketcher's hit-testing so a click lands where the pill
+/// is painted.
+pub const PILL_PAD: [f32; 2] = [5.0, 2.0];
+
 pub const SHADOW_POPOVER: Shadow = Shadow {
     offset: [0, 8],
     blur: 24,

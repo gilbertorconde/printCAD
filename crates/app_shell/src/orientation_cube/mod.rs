@@ -221,10 +221,11 @@ pub fn draw(
     let available = viewport_rect;
     let margin = 10.0;
 
-    // Position in bottom-right of the available viewport area
+    // Top-right of the viewport, under the floating view toolbar.
+    let toolbar_clearance = 44.0;
     let pos = Pos2::new(
         available.right() - total_width - margin,
-        available.bottom() - total_height - margin,
+        available.top() + toolbar_clearance + margin,
     );
 
     // Use Area for floating widget in the viewport
@@ -279,13 +280,14 @@ pub fn draw(
             }
         });
 
-    // Axis triad alone: top-right, away from the bottom-right cube.
+    // Axis triad alone: bottom-left, away from the top-right cube and
+    // above the legend line a workbench may draw there.
     if config.show_axis_arrows {
         let axis_margin = margin;
         let axis_widget = 80.0_f32;
         let axis_pos = Pos2::new(
-            available.right() - axis_widget - axis_margin,
-            available.top() + axis_margin,
+            available.left() + axis_margin,
+            available.bottom() - axis_widget - axis_margin - 24.0,
         );
         egui::Area::new(egui::Id::new("orientation_axes"))
             .fixed_pos(axis_pos)

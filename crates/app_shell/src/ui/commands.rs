@@ -2,6 +2,9 @@
 //! were triggered. Adding a new UI action = one enum variant here + one
 //! match arm in `PrintCadApp::apply_ui_commands`.
 
+use core_document::TaskOutcome;
+use settings::ProjectionMode;
+
 use super::ActiveWorkbench;
 use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
@@ -50,4 +53,15 @@ pub enum UiCommand {
         from: ActiveWorkbench,
         to: ActiveWorkbench,
     },
+    /// A panel hook asked for another workbench (e.g. New Sketch jumps to
+    /// the sketcher).
+    RequestWorkbench(ActiveWorkbench),
+    Undo,
+    Redo,
+    ToggleLogPanel,
+    SetProjection(ProjectionMode),
+    /// Mark every part feature dirty so the next frame rebuilds them all.
+    RecomputeAll,
+    /// The task panel closed with this outcome.
+    TaskClosed(TaskOutcome),
 }

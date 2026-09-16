@@ -1,0 +1,160 @@
+//! The left "combo view": the model tree with a filter, the details line,
+//! and the active workbench's left-panel content beneath.
+
+use egui::RichText;
+use ui_kit::tokens::*;
+use ui_kit::widgets::vseparator;
+use ui_kit::{sans, sans_medium};
+
+use super::ActiveWorkbench;
+use super::feature_tree::{self, TreeItemId};
+use super::host_ctx::{HostCtxParams, PanelWriteback, flush_ctx_logs, panel_ctx};
+
+#[derive(Default)]
+pub struct ComboViewResult {
+    pub writeback: PanelWriteback,
+    pub tree_selection: Option<TreeItemId>,
+    pub tree_activation: Option<TreeItemId>,
+    pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
+    pub tree_feature_command: Option<(core_document::FeatureId, feature_tree::TreeFeatureCommand)>,
+}
+
+pub struct ComboViewInputs<'a> {
+    pub active_workbench: ActiveWorkbench,
+    pub document: &'a mut core_document::Document,
+    pub registry: &'a mut core_document::DocumentService,
+    pub host: HostCtxParams,
+    pub active_tree_selection: Option<TreeItemId>,
+    pub active_document_object: Option<core_document::FeatureId>,
+    pub editing_feature: Option<core_document::FeatureId>,
+    /// UI-local substring filter over tree labels.
+    pub filter: &'a mut String,
+}
+
+pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
+    let ComboViewInputs {
+        active_workbench,
+        document,
+        registry,
+        host,
+        active_tree_selection,
+        active_document_object,
+        editing_feature,
+        filter,
+    } = inputs;
+    let mut result = ComboViewResult::default();
+
+    egui::Panel::left("combo_view")
+        .resizable(true)
+        .default_size(300.0)
+        .size_range(240.0..=420.0)
+        .frame(egui::Frame::new().fill(BG1))
+        .show(ui, |ui| {
+            let rect = ui.max_rect();
+            ui.painter().vline(
+                rect.right() - 0.5,
+                rect.y_range(),
+                egui::Stroke::new(1.0, BORDER),
+            );
+
+            // Header: "Model" and the filter box.
+            let (header, _) = ui.allocate_exact_size(
+                egui::Vec2::new(ui.available_width(), TAB_BAR),
+                egui::Sense::hover(),
+            );
+            ui.painter().hline(
+                header.x_range(),
+                header.bottom() - 0.5,
+                egui::Stroke::new(1.0, BORDER),
+            );
+            let mut h = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(header.shrink2(egui::Vec2::new(10.0, 0.0)))
+                    .layout(egui::Layout::left_to_right(egui::Align::Center)),
+            );
+            h.spacing_mut().item_spacing.x = SPACE_2;
+            ui_kit::icon::draw(&mut h, "tree-group", 14.0, TEXT2);
+            h.label(
+                RichText::new("Model")
+                    .font(sans_medium(FONT_SM))
+                    .color(TEXT1),
+            );
+            h.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                egui::Frame::new()
+                    .stroke(egui::Stroke::new(1.0, BORDER))
+                    .corner_radius(4)
+                    .inner_margin(egui::Margin::symmetric(6, 0))
+                    .show(ui, |ui| {
+                        ui.set_min_height(22.0);
+                        ui.horizontal_centered(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui_kit::icon::draw(ui, "search", 11.0, TEXT3);
+                            ui.add(
+                                egui::TextEdit::singleline(filter)
+                                    .desired_width(70.0)
+                                    .frame(egui::Frame::NONE)
+                                    .hint_text(RichText::new("Filter").color(TEXT3))
+                                    .font(sans(FONT_XS)),
+                            );
+                        });
+                    });
+            });
+
+            ui.add_space(SPACE_1);
+            let tree_height = ui.available_height();
+            let mut selected_detail: Option<String> = None;
+            egui::ScrollArea::vertical()
+                .id_salt("model_tree")
+                .max_height(tree_height)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    let tree_model = feature_tree::DocumentTree::build(document);
+                    let selected_id = active_tree_selection
+                        .or_else(|| active_document_object.map(TreeItemId::from))
+                        .unwrap_or(TreeItemId::DocumentRoot);
+                    let tree_ui = feature_tree::draw_tree(
+                        ui,
+                        &tree_model,
+                        feature_tree::TreeDrawOptions {
+                            selected: Some(selected_id),
+                            editing: editing_feature,
+                            filter: filter.trim(),
+                        },
+                    );
+                    result.tree_selection = tree_ui.selection;
+                    result.tree_activation = tree_ui.activation;
+                    result.imported_visibility_change = tree_ui.imported_visibility_change;
+                    result.tree_feature_command = tree_ui.feature_command;
+                    // Hover wins; the selection stands in when the pointer
+                    // is elsewhere, so the line never goes blank mid-glance.
+                    selected_detail = tree_ui
+                        .hovered
+                        .and_then(|id| tree_model.detail_for(id))
+                        .or_else(|| tree_model.detail_for(selected_id));
+                });
+
+            if let Some(detail) = selected_detail {
+                ui.add_space(2.0);
+                ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.label(RichText::new(detail).font(sans(FONT_XS)).color(TEXT3));
+                });
+            }
+            let _ = vseparator;
+
+            // The active workbench's own panel content.
+            if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
+                let mut ctx = panel_ctx(document, host, active_document_object);
+                let inner = egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        wb.ui_left_panel(ui, &mut ctx);
+                    });
+                let _ = inner;
+                result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
+                flush_ctx_logs(&mut ctx);
+            }
+        });
+
+    result
+}
