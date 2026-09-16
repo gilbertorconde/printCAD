@@ -82,11 +82,15 @@ pub enum KernelResponse {
 struct Activity {
     /// printCAD's own label: which feature or body is being worked on.
     context: Option<String>,
-    /// The kernel's stage within that work — changes rapidly.
+    /// The kernel's stage within that work — changes rapidly, and during a
+    /// parallel loop arrives from every worker thread at once.
     detail: Option<String>,
-    /// `(done, total)` within the current stage, when the kernel knows both —
-    /// what lets the status bar be a bar instead of a spinner.
+    /// `(done, total)` announced by the kernel's current stage.
     progress: Option<(u64, u64)>,
+    /// `(done, total)` announced by OUR counted stage (the per-body import
+    /// loop). While set, it owns the display: the kernel's per-body stages
+    /// beneath it are twenty threads' worth of noise, not information.
+    own_progress: Option<(u64, u64)>,
     /// Stops the job currently running, when there is one.
     canceller: Option<Canceller>,
 }
@@ -94,11 +98,20 @@ struct Activity {
 impl Activity {
     /// The one line worth showing: our label, refined by the kernel's stage.
     fn status(&self) -> Option<String> {
+        // Our counted stage speaks alone; the bar carries its numbers.
+        if self.own_progress.is_some() {
+            return self.context.clone();
+        }
         match (self.context.as_deref(), self.detail.as_deref()) {
             (Some(context), Some(detail)) => Some(format!("{context} — {detail}")),
             (Some(only), None) | (None, Some(only)) => Some(only.to_owned()),
             (None, None) => None,
         }
+    }
+
+    /// The counts to draw: ours when we are counting, else the kernel's.
+    fn progress(&self) -> Option<(u64, u64)> {
+        self.own_progress.or(self.progress)
     }
 }
 
@@ -200,9 +213,10 @@ impl KernelWorker {
         lock(&self.activity).status()
     }
 
-    /// `(done, total)` of the current kernel stage, when it announced counts.
+    /// `(done, total)` to draw: our counted stage's when running, else the
+    /// kernel's current stage's.
     pub fn progress(&self) -> Option<(u64, u64)> {
-        lock(&self.activity).progress
+        lock(&self.activity).progress()
     }
 
     /// Whether a running job can be stopped — i.e. one is running at all.
@@ -228,17 +242,28 @@ fn watch_for(activity: &Arc<Mutex<Activity>>) -> Watch {
     let sink_activity = Arc::clone(activity);
     Watch::with_stage_sink(move |stage: kernel_ogeom::Stage<'_>| {
         let mut activity = lock(&sink_activity);
-        match stage.name.strip_prefix(kernel_ogeom::CONTEXT_PREFIX) {
-            Some(ours) => {
+        match (
+            stage.name.strip_prefix(kernel_ogeom::CONTEXT_PREFIX),
+            stage.progress,
+        ) {
+            // Our context label: a new phase begins, everything else resets.
+            (Some(ours), None) => {
                 ours.clone_into(activity.context.get_or_insert_default());
                 activity.detail = None;
                 activity.progress = None;
+                activity.own_progress = None;
             }
-            None => {
-                activity.detail = Some(stage.name.to_owned());
-                // A bare boundary keeps the previous counts on screen only if
-                // it belongs to the same stage; a new stage starts unknown.
-                activity.progress = stage.progress;
+            // Our counted stage: takes ownership of the display.
+            (Some(_), Some(counts)) => {
+                activity.own_progress = Some(counts);
+            }
+            // The kernel's stage: informative in a sequential phase, noise
+            // while our counted loop is running (many threads, one slot).
+            (None, counts) => {
+                if activity.own_progress.is_none() {
+                    activity.detail = Some(stage.name.to_owned());
+                    activity.progress = counts;
+                }
             }
         }
     })
@@ -338,8 +363,14 @@ mod tests {
             context: context.map(str::to_owned),
             detail: detail.map(str::to_owned),
             progress: None,
+            own_progress: None,
             canceller: None,
         }
+    }
+
+    /// Emits a stage the way the kernel does: no printCAD prefix.
+    fn ogeom_stage_for_test(name: &str, done: u64, total: u64) {
+        kernel_ogeom::progress::kernel_stage_at_for_tests(name, done, total);
     }
 
     #[test]
@@ -353,15 +384,32 @@ mod tests {
         {
             let seen = lock(&slot);
             assert_eq!(seen.context.as_deref(), Some("Preparing 3 bodies"));
-            assert_eq!(seen.detail.as_deref(), Some("bodies"));
-            assert_eq!(seen.progress, Some((2, 3)));
+            assert_eq!(seen.progress(), Some((2, 3)), "our counts drive the bar");
+            assert_eq!(
+                seen.status().as_deref(),
+                Some("Preparing 3 bodies"),
+                "our counted stage speaks alone, no kernel detail appended"
+            );
+        }
+        // Kernel chatter from the parallel loop must not disturb the display.
+        kernel_ogeom::watched(&watch, || {
+            ogeom_stage_for_test("tessellate: faces", 7, 143);
+        });
+        {
+            let seen = lock(&slot);
+            assert_eq!(
+                seen.progress(),
+                Some((2, 3)),
+                "kernel counts do not steal the bar"
+            );
+            assert_eq!(seen.status().as_deref(), Some("Preparing 3 bodies"));
         }
         kernel_ogeom::watched(&watch, || {
             kernel_ogeom::progress::context("Reading STEP");
         });
         let seen = lock(&slot);
         assert_eq!(seen.context.as_deref(), Some("Reading STEP"));
-        assert_eq!(seen.progress, None, "a new context starts unknown");
+        assert_eq!(seen.progress(), None, "a new context starts unknown");
     }
 
     #[test]

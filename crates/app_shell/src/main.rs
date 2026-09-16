@@ -201,6 +201,11 @@ struct PrintCadApp {
     /// is what "the parts' fps" actually is.
     scene_redraw_accum: u32,
     scene_redraws_per_s: u32,
+    /// How often the status-bar text changed this second, and what it last
+    /// read. A readable status changes a few times a second at most; a slot
+    /// being overwritten by twenty threads changes every frame.
+    status_changes_accum: u32,
+    last_status_text: Option<String>,
     /// Last frame's view-projection, to detect camera motion. While the
     /// camera moves the edge pass is skipped (see `FrameSubmission::
     /// suppress_edges`); the first still frame restores it.
@@ -330,6 +335,8 @@ impl PrintCadApp {
             frame_phase_accum: (0.0, 0.0, 0),
             scene_redraw_accum: 0,
             scene_redraws_per_s: 0,
+            status_changes_accum: 0,
+            last_status_text: None,
             prev_view_proj: None,
             last_input_time: None,
             last_wake_reason: (false, false, false, false),

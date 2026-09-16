@@ -159,7 +159,10 @@ pub fn mesh_shape_with(
     let faces = explore(model, root, Filter::OfType(ShapeType::Face))
         .map_err(|e| KernelError::Other(anyhow::anyhow!("face exploration failed: {e}")))?;
 
-    crate::progress::context(format_args!("Meshing {} faces", faces.len()));
+    // A detail, not a context: this runs once per body, from every worker
+    // thread during an import — announced as a context it reset the status
+    // display hundreds of times a second.
+    crate::progress::detail(format_args!("Meshing {} faces", faces.len()));
 
     // Triangulating a face only reads the model, so the faces go wide; the
     // buffers are then filled in face order, which is what keeps the output

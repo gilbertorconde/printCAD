@@ -111,7 +111,15 @@ op/face/solid loops call `progress::checkpoint()` themselves, since
 shared monotone counter in the parallel import loop — draw as a determinate
 bar instead of the spinner; a new context resets counts to unknown.
 `report.untrimmed_faces` (STEP entity ids of faces that will draw with gaps)
-is logged structured at import.
+is logged structured at import. **Announcement discipline:** `progress::
+context` marks a *phase* and resets the display — call it once per phase,
+never per body or per face. Anything emitted inside a loop is
+`progress::detail` (a kernel-style sub-stage: shown under a sequential
+phase, ignored while our counted `stage_at` loop owns the display) or
+`stage_at`. Our counted stage speaks alone — the kernel's per-body stages
+from twenty threads are noise, not information; the 1 s frame log's
+`status_changes` counts status-text changes per second (a readable bar
+changes ~1/s; a slot overwritten by threads changes every frame).
 
 ## Kernel gap protocol
 

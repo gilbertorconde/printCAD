@@ -35,10 +35,28 @@ pub fn context(label: impl Display) {
 ///
 /// Returns the kernel's `cancelled` message when the watch has been cancelled;
 /// free when unwatched.
+/// Announce a sub-stage beneath the current context — unprefixed, so a
+/// sink files it as detail like the kernel's own stages: shown while a
+/// sequential phase runs, ignored while our counted loop owns the display.
+/// Use this, not `context`, for anything emitted per body or per face.
+pub fn detail(label: impl Display) {
+    ogeom::core::progress::stage(&label.to_string());
+}
+
 /// Announce a counted stage: `(done, total)` under a stable name, for a
 /// determinate progress bar. Safe from parallel workers as long as `done`
 /// comes from a shared monotone counter.
 pub fn stage_at(name: &str, done: u64, total: u64) {
+    // Prefixed like `context`, so a sink can tell our counted stages from
+    // the kernel's: while ours is active it owns the display, and the
+    // kernel's per-body chatter from twenty threads is not shown.
+    ogeom::core::progress::stage_at(&format!("{CONTEXT_PREFIX}{name}"), done, total);
+}
+
+/// Announce a counted stage WITHOUT the printCAD prefix — what the kernel's
+/// own stages look like to a sink. For host tests of sink policy only.
+#[doc(hidden)]
+pub fn kernel_stage_at_for_tests(name: &str, done: u64, total: u64) {
     ogeom::core::progress::stage_at(name, done, total);
 }
 
@@ -143,7 +161,11 @@ mod tests {
         assert_eq!(heard.len(), 2);
         assert!(heard[0].0.starts_with(CONTEXT_PREFIX));
         assert_eq!(heard[0].1, None, "a context is a bare boundary");
-        assert_eq!(heard[1], ("bodies".to_owned(), Some((1, 3))));
+        assert_eq!(
+            heard[1],
+            (format!("{CONTEXT_PREFIX}bodies"), Some((1, 3))),
+            "our counted stages carry the prefix too"
+        );
     }
 
     #[test]

@@ -219,6 +219,7 @@ impl PrintCadApp {
                             tri_idx = stats.triangle_indices,
                             edge_idx = stats.edge_indices,
                             scene_redraws = self.scene_redraw_accum,
+                            status_changes = self.status_changes_accum,
                             wake = ?self.last_wake_reason,
                             "frame phases (1s avg)"
                         );
@@ -226,6 +227,7 @@ impl PrintCadApp {
                     self.frame_phase_accum = (0.0, 0.0, 0);
                     self.scene_redraws_per_s = self.scene_redraw_accum;
                     self.scene_redraw_accum = 0;
+                    self.status_changes_accum = 0;
                 }
             }
             dt
@@ -343,7 +345,14 @@ impl PrintCadApp {
                         pending_imports: self.kernel_worker.in_flight(),
                         pending_document_open: server_status.opens_in_flight
                             + server_status.saves_in_flight,
-                        kernel_status: self.kernel_worker.status(),
+                        kernel_status: {
+                            let status = self.kernel_worker.status();
+                            if status != self.last_status_text {
+                                self.status_changes_accum += 1;
+                                self.last_status_text = status.clone();
+                            }
+                            status
+                        },
                         kernel_progress: self.kernel_worker.progress(),
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
                         document_saving: server_status.saves_in_flight > 0,
