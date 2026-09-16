@@ -3,9 +3,9 @@
 //! Without a messenger the validation layers only print through the loader's
 //! default stderr handler, invisible to the app's log pipeline.
 
-use std::ffi::{c_void, CStr};
+use std::ffi::{CStr, c_void};
 
-use ash::{ext::debug_utils, vk, Entry};
+use ash::{Entry, ext::debug_utils, vk};
 use tracing::{debug, error, trace, warn};
 
 pub(crate) struct DebugMessenger {
@@ -52,48 +52,50 @@ unsafe extern "system" fn vulkan_debug_callback(
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
     _user_data: *mut c_void,
 ) -> vk::Bool32 {
-    if p_callback_data.is_null() {
-        return vk::FALSE;
+    unsafe {
+        if p_callback_data.is_null() {
+            return vk::FALSE;
+        }
+        let data = &*p_callback_data;
+        let message = if data.p_message.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(data.p_message)
+                .to_string_lossy()
+                .into_owned()
+        };
+        let id_name = if data.p_message_id_name.is_null() {
+            String::new()
+        } else {
+            CStr::from_ptr(data.p_message_id_name)
+                .to_string_lossy()
+                .into_owned()
+        };
+
+        let kind = if message_type.contains(vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION) {
+            "validation"
+        } else if message_type.contains(vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE) {
+            "performance"
+        } else {
+            "general"
+        };
+
+        match severity {
+            s if s.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) => {
+                error!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
+            }
+            s if s.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) => {
+                warn!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
+            }
+            s if s.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) => {
+                debug!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
+            }
+            _ => {
+                trace!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
+            }
+        }
+
+        // Per spec, the callback must always return VK_FALSE.
+        vk::FALSE
     }
-    let data = &*p_callback_data;
-    let message = if data.p_message.is_null() {
-        String::new()
-    } else {
-        CStr::from_ptr(data.p_message)
-            .to_string_lossy()
-            .into_owned()
-    };
-    let id_name = if data.p_message_id_name.is_null() {
-        String::new()
-    } else {
-        CStr::from_ptr(data.p_message_id_name)
-            .to_string_lossy()
-            .into_owned()
-    };
-
-    let kind = if message_type.contains(vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION) {
-        "validation"
-    } else if message_type.contains(vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE) {
-        "performance"
-    } else {
-        "general"
-    };
-
-    match severity {
-        s if s.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) => {
-            error!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
-        }
-        s if s.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) => {
-            warn!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
-        }
-        s if s.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) => {
-            debug!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
-        }
-        _ => {
-            trace!(target: "printcad.vulkan", kind, id = %id_name, "{message}");
-        }
-    }
-
-    // Per spec, the callback must always return VK_FALSE.
-    vk::FALSE
 }

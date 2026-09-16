@@ -24,10 +24,10 @@ fn main() {
 
     let mut matches = Vec::new();
     for (_, product) in import.document.products() {
-        if let ProductKind::Part { shape } = &product.kind {
-            if product.name.to_lowercase().contains(&name_filter) {
-                matches.push((product.name.clone(), shape.clone()));
-            }
+        if let ProductKind::Part { shape } = &product.kind
+            && product.name.to_lowercase().contains(&name_filter)
+        {
+            matches.push((product.name.clone(), shape.clone()));
         }
     }
     assert!(

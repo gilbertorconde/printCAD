@@ -13,9 +13,9 @@ use uuid::Uuid;
 
 use crate::geom2d;
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
-use crate::snap::{arc_angles, SnapTarget};
+use crate::snap::{SnapTarget, arc_angles};
 use crate::tools::{
-    self, arc_slot_shape, polygon_vertices, slot_corners, Similarity, ToolParams, ToolState,
+    self, Similarity, ToolParams, ToolState, arc_slot_shape, polygon_vertices, slot_corners,
 };
 
 pub const COLOR_GEOMETRY: [f32; 3] = [0.92, 0.92, 0.92];
@@ -857,10 +857,10 @@ pub fn build_overlays(
         push_selection_box(&mut out, proj, a, b);
     } else if let Some(cursor) = cursor {
         push_preview(&mut out, proj, sketch, tool_state, cursor, params, selected);
-        if active_tool == Some("sketch.trim") {
-            if let Some(span) = tools::trim_preview(sketch, cursor, snap_tol) {
-                push_polyline(&mut out, proj, span.into_iter(), COLOR_TRIM, 3.0, false);
-            }
+        if active_tool == Some("sketch.trim")
+            && let Some(span) = tools::trim_preview(sketch, cursor, snap_tol)
+        {
+            push_polyline(&mut out, proj, span.into_iter(), COLOR_TRIM, 3.0, false);
         }
         // Pending auto-constraint hint: tools that attach new points onto
         // curves show a diamond at the projected snap position (only when
@@ -871,11 +871,9 @@ pub fn build_overlays(
         ) && matches!(
             crate::snap::snap_to_point(sketch, cursor, snap_tol, &[]),
             SnapTarget::New(_)
-        ) {
-            if let Some((_, projected)) = crate::snap::snap_to_curve(sketch, cursor, snap_tol, &[])
-            {
-                push_diamond_marker(&mut out, proj, projected, COLOR_AUTO_CONSTRAINT);
-            }
+        ) && let Some((_, projected)) = crate::snap::snap_to_curve(sketch, cursor, snap_tol, &[])
+        {
+            push_diamond_marker(&mut out, proj, projected, COLOR_AUTO_CONSTRAINT);
         }
     }
     out

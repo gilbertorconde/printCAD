@@ -37,16 +37,15 @@ pub(crate) fn read_recent_dir() -> Option<PathBuf> {
 /// Persist the parent directory of `path` for future dialog seeding.
 /// Best-effort: failures are ignored.
 pub(crate) fn write_recent_dir(path: &Path) {
-    if let Ok(recent_path) = settings::SettingsStore::recent_file_path() {
-        if let Some(dir) = path.parent() {
-            if let Ok(file) = std::fs::File::create(&recent_path) {
-                let mut s = dir.to_string_lossy().to_string();
-                if !s.ends_with(std::path::MAIN_SEPARATOR) {
-                    s.push(std::path::MAIN_SEPARATOR);
-                }
-                let _ = serde_json::to_writer(file, &s);
-            }
+    if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
+        && let Some(dir) = path.parent()
+        && let Ok(file) = std::fs::File::create(&recent_path)
+    {
+        let mut s = dir.to_string_lossy().to_string();
+        if !s.ends_with(std::path::MAIN_SEPARATOR) {
+            s.push(std::path::MAIN_SEPARATOR);
         }
+        let _ = serde_json::to_writer(file, &s);
     }
 }
 
@@ -560,10 +559,10 @@ impl PrintCadApp {
                 }
             }
             FileDialogKind::Save | FileDialogKind::SaveAs => {
-                if let Some(path) = result.path {
-                    if let Err(err) = self.save_document_at(&path) {
-                        app_log::error(format!("Failed to save document: {err}"));
-                    }
+                if let Some(path) = result.path
+                    && let Err(err) = self.save_document_at(&path)
+                {
+                    app_log::error(format!("Failed to save document: {err}"));
                 }
             }
             FileDialogKind::ImportStep => {

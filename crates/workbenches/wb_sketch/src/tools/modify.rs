@@ -744,7 +744,7 @@ fn order_chain(curves: &[(Uuid, (Uuid, Uuid))]) -> Option<(Vec<ChainLink>, bool)
         .iter()
         .find(|(_, v)| v.len() == 1)
         .map(|(p, _)| *p)
-        .unwrap_or(curves[0].1 .0);
+        .unwrap_or(curves[0].1.0);
     let mut used = vec![false; curves.len()];
     let mut links = Vec::new();
     let mut current = start_point;

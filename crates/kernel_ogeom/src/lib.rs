@@ -15,7 +15,7 @@ mod tess;
 pub use progress::CONTEXT_PREFIX;
 // The host installs a progress watch around each job; re-exported here so
 // app code never depends on `ogeom` directly.
-pub use ogeom::core::progress::{watched, Canceller, Stage, Watch};
+pub use ogeom::core::progress::{Canceller, Stage, Watch, watched};
 
 /// Announce a stage as the kernel would, for host-side tests of a sink.
 #[doc(hidden)]

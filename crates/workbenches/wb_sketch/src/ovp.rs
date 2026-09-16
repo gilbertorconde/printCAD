@@ -476,10 +476,10 @@ pub fn apply_typed_constraints(
         }
         ToolState::ArcCenter { .. } => {
             // The arc only materializes at the end click; carry the radius.
-            if matches!(state_after, ToolState::ArcStart { .. }) {
-                if let Some(r) = get(FieldKind::Radius) {
-                    capture.pending = Some(PendingDim::ArcRadius(r.abs()));
-                }
+            if matches!(state_after, ToolState::ArcStart { .. })
+                && let Some(r) = get(FieldKind::Radius)
+            {
+                capture.pending = Some(PendingDim::ArcRadius(r.abs()));
             }
         }
         ToolState::ArcStart { .. } if changed => {
@@ -546,10 +546,10 @@ pub fn apply_typed_constraints(
             }
         }
         ToolState::ArcSlotCenter { .. } => {
-            if matches!(state_after, ToolState::ArcSlotStart { .. }) {
-                if let Some(l) = get(FieldKind::Length) {
-                    capture.pending = Some(PendingDim::ArcSlotLength(l.abs()));
-                }
+            if matches!(state_after, ToolState::ArcSlotStart { .. })
+                && let Some(l) = get(FieldKind::Length)
+            {
+                capture.pending = Some(PendingDim::ArcSlotLength(l.abs()));
             }
         }
         ToolState::ArcSlotStart { .. } if changed => {

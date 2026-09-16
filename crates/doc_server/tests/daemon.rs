@@ -3,8 +3,8 @@
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use core_document::server::{ClientMessage, DocumentServer, ServerMessage};
 use core_document::Document;
+use core_document::server::{ClientMessage, DocumentServer, ServerMessage};
 use doc_server::DaemonClient;
 
 /// Each test gets its own socket + document dir, torn down with the daemon.
@@ -39,11 +39,18 @@ impl Drop for TestHome {
 /// Point the client at the freshly built daemon binary. Cargo puts test
 /// binaries under target/<profile>/deps; the daemon sits one level up.
 fn daemon_env() {
-    let mut path = std::env::current_exe().expect("test exe");
-    path.pop(); // deps/
-    path.pop(); // <profile>/
-    path.push("printcad-serverd");
-    std::env::set_var("PRINTCAD_SERVERD", &path);
+    static POINTED: std::sync::Once = std::sync::Once::new();
+    POINTED.call_once(|| {
+        let mut path = std::env::current_exe().expect("test exe");
+        path.pop(); // deps/
+        path.pop(); // <profile>/
+        path.push("printcad-serverd");
+        // Sound because every test calls this before it first reads the
+        // variable through the client, and `Once` orders those reads after
+        // the single write; a test-local process could still race a
+        // concurrent write, so this is the only writer in the binary.
+        unsafe { std::env::set_var("PRINTCAD_SERVERD", &path) };
+    });
 }
 
 /// Messages polled but not yet consumed by a `wait_for`. Poll batches can

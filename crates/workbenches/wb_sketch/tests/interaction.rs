@@ -993,7 +993,7 @@ fn tiny_box_drag_behaves_as_click_clear() {
     let mut h = Harness::new();
     two_lines(&mut h);
     h.click(5.0, 3.5, "sketch.select"); // select L1
-                                        // Sub-threshold drag on empty space: plain empty click → clear.
+    // Sub-threshold drag on empty space: plain empty click → clear.
     h.click(15.0, 10.0, "sketch.select");
     h.mouse_move(15.05, 10.05, "sketch.select");
     h.release(15.05, 10.05, "sketch.select");
@@ -1010,7 +1010,7 @@ fn escape_cancels_box_selection_and_keeps_prior_selection() {
     let mut h = Harness::new();
     two_lines(&mut h);
     h.click(5.0, 3.5, "sketch.select"); // select L1
-                                        // Start a box that would engulf L2, but cancel it with Escape.
+    // Start a box that would engulf L2, but cancel it with Escape.
     h.click(-2.0, 15.0, "sketch.select");
     h.mouse_move(12.0, 28.5, "sketch.select");
     h.key(KeyCode::Escape, Some("sketch.select"));

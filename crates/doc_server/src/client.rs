@@ -6,11 +6,11 @@
 use std::io::Write as _;
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use core_document::server::{
-    ClientMessage, DocumentServer, ServerMessage, ServerStatus, SERVER_PROTOCOL_VERSION,
+    ClientMessage, DocumentServer, SERVER_PROTOCOL_VERSION, ServerMessage, ServerStatus,
 };
 
 use crate::framing::{read_frame, write_frame};

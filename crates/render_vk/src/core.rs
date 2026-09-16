@@ -4,8 +4,9 @@ use std::{
 };
 
 use ash::{
+    Entry,
     khr::{surface::Instance as SurfaceLoader, swapchain::Device as SwapchainLoader},
-    vk, Entry,
+    vk,
 };
 use egui::TextureId;
 use egui_ash_renderer::allocator::DefaultAllocator;
@@ -15,14 +16,14 @@ use uuid::Uuid;
 use winit::window::Window;
 
 use crate::{
-    find_depth_format, get_max_usable_sample_count, is_srgb_format, map_egui_err,
+    FrameSubmission, MAX_FRAMES_IN_FLIGHT, PickResult, RenderError, RenderSettings,
+    VALIDATION_LAYER, ViewportRect, find_depth_format, get_max_usable_sample_count, is_srgb_format,
+    map_egui_err,
     mesh::{MeshCache, MeshRenderer},
     msaa_samples_to_vk,
     picking::{PendingPick, PickRenderer},
     surface,
     util::find_memory_type,
-    FrameSubmission, PickResult, RenderError, RenderSettings, ViewportRect, MAX_FRAMES_IN_FLIGHT,
-    VALIDATION_LAYER,
 };
 
 /// Background color for the 3D viewport (RGBA in range 0.0-1.0).
@@ -390,20 +391,20 @@ impl RendererCore {
 
         // The fence wait above proves the readback recorded into this slot's
         // frame has completed: resolve it host-side with no extra sync.
-        if let Some(pending) = self.pick_in_flight[self.current_frame].take() {
-            if let Some(pick_renderer) = &self.pick_renderer {
-                match pick_renderer.read_slot(&self.device, self.current_frame, &pending) {
-                    Ok(result) => {
-                        if result.body_id.is_some() {
-                            debug!(
-                                "GPU pick hit: {:?} at ({}, {})",
-                                result.body_id, pending.x, pending.y
-                            );
-                        }
-                        self.last_pick_result = result;
+        if let Some(pending) = self.pick_in_flight[self.current_frame].take()
+            && let Some(pick_renderer) = &self.pick_renderer
+        {
+            match pick_renderer.read_slot(&self.device, self.current_frame, &pending) {
+                Ok(result) => {
+                    if result.body_id.is_some() {
+                        debug!(
+                            "GPU pick hit: {:?} at ({}, {})",
+                            result.body_id, pending.x, pending.y
+                        );
                     }
-                    Err(e) => warn!("GPU pick readback failed: {:?}", e),
+                    self.last_pick_result = result;
                 }
+                Err(e) => warn!("GPU pick readback failed: {:?}", e),
             }
         }
 
@@ -422,7 +423,7 @@ impl RendererCore {
             ) {
                 Ok(result) => result,
                 Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => {
-                    return Err(RenderError::SwapchainOutOfDate)
+                    return Err(RenderError::SwapchainOutOfDate);
                 }
                 Err(err) => return Err(RenderError::from(err)),
             }
@@ -1135,36 +1136,31 @@ impl RendererCore {
         // entirely. The readback lands in this frame's staging slot and is
         // resolved after this frame's fence wait (a stable
         // MAX_FRAMES_IN_FLIGHT-frame latency, no GPU stalls).
-        if let Some((x, y)) = self.pending_pick.take() {
-            if let Some(pick_renderer) = self.pick_renderer.as_mut() {
-                pick_renderer.record_commands(
-                    &self.device,
-                    command_buffer,
-                    &self.mesh_cache,
-                    &frame.bodies,
-                    frame.view_proj,
-                    frame.viewport_rect.as_ref(),
-                )?;
+        if let Some((x, y)) = self.pending_pick.take()
+            && let Some(pick_renderer) = self.pick_renderer.as_mut()
+        {
+            pick_renderer.record_commands(
+                &self.device,
+                command_buffer,
+                &self.mesh_cache,
+                &frame.bodies,
+                frame.view_proj,
+                frame.viewport_rect.as_ref(),
+            )?;
 
-                if pick_renderer.record_readback(
-                    &self.device,
-                    command_buffer,
+            if pick_renderer.record_readback(&self.device, command_buffer, x, y, self.current_frame)
+            {
+                self.pick_in_flight[self.current_frame] = Some(PendingPick {
                     x,
                     y,
-                    self.current_frame,
-                ) {
-                    self.pick_in_flight[self.current_frame] = Some(PendingPick {
-                        x,
-                        y,
-                        view_proj: frame.view_proj,
-                        viewport: frame.viewport_rect.unwrap_or(ViewportRect {
-                            x: 0,
-                            y: 0,
-                            width: self.swapchain_extent.width,
-                            height: self.swapchain_extent.height,
-                        }),
-                    });
-                }
+                    view_proj: frame.view_proj,
+                    viewport: frame.viewport_rect.unwrap_or(ViewportRect {
+                        x: 0,
+                        y: 0,
+                        width: self.swapchain_extent.width,
+                        height: self.swapchain_extent.height,
+                    }),
+                });
             }
         }
 
@@ -1648,22 +1644,22 @@ fn enumerate_suitable_devices(
     let devices = unsafe { instance.enumerate_physical_devices() }.map_err(RenderError::from)?;
     let mut candidates = Vec::new();
     for device in devices {
-        if let Some(indices) = find_queue_families(instance, device, surface_loader, surface)? {
-            if check_device_extension_support(instance, device)? {
-                let swapchain_support = query_swapchain_support(device, surface_loader, surface)?;
-                let format_supported = !swapchain_support.formats.is_empty();
-                let present_supported = !swapchain_support.present_modes.is_empty();
-                if format_supported && present_supported {
-                    let props = unsafe { instance.get_physical_device_properties(device) };
-                    let raw_name = &props.device_name;
-                    let cstr = unsafe { CStr::from_ptr(raw_name.as_ptr()) };
-                    let name = cstr.to_string_lossy().into_owned();
-                    candidates.push(GpuCandidate {
-                        device,
-                        name,
-                        indices,
-                    });
-                }
+        if let Some(indices) = find_queue_families(instance, device, surface_loader, surface)?
+            && check_device_extension_support(instance, device)?
+        {
+            let swapchain_support = query_swapchain_support(device, surface_loader, surface)?;
+            let format_supported = !swapchain_support.formats.is_empty();
+            let present_supported = !swapchain_support.present_modes.is_empty();
+            if format_supported && present_supported {
+                let props = unsafe { instance.get_physical_device_properties(device) };
+                let raw_name = &props.device_name;
+                let cstr = unsafe { CStr::from_ptr(raw_name.as_ptr()) };
+                let name = cstr.to_string_lossy().into_owned();
+                candidates.push(GpuCandidate {
+                    device,
+                    name,
+                    indices,
+                });
             }
         }
     }

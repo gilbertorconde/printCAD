@@ -372,11 +372,10 @@ pub(super) fn mirror(
             // line element is the axis; empty space starts a two-point axis.
             if let snap::SnapTarget::Existing(pid) =
                 snap::snap_to_point(sketch, cursor, snap_tol, &[])
+                && let Some(pos) = sketch.point_position(pid)
             {
-                if let Some(pos) = sketch.point_position(pid) {
-                    *state = ToolState::MirrorAxisFrom { a: pos };
-                    return ToolEffect::none();
-                }
+                *state = ToolState::MirrorAxisFrom { a: pos };
+                return ToolEffect::none();
             }
             if let Some((a, b)) = line_under_cursor(sketch, cursor, snap_tol) {
                 return mirror_now(state, sketch, selected, a, b);

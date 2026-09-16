@@ -9,13 +9,13 @@ mod editors;
 mod feature;
 
 pub use build::{
-    body_build_ops, hole_diameter, mark_all_part_features_dirty, part_feature_ids,
-    part_features_of_body, pending_body_rebuilds, retarget_feature_sketch,
-    sketch_plane_description, sketches_of_body, BuildError, BuildPlan,
+    BuildError, BuildPlan, body_build_ops, hole_diameter, mark_all_part_features_dirty,
+    part_feature_ids, part_features_of_body, pending_body_rebuilds, retarget_feature_sketch,
+    sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, MirrorPlane,
-    PartFeature, PatternAxis, RevolveAxis, TransformStep, METRIC_SIZES,
+    ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
 };
 
 use core_document::{
@@ -39,12 +39,11 @@ impl PartDesignWorkbench {
     /// The body the current selection belongs to: the selected feature's
     /// owning body, or the selected body itself.
     fn target_body(ctx: &WorkbenchRuntimeContext) -> Option<BodyId> {
-        if let Some(id) = ctx.active_document_object {
-            if let Some(node) = ctx.document.get_feature_meta(id) {
-                if node.body.is_some() {
-                    return node.body;
-                }
-            }
+        if let Some(id) = ctx.active_document_object
+            && let Some(node) = ctx.document.get_feature_meta(id)
+            && node.body.is_some()
+        {
+            return node.body;
         }
         ctx.selected_body_id.map(BodyId)
     }
@@ -632,14 +631,13 @@ impl Workbench for PartDesignWorkbench {
                     suppress_toggle = Some((*feature_id, is_suppressed));
                 }
             });
-            if has_error {
-                if let Some(message) = ctx
+            if has_error
+                && let Some(message) = ctx
                     .document
                     .get_feature_meta(*feature_id)
                     .and_then(|n| n.error.clone())
-                {
-                    ui.colored_label(egui::Color32::from_rgb(240, 90, 90), message);
-                }
+            {
+                ui.colored_label(egui::Color32::from_rgb(240, 90, 90), message);
             }
         }
 
@@ -649,49 +647,48 @@ impl Workbench for PartDesignWorkbench {
         }
 
         // ---- Detail editor for the operation selected in the tree ----
-        if let Some(feature_id) = Self::selected_part_feature(ctx) {
-            if let Some((mut part_feature, node_name)) = ctx
+        if let Some(feature_id) = Self::selected_part_feature(ctx)
+            && let Some((mut part_feature, node_name)) = ctx
                 .document
                 .get_feature_meta(feature_id)
                 .filter(|n| n.body == Some(body))
                 .map(|n| (PartFeature::from_json(&n.data).ok(), n.name.clone()))
                 .and_then(|(f, n)| f.map(|f| (f, n)))
-            {
-                ui.separator();
-                ui.heading(format!("{} settings", part_feature.kind_label()));
+        {
+            ui.separator();
+            ui.heading(format!("{} settings", part_feature.kind_label()));
 
-                let mut edited_name = node_name.clone();
-                ui.horizontal(|ui| {
-                    ui.label("Name:");
-                    if ui
-                        .add(egui::TextEdit::singleline(&mut edited_name).desired_width(140.0))
-                        .lost_focus()
-                        && edited_name != node_name
-                    {
-                        ctx.document.rename_feature(feature_id, edited_name);
-                    }
-                });
-                if let Some(sketch_id) = part_feature.sketch() {
-                    ui.label(format!(
-                        "Plane: {}",
-                        sketch_plane_description(ctx.document, sketch_id)
-                    ));
+            let mut edited_name = node_name.clone();
+            ui.horizontal(|ui| {
+                ui.label("Name:");
+                if ui
+                    .add(egui::TextEdit::singleline(&mut edited_name).desired_width(140.0))
+                    .lost_focus()
+                    && edited_name != node_name
+                {
+                    ctx.document.rename_feature(feature_id, edited_name);
                 }
+            });
+            if let Some(sketch_id) = part_feature.sketch() {
+                ui.label(format!(
+                    "Plane: {}",
+                    sketch_plane_description(ctx.document, sketch_id)
+                ));
+            }
 
-                let deps_before = part_feature.dependencies();
-                if editors::feature_editor(ui, ctx, body, feature_id, &mut part_feature) {
-                    let deps_after = part_feature.dependencies();
-                    if ctx
-                        .document
-                        .update_feature_data(feature_id, part_feature.to_json())
-                        .is_ok()
-                    {
-                        if deps_before != deps_after {
-                            ctx.document
-                                .set_feature_dependencies(feature_id, deps_after);
-                        }
-                        ctx.document.mark_feature_dirty(feature_id);
+            let deps_before = part_feature.dependencies();
+            if editors::feature_editor(ui, ctx, body, feature_id, &mut part_feature) {
+                let deps_after = part_feature.dependencies();
+                if ctx
+                    .document
+                    .update_feature_data(feature_id, part_feature.to_json())
+                    .is_ok()
+                {
+                    if deps_before != deps_after {
+                        ctx.document
+                            .set_feature_dependencies(feature_id, deps_after);
                     }
+                    ctx.document.mark_feature_dirty(feature_id);
                 }
             }
         }
@@ -702,44 +699,42 @@ impl Workbench for PartDesignWorkbench {
                 .get_feature_meta(*id)
                 .map(|n| n.workbench_id.as_str() == "core.datum" && n.body == Some(body))
                 .unwrap_or(false)
-        }) {
-            if let Some(mut datum) = ctx
-                .document
-                .get_feature_data(datum_id)
-                .and_then(|d| core_document::DatumFeature::from_json(d).ok())
+        }) && let Some(mut datum) = ctx
+            .document
+            .get_feature_data(datum_id)
+            .and_then(|d| core_document::DatumFeature::from_json(d).ok())
+        {
+            ui.separator();
+            ui.heading(datum.shape.label());
+            if editors::datum_editor(ui, ctx, datum_id, &mut datum) {
+                let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
+                // Sketches attached to this datum re-derive their plane
+                // from it on their next edit; solids are unaffected.
+            }
+            if ui
+                .small_button("Delete datum")
+                .on_hover_text("Remove this datum")
+                .clicked()
+                && ctx.document.remove_feature(datum_id).is_ok()
             {
-                ui.separator();
-                ui.heading(datum.shape.label());
-                if editors::datum_editor(ui, ctx, datum_id, &mut datum) {
-                    let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
-                    // Sketches attached to this datum re-derive their plane
-                    // from it on their next edit; solids are unaffected.
-                }
-                if ui
-                    .small_button("Delete datum")
-                    .on_hover_text("Remove this datum")
-                    .clicked()
-                    && ctx.document.remove_feature(datum_id).is_ok()
-                {
-                    ctx.active_document_object = None;
-                }
+                ctx.active_document_object = None;
             }
         }
 
-        if let Some((feature_id, sketches)) = removed {
-            if ctx.document.remove_feature(feature_id).is_ok() {
-                ctx.log_info("Deleted feature");
-                // Reveal consumed sketches again so they can be reused.
-                for sketch_id in sketches {
-                    ctx.document.set_feature_visible(sketch_id, true);
-                }
-                let remaining = part_feature_ids(ctx.document, body);
-                match remaining.first() {
-                    // Rebuild the rest of the history.
-                    Some(first) => ctx.document.mark_feature_dirty(*first),
-                    // Last feature gone: the body has no solid any more.
-                    None => ctx.document.remove_imported_geometry(body),
-                }
+        if let Some((feature_id, sketches)) = removed
+            && ctx.document.remove_feature(feature_id).is_ok()
+        {
+            ctx.log_info("Deleted feature");
+            // Reveal consumed sketches again so they can be reused.
+            for sketch_id in sketches {
+                ctx.document.set_feature_visible(sketch_id, true);
+            }
+            let remaining = part_feature_ids(ctx.document, body);
+            match remaining.first() {
+                // Rebuild the rest of the history.
+                Some(first) => ctx.document.mark_feature_dirty(*first),
+                // Last feature gone: the body has no solid any more.
+                None => ctx.document.remove_imported_geometry(body),
             }
         }
     }

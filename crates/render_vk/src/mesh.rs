@@ -4,8 +4,8 @@ use std::mem::size_of;
 use uuid::Uuid;
 
 use crate::{
-    util::create_buffer, BodySubmission, HighlightState, RenderError, ViewportRect, EDGE_FRAG_SPV,
-    EDGE_VERT_SPV, MAX_FRAMES_IN_FLIGHT, MESH_FRAG_SPV, MESH_VERT_SPV,
+    BodySubmission, EDGE_FRAG_SPV, EDGE_VERT_SPV, HighlightState, MAX_FRAMES_IN_FLIGHT,
+    MESH_FRAG_SPV, MESH_VERT_SPV, RenderError, ViewportRect, util::create_buffer,
 };
 
 use crate::create_shader_module;

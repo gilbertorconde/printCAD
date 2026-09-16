@@ -20,7 +20,7 @@ resolver = "2"
 opt-level = 3
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 rust-version = "1.98"
 

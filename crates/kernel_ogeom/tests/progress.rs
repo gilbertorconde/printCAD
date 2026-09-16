@@ -10,7 +10,7 @@ use kernel_api::{
     BooleanOp, ExtrudeTermination, Kernel, Profile, ProfilePlane, ProfileSegment, ProfileWire,
     SolidOp, SweepKind, TessellationSettings,
 };
-use kernel_ogeom::{OgeomKernel, Watch, CONTEXT_PREFIX};
+use kernel_ogeom::{CONTEXT_PREFIX, OgeomKernel, Watch};
 
 fn new_kernel() -> OgeomKernel {
     let mut kernel = OgeomKernel::new();

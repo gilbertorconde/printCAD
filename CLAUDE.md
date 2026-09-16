@@ -17,7 +17,7 @@ the single sanctioned mention.)
 ```bash
 cargo run -p app_shell            # launch the app (needs Vulkan + Wayland/X11)
 cargo run --release -p app_shell  # for real STEP files — see the profile note
-cargo test --workspace            # full suite (~200 tests)
+cargo test --workspace            # full suite (~390 tests)
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 ```

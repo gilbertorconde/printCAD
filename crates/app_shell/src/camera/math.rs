@@ -15,11 +15,7 @@ pub(crate) fn axis_parity(axes: &AxisSystem) -> f32 {
         .vector()
         .cross(axes.vertical().vector())
         .dot(axes.depth().vector());
-    if triple < 0.0 {
-        -1.0
-    } else {
-        1.0
-    }
+    if triple < 0.0 { -1.0 } else { 1.0 }
 }
 
 pub(crate) fn control_horizontal_vec(axes: &AxisSystem) -> Vec3 {

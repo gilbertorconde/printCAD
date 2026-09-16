@@ -12,8 +12,8 @@
 //! Non-invertible ops (imports, asset registration) are barriers: the
 //! journal clears rather than store an inverse that would lie.
 
-use crate::op::DocumentOp;
 use crate::Document;
+use crate::op::DocumentOp;
 
 /// One undoable user gesture.
 #[derive(Debug, Clone)]
@@ -127,8 +127,8 @@ impl OpJournal {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::datum::{DatumAttachment, DatumFeature, DatumShape};
     use crate::BasePlane;
+    use crate::datum::{DatumAttachment, DatumFeature, DatumShape};
 
     fn datum() -> DatumFeature {
         DatumFeature {

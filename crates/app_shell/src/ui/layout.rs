@@ -1,5 +1,5 @@
 use axes::AxisSystem;
-use core_document::{format_length_mm, DocumentService, Unit, WorkbenchId};
+use core_document::{DocumentService, Unit, WorkbenchId, format_length_mm};
 use egui::{
     self, Color32, Context, Id, Key, KeyboardShortcut, Modifiers, TextureHandle, TextureOptions,
 };
@@ -9,7 +9,7 @@ use crate::{log_panel, orientation_cube::rasterize_svg};
 use glam::Vec3;
 use workbenches::REGISTERED_WORKBENCHES;
 
-use super::{feature_tree, ActiveTool, ActiveWorkbench};
+use super::{ActiveTool, ActiveWorkbench, feature_tree};
 
 /// Outcome of a frame's interaction with the top bar (menu items + keyboard
 /// shortcuts). Each flag is `true` only on the frame the action was triggered.

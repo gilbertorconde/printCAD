@@ -7,8 +7,8 @@
 
 use kernel_api::TessellationSettings;
 
-use crate::log_panel as app_log;
 use crate::PrintCadApp;
+use crate::log_panel as app_log;
 
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {

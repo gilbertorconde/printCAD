@@ -31,13 +31,13 @@ pub fn execute(
             return Err(chain_err(
                 0,
                 "first solid op in a chain must be NewSolid".into(),
-            ))
+            ));
         }
         None => {
             return Err(chain_err(
                 0,
                 "first solid op in a chain must produce a shape".into(),
-            ))
+            ));
         }
     }
     for (index, op) in ops_list.iter().enumerate().skip(1) {

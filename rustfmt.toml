@@ -1,2 +1,2 @@
 # Default rustfmt style; pinned edition so standalone `rustfmt` runs match `cargo fmt`.
-edition = "2021"
+edition = "2024"

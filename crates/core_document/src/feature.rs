@@ -201,12 +201,12 @@ impl FeatureTree {
         to_mark.push_back(feature);
 
         while let Some(id) = to_mark.pop_front() {
-            if let Some(node) = self.features.get_mut(&id) {
-                if !node.dirty {
-                    node.dirty = true;
-                    // Add all dependents to the queue
-                    to_mark.extend(self.dependents(id));
-                }
+            if let Some(node) = self.features.get_mut(&id)
+                && !node.dirty
+            {
+                node.dirty = true;
+                // Add all dependents to the queue
+                to_mark.extend(self.dependents(id));
             }
         }
     }

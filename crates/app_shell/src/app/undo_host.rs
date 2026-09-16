@@ -1,9 +1,9 @@
 //! Host-side undo/redo: shortcuts land here; selection state is revalidated
 //! against the restored document after each history jump.
 
+use crate::PrintCadApp;
 use crate::log_panel as app_log;
 use crate::ui::TreeItemId;
-use crate::PrintCadApp;
 
 impl PrintCadApp {
     pub(crate) fn perform_undo(&mut self) {
@@ -54,20 +54,20 @@ impl PrintCadApp {
         let feature_exists =
             |id: core_document::FeatureId| doc.feature_tree().get_node(id).is_some();
 
-        if let Some(id) = self.active_body_id {
-            if !body_exists(id) {
-                self.active_body_id = None;
-            }
+        if let Some(id) = self.active_body_id
+            && !body_exists(id)
+        {
+            self.active_body_id = None;
         }
-        if let Some(id) = self.selected_body {
-            if !body_exists(core_document::BodyId(id)) {
-                self.selected_body = None;
-            }
+        if let Some(id) = self.selected_body
+            && !body_exists(core_document::BodyId(id))
+        {
+            self.selected_body = None;
         }
-        if let Some(id) = self.hovered_body {
-            if !body_exists(core_document::BodyId(id)) {
-                self.hovered_body = None;
-            }
+        if let Some(id) = self.hovered_body
+            && !body_exists(core_document::BodyId(id))
+        {
+            self.hovered_body = None;
         }
         match self.tree_selection {
             Some(TreeItemId::Body(id)) if !body_exists(id) => {

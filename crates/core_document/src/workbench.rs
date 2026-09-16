@@ -6,8 +6,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 use crate::FeatureId;
+use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkbenchId(String);

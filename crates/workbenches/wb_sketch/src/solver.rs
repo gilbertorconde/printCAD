@@ -739,16 +739,15 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
             ConstraintKind::PointOnEllipse { point, ellipse } => {
                 if let (Some(p), Some(GeometryElement::Ellipse(el))) =
                     (point_var(point), sketch.get_geometry(ellipse))
+                    && let Some(c) = point_var(el.center)
                 {
-                    if let Some(c) = point_var(el.center) {
-                        specs.push(ResidualSpec::PointOnEllipse {
-                            p,
-                            c,
-                            major_x: f64::from(el.major.x),
-                            major_y: f64::from(el.major.y),
-                            ratio: f64::from(el.ratio),
-                        });
-                    }
+                    specs.push(ResidualSpec::PointOnEllipse {
+                        p,
+                        c,
+                        major_x: f64::from(el.major.x),
+                        major_y: f64::from(el.major.y),
+                        ratio: f64::from(el.ratio),
+                    });
                 }
             }
             ConstraintKind::Tangent {
@@ -827,16 +826,16 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
     // never runs, so gating on "at least one constraint exists" costs nothing.
     if !specs.is_empty() {
         for element in &sketch.geometry {
-            if let GeometryElement::Arc(arc) = element {
-                if let (Some(c), Some(s), Some(e), Some(r)) = (
+            if let GeometryElement::Arc(arc) = element
+                && let (Some(c), Some(s), Some(e), Some(r)) = (
                     point_var(arc.center),
                     point_var(arc.start),
                     point_var(arc.end),
                     radius_vars.get(&arc.id).copied(),
-                ) {
-                    specs.push(ResidualSpec::ArcEndpoint { p: s, c, r });
-                    specs.push(ResidualSpec::ArcEndpoint { p: e, c, r });
-                }
+                )
+            {
+                specs.push(ResidualSpec::ArcEndpoint { p: s, c, r });
+                specs.push(ResidualSpec::ArcEndpoint { p: e, c, r });
             }
         }
     }

@@ -5,7 +5,7 @@
 //! server process there is nowhere durable to log them, and pretending
 //! otherwise would be worse than saying so.
 
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 use core_document::server::{ClientMessage, DocumentServer, ServerMessage, ServerStatus};
 

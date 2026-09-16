@@ -19,7 +19,7 @@ use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
 use settings::CameraSettings;
-use state::{canonical_quat_to_world, CadCameraState};
+use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
 
@@ -303,11 +303,11 @@ impl CameraController {
 
     /// Middle mouse — uses current pick world position supplied by caller.
     pub fn on_mmb_pivot_pick(&mut self, world_hit: Option<Vec3>, settings: &CameraSettings) {
-        if let Some(hit) = world_hit {
-            if ops::set_pivot_world_hit(&mut self.state, &self.axes, hit, settings) {
-                self.state.clip_dirty = true;
-                self.cancel_animation();
-            }
+        if let Some(hit) = world_hit
+            && ops::set_pivot_world_hit(&mut self.state, &self.axes, hit, settings)
+        {
+            self.state.clip_dirty = true;
+            self.cancel_animation();
         }
     }
 
@@ -394,12 +394,13 @@ impl CameraController {
         if !self.rotation_pivot_marker_visible() {
             return None;
         }
-        if orbit_pivot_pick && self.lmb_dragging_scene {
-            if let Some(p) = self.orbit_lmb_anchor_world {
-                let world = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
-                if let Some(px) = self.world_to_screen(world) {
-                    return Some(px);
-                }
+        if orbit_pivot_pick
+            && self.lmb_dragging_scene
+            && let Some(p) = self.orbit_lmb_anchor_world
+        {
+            let world = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
+            if let Some(px) = self.world_to_screen(world) {
+                return Some(px);
             }
         }
         self.world_to_screen(Vec3::from_array(self.target()))

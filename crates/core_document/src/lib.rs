@@ -23,8 +23,8 @@ use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
 pub use datum::{
-    datums_of_body, AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame,
-    DatumShape,
+    AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,
+    datums_of_body,
 };
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use kernel_api::TriMesh;
@@ -33,7 +33,7 @@ pub use runtime::{
     SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
-pub use units::{format_length_mm, Unit};
+pub use units::{Unit, format_length_mm};
 pub use workbench::{
     CommandDescriptor, ScreenSpaceLabel, ScreenSpaceOverlay, ToolBehavior, ToolDescriptor,
     Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
@@ -683,13 +683,13 @@ impl Document {
 
     /// Show/hide a feature (e.g. hide a sketch once a pad consumes it).
     pub fn set_feature_visible(&mut self, feature_id: FeatureId, visible: bool) {
-        if let Some(node) = self.feature_tree.get_node(feature_id) {
-            if node.visible != visible {
-                self.record_and_apply(op::DocumentOp::SetFeatureVisible {
-                    id: feature_id,
-                    visible,
-                });
-            }
+        if let Some(node) = self.feature_tree.get_node(feature_id)
+            && node.visible != visible
+        {
+            self.record_and_apply(op::DocumentOp::SetFeatureVisible {
+                id: feature_id,
+                visible,
+            });
         }
     }
 
@@ -704,45 +704,47 @@ impl Document {
     /// Rename a feature (user-facing name in the tree and panels).
     pub fn rename_feature(&mut self, feature_id: FeatureId, name: impl Into<String>) {
         let name = name.into();
-        if let Some(node) = self.feature_tree.get_node(feature_id) {
-            if node.name != name && !name.trim().is_empty() {
-                self.record_and_apply(op::DocumentOp::RenameFeature {
-                    id: feature_id,
-                    name,
-                });
-            }
+        if let Some(node) = self.feature_tree.get_node(feature_id)
+            && node.name != name
+            && !name.trim().is_empty()
+        {
+            self.record_and_apply(op::DocumentOp::RenameFeature {
+                id: feature_id,
+                name,
+            });
         }
     }
 
     /// Rename a body.
     pub fn rename_body(&mut self, body: BodyId, name: impl Into<String>) {
         let name = name.into();
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body) {
-            if entry.name != name && !name.trim().is_empty() {
-                self.record_and_apply(op::DocumentOp::RenameBody { id: body, name });
-            }
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+            && entry.name != name
+            && !name.trim().is_empty()
+        {
+            self.record_and_apply(op::DocumentOp::RenameBody { id: body, name });
         }
     }
 
     /// Suppress/unsuppress a feature (excluded from builds while suppressed).
     pub fn set_feature_suppressed(&mut self, feature_id: FeatureId, suppressed: bool) {
-        if let Some(node) = self.feature_tree.get_node(feature_id) {
-            if node.suppressed != suppressed {
-                self.record_and_apply(op::DocumentOp::SetFeatureSuppressed {
-                    id: feature_id,
-                    suppressed,
-                });
-            }
+        if let Some(node) = self.feature_tree.get_node(feature_id)
+            && node.suppressed != suppressed
+        {
+            self.record_and_apply(op::DocumentOp::SetFeatureSuppressed {
+                id: feature_id,
+                suppressed,
+            });
         }
     }
 
     /// Set (or clear) the feature exposed as a body's shape. Features after
     /// the tip are excluded from the build until the tip moves back.
     pub fn set_body_tip(&mut self, body: BodyId, tip: Option<FeatureId>) {
-        if let Some(entry) = self.bodies.iter().find(|b| b.id == body) {
-            if entry.tip != tip {
-                self.record_and_apply(op::DocumentOp::SetBodyTip { id: body, tip });
-            }
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+            && entry.tip != tip
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyTip { id: body, tip });
         }
     }
 
@@ -1237,26 +1239,25 @@ impl Document {
         // line rather than failing later with a parse error (the body's mesh
         // still loads; re-import the STEP source to restore the solid).
         for (body_id, geom) in &doc.imported_meshes {
-            if let Some(ref brep_path) = geom.brep_blob_path {
-                if let Some(bytes) = blobs_by_path.remove(brep_path) {
-                    if bytes.starts_with(b"ogeom") {
-                        doc.imported_brep_blobs
-                            .insert(*body_id, std::sync::Arc::new(bytes));
-                    } else {
-                        tracing::warn!(
-                            body = ?body_id,
-                            "shape snapshot predates the ogeom kernel; \
-                             re-import the STEP source to restore this body's solid"
-                        );
-                    }
+            if let Some(ref brep_path) = geom.brep_blob_path
+                && let Some(bytes) = blobs_by_path.remove(brep_path)
+            {
+                if bytes.starts_with(b"ogeom") {
+                    doc.imported_brep_blobs
+                        .insert(*body_id, std::sync::Arc::new(bytes));
+                } else {
+                    tracing::warn!(
+                        body = ?body_id,
+                        "shape snapshot predates the ogeom kernel; \
+                         re-import the STEP source to restore this body's solid"
+                    );
                 }
             }
-            if let Some(ref col_path) = geom.face_colors_path {
-                if let Some(bytes) = blobs_by_path.remove(col_path) {
-                    if let Some(parsed) = decode_face_colors_blob(&bytes) {
-                        doc.imported_brep_face_colors.insert(*body_id, parsed);
-                    }
-                }
+            if let Some(ref col_path) = geom.face_colors_path
+                && let Some(bytes) = blobs_by_path.remove(col_path)
+                && let Some(parsed) = decode_face_colors_blob(&bytes)
+            {
+                doc.imported_brep_face_colors.insert(*body_id, parsed);
             }
         }
 
@@ -1411,10 +1412,9 @@ fn next_indexed_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) ->
         } else if let Some(rest) = name
             .to_ascii_lowercase()
             .strip_prefix(&(base.to_ascii_lowercase() + "_"))
+            && let Ok(n) = rest.parse::<u32>()
         {
-            if let Ok(n) = rest.parse::<u32>() {
-                max_suffix = Some(max_suffix.map_or(n, |m| m.max(n)));
-            }
+            max_suffix = Some(max_suffix.map_or(n, |m| m.max(n)));
         }
     }
 

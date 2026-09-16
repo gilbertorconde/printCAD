@@ -3,12 +3,12 @@
 
 use uuid::Uuid;
 
-use super::{materialize, materialize_on_curve, short, ToolEffect, ToolState};
+use super::{ToolEffect, ToolState, materialize, materialize_on_curve, short};
 use crate::geom2d;
 use crate::sketch::{
     Arc, BSpline, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
 };
-use crate::snap::{self, arc_angles, AxisSnap, SnapTarget};
+use crate::snap::{self, AxisSnap, SnapTarget, arc_angles};
 
 /// Point snap first (id reuse — never a coincident duplicate); otherwise a
 /// curve within tolerance captures the click, projecting the position onto
@@ -435,10 +435,10 @@ pub(super) fn bspline(
         ToolState::BSplineDraw { points } => {
             let prev = points.last().and_then(|t| t.position(sketch));
             let new = target.position(sketch);
-            if let (Some(prev), Some(new)) = (prev, new) {
-                if (new - prev).to_glam().length() < 1e-6 {
-                    return ToolEffect::none(); // double-click on the same spot
-                }
+            if let (Some(prev), Some(new)) = (prev, new)
+                && (new - prev).to_glam().length() < 1e-6
+            {
+                return ToolEffect::none(); // double-click on the same spot
             }
             points.push(target);
         }

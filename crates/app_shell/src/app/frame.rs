@@ -15,7 +15,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
 use crate::log_panel as app_log;
 use crate::orientation_cube::OrientationCubeInput;
-use crate::{ui, Document, PrintCadApp};
+use crate::{Document, PrintCadApp, ui};
 
 /// Stable u64 fingerprint of a [`kernel_api::TriMesh`]'s geometry. Used as
 /// the `revision` for workbench overlay meshes so unchanged overlays are
@@ -254,13 +254,12 @@ impl PrintCadApp {
         if let Some(after_ms) = std::env::var("PRINTCAD_EXIT_AFTER_MS")
             .ok()
             .and_then(|v| v.parse::<u64>().ok())
+            && self.bench_started.elapsed().as_millis() as u64 >= after_ms
         {
-            if self.bench_started.elapsed().as_millis() as u64 >= after_ms {
-                tracing::info!(target: "printcad.frame", "bench exit requested");
-                self.wait_for_document_saves();
-                event_loop.exit();
-                return;
-            }
+            tracing::info!(target: "printcad.frame", "bench exit requested");
+            self.wait_for_document_saves();
+            event_loop.exit();
+            return;
         }
 
         // Dev/bench hooks: import a STEP or open a document at startup

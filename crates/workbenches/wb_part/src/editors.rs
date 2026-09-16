@@ -8,8 +8,8 @@ use egui::Ui;
 
 use crate::build::{part_features_of_body, sketches_of_body};
 use crate::feature::{
-    ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, MirrorPlane,
-    PartFeature, PatternAxis, RevolveAxis, TransformStep, METRIC_SIZES,
+    ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
 };
 
 fn mm_drag(ui: &mut Ui, value: &mut f32, label: &str) -> bool {
@@ -151,14 +151,13 @@ fn face_pick_row(
             .add_enabled(has_selection, egui::Button::new("Use selected face"))
             .on_hover_text("Click a face in the viewport first, then press this")
             .clicked()
+            && let Some(face) = ctx.selected_face
         {
-            if let Some(face) = ctx.selected_face {
-                *pick = Some(FacePick {
-                    point: face.point,
-                    normal: face.normal,
-                });
-                changed = true;
-            }
+            *pick = Some(FacePick {
+                point: face.point,
+                normal: face.normal,
+            });
+            changed = true;
         }
     });
     changed
@@ -193,14 +192,13 @@ fn face_list_editor(
         .add_enabled(has_selection, egui::Button::new("Add selected face"))
         .on_hover_text("Click a face in the viewport first, then press this")
         .clicked()
+        && let Some(face) = ctx.selected_face
     {
-        if let Some(face) = ctx.selected_face {
-            faces.push(FacePick {
-                point: face.point,
-                normal: face.normal,
-            });
-            changed = true;
-        }
+        faces.push(FacePick {
+            point: face.point,
+            normal: face.normal,
+        });
+        changed = true;
     }
     changed
 }
@@ -354,24 +352,25 @@ fn mirror_plane_editor(
                     }
                 }
                 let is_face = matches!(plane, MirrorPlane::Face(_));
-                if ui.selectable_label(is_face, "Picked face").clicked() && !is_face {
-                    if let Some(face) = ctx.selected_face {
-                        *plane = MirrorPlane::Face(FacePick {
-                            point: face.point,
-                            normal: face.normal,
-                        });
-                        changed = true;
-                    }
+                if ui.selectable_label(is_face, "Picked face").clicked()
+                    && !is_face
+                    && let Some(face) = ctx.selected_face
+                {
+                    *plane = MirrorPlane::Face(FacePick {
+                        point: face.point,
+                        normal: face.normal,
+                    });
+                    changed = true;
                 }
             });
     });
     if let MirrorPlane::Face(pick) = plane {
         let mut opt = Some(*pick);
-        if face_pick_row(ui, ctx, &mut opt, "Face:") {
-            if let Some(new_pick) = opt {
-                *pick = new_pick;
-                changed = true;
-            }
+        if face_pick_row(ui, ctx, &mut opt, "Face:")
+            && let Some(new_pick) = opt
+        {
+            *pick = new_pick;
+            changed = true;
         }
     }
     changed
@@ -714,14 +713,13 @@ pub fn datum_editor(
                     )
                     .on_hover_text("Click a face in the viewport first")
                     .clicked()
+                    && let Some(face) = ctx.selected_face
                 {
-                    if let Some(face) = ctx.selected_face {
-                        datum.attachment = DatumAttachment::FlatFace {
-                            point: face.point,
-                            normal: face.normal,
-                        };
-                        changed = true;
-                    }
+                    datum.attachment = DatumAttachment::FlatFace {
+                        point: face.point,
+                        normal: face.normal,
+                    };
+                    changed = true;
                 }
             });
     });
@@ -731,14 +729,13 @@ pub fn datum_editor(
             .button("Re-pick from selected face")
             .on_hover_text("Move the attachment to the currently selected face")
             .clicked()
+        && let Some(face) = ctx.selected_face
     {
-        if let Some(face) = ctx.selected_face {
-            datum.attachment = DatumAttachment::FlatFace {
-                point: face.point,
-                normal: face.normal,
-            };
-            changed = true;
-        }
+        datum.attachment = DatumAttachment::FlatFace {
+            point: face.point,
+            normal: face.normal,
+        };
+        changed = true;
     }
 
     ui.label("Attachment offset:");
@@ -931,11 +928,10 @@ pub fn feature_editor(
                 ("loft_add", feature_id),
                 None,
                 "Add section:",
-            ) {
-                if !sections.contains(&new) {
-                    sections.push(new);
-                    changed = true;
-                }
+            ) && !sections.contains(&new)
+            {
+                sections.push(new);
+                changed = true;
             }
             changed |= ui.checkbox(ruled, "Ruled (straight transitions)").changed();
             changed |= ui.checkbox(closed, "Closed (loop back)").changed();
@@ -1244,11 +1240,11 @@ pub fn feature_editor(
         } => {
             changed |= deg_drag(ui, angle_deg, "Angle:", 0.1..=45.0);
             let mut neutral_opt = Some(*neutral);
-            if face_pick_row(ui, ctx, &mut neutral_opt, "Neutral plane:") {
-                if let Some(pick) = neutral_opt {
-                    *neutral = pick;
-                    changed = true;
-                }
+            if face_pick_row(ui, ctx, &mut neutral_opt, "Neutral plane:")
+                && let Some(pick) = neutral_opt
+            {
+                *neutral = pick;
+                changed = true;
             }
             changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
             changed |= ui.checkbox(reversed, "Reversed pull").changed();

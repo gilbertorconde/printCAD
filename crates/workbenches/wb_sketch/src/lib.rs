@@ -241,20 +241,20 @@ impl SketchWorkbench {
     }
 
     fn sync_active_sketch_from_ctx(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        if let Some(feature_id) = ctx.active_document_object {
-            if self.is_sketch_feature(ctx, feature_id) && self.active_sketch_id != Some(feature_id)
-            {
-                self.active_sketch_id = Some(feature_id);
-                self.clear_interaction_state();
+        if let Some(feature_id) = ctx.active_document_object
+            && self.is_sketch_feature(ctx, feature_id)
+            && self.active_sketch_id != Some(feature_id)
+        {
+            self.active_sketch_id = Some(feature_id);
+            self.clear_interaction_state();
 
-                if let Some(sketch_feature) = self.get_active_sketch(ctx) {
-                    let plane = sketch_feature.plane;
-                    ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
-                        plane_origin: plane.origin,
-                        plane_normal: plane.normal,
-                        plane_up: plane.y_axis,
-                    });
-                }
+            if let Some(sketch_feature) = self.get_active_sketch(ctx) {
+                let plane = sketch_feature.plane;
+                ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
+                    plane_origin: plane.origin,
+                    plane_normal: plane.normal,
+                    plane_up: plane.y_axis,
+                });
             }
         }
     }
@@ -269,10 +269,10 @@ impl SketchWorkbench {
     fn next_sketch_name(document: &core_document::Document) -> String {
         let mut max_index = None::<u32>;
         for (_, node) in document.feature_tree().all_nodes() {
-            if node.workbench_id.as_str() == "wb.sketch" {
-                if let Some(idx) = parse_sketch_index(&node.name) {
-                    max_index = Some(max_index.map_or(idx, |m| m.max(idx)));
-                }
+            if node.workbench_id.as_str() == "wb.sketch"
+                && let Some(idx) = parse_sketch_index(&node.name)
+            {
+                max_index = Some(max_index.map_or(idx, |m| m.max(idx)));
             }
         }
         match max_index {
@@ -758,16 +758,15 @@ impl SketchWorkbench {
         }
         if let Some(ld) = self.label_drag.take() {
             // Restore the pre-drag label offset.
-            if let Some(mut feature) = self.get_active_sketch(ctx) {
-                if let Some(c) = feature
+            if let Some(mut feature) = self.get_active_sketch(ctx)
+                && let Some(c) = feature
                     .sketch
                     .constraints
                     .iter_mut()
                     .find(|c| c.id == ld.constraint)
-                {
-                    c.label_offset = ld.original;
-                    self.store_sketch(ctx, feature);
-                }
+            {
+                c.label_offset = ld.original;
+                self.store_sketch(ctx, feature);
             }
             return InputResult::consumed();
         }
@@ -777,16 +776,16 @@ impl SketchWorkbench {
         }
         if let Some(drag) = self.dragging.take() {
             // Restore the pre-drag position.
-            if drag.moved {
-                if let Some(mut feature) = self.get_active_sketch(ctx) {
-                    if let Some(sketch::GeometryElement::Point(p)) =
-                        feature.sketch.get_geometry_mut(drag.point)
-                    {
-                        p.position = drag.original;
-                    }
-                    self.solve(ctx, &mut feature);
-                    self.store_sketch(ctx, feature);
+            if drag.moved
+                && let Some(mut feature) = self.get_active_sketch(ctx)
+            {
+                if let Some(sketch::GeometryElement::Point(p)) =
+                    feature.sketch.get_geometry_mut(drag.point)
+                {
+                    p.position = drag.original;
                 }
+                self.solve(ctx, &mut feature);
+                self.store_sketch(ctx, feature);
             }
             return InputResult::consumed();
         }
@@ -1121,14 +1120,13 @@ impl Workbench for SketchWorkbench {
             let face_plane = pending.face_plane;
             ui.label("New sketch — choose a plane:");
             let mut chosen: Option<SketchPlane> = None;
-            if let Some(face) = face_plane {
-                if ui
+            if let Some(face) = face_plane
+                && ui
                     .button("▸ Selected face")
                     .on_hover_text("Sketch on the face you clicked on the solid")
                     .clicked()
-                {
-                    chosen = Some(face);
-                }
+            {
+                chosen = Some(face);
             }
             ui.horizontal(|ui| {
                 if ui.button("Top (XY)").clicked() {
@@ -1236,12 +1234,12 @@ impl Workbench for SketchWorkbench {
                 });
             self.pending_focus = None; // one-shot: the row grabbed focus
         }
-        if let Some(idx) = delete_constraint {
-            if let Some(mut feature) = self.get_active_sketch(ctx) {
-                feature.sketch.constraints.remove(idx);
-                self.solve(ctx, &mut feature);
-                self.store_sketch(ctx, feature);
-            }
+        if let Some(idx) = delete_constraint
+            && let Some(mut feature) = self.get_active_sketch(ctx)
+        {
+            feature.sketch.constraints.remove(idx);
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
         }
         if let Some((idx, constraint)) = edited_constraint {
             self.update_constraint(ctx, idx, constraint);
@@ -1345,16 +1343,16 @@ impl Workbench for SketchWorkbench {
                 .map(glyphs::Glyph::into_label)
                 .collect();
         // On-view parameter readouts stack next to the cursor.
-        if let Some(cursor) = self.cursor {
-            if let Some(px) = proj.to_px(cursor) {
-                out.extend(ovp::readout_labels(
-                    &self.dim_capture,
-                    &self.tool_state,
-                    &feature.sketch,
-                    cursor,
-                    px,
-                ));
-            }
+        if let Some(cursor) = self.cursor
+            && let Some(px) = proj.to_px(cursor)
+        {
+            out.extend(ovp::readout_labels(
+                &self.dim_capture,
+                &self.tool_state,
+                &feature.sketch,
+                cursor,
+                px,
+            ));
         }
         out
     }
@@ -1603,26 +1601,26 @@ impl SketchWorkbench {
             self.hover_from_panel = false;
         }
 
-        if let Some(id) = delete_element {
-            if let Some(mut feature) = self.get_active_sketch(ctx) {
-                let removed = feature.sketch.remove_geometry_cascade(&[id]);
-                if !removed.is_empty() {
-                    for rid in &removed {
-                        self.selected.remove(rid);
-                    }
-                    self.hovered = None;
-                    self.solve(ctx, &mut feature);
-                    ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
-                    self.store_sketch(ctx, feature);
+        if let Some(id) = delete_element
+            && let Some(mut feature) = self.get_active_sketch(ctx)
+        {
+            let removed = feature.sketch.remove_geometry_cascade(&[id]);
+            if !removed.is_empty() {
+                for rid in &removed {
+                    self.selected.remove(rid);
                 }
-            }
-        }
-        if let Some(id) = toggle_construction {
-            if let Some(mut feature) = self.get_active_sketch(ctx) {
-                let flag = !feature.sketch.is_construction(id);
-                feature.sketch.set_construction(id, flag);
+                self.hovered = None;
+                self.solve(ctx, &mut feature);
+                ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
                 self.store_sketch(ctx, feature);
             }
+        }
+        if let Some(id) = toggle_construction
+            && let Some(mut feature) = self.get_active_sketch(ctx)
+        {
+            let flag = !feature.sketch.is_construction(id);
+            feature.sketch.set_construction(id, flag);
+            self.store_sketch(ctx, feature);
         }
     }
 

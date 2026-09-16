@@ -18,7 +18,7 @@ use std::path::PathBuf;
 
 use std::time::Instant;
 use tracing::error;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
 use uuid::Uuid;
 use winit::{

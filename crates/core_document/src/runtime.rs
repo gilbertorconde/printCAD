@@ -386,9 +386,10 @@ mod transform_tests {
         let ctx = ctx_with_matrix(&mut doc);
         // The center ray travels along -Z; a plane containing that axis
         // (normal +Y at the ray height) is parallel to it.
-        assert!(ctx
-            .viewport_to_plane((400.0, 300.0), [0.0, 5.0, 0.0], [0.0, 1.0, 0.0])
-            .is_none());
+        assert!(
+            ctx.viewport_to_plane((400.0, 300.0), [0.0, 5.0, 0.0], [0.0, 1.0, 0.0])
+                .is_none()
+        );
     }
 
     #[test]

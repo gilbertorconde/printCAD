@@ -13,14 +13,14 @@ use std::collections::HashMap;
 
 use axes::AxisSystem;
 use egui::{
-    epaint::{Mesh as EguiMesh, Vertex as EguiVertex},
     Color32, ColorImage, Context, Id, Pos2, Response, Sense, Stroke, TextureHandle, TextureOptions,
     Ui,
+    epaint::{Mesh as EguiMesh, Vertex as EguiVertex},
 };
 use glam::{Mat3, Quat, Vec3};
 use resvg::render;
 use tiny_skia::Pixmap;
-use usvg::{fontdb, Options};
+use usvg::{Options, fontdb};
 
 const FACE_TEMPLATE_SVG: &str = include_str!("face_template.svg");
 
@@ -265,17 +265,17 @@ pub fn draw(
                 result.snap_to_view = Some(snap);
             }
 
-            if config.show_rotation_arrows {
-                if let Some(delta) = draw_rotation_arrows_interactive(
+            if config.show_rotation_arrows
+                && let Some(delta) = draw_rotation_arrows_interactive(
                     ui,
                     &painter,
                     local_center,
                     config.widget_size,
                     &response,
                     y_offset,
-                ) {
-                    result.rotate_delta = Some(delta);
-                }
+                )
+            {
+                result.rotate_delta = Some(delta);
             }
         });
 
@@ -731,18 +731,15 @@ fn draw_cube_interactive(
         };
 
         // Check if clicked on this polygon
-        if let Some(pos) = click_pos {
-            if point_in_polygon(pos, &points) {
-                if let Some(snap) = poly.snap_view {
-                    clicked_face = Some(snap);
-                }
-            }
+        if let Some(pos) = click_pos
+            && point_in_polygon(pos, &points)
+            && let Some(snap) = poly.snap_view
+        {
+            clicked_face = Some(snap);
         }
 
-        if is_hovered {
-            if let Some(label) = poly.label {
-                hovered_label = Some(label);
-            }
+        if is_hovered && let Some(label) = poly.label {
+            hovered_label = Some(label);
         }
 
         // Shade based on normal direction, brighten if hovered
@@ -771,24 +768,25 @@ fn draw_cube_interactive(
             Stroke::new(0.5_f32, stroke_color),
         ));
 
-        if let (Some(label), Some(uvs)) = (poly.label, &poly.uvs) {
-            if normal.z > 0.3 && points.len() >= 3 {
-                let text_color = auto_text_color(poly.color);
-                if let Some(texture) = get_face_texture(ctx, label, poly.color, text_color) {
-                    let mut mesh = EguiMesh::with_texture(texture.id());
-                    for (pos, uv) in points.iter().zip(uvs.iter()) {
-                        mesh.vertices.push(EguiVertex {
-                            pos: *pos,
-                            uv: Pos2::new(uv[0], uv[1]),
-                            color: Color32::WHITE,
-                        });
-                    }
-                    for idx in 1..(points.len() - 1) {
-                        mesh.indices
-                            .extend_from_slice(&[0, idx as u32, (idx as u32 + 1)]);
-                    }
-                    painter.add(egui::Shape::mesh(mesh));
+        if let (Some(label), Some(uvs)) = (poly.label, &poly.uvs)
+            && normal.z > 0.3
+            && points.len() >= 3
+        {
+            let text_color = auto_text_color(poly.color);
+            if let Some(texture) = get_face_texture(ctx, label, poly.color, text_color) {
+                let mut mesh = EguiMesh::with_texture(texture.id());
+                for (pos, uv) in points.iter().zip(uvs.iter()) {
+                    mesh.vertices.push(EguiVertex {
+                        pos: *pos,
+                        uv: Pos2::new(uv[0], uv[1]),
+                        color: Color32::WHITE,
+                    });
                 }
+                for idx in 1..(points.len() - 1) {
+                    mesh.indices
+                        .extend_from_slice(&[0, idx as u32, (idx as u32 + 1)]);
+                }
+                painter.add(egui::Shape::mesh(mesh));
             }
         }
     }

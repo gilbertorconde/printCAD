@@ -84,7 +84,7 @@ pub fn normalized(model: &Model, shape: Shape) -> Shape {
 /// The solid pieces of a shape: itself when it is a solid, its solid
 /// children when it is a compound.
 pub fn solids_of(model: &Model, shape: &Shape) -> Vec<Shape> {
-    use ogeom::topo::{explore, Filter, ShapeType};
+    use ogeom::topo::{Filter, ShapeType, explore};
     match model.kind_of(shape) {
         Ok(ShapeType::Solid) => vec![shape.clone()],
         Ok(ShapeType::Compound | ShapeType::CompSolid) => {

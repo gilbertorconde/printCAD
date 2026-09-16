@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use core_document::{ScreenSpaceLabel, ScreenSpaceOverlay};
 use uuid::Uuid;
 
-use crate::overlay::{SketchProjector, COLOR_SELECTED};
+use crate::overlay::{COLOR_SELECTED, SketchProjector};
 use crate::sketch::{self, ConstraintKind, GeometryElement, Sketch, Vec2D};
 use crate::snap::arc_angles;
 

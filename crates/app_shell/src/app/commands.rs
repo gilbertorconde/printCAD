@@ -11,8 +11,8 @@ use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
 use core_document::WorkbenchFeature;
 
-use crate::ui::{ActiveWorkbench, FileCommand, TreeFeatureCommand, TreeItemId, UiCommand};
 use crate::PrintCadApp;
+use crate::ui::{ActiveWorkbench, FileCommand, TreeFeatureCommand, TreeItemId, UiCommand};
 
 /// Phase 1 of the two-phase dispatch: commands folded into per-frame
 /// intents. Phase 2 applies them in the frame order the pre-command code
@@ -115,10 +115,10 @@ impl PrintCadApp {
             }
         }
 
-        if intents.persist_settings {
-            if let Err(err) = self.settings_store.save(&self.user_settings) {
-                app_log::warn(format!("Failed to save settings: {err}"));
-            }
+        if intents.persist_settings
+            && let Err(err) = self.settings_store.save(&self.user_settings)
+        {
+            app_log::warn(format!("Failed to save settings: {err}"));
         }
         if intents.apply_camera_settings {
             self.camera.sync_with_settings(&self.user_settings.camera);
@@ -241,10 +241,10 @@ impl PrintCadApp {
         self.active_document_object = None;
         self.tree_selection = Some(TreeItemId::DocumentRoot);
 
-        if let Some(previous) = self.return_workbench.take() {
-            if previous != self.active_workbench {
-                self.switch_workbench_for_flow(previous.0);
-            }
+        if let Some(previous) = self.return_workbench.take()
+            && previous != self.active_workbench
+        {
+            self.switch_workbench_for_flow(previous.0);
         }
     }
 

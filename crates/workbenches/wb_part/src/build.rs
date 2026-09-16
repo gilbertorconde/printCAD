@@ -9,13 +9,13 @@ use kernel_api::{
     BooleanOp, EdgeSelection, ExtrudeTermination, Profile, ProfileSegment, ProfileWire, SolidOp,
     SweepKind,
 };
+use wb_sketch::SketchFeature;
 use wb_sketch::profile;
 use wb_sketch::sketch::{GeometryElement, Sketch};
-use wb_sketch::SketchFeature;
 
 use crate::feature::{
-    ExtrudeMode, FacePick, HelixMode, HoleCut, PartFeature, PatternAxis, RevolveAxis,
-    TransformStep, METRIC_SIZES,
+    ExtrudeMode, FacePick, HelixMode, HoleCut, METRIC_SIZES, PartFeature, PatternAxis, RevolveAxis,
+    TransformStep,
 };
 
 /// A body's translated build chain plus the feature responsible for each op
@@ -626,14 +626,14 @@ pub fn hole_diameter(feature: &PartFeature) -> f32 {
         ..
     } = feature
     {
-        if let Some(index) = metric_index {
-            if let Some((_, _, tap_drill, clearance)) = METRIC_SIZES.get(*index) {
-                return if *threaded {
-                    *tap_drill
-                } else {
-                    clearance[*fit as usize]
-                };
-            }
+        if let Some(index) = metric_index
+            && let Some((_, _, tap_drill, clearance)) = METRIC_SIZES.get(*index)
+        {
+            return if *threaded {
+                *tap_drill
+            } else {
+                clearance[*fit as usize]
+            };
         }
         return *diameter;
     }
@@ -816,21 +816,21 @@ fn sketch_spine(document: &Document, sketch_id: FeatureId) -> Result<Profile, St
     }
 
     // A single circle is a closed spine by itself.
-    if curves.len() == 1 {
-        if let GeometryElement::Circle(circle) = curves[0] {
-            let center = sketch
-                .point_position(circle.center)
-                .ok_or("spine circle has no center point")?;
-            return Ok(Profile {
-                plane,
-                wires: vec![ProfileWire {
-                    segments: vec![ProfileSegment::Circle {
-                        center: [center.x as f64, center.y as f64],
-                        radius: circle.radius as f64,
-                    }],
+    if curves.len() == 1
+        && let GeometryElement::Circle(circle) = curves[0]
+    {
+        let center = sketch
+            .point_position(circle.center)
+            .ok_or("spine circle has no center point")?;
+        return Ok(Profile {
+            plane,
+            wires: vec![ProfileWire {
+                segments: vec![ProfileSegment::Circle {
+                    center: [center.x as f64, center.y as f64],
+                    radius: circle.radius as f64,
                 }],
-            });
-        }
+            }],
+        });
     }
 
     // Order curves into one chain by shared endpoints.
@@ -1684,9 +1684,11 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        assert!(sketch_spine(&doc, spine_id)
-            .unwrap_err()
-            .contains("branches"));
+        assert!(
+            sketch_spine(&doc, spine_id)
+                .unwrap_err()
+                .contains("branches")
+        );
     }
 
     #[test]

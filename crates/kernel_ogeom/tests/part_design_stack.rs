@@ -6,8 +6,8 @@ use core_document::{BodyId, Document, FeatureId};
 use kernel_api::TessellationSettings;
 use kernel_ogeom::OgeomKernel;
 use wb_part::PartFeature;
-use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 use wb_sketch::SketchFeature;
+use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
 fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32) -> SketchFeature {
     let mut sketch = Sketch::new("s");

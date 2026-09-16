@@ -309,11 +309,7 @@ fn is_full(angle_deg: f64) -> bool {
 }
 
 fn angle_deg3_or_full(angle_deg: f64) -> f64 {
-    if angle_deg == 0.0 {
-        360.0
-    } else {
-        angle_deg
-    }
+    if angle_deg == 0.0 { 360.0 } else { angle_deg }
 }
 
 fn placement_frame(placement: &Placement) -> Result<Frame, String> {

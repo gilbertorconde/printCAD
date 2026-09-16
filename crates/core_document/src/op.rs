@@ -19,11 +19,11 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::ImportedObjectNode;
 use crate::asset::AssetReference;
 use crate::feature::{BodyId, FeatureId};
 use crate::units::Unit;
 use crate::workbench::WorkbenchId;
-use crate::ImportedObjectNode;
 
 /// Version of the op vocabulary. Lives on the envelope (the op log / wire
 /// protocol), not on each variant; additive evolution uses serde defaults.
@@ -196,13 +196,12 @@ impl OpBuffer {
     /// Append an op, coalescing consecutive whole-payload writes to the same
     /// feature: a drag's per-frame updates collapse to the latest payload.
     pub fn record(&mut self, op: DocumentOp) {
-        if let DocumentOp::UpdateFeatureData { id, .. } = &op {
-            if let Some(DocumentOp::UpdateFeatureData { id: tail_id, .. }) = self.0.last() {
-                if tail_id == id {
-                    *self.0.last_mut().expect("tail exists") = op;
-                    return;
-                }
-            }
+        if let DocumentOp::UpdateFeatureData { id, .. } = &op
+            && let Some(DocumentOp::UpdateFeatureData { id: tail_id, .. }) = self.0.last()
+            && tail_id == id
+        {
+            *self.0.last_mut().expect("tail exists") = op;
+            return;
         }
         self.0.push(op);
     }
@@ -246,15 +245,13 @@ impl JournalBuffer {
             self.pairs.clear();
             return;
         };
-        if let DocumentOp::UpdateFeatureData { id, .. } = op {
-            if let Some((DocumentOp::UpdateFeatureData { id: tail_id, .. }, _)) = self.pairs.last()
-            {
-                if tail_id == id {
-                    // Latest payload forward, oldest payload back.
-                    self.pairs.last_mut().expect("tail exists").0 = op.clone();
-                    return;
-                }
-            }
+        if let DocumentOp::UpdateFeatureData { id, .. } = op
+            && let Some((DocumentOp::UpdateFeatureData { id: tail_id, .. }, _)) = self.pairs.last()
+            && tail_id == id
+        {
+            // Latest payload forward, oldest payload back.
+            self.pairs.last_mut().expect("tail exists").0 = op.clone();
+            return;
         }
         self.pairs.push((op.clone(), inverse));
     }

@@ -12,11 +12,11 @@ use kernel_api::{ImportedModel, LengthUnit, TessellationSettings};
 use tracing::info;
 use uuid::Uuid;
 
+use crate::PrintCadApp;
 use crate::app::frame::aabb_fit_center_radius;
 use crate::kernel_worker::KernelResponse;
 use crate::log_panel as app_log;
 use crate::ui::TreeItemId;
-use crate::PrintCadApp;
 
 /// Map a STEP-declared length unit onto the document's display unit enum.
 fn length_unit_to_document_unit(unit: LengthUnit) -> Unit {

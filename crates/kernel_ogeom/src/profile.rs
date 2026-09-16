@@ -137,11 +137,7 @@ fn uv_bounds(wires: &[ProfileWire]) -> (f64, f64, f64, f64) {
             }
         }
     }
-    if b.0 > b.1 {
-        (0.0, 1.0, 0.0, 1.0)
-    } else {
-        b
-    }
+    if b.0 > b.1 { (0.0, 1.0, 0.0, 1.0) } else { b }
 }
 
 fn seg_err(what: &str) -> String {
@@ -182,11 +178,7 @@ fn segment_curve(
                 let y = Direction::new(z.cross_vector(x_dir), tol).expect("perpendicular axes");
                 let d = p - center;
                 let a = d.dot(y.vector()).atan2(d.dot(x_dir.vector()));
-                if a <= 0.0 {
-                    a + TAU
-                } else {
-                    a
-                }
+                if a <= 0.0 { a + TAU } else { a }
             };
             let n = plane_normal(plane).map_err(|e| seg_err(&format!("arc normal: {e}")))?;
             let (frame_z, sweep) = {

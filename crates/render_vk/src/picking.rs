@@ -4,11 +4,10 @@ use ash::vk;
 use uuid::Uuid;
 
 use crate::{
-    create_shader_module,
+    BodySubmission, MAX_FRAMES_IN_FLIGHT, PICK_FRAG_SPV, PICK_VERT_SPV, PickResult, RenderError,
+    ViewportRect, create_shader_module,
     mesh::{MeshCache, MeshVertex},
     util::{create_buffer, create_image, create_image_view},
-    BodySubmission, PickResult, RenderError, ViewportRect, MAX_FRAMES_IN_FLIGHT, PICK_FRAG_SPV,
-    PICK_VERT_SPV,
 };
 
 /// Bytes reserved per in-flight-frame staging slot: the 16-byte pixel ID at

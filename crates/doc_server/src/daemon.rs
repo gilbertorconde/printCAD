@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use core_document::server::{ClientMessage, ServerMessage, SERVER_PROTOCOL_VERSION};
+use core_document::server::{ClientMessage, SERVER_PROTOCOL_VERSION, ServerMessage};
 
 use crate::framing::{read_frame, write_frame};
 
@@ -265,31 +265,30 @@ fn set_oplog_home(document: &Path) {
     // carry them over so the document's history starts at its beginning,
     // not at its first save.
     let orphan = crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl");
-    if let Ok(text) = std::fs::read_to_string(&orphan) {
-        if !text.is_empty() {
-            let appended = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&home)
-                .and_then(|mut file| file.write_all(text.as_bytes()));
-            match appended {
-                Ok(()) => {
-                    let _ = std::fs::write(&orphan, b"");
-                    // The log's blob markers reference the unhomed store;
-                    // the blobs move with the lines they back.
-                    let orphan_blobs = orphan.with_extension("blobs");
-                    let home_blobs = home.with_extension("blobs");
-                    if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
-                        let _ = std::fs::create_dir_all(&home_blobs);
-                        for entry in entries.flatten() {
-                            let _ =
-                                std::fs::rename(entry.path(), home_blobs.join(entry.file_name()));
-                        }
-                        let _ = std::fs::remove_dir(&orphan_blobs);
+    if let Ok(text) = std::fs::read_to_string(&orphan)
+        && !text.is_empty()
+    {
+        let appended = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&home)
+            .and_then(|mut file| file.write_all(text.as_bytes()));
+        match appended {
+            Ok(()) => {
+                let _ = std::fs::write(&orphan, b"");
+                // The log's blob markers reference the unhomed store;
+                // the blobs move with the lines they back.
+                let orphan_blobs = orphan.with_extension("blobs");
+                let home_blobs = home.with_extension("blobs");
+                if let Ok(entries) = std::fs::read_dir(&orphan_blobs) {
+                    let _ = std::fs::create_dir_all(&home_blobs);
+                    for entry in entries.flatten() {
+                        let _ = std::fs::rename(entry.path(), home_blobs.join(entry.file_name()));
                     }
+                    let _ = std::fs::remove_dir(&orphan_blobs);
                 }
-                Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
             }
+            Err(err) => tracing::warn!("unhomed op log migration failed: {err}"),
         }
     }
     *slot = Some(home);
@@ -350,25 +349,24 @@ fn extract_blobs(value: &mut serde_json::Value, blob_dir: &Path) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map.iter_mut() {
-                if key == "bytes" {
-                    if let serde_json::Value::String(payload) = child {
-                        if payload.len() >= BLOB_EXTRACT_THRESHOLD {
-                            use base64::Engine as _;
-                            use sha2::Digest as _;
-                            let decoded = base64::engine::general_purpose::STANDARD
-                                .decode(payload.as_bytes())
-                                .unwrap_or_else(|_| payload.clone().into_bytes());
-                            let hash = hex_digest(sha2::Sha256::digest(&decoded));
-                            let target = blob_dir.join(&hash);
-                            let stored = target.exists()
-                                || (std::fs::create_dir_all(blob_dir).is_ok()
-                                    && std::fs::write(&target, &decoded).is_ok());
-                            if stored {
-                                *child = serde_json::Value::String(format!("blob:sha256:{hash}"));
-                            }
-                            continue;
-                        }
+                if key == "bytes"
+                    && let serde_json::Value::String(payload) = child
+                    && payload.len() >= BLOB_EXTRACT_THRESHOLD
+                {
+                    use base64::Engine as _;
+                    use sha2::Digest as _;
+                    let decoded = base64::engine::general_purpose::STANDARD
+                        .decode(payload.as_bytes())
+                        .unwrap_or_else(|_| payload.clone().into_bytes());
+                    let hash = hex_digest(sha2::Sha256::digest(&decoded));
+                    let target = blob_dir.join(&hash);
+                    let stored = target.exists()
+                        || (std::fs::create_dir_all(blob_dir).is_ok()
+                            && std::fs::write(&target, &decoded).is_ok());
+                    if stored {
+                        *child = serde_json::Value::String(format!("blob:sha256:{hash}"));
                     }
+                    continue;
                 }
                 extract_blobs(child, blob_dir);
             }

@@ -8,8 +8,8 @@ use kernel_api::{ExtrudeTermination, Profile, SweepKind};
 use ogeom::algo::{make_natural_face, make_prism, make_prism_tapered, make_revolution};
 use ogeom::geom::{Curve, Curve3d, HelixCurve, PlaneSurface, SurfaceGeometry};
 use ogeom::math::{Axis, Direction, Frame, Plane, Point, Transform, Vector};
-use ogeom::mesh::{triangulate_face, Deflection};
-use ogeom::topo::{explore, Filter, Model, NodeData, Shape, ShapeType};
+use ogeom::mesh::{Deflection, triangulate_face};
+use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
 use super::{fuse_all, tol};
 use crate::profile::{self, BuiltProfile};
@@ -121,13 +121,11 @@ fn extrude(
         tool = ogeom::boolean::fuse(model, &tool, &back, tol())
             .map_err(|e| format!("fusing the two sweep sides failed: {e}"))?
             .shape;
-    } else if symmetric {
-        if let ExtrudeTermination::Blind { distance } = termination {
-            let shift = Transform::translation(dir.vector() * (-distance * 0.5));
-            tool = ogeom::algo::transformed(model, &tool, shift)
-                .map_err(|e| format!("centering the symmetric extrusion failed: {e}"))?
-                .shape;
-        }
+    } else if symmetric && let ExtrudeTermination::Blind { distance } = termination {
+        let shift = Transform::translation(dir.vector() * (-distance * 0.5));
+        tool = ogeom::algo::transformed(model, &tool, shift)
+            .map_err(|e| format!("centering the symmetric extrusion failed: {e}"))?
+            .shape;
     }
     Ok(tool)
 }
@@ -310,21 +308,21 @@ pub fn ray_hit(
         };
         for t in &tri.triangles {
             let [a, b, c] = t.map(|i| tri.positions[i as usize]);
-            if let Some(w) = ray_triangle(origin, dir, a, b, c) {
-                if w > 1e-6 {
-                    let better = match best {
-                        None => true,
-                        Some((bw, _)) => {
-                            if nearest {
-                                w < bw
-                            } else {
-                                w > bw
-                            }
+            if let Some(w) = ray_triangle(origin, dir, a, b, c)
+                && w > 1e-6
+            {
+                let better = match best {
+                    None => true,
+                    Some((bw, _)) => {
+                        if nearest {
+                            w < bw
+                        } else {
+                            w > bw
                         }
-                    };
-                    if better {
-                        best = Some((w, i));
                     }
+                };
+                if better {
+                    best = Some((w, i));
                 }
             }
         }

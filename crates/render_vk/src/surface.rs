@@ -1,4 +1,4 @@
-use ash::{ext, khr, vk, Entry, Instance};
+use ash::{Entry, Instance, ext, khr, vk};
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use winit::window::Window;
 
@@ -44,37 +44,39 @@ mod platform {
         display: RawDisplayHandle,
         handle: RawWindowHandle,
     ) -> Result<vk::SurfaceKHR, RenderError> {
-        match (display, handle) {
-            (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(window)) => {
-                let create_info = vk::WaylandSurfaceCreateInfoKHR::default()
-                    .display(display.display.as_ptr() as *mut _)
-                    .surface(window.surface.as_ptr() as *mut _);
-                let wayland = khr::wayland_surface::Instance::new(entry, instance);
-                Ok(wayland.create_wayland_surface(&create_info, None)?)
+        unsafe {
+            match (display, handle) {
+                (RawDisplayHandle::Wayland(display), RawWindowHandle::Wayland(window)) => {
+                    let create_info = vk::WaylandSurfaceCreateInfoKHR::default()
+                        .display(display.display.as_ptr() as *mut _)
+                        .surface(window.surface.as_ptr() as *mut _);
+                    let wayland = khr::wayland_surface::Instance::new(entry, instance);
+                    Ok(wayland.create_wayland_surface(&create_info, None)?)
+                }
+                (RawDisplayHandle::Xlib(display), RawWindowHandle::Xlib(window)) => {
+                    let dpy = display
+                        .display
+                        .map_or(std::ptr::null_mut(), |ptr| ptr.as_ptr());
+                    let create_info = vk::XlibSurfaceCreateInfoKHR::default()
+                        .dpy(dpy as *mut _)
+                        .window(window.window);
+                    let xlib = khr::xlib_surface::Instance::new(entry, instance);
+                    Ok(xlib.create_xlib_surface(&create_info, None)?)
+                }
+                (RawDisplayHandle::Xcb(display), RawWindowHandle::Xcb(window)) => {
+                    let connection = display
+                        .connection
+                        .map_or(std::ptr::null_mut(), |ptr| ptr.as_ptr());
+                    let create_info = vk::XcbSurfaceCreateInfoKHR::default()
+                        .connection(connection as *mut _)
+                        .window(window.window.get());
+                    let xcb = khr::xcb_surface::Instance::new(entry, instance);
+                    Ok(xcb.create_xcb_surface(&create_info, None)?)
+                }
+                _ => Err(RenderError::UnsupportedPlatform(
+                    "Windowing platform is not supported on this build".into(),
+                )),
             }
-            (RawDisplayHandle::Xlib(display), RawWindowHandle::Xlib(window)) => {
-                let dpy = display
-                    .display
-                    .map_or(std::ptr::null_mut(), |ptr| ptr.as_ptr());
-                let create_info = vk::XlibSurfaceCreateInfoKHR::default()
-                    .dpy(dpy as *mut _)
-                    .window(window.window);
-                let xlib = khr::xlib_surface::Instance::new(entry, instance);
-                Ok(xlib.create_xlib_surface(&create_info, None)?)
-            }
-            (RawDisplayHandle::Xcb(display), RawWindowHandle::Xcb(window)) => {
-                let connection = display
-                    .connection
-                    .map_or(std::ptr::null_mut(), |ptr| ptr.as_ptr());
-                let create_info = vk::XcbSurfaceCreateInfoKHR::default()
-                    .connection(connection as *mut _)
-                    .window(window.window.get());
-                let xcb = khr::xcb_surface::Instance::new(entry, instance);
-                Ok(xcb.create_xcb_surface(&create_info, None)?)
-            }
-            _ => Err(RenderError::UnsupportedPlatform(
-                "Windowing platform is not supported on this build".into(),
-            )),
         }
     }
 
@@ -96,7 +98,7 @@ mod platform {
             _ => {
                 return Err(RenderError::UnsupportedPlatform(
                     "Windowing platform is not supported on this build".into(),
-                ))
+                ));
             }
         }
         if enable_validation {

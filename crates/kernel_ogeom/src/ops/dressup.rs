@@ -11,7 +11,7 @@ use ogeom::algo::distance_between_shapes;
 use ogeom::fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_distances, fillet_edge};
 use ogeom::math::{Direction, Plane, Point, Vector};
 use ogeom::offset::{apply_draft, make_thick_solid};
-use ogeom::topo::{ancestors_of, explore_unique, Model, NodeData, Shape, ShapeType};
+use ogeom::topo::{Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
 
 use super::tol;
 

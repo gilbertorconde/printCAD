@@ -11,7 +11,7 @@
 //! already off the hot path.
 
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -289,7 +289,8 @@ fn worker_loop(
             KernelRequest::ImportStep { path, detail } => {
                 let started = Instant::now();
                 let k0 = Instant::now();
-                let response = match kernel.import_step(&path, &detail) {
+
+                match kernel.import_step(&path, &detail) {
                     Ok(model) => {
                         let kernel_ms = k0.elapsed();
                         let r0 = Instant::now();
@@ -322,8 +323,7 @@ fn worker_loop(
                         path,
                         error: err.to_string(),
                     },
-                };
-                response
+                }
             }
             KernelRequest::BuildSolid {
                 body_id,

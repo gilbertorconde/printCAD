@@ -269,25 +269,25 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
     // to the user, not two: show a single row named for the instance, with
     // the product's children hoisted under it. Selection and visibility keep
     // the instance's identity — hiding an instance hides that placement.
-    if imported.kind == kernel_api::ImportedNodeKind::Instance && imported.children.len() == 1 {
-        if let Some(target) = document.imported_object(imported.children[0]) {
-            if target.kind != kernel_api::ImportedNodeKind::Instance {
-                let mut merged = build_imported_node(document, target.id)?;
-                merged.id = TreeItemId::ImportedObject(imported.id);
-                merged.imported_object_id = Some(imported.id);
-                merged.visible = imported.visible && target.visible;
-                let instance_name = imported.name.trim();
-                if !instance_name.is_empty() && instance_name != "Instance" {
-                    merged.label = imported.name.clone();
-                }
-                merged.detail = Some(format!(
-                    "Instance of {} {}",
-                    kind_word(target.kind),
-                    target.name
-                ));
-                return Some(merged);
-            }
+    if imported.kind == kernel_api::ImportedNodeKind::Instance
+        && imported.children.len() == 1
+        && let Some(target) = document.imported_object(imported.children[0])
+        && target.kind != kernel_api::ImportedNodeKind::Instance
+    {
+        let mut merged = build_imported_node(document, target.id)?;
+        merged.id = TreeItemId::ImportedObject(imported.id);
+        merged.imported_object_id = Some(imported.id);
+        merged.visible = imported.visible && target.visible;
+        let instance_name = imported.name.trim();
+        if !instance_name.is_empty() && instance_name != "Instance" {
+            merged.label = imported.name.clone();
         }
+        merged.detail = Some(format!(
+            "Instance of {} {}",
+            kind_word(target.kind),
+            target.name
+        ));
+        return Some(merged);
     }
 
     let mut children = Vec::new();

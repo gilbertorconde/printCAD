@@ -17,7 +17,7 @@ use kernel_api::{
 use ogeom::core::parallel::map_ordered;
 use ogeom::doc::{Document, ProductId, ProductKind};
 use ogeom::math::{Point, Transform, Vector};
-use ogeom::topo::{explore, Filter, Model, Shape, ShapeType};
+use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
 use tracing::{info, warn};
 
 use crate::{progress, tess};
@@ -211,12 +211,13 @@ fn heal_untrimmed_faces(
 
     let mut healed = 0usize;
     for refused in untrimmed {
-        match ogeom::heal::fix_face_pcurves(
+        let outcome = ogeom::heal::fix_face_pcurves(
             document.model_mut(),
             &refused.face,
             HEAL_CAP_MM,
             tess::tolerances(),
-        ) {
+        );
+        match outcome {
             Ok(report) => {
                 if report.refused.is_empty() {
                     if report.fitted > 0 {

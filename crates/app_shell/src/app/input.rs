@@ -13,9 +13,9 @@ use render_vk::RenderBackend;
 use std::time::Instant;
 use uuid::Uuid;
 
+use crate::PrintCadApp;
 use crate::camera::CameraPointerResult;
 use crate::log_panel as app_log;
-use crate::PrintCadApp;
 
 impl PrintCadApp {
     /// Body of the winit `window_event` handler.
@@ -138,28 +138,26 @@ impl PrintCadApp {
         }
 
         use winit::keyboard::Key;
-        if let WindowEvent::KeyboardInput { event: ke, .. } = &event {
-            if matches!(ke.state, ElementState::Pressed) {
-                if let Key::Character(ch) = &ke.logical_key {
-                    let s = ch.as_str();
-                    if matches!(s, "h" | "H")
-                        && self.cursor_in_viewport.is_some()
-                        && self.camera.pivot_from_key_h(&self.user_settings.camera)
-                    {
-                        if let Some(gfx) = self.gfx.as_ref() {
-                            gfx.window.request_redraw();
-                        }
-                    }
-                    // Undo/redo. egui gets the event first, so typing in a
-                    // text field never reaches here.
-                    if self.modifiers.control_key() {
-                        match s {
-                            "z" | "Z" if self.modifiers.shift_key() => self.perform_redo(),
-                            "z" => self.perform_undo(),
-                            "y" | "Y" => self.perform_redo(),
-                            _ => {}
-                        }
-                    }
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && matches!(ke.state, ElementState::Pressed)
+            && let Key::Character(ch) = &ke.logical_key
+        {
+            let s = ch.as_str();
+            if matches!(s, "h" | "H")
+                && self.cursor_in_viewport.is_some()
+                && self.camera.pivot_from_key_h(&self.user_settings.camera)
+                && let Some(gfx) = self.gfx.as_ref()
+            {
+                gfx.window.request_redraw();
+            }
+            // Undo/redo. egui gets the event first, so typing in a
+            // text field never reaches here.
+            if self.modifiers.control_key() {
+                match s {
+                    "z" | "Z" if self.modifiers.shift_key() => self.perform_redo(),
+                    "z" => self.perform_undo(),
+                    "y" | "Y" => self.perform_redo(),
+                    _ => {}
                 }
             }
         }
@@ -167,10 +165,8 @@ impl PrintCadApp {
         let wb = self.dispatch_workbench_input_without_select(&event);
         let mut redraw = wb.redraw;
         if wb.consumed {
-            if redraw {
-                if let Some(gfx) = self.gfx.as_ref() {
-                    gfx.window.request_redraw();
-                }
+            if redraw && let Some(gfx) = self.gfx.as_ref() {
+                gfx.window.request_redraw();
             }
             return;
         }
@@ -184,10 +180,8 @@ impl PrintCadApp {
             redraw |= self.toggle_body_under_cursor_selection();
         }
 
-        if redraw {
-            if let Some(gfx) = self.gfx.as_ref() {
-                gfx.window.request_redraw();
-            }
+        if redraw && let Some(gfx) = self.gfx.as_ref() {
+            gfx.window.request_redraw();
         }
 
         match event {
@@ -238,10 +232,11 @@ impl PrintCadApp {
 
         // Action-behaviour tools fire once: consume them as soon as the
         // workbench handled an event with them active.
-        if let Some(tool_id) = active_tool_id {
-            if result.consumed && self.tool_is_action(&wb_id, &tool_id) {
-                self.active_tool.active_ids.remove(&tool_id);
-            }
+        if let Some(tool_id) = active_tool_id
+            && result.consumed
+            && self.tool_is_action(&wb_id, &tool_id)
+        {
+            self.active_tool.active_ids.remove(&tool_id);
         }
 
         result

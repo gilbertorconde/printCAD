@@ -9,7 +9,7 @@
 
 use ogeom::core::Tolerances;
 use ogeom::doc::ProductKind;
-use ogeom::topo::{explore, Filter, ShapeType};
+use ogeom::topo::{Filter, ShapeType, explore};
 
 fn main() {
     let mut args = std::env::args().skip(1);
@@ -29,10 +29,10 @@ fn main() {
     // escapes only when placed points at transform-dependent triangulation.
     let mut subjects: Vec<(String, ogeom::topo::Shape)> = Vec::new();
     for (_, product) in doc.products() {
-        if let ProductKind::Part { shape } = &product.kind {
-            if name_filter.is_empty() || product.name.to_lowercase().contains(&name_filter) {
-                subjects.push((format!("local `{}`", product.name), shape.clone()));
-            }
+        if let ProductKind::Part { shape } = &product.kind
+            && (name_filter.is_empty() || product.name.to_lowercase().contains(&name_filter))
+        {
+            subjects.push((format!("local `{}`", product.name), shape.clone()));
         }
     }
     for root in doc.roots() {

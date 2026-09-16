@@ -2,8 +2,8 @@
 //! were triggered. Adding a new UI action = one enum variant here + one
 //! match arm in `PrintCadApp::apply_ui_commands`.
 
-use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 use super::ActiveWorkbench;
+use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -12,7 +12,7 @@ pub use step_import_modal::StepImportDialogAction;
 
 use core_document::WorkbenchId;
 use egui::Context;
-use egui_winit::{egui as egui_core, State};
+use egui_winit::{State, egui as egui_core};
 use render_vk::EguiSubmission;
 use winit::{event::WindowEvent, window::Window};
 

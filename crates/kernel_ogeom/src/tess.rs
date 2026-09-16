@@ -9,12 +9,12 @@ use std::collections::HashMap;
 
 use kernel_api::{KernelError, KernelResult, LinearDeflectionMode, TessellationSettings, TriMesh};
 use ogeom::algo::{shape_bounds, vertex_bounds};
-use ogeom::core::parallel::map_ordered;
 use ogeom::core::Tolerances;
+use ogeom::core::parallel::map_ordered;
 use ogeom::math::Point;
-use ogeom::mesh::{triangulate_face, Deflection};
+use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::Triangulation;
-use ogeom::topo::{explore, Filter, Model, Shape, ShapeType};
+use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
 use tracing::warn;
 
 pub const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
@@ -204,7 +204,7 @@ pub fn mesh_shape_with(
             // A cancelled mesh is not a partial mesh: say so and hand back
             // nothing rather than half a body.
             FaceWork::Cancelled(e) => {
-                return Err(KernelError::Other(anyhow::anyhow!("meshing stopped: {e}")))
+                return Err(KernelError::Other(anyhow::anyhow!("meshing stopped: {e}")));
             }
         };
         if tri.triangles.is_empty() || tri.positions.is_empty() {

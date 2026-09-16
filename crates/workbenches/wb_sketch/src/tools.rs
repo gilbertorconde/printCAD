@@ -150,9 +150,9 @@ impl ToolState {
             }
             ToolState::EllipseCenter { .. } => Some("Ellipse: click the major-axis vertex"),
             ToolState::EllipseMajor { .. } => Some("Ellipse: click to set the minor radius"),
-            ToolState::BSplineDraw { .. } => {
-                Some("Spline: click control points; Enter/right-click finishes (periodic: tool settings)")
-            }
+            ToolState::BSplineDraw { .. } => Some(
+                "Spline: click control points; Enter/right-click finishes (periodic: tool settings)",
+            ),
             ToolState::TranslateFrom { .. } => Some("Move: click the destination"),
             ToolState::RotateCenter { .. } => Some("Rotate: click the angle reference"),
             ToolState::RotateRef { .. } => Some("Rotate: click the target angle"),
