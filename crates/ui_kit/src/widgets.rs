@@ -1,0 +1,704 @@
+//! The widget vocabulary of the mockups: cards, badges, toggles, quantity
+//! and select fields, check rows, note cards, buttons, tool buttons and
+//! section headers. Each is a plain function over `egui::Ui` so any crate
+//! that draws UI can use it.
+
+use egui::{
+    Color32, CornerRadius, Frame, InnerResponse, Margin, Response, RichText, Sense, Stroke, Ui,
+    Vec2, WidgetText,
+};
+
+use crate::icon;
+use crate::theme::{mono, sans, sans_semibold};
+use crate::tokens::*;
+
+/// A bordered surface. `primary` cards carry the accent border and tint.
+pub struct Card {
+    fill: Color32,
+    border: Color32,
+    padding: f32,
+    radius: f32,
+}
+
+impl Default for Card {
+    fn default() -> Self {
+        Self {
+            fill: BG1,
+            border: BORDER,
+            padding: SPACE_3,
+            radius: RADIUS_MD,
+        }
+    }
+}
+
+impl Card {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn primary() -> Self {
+        Self {
+            fill: ACCENT_FAINT,
+            border: ACCENT,
+            ..Self::default()
+        }
+    }
+
+    /// A card that sits over the viewport: translucent surface.
+    pub fn floating() -> Self {
+        Self {
+            fill: OVERLAY_CARD,
+            border: BORDER,
+            padding: SPACE_2,
+            radius: RADIUS_MD,
+        }
+    }
+
+    pub fn fill(mut self, fill: Color32) -> Self {
+        self.fill = fill;
+        self
+    }
+
+    pub fn border(mut self, border: Color32) -> Self {
+        self.border = border;
+        self
+    }
+
+    pub fn padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
+        self
+    }
+
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
+
+    pub fn frame(&self) -> Frame {
+        Frame::new()
+            .fill(self.fill)
+            .stroke(Stroke::new(1.0, self.border))
+            .corner_radius(CornerRadius::same(self.radius as u8))
+            .inner_margin(Margin::same(self.padding as i8))
+    }
+
+    pub fn show<R>(self, ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+        self.frame().show(ui, add)
+    }
+}
+
+/// Small uppercase label above a section.
+pub fn overline(ui: &mut Ui, text: &str) -> Response {
+    ui.label(
+        RichText::new(text.to_uppercase())
+            .font(sans_semibold(FONT_XS))
+            .color(TEXT3)
+            .extra_letter_spacing(0.6),
+    )
+}
+
+/// Monospace text in `color`.
+pub fn mono_label(ui: &mut Ui, text: impl Into<String>, size: f32, color: Color32) -> Response {
+    ui.label(RichText::new(text).font(mono(size)).color(color))
+}
+
+/// A tiny bordered pill: `TIP`, `EDITING`, a key hint.
+pub fn badge(ui: &mut Ui, text: &str, color: Color32) -> Response {
+    Frame::new()
+        .stroke(Stroke::new(1.0, with_alpha(color, 0.4)))
+        .corner_radius(CornerRadius::same(RADIUS_SM as u8))
+        .inner_margin(Margin::symmetric(4, 0))
+        .show(ui, |ui| {
+            ui.label(
+                RichText::new(text)
+                    .font(sans_semibold(10.0))
+                    .color(color)
+                    .extra_letter_spacing(0.4),
+            )
+        })
+        .response
+}
+
+/// A key cap: mono 10px in a bordered box.
+pub fn key_chip(ui: &mut Ui, text: &str) -> Response {
+    Frame::new()
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(RADIUS_SM as u8))
+        .inner_margin(Margin::symmetric(4, 1))
+        .show(ui, |ui| {
+            ui.label(RichText::new(text).font(mono(10.0)).color(TEXT2))
+        })
+        .response
+}
+
+/// A 1px vertical rule of `height` px.
+pub fn vseparator(ui: &mut Ui, height: f32) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, height), Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, BORDER);
+}
+
+/// A 34×18 switch.
+pub fn toggle(ui: &mut Ui, on: &mut bool) -> Response {
+    let size = Vec2::new(34.0, 18.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let t = ui.ctx().animate_bool(response.id, *on);
+    let track = if *on { ACCENT } else { BG4 };
+    let knob = if *on { ACCENT_TEXT } else { TEXT2 };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 9.0, track);
+    let x = rect.left() + 9.0 + t * (size.x - 18.0);
+    painter.circle_filled(egui::pos2(x, rect.center().y), 7.0, knob);
+    response
+}
+
+/// A checkbox row: 14px box, accent when on, label text1/text2.
+pub fn check_row(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
+    let text = RichText::new(label)
+        .font(sans(FONT_SM))
+        .color(if *on { TEXT1 } else { TEXT2 });
+    let galley = ui.painter().layout_no_wrap(
+        text.text().to_owned(),
+        sans(FONT_SM),
+        if *on { TEXT1 } else { TEXT2 },
+    );
+    let width = 14.0 + SPACE_2 + galley.size().x;
+    let (rect, mut response) = ui.allocate_exact_size(Vec2::new(width, 18.0), Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+    let painter = ui.painter();
+    let box_rect = egui::Rect::from_min_size(
+        egui::pos2(rect.left(), rect.center().y - 7.0),
+        Vec2::splat(14.0),
+    );
+    if *on {
+        painter.rect_filled(box_rect, RADIUS_SM, ACCENT);
+        let c = box_rect.center();
+        painter.line_segment(
+            [egui::pos2(c.x - 3.5, c.y), egui::pos2(c.x - 1.0, c.y + 2.5)],
+            Stroke::new(1.5, ACCENT_TEXT),
+        );
+        painter.line_segment(
+            [
+                egui::pos2(c.x - 1.0, c.y + 2.5),
+                egui::pos2(c.x + 3.5, c.y - 2.5),
+            ],
+            Stroke::new(1.5, ACCENT_TEXT),
+        );
+    } else {
+        painter.rect_filled(box_rect, RADIUS_SM, BG2);
+        painter.rect_stroke(
+            box_rect,
+            RADIUS_SM,
+            Stroke::new(1.0, BORDER_STRONG),
+            egui::StrokeKind::Inside,
+        );
+    }
+    painter.galley(
+        egui::pos2(
+            box_rect.right() + SPACE_2,
+            rect.center().y - galley.size().y / 2.0,
+        ),
+        galley,
+        TEXT1,
+    );
+    response
+}
+
+/// Tone of a note card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Note {
+    Info,
+    Warning,
+    Error,
+    Success,
+}
+
+impl Note {
+    pub fn color(self) -> Color32 {
+        match self {
+            Note::Info => INFO,
+            Note::Warning => WARNING,
+            Note::Error => DANGER,
+            Note::Success => SUCCESS,
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            Note::Info => "info",
+            Note::Warning => "warning",
+            Note::Error => "error",
+            Note::Success => "check",
+        }
+    }
+}
+
+/// A tinted message box: icon, optional bold title, body.
+pub fn note_card(ui: &mut Ui, note: Note, title: Option<&str>, body: &str) -> Response {
+    let color = note.color();
+    Frame::new()
+        .fill(with_alpha(color, 0.08))
+        .stroke(Stroke::new(1.0, with_alpha(color, 0.35)))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                icon::draw(ui, note.icon(), 16.0, color);
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    if let Some(title) = title {
+                        ui.label(
+                            RichText::new(title)
+                                .font(sans_semibold(FONT_SM))
+                                .color(color),
+                        );
+                    }
+                    ui.label(RichText::new(body).font(sans(11.5)).color(TEXT2));
+                });
+            });
+        })
+        .response
+}
+
+/// Colors and metrics of a text button.
+struct ButtonStyle {
+    fill: Color32,
+    hover_fill: Color32,
+    border: Color32,
+    text: Color32,
+    font: egui::FontId,
+    height: f32,
+    padding: f32,
+}
+
+fn text_button(ui: &mut Ui, label: &str, style: ButtonStyle) -> Response {
+    let id = ui.next_auto_id();
+    let hovered = ui.ctx().read_response(id).is_some_and(|r| r.hovered());
+    let fill = if hovered {
+        style.hover_fill
+    } else {
+        style.fill
+    };
+    let inner = Frame::new()
+        .fill(fill)
+        .stroke(Stroke::new(1.0, style.border))
+        .corner_radius(CornerRadius::same(5))
+        .inner_margin(Margin::symmetric(
+            style.padding as i8,
+            ((style.height - 16.0) / 2.0) as i8,
+        ))
+        .show(ui, |ui| {
+            ui.add(egui::Label::new(
+                RichText::new(label).font(style.font).color(style.text),
+            ));
+        });
+    ui.interact(inner.response.rect, id, Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// Accent-filled action button (OK, Import).
+pub fn primary_button(ui: &mut Ui, label: &str) -> Response {
+    text_button(
+        ui,
+        label,
+        ButtonStyle {
+            fill: ACCENT,
+            hover_fill: ACCENT_HOVER,
+            border: ACCENT,
+            text: ACCENT_TEXT,
+            font: sans_semibold(FONT_SM),
+            height: 28.0,
+            padding: SPACE_4,
+        },
+    )
+}
+
+/// Bordered transparent button (Cancel, Remove).
+pub fn secondary_button(ui: &mut Ui, label: &str) -> Response {
+    text_button(
+        ui,
+        label,
+        ButtonStyle {
+            fill: Color32::TRANSPARENT,
+            hover_fill: BG3,
+            border: BORDER_STRONG,
+            text: TEXT1,
+            font: sans(FONT_SM),
+            height: 28.0,
+            padding: 14.0,
+        },
+    )
+}
+
+/// Bordered accent button (Add).
+pub fn accent_outline_button(ui: &mut Ui, label: &str) -> Response {
+    text_button(
+        ui,
+        label,
+        ButtonStyle {
+            fill: with_alpha(ACCENT, 0.14),
+            hover_fill: ACCENT_DIM,
+            border: ACCENT,
+            text: ACCENT,
+            font: sans(FONT_SM),
+            height: 26.0,
+            padding: SPACE_3,
+        },
+    )
+}
+
+/// 22px bordered button for status bars and row actions.
+pub fn small_secondary_button(ui: &mut Ui, label: &str) -> Response {
+    text_button(
+        ui,
+        label,
+        ButtonStyle {
+            fill: Color32::TRANSPARENT,
+            hover_fill: BG3,
+            border: BORDER_STRONG,
+            text: TEXT1,
+            font: sans(FONT_XS),
+            height: 22.0,
+            padding: SPACE_2,
+        },
+    )
+}
+
+/// Red-tinted button for destructive actions.
+pub fn destructive_button(ui: &mut Ui, label: &str) -> Response {
+    text_button(
+        ui,
+        label,
+        ButtonStyle {
+            fill: with_alpha(DANGER, 0.1),
+            hover_fill: with_alpha(DANGER, 0.2),
+            border: with_alpha(DANGER, 0.5),
+            text: DANGER,
+            font: sans(FONT_SM),
+            height: 28.0,
+            padding: 14.0,
+        },
+    )
+}
+
+/// The visual state of a toolbar button.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ToolButtonState {
+    pub enabled: bool,
+    pub active: bool,
+    /// Present in the design but not implemented: drawn dimmed with a note.
+    pub planned: Option<&'static str>,
+    /// Draw a small chevron after the icon: the button opens a menu.
+    pub menu: bool,
+}
+
+/// An icon-only toolbar button. `label` is the tooltip.
+pub fn tool_button(
+    ui: &mut Ui,
+    icon_name: &str,
+    label: &str,
+    size: f32,
+    state: ToolButtonState,
+) -> Response {
+    let planned = state.planned.is_some();
+    let enabled = state.enabled && !planned;
+    let width = if state.menu { size + 12.0 } else { size };
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, size), Sense::click());
+    let hovered = enabled && response.hovered();
+    let tint = if !enabled {
+        TEXT3
+    } else if state.active {
+        ACCENT
+    } else if hovered {
+        TEXT1
+    } else {
+        ICON
+    };
+    let fill = if state.active {
+        ACCENT_DIM
+    } else if hovered {
+        BG3
+    } else {
+        Color32::TRANSPARENT
+    };
+    let painter = ui.painter();
+    painter.rect_filled(rect, 4.0, fill);
+    let icon_px = (size * 2.0 / 3.0).round();
+    let icon_rect = egui::Rect::from_center_size(
+        egui::pos2(rect.left() + size / 2.0, rect.center().y),
+        Vec2::splat(icon_px),
+    );
+    if let Some(handle) = icon::texture(ui.ctx(), icon_name) {
+        painter.image(
+            handle.id(),
+            icon_rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            tint,
+        );
+    } else {
+        painter.text(
+            icon_rect.center(),
+            egui::Align2::CENTER_CENTER,
+            label.chars().next().unwrap_or('?'),
+            sans(FONT_SM),
+            tint,
+        );
+    }
+    if state.menu
+        && let Some(chev) = icon::texture(ui.ctx(), "chevron-down")
+    {
+        let r = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 7.0, rect.center().y),
+            Vec2::splat(10.0),
+        );
+        painter.image(
+            chev.id(),
+            r,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            TEXT3,
+        );
+    }
+    let response = match state.planned {
+        Some(note) => response.on_hover_text(format!("{label} — planned\n{note}")),
+        None if !enabled => response.on_hover_text(label),
+        None => response.on_hover_text(label),
+    };
+    if enabled {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    }
+}
+
+/// A collapsible section title with a chevron and an optional count. Returns
+/// whether the body is open.
+pub fn section_header(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    title: &str,
+    count: Option<usize>,
+    default_open: bool,
+) -> bool {
+    let id = ui.make_persistent_id(id_salt);
+    let mut open = ui
+        .data_mut(|d| d.get_persisted::<bool>(id))
+        .unwrap_or(default_open);
+    let response = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = SPACE_2;
+            icon::draw(
+                ui,
+                if open {
+                    "chevron-down"
+                } else {
+                    "chevron-right"
+                },
+                12.0,
+                TEXT3,
+            );
+            ui.label(
+                RichText::new(title)
+                    .font(sans_semibold(FONT_SM))
+                    .color(TEXT1),
+            );
+            if let Some(n) = count {
+                mono_label(ui, n.to_string(), FONT_XS, TEXT3);
+            }
+        })
+        .response;
+    let response = ui.interact(response.rect, id.with("hit"), Sense::click());
+    if response.clicked() {
+        open = !open;
+        ui.data_mut(|d| d.insert_persisted(id, open));
+    }
+    open
+}
+
+/// The label column of a two-column parameter grid.
+pub fn field_label(ui: &mut Ui, text: &str) -> Response {
+    ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2))
+}
+
+/// A numeric field: mono value with a unit suffix, dragging and typing both
+/// work. `dim` renders it as not applicable; `error` paints it red with an
+/// inline message.
+pub struct QtyField<'a> {
+    value: &'a mut f32,
+    unit: &'static str,
+    speed: f64,
+    range: std::ops::RangeInclusive<f64>,
+    decimals: usize,
+    dim: bool,
+    error: Option<&'a str>,
+    width: f32,
+}
+
+impl<'a> QtyField<'a> {
+    pub fn new(value: &'a mut f32) -> Self {
+        Self {
+            value,
+            unit: "",
+            speed: 0.1,
+            range: f64::NEG_INFINITY..=f64::INFINITY,
+            decimals: 2,
+            dim: false,
+            error: None,
+            width: 120.0,
+        }
+    }
+
+    pub fn mm(value: &'a mut f32) -> Self {
+        Self::new(value).unit("mm").range(0.001..=1.0e6)
+    }
+
+    pub fn degrees(value: &'a mut f32) -> Self {
+        Self::new(value).unit("°").speed(0.5)
+    }
+
+    pub fn unit(mut self, unit: &'static str) -> Self {
+        self.unit = unit;
+        self
+    }
+
+    pub fn speed(mut self, speed: f64) -> Self {
+        self.speed = speed;
+        self
+    }
+
+    pub fn range(mut self, range: std::ops::RangeInclusive<f64>) -> Self {
+        self.range = range;
+        self
+    }
+
+    pub fn decimals(mut self, decimals: usize) -> Self {
+        self.decimals = decimals;
+        self
+    }
+
+    pub fn dim(mut self, dim: bool) -> Self {
+        self.dim = dim;
+        self
+    }
+
+    pub fn error(mut self, error: Option<&'a str>) -> Self {
+        self.error = error;
+        self
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Draws the field; returns whether the value changed.
+    pub fn show(self, ui: &mut Ui) -> bool {
+        let border = if self.error.is_some() { DANGER } else { BORDER };
+        let text = if self.dim {
+            TEXT3
+        } else if self.error.is_some() {
+            DANGER
+        } else {
+            TEXT1
+        };
+        let mut changed = false;
+        Frame::new()
+            .fill(BG2)
+            .stroke(Stroke::new(1.0, border))
+            .corner_radius(CornerRadius::same(4))
+            .inner_margin(Margin::symmetric(SPACE_2 as i8, 0))
+            .show(ui, |ui| {
+                ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
+                ui.set_max_width(self.width);
+                ui.horizontal_centered(|ui| {
+                    ui.spacing_mut().item_spacing.x = SPACE_1;
+                    let focus = ui.visuals_mut();
+                    focus.widgets.inactive.bg_fill = Color32::TRANSPARENT;
+                    focus.widgets.inactive.weak_bg_fill = Color32::TRANSPARENT;
+                    focus.widgets.inactive.bg_stroke = Stroke::NONE;
+                    focus.widgets.hovered.bg_fill = Color32::TRANSPARENT;
+                    focus.widgets.hovered.weak_bg_fill = Color32::TRANSPARENT;
+                    focus.widgets.hovered.bg_stroke = Stroke::NONE;
+                    focus.widgets.active.bg_stroke = Stroke::NONE;
+                    focus.widgets.active.bg_fill = Color32::TRANSPARENT;
+                    focus.override_text_color = Some(text);
+                    ui.style_mut().override_font_id = Some(mono(FONT_SM));
+                    let suffix = if self.unit.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" {}", self.unit)
+                    };
+                    let mut v = *self.value as f64;
+                    let resp = ui.add_enabled(
+                        !self.dim,
+                        egui::DragValue::new(&mut v)
+                            .speed(self.speed)
+                            .range(self.range.clone())
+                            .fixed_decimals(self.decimals)
+                            .suffix(suffix),
+                    );
+                    if resp.changed() {
+                        *self.value = v as f32;
+                        changed = true;
+                    }
+                    if let Some(err) = self.error {
+                        ui.label(RichText::new(err).font(sans(FONT_XS)).color(DANGER));
+                    }
+                });
+            });
+        changed
+    }
+}
+
+/// A dropdown of labelled options; returns whether the selection changed.
+pub fn select_field<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    current: &mut T,
+    options: &[(T, &str)],
+    width: f32,
+) -> bool {
+    let label = options
+        .iter()
+        .find(|(v, _)| *v == *current)
+        .map(|(_, l)| *l)
+        .unwrap_or("—");
+    let mut changed = false;
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(RichText::new(label).font(sans(FONT_SM)))
+        .width(width)
+        .show_ui(ui, |ui| {
+            for (value, text) in options {
+                if ui
+                    .selectable_label(*value == *current, RichText::new(*text).font(sans(FONT_SM)))
+                    .clicked()
+                    && *value != *current
+                {
+                    *current = *value;
+                    changed = true;
+                }
+            }
+        });
+    changed
+}
+
+/// A widget the design shows but the app has not built yet: drawn disabled
+/// with the note as its tooltip.
+pub fn planned<R>(ui: &mut Ui, note: &str, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+    let inner = ui.add_enabled_ui(false, add);
+    let response = inner
+        .response
+        .clone()
+        .on_disabled_hover_text(format!("Planned — {note}"));
+    InnerResponse::new(inner.inner, response)
+}
+
+/// Text for a label: proportional at `size` in `color`.
+pub fn text(s: impl Into<String>, size: f32, color: Color32) -> WidgetText {
+    RichText::new(s).font(sans(size)).color(color).into()
+}

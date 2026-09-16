@@ -69,6 +69,7 @@ pub struct UiLayer {
 impl UiLayer {
     pub fn new(window: &Window) -> Self {
         let ctx = Context::default();
+        ui_kit::apply_theme(&ctx);
         let state = State::new(
             ctx.clone(),
             egui_core::ViewportId::ROOT,

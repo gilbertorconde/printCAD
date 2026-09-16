@@ -114,6 +114,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "ui_kit",
  "usvg",
  "uuid",
  "wb_part",
@@ -1960,7 +1961,6 @@ dependencies = [
 [[package]]
 name = "ogeom"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -1981,7 +1981,6 @@ dependencies = [
 [[package]]
 name = "ogeom-algo"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -1996,7 +1995,6 @@ dependencies = [
 [[package]]
 name = "ogeom-bool"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
@@ -2013,7 +2011,6 @@ dependencies = [
 [[package]]
 name = "ogeom-core"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "robust",
  "smallvec",
@@ -2023,7 +2020,6 @@ dependencies = [
 [[package]]
 name = "ogeom-doc"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -2034,7 +2030,6 @@ dependencies = [
 [[package]]
 name = "ogeom-fillet"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2049,7 +2044,6 @@ dependencies = [
 [[package]]
 name = "ogeom-geom"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2059,7 +2053,6 @@ dependencies = [
 [[package]]
 name = "ogeom-heal"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "nalgebra",
  "ogeom-algo",
@@ -2073,7 +2066,6 @@ dependencies = [
 [[package]]
 name = "ogeom-hlr"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2088,7 +2080,6 @@ dependencies = [
 [[package]]
 name = "ogeom-intersect"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2099,7 +2090,6 @@ dependencies = [
 [[package]]
 name = "ogeom-io"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-algo",
  "ogeom-core",
@@ -2113,7 +2103,6 @@ dependencies = [
 [[package]]
 name = "ogeom-math"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2123,7 +2112,6 @@ dependencies = [
 [[package]]
 name = "ogeom-mesh"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -2135,7 +2123,6 @@ dependencies = [
 [[package]]
 name = "ogeom-offset"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2150,7 +2137,6 @@ dependencies = [
 [[package]]
 name = "ogeom-topo"
 version = "0.0.0"
-source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=58c6d4ec036db22a94dace59f4f2f4e79aeae6f6#58c6d4ec036db22a94dace59f4f2f4e79aeae6f6"
 dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
@@ -3306,6 +3292,17 @@ name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20"
+
+[[package]]
+name = "ui_kit"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "resvg",
+ "tiny-skia 0.12.0",
+ "tracing",
+ "usvg",
+]
 
 [[package]]
 name = "unicode-bidi"

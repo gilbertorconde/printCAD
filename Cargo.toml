@@ -9,6 +9,7 @@ members = [
   "crates/workbenches",
 "crates/settings",
 "crates/axes",
+  "crates/ui_kit",
 ]
 resolver = "2"
 
@@ -55,5 +56,5 @@ rayon = "1.12"
 ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "58c6d4ec036db22a94dace59f4f2f4e79aeae6f6" }
 
 # Uncomment to develop against the local kernel checkout instead of the pin:
-# [patch."https://github.com/gilbertorconde/ogeom-rs"]
-# ogeom = { path = "../openGeometry/crates/ogeom" }
+[patch."https://github.com/gilbertorconde/ogeom-rs"]
+ogeom = { path = "../openGeometry/crates/ogeom" }

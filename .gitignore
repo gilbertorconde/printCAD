@@ -1,2 +1,5 @@
 /target
 **/*.rs.bk
+
+# Design mockups are reference material, not project artifacts.
+ui-mockup/
