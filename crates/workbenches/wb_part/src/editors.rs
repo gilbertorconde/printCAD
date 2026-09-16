@@ -1,10 +1,18 @@
-//! Per-feature settings editors for the left panel.
+//! Per-feature parameter editors for the task panel.
 //!
 //! Every dialog option maps 1:1 to a feature field; editing either path
 //! recomputes. Editors return `true` when the feature payload changed.
+//! Rows are a fixed-width label column beside a control, the way the
+//! design lays out its parameter cards.
 
 use core_document::{BodyId, FeatureId, WorkbenchRuntimeContext};
-use egui::Ui;
+use egui::{RichText, Ui};
+use ui_kit::sans;
+use ui_kit::tokens::*;
+use ui_kit::widgets::{
+    QtyField, accent_outline_button, check_row, mono_label, secondary_button,
+    small_secondary_button,
+};
 
 use crate::build::{part_features_of_body, sketches_of_body};
 use crate::feature::{
@@ -12,18 +20,28 @@ use crate::feature::{
     MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
 };
 
-fn mm_drag(ui: &mut Ui, value: &mut f32, label: &str) -> bool {
+/// The label column of a parameter row.
+pub(crate) fn label_cell(ui: &mut Ui, label: &str) {
+    let text = label.trim_end_matches(':');
+    ui.add_sized(
+        [96.0, INPUT],
+        egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)),
+    );
+}
+
+/// One parameter row: the label column, then `add` draws the control and
+/// reports whether it changed the value.
+fn field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> bool) -> bool {
     ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::DragValue::new(value)
-                .speed(0.5)
-                .range(0.01..=1.0e6)
-                .suffix(" mm"),
-        )
-        .changed()
+        ui.spacing_mut().item_spacing.x = SPACE_2;
+        label_cell(ui, label);
+        add(ui)
     })
     .inner
+}
+
+fn mm_drag(ui: &mut Ui, value: &mut f32, label: &str) -> bool {
+    field(ui, label, |ui| QtyField::mm(value).speed(0.5).show(ui))
 }
 
 fn deg_drag(
@@ -32,26 +50,25 @@ fn deg_drag(
     label: &str,
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(
-            egui::DragValue::new(value)
-                .speed(1.0)
-                .range(range)
-                .suffix("°"),
-        )
-        .changed()
+    let range = (*range.start() as f64)..=(*range.end() as f64);
+    field(ui, label, |ui| {
+        QtyField::degrees(value).speed(1.0).range(range).show(ui)
     })
-    .inner
 }
 
 fn count_drag(ui: &mut Ui, value: &mut u32, label: &str) -> bool {
-    ui.horizontal(|ui| {
-        ui.label(label);
-        ui.add(egui::DragValue::new(value).speed(0.1).range(2..=1000))
-            .changed()
+    field(ui, label, |ui| {
+        let mut v = *value as f32;
+        let changed = QtyField::new(&mut v)
+            .decimals(0)
+            .speed(0.1)
+            .range(2.0..=1000.0)
+            .show(ui);
+        if changed {
+            *value = v.round() as u32;
+        }
+        changed
     })
-    .inner
 }
 
 fn sketch_combo(
@@ -73,7 +90,7 @@ fn sketch_combo(
         .unwrap_or_else(|| "(pick)".to_string());
     let mut picked = None;
     ui.horizontal(|ui| {
-        ui.label(label);
+        label_cell(ui, label);
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(current_name)
             .show_ui(ui, |ui| {
@@ -97,7 +114,7 @@ fn extrude_mode_combo(
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Type:");
+        label_cell(ui, "Type");
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(mode.label())
             .show_ui(ui, |ui| {
@@ -134,21 +151,26 @@ fn face_pick_row(
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label(label);
+        label_cell(ui, label);
         match pick {
             Some(p) => {
-                ui.label(format!(
-                    "({:.1}, {:.1}, {:.1})",
-                    p.point[0], p.point[1], p.point[2]
-                ));
+                mono_label(
+                    ui,
+                    format!("({:.1}, {:.1}, {:.1})", p.point[0], p.point[1], p.point[2]),
+                    FONT_XS,
+                    TEXT1,
+                );
             }
             None => {
-                ui.label("(none)");
+                mono_label(ui, "(none)", FONT_XS, TEXT3);
             }
         }
         let has_selection = ctx.selected_face.is_some();
         if ui
-            .add_enabled(has_selection, egui::Button::new("Use selected face"))
+            .add_enabled_ui(has_selection, |ui| {
+                accent_outline_button(ui, "Use selected face")
+            })
+            .inner
             .on_hover_text("Click a face in the viewport first, then press this")
             .clicked()
             && let Some(face) = ctx.selected_face
@@ -170,15 +192,20 @@ fn face_list_editor(
     label: &str,
 ) -> bool {
     let mut changed = false;
-    ui.label(label);
+    label_cell(ui, label);
     let mut remove = None;
     for (i, face) in faces.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.label(format!(
-                "· ({:.1}, {:.1}, {:.1})",
-                face.point[0], face.point[1], face.point[2]
-            ));
-            if ui.small_button("✕").clicked() {
+            mono_label(
+                ui,
+                format!(
+                    "Face @ ({:.1}, {:.1}, {:.1})",
+                    face.point[0], face.point[1], face.point[2]
+                ),
+                FONT_XS,
+                TEXT1,
+            );
+            if small_secondary_button(ui, "✕").clicked() {
                 remove = Some(i);
             }
         });
@@ -189,7 +216,10 @@ fn face_list_editor(
     }
     let has_selection = ctx.selected_face.is_some();
     if ui
-        .add_enabled(has_selection, egui::Button::new("Add selected face"))
+        .add_enabled_ui(has_selection, |ui| {
+            accent_outline_button(ui, "Add selected face")
+        })
+        .inner
         .on_hover_text("Click a face in the viewport first, then press this")
         .clicked()
         && let Some(face) = ctx.selected_face
@@ -211,7 +241,7 @@ fn edge_sel_editor(
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Edges:");
+        label_cell(ui, "Edges");
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(match edges {
                 EdgeSel::All => "All edges".to_string(),
@@ -245,7 +275,7 @@ fn edge_sel_editor(
 fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl egui::AsIdSalt) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Axis:");
+        label_cell(ui, "Axis");
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(axis.label())
             .show_ui(ui, |ui| {
@@ -268,14 +298,14 @@ fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl egui::
     });
     if let RevolveAxis::Custom { origin, dir } = axis {
         ui.horizontal(|ui| {
-            ui.label("Origin:");
+            label_cell(ui, "Origin");
             changed |= ui
                 .add(egui::DragValue::new(&mut origin[0]).speed(0.5))
                 .changed();
             changed |= ui
                 .add(egui::DragValue::new(&mut origin[1]).speed(0.5))
                 .changed();
-            ui.label("Dir:");
+            label_cell(ui, "Dir");
             changed |= ui
                 .add(egui::DragValue::new(&mut dir[0]).speed(0.1))
                 .changed();
@@ -290,7 +320,7 @@ fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl egui::
 fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl egui::AsIdSalt) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Axis:");
+        label_cell(ui, "Axis");
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(axis.label())
             .show_ui(ui, |ui| {
@@ -314,13 +344,13 @@ fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl egui::
     });
     if let PatternAxis::Custom { origin, dir } = axis {
         ui.horizontal(|ui| {
-            ui.label("Origin:");
+            label_cell(ui, "Origin");
             for v in origin.iter_mut() {
                 changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
             }
         });
         ui.horizontal(|ui| {
-            ui.label("Dir:");
+            label_cell(ui, "Dir");
             for v in dir.iter_mut() {
                 changed |= ui.add(egui::DragValue::new(v).speed(0.1)).changed();
             }
@@ -337,7 +367,7 @@ fn mirror_plane_editor(
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Plane:");
+        label_cell(ui, "Plane");
         egui::ComboBox::from_id_salt(id_salt)
             .selected_text(plane.label())
             .show_ui(ui, |ui| {
@@ -385,7 +415,7 @@ fn originals_editor(
     originals: &mut Vec<FeatureId>,
 ) -> bool {
     let mut changed = false;
-    ui.label("Originals (empty = whole body):");
+    label_cell(ui, "Originals (empty = whole body)");
     let features = part_features_of_body(ctx.document, body);
     for (id, feature) in &features {
         if *id == this_feature {
@@ -400,7 +430,7 @@ fn originals_editor(
             .map(|n| n.name.clone())
             .unwrap_or_else(|| feature.kind_label().to_string());
         let mut included = originals.contains(id);
-        if ui.checkbox(&mut included, name).changed() {
+        if check_row(ui, &mut included, &name).changed() {
             if included {
                 originals.push(*id);
             } else {
@@ -498,7 +528,7 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
         .map(|(l, _)| *l)
         .unwrap_or("?");
     ui.horizontal(|ui| {
-        ui.label("Shape:");
+        label_cell(ui, "Shape");
         egui::ComboBox::from_id_salt("primitive_kind")
             .selected_text(current_label)
             .show_ui(ui, |ui| {
@@ -515,7 +545,7 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
 
     let dim = |ui: &mut Ui, value: &mut f64, label: &str, min: f64| {
         ui.horizontal(|ui| {
-            ui.label(label);
+            label_cell(ui, label);
             ui.add(
                 egui::DragValue::new(value)
                     .speed(0.5)
@@ -528,7 +558,7 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
     };
     let ang = |ui: &mut Ui, value: &mut f64, label: &str, lo: f64, hi: f64| {
         ui.horizontal(|ui| {
-            ui.label(label);
+            label_cell(ui, label);
             ui.add(
                 egui::DragValue::new(value)
                     .speed(1.0)
@@ -609,7 +639,7 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
             height,
         } => {
             ui.horizontal(|ui| {
-                ui.label("Sides:");
+                label_cell(ui, "Sides");
                 changed |= ui
                     .add(egui::DragValue::new(sides).speed(0.1).range(3..=64))
                     .changed();
@@ -642,7 +672,7 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
                 (z2max, "Z2 max:"),
             ] {
                 ui.horizontal(|ui| {
-                    ui.label(label);
+                    label_cell(ui, label);
                     changed |= ui
                         .add(
                             egui::DragValue::new(value)
@@ -661,7 +691,7 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
 fn placement_editor(ui: &mut Ui, placement: &mut kernel_api::Placement) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
-        ui.label("Position:");
+        label_cell(ui, "Position");
         for v in placement.origin.iter_mut() {
             changed |= ui
                 .add(egui::DragValue::new(v).speed(0.5).suffix(" mm"))
@@ -689,7 +719,7 @@ pub fn datum_editor(
     }
 
     ui.horizontal(|ui| {
-        ui.label("Attached to:");
+        label_cell(ui, "Attached to");
         egui::ComboBox::from_id_salt(("datum_attach", feature_id))
             .selected_text(datum.attachment.label())
             .show_ui(ui, |ui| {
@@ -738,10 +768,10 @@ pub fn datum_editor(
         changed = true;
     }
 
-    ui.label("Attachment offset:");
+    label_cell(ui, "Attachment offset");
     ui.horizontal(|ui| {
         for (value, label) in datum.offset.translation.iter_mut().zip(["x", "y", "n"]) {
-            ui.label(label);
+            label_cell(ui, label);
             changed |= ui
                 .add(egui::DragValue::new(value).speed(0.5).suffix(" mm"))
                 .changed();
@@ -753,7 +783,7 @@ pub fn datum_editor(
         "Rotation:",
         -180.0..=180.0,
     );
-    changed |= ui.checkbox(&mut datum.offset.flip, "Flip side").changed();
+    changed |= check_row(ui, &mut datum.offset.flip, "Flip side").changed();
     changed
 }
 
@@ -794,7 +824,7 @@ pub fn feature_editor(
             match mode {
                 ExtrudeMode::Dimension => {
                     changed |= mm_drag(ui, length, "Length:");
-                    changed |= ui.checkbox(symmetric, "Symmetric to plane").changed();
+                    changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
                 }
                 ExtrudeMode::TwoLengths => {
                     changed |= mm_drag(ui, length, "Length:");
@@ -806,7 +836,7 @@ pub fn feature_editor(
                 }
                 _ => {}
             }
-            changed |= ui.checkbox(reversed, "Reversed").changed();
+            changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= deg_drag(ui, taper_deg, "Taper:", -85.0..=85.0);
         }
         PartFeature::Pocket {
@@ -850,8 +880,7 @@ pub fn feature_editor(
                 }
                 _ => {}
             }
-            changed |= ui
-                .checkbox(reversed, "Reversed")
+            changed |= check_row(ui, reversed, "Reversed")
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();
             changed |= deg_drag(ui, taper_deg, "Taper:", -85.0..=85.0);
@@ -885,16 +914,16 @@ pub fn feature_editor(
             }
             changed |= deg_drag(ui, angle_deg, "Angle:", 0.1..=360.0);
             changed |= revolve_axis_editor(ui, axis, ("rev_axis", feature_id));
-            changed |= ui.checkbox(midplane, "Midplane").changed();
+            changed |= check_row(ui, midplane, "Midplane").changed();
             let mut two_sided = second_angle_deg.is_some();
-            if ui.checkbox(&mut two_sided, "Second angle").changed() {
+            if check_row(ui, &mut two_sided, "Second angle").changed() {
                 *second_angle_deg = two_sided.then_some(90.0);
                 changed = true;
             }
             if let Some(second) = second_angle_deg {
                 changed |= deg_drag(ui, second, "Angle 2:", 0.1..=360.0);
             }
-            changed |= ui.checkbox(reversed, "Reversed").changed();
+            changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::Loft {
             sections,
@@ -902,7 +931,7 @@ pub fn feature_editor(
             closed,
             subtractive,
         } => {
-            ui.label("Sections (in order):");
+            label_cell(ui, "Sections (in order)");
             let mut remove = None;
             for (i, section) in sections.iter().enumerate() {
                 let name = ctx
@@ -911,8 +940,8 @@ pub fn feature_editor(
                     .map(|n| n.name.clone())
                     .unwrap_or_else(|| "(missing)".into());
                 ui.horizontal(|ui| {
-                    ui.label(format!("{}. {name}", i + 1));
-                    if ui.small_button("✕").clicked() && sections.len() > 1 {
+                    mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
+                    if small_secondary_button(ui, "✕").clicked() && sections.len() > 1 {
                         remove = Some(i);
                     }
                 });
@@ -933,9 +962,9 @@ pub fn feature_editor(
                 sections.push(new);
                 changed = true;
             }
-            changed |= ui.checkbox(ruled, "Ruled (straight transitions)").changed();
-            changed |= ui.checkbox(closed, "Closed (loop back)").changed();
-            changed |= ui.checkbox(subtractive, "Subtractive").changed();
+            changed |= check_row(ui, ruled, "Ruled (straight transitions)").changed();
+            changed |= check_row(ui, closed, "Closed (loop back)").changed();
+            changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Pipe {
             profile,
@@ -965,11 +994,10 @@ pub fn feature_editor(
                 *spine = new;
                 changed = true;
             }
-            changed |= ui
-                .checkbox(frenet, "Frenet orientation")
+            changed |= check_row(ui, frenet, "Frenet orientation")
                 .on_hover_text("Rotate the profile with the path's curvature frame")
                 .changed();
-            changed |= ui.checkbox(subtractive, "Subtractive").changed();
+            changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Helix {
             sketch,
@@ -996,7 +1024,7 @@ pub fn feature_editor(
             }
             changed |= revolve_axis_editor(ui, axis, ("helix_axis", feature_id));
             ui.horizontal(|ui| {
-                ui.label("Mode:");
+                label_cell(ui, "Mode");
                 egui::ComboBox::from_id_salt(("helix_mode", feature_id))
                     .selected_text(mode.label())
                     .show_ui(ui, |ui| {
@@ -1020,7 +1048,7 @@ pub fn feature_editor(
                 HelixMode::PitchTurns => {
                     changed |= mm_drag(ui, pitch, "Pitch:");
                     ui.horizontal(|ui| {
-                        ui.label("Turns:");
+                        label_cell(ui, "Turns");
                         changed |= ui
                             .add(egui::DragValue::new(turns).speed(0.1).range(0.1..=1000.0))
                             .changed();
@@ -1029,7 +1057,7 @@ pub fn feature_editor(
                 HelixMode::HeightTurns => {
                     changed |= mm_drag(ui, height, "Height:");
                     ui.horizontal(|ui| {
-                        ui.label("Turns:");
+                        label_cell(ui, "Turns");
                         changed |= ui
                             .add(egui::DragValue::new(turns).speed(0.1).range(0.1..=1000.0))
                             .changed();
@@ -1037,9 +1065,9 @@ pub fn feature_editor(
                 }
             }
             changed |= deg_drag(ui, cone_angle_deg, "Cone angle:", -85.0..=85.0);
-            changed |= ui.checkbox(left_handed, "Left handed").changed();
-            changed |= ui.checkbox(reversed, "Reversed").changed();
-            changed |= ui.checkbox(subtractive, "Subtractive").changed();
+            changed |= check_row(ui, left_handed, "Left handed").changed();
+            changed |= check_row(ui, reversed, "Reversed").changed();
+            changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Primitive {
             kind,
@@ -1048,7 +1076,7 @@ pub fn feature_editor(
         } => {
             changed |= primitive_editor(ui, kind);
             changed |= placement_editor(ui, placement);
-            changed |= ui.checkbox(subtractive, "Subtractive").changed();
+            changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Hole {
             sketch,
@@ -1073,7 +1101,7 @@ pub fn feature_editor(
                 changed = true;
             }
             ui.horizontal(|ui| {
-                ui.label("Size:");
+                label_cell(ui, "Size");
                 let current = metric_index
                     .and_then(|i| METRIC_SIZES.get(i).map(|(name, ..)| *name))
                     .unwrap_or("Custom");
@@ -1101,13 +1129,12 @@ pub fn feature_editor(
                     });
             });
             if metric_index.is_some() {
-                changed |= ui
-                    .checkbox(threaded, "Threaded (tap drill)")
+                changed |= check_row(ui, threaded, "Threaded (tap drill)")
                     .on_hover_text("Use the tap-drill diameter for later thread cutting")
                     .changed();
                 if !*threaded {
                     ui.horizontal(|ui| {
-                        ui.label("Fit:");
+                        label_cell(ui, "Fit");
                         egui::ComboBox::from_id_salt(("hole_fit", feature_id))
                             .selected_text(fit.label())
                             .show_ui(ui, |ui| {
@@ -1124,29 +1151,34 @@ pub fn feature_editor(
                             });
                     });
                 }
-                ui.label(format!(
-                    "Drill Ø {:.2} mm",
-                    crate::build::hole_diameter(&PartFeature::Hole {
-                        sketch: *sketch,
-                        diameter: *diameter,
-                        depth: *depth,
-                        through_all: *through_all,
-                        cut: *cut,
-                        metric_index: *metric_index,
-                        threaded: *threaded,
-                        fit: *fit,
-                        reversed: *reversed,
-                    })
-                ));
+                mono_label(
+                    ui,
+                    format!(
+                        "Drill Ø {:.2} mm",
+                        crate::build::hole_diameter(&PartFeature::Hole {
+                            sketch: *sketch,
+                            diameter: *diameter,
+                            depth: *depth,
+                            through_all: *through_all,
+                            cut: *cut,
+                            metric_index: *metric_index,
+                            threaded: *threaded,
+                            fit: *fit,
+                            reversed: *reversed,
+                        })
+                    ),
+                    FONT_SM,
+                    TEXT2,
+                );
             } else {
                 changed |= mm_drag(ui, diameter, "Diameter:");
             }
-            changed |= ui.checkbox(through_all, "Through all").changed();
+            changed |= check_row(ui, through_all, "Through all").changed();
             if !*through_all {
                 changed |= mm_drag(ui, depth, "Depth:");
             }
             ui.horizontal(|ui| {
-                ui.label("Hole cut:");
+                label_cell(ui, "Hole cut");
                 egui::ComboBox::from_id_salt(("hole_cut", feature_id))
                     .selected_text(cut.label())
                     .show_ui(ui, |ui| {
@@ -1187,7 +1219,7 @@ pub fn feature_editor(
                     changed |= deg_drag(ui, angle_deg, "Sink angle:", 10.0..=170.0);
                 }
             }
-            changed |= ui.checkbox(reversed, "Reversed").changed();
+            changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::Fillet { radius, edges } => {
             changed |= mm_drag(ui, radius, "Radius:");
@@ -1202,7 +1234,7 @@ pub fn feature_editor(
             edges,
         } => {
             ui.horizontal(|ui| {
-                ui.label("Type:");
+                label_cell(ui, "Type");
                 egui::ComboBox::from_id_salt(("chamfer_mode", feature_id))
                     .selected_text(mode.label())
                     .show_ui(ui, |ui| {
@@ -1223,11 +1255,11 @@ pub fn feature_editor(
                 ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {
                     changed |= mm_drag(ui, size2, "Size 2:");
-                    changed |= ui.checkbox(flip, "Flip direction").changed();
+                    changed |= check_row(ui, flip, "Flip direction").changed();
                 }
                 ChamferMode::DistanceAngle => {
                     changed |= deg_drag(ui, angle_deg, "Angle:", 1.0..=89.0);
-                    changed |= ui.checkbox(flip, "Flip direction").changed();
+                    changed |= check_row(ui, flip, "Flip direction").changed();
                 }
             }
             changed |= edge_sel_editor(ui, ctx, edges, ("chamfer_edges", feature_id));
@@ -1247,7 +1279,7 @@ pub fn feature_editor(
                 changed = true;
             }
             changed |= face_list_editor(ui, ctx, faces, "Faces to draft:");
-            changed |= ui.checkbox(reversed, "Reversed pull").changed();
+            changed |= check_row(ui, reversed, "Reversed pull").changed();
         }
         PartFeature::Thickness {
             value,
@@ -1256,7 +1288,7 @@ pub fn feature_editor(
         } => {
             changed |= mm_drag(ui, value, "Thickness:");
             changed |= face_list_editor(ui, ctx, faces, "Faces to open:");
-            changed |= ui.checkbox(inward, "Inward").changed();
+            changed |= check_row(ui, inward, "Inward").changed();
         }
         PartFeature::Mirrored { originals, plane } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
@@ -1273,12 +1305,11 @@ pub fn feature_editor(
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(ui, axis, ("linear_axis", feature_id));
             changed |= count_drag(ui, occurrences, "Occurrences:");
-            changed |= ui
-                .checkbox(spacing_mode, "Length is spacing")
+            changed |= check_row(ui, spacing_mode, "Length is spacing")
                 .on_hover_text("Off: length is the overall span")
                 .changed();
             changed |= mm_drag(ui, length, "Length:");
-            changed |= ui.checkbox(reversed, "Reversed").changed();
+            changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::PolarPattern {
             originals,
@@ -1291,11 +1322,11 @@ pub fn feature_editor(
             changed |= pattern_axis_editor(ui, axis, ("polar_axis", feature_id));
             changed |= count_drag(ui, occurrences, "Occurrences:");
             changed |= deg_drag(ui, angle_deg, "Angle:", 1.0..=360.0);
-            changed |= ui.checkbox(reversed, "Reversed").changed();
+            changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::MultiTransform { originals, steps } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            ui.label("Steps (each applies to all previous results):");
+            label_cell(ui, "Steps (each applies to all previous results)");
             let mut remove = None;
             for (i, step) in steps.iter_mut().enumerate() {
                 let label = match step {
@@ -1305,8 +1336,8 @@ pub fn feature_editor(
                     TransformStep::Scale { .. } => "Scale",
                 };
                 ui.horizontal(|ui| {
-                    ui.label(format!("{}. {label}", i + 1));
-                    if ui.small_button("✕").clicked() {
+                    mono_label(ui, format!("{}. {label}", i + 1), FONT_XS, TEXT1);
+                    if small_secondary_button(ui, "✕").clicked() {
                         remove = Some(i);
                     }
                 });
@@ -1338,13 +1369,13 @@ pub fn feature_editor(
                         occurrences,
                     } => {
                         ui.horizontal(|ui| {
-                            ui.label("Factor:");
+                            label_cell(ui, "Factor");
                             changed |= ui
                                 .add(egui::DragValue::new(factor).speed(0.05).range(0.01..=100.0))
                                 .changed();
                         });
                         ui.horizontal(|ui| {
-                            ui.label("Center:");
+                            label_cell(ui, "Center");
                             for v in center.iter_mut() {
                                 changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
                             }
@@ -1358,7 +1389,7 @@ pub fn feature_editor(
                 changed = true;
             }
             ui.horizontal(|ui| {
-                if ui.button("+ Linear").clicked() {
+                if secondary_button(ui, "+ Linear").clicked() {
                     steps.push(TransformStep::Linear {
                         axis: PatternAxis::X,
                         length: 10.0,
@@ -1366,7 +1397,7 @@ pub fn feature_editor(
                     });
                     changed = true;
                 }
-                if ui.button("+ Polar").clicked() {
+                if secondary_button(ui, "+ Polar").clicked() {
                     steps.push(TransformStep::Polar {
                         axis: PatternAxis::Z,
                         angle_deg: 360.0,
@@ -1374,13 +1405,13 @@ pub fn feature_editor(
                     });
                     changed = true;
                 }
-                if ui.button("+ Mirror").clicked() {
+                if secondary_button(ui, "+ Mirror").clicked() {
                     steps.push(TransformStep::Mirror {
                         plane: MirrorPlane::YZ,
                     });
                     changed = true;
                 }
-                if ui.button("+ Scale").clicked() {
+                if secondary_button(ui, "+ Scale").clicked() {
                     steps.push(TransformStep::Scale {
                         factor: 2.0,
                         center: [0.0; 3],
@@ -1404,7 +1435,7 @@ pub fn feature_editor(
                 .map(|(_, n)| n.clone())
                 .unwrap_or_else(|| "(pick body)".into());
             ui.horizontal(|ui| {
-                ui.label("Tool body:");
+                label_cell(ui, "Tool body");
                 egui::ComboBox::from_id_salt(("bool_body", feature_id))
                     .selected_text(current)
                     .show_ui(ui, |ui| {
@@ -1419,7 +1450,7 @@ pub fn feature_editor(
                     });
             });
             ui.horizontal(|ui| {
-                ui.label("Operation:");
+                label_cell(ui, "Operation");
                 for (candidate, label) in [
                     (kernel_api::BoolKind::Fuse, "Fuse"),
                     (kernel_api::BoolKind::Cut, "Cut"),

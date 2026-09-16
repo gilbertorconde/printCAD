@@ -1,3 +1,7 @@
+// Without the egui feature the crate is the headless subset the tests and
+// the kernel bench use; the panel-only state and helpers go unused there.
+#![cfg_attr(not(feature = "egui"), allow(dead_code))]
+
 mod constrain;
 mod feature;
 mod geom2d;

@@ -522,7 +522,8 @@ impl PrintCadApp {
 
         // Cut an undo boundary at frame end when no drag is in progress so
         // an entire drag interaction coalesces into one step.
-        if self.mouse_buttons_down == 0 {
+        // A task panel's edits stay one gesture until it closes.
+        if self.mouse_buttons_down == 0 && !self.task_open {
             self.journal.note(&mut self.document);
         }
     }
@@ -823,13 +824,42 @@ impl PrintCadApp {
             sketch.constraints.push(Constraint::new(kind));
         }
         let plane = sketch.plane;
-        match self.document.add_feature_in_body(
+        let sketch_id = match self.document.add_feature_in_body(
             wb_sketch::SketchFeature::new(sketch, plane),
-            "sketch".into(),
+            "Sketch".into(),
             body,
         ) {
-            Ok(id) => self.apply_tree_activation(crate::ui::TreeItemId::Feature(id)),
-            Err(err) => app_log::error(format!("bench sketch: {err}")),
+            Ok(id) => id,
+            Err(err) => {
+                app_log::error(format!("bench sketch: {err}"));
+                return;
+            }
+        };
+        // `pad` pads the sketch and opens the pad's task; anything else
+        // opens the sketch for editing.
+        let pad = std::env::var("PRINTCAD_BENCH_SKETCH").is_ok_and(|v| v == "pad");
+        if !pad {
+            self.apply_tree_activation(crate::ui::TreeItemId::Feature(sketch_id));
+            return;
+        }
+        let pad = wb_part::PartFeature::Pad {
+            sketch: sketch_id,
+            length: 20.0,
+            reversed: false,
+            symmetric: false,
+            mode: wb_part::ExtrudeMode::Dimension,
+            length2: 0.0,
+            taper_deg: 0.0,
+            up_to_face: None,
+            up_to_offset: 0.0,
+        };
+        match self.document.add_feature_in_body(pad, "Pad".into(), body) {
+            Ok(id) => {
+                self.document.mark_feature_dirty(id);
+                self.document.set_feature_visible(sketch_id, false);
+                self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+            }
+            Err(err) => app_log::error(format!("bench pad: {err}")),
         }
     }
 }

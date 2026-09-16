@@ -7,6 +7,8 @@ mod build;
 #[cfg(feature = "egui")]
 mod editors;
 mod feature;
+#[cfg(feature = "egui")]
+mod task;
 
 pub use build::{
     BuildError, BuildPlan, body_build_ops, hole_diameter, mark_all_part_features_dirty,
@@ -15,18 +17,45 @@ pub use build::{
 };
 pub use feature::{
     ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
+    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep, primitive_icon,
+    primitive_preset,
 };
 
 use core_document::{
-    BodyId, FeatureId, InputResult, ToolDescriptor, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
+    BodyId, FeatureId, InputResult, TaskInfo, ToolDescriptor, ToolVariant, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
+    WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 
 /// Part Design workbench: feature-based solid modeling.
 #[derive(Default)]
-pub struct PartDesignWorkbench;
+pub struct PartDesignWorkbench {
+    /// The feature open in the task panel.
+    #[cfg(feature = "egui")]
+    task: Option<task::TaskState>,
+    /// A feature a tool just created, with the sketches it hid: the task
+    /// that opens for it deletes it on Cancel.
+    pending_task_from_tool: Option<(FeatureId, Vec<FeatureId>)>,
+}
+
+/// Primitive shapes offered from the primitive tools' dropdowns.
+const PRIMITIVE_SHAPES: &[(&str, &str)] = &[
+    ("box", "Box"),
+    ("cylinder", "Cylinder"),
+    ("sphere", "Sphere"),
+    ("cone", "Cone"),
+    ("torus", "Torus"),
+    ("ellipsoid", "Ellipsoid"),
+    ("prism", "Prism"),
+    ("wedge", "Wedge"),
+];
+
+fn primitive_variants(subtractive: bool) -> Vec<ToolVariant> {
+    PRIMITIVE_SHAPES
+        .iter()
+        .map(|(id, label)| ToolVariant::new(id, label, primitive_icon(id, subtractive)))
+        .collect()
+}
 
 impl PartDesignWorkbench {
     /// The sketch feature currently selected in the tree, if any.
@@ -94,10 +123,18 @@ impl PartDesignWorkbench {
     /// it can't be created from the current selection.
     fn feature_for_tool(
         tool: &str,
+        variant: Option<&str>,
         ctx: &WorkbenchRuntimeContext,
         body: BodyId,
     ) -> Result<(PartFeature, &'static str), String> {
         let sketch = Self::selected_sketch(ctx);
+        let primitive = |subtractive: bool| PartFeature::Primitive {
+            kind: variant
+                .and_then(primitive_preset)
+                .unwrap_or_else(|| primitive_preset("box").expect("box preset")),
+            placement: kernel_api::Placement::default(),
+            subtractive,
+        };
         let need_sketch =
             |value: Option<FeatureId>| value.ok_or("Select a sketch in the tree first".to_string());
         let need_material = |ok: bool| {
@@ -169,51 +206,62 @@ impl PartDesignWorkbench {
                     "Groove",
                 )
             }
-            "part.loft" => (
-                PartFeature::Loft {
-                    sections: vec![need_sketch(sketch)?],
-                    ruled: false,
-                    closed: false,
-                    subtractive: false,
-                },
-                "Loft",
-            ),
-            "part.pipe" => (
-                PartFeature::Pipe {
-                    profile: need_sketch(sketch)?,
-                    spine: need_sketch(sketch)?,
-                    frenet: false,
-                    subtractive: false,
-                },
-                "Pipe",
-            ),
-            "part.helix" => (
-                PartFeature::Helix {
-                    sketch: need_sketch(sketch)?,
-                    axis: RevolveAxis::default(),
-                    mode: HelixMode::PitchHeight,
-                    pitch: 5.0,
-                    height: 20.0,
-                    turns: 4.0,
-                    left_handed: false,
-                    cone_angle_deg: 0.0,
-                    reversed: false,
-                    subtractive: false,
-                },
-                "Helix",
-            ),
-            "part.primitive" => (
-                PartFeature::Primitive {
-                    kind: kernel_api::PrimitiveKind::Box {
-                        length: 10.0,
-                        width: 10.0,
-                        height: 10.0,
+            "part.loft" | "part.subtractive_loft" => {
+                let subtractive = tool == "part.subtractive_loft";
+                if subtractive {
+                    need_material(has_solid)?;
+                }
+                (
+                    PartFeature::Loft {
+                        sections: vec![need_sketch(sketch)?],
+                        ruled: false,
+                        closed: false,
+                        subtractive,
                     },
-                    placement: kernel_api::Placement::default(),
-                    subtractive: false,
-                },
-                "Primitive",
-            ),
+                    "Loft",
+                )
+            }
+            "part.pipe" | "part.subtractive_pipe" => {
+                let subtractive = tool == "part.subtractive_pipe";
+                if subtractive {
+                    need_material(has_solid)?;
+                }
+                (
+                    PartFeature::Pipe {
+                        profile: need_sketch(sketch)?,
+                        spine: need_sketch(sketch)?,
+                        frenet: false,
+                        subtractive,
+                    },
+                    "Pipe",
+                )
+            }
+            "part.helix" | "part.subtractive_helix" => {
+                let subtractive = tool == "part.subtractive_helix";
+                if subtractive {
+                    need_material(has_solid)?;
+                }
+                (
+                    PartFeature::Helix {
+                        sketch: need_sketch(sketch)?,
+                        axis: RevolveAxis::default(),
+                        mode: HelixMode::PitchHeight,
+                        pitch: 5.0,
+                        height: 20.0,
+                        turns: 4.0,
+                        left_handed: false,
+                        cone_angle_deg: 0.0,
+                        reversed: false,
+                        subtractive,
+                    },
+                    "Helix",
+                )
+            }
+            "part.primitive" => (primitive(false), "Primitive"),
+            "part.subtractive_primitive" => {
+                need_material(has_solid)?;
+                (primitive(true), "Primitive")
+            }
             "part.hole" => {
                 need_material(has_solid)?;
                 (
@@ -363,7 +411,7 @@ impl PartDesignWorkbench {
 
     /// Create a datum feature anchored to the selected face (or the XY base
     /// plane) and select it for editing.
-    fn insert_datum(&self, ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
+    fn insert_datum(&mut self, ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
         use core_document::{AttachmentOffset, DatumAttachment, DatumFeature, DatumShape};
         let Some(body) = Self::target_body(ctx) else {
             ctx.log_warn("Select a body (or one of its features) first");
@@ -392,6 +440,7 @@ impl PartDesignWorkbench {
             .add_feature_in_body(datum, name.clone(), Some(body))
         {
             Ok(feature_id) => {
+                self.pending_task_from_tool = Some((feature_id, Vec::new()));
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
             }
@@ -401,18 +450,19 @@ impl PartDesignWorkbench {
     }
 
     /// Create a feature from a toolbar action and mark it for rebuild.
-    fn insert_feature(&self, ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
+    fn insert_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
         let Some(body) = Self::target_body(ctx) else {
             ctx.log_warn("Select a body (or one of its features) first");
             return InputResult::consumed();
         };
-        let (feature, base) = match Self::feature_for_tool(tool, ctx, body) {
-            Ok(pair) => pair,
-            Err(message) => {
-                ctx.log_warn(message);
-                return InputResult::consumed();
-            }
-        };
+        let (feature, base) =
+            match Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body) {
+                Ok(pair) => pair,
+                Err(message) => {
+                    ctx.log_warn(message);
+                    return InputResult::consumed();
+                }
+            };
         let name = Self::next_feature_name(ctx, base);
         let sketches = feature.sketches();
 
@@ -423,9 +473,10 @@ impl PartDesignWorkbench {
             Ok(feature_id) => {
                 ctx.document.mark_feature_dirty(feature_id);
                 // Consumed sketches are hidden; the solid takes over visually.
-                for sketch in sketches {
-                    ctx.document.set_feature_visible(sketch, false);
+                for sketch in &sketches {
+                    ctx.document.set_feature_visible(*sketch, false);
                 }
+                self.pending_task_from_tool = Some((feature_id, sketches));
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
             }
@@ -445,50 +496,169 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
-        // (id, label, icon), grouped by toolbar category.
-        let structure = [
-            ("part.new_body", "New Body", "body"),
-            ("part.new_sketch", "New Sketch", "sketch-new"),
-            ("part.datum_plane", "Datum Plane", "datum-plane"),
-            ("part.datum_line", "Datum Line", "datum-line"),
-            ("part.datum_point", "Datum Point", "datum-point"),
-        ];
-        let modeling = [
-            ("part.pad", "Pad (Extrude)", "pad"),
-            ("part.pocket", "Pocket (Cut)", "pocket"),
-            ("part.revolve", "Revolution", "revolution"),
-            ("part.groove", "Groove (Revolved Cut)", "groove"),
-            ("part.loft", "Loft", "additive-loft"),
-            ("part.pipe", "Pipe (Sweep)", "additive-pipe"),
-            ("part.helix", "Helix", "additive-helix"),
-            ("part.primitive", "Primitive", "additive-box"),
-            ("part.hole", "Hole", "hole"),
-        ];
-        let dressup = [
-            ("part.fillet", "Fillet", "fillet"),
-            ("part.chamfer", "Chamfer", "chamfer"),
-            ("part.draft", "Draft", "draft"),
-            ("part.thickness", "Thickness (Shell)", "thickness"),
-        ];
-        let transform = [
-            ("part.mirror", "Mirrored", "mirrored"),
-            ("part.linear_pattern", "Linear Pattern", "linear-pattern"),
-            ("part.polar_pattern", "Polar Pattern", "polar-pattern"),
-            ("part.multi_transform", "Multi Transform", "multi-transform"),
-            ("part.boolean", "Boolean", "boolean"),
-        ];
-        for (category, tools) in [
-            ("structure", &structure[..]),
-            ("modeling", &modeling[..]),
-            ("dressup", &dressup[..]),
-            ("transform", &transform[..]),
-        ] {
-            for (id, label, icon) in tools {
-                context.register_tool(
-                    ToolDescriptor::new_action(*id, *label, Some(category)).icon(icon),
-                );
-            }
-        }
+        let action = |id: &str, label: &str, icon: &'static str, category: &str| {
+            ToolDescriptor::new_action(id, label, Some(category)).icon(icon)
+        };
+        // Structure and sketches.
+        context.register_tool(action("part.new_body", "Create body", "body", "structure"));
+        context.register_tool(action(
+            "part.new_sketch",
+            "Create sketch",
+            "sketch-new",
+            "structure",
+        ));
+        context.register_tool(action(
+            "part.edit_sketch",
+            "Edit sketch",
+            "sketch-edit",
+            "structure",
+        ));
+        // PLANNED: re-attach a sketch to another plane or face.
+        context.register_tool(
+            action(
+                "part.map_sketch",
+                "Map sketch to face",
+                "sketch-map",
+                "structure",
+            )
+            .planned("moves a sketch onto a picked face"),
+        );
+        // Datums.
+        context.register_tool(action(
+            "part.datum_point",
+            "Datum point",
+            "datum-point",
+            "datum",
+        ));
+        context.register_tool(action(
+            "part.datum_line",
+            "Datum line",
+            "datum-line",
+            "datum",
+        ));
+        context.register_tool(action(
+            "part.datum_plane",
+            "Datum plane",
+            "datum-plane",
+            "datum",
+        ));
+        // PLANNED: a local coordinate system and a clone of another body.
+        context.register_tool(
+            action(
+                "part.coordinate_system",
+                "Local coordinate system",
+                "coordinate-system",
+                "datum",
+            )
+            .planned("places a named frame to attach features to"),
+        );
+        context.register_tool(
+            action("part.clone", "Clone", "clone", "datum")
+                .planned("links a copy of another body's shape into this one"),
+        );
+        // Additive.
+        context.register_tool(action("part.pad", "Pad", "pad", "additive"));
+        context.register_tool(action(
+            "part.revolve",
+            "Revolution",
+            "revolution",
+            "additive",
+        ));
+        context.register_tool(action(
+            "part.loft",
+            "Additive loft",
+            "additive-loft",
+            "additive",
+        ));
+        context.register_tool(action(
+            "part.pipe",
+            "Additive pipe",
+            "additive-pipe",
+            "additive",
+        ));
+        context.register_tool(action(
+            "part.helix",
+            "Additive helix",
+            "additive-helix",
+            "additive",
+        ));
+        context.register_tool(
+            action(
+                "part.primitive",
+                "Additive primitive",
+                "additive-box",
+                "additive",
+            )
+            .variants(primitive_variants(false)),
+        );
+        // Subtractive.
+        context.register_tool(action("part.pocket", "Pocket", "pocket", "subtractive"));
+        context.register_tool(action("part.hole", "Hole", "hole", "subtractive"));
+        context.register_tool(action("part.groove", "Groove", "groove", "subtractive"));
+        context.register_tool(action(
+            "part.subtractive_loft",
+            "Subtractive loft",
+            "subtractive-loft",
+            "subtractive",
+        ));
+        context.register_tool(action(
+            "part.subtractive_pipe",
+            "Subtractive pipe",
+            "subtractive-pipe",
+            "subtractive",
+        ));
+        context.register_tool(action(
+            "part.subtractive_helix",
+            "Subtractive helix",
+            "subtractive-helix",
+            "subtractive",
+        ));
+        context.register_tool(
+            action(
+                "part.subtractive_primitive",
+                "Subtractive primitive",
+                "subtractive-box",
+                "subtractive",
+            )
+            .variants(primitive_variants(true)),
+        );
+        // Transformations.
+        context.register_tool(action("part.mirror", "Mirrored", "mirrored", "transform"));
+        context.register_tool(action(
+            "part.linear_pattern",
+            "Linear pattern",
+            "linear-pattern",
+            "transform",
+        ));
+        context.register_tool(action(
+            "part.polar_pattern",
+            "Polar pattern",
+            "polar-pattern",
+            "transform",
+        ));
+        context.register_tool(action(
+            "part.multi_transform",
+            "Multi-transform",
+            "multi-transform",
+            "transform",
+        ));
+        // PLANNED: a scaled copy of earlier features.
+        context.register_tool(
+            action("part.scaled", "Scaled", "scaled", "transform")
+                .planned("repeats features at growing scales"),
+        );
+        // Dress-up.
+        context.register_tool(action("part.fillet", "Fillet", "fillet", "dressup"));
+        context.register_tool(action("part.chamfer", "Chamfer", "chamfer", "dressup"));
+        context.register_tool(action("part.draft", "Draft", "draft", "dressup"));
+        context.register_tool(action(
+            "part.thickness",
+            "Thickness",
+            "thickness",
+            "dressup",
+        ));
+        // Boolean.
+        context.register_tool(action("part.boolean", "Boolean", "boolean", "boolean"));
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -504,9 +674,20 @@ impl Workbench for PartDesignWorkbench {
         // Feature tools are Actions: they fire once on the first input event
         // after the toolbar click (the host clears consumed actions).
         // `part.new_body` is handled host-side.
-        match active_tool {
+        let base = active_tool.map(base_tool_id);
+        match base {
             Some(tool @ ("part.datum_plane" | "part.datum_line" | "part.datum_point")) => {
                 self.insert_datum(ctx, tool)
+            }
+            Some("part.edit_sketch") => {
+                if Self::selected_sketch(ctx).is_some() {
+                    // The sketcher picks the active object up as its edit
+                    // session on activation.
+                    ctx.workbench_switch_request = Some(WorkbenchId::from("wb.sketch"));
+                } else {
+                    ctx.log_warn("Select a sketch in the tree first");
+                }
+                InputResult::consumed()
             }
             Some("part.new_sketch") => {
                 let Some(body) = Self::target_body(ctx) else {
@@ -525,9 +706,39 @@ impl Workbench for PartDesignWorkbench {
                 InputResult::consumed()
             }
             Some(tool) if tool.starts_with("part.") && tool != "part.new_body" => {
-                self.insert_feature(ctx, tool)
+                let full = active_tool.unwrap_or(tool);
+                self.insert_feature(ctx, full)
             }
             _ => InputResult::ignored(),
+        }
+    }
+
+    fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        #[cfg(feature = "egui")]
+        {
+            self.task_info(ctx)
+        }
+        #[cfg(not(feature = "egui"))]
+        {
+            let _ = ctx;
+            None
+        }
+    }
+
+    #[cfg(feature = "egui")]
+    fn ui_task_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: core_document::TaskRequest,
+    ) -> core_document::TaskOutcome {
+        self.draw_task_panel(ui, ctx, request)
+    }
+
+    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        #[cfg(feature = "egui")]
+        {
+            self.task = None;
         }
     }
 
@@ -536,12 +747,19 @@ impl Workbench for PartDesignWorkbench {
         let has_body = body.is_some();
         let has_sketch = Self::selected_sketch(ctx).is_some();
         let has_solid = body.map(|b| Self::body_has_solid(ctx, b)).unwrap_or(false);
-        match tool_id {
+        match base_tool_id(tool_id) {
             "part.new_body" => true,
+            "part.edit_sketch" => has_sketch,
             "part.new_sketch" | "part.primitive" | "part.datum_plane" | "part.datum_line"
             | "part.datum_point" => has_body,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,
-            "part.pocket" | "part.groove" | "part.hole" => has_sketch && has_solid,
+            "part.pocket"
+            | "part.groove"
+            | "part.hole"
+            | "part.subtractive_loft"
+            | "part.subtractive_pipe"
+            | "part.subtractive_helix" => has_sketch && has_solid,
+            "part.subtractive_primitive" => has_solid,
             "part.fillet"
             | "part.chamfer"
             | "part.draft"
@@ -555,189 +773,23 @@ impl Workbench for PartDesignWorkbench {
         }
     }
 
+    /// Under the tree the bench only orients a new user; features are
+    /// edited in the task panel and managed from the tree's menu.
     #[cfg(feature = "egui")]
     fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-        ui.heading("Part Design");
-
-        let Some(body) = Self::target_body(ctx) else {
-            ui.label("Create a body, then a sketch on it, then Pad the sketch.");
-            ui.label("Select a body or sketch in the tree to see its features.");
-            return;
-        };
-        let body_name = ctx
-            .document
-            .bodies()
-            .iter()
-            .find(|b| b.id == body)
-            .map(|b| b.name.clone())
-            .unwrap_or_else(|| "Body".to_string());
-        let mut edited_body_name = body_name.clone();
-        ui.horizontal(|ui| {
-            ui.label("Body:");
-            if ui
-                .add(egui::TextEdit::singleline(&mut edited_body_name).desired_width(140.0))
-                .lost_focus()
-                && edited_body_name != body_name
-            {
-                ctx.document.rename_body(body, edited_body_name.clone());
-            }
-        });
-        ui.separator();
-
-        let features = part_features_of_body(ctx.document, body);
-        if features.is_empty() {
-            ui.label("No features yet.");
-            ui.label("Select a sketch and use Pad to create a solid.");
+        if Self::target_body(ctx).is_some() {
             return;
         }
-
-        // Collect edits first; apply after the iteration ends.
-        let mut removed: Option<(FeatureId, Vec<FeatureId>)> = None;
-        let mut suppress_toggle: Option<(FeatureId, bool)> = None;
-
-        for (feature_id, part_feature) in &features {
-            let (node_name, suppressed, has_error) = ctx
-                .document
-                .get_feature_meta(*feature_id)
-                .map(|n| (n.name.clone(), n.suppressed, n.error.is_some()))
-                .unwrap_or_else(|| (part_feature.kind_label().to_string(), false, false));
-            let is_active = ctx.active_document_object == Some(*feature_id);
-            ui.horizontal(|ui| {
-                if ui
-                    .small_button("✕")
-                    .on_hover_text("Delete feature")
-                    .clicked()
-                {
-                    removed = Some((*feature_id, part_feature.sketches()));
-                }
-                let mut label = egui::RichText::new(&node_name);
-                if has_error {
-                    label = label.color(egui::Color32::from_rgb(240, 90, 90));
-                }
-                if suppressed {
-                    label = label.strikethrough();
-                }
-                let response = ui
-                    .selectable_label(is_active, label)
-                    .on_hover_text("Click to edit this operation's settings");
-                if response.clicked() {
-                    ctx.active_document_object = Some(*feature_id);
-                }
-                let mut is_suppressed = suppressed;
-                if ui
-                    .checkbox(&mut is_suppressed, "off")
-                    .on_hover_text("Suppress: exclude this feature from the build")
-                    .changed()
-                {
-                    suppress_toggle = Some((*feature_id, is_suppressed));
-                }
-            });
-            if has_error
-                && let Some(message) = ctx
-                    .document
-                    .get_feature_meta(*feature_id)
-                    .and_then(|n| n.error.clone())
-            {
-                ui.colored_label(egui::Color32::from_rgb(240, 90, 90), message);
-            }
-        }
-
-        if let Some((feature_id, suppressed)) = suppress_toggle {
-            ctx.document.set_feature_suppressed(feature_id, suppressed);
-            ctx.document.mark_feature_dirty(feature_id);
-        }
-
-        // ---- Detail editor for the operation selected in the tree ----
-        if let Some(feature_id) = Self::selected_part_feature(ctx)
-            && let Some((mut part_feature, node_name)) = ctx
-                .document
-                .get_feature_meta(feature_id)
-                .filter(|n| n.body == Some(body))
-                .map(|n| (PartFeature::from_json(&n.data).ok(), n.name.clone()))
-                .and_then(|(f, n)| f.map(|f| (f, n)))
-        {
-            ui.separator();
-            ui.heading(format!("{} settings", part_feature.kind_label()));
-
-            let mut edited_name = node_name.clone();
-            ui.horizontal(|ui| {
-                ui.label("Name:");
-                if ui
-                    .add(egui::TextEdit::singleline(&mut edited_name).desired_width(140.0))
-                    .lost_focus()
-                    && edited_name != node_name
-                {
-                    ctx.document.rename_feature(feature_id, edited_name);
-                }
-            });
-            if let Some(sketch_id) = part_feature.sketch() {
-                ui.label(format!(
-                    "Plane: {}",
-                    sketch_plane_description(ctx.document, sketch_id)
-                ));
-            }
-
-            let deps_before = part_feature.dependencies();
-            if editors::feature_editor(ui, ctx, body, feature_id, &mut part_feature) {
-                let deps_after = part_feature.dependencies();
-                if ctx
-                    .document
-                    .update_feature_data(feature_id, part_feature.to_json())
-                    .is_ok()
-                {
-                    if deps_before != deps_after {
-                        ctx.document
-                            .set_feature_dependencies(feature_id, deps_after);
-                    }
-                    ctx.document.mark_feature_dirty(feature_id);
-                }
-            }
-        }
-
-        // ---- Datum editor when a datum is selected in the tree ----
-        if let Some(datum_id) = ctx.active_document_object.filter(|id| {
-            ctx.document
-                .get_feature_meta(*id)
-                .map(|n| n.workbench_id.as_str() == "core.datum" && n.body == Some(body))
-                .unwrap_or(false)
-        }) && let Some(mut datum) = ctx
-            .document
-            .get_feature_data(datum_id)
-            .and_then(|d| core_document::DatumFeature::from_json(d).ok())
-        {
-            ui.separator();
-            ui.heading(datum.shape.label());
-            if editors::datum_editor(ui, ctx, datum_id, &mut datum) {
-                let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
-                // Sketches attached to this datum re-derive their plane
-                // from it on their next edit; solids are unaffected.
-            }
-            if ui
-                .small_button("Delete datum")
-                .on_hover_text("Remove this datum")
-                .clicked()
-                && ctx.document.remove_feature(datum_id).is_ok()
-            {
-                ctx.active_document_object = None;
-            }
-        }
-
-        if let Some((feature_id, sketches)) = removed
-            && ctx.document.remove_feature(feature_id).is_ok()
-        {
-            ctx.log_info("Deleted feature");
-            // Reveal consumed sketches again so they can be reused.
-            for sketch_id in sketches {
-                ctx.document.set_feature_visible(sketch_id, true);
-            }
-            let remaining = part_feature_ids(ctx.document, body);
-            match remaining.first() {
-                // Rebuild the rest of the history.
-                Some(first) => ctx.document.mark_feature_dirty(*first),
-                // Last feature gone: the body has no solid any more.
-                None => ctx.document.remove_imported_geometry(body),
-            }
-        }
+        ui.label(
+            egui::RichText::new("Create a body, then a sketch on it, then Pad the sketch.")
+                .font(ui_kit::sans(ui_kit::tokens::FONT_SM))
+                .color(ui_kit::tokens::TEXT3),
+        );
+        ui.label(
+            egui::RichText::new("Select a body or sketch in the tree to see its features.")
+                .font(ui_kit::sans(ui_kit::tokens::FONT_SM))
+                .color(ui_kit::tokens::TEXT3),
+        );
     }
 
     fn feature_dependencies(
@@ -843,7 +895,7 @@ mod icon_coverage {
     #[test]
     fn every_tool_names_an_icon_in_the_set() {
         let mut ctx = WorkbenchContext::default();
-        PartDesignWorkbench.configure(&mut ctx);
+        PartDesignWorkbench::default().configure(&mut ctx);
         for tool in ctx.tools() {
             let icon = tool
                 .icon
