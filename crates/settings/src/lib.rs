@@ -26,11 +26,14 @@ pub enum SettingsError {
     Json(#[from] serde_json::Error),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserSettings {
     pub camera: CameraSettings,
     pub lighting: LightingSettings,
     pub rendering: RenderingSettings,
+    /// Defaults for file import; the STEP dialog opens with these.
+    #[serde(default)]
+    pub import: ImportSettings,
     /// Preferred GPU name substring for Vulkan device selection (None = automatic)
     pub preferred_gpu: Option<String>,
     /// Optional FPS cap. 0.0 = uncapped (driven by vsync / driver).
@@ -43,14 +46,22 @@ impl Default for UserSettings {
             camera: CameraSettings::default(),
             lighting: LightingSettings::default(),
             rendering: RenderingSettings::default(),
+            import: ImportSettings::default(),
             preferred_gpu: None,
             fps_cap: 0.0,
         }
     }
 }
 
+/// Import defaults.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImportSettings {
+    pub tessellation: kernel_api::TessellationSettings,
+}
+
 /// Rendering quality settings
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RenderingSettings {
     /// MSAA sample count (1 = disabled, 2, 4, or 8)
     pub msaa_samples: u8,
@@ -84,7 +95,7 @@ fn default_specular_intensity() -> f32 {
 }
 
 /// Settings for the 3D viewport lighting system
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LightingSettings {
     pub main_light: LightSource,
     pub backlight: LightSource,
@@ -142,7 +153,7 @@ impl Default for LightingSettings {
 }
 
 /// A single light source with direction defined by angles
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LightSource {
     pub enabled: bool,
     /// Horizontal angle in degrees (0 = front, 90 = right, -90 = left, 180 = back)
@@ -178,7 +189,7 @@ impl LightSource {
 /// Camera / navigation preferences (focal-distance viewport model).
 ///
 /// Distances are **millimetres** (printCAD world unit; matches STEP import).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct CameraSettings {
     #[serde(default)]

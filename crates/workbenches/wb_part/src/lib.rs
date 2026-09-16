@@ -773,6 +773,37 @@ impl Workbench for PartDesignWorkbench {
         }
     }
 
+    /// The Part Design preferences page: every row is planned.
+    #[cfg(feature = "egui")]
+    fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
+        use ui_kit::widgets::{PrefRow, pref_group};
+        // PLANNED: feature defaults applied when a feature is created.
+        pref_group(
+            ui,
+            "Feature defaults",
+            vec![
+                PrefRow::planned_toggle(
+                    "Refine result",
+                    "merges coplanar faces after each boolean",
+                    true,
+                )
+                .hint("Merge coplanar faces after booleans"),
+                PrefRow::planned_toggle(
+                    "Update view while editing",
+                    "rebuilds the preview on every field change",
+                    true,
+                ),
+                PrefRow::planned_toggle(
+                    "Hide the sketch after a feature uses it",
+                    "keeps used sketches out of the viewport",
+                    true,
+                ),
+            ],
+            "",
+        );
+        false
+    }
+
     /// Under the tree the bench only orients a new user; features are
     /// edited in the task panel and managed from the tree's menu.
     #[cfg(feature = "egui")]

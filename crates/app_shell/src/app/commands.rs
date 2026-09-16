@@ -25,6 +25,7 @@ struct FrameIntents {
     camera_rotate: Option<RotateDelta>,
     persist_settings: bool,
     apply_camera_settings: bool,
+    commit_settings: Option<(Box<settings::UserSettings>, core_document::Unit)>,
     confirm_step_import: bool,
     cancel_step_import: bool,
     fit_view: bool,
@@ -91,8 +92,10 @@ impl PrintCadApp {
                 UiCommand::FitView => intents.fit_view = true,
                 UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
                 UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
-                UiCommand::PersistSettings => intents.persist_settings = true,
-                UiCommand::ApplyCameraSettings => intents.apply_camera_settings = true,
+                UiCommand::CommitSettings {
+                    settings,
+                    display_unit,
+                } => intents.commit_settings = Some((settings, display_unit)),
                 UiCommand::SelectTreeItem(item) => intents.select_tree_item = Some(item),
                 UiCommand::ActivateTreeItem(item) => intents.activate_tree_item = Some(item),
                 UiCommand::TreeFeature { feature, command } => {
@@ -184,6 +187,20 @@ impl PrintCadApp {
             }
         }
 
+        if let Some((settings, display_unit)) = intents.commit_settings {
+            // Only a changed camera section re-syncs the controller: a sync
+            // resets the wheel zoom and orbit framing from the saved values.
+            if settings.camera != self.user_settings.camera {
+                intents.apply_camera_settings = true;
+            }
+            if *settings != self.user_settings {
+                self.user_settings = *settings;
+                intents.persist_settings = true;
+            }
+            if display_unit != self.document.display_unit() {
+                self.document.set_display_unit(display_unit);
+            }
+        }
         if intents.persist_settings
             && let Err(err) = self.settings_store.save(&self.user_settings)
         {

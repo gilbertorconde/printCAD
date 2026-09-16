@@ -46,7 +46,7 @@ pub enum LinearDeflectionMode {
 }
 
 /// Parameters controlling tessellation quality for viewport rendering.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TessellationSettings {
     #[serde(default)]
     pub linear_deflection_mode: LinearDeflectionMode,

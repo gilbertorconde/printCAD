@@ -33,7 +33,7 @@ pub struct UiFrameInputs<'a> {
     /// The host's active workbench — authoritative (the host can switch
     /// benches itself, e.g. the create-sketch flow).
     pub active_workbench: ActiveWorkbench,
-    pub settings: &'a mut UserSettings,
+    pub settings: &'a UserSettings,
     pub document: &'a mut core_document::Document,
     pub registry: &'a mut core_document::DocumentService,
     /// Camera and viewport facts for the contexts panel hooks receive.

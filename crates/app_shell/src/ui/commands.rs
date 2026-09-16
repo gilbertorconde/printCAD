@@ -36,10 +36,11 @@ pub enum UiCommand {
     CameraRotate(RotateDelta),
     /// Stop the kernel job that is running now.
     CancelKernelJob,
-    /// Settings were edited this frame; persist them to disk.
-    PersistSettings,
-    /// Camera preferences were edited; push them into the camera controller.
-    ApplyCameraSettings,
+    /// The Preferences dialog applied its draft.
+    CommitSettings {
+        settings: Box<settings::UserSettings>,
+        display_unit: core_document::Unit,
+    },
     SelectTreeItem(TreeItemId),
     ActivateTreeItem(TreeItemId),
     /// History context-menu action on a tree feature row.

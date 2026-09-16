@@ -1589,6 +1589,60 @@ impl Workbench for SketchWorkbench {
         self.sync_active_sketch_from_ctx(ctx);
     }
 
+    /// The Sketcher preferences page: the snap toggle is live, the solver
+    /// automation rows are planned, and the palette shows read-only.
+    #[cfg(feature = "egui")]
+    fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
+        use ui_kit::widgets::{PrefRow, pref_group};
+        let mut snap = !self.snap_off;
+        let changed = pref_group(
+            ui,
+            "Solver & constraints",
+            vec![
+                // PLANNED: auto constraints while drawing.
+                PrefRow::planned_toggle(
+                    "Auto constraints",
+                    "adds coincident, horizontal and vertical constraints while drawing",
+                    false,
+                )
+                .hint("Add coincident, horizontal, vertical while drawing"),
+                PrefRow::planned_toggle(
+                    "Avoid redundant auto constraints",
+                    "skips auto constraints the solver would report as redundant",
+                    false,
+                ),
+                PrefRow::planned_toggle(
+                    "Auto remove redundants",
+                    "drops redundant constraints after each solve",
+                    false,
+                ),
+                PrefRow::toggle("Snap to objects", &mut snap)
+                    .hint("Endpoints, midpoints and intersections attract the cursor"),
+            ],
+            "",
+        );
+        if changed {
+            self.snap_off = !snap;
+        }
+        let pal = core_document::SketchPalette::default();
+        pref_group(
+            ui,
+            "Colors",
+            vec![
+                PrefRow::swatch("Geometry", pal.geometry),
+                PrefRow::swatch("Construction", pal.construction),
+                PrefRow::swatch("External", pal.external),
+                PrefRow::swatch("Fully constrained", pal.fully_constrained),
+                PrefRow::swatch("Selected", pal.selected),
+                PrefRow::swatch("Preselect", pal.preselect),
+                PrefRow::swatch("Constraint", pal.constraint),
+                PrefRow::swatch("Reference dimension", pal.reference),
+            ],
+            "",
+        );
+        changed
+    }
+
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
         if self.pending_creation.is_some() {
             return Some(TaskInfo {

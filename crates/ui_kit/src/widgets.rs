@@ -4,8 +4,8 @@
 //! that draws UI can use it.
 
 use egui::{
-    Color32, CornerRadius, Frame, InnerResponse, Margin, Response, RichText, Sense, Stroke, Ui,
-    Vec2, WidgetText,
+    Color32, CornerRadius, Frame, InnerResponse, Layout, Margin, Response, RichText, Sense, Stroke,
+    StrokeKind, Ui, Vec2, WidgetText,
 };
 
 use crate::icon;
@@ -701,4 +701,180 @@ pub fn planned<R>(ui: &mut Ui, note: &str, add: impl FnOnce(&mut Ui) -> R) -> In
 /// Text for a label: proportional at `size` in `color`.
 pub fn text(s: impl Into<String>, size: f32, color: Color32) -> WidgetText {
     RichText::new(s).font(sans(size)).color(color).into()
+}
+
+/// One preferences row: a label with an optional hint on the left and a
+/// control on the right. The control closure returns whether it changed
+/// the value.
+pub struct PrefRow<'a> {
+    pub label: &'a str,
+    pub hint: Option<&'a str>,
+    control: Box<dyn FnOnce(&mut Ui) -> bool + 'a>,
+}
+
+impl<'a> PrefRow<'a> {
+    pub fn new(label: &'a str, control: impl FnOnce(&mut Ui) -> bool + 'a) -> Self {
+        Self {
+            label,
+            hint: None,
+            control: Box::new(control),
+        }
+    }
+
+    pub fn hint(mut self, hint: &'a str) -> Self {
+        self.hint = Some(hint);
+        self
+    }
+
+    pub fn toggle(label: &'a str, on: &'a mut bool) -> Self {
+        Self::new(label, move |ui| toggle(ui, on).changed())
+    }
+
+    /// A toggle for something not built yet: disabled, showing `on`.
+    pub fn planned_toggle(label: &'a str, note: &'a str, on: bool) -> Self {
+        Self::new(label, move |ui| {
+            let mut value = on;
+            planned(ui, note, |ui| toggle(ui, &mut value));
+            false
+        })
+    }
+
+    pub fn select<T: PartialEq + Copy + 'a>(
+        label: &'a str,
+        id_salt: &'static str,
+        current: &'a mut T,
+        options: &'a [(T, &'a str)],
+    ) -> Self {
+        Self::new(label, move |ui| {
+            select_field(ui, id_salt, current, options, 180.0)
+        })
+    }
+
+    pub fn qty(label: &'a str, field: QtyField<'a>) -> Self {
+        Self::new(label, move |ui| field.width(120.0).show(ui))
+    }
+
+    pub fn color(label: &'a str, rgb: &'a mut [f32; 3]) -> Self {
+        Self::new(label, move |ui| {
+            let mut color = Color32::from_rgb(
+                (rgb[0] * 255.0) as u8,
+                (rgb[1] * 255.0) as u8,
+                (rgb[2] * 255.0) as u8,
+            );
+            if ui.color_edit_button_srgba(&mut color).changed() {
+                *rgb = [
+                    color.r() as f32 / 255.0,
+                    color.g() as f32 / 255.0,
+                    color.b() as f32 / 255.0,
+                ];
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    /// A read-only value.
+    pub fn text(label: &'a str, value: String) -> Self {
+        Self::new(label, move |ui| {
+            ui.label(RichText::new(value).font(sans(FONT_SM)).color(TEXT2));
+            false
+        })
+    }
+
+    /// A read-only color swatch with its hex value.
+    pub fn swatch(label: &'a str, rgb: [f32; 3]) -> Self {
+        Self::new(label, move |ui| {
+            let color = Color32::from_rgb(
+                (rgb[0] * 255.0) as u8,
+                (rgb[1] * 255.0) as u8,
+                (rgb[2] * 255.0) as u8,
+            );
+            mono_label(
+                ui,
+                format!("#{:02X}{:02X}{:02X}", color.r(), color.g(), color.b()),
+                FONT_XS,
+                TEXT3,
+            );
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(28.0, 16.0), Sense::hover());
+            ui.painter().rect(
+                rect,
+                3.0,
+                color,
+                Stroke::new(1.0, BORDER_STRONG),
+                StrokeKind::Inside,
+            );
+            false
+        })
+    }
+
+    fn matches(&self, filter: &str) -> bool {
+        filter.is_empty()
+            || self.label.to_lowercase().contains(filter)
+            || self.hint.is_some_and(|h| h.to_lowercase().contains(filter))
+    }
+}
+
+/// A titled, bordered group of preference rows. Rows whose label or hint
+/// does not contain `filter` (lowercase) are left out; a group with no
+/// rows left draws nothing. Returns whether any control changed.
+pub fn pref_group(ui: &mut Ui, title: &str, rows: Vec<PrefRow<'_>>, filter: &str) -> bool {
+    let rows: Vec<PrefRow<'_>> = rows.into_iter().filter(|r| r.matches(filter)).collect();
+    if rows.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    overline(ui, title);
+    ui.add_space(SPACE_1);
+    Frame::new()
+        .fill(BG1)
+        .stroke(Stroke::new(1.0, BORDER))
+        .corner_radius(CornerRadius::same(RADIUS_MD as u8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = 0.0;
+            let count = rows.len();
+            for (i, row) in rows.into_iter().enumerate() {
+                let PrefRow {
+                    label,
+                    hint,
+                    control,
+                } = row;
+                let height = if hint.is_some() { 44.0 } else { 40.0 };
+                let (rect, _) =
+                    ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+                let inner = rect.shrink2(Vec2::new(14.0, 0.0));
+                let mut left = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(inner)
+                        .layout(Layout::top_down(egui::Align::Min)),
+                );
+                left.spacing_mut().item_spacing.y = 2.0;
+                let text_top = if hint.is_some() { 7.0 } else { 12.0 };
+                left.add_space(text_top);
+                left.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT1));
+                if let Some(hint) = hint {
+                    left.label(RichText::new(hint).font(sans(FONT_XS)).color(TEXT3));
+                }
+                // The control strip is one input tall, centred in the row,
+                // so fields keep their own height.
+                let strip = egui::Rect::from_x_y_ranges(
+                    inner.x_range(),
+                    (inner.center().y - INPUT / 2.0)..=(inner.center().y + INPUT / 2.0),
+                );
+                let mut right = ui.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(strip)
+                        .layout(Layout::right_to_left(egui::Align::Center)),
+                );
+                right.spacing_mut().item_spacing.x = SPACE_2;
+                changed |= control(&mut right);
+                if i + 1 < count {
+                    ui.painter()
+                        .hline(rect.x_range(), rect.bottom(), Stroke::new(1.0, BORDER));
+                }
+            }
+        });
+    ui.add_space(SPACE_4);
+    changed
 }

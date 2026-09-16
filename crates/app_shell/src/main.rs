@@ -312,6 +312,7 @@ impl PrintCadApp {
         registry: DocumentService,
     ) -> Self {
         let camera = CameraController::new(&user_settings.camera, (1, 1));
+        let step_import_defaults = user_settings.import.tessellation.clone();
         let journal = core_document::history::OpJournal::new(64);
 
         // The document server: a per-session local daemon by default; plain
@@ -378,7 +379,7 @@ impl PrintCadApp {
             smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,
             step_import_pending: None,
-            last_step_import_detail: TessellationSettings::default(),
+            last_step_import_detail: step_import_defaults,
             journal,
             mouse_buttons_down: 0,
             overlay_id_pool: Vec::new(),

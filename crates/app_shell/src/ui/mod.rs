@@ -7,8 +7,8 @@ mod inputs;
 mod log_view;
 mod menu_bar;
 mod overlays;
+mod preferences;
 mod property_panel;
-mod settings_panel;
 mod start_page;
 mod status_bar;
 mod step_import_modal;
@@ -84,8 +84,7 @@ pub struct UiFrameOutput {
 pub struct UiLayer {
     ctx: Context,
     state: State,
-    settings_tab: settings_panel::SettingsTab,
-    show_settings: bool,
+    preferences: preferences::PreferencesState,
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
     tree_filter: String,
@@ -113,8 +112,7 @@ impl UiLayer {
         Self {
             ctx,
             state,
-            settings_tab: settings_panel::SettingsTab::Camera,
-            show_settings: false,
+            preferences: preferences::PreferencesState::default(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
             property_tab: property_panel::PropertyTab::default(),
@@ -177,13 +175,10 @@ impl UiLayer {
         // consumption of Action tools, and a stale parallel copy here would
         // resurrect them every frame (infinite "New Body" loop).
         let mut active_tool = host_active_tool;
-        let mut show_settings = self.show_settings;
-        let mut settings_tab = self.settings_tab;
 
         let cube_config = self.orientation_cube_config.clone();
         let mut commands: Vec<UiCommand> = Vec::new();
-        let mut settings_changed = false;
-        let mut camera_settings_changed = false;
+        let mut settings_commit: Option<preferences::Commit> = None;
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
         let mut task_open = false;
@@ -218,14 +213,15 @@ impl UiLayer {
                 &mut active_tool,
                 &mut commands,
             );
-            // About forces the About tab so the user lands on the right
-            // page; Preferences keeps whatever tab they used last.
+            // About lands on its page; Preferences keeps the last group.
+            let unit = document.display_unit();
             if menu.show_about {
-                show_settings = true;
-                settings_tab = settings_panel::SettingsTab::About;
+                self.preferences
+                    .open_at(settings, unit, preferences::PrefGroup::General, 1);
             }
             if menu.show_preferences {
-                show_settings = true;
+                let (group, tab) = (self.preferences.group, self.preferences.tab);
+                self.preferences.open_at(settings, unit, group, tab);
             }
             // PLANNED: the command palette opens from the search box and
             // Ctrl+K; until it exists the request is dropped.
@@ -244,19 +240,18 @@ impl UiLayer {
                     &mut commands,
                 );
                 if start.show_preferences {
-                    show_settings = true;
+                    let (group, tab) = (self.preferences.group, self.preferences.tab);
+                    self.preferences.open_at(settings, unit, group, tab);
                 }
-                let outcome = settings_panel::draw_settings_window(
+                settings_commit = preferences::draw_preferences(
                     ui.ctx(),
-                    settings,
-                    document,
-                    &mut show_settings,
-                    &mut settings_tab,
-                    gpus,
-                    gpu_name,
+                    &mut self.preferences,
+                    preferences::PreferencesInputs {
+                        registry,
+                        gpus,
+                        gpu_name,
+                    },
                 );
-                settings_changed |= outcome.any;
-                camera_settings_changed |= outcome.camera_prefs;
                 return;
             }
 
@@ -351,17 +346,15 @@ impl UiLayer {
             }
             task_open = task_result.open;
 
-            let settings_outcome = settings_panel::draw_settings_window(
+            settings_commit = preferences::draw_preferences(
                 ui.ctx(),
-                settings,
-                document,
-                &mut show_settings,
-                &mut settings_tab,
-                gpus,
-                gpu_name,
+                &mut self.preferences,
+                preferences::PreferencesInputs {
+                    registry,
+                    gpus,
+                    gpu_name,
+                },
             );
-            settings_changed |= settings_outcome.any;
-            camera_settings_changed |= settings_outcome.camera_prefs;
 
             viewport_rect_logical = ui.available_rect_before_wrap();
 
@@ -426,8 +419,6 @@ impl UiLayer {
             active_tool = ActiveTool::default();
         }
 
-        self.show_settings = show_settings;
-        self.settings_tab = settings_tab;
         self.state
             .handle_platform_output(window, full_output.platform_output.clone());
         let primitives = self
@@ -450,11 +441,11 @@ impl UiLayer {
         if let Some(delta) = cube_result.rotate_delta {
             commands.push(UiCommand::CameraRotate(delta));
         }
-        if settings_changed {
-            commands.push(UiCommand::PersistSettings);
-        }
-        if camera_settings_changed {
-            commands.push(UiCommand::ApplyCameraSettings);
+        if let Some(commit) = settings_commit {
+            commands.push(UiCommand::CommitSettings {
+                settings: commit.settings,
+                display_unit: commit.display_unit,
+            });
         }
         if let Some(item) = tree_selection {
             commands.push(UiCommand::SelectTreeItem(item));
