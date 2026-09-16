@@ -449,11 +449,16 @@ pub fn draw_left_panel(
                 panel_result.tree_activation = tree_ui_result.activation;
                 panel_result.imported_visibility_change = tree_ui_result.imported_visibility_change;
                 panel_result.tree_feature_command = tree_ui_result.feature_command;
-                selected_detail = tree_model.detail_for(selected_id);
+                // Hover wins; the selection stands in when the pointer is
+                // elsewhere, so the line never goes blank mid-glance.
+                selected_detail = tree_ui_result
+                    .hovered
+                    .and_then(|id| tree_model.detail_for(id))
+                    .or_else(|| tree_model.detail_for(selected_id));
             });
 
-            // What the selected item is, spelled out — kept off the rows
-            // themselves so names stay readable at depth.
+            // What the hovered (else selected) item is, spelled out — kept
+            // off the rows themselves so names stay readable at depth.
             if let Some(detail) = selected_detail {
                 ui.add_space(2.0);
                 ui.weak(detail);

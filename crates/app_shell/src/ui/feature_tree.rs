@@ -35,6 +35,9 @@ pub enum TreeFeatureCommand {
 pub struct TreeUiResult {
     pub selection: Option<TreeItemId>,
     pub activation: Option<TreeItemId>,
+    /// The row under the pointer this frame — drives the details line, so
+    /// a glance tells what something is without committing a click.
+    pub hovered: Option<TreeItemId>,
     pub imported_visibility_change: Option<(Uuid, bool)>,
     pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
 }
@@ -472,6 +475,9 @@ fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiR
 }
 
 fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult) {
+    if response.hovered() {
+        result.hovered = Some(id);
+    }
     if response.clicked() {
         result.selection = Some(id);
     }
