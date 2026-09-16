@@ -420,10 +420,12 @@ fn create_shader_module(
         ));
     }
 
-    let mut words = Vec::with_capacity(bytes.len() / 4);
-    for chunk in bytes.chunks_exact(4) {
-        words.push(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
-    }
+    let words: Vec<u32> = bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|chunk| u32::from_le_bytes(*chunk))
+        .collect();
 
     let info = vk::ShaderModuleCreateInfo::default().code(&words);
     let module = unsafe { device.create_shader_module(&info, None) }.map_err(RenderError::from)?;

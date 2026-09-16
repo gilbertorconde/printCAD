@@ -335,9 +335,7 @@ impl RendererCore {
         }
         // Recreate picking renderer with new extent; pending readbacks
         // reference the old staging buffer and stale coordinates.
-        for slot in &mut self.pick_in_flight {
-            *slot = None;
-        }
+        self.pick_in_flight.fill(None);
         if let Some(pick_renderer) = self.pick_renderer.take() {
             pick_renderer.destroy(&self.device);
         }

@@ -658,10 +658,8 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
                     centers.push([pos.x as f64, pos.y as f64]);
                 }
             }
-            GeometryElement::Point(point) => {
-                if !referenced.contains(&point.id) {
-                    centers.push([point.position.x as f64, point.position.y as f64]);
-                }
+            GeometryElement::Point(point) if !referenced.contains(&point.id) => {
+                centers.push([point.position.x as f64, point.position.y as f64]);
             }
             _ => {}
         }

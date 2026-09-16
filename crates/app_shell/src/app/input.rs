@@ -536,7 +536,7 @@ pub(crate) fn face_ref_from_mesh(
     point: glam::Vec3,
 ) -> Option<core_document::FaceRef> {
     let mut best: Option<(f32, glam::Vec3, glam::Vec3)> = None; // (dist2, anchor, normal)
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
         let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
         let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
@@ -598,7 +598,7 @@ pub(crate) fn coplanar_face_submesh(
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut indices = Vec::new();
-    for tri in mesh.indices.chunks_exact(3) {
+    for tri in mesh.indices.as_chunks::<3>().0 {
         let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
         let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
         let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);

@@ -286,7 +286,7 @@ pub fn mesh_shape_with(
             *v = remap[*v as usize];
         }
         let mut filtered = Vec::with_capacity(edges.len());
-        for pair in edges.chunks_exact(2) {
+        for pair in edges.as_chunks::<2>().0 {
             if pair[0] != pair[1] {
                 filtered.extend_from_slice(pair);
             }
@@ -317,7 +317,7 @@ pub fn extract_boundary_edges(indices: &[u32]) -> Vec<u32> {
             .and_modify(|r| r.count += 1)
             .or_insert(Record { count: 1 });
     };
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         bump(tri[0], tri[1], &mut edges);
         bump(tri[1], tri[2], &mut edges);
         bump(tri[2], tri[0], &mut edges);
@@ -336,7 +336,7 @@ pub fn extract_boundary_edges(indices: &[u32]) -> Vec<u32> {
             out.push(b);
         }
     };
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         emit(tri[0], tri[1], &mut out);
         emit(tri[1], tri[2], &mut out);
         emit(tri[2], tri[0], &mut out);

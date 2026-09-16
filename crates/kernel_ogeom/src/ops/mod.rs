@@ -182,17 +182,13 @@ pub fn combine_solids(
                     if !bounds_overlap(model, &acc, t) {
                         continue;
                     }
-                    match bool_once(model, &acc, t, BoolKind::Cut) {
-                        Ok(next) => {
-                            let pieces = solids_of(model, &next);
-                            if pieces.is_empty() {
-                                gone = true;
-                                break;
-                            }
-                            acc = next;
-                        }
-                        Err(e) => return Err(e),
+                    let next = bool_once(model, &acc, t, BoolKind::Cut)?;
+                    let pieces = solids_of(model, &next);
+                    if pieces.is_empty() {
+                        gone = true;
+                        break;
                     }
+                    acc = next;
                 }
                 if !gone {
                     out.push(acc);

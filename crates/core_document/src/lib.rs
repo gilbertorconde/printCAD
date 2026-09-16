@@ -1407,7 +1407,7 @@ fn next_indexed_name<'a>(base: &str, existing: impl Iterator<Item = &'a str>) ->
 
     for name in existing {
         if name.eq_ignore_ascii_case(base) {
-            max_suffix = Some(max_suffix.map_or(0, |m| m));
+            max_suffix = Some(max_suffix.unwrap_or(0));
         } else if let Some(rest) = name
             .to_ascii_lowercase()
             .strip_prefix(&(base.to_ascii_lowercase() + "_"))

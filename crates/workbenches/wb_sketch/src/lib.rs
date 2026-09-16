@@ -809,7 +809,7 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let doomed: HashSet<Uuid> = self.selected_constraints.drain().collect();
+        let doomed: HashSet<Uuid> = std::mem::take(&mut self.selected_constraints);
         let before = feature.sketch.constraints.len();
         feature
             .sketch

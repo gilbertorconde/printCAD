@@ -126,12 +126,7 @@ fn uv_bounds(wires: &[ProfileWire]) -> (f64, f64, f64, f64) {
                     major,
                     ratio: _,
                 }
-                | ProfileSegment::EllipseArc {
-                    center,
-                    major,
-                    ratio: _,
-                    ..
-                } => {
+                | ProfileSegment::EllipseArc { center, major, .. } => {
                     push(*center, major[0].hypot(major[1]));
                 }
                 ProfileSegment::BSpline { control_points, .. } => {
