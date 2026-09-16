@@ -1,4 +1,5 @@
 mod combo_view;
+mod command_palette;
 mod commands;
 mod feature_tree;
 mod host_ctx;
@@ -85,6 +86,7 @@ pub struct UiLayer {
     ctx: Context,
     state: State,
     preferences: preferences::PreferencesState,
+    palette: command_palette::PaletteState,
     orientation_cube_config: OrientationCubeConfig,
     /// Substring filter over the model tree; UI-local.
     tree_filter: String,
@@ -113,6 +115,7 @@ impl UiLayer {
             ctx,
             state,
             preferences: preferences::PreferencesState::default(),
+            palette: command_palette::PaletteState::default(),
             orientation_cube_config: OrientationCubeConfig::default(),
             tree_filter: String::new(),
             property_tab: property_panel::PropertyTab::default(),
@@ -179,6 +182,7 @@ impl UiLayer {
         let cube_config = self.orientation_cube_config.clone();
         let mut commands: Vec<UiCommand> = Vec::new();
         let mut settings_commit: Option<preferences::Commit> = None;
+        let mut palette_activate: Option<(ActiveWorkbench, String)> = None;
         let mut cube_result = OrientationCubeResult::default();
         let mut viewport_rect_logical = egui::Rect::NOTHING;
         let mut task_open = false;
@@ -223,8 +227,6 @@ impl UiLayer {
                 let (group, tab) = (self.preferences.group, self.preferences.tab);
                 self.preferences.open_at(settings, unit, group, tab);
             }
-            // PLANNED: the command palette opens from the search box and
-            // Ctrl+K; until it exists the request is dropped.
             let mut open_palette = menu.open_palette;
 
             if screen == Screen::Start {
@@ -268,6 +270,45 @@ impl UiLayer {
                 &mut commands,
                 &mut open_palette,
             );
+
+            if open_palette {
+                self.palette.open();
+            }
+            {
+                // Enablement for the active bench's tools, against the real
+                // camera and viewport.
+                let ids: Vec<String> = registry
+                    .tools_for(&active_workbench.0)
+                    .map(|t| t.iter().map(|d| d.id.clone()).collect())
+                    .unwrap_or_default();
+                let enabled: Vec<(String, bool)> = match registry.workbench_mut(&active_workbench.0)
+                {
+                    Ok(wb) => {
+                        let ctx = host_ctx::panel_ctx(document, host, active_document_object);
+                        ids.into_iter()
+                            .map(|id| {
+                                let on = wb.is_tool_enabled(&id, &ctx);
+                                (id, on)
+                            })
+                            .collect()
+                    }
+                    Err(_) => Vec::new(),
+                };
+                let enabled_active = |id: &str| enabled.iter().any(|(i, on)| i == id && *on);
+                let palette = command_palette::draw_command_palette(
+                    ui.ctx(),
+                    &mut self.palette,
+                    registry,
+                    &active_workbench,
+                    &enabled_active,
+                    &mut commands,
+                );
+                if palette.show_preferences {
+                    let (group, tab) = (self.preferences.group, self.preferences.tab);
+                    self.preferences.open_at(settings, unit, group, tab);
+                }
+                palette_activate = palette.activate_tool;
+            }
 
             // Bottom bars before the side panels so they span the width.
             let cancel = status_bar::draw_status_bar(
@@ -413,8 +454,21 @@ impl UiLayer {
         });
 
         // Detect workbench change
+        // A palette pick on another bench switches first, then activates.
+        let plain_switch = palette_activate.is_none();
+        if let Some((bench, id)) = palette_activate {
+            if bench != active_workbench {
+                active_workbench = bench;
+                active_tool = ActiveTool::default();
+            }
+            if let Ok(tools) = registry.tools_for(&active_workbench.0)
+                && let Some(tool) = tools.iter().find(|t| t.id == id)
+            {
+                toolbar::activate_tool(&mut active_tool, tools, tool, &id);
+            }
+        }
         let workbench_changed = active_workbench != prev_workbench;
-        if workbench_changed {
+        if workbench_changed && plain_switch {
             // Reset tool when switching workbenches
             active_tool = ActiveTool::default();
         }
