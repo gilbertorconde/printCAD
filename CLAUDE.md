@@ -271,7 +271,9 @@ disabled; pan/zoom/roll allowed).
   PR or commit references in comments — the one sanctioned place for a
   kernel issue number is the `#[ignore = "kernel: … (ogeom-rs#N)"]` string.
   `lint-comment-rot: ignore` on a line opts it out when a reference is
-  load-bearing.
+  load-bearing. The tracked pre-commit hook runs it in `--staged` mode over
+  the lines a commit adds; enable once per clone with
+  `git config core.hooksPath .githooks`.
 
 ## Known approximations / roadmap
 

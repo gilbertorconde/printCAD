@@ -5,10 +5,11 @@
 // survives as documentation once the change it describes is forgotten.
 //
 // Default mode lints only comment lines ADDED against a base ref, so it gates
-// new rot at authoring time without demanding the tree be clean first. Pass
-// --all to sweep the whole tree.
+// new rot at authoring time without demanding the tree be clean first.
+// --staged lints the lines the index adds (the pre-commit hook's mode, reading
+// staged content rather than the working tree). --all sweeps the whole tree.
 //
-// Run: node scripts/lint-comment-rot.mjs [--base <ref>] [--all] [--json]
+// Run: node scripts/lint-comment-rot.mjs [--base <ref>] [--staged] [--all] [--json]
 // Exit 0 = clean. Exit 1 = violations.
 
 import { readFileSync, existsSync } from "node:fs";
@@ -22,6 +23,7 @@ const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
 const opt = (n, d) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : d);
 const MODE_ALL = flag("--all");
+const MODE_STAGED = flag("--staged");
 const AS_JSON = flag("--json");
 const BASE = opt("--base", process.env.LINT_COMMENT_ROT_BASE ?? "origin/master");
 
@@ -213,21 +215,25 @@ if (MODE_ALL) {
     });
   }
 } else {
-  // Diff mode: collect the new-side line numbers this branch adds, then parse
+  // Diff mode: collect the new-side line numbers the diff adds, then parse
   // each complete post-change file. Parsing only zero-context hunk text loses
   // lexical state when an added line sits inside an existing block comment.
+  // Staged mode diffs the index and reads post-change content from the index
+  // too, so unstaged edits in the working tree neither hide nor cause a hit.
+  const git = (args) => execFileSync("git", args, { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
   let diff;
   try {
-    diff = execFileSync("git", ["diff", "-U0", `${BASE}...HEAD`], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
+    diff = MODE_STAGED ? git(["diff", "--cached", "-U0", "--no-renames"]) : git(["diff", "-U0", `${BASE}...HEAD`]);
   } catch {
     console.error(`comment-rot lint: cannot diff against '${BASE}'. Pass --base <ref> or use --all.`);
     process.exit(1);
   }
+  const postChange = (rel) => (MODE_STAGED ? git(["show", `:${rel}`]) : readFileSync(join(root, rel), "utf8"));
   const added = new Map();
   let file = null;
   let lineNo = 0;
   for (const raw of diff.split("\n")) {
-    if (raw.startsWith("+++ b/")) { file = raw.slice(6); continue; }
+    if (raw.startsWith("+++ ")) { file = raw.startsWith("+++ b/") ? raw.slice(6) : null; continue; }
     const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)/.exec(raw);
     if (hunk) { lineNo = Number(hunk[1]); continue; }
     if (raw.startsWith("+") && !raw.startsWith("+++")) {
@@ -242,9 +248,9 @@ if (MODE_ALL) {
   }
 
   for (const [rel, linesAdded] of added) {
-    if (!eligible(rel) || !existsSync(join(root, rel))) continue;
+    if (!eligible(rel) || (!MODE_STAGED && !existsSync(join(root, rel)))) continue;
     const state = { block: false };
-    readFileSync(join(root, rel), "utf8").split("\n").forEach((line, i) => {
+    postChange(rel).split("\n").forEach((line, i) => {
       const c = commentOf(line, lang(rel), state);
       const currentLine = i + 1;
       if (!linesAdded.has(currentLine) || !c.trim()) return;
@@ -260,7 +266,7 @@ if (AS_JSON) {
 }
 
 if (violations.length === 0) {
-  console.log(`comment-rot lint: clean — no change-narration or provenance references in ${MODE_ALL ? "tree" : "added"} comments.`);
+  console.log(`comment-rot lint: clean — no change-narration or provenance references in ${MODE_ALL ? "tree" : MODE_STAGED ? "staged" : "added"} comments.`);
   process.exit(0);
 }
 

@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pre-commit: the comment-rot lint over the lines this commit adds.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Bypass a single commit: git commit --no-verify
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node not found, skipping comment-rot lint (CI still runs it)" >&2
+  exit 0
+fi
+exec node "$(git rev-parse --show-toplevel)/scripts/lint-comment-rot.mjs" --staged
