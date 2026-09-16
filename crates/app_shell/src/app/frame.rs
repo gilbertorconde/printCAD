@@ -588,7 +588,7 @@ impl PrintCadApp {
 
                 let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
 
-                let mesh = wb_sketch::render::sketch_to_mesh(
+                let mesh = wb_sketch::render::sketch_to_lines(
                     &sketch_feature.sketch,
                     &sketch_feature.plane,
                 );

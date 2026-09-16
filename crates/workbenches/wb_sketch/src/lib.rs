@@ -457,11 +457,15 @@ impl SketchWorkbench {
     /// Advance the active drawing tool with a click at `cursor` (sketch
     /// coords): typed on-view parameters override the position and become
     /// driving constraints after the shape commits.
+    /// Run the tool at `cursor` (typed dimensions override it). `constrain`
+    /// turns the typed values into constraints as well; a plain click keeps
+    /// the geometry free.
     fn apply_tool_click(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
         tool: &str,
         cursor: Vec2D,
+        constrain: bool,
     ) -> InputResult {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
@@ -531,6 +535,7 @@ impl SketchWorkbench {
             &self.tool_state,
             effect.changed,
             &typed,
+            constrain,
         );
         if effect.changed {
             self.dim_capture.clear_buffers();
@@ -562,7 +567,7 @@ impl SketchWorkbench {
         self.cursor = Some(cursor);
 
         match tool {
-            Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor),
+            Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor, false),
             _ => {
                 // Select mode. Constraint glyphs sit on top of geometry, so
                 // they win the hit-test. Pressing on a point begins a drag
@@ -970,7 +975,7 @@ impl SketchWorkbench {
         // Anchor the derived position on the last known cursor; the
         // override falls back to the +x direction when it is degenerate.
         let cursor = self.cursor.unwrap_or(Vec2D::new(0.0, 0.0));
-        self.apply_tool_click(ctx, tool, cursor)
+        self.apply_tool_click(ctx, tool, cursor, true)
     }
 
     /// Consolidated key handling: on-view parameter capture first (typing
@@ -1767,7 +1772,7 @@ impl Workbench for SketchWorkbench {
             (!rows.is_empty()).then(|| core_document::OvpWidget {
                 anchor: [px[0] + 22.0, px[1] - 12.0],
                 rows,
-                hint: "Tab → next · Enter → lock",
+                hint: "Tab next · Enter constrains · click keeps free",
             })
         });
         Some(ViewportHud {

@@ -94,6 +94,9 @@ pub struct UiLayer {
     rename_buffer: Option<(TreeItemId, String)>,
     /// The start page's recent-files filter; UI-local.
     recent_search: String,
+    /// Keys the workbench consumed that egui also queued; egui must not
+    /// act on them (Tab would move focus, Enter would accept the task).
+    swallowed_keys: Vec<egui::Key>,
 }
 
 impl UiLayer {
@@ -121,7 +124,27 @@ impl UiLayer {
             property_tab: property_panel::PropertyTab::default(),
             rename_buffer: None,
             recent_search: String::new(),
+            swallowed_keys: Vec::new(),
         }
+    }
+
+    /// A text field owns the keyboard.
+    pub fn wants_keyboard_input(&self) -> bool {
+        self.ctx.egui_wants_keyboard_input()
+    }
+
+    /// The workbench consumed `key`: keep egui from acting on it too.
+    pub fn swallow_key(&mut self, key: egui::Key) {
+        self.swallowed_keys.push(key);
+    }
+
+    /// Drop keyboard focus (a click landed on the viewport, not a widget).
+    pub fn release_focus(&self) {
+        self.ctx.memory_mut(|m| {
+            if let Some(id) = m.focused() {
+                m.surrender_focus(id);
+            }
+        });
     }
 
     pub fn on_window_event(
@@ -171,7 +194,13 @@ impl UiLayer {
             mut step_import_pending,
         } = inputs;
 
-        let raw_input = self.state.take_egui_input(window);
+        let mut raw_input = self.state.take_egui_input(window);
+        if !self.swallowed_keys.is_empty() {
+            let swallowed = std::mem::take(&mut self.swallowed_keys);
+            raw_input
+                .events
+                .retain(|e| !matches!(e, egui::Event::Key { key, .. } if swallowed.contains(key)));
+        }
         let prev_workbench = host_active_workbench.clone();
         let mut active_workbench = host_active_workbench;
         // Seed tool state from the host, not a UiLayer copy: the host owns

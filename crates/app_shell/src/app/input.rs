@@ -132,8 +132,24 @@ impl PrintCadApp {
             }
             // egui-winit marks MouseWheel consumed when `wants_pointer_input()` — true over most
             // of the central panel — which prevented the CAD camera from ever seeing scroll.
-            if response.consumed && !zoom_wheel_over_viewport {
+            // It also marks Tab consumed unconditionally; keys belong to the
+            // workbench whenever no text field owns the keyboard.
+            let key_for_workbench = matches!(event, WindowEvent::KeyboardInput { .. })
+                && !gfx.ui_layer.wants_keyboard_input();
+            if response.consumed && !zoom_wheel_over_viewport && !key_for_workbench {
                 return;
+            }
+            // A press on the viewport is on no widget: egui would keep the
+            // last text field focused and swallow every key after it.
+            if matches!(
+                event,
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    ..
+                }
+            ) && self.cursor_in_viewport.is_some()
+            {
+                gfx.ui_layer.release_focus();
             }
         }
 
@@ -164,6 +180,26 @@ impl PrintCadApp {
 
         let wb = self.dispatch_workbench_input_without_select(&event);
         let mut redraw = wb.redraw;
+        // A key the workbench consumed must not also reach egui's widgets
+        // (Tab would move focus, Enter would accept the open task).
+        if wb.consumed
+            && let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && let winit::keyboard::Key::Named(named) = &ke.logical_key
+            && let Some(gfx) = self.gfx.as_mut()
+        {
+            use winit::keyboard::NamedKey;
+            let key = match named {
+                NamedKey::Tab => Some(egui::Key::Tab),
+                NamedKey::Enter => Some(egui::Key::Enter),
+                NamedKey::Escape => Some(egui::Key::Escape),
+                NamedKey::Delete => Some(egui::Key::Delete),
+                NamedKey::Backspace => Some(egui::Key::Backspace),
+                _ => None,
+            };
+            if let Some(key) = key {
+                gfx.ui_layer.swallow_key(key);
+            }
+        }
         if wb.consumed {
             if redraw && let Some(gfx) = self.gfx.as_ref() {
                 gfx.window.request_redraw();

@@ -1582,7 +1582,7 @@ fn typed_length_enter_creates_line_with_driving_distance() {
 }
 
 #[test]
-fn tab_focuses_angle_field_and_click_commits_typed_angle_only() {
+fn tab_focuses_angle_field_and_click_keeps_typed_angle_free() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
@@ -1593,15 +1593,13 @@ fn tab_focuses_angle_field_and_click_commits_typed_angle_only() {
 
     let sketch = h.sketch();
     assert!(distance_constraints(&sketch).is_empty(), "no length typed");
-    let angle = sketch
-        .constraints
-        .iter()
-        .find_map(|c| match c.kind {
-            ConstraintKind::AngleToAxis { angle_rad, .. } => Some(angle_rad.to_degrees()),
-            _ => None,
-        })
-        .expect("typed angle became an AngleToAxis constraint");
-    assert!((angle - 45.0).abs() < 1e-3, "angle {angle}");
+    assert!(
+        !sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::AngleToAxis { .. })),
+        "a click shapes the geometry from the typed angle but leaves it free"
+    );
     let end = sketch
         .geometry
         .iter()
@@ -1652,7 +1650,7 @@ fn typed_length_and_angle_commit_exact_polar() {
 }
 
 #[test]
-fn rect_typed_width_height_creates_distance_xy_constraints() {
+fn rect_typed_width_height_creates_edge_lengths() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.rect");
@@ -1674,16 +1672,21 @@ fn rect_typed_width_height_creates_distance_xy_constraints() {
         })
         .find(|p| (p.x - 12.0).abs() < 1e-3 && (p.y - 8.0).abs() < 1e-3);
     assert!(corner.is_some(), "opposite corner at typed (12, 8)");
-    let dx = sketch.constraints.iter().find_map(|c| match c.kind {
-        ConstraintKind::DistanceX { value, .. } => Some(value),
-        _ => None,
-    });
-    let dy = sketch.constraints.iter().find_map(|c| match c.kind {
-        ConstraintKind::DistanceY { value, .. } => Some(value),
-        _ => None,
-    });
-    assert_eq!((dx, dy), (Some(12.0), Some(8.0)));
-    assert_eq!(sketch.constraints.len(), 6, "4 H/V + DistanceX + DistanceY");
+    let mut lengths: Vec<f32> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::Length { length, .. } => Some(length),
+            _ => None,
+        })
+        .collect();
+    lengths.sort_by(f32::total_cmp);
+    assert_eq!(
+        lengths,
+        vec![8.0, 12.0],
+        "width on the bottom edge, height on the right"
+    );
+    assert_eq!(sketch.constraints.len(), 6, "4 H/V + two edge lengths");
 }
 
 #[test]

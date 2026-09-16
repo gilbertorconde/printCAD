@@ -61,8 +61,15 @@ pub fn fields_for(state: &ToolState) -> &'static [FieldKind] {
 /// on a later click of the same tool.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum PendingDim {
-    ArcRadius(f32),
-    ArcSlotLength(f32),
+    /// `constrain` remembers whether the value came in with Enter.
+    ArcRadius {
+        r: f32,
+        constrain: bool,
+    },
+    ArcSlotLength {
+        l: f32,
+        constrain: bool,
+    },
 }
 
 /// Per-field typed buffers + focus for the active tool's dimension fields.
@@ -375,13 +382,17 @@ pub fn apply_typed_constraints(
     state_after: &ToolState,
     changed: bool,
     typed: &[(FieldKind, f32)],
+    constrain: bool,
 ) -> usize {
     let get = |k: FieldKind| typed_value(typed, k);
     let mut added = 0;
-    let mut add = |sketch: &mut Sketch, kind: ConstraintKind| {
-        sketch.add_constraint(kind);
-        added += 1;
-    };
+    // With `when` off the typed value only shaped the geometry.
+    fn add(sketch: &mut Sketch, kind: ConstraintKind, when: bool, added: &mut usize) {
+        if when {
+            sketch.add_constraint(kind);
+            *added += 1;
+        }
+    }
     match state_before {
         ToolState::LineFrom { .. } if changed => {
             let Some(line) = last_of(sketch, 1, |g| match g {
@@ -399,6 +410,8 @@ pub fn apply_typed_constraints(
                         point2: line.end,
                         distance: len.abs(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
             if let Some(deg) = get(FieldKind::Angle) {
@@ -409,44 +422,51 @@ pub fn apply_typed_constraints(
                         axis: AxisDirection::Horizontal,
                         angle_rad: normalize_deg(deg).to_radians(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
         }
         ToolState::RectFrom { .. } | ToolState::RectCenterAt { .. } if changed => {
             // The last four elements are the edges bottom → right → top →
-            // left; the diagonal corners are bottom.start and top.start.
-            let corners = match (
+            // left. The width sits on the bottom edge and the height on the
+            // right one, so the two dimensions draw along their own sides.
+            let edges = match (
                 last_of(sketch, 4, |g| match g {
                     GeometryElement::Line(l) => Some(l),
                     _ => None,
                 }),
-                last_of(sketch, 2, |g| match g {
+                last_of(sketch, 3, |g| match g {
                     GeometryElement::Line(l) => Some(l),
                     _ => None,
                 }),
             ) {
-                (Some(bottom), Some(top)) => Some((bottom.start, top.start)),
+                (Some(bottom), Some(right)) => Some((bottom.id, right.id)),
                 _ => None,
             };
-            let Some((pa, pc)) = corners else { return 0 };
+            let Some((bottom, right)) = edges else {
+                return 0;
+            };
             if let Some(w) = get(FieldKind::Width) {
                 add(
                     sketch,
-                    ConstraintKind::DistanceX {
-                        a: pa,
-                        b: Some(pc),
-                        value: w.abs(),
+                    ConstraintKind::Length {
+                        line: bottom,
+                        length: w.abs(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
             if let Some(h) = get(FieldKind::Height) {
                 add(
                     sketch,
-                    ConstraintKind::DistanceY {
-                        a: pa,
-                        b: Some(pc),
-                        value: h.abs(),
+                    ConstraintKind::Length {
+                        line: right,
+                        length: h.abs(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
         }
@@ -463,6 +483,8 @@ pub fn apply_typed_constraints(
                         circle,
                         diameter: d.abs(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
         }
@@ -471,18 +493,27 @@ pub fn apply_typed_constraints(
             if matches!(state_after, ToolState::ArcStart { .. })
                 && let Some(r) = get(FieldKind::Radius)
             {
-                capture.pending = Some(PendingDim::ArcRadius(r.abs()));
+                capture.pending = Some(PendingDim::ArcRadius {
+                    r: r.abs(),
+                    constrain,
+                });
             }
         }
         ToolState::ArcStart { .. } if changed => {
-            if let Some(PendingDim::ArcRadius(r)) = capture.pending.take() {
+            if let Some(PendingDim::ArcRadius { r, constrain: c }) = capture.pending.take() {
+                let constrain = c;
                 let arc = last_of(sketch, 1, |g| match g {
                     GeometryElement::Arc(a) => Some(a),
                     _ => None,
                 })
                 .map(|a| a.id);
                 if let Some(circle) = arc {
-                    add(sketch, ConstraintKind::Radius { circle, radius: r });
+                    add(
+                        sketch,
+                        ConstraintKind::Radius { circle, radius: r },
+                        constrain,
+                        &mut added,
+                    );
                 }
             }
         }
@@ -507,6 +538,8 @@ pub fn apply_typed_constraints(
                         circle,
                         radius: r.abs(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
         }
@@ -534,6 +567,8 @@ pub fn apply_typed_constraints(
                         point2: b,
                         distance: l.abs(),
                     },
+                    constrain,
+                    &mut added,
                 );
             }
         }
@@ -541,11 +576,15 @@ pub fn apply_typed_constraints(
             if matches!(state_after, ToolState::ArcSlotStart { .. })
                 && let Some(l) = get(FieldKind::Length)
             {
-                capture.pending = Some(PendingDim::ArcSlotLength(l.abs()));
+                capture.pending = Some(PendingDim::ArcSlotLength {
+                    l: l.abs(),
+                    constrain,
+                });
             }
         }
         ToolState::ArcSlotStart { .. } if changed => {
-            if let Some(PendingDim::ArcSlotLength(l)) = capture.pending.take() {
+            if let Some(PendingDim::ArcSlotLength { l, constrain: c }) = capture.pending.take() {
+                let constrain = c;
                 // Outer rail (4th from last) is centered on the slot center;
                 // the start cap (last) is centered on the centerline start.
                 let pair = match (
@@ -569,6 +608,8 @@ pub fn apply_typed_constraints(
                             point2: s,
                             distance: l,
                         },
+                        constrain,
+                        &mut added,
                     );
                 }
             }
@@ -744,6 +785,7 @@ mod tests {
             &after,
             true,
             &[(FieldKind::Length, 25.0), (FieldKind::Angle, 360.0)],
+            true,
         );
         assert_eq!(added, 2);
         assert!(sketch.constraints.iter().any(|c| matches!(

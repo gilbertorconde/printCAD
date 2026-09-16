@@ -58,6 +58,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         .size_range(240.0..=420.0)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
+            // Nothing paints past the panel, whatever the content's height.
+            ui.set_clip_rect(ui.max_rect());
             let rect = ui.max_rect().intersect(ui.clip_rect());
             ui.painter().vline(
                 rect.right() - 0.5,
@@ -115,6 +117,18 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 );
             });
 
+            // The active workbench's own panel content.
+            if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
+                let mut ctx = panel_ctx(document, host, active_document_object);
+                let inner = egui::Frame::new()
+                    .inner_margin(egui::Margin::symmetric(10, 6))
+                    .show(ui, |ui| {
+                        wb.ui_left_panel(ui, &mut ctx);
+                    });
+                let _ = inner;
+                result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
+                flush_ctx_logs(&mut ctx);
+            }
             ui.add_space(SPACE_1);
             // The tree takes the upper part; the property panel the rest.
             let total = ui.available_height();
@@ -167,19 +181,6 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             }
             result.rename = props.rename;
             let _ = vseparator;
-
-            // The active workbench's own panel content.
-            if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
-                let mut ctx = panel_ctx(document, host, active_document_object);
-                let inner = egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(10, 6))
-                    .show(ui, |ui| {
-                        wb.ui_left_panel(ui, &mut ctx);
-                    });
-                let _ = inner;
-                result.writeback = PanelWriteback::take(&mut ctx, active_document_object);
-                flush_ctx_logs(&mut ctx);
-            }
         });
 
     result

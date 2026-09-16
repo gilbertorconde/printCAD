@@ -1,4 +1,5 @@
-//! Rendering utilities for converting sketch geometry to meshes.
+//! Sketch geometry as renderable meshes: thin quads, or a line list the
+//! renderer draws at a fixed pixel width.
 
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
 use kernel_api::TriMesh;
@@ -7,142 +8,62 @@ use kernel_api::TriMesh;
 ///
 /// This tessellates the sketch geometry (lines, circles, arcs) into triangles
 /// for rendering in the 3D viewport.
-pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
-    let mut positions = Vec::new();
-    let mut normals = Vec::new();
-    let mut indices = Vec::new();
-
-    // Convert 2D sketch coordinates to 3D world coordinates
-    let to_world = |pos: Vec2D| -> [f32; 3] {
-        let x_axis = glam::Vec3::from_array(plane.x_axis);
-        let y_axis = glam::Vec3::from_array(plane.y_axis);
-        let origin = glam::Vec3::from_array(plane.origin);
-
-        (origin + x_axis * pos.x + y_axis * pos.y).to_array()
+/// The sketch as world-space polylines: one per line, sampled curve, or
+/// point cross. Shared by the quad mesh and the line list.
+pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3]>> {
+    let x_axis = glam::Vec3::from_array(plane.x_axis);
+    let y_axis = glam::Vec3::from_array(plane.y_axis);
+    let origin = glam::Vec3::from_array(plane.origin);
+    let to_world =
+        |pos: Vec2D| -> [f32; 3] { (origin + x_axis * pos.x + y_axis * pos.y).to_array() };
+    let point = |id| {
+        sketch.get_geometry(id).and_then(|g| match g {
+            GeometryElement::Point(p) => Some(p.position),
+            _ => None,
+        })
     };
-
-    // Get normal vector for the plane - use this for all geometry normals
-    let plane_normal = glam::Vec3::from_array(plane.normal).normalize();
-
-    let mut vertex_offset = 0u32;
-
+    let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
     for geom in &sketch.geometry {
         match geom {
-            GeometryElement::Point(point) => {
-                // Render point as a small cross (4 lines forming an X)
-                let world_pos = to_world(point.position);
-                let size = 0.05; // Point size in world units
-
-                // Create a small cross
-                let offsets = [
-                    ([-size, 0.0, 0.0], [size, 0.0, 0.0]), // Horizontal line
-                    ([0.0, -size, 0.0], [0.0, size, 0.0]), // Vertical line
-                ];
-
-                for (start, end) in offsets {
-                    let start_pos = [
-                        world_pos[0] + start[0],
-                        world_pos[1] + start[1],
-                        world_pos[2] + start[2],
-                    ];
-                    let end_pos = [
-                        world_pos[0] + end[0],
-                        world_pos[1] + end[1],
-                        world_pos[2] + end[2],
-                    ];
-
-                    // Create a thin line as a quad (two triangles)
-                    add_line_quad(
-                        &mut positions,
-                        &mut normals,
-                        &mut indices,
-                        &mut vertex_offset,
-                        start_pos,
-                        end_pos,
-                        0.1,
-                        plane_normal,
-                    );
-                }
+            GeometryElement::Point(p) => {
+                // A small cross in the plane.
+                let size = 0.05;
+                let c = p.position;
+                out.push(vec![
+                    to_world(Vec2D::new(c.x - size, c.y)),
+                    to_world(Vec2D::new(c.x + size, c.y)),
+                ]);
+                out.push(vec![
+                    to_world(Vec2D::new(c.x, c.y - size)),
+                    to_world(Vec2D::new(c.x, c.y + size)),
+                ]);
             }
             GeometryElement::Line(line) => {
-                // Get start and end points
-                let start_point = sketch.get_geometry(line.start).and_then(|g| match g {
-                    GeometryElement::Point(p) => Some(p.position),
-                    _ => None,
-                });
-                let end_point = sketch.get_geometry(line.end).and_then(|g| match g {
-                    GeometryElement::Point(p) => Some(p.position),
-                    _ => None,
-                });
-
-                if let (Some(start), Some(end)) = (start_point, end_point) {
-                    let start_world = to_world(start);
-                    let end_world = to_world(end);
-
-                    // Render line as a thin quad (two triangles)
-                    add_line_quad(
-                        &mut positions,
-                        &mut normals,
-                        &mut indices,
-                        &mut vertex_offset,
-                        start_world,
-                        end_world,
-                        0.1,
-                        plane_normal,
-                    );
+                if let (Some(start), Some(end)) = (point(line.start), point(line.end)) {
+                    out.push(vec![to_world(start), to_world(end)]);
                 }
             }
             GeometryElement::Circle(circle) => {
-                // Get center point
-                let center_point = sketch.get_geometry(circle.center).and_then(|g| match g {
-                    GeometryElement::Point(p) => Some(p.position),
-                    _ => None,
-                });
-
-                if let Some(center) = center_point {
-                    // Tessellate circle into line segments
-                    let segments = 32; // Number of segments for the circle
-                    let mut prev_point = None;
-
-                    for i in 0..=segments {
-                        let angle = (i as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
-                        let offset =
-                            Vec2D::new(circle.radius * angle.cos(), circle.radius * angle.sin());
-                        let point_world = to_world(center + offset);
-
-                        if let Some(prev) = prev_point {
-                            add_line_quad(
-                                &mut positions,
-                                &mut normals,
-                                &mut indices,
-                                &mut vertex_offset,
-                                prev,
-                                point_world,
-                                0.1,
-                                plane_normal,
-                            );
-                        }
-                        prev_point = Some(point_world);
-                    }
+                if let Some(center) = point(circle.center) {
+                    let segments = 32;
+                    out.push(
+                        (0..=segments)
+                            .map(|i| {
+                                let angle =
+                                    (i as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
+                                let offset = Vec2D::new(
+                                    circle.radius * angle.cos(),
+                                    circle.radius * angle.sin(),
+                                );
+                                to_world(center + offset)
+                            })
+                            .collect(),
+                    );
                 }
             }
             GeometryElement::Arc(arc) => {
-                // Get center, start, and end points
-                let center_point = sketch.get_geometry(arc.center).and_then(|g| match g {
-                    GeometryElement::Point(p) => Some(p.position),
-                    _ => None,
-                });
-                let start_point = sketch.get_geometry(arc.start).and_then(|g| match g {
-                    GeometryElement::Point(p) => Some(p.position),
-                    _ => None,
-                });
-                let end_point = sketch.get_geometry(arc.end).and_then(|g| match g {
-                    GeometryElement::Point(p) => Some(p.position),
-                    _ => None,
-                });
-
                 if let (Some(center), Some(start), Some(end)) =
-                    (center_point, start_point, end_point)
+                    (point(arc.center), point(arc.start), point(arc.end))
                 {
                     // CCW sweep, matching every other consumer of arcs
                     // (overlay, profile extraction, hit-testing).
@@ -150,46 +71,24 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                         (start - center).to_glam(),
                         (end - center).to_glam(),
                     );
-
-                    // Tessellate arc
                     let segments = 16;
-                    let mut prev_point = None;
-
-                    for i in 0..=segments {
-                        let t = i as f32 / segments as f32;
-                        let angle = start_angle + t * sweep;
-                        let offset = Vec2D::new(arc.radius * angle.cos(), arc.radius * angle.sin());
-                        let point_world = to_world(center + offset);
-
-                        if let Some(prev) = prev_point {
-                            add_line_quad(
-                                &mut positions,
-                                &mut normals,
-                                &mut indices,
-                                &mut vertex_offset,
-                                prev,
-                                point_world,
-                                0.1,
-                                plane_normal,
-                            );
-                        }
-                        prev_point = Some(point_world);
-                    }
+                    out.push(
+                        (0..=segments)
+                            .map(|i| {
+                                let angle = start_angle + (i as f32 / segments as f32) * sweep;
+                                let offset =
+                                    Vec2D::new(arc.radius * angle.cos(), arc.radius * angle.sin());
+                                to_world(center + offset)
+                            })
+                            .collect(),
+                    );
                 }
             }
             GeometryElement::Ellipse(ellipse) => {
                 if let Some(center) = sketch.point_position(ellipse.center) {
                     let pts =
                         crate::geom2d::ellipse_points(center, ellipse.major, ellipse.ratio, 48);
-                    add_polyline(
-                        &mut positions,
-                        &mut normals,
-                        &mut indices,
-                        &mut vertex_offset,
-                        &pts,
-                        &to_world,
-                        plane_normal,
-                    );
+                    out.push(pts.iter().map(|p| to_world(*p)).collect());
                 }
             }
             GeometryElement::BSpline(spline) => {
@@ -200,20 +99,35 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
                     .collect();
                 if let Some(ctrl) = ctrl {
                     let pts = crate::geom2d::bspline_points(&ctrl, spline.periodic, 64);
-                    add_polyline(
-                        &mut positions,
-                        &mut normals,
-                        &mut indices,
-                        &mut vertex_offset,
-                        &pts,
-                        &to_world,
-                        plane_normal,
-                    );
+                    out.push(pts.iter().map(|p| to_world(*p)).collect());
                 }
             }
         }
     }
+    out
+}
 
+/// Convert sketch geometry to a renderable mesh of thin quads.
+pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut indices = Vec::new();
+    let plane_normal = glam::Vec3::from_array(plane.normal).normalize();
+    let mut vertex_offset = 0u32;
+    for polyline in sketch_polylines(sketch, plane) {
+        for pair in polyline.windows(2) {
+            add_line_quad(
+                &mut positions,
+                &mut normals,
+                &mut indices,
+                &mut vertex_offset,
+                pair[0],
+                pair[1],
+                0.1,
+                plane_normal,
+            );
+        }
+    }
     TriMesh {
         positions,
         normals,
@@ -223,28 +137,27 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
     }
 }
 
-/// Add a sampled 2D polyline as consecutive thin quads.
-#[allow(clippy::too_many_arguments)]
-fn add_polyline(
-    positions: &mut Vec<[f32; 3]>,
-    normals: &mut Vec<[f32; 3]>,
-    indices: &mut Vec<u32>,
-    vertex_offset: &mut u32,
-    pts: &[Vec2D],
-    to_world: &impl Fn(Vec2D) -> [f32; 3],
-    plane_normal: glam::Vec3,
-) {
-    for pair in pts.windows(2) {
-        add_line_quad(
-            positions,
-            normals,
-            indices,
-            vertex_offset,
-            to_world(pair[0]),
-            to_world(pair[1]),
-            0.1,
-            plane_normal,
-        );
+/// The sketch as a line list: no triangles, every segment an edge pair, so
+/// the renderer draws it at a constant pixel width whatever the zoom.
+pub fn sketch_to_lines(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
+    let mut positions = Vec::new();
+    let mut edges = Vec::new();
+    let normal = glam::Vec3::from_array(plane.normal).normalize().to_array();
+    for polyline in sketch_polylines(sketch, plane) {
+        let base = positions.len() as u32;
+        positions.extend_from_slice(&polyline);
+        for i in 1..polyline.len() as u32 {
+            edges.push(base + i - 1);
+            edges.push(base + i);
+        }
+    }
+    let normals = vec![normal; positions.len()];
+    TriMesh {
+        positions,
+        normals,
+        indices: Vec::new(),
+        edges,
+        colors: Vec::new(),
     }
 }
 

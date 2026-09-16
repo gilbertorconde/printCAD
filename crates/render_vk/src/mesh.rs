@@ -380,7 +380,9 @@ impl MeshCache {
     ) -> Result<(), RenderError> {
         let mesh = body.mesh.as_ref();
         let vertex_count = mesh.positions.len();
-        let index_count = if mesh.indices.is_empty() {
+        // No triangles and no edges means an implicit triangle list over
+        // the positions; edges alone mean a line body with nothing solid.
+        let index_count = if mesh.indices.is_empty() && mesh.edges.is_empty() {
             mesh.positions.len()
         } else {
             mesh.indices.len()
@@ -860,14 +862,15 @@ impl MeshRenderer {
             .iter()
             .zip(&visible)
             .map(|(body, v)| {
-                *v && cache
-                    .get(&body.id)
-                    .and_then(|c| c.bounds)
-                    .is_none_or(|(lo, hi)| {
-                        edge_min_px <= 0.0
-                            || aabb_screen_px(&view_proj, lo, hi, vp_width, vp_height)
-                                >= edge_min_px
-                    })
+                // Line bodies (sketches) are all edges: never skipped for size.
+                *v && cache.get(&body.id).is_none_or(|c| {
+                    c.index_count == 0
+                        || c.bounds.is_none_or(|(lo, hi)| {
+                            edge_min_px <= 0.0
+                                || aabb_screen_px(&view_proj, lo, hi, vp_width, vp_height)
+                                    >= edge_min_px
+                        })
+                })
             })
             .collect();
 
@@ -941,7 +944,7 @@ impl MeshRenderer {
                     _ => continue,
                 };
                 stats.edge_indices += u64::from(cached.edge_index_count);
-                self.draw_body_edges(command_buffer, cached, lighting);
+                self.draw_body_edges(command_buffer, cached, body, lighting);
             }
         }
 
@@ -1048,9 +1051,16 @@ impl MeshRenderer {
         &self,
         command_buffer: vk::CommandBuffer,
         cached: &CachedMesh,
+        body: &BodySubmission,
         lighting: &LightingData,
     ) {
-        let c = lighting.edge_line_color;
+        // Face-boundary edges take the global edge color; a line body has
+        // nothing else to show its own color with.
+        let c = if cached.index_count == 0 {
+            apply_highlight_color(body.color, body.highlight)
+        } else {
+            lighting.edge_line_color
+        };
         let draw_pc = MeshDrawPushConstants {
             draw_color: [c[0], c[1], c[2], 0.0],
         };
