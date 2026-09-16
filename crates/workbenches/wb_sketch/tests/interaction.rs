@@ -18,9 +18,14 @@ const CAM_POS: [f32; 3] = [0.0, 0.0, 50.0];
 /// with the Y flip baked in, looking straight down +Z at the default XY
 /// sketch plane.
 fn view_proj() -> [[f32; 4]; 4] {
-    let proj = Mat4::perspective_rh(60f32.to_radians(), 800.0 / 600.0, 0.1, 1000.0);
+    let proj = glam::camera::rh::proj::directx::perspective(
+        60f32.to_radians(),
+        800.0 / 600.0,
+        0.1,
+        1000.0,
+    );
     let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
-    let view = Mat4::look_at_rh(Vec3::from_array(CAM_POS), Vec3::ZERO, Vec3::Y);
+    let view = glam::camera::rh::view::look_at_mat4(Vec3::from_array(CAM_POS), Vec3::ZERO, Vec3::Y);
     (flip_y * proj * view).to_cols_array_2d()
 }
 

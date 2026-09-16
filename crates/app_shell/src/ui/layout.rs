@@ -91,7 +91,7 @@ pub fn draw_top_panel(
                 .inner_margin(egui::Margin::symmetric(6, 2))
                 .fill(panel_fill),
         )
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.vertical(|ui| {
                 // ----------------- Menu bar (thin row) -----------------
                 egui::MenuBar::new().ui(ui, |ui| {
@@ -436,7 +436,7 @@ pub fn draw_left_panel(
     egui::Panel::left("left_panel")
         .resizable(true)
         .default_size(260.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.heading("Model");
             let mut selected_detail: Option<String> = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -518,7 +518,7 @@ pub fn draw_right_panel(
     egui::Panel::right("right_panel")
         .resizable(true)
         .default_size(280.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
                 let cam_pos = [0.0, 0.0, 5.0];
                 let cam_target = [0.0, 0.0, 0.0];
@@ -561,7 +561,7 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
         .resizable(true)
         .default_size(160.0)
         .min_size(80.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 ui.heading("Log");
                 ui.add_space(8.0);
@@ -612,7 +612,7 @@ pub fn draw_bottom_panel(
     document_saving: bool,
 ) -> bool {
     let mut cancel_requested = false;
-    egui::Panel::bottom("status_bar").show_inside(ui, |ui| {
+    egui::Panel::bottom("status_bar").show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(server_label);
             ui.separator();

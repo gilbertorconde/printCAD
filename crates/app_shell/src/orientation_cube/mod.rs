@@ -1121,15 +1121,16 @@ fn face_texture_palette() -> [(&'static str, Color32); 6] {
 }
 
 pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
+    let mut fontdb = fontdb::Database::new();
+    fontdb.load_system_fonts();
     let opt = Options {
         font_family: "DejaVu Sans".into(),
         languages: vec!["en".into()],
         font_size: 44.0,
+        fontdb: std::sync::Arc::new(fontdb),
         ..Options::default()
     };
-    let mut fontdb = fontdb::Database::new();
-    fontdb.load_system_fonts();
-    let tree = usvg::Tree::from_data(svg.as_bytes(), &opt, &fontdb).ok()?;
+    let tree = usvg::Tree::from_data(svg.as_bytes(), &opt).ok()?;
     let size = tree.size().to_int_size();
     let (width, height) = (size.width(), size.height());
     let mut pixmap = Pixmap::new(width, height)?;

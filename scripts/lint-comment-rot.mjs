@@ -106,8 +106,8 @@ const LANG_BY_EXT = new Map([
 ]);
 
 const SKIP_DIRS = new Set(["target", ".git"]);
-// Vendored third-party code is not ours to reword; test data is not prose.
-const SKIP_PATH = [/(^|\/)crates\/egui-ash-renderer-vendored\//, /(^|\/)tests\/data\//];
+// Test data is not prose.
+const SKIP_PATH = [/(^|\/)tests\/data\//];
 
 function lang(rel) {
   return LANG_BY_EXT.get(extname(rel)) ?? null;

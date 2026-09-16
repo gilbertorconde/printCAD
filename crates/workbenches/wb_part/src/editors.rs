@@ -58,7 +58,7 @@ fn sketch_combo(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl egui::AsIdSalt,
     current: Option<FeatureId>,
     label: &str,
 ) -> Option<FeatureId> {
@@ -91,7 +91,7 @@ fn sketch_combo(
 
 fn extrude_mode_combo(
     ui: &mut Ui,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl egui::AsIdSalt,
     mode: &mut ExtrudeMode,
     first_feature: bool,
 ) -> bool {
@@ -209,7 +209,7 @@ fn edge_sel_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     edges: &mut EdgeSel,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
@@ -244,7 +244,7 @@ fn edge_sel_editor(
     changed
 }
 
-fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl std::hash::Hash) -> bool {
+fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl egui::AsIdSalt) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label("Axis:");
@@ -289,7 +289,7 @@ fn revolve_axis_editor(ui: &mut Ui, axis: &mut RevolveAxis, id_salt: impl std::h
     changed
 }
 
-fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl std::hash::Hash) -> bool {
+fn pattern_axis_editor(ui: &mut Ui, axis: &mut PatternAxis, id_salt: impl egui::AsIdSalt) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         ui.label("Axis:");
@@ -335,7 +335,7 @@ fn mirror_plane_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     plane: &mut MirrorPlane,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl egui::AsIdSalt,
 ) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {

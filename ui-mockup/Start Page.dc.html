@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#0F1216;color:#E6EBF0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px}a{color:#4FA3E6;text-decoration:none}a:hover{color:#6DB5EC}*{box-sizing:border-box}</style>
+</helmet>
+<div data-screen-label="Start Page" style="width:1440px;height:900px;display:flex;flex-direction:column;background:#0F1216;color:#E6EBF0;overflow:hidden;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px">
+  <div style="height:28px;display:flex;align-items:center;gap:2px;padding:0 8px;background:#0F1216;border-bottom:1px solid #2B333E;flex:none">
+    <div style="display:flex;align-items:center;gap:7px;padding:0 10px 0 2px;margin-right:6px;border-right:1px solid #2B333E;height:100%">
+      <i style="display:inline-block;width:16px;height:16px;background:#4FA3E6;-webkit-mask:url(icons/workbench-print.svg) center/contain no-repeat;mask:url(icons/workbench-print.svg) center/contain no-repeat"></i>
+      <span style="font-weight:600;font-size:12px">printCAD</span>
+    </div>
+    <sc-for list="{{ menus }}" as="m" hint-placeholder-count="6"><span style="padding:0 8px;height:22px;display:flex;align-items:center;border-radius:3px;color:#9AA5B1;font-size:12px" style-hover="background:#242C36;color:#E6EBF0">{{ m }}</span></sc-for>
+  </div>
+
+  <div style="flex:1;display:grid;grid-template-columns:260px 1fr;min-height:0">
+    <!-- Left rail -->
+    <div style="border-right:1px solid #2B333E;background:#151A20;padding:24px 16px;display:flex;flex-direction:column;gap:6px">
+      <div style="padding:0 8px 16px;display:flex;flex-direction:column;gap:2px"><span style="font-size:20px;font-weight:600;letter-spacing:-.2px">Start</span><span style="font-size:12px;color:#667180">printCAD 0.1 · dev</span></div>
+      <sc-for list="{{ nav }}" as="n" hint-placeholder-count="5">
+        <div style="height:32px;display:flex;align-items:center;gap:10px;padding:0 10px;border-radius:5px;background:{{ n.bg }};color:{{ n.color }};font-size:13px;cursor:pointer" style-hover="background:#1C222A"><i style="display:inline-block;width:16px;height:16px;background:currentColor;-webkit-mask:url(icons/{{ n.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ n.icon }}.svg) center/contain no-repeat"></i>{{ n.label }}</div>
+      </sc-for>
+      <div style="flex:1"></div>
+      <div style="padding:10px;border-radius:6px;border:1px solid #2B333E;background:#1C222A;font-size:12px;color:#9AA5B1;line-height:1.5">Default workbench<br><span style="display:flex;align-items:center;gap:6px;color:#E6EBF0;margin-top:4px"><i style="display:inline-block;width:14px;height:14px;background:#4FA3E6;-webkit-mask:url(icons/workbench-part-design.svg) center/contain no-repeat;mask:url(icons/workbench-part-design.svg) center/contain no-repeat"></i>Part Design</span></div>
+    </div>
+
+    <!-- Main -->
+    <div style="padding:32px 40px;overflow:auto;display:flex;flex-direction:column;gap:32px">
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">New</span>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+          <sc-for list="{{ newCards }}" as="c" hint-placeholder-count="4">
+            <div style="height:116px;display:flex;flex-direction:column;justify-content:space-between;padding:14px;border-radius:8px;border:1px solid {{ c.border }};background:{{ c.bg }};cursor:pointer" style-hover="border-color:#4FA3E6;background:#1C222A">
+              <i style="display:inline-block;width:26px;height:26px;background:{{ c.iconColor }};-webkit-mask:url(icons/{{ c.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ c.icon }}.svg) center/contain no-repeat"></i>
+              <div style="display:flex;flex-direction:column;gap:2px"><span style="font-weight:500">{{ c.title }}</span><span style="font-size:11.5px;color:#9AA5B1">{{ c.sub }}</span></div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <div style="display:flex;align-items:center;gap:12px"><span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Recent</span><div style="flex:1"></div><div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border:1px solid #2B333E;border-radius:5px;background:#1C222A;width:240px;color:#667180"><i style="display:inline-block;width:14px;height:14px;background:currentColor;-webkit-mask:url(icons/search.svg) center/contain no-repeat;mask:url(icons/search.svg) center/contain no-repeat"></i><span style="font-size:12px">Search recent…</span></div></div>
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+          <sc-for list="{{ recent }}" as="f" hint-placeholder-count="8">
+            <div style="display:flex;flex-direction:column;border-radius:8px;border:1px solid #2B333E;background:#151A20;overflow:hidden;cursor:pointer" style-hover="border-color:#3A4553;background:#1C222A">
+              <div style="height:120px;display:flex;align-items:center;justify-content:center;background:repeating-linear-gradient(135deg,#1A2028 0 8px,#171C23 8px 16px);border-bottom:1px solid #2B333E;color:#667180;font-family:'IBM Plex Mono',monospace;font-size:10px">thumbnail · {{ f.name }}</div>
+              <div style="padding:10px 12px;display:flex;flex-direction:column;gap:3px">
+                <div style="display:flex;align-items:center;gap:6px"><i style="display:inline-block;width:14px;height:14px;background:#9AA5B1;-webkit-mask:url(icons/file-fcstd.svg) center/contain no-repeat;mask:url(icons/file-fcstd.svg) center/contain no-repeat"></i><span style="font-weight:500;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ f.name }}</span></div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:#667180"><span>{{ f.when }}</span><span style="font-family:'IBM Plex Mono',monospace">{{ f.size }}</span></div>
+              </div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Learn</span>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px">
+          <sc-for list="{{ learn }}" as="l" hint-placeholder-count="3">
+            <div style="display:flex;gap:12px;padding:12px;border-radius:8px;border:1px solid #2B333E;background:#151A20;cursor:pointer" style-hover="border-color:#3A4553"><i style="display:inline-block;width:20px;height:20px;flex:none;background:#9AA5B1;-webkit-mask:url(icons/{{ l.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ l.icon }}.svg) center/contain no-repeat"></i><div style="display:flex;flex-direction:column;gap:2px"><span style="font-weight:500">{{ l.title }}</span><span style="font-size:11.5px;color:#9AA5B1;line-height:1.4">{{ l.sub }}</span></div></div>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  renderVals() {
+    const N = (icon, label, on) => ({ icon, label, bg: on ? 'rgba(79,163,230,.14)' : 'transparent', color: on ? '#E6EBF0' : '#9AA5B1' });
+    const card = (icon, title, sub, primary) => ({ icon, title, sub, border: primary ? '#4FA3E6' : '#2B333E', bg: primary ? 'rgba(79,163,230,.08)' : '#151A20', iconColor: primary ? '#4FA3E6' : '#9AA5B1' });
+    const R = (name, when, size) => ({ name, when, size });
+    return {
+      menus: ['File','Edit','View','Tools','Windows','Help'],
+      nav: [N('folder','Start', true), N('open','Open file'), N('tree-document','Examples'), N('settings','Preferences'), N('info','What\'s new')],
+      newCards: [card('workbench-part-design','Part Design','Body + sketch, ready to pad', true), card('workbench-sketcher','Empty sketch','2D on XY plane'), card('workbench-mesh','From mesh','Import STL / 3MF'), card('open','Open…','Browse files')],
+      recent: [R('Bracket','2 hours ago','1.2 MB'), R('Enclosure-lid','Yesterday','3.8 MB'), R('Cable-clip','Yesterday','340 KB'), R('Spool-holder','3 days ago','2.1 MB'), R('Nozzle-adapter','Last week','790 KB'), R('Gear-test','Last week','1.6 MB'), R('Fan-duct','2 weeks ago','2.9 MB'), R('Hinge','2 weeks ago','610 KB')],
+      learn: [{icon:'sketch',title:'Sketcher basics',sub:'Constraints, DoF and the solver'},{icon:'pad',title:'Part Design workflow',sub:'Sketch → Pad → Pocket → Fillet'},{icon:'print-bed',title:'Export for printing',sub:'STL / 3MF and mesh tolerance'}],
+    };
+  }
+}
+</script>
+</body>
+</html>

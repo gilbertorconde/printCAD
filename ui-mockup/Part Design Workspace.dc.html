@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#0F1216;color:#E6EBF0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px}a{color:#4FA3E6;text-decoration:none}a:hover{color:#6DB5EC}*{box-sizing:border-box}::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-thumb{background:#2C3541;border-radius:4px}</style>
+</helmet>
+<div data-screen-label="Part Design Workspace" style="width:1440px;height:900px;display:flex;flex-direction:column;background:#151A20;color:#E6EBF0;overflow:hidden;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px;user-select:none">
+
+  <!-- Menu bar -->
+  <div style="height:28px;display:flex;align-items:center;gap:2px;padding:0 8px;background:#0F1216;border-bottom:1px solid #2B333E;flex:none">
+    <div style="display:flex;align-items:center;gap:7px;padding:0 10px 0 2px;margin-right:6px;border-right:1px solid #2B333E;height:100%">
+      <i style="display:inline-block;width:16px;height:16px;background:#4FA3E6;-webkit-mask:url(icons/workbench-print.svg) center/contain no-repeat;mask:url(icons/workbench-print.svg) center/contain no-repeat"></i>
+      <span style="font-weight:600;font-size:12px;letter-spacing:.2px">printCAD</span>
+    </div>
+    <sc-for list="{{ menus }}" as="m" hint-placeholder-count="8"><span style="padding:0 8px;height:22px;display:flex;align-items:center;border-radius:3px;color:#9AA5B1;font-size:12px" style-hover="background:#242C36;color:#E6EBF0">{{ m }}</span></sc-for>
+    <div style="flex:1"></div>
+    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#667180">Bracket.FCStd</span>
+    <span style="width:6px;height:6px;border-radius:50%;background:#E6A44F;margin:0 10px 0 6px" title="Unsaved changes"></span>
+  </div>
+
+  <!-- Toolbar row 1: file / edit / view / workbench -->
+  <div style="height:38px;display:flex;align-items:center;gap:2px;padding:0 6px;background:#151A20;border-bottom:1px solid #2B333E;flex:none">
+    <sc-for list="{{ stdTools }}" as="t" hint-placeholder-count="10">
+      <sc-if value="{{ t.sep }}" hint-placeholder-val="{{ false }}"><span style="width:1px;height:22px;background:#2B333E;margin:0 5px"></span></sc-if>
+      <sc-if value="{{ t.icon }}" hint-placeholder-val="{{ true }}">
+        <button title="{{ t.label }}" style="width:30px;height:30px;display:flex;align-items:center;justify-content:center;border:0;border-radius:4px;background:transparent;color:#C9D1D9;cursor:pointer;padding:0" style-hover="background:#242C36;color:#E6EBF0">
+          <i style="display:inline-block;width:20px;height:20px;background:currentColor;-webkit-mask:url(icons/{{ t.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ t.icon }}.svg) center/contain no-repeat"></i>
+        </button>
+      </sc-if>
+    </sc-for>
+    <span style="width:1px;height:22px;background:#2B333E;margin:0 5px"></span>
+    <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px 0 8px;border:1px solid #2B333E;border-radius:5px;background:#1C222A;min-width:180px">
+      <i style="display:inline-block;width:16px;height:16px;background:#4FA3E6;-webkit-mask:url(icons/workbench-part-design.svg) center/contain no-repeat;mask:url(icons/workbench-part-design.svg) center/contain no-repeat"></i>
+      <span style="flex:1;font-size:12px">Part Design</span>
+      <i style="display:inline-block;width:14px;height:14px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;align-items:center;gap:8px;height:28px;padding:0 10px;border:1px solid #2B333E;border-radius:5px;background:#1C222A;width:220px;color:#667180">
+      <i style="display:inline-block;width:14px;height:14px;background:currentColor;-webkit-mask:url(icons/search.svg) center/contain no-repeat;mask:url(icons/search.svg) center/contain no-repeat"></i>
+      <span style="font-size:12px;flex:1">Search tools…</span>
+      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;border:1px solid #2B333E;border-radius:3px;padding:1px 4px">⌘K</span>
+    </div>
+  </div>
+
+  <!-- Toolbar row 2: Part Design tools -->
+  <div style="height:38px;display:flex;align-items:center;gap:2px;padding:0 6px;background:#151A20;border-bottom:1px solid #2B333E;flex:none;overflow:hidden">
+    <sc-for list="{{ pdTools }}" as="t" hint-placeholder-count="30">
+      <sc-if value="{{ t.sep }}" hint-placeholder-val="{{ false }}"><span style="width:1px;height:22px;background:#2B333E;margin:0 5px"></span></sc-if>
+      <sc-if value="{{ t.icon }}" hint-placeholder-val="{{ true }}">
+        <button title="{{ t.label }}" style="height:30px;display:flex;align-items:center;justify-content:center;gap:2px;border:0;border-radius:4px;background:transparent;color:#C9D1D9;cursor:pointer;padding:0 5px" style-hover="background:#242C36;color:#E6EBF0">
+          <i style="display:inline-block;width:20px;height:20px;background:currentColor;-webkit-mask:url(icons/{{ t.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ t.icon }}.svg) center/contain no-repeat"></i>
+          <sc-if value="{{ t.menu }}" hint-placeholder-val="{{ false }}"><i style="display:inline-block;width:10px;height:10px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i></sc-if>
+        </button>
+      </sc-if>
+    </sc-for>
+  </div>
+
+  <!-- Body -->
+  <div style="flex:1;display:flex;min-height:0">
+
+    <!-- Combo view -->
+    <div style="width:{{ panelWidth }}px;display:flex;flex-direction:column;border-right:1px solid #2B333E;background:#151A20;flex:none;min-height:0">
+      <div style="height:30px;display:flex;border-bottom:1px solid #2B333E;flex:none">
+        <div onClick="{{ showModel }}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;cursor:pointer;color:{{ modelTabColor }};border-bottom:2px solid {{ modelTabBorder }}">Model</div>
+        <div onClick="{{ showTasks }}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:12px;cursor:pointer;color:{{ tasksTabColor }};border-bottom:2px solid {{ tasksTabBorder }}">Tasks<sc-if value="{{ tasksOpen }}" hint-placeholder-val="{{ false }}"><span style="width:6px;height:6px;border-radius:50%;background:#4FA3E6"></span></sc-if></div>
+      </div>
+
+      <!-- MODEL: tree -->
+      <sc-if value="{{ isModel }}" hint-placeholder-val="{{ true }}">
+        <div style="flex:1.2;overflow:auto;padding:4px 0;min-height:0">
+          <sc-for list="{{ tree }}" as="n" hint-placeholder-count="14">
+            <div style="height:24px;display:flex;align-items:center;gap:6px;padding-left:{{ n.pad }}px;padding-right:8px;background:{{ n.bg }};color:{{ n.color }};cursor:default;border-left:2px solid {{ n.edge }}" style-hover="background:#1C222A">
+              <i style="display:inline-block;width:12px;height:12px;flex:none;background:#667180;-webkit-mask:url(icons/{{ n.chev }}.svg) center/contain no-repeat;mask:url(icons/{{ n.chev }}.svg) center/contain no-repeat;opacity:{{ n.chevOp }}"></i>
+              <i style="display:inline-block;width:16px;height:16px;flex:none;background:{{ n.iconColor }};-webkit-mask:url(icons/{{ n.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ n.icon }}.svg) center/contain no-repeat"></i>
+              <span style="flex:1;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n.label }}</span>
+              <sc-if value="{{ n.tip }}" hint-placeholder-val="{{ false }}"><span style="font-size:10px;font-weight:600;letter-spacing:.4px;color:#4FD08F;border:1px solid rgba(79,208,143,.4);border-radius:3px;padding:0 4px;line-height:14px">TIP</span></sc-if>
+              <sc-if value="{{ n.hidden }}" hint-placeholder-val="{{ false }}"><i style="display:inline-block;width:14px;height:14px;background:#667180;-webkit-mask:url(icons/eye-off.svg) center/contain no-repeat;mask:url(icons/eye-off.svg) center/contain no-repeat"></i></sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <!-- Property panel -->
+        <div style="flex:1;display:flex;flex-direction:column;border-top:1px solid #2B333E;min-height:0">
+          <div style="height:28px;display:flex;align-items:center;padding:0 8px;gap:2px;border-bottom:1px solid #2B333E;flex:none;background:#1C222A">
+            <span style="font-size:11px;padding:3px 8px;border-radius:3px;color:#9AA5B1" style-hover="background:#242C36">View</span>
+            <span style="font-size:11px;padding:3px 8px;border-radius:3px;background:#242C36;color:#E6EBF0;font-weight:500">Data</span>
+            <div style="flex:1"></div>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#667180">Pad</span>
+          </div>
+          <div style="flex:1;overflow:auto;font-size:12px">
+            <sc-for list="{{ props }}" as="p" hint-placeholder-count="12">
+              <sc-if value="{{ p.group }}" hint-placeholder-val="{{ false }}">
+                <div style="height:22px;display:flex;align-items:center;gap:6px;padding:0 8px;background:#1A2028;color:#9AA5B1;font-size:11px;font-weight:600;letter-spacing:.3px;text-transform:uppercase;border-bottom:1px solid #2B333E">
+                  <i style="display:inline-block;width:10px;height:10px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i>{{ p.group }}</div>
+              </sc-if>
+              <sc-if value="{{ p.name }}" hint-placeholder-val="{{ true }}">
+                <div style="height:24px;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #1C222A" style-hover="background:#1C222A">
+                  <span style="display:flex;align-items:center;padding:0 8px 0 24px;color:#9AA5B1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-right:1px solid #2B333E">{{ p.name }}</span>
+                  <span style="display:flex;align-items:center;gap:6px;padding:0 8px;font-family:{{ p.font }};color:{{ p.color }};white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ p.value }}<sc-if value="{{ p.expr }}" hint-placeholder-val="{{ false }}"><i style="display:inline-block;width:12px;height:12px;background:#4FA3E6;-webkit-mask:url(icons/expression.svg) center/contain no-repeat;mask:url(icons/expression.svg) center/contain no-repeat"></i></sc-if></span>
+                </div>
+              </sc-if>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- TASKS: Pad dialog -->
+      <sc-if value="{{ isTasks }}" hint-placeholder-val="{{ false }}">
+        <div style="flex:1;overflow:auto;min-height:0;display:flex;flex-direction:column">
+          <div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid #2B333E;background:#1C222A">
+            <button style="flex:1;height:28px;border:0;border-radius:5px;background:#4FA3E6;color:#0B1520;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit" style-hover="background:#6DB5EC">OK</button>
+            <button style="flex:1;height:28px;border:1px solid #3A4553;border-radius:5px;background:transparent;color:#E6EBF0;font-size:12px;cursor:pointer;font-family:inherit" style-hover="background:#242C36">Cancel</button>
+          </div>
+          <div style="padding:12px;display:flex;flex-direction:column;gap:14px">
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;background:#1C222A;border:1px solid #2B333E">
+              <i style="display:inline-block;width:18px;height:18px;background:#4FA3E6;-webkit-mask:url(icons/pad.svg) center/contain no-repeat;mask:url(icons/pad.svg) center/contain no-repeat"></i>
+              <span style="font-weight:600">Pad parameters</span>
+              <div style="flex:1"></div>
+              <i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/chevron-up.svg) center/contain no-repeat;mask:url(icons/chevron-up.svg) center/contain no-repeat"></i>
+            </div>
+            <div style="display:grid;grid-template-columns:90px 1fr;gap:8px 10px;align-items:center;font-size:12px">
+              <span style="color:#9AA5B1">Type</span>
+              <div style="height:26px;display:flex;align-items:center;padding:0 8px;border:1px solid #2B333E;border-radius:4px;background:#1C222A;gap:6px"><span style="flex:1">Dimension</span><i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i></div>
+              <span style="color:#9AA5B1">Length</span>
+              <div style="height:26px;display:flex;align-items:center;border:1px solid #4FA3E6;border-radius:4px;background:#1C222A;box-shadow:0 0 0 2px rgba(79,163,230,.18)"><span style="flex:1;padding:0 8px;font-family:'IBM Plex Mono',monospace">20,00 mm</span><span style="width:1px;height:100%;background:#2B333E"></span><span style="width:22px;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:12px;height:12px;background:#9AA5B1;-webkit-mask:url(icons/expression.svg) center/contain no-repeat;mask:url(icons/expression.svg) center/contain no-repeat"></i></span></div>
+              <span style="color:#9AA5B1">2nd length</span>
+              <div style="height:26px;display:flex;align-items:center;padding:0 8px;border:1px solid #2B333E;border-radius:4px;background:#1C222A;color:#667180;font-family:'IBM Plex Mono',monospace">0,00 mm</div>
+              <span style="color:#9AA5B1">Direction</span>
+              <div style="height:26px;display:flex;align-items:center;padding:0 8px;border:1px solid #2B333E;border-radius:4px;background:#1C222A;gap:6px"><span style="flex:1">Sketch normal</span><i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+              <sc-for list="{{ padChecks }}" as="c" hint-placeholder-count="5">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;color:{{ c.color }}"><span style="width:14px;height:14px;border-radius:3px;border:1px solid {{ c.border }};background:{{ c.bg }};display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:10px;height:10px;background:#0B1520;-webkit-mask:url(icons/check.svg) center/contain no-repeat;mask:url(icons/check.svg) center/contain no-repeat;opacity:{{ c.op }}"></i></span>{{ c.label }}</label>
+              </sc-for>
+            </div>
+            <div style="padding:8px 10px;border-radius:5px;background:rgba(79,163,230,.08);border:1px solid rgba(79,163,230,.25);font-size:11.5px;color:#9AA5B1;line-height:1.45">Preview updates live. Press <span style="font-family:'IBM Plex Mono',monospace;color:#E6EBF0">Enter</span> to accept, <span style="font-family:'IBM Plex Mono',monospace;color:#E6EBF0">Esc</span> to cancel.</div>
+          </div>
+        </div>
+      </sc-if>
+    </div>
+
+    <!-- 3D viewport -->
+    <div style="flex:1;position:relative;background:linear-gradient(180deg,#1A2028 0%,#0D1014 100%);overflow:hidden;min-width:0">
+      <div style="position:absolute;inset:0;background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);background-size:40px 40px;background-position:center;transform:perspective(900px) rotateX(60deg) translateY(120px) scale(2.2);transform-origin:50% 60%;mask-image:radial-gradient(ellipse at 50% 55%,#000 30%,transparent 75%);-webkit-mask-image:radial-gradient(ellipse at 50% 55%,#000 30%,transparent 75%)"></div>
+
+      <!-- Part placeholder (simple iso block) -->
+      <svg viewBox="0 0 600 460" style="position:absolute;left:50%;top:50%;width:640px;height:490px;transform:translate(-50%,-52%)">
+        <g stroke="#3A4553" stroke-width="1">
+          <polygon points="150,300 330,390 550,280 370,190" fill="#2A323D"/>
+          <polygon points="150,300 330,390 330,430 150,340" fill="#1F2630"/>
+          <polygon points="330,390 550,280 550,320 330,430" fill="#242C36"/>
+          <polygon points="150,300 370,190 370,230 150,340" fill="#1F2630" opacity="0"/>
+          <polygon points="370,190 550,280 550,150 370,60" fill="#38424F"/>
+          <polygon points="370,190 370,230 550,320 550,280" fill="#242C36" opacity="0"/>
+          <polygon points="370,60 550,150 470,190 290,100" fill="#465262"/>
+          <polygon points="290,100 470,190 470,230 290,140" fill="#2A323D"/>
+          <polygon points="370,190 470,230 470,190" fill="#2A323D" opacity="0"/>
+          <polygon points="290,100 370,60 370,190 290,140" fill="#333D49"/>
+          <ellipse cx="240" cy="300" rx="40" ry="20" fill="#151A20" stroke="#3A4553"/>
+          <ellipse cx="240" cy="296" rx="40" ry="20" fill="none" stroke="#4FA3E6" stroke-width="1.5" opacity=".9"/>
+          <ellipse cx="420" cy="130" rx="26" ry="13" fill="#151A20"/>
+        </g>
+        <polygon points="370,190 550,280 550,150 370,60" fill="#4FA3E6" opacity=".18" stroke="#4FA3E6" stroke-width="1.5"/>
+      </svg>
+
+      <!-- Selection tag -->
+      <div style="position:absolute;left:calc(50% + 150px);top:calc(50% - 130px);display:flex;flex-direction:column;gap:2px;padding:6px 9px;border-radius:5px;background:rgba(15,18,22,.92);border:1px solid #2B333E;font-size:11px;box-shadow:0 8px 24px rgba(0,0,0,.5)">
+        <span style="color:#E6EBF0;font-weight:500">Pad · Face6</span>
+        <span style="font-family:'IBM Plex Mono',monospace;color:#667180">(102.30, 84.15, 20.00) mm</span>
+      </div>
+
+      <!-- View toolbar overlay -->
+      <div style="position:absolute;top:10px;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:2px;padding:3px;border-radius:7px;background:rgba(21,26,32,.92);border:1px solid #2B333E;backdrop-filter:blur(8px)">
+        <sc-for list="{{ viewTools }}" as="t" hint-placeholder-count="10">
+          <sc-if value="{{ t.sep }}" hint-placeholder-val="{{ false }}"><span style="width:1px;height:18px;background:#2B333E;margin:0 3px"></span></sc-if>
+          <sc-if value="{{ t.icon }}" hint-placeholder-val="{{ true }}">
+            <button title="{{ t.label }}" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;border:0;border-radius:5px;background:{{ t.bg }};color:{{ t.color }};cursor:pointer;padding:0" style-hover="background:#242C36;color:#E6EBF0"><i style="display:inline-block;width:18px;height:18px;background:currentColor;-webkit-mask:url(icons/{{ t.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ t.icon }}.svg) center/contain no-repeat"></i></button>
+          </sc-if>
+        </sc-for>
+      </div>
+
+      <!-- Navigation cube -->
+      <sc-if value="{{ showNavCube }}" hint-placeholder-val="{{ true }}">
+      <div style="position:absolute;top:60px;right:20px;width:110px;height:110px">
+        <svg viewBox="0 0 110 110" style="width:100%;height:100%;overflow:visible">
+          <g stroke="#3A4553" stroke-width="1" font-family="IBM Plex Sans,sans-serif" font-size="10" font-weight="600" text-anchor="middle">
+            <polygon points="55,14 92,32 55,50 18,32" fill="#2C3541"/>
+            <polygon points="18,32 55,50 55,92 18,74" fill="#1F2630"/>
+            <polygon points="55,50 92,32 92,74 55,92" fill="#242C36"/>
+            <text x="55" y="35" fill="#E6EBF0">TOP</text>
+            <text x="36" y="66" fill="#9AA5B1" transform="skewY(26)">FRONT</text>
+            <text x="74" y="106" fill="#9AA5B1" transform="skewY(-26)">RIGHT</text>
+          </g>
+          <g stroke-width="1.5" stroke-linecap="round"><line x1="10" y1="100" x2="30" y2="110" stroke="#E86E6E"/><line x1="10" y1="100" x2="10" y2="80" stroke="#4FA3E6"/><line x1="10" y1="100" x2="30" y2="90" stroke="#4FD08F"/></g>
+        </svg>
+      </div>
+      </sc-if>
+
+      <!-- Axis cross -->
+      <div style="position:absolute;left:18px;bottom:18px;width:64px;height:64px">
+        <svg viewBox="0 0 64 64" style="width:100%;height:100%"><g stroke-width="2" stroke-linecap="round" font-family="IBM Plex Mono,monospace" font-size="10">
+          <line x1="20" y1="44" x2="52" y2="54" stroke="#E86E6E"/><text x="56" y="58" fill="#E86E6E">X</text>
+          <line x1="20" y1="44" x2="48" y2="30" stroke="#4FD08F"/><text x="52" y="30" fill="#4FD08F">Y</text>
+          <line x1="20" y1="44" x2="20" y2="10" stroke="#4FA3E6"/><text x="16" y="8" fill="#4FA3E6">Z</text>
+        </g></svg>
+      </div>
+
+      <!-- Viewport HUD -->
+      <div style="position:absolute;right:16px;bottom:14px;display:flex;gap:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#667180">
+        <span>Orthographic</span><span>Shaded + edges</span><span>1 mm grid</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div style="height:24px;display:flex;align-items:center;gap:16px;padding:0 10px;background:#0F1216;border-top:1px solid #2B333E;font-size:11px;color:#9AA5B1;flex:none">
+    <span style="display:flex;align-items:center;gap:6px"><span style="width:6px;height:6px;border-radius:50%;background:#4FD08F"></span>Ready</span>
+    <span>Preselected: <span style="color:#E6EBF0">Body.Pad.Face6</span></span>
+    <div style="flex:1"></div>
+    <span style="font-family:'IBM Plex Mono',monospace">X 102.30 · Y 84.15 · Z 20.00</span>
+    <span style="font-family:'IBM Plex Mono',monospace">Dim: 120 × 80 × 42 mm</span>
+    <span style="display:flex;align-items:center;gap:6px;padding:0 6px;border-left:1px solid #2B333E">Nav: CAD</span>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900},&quot;panel&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;default&quot;:&quot;model&quot;,&quot;options&quot;:[&quot;model&quot;,&quot;tasks&quot;],&quot;tsType&quot;:&quot;'model'|'tasks'&quot;,&quot;section&quot;:&quot;Combo view&quot;},&quot;panelWidth&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:300,&quot;min&quot;:240,&quot;max&quot;:420,&quot;step&quot;:10,&quot;unit&quot;:&quot;px&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Combo view&quot;},&quot;showNavCube&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Viewport&quot;}}">
+class Component extends DCLogic {
+  state = { panel: null };
+  renderVals() {
+    const panel = this.state.panel ?? this.props.panel ?? 'model';
+    const isModel = panel === 'model', isTasks = !isModel;
+    const sep = { sep: true };
+    const T = (icon, label, menu) => ({ icon, label, menu: !!menu });
+    const stdTools = [T('new-file','New'),T('open','Open'),T('save','Save'),sep,T('undo','Undo'),T('redo','Redo'),sep,T('cut','Cut'),T('copy','Copy'),T('paste','Paste'),sep,T('refresh','Recompute'),T('measure','Measure'),T('print-bed','Print bed')];
+    const pdTools = [
+      T('body','Create body'),T('sketch-new','Create sketch'),T('sketch-edit','Edit sketch'),T('sketch-map','Map sketch to face'),sep,
+      T('datum-point','Datum point'),T('datum-line','Datum line'),T('datum-plane','Datum plane'),T('coordinate-system','Local coordinate system'),T('shape-binder','Shape binder'),T('sub-shape-binder','Sub-shape binder'),T('clone','Clone'),sep,
+      T('pad','Pad'),T('revolution','Revolution'),T('additive-loft','Additive loft'),T('additive-pipe','Additive pipe'),T('additive-helix','Additive helix'),T('additive-box','Additive primitive',true),sep,
+      T('pocket','Pocket'),T('hole','Hole'),T('groove','Groove'),T('subtractive-loft','Subtractive loft'),T('subtractive-pipe','Subtractive pipe'),T('subtractive-helix','Subtractive helix'),T('subtractive-box','Subtractive primitive',true),sep,
+      T('mirrored','Mirrored'),T('linear-pattern','Linear pattern'),T('polar-pattern','Polar pattern'),T('multi-transform','Multi-transform'),T('scaled','Scaled'),sep,
+      T('fillet','Fillet'),T('chamfer','Chamfer'),T('draft','Draft'),T('thickness','Thickness'),sep,T('boolean','Boolean'),T('migrate','Migrate'),T('sprocket','Sprocket'),T('involute-gear','Involute gear'),
+    ];
+    const V = (icon, label, on) => ({ icon, label, bg: on ? 'rgba(79,163,230,.18)' : 'transparent', color: on ? '#4FA3E6' : '#C9D1D9' });
+    const viewTools = [V('fit-all','Fit all'),V('fit-selection','Fit selection'),sep,V('view-iso','Isometric',true),V('view-front','Front'),V('view-top','Top'),V('view-right','Right'),V('view-rear','Rear'),V('view-bottom','Bottom'),V('view-left','Left'),sep,V('draw-style-shaded','Shaded',true),V('draw-style-wireframe','Wireframe'),V('clipping-plane','Clipping plane'),sep,V('view-orthographic','Orthographic',true),V('view-perspective','Perspective')];
+    const N = (label, icon, depth, o = {}) => ({ label, icon, pad: 8 + depth * 16, chev: o.leaf ? 'chevron-right' : (o.closed ? 'chevron-right' : 'chevron-down'), chevOp: o.leaf ? 0 : 1, iconColor: o.iconColor || '#9AA5B1', bg: o.sel ? 'rgba(79,163,230,.16)' : 'transparent', edge: o.sel ? '#4FA3E6' : 'transparent', color: o.hidden ? '#667180' : '#E6EBF0', tip: !!o.tip, hidden: !!o.hidden });
+    const tree = [
+      N('Application','tree-group',0), N('Bracket','tree-document',1,{iconColor:'#E6EBF0'}),
+      N('Body','tree-body',2,{iconColor:'#4FA3E6'}),
+      N('Origin','tree-origin',3,{closed:true,hidden:true}),
+      N('Sketch','tree-sketch',3,{leaf:true,hidden:true}),
+      N('Pad','tree-feature',3,{leaf:true,sel:true,iconColor:'#4FA3E6'}),
+      N('Sketch001','tree-sketch',3,{leaf:true,hidden:true}),
+      N('Pocket','tree-feature',3,{leaf:true}),
+      N('Hole','tree-feature',3,{leaf:true}),
+      N('Fillet','tree-feature',3,{leaf:true,tip:true,iconColor:'#4FD08F'}),
+      N('Parameters','tree-spreadsheet',2,{leaf:true}),
+    ];
+    const mono = "'IBM Plex Mono',monospace", sans = 'inherit';
+    const P = (name, value, o = {}) => ({ name, value, font: o.mono ? mono : sans, color: o.dim ? '#667180' : '#E6EBF0', expr: !!o.expr });
+    const props = [
+      { group: 'Base' }, P('Label','Pad'), P('Placement','[(0,0,1); 0°; (0,0,0)]',{mono:true}), P('Attachment','Not attached',{dim:true}),
+      { group: 'Pad' }, P('Type','Dimension'), P('Length','20,00 mm',{mono:true,expr:true}), P('Length 2','0,00 mm',{mono:true,dim:true}), P('Use Custom Vector','false',{mono:true,dim:true}), P('Direction','(0, 0, 1)',{mono:true}), P('Reversed','false',{mono:true,dim:true}), P('Midplane','false',{mono:true,dim:true}), P('Offset','0,00 mm',{mono:true,dim:true}), P('Taper Angle','0,00 °',{mono:true,dim:true}),
+      { group: 'Part Design' }, P('Refine','true',{mono:true}), P('Base Feature','',{dim:true}), P('Profile','Sketch'),
+    ];
+    const C = (label, on) => ({ label, on, color: on ? '#E6EBF0' : '#9AA5B1', border: on ? '#4FA3E6' : '#3A4553', bg: on ? '#4FA3E6' : '#1C222A', op: on ? 1 : 0 });
+    const padChecks = [C('Symmetric to plane', false), C('Reversed', false), C('Taper angle', false), C('Update view', true), C('Refine result', true)];
+    return {
+      menus: ['File','Edit','View','Tools','Macro','Sketch','Part Design','Measure','Windows','Help'],
+      stdTools, pdTools, viewTools, tree, props, padChecks,
+      panelWidth: this.props.panelWidth ?? 300,
+      showNavCube: this.props.showNavCube ?? true,
+      isModel, isTasks, tasksOpen: true,
+      modelTabColor: isModel ? '#E6EBF0' : '#9AA5B1', modelTabBorder: isModel ? '#4FA3E6' : 'transparent',
+      tasksTabColor: isTasks ? '#E6EBF0' : '#9AA5B1', tasksTabBorder: isTasks ? '#4FA3E6' : 'transparent',
+      showModel: () => this.setState({ panel: 'model' }), showTasks: () => this.setState({ panel: 'tasks' }),
+    };
+  }
+}
+</script>
+</body>
+</html>

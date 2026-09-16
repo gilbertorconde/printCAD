@@ -8,7 +8,8 @@ use ash::{
     vk, Entry,
 };
 use egui::TextureId;
-use egui_ash_renderer::{Options as EguiRendererOptions, Renderer as EguiRenderer};
+use egui_ash_renderer::allocator::DefaultAllocator;
+use egui_ash_renderer::{Options as EguiRendererOptions, RenderMode, Renderer as EguiRenderer};
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 use winit::window::Window;
@@ -58,7 +59,7 @@ pub(crate) struct RendererCore {
     in_flight_fences: Vec<vk::Fence>,
     images_in_flight: Vec<vk::Fence>,
     current_frame: usize,
-    egui_renderer: Option<EguiRenderer>,
+    egui_renderer: Option<EguiRenderer<DefaultAllocator>>,
     textures_to_free: Vec<Vec<TextureId>>,
     /// The rendered 3D scene, single-sample, kept between frames. The scene
     /// pass writes it only when the scene changed; every frame copies it
@@ -283,7 +284,7 @@ impl RendererCore {
             &core.instance,
             core.physical_device,
             core.device.clone(),
-            core.ui_render_pass,
+            RenderMode::RenderPass(core.ui_render_pass),
             egui_options,
         )
         .map_err(map_egui_err)?;
@@ -327,7 +328,7 @@ impl RendererCore {
         self.create_sync_objects()?;
         if let Some(renderer) = self.egui_renderer.as_mut() {
             renderer
-                .set_render_pass(self.ui_render_pass)
+                .set_render_mode(RenderMode::RenderPass(self.ui_render_pass))
                 .map_err(map_egui_err)?;
         }
         if let Some(renderer) = self.mesh_renderer.as_mut() {
@@ -407,12 +408,8 @@ impl RendererCore {
         }
 
         if let Some(renderer) = self.egui_renderer.as_mut() {
-            let pending = &mut self.textures_to_free[self.current_frame];
-            if !pending.is_empty() {
-                renderer
-                    .free_textures(pending.as_slice())
-                    .map_err(map_egui_err)?;
-                pending.clear();
+            for id in self.textures_to_free[self.current_frame].drain(..) {
+                renderer.free_texture(id).map_err(map_egui_err)?;
             }
         }
 
@@ -446,13 +443,13 @@ impl RendererCore {
         self.images_in_flight[image_index as usize] = self.in_flight_fences[self.current_frame];
 
         if let (Some(ui), Some(renderer)) = (&frame.egui, self.egui_renderer.as_mut()) {
-            renderer
-                .set_textures(
-                    self.graphics_queue,
-                    self.command_pool,
-                    ui.textures_delta.set.as_slice(),
-                )
-                .map_err(map_egui_err)?;
+            for (id, deltas) in &ui.textures_delta.set {
+                for delta in deltas {
+                    renderer
+                        .set_texture(self.graphics_queue, self.command_pool, *id, delta)
+                        .map_err(map_egui_err)?;
+                }
+            }
         }
 
         self.record_command_buffer(self.command_buffers[self.current_frame], image_index, frame)?;
@@ -501,7 +498,8 @@ impl RendererCore {
         }
 
         if let Some(ui) = &frame.egui {
-            self.textures_to_free[self.current_frame] = ui.textures_delta.free.clone();
+            self.textures_to_free[self.current_frame] =
+                ui.textures_delta.free.iter().copied().collect();
         } else {
             self.textures_to_free[self.current_frame].clear();
         }

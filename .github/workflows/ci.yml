@@ -12,7 +12,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install system dependencies
         # libvulkan-dev: ash uses the "linked" feature (links libvulkan at build time).
@@ -36,9 +36,9 @@ jobs:
       - name: Tests
         run: cargo test --workspace
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Comment-rot lint
         run: node scripts/lint-comment-rot.mjs --all

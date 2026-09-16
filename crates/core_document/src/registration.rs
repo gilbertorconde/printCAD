@@ -1,9 +1,8 @@
 use crate::WorkbenchDescriptor;
-use once_cell::sync::Lazy;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
-pub static REGISTERED_WORKBENCHES: Lazy<Mutex<Vec<WorkbenchDescriptor>>> =
-    Lazy::new(|| Mutex::new(Vec::new()));
+pub static REGISTERED_WORKBENCHES: LazyLock<Mutex<Vec<WorkbenchDescriptor>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
 
 #[macro_export]
 macro_rules! define_workbenches {

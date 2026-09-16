@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#0F1216;color:#E6EBF0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px}a{color:#4FA3E6;text-decoration:none}a:hover{color:#6DB5EC}*{box-sizing:border-box}</style>
+</helmet>
+<div data-screen-label="Component Sheet" style="padding:32px 40px;display:flex;flex-direction:column;gap:36px;background:#0F1216;color:#E6EBF0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px;max-width:1440px">
+  <div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:22px;font-weight:600">printCAD — component sheet</span><span style="font-size:12px;color:#9AA5B1">Tokens in <span style="font-family:'IBM Plex Mono',monospace;color:#E6EBF0">tokens/tokens.css</span> · icons in <span style="font-family:'IBM Plex Mono',monospace;color:#E6EBF0">icons/*.svg</span> (24 px grid, 1.5 px stroke, currentColor). Type: IBM Plex Sans for UI, IBM Plex Mono for every number, unit and path.</span></div>
+
+  <!-- Colors -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Color</span>
+    <div style="display:flex;flex-wrap:wrap;gap:10px">
+      <sc-for list="{{ colors }}" as="c" hint-placeholder-count="16">
+        <div style="width:118px;display:flex;flex-direction:column;gap:6px"><span style="height:44px;border-radius:6px;background:{{ c.value }};border:1px solid #2B333E"></span><span style="font-size:11px">{{ c.name }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#667180">{{ c.value }}</span></div>
+      </sc-for>
+    </div>
+  </div>
+
+  <!-- Type -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Type</span>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <div style="padding:16px;border:1px solid #2B333E;border-radius:8px;background:#151A20;display:flex;flex-direction:column;gap:8px">
+        <span style="font-size:20px;font-weight:600">Title 20 / 600</span><span style="font-size:15px;font-weight:500">Section 15 / 500</span><span style="font-size:13px">Body 13 / 400 — Pad, Pocket, Fillet</span><span style="font-size:12px;color:#9AA5B1">Secondary 12 / text-2</span><span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Overline 11 / 600 / +0.6</span>
+      </div>
+      <div style="padding:16px;border:1px solid #2B333E;border-radius:8px;background:#151A20;display:flex;flex-direction:column;gap:8px;font-family:'IBM Plex Mono',monospace">
+        <span style="font-size:13px">20,00 mm · 360,00 ° · Ø 14,40</span><span style="font-size:12px;color:#9AA5B1">Body.Pad.Face6 · (102.30, 84.15, 20.00)</span><span style="font-size:11px;color:#667180">Bracket.FCStd › Body › Sketch001</span><span style="font-size:12px;color:#4FA3E6">=Spreadsheet.wall * 2</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Buttons & inputs -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Buttons · inputs · toggles</span>
+    <div style="display:flex;flex-wrap:wrap;gap:24px;padding:20px;border:1px solid #2B333E;border-radius:8px;background:#151A20;align-items:flex-start">
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <button style="height:28px;padding:0 16px;border:0;border-radius:5px;background:#4FA3E6;color:#0B1520;font-weight:600;font-size:12px;font-family:inherit">Primary</button>
+        <button style="height:28px;padding:0 14px;border:1px solid #3A4553;border-radius:5px;background:transparent;color:#E6EBF0;font-size:12px;font-family:inherit">Secondary</button>
+        <button style="height:28px;padding:0 14px;border:1px solid #3A4553;border-radius:5px;background:transparent;color:#667180;font-size:12px;font-family:inherit">Disabled</button>
+        <button style="height:28px;padding:0 14px;border:1px solid rgba(232,110,110,.5);border-radius:5px;background:rgba(232,110,110,.1);color:#E86E6E;font-size:12px;font-family:inherit">Destructive</button>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;width:200px">
+        <div style="height:26px;display:flex;align-items:center;border:1px solid #2B333E;border-radius:4px;background:#1C222A"><span style="flex:1;padding:0 8px;font-family:'IBM Plex Mono',monospace;font-size:12px">20,00 mm</span><span style="width:1px;height:100%;background:#2B333E"></span><span style="width:22px;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/expression.svg) center/contain no-repeat;mask:url(icons/expression.svg) center/contain no-repeat"></i></span></div>
+        <div style="height:26px;display:flex;align-items:center;border:1px solid #4FA3E6;border-radius:4px;background:#1C222A;box-shadow:0 0 0 2px rgba(79,163,230,.18)"><span style="flex:1;padding:0 8px;font-family:'IBM Plex Mono',monospace;font-size:12px">14,40 mm</span><span style="width:1px;height:100%;background:#2B333E"></span><span style="width:22px;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:12px;height:12px;background:#4FA3E6;-webkit-mask:url(icons/expression.svg) center/contain no-repeat;mask:url(icons/expression.svg) center/contain no-repeat"></i></span></div>
+        <div style="height:26px;display:flex;align-items:center;border:1px solid #E86E6E;border-radius:4px;background:#1C222A"><span style="flex:1;padding:0 8px;font-family:'IBM Plex Mono',monospace;font-size:12px;color:#E86E6E">-2,00 mm</span><span style="padding:0 8px;font-size:11px;color:#E86E6E">must be &gt; 0</span></div>
+        <div style="height:26px;display:flex;align-items:center;padding:0 8px;border:1px solid #2B333E;border-radius:4px;background:#1C222A;gap:6px;font-size:12px"><span style="flex:1">Dimension</span><i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i></div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px;font-size:12px">
+        <label style="display:flex;align-items:center;gap:8px"><span style="width:14px;height:14px;border-radius:3px;background:#4FA3E6;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:10px;height:10px;background:#0B1520;-webkit-mask:url(icons/check.svg) center/contain no-repeat;mask:url(icons/check.svg) center/contain no-repeat"></i></span>Checked</label>
+        <label style="display:flex;align-items:center;gap:8px;color:#9AA5B1"><span style="width:14px;height:14px;border-radius:3px;border:1px solid #3A4553;background:#1C222A"></span>Unchecked</label>
+        <label style="display:flex;align-items:center;gap:8px"><span style="width:34px;height:18px;border-radius:9px;background:#4FA3E6;position:relative"><span style="position:absolute;top:2px;left:18px;width:14px;height:14px;border-radius:50%;background:#0B1520"></span></span>Toggle on</label>
+        <label style="display:flex;align-items:center;gap:8px;color:#9AA5B1"><span style="width:34px;height:18px;border-radius:9px;background:#2C3541;position:relative"><span style="position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#9AA5B1"></span></span>Toggle off</label>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        <div style="display:flex;gap:2px;padding:3px;border-radius:6px;background:#1C222A;border:1px solid #2B333E">
+          <button style="width:30px;height:30px;border:0;border-radius:4px;background:transparent;color:#C9D1D9;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:20px;height:20px;background:currentColor;-webkit-mask:url(icons/pad.svg) center/contain no-repeat;mask:url(icons/pad.svg) center/contain no-repeat"></i></button>
+          <button style="width:30px;height:30px;border:0;border-radius:4px;background:#242C36;color:#E6EBF0;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:20px;height:20px;background:currentColor;-webkit-mask:url(icons/pocket.svg) center/contain no-repeat;mask:url(icons/pocket.svg) center/contain no-repeat"></i></button>
+          <button style="width:30px;height:30px;border:0;border-radius:4px;background:rgba(79,163,230,.18);color:#4FA3E6;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:20px;height:20px;background:currentColor;-webkit-mask:url(icons/fillet.svg) center/contain no-repeat;mask:url(icons/fillet.svg) center/contain no-repeat"></i></button>
+          <button style="width:30px;height:30px;border:0;border-radius:4px;background:transparent;color:#3A4553;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:20px;height:20px;background:currentColor;-webkit-mask:url(icons/chamfer.svg) center/contain no-repeat;mask:url(icons/chamfer.svg) center/contain no-repeat"></i></button>
+        </div>
+        <span style="font-size:11px;color:#667180">rest · hover · active · disabled</span>
+        <div style="display:flex;gap:6px">
+          <span style="font-size:10px;font-weight:600;letter-spacing:.4px;color:#4FD08F;border:1px solid rgba(79,208,143,.4);border-radius:3px;padding:1px 5px">TIP</span>
+          <span style="font-size:10px;font-weight:600;letter-spacing:.4px;color:#E6A44F;border:1px solid rgba(230,164,79,.4);border-radius:3px;padding:1px 5px">2 DoF</span>
+          <span style="font-size:10px;font-weight:600;letter-spacing:.4px;color:#E86E6E;border:1px solid rgba(232,110,110,.4);border-radius:3px;padding:1px 5px">ERROR</span>
+          <span style="font-size:10px;font-weight:600;letter-spacing:.4px;color:#9AA5B1;border:1px solid #2B333E;border-radius:3px;padding:1px 5px;font-family:'IBM Plex Mono',monospace">⌘K</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Panels -->
+  <div style="display:flex;flex-direction:column;gap:12px">
+    <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Panels · messages · context menu</span>
+    <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+      <div style="width:280px;display:flex;flex-direction:column;gap:8px">
+        <sc-for list="{{ messages }}" as="m" hint-placeholder-count="4"><div style="display:flex;gap:8px;padding:8px 10px;border-radius:5px;background:{{ m.bg }};border:1px solid {{ m.border }};font-size:12px;line-height:1.45"><i style="display:inline-block;width:16px;height:16px;flex:none;background:{{ m.color }};-webkit-mask:url(icons/{{ m.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ m.icon }}.svg) center/contain no-repeat"></i><div><span style="color:{{ m.color }};font-weight:500">{{ m.title }}</span><br><span style="color:#9AA5B1">{{ m.body }}</span></div></div></sc-for>
+      </div>
+      <div style="width:220px;padding:4px;border-radius:6px;background:#1C222A;box-shadow:0 8px 24px rgba(0,0,0,.5),0 0 0 1px #2B333E;font-size:12px">
+        <sc-for list="{{ ctx }}" as="i" hint-placeholder-count="8">
+          <sc-if value="{{ i.sep }}" hint-placeholder-val="{{ false }}"><div style="height:1px;background:#2B333E;margin:4px 6px"></div></sc-if>
+          <sc-if value="{{ i.label }}" hint-placeholder-val="{{ true }}"><div style="height:26px;display:flex;align-items:center;gap:8px;padding:0 8px;border-radius:4px;color:{{ i.color }}" style-hover="background:#242C36"><i style="display:inline-block;width:14px;height:14px;background:currentColor;-webkit-mask:url(icons/{{ i.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ i.icon }}.svg) center/contain no-repeat"></i><span style="flex:1">{{ i.label }}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#667180">{{ i.key }}</span></div></sc-if>
+        </sc-for>
+      </div>
+      <div style="width:300px;border:1px solid #2B333E;border-radius:8px;background:#151A20;overflow:hidden">
+        <div style="height:30px;display:flex;border-bottom:1px solid #2B333E"><div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;border-bottom:2px solid #4FA3E6">Model</div><div style="flex:1;display:flex;align-items:center;justify-content:center;font-size:12px;color:#9AA5B1">Tasks</div></div>
+        <div style="padding:4px 0">
+          <sc-for list="{{ treeRows }}" as="n" hint-placeholder-count="5"><div style="height:24px;display:flex;align-items:center;gap:6px;padding-left:{{ n.pad }}px;padding-right:8px;background:{{ n.bg }};border-left:2px solid {{ n.edge }};font-size:12.5px"><i style="display:inline-block;width:16px;height:16px;background:{{ n.iconColor }};-webkit-mask:url(icons/{{ n.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ n.icon }}.svg) center/contain no-repeat"></i><span style="flex:1">{{ n.label }}</span><span style="font-size:10.5px;color:#667180">{{ n.hint }}</span></div></sc-for>
+        </div>
+        <div style="height:28px;display:flex;align-items:center;padding:0 8px;gap:2px;border-top:1px solid #2B333E;border-bottom:1px solid #2B333E;background:#1C222A"><span style="font-size:11px;padding:3px 8px;border-radius:3px;color:#9AA5B1">View</span><span style="font-size:11px;padding:3px 8px;border-radius:3px;background:#242C36;font-weight:500">Data</span></div>
+        <div style="height:24px;display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid #1C222A;font-size:12px"><span style="display:flex;align-items:center;padding:0 8px 0 24px;color:#9AA5B1;border-right:1px solid #2B333E">Length</span><span style="display:flex;align-items:center;gap:6px;padding:0 8px;font-family:'IBM Plex Mono',monospace">20,00 mm<i style="display:inline-block;width:12px;height:12px;background:#4FA3E6;-webkit-mask:url(icons/expression.svg) center/contain no-repeat;mask:url(icons/expression.svg) center/contain no-repeat"></i></span></div>
+        <div style="height:24px;display:grid;grid-template-columns:1fr 1fr;font-size:12px"><span style="display:flex;align-items:center;padding:0 8px 0 24px;color:#9AA5B1;border-right:1px solid #2B333E">Reversed</span><span style="display:flex;align-items:center;padding:0 8px;font-family:'IBM Plex Mono',monospace;color:#667180">false</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Icons -->
+  <div style="display:flex;flex-direction:column;gap:16px">
+    <span style="font-size:11px;font-weight:600;letter-spacing:.6px;text-transform:uppercase;color:#667180">Icon set · {{ iconCount }}</span>
+    <sc-for list="{{ iconGroups }}" as="g" hint-placeholder-count="6">
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <span style="font-size:12px;font-weight:500;color:#9AA5B1">{{ g.title }}</span>
+        <div style="display:flex;flex-wrap:wrap;gap:6px">
+          <sc-for list="{{ g.items }}" as="n" hint-placeholder-count="12">
+            <div title="{{ n }}" style="width:92px;height:70px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;border:1px solid #2B333E;border-radius:6px;background:#151A20;color:#C9D1D9" style-hover="border-color:#4FA3E6;color:#E6EBF0">
+              <i style="display:inline-block;width:22px;height:22px;background:currentColor;-webkit-mask:url(icons/{{ n }}.svg) center/contain no-repeat;mask:url(icons/{{ n }}.svg) center/contain no-repeat"></i>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;color:#667180;max-width:84px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ n }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  state = { icons: [] };
+  componentDidMount() { fetch('icons/manifest.json').then(r => r.json()).then(icons => this.setState({ icons })).catch(() => {}); }
+  renderVals() {
+    const colors = [['bg-0','#0F1216'],['bg-1','#151A20'],['bg-2','#1C222A'],['bg-3','#242C36'],['border','#2B333E'],['text-1','#E6EBF0'],['text-2','#9AA5B1'],['text-3','#667180'],['accent','#4FA3E6'],['success','#4FD08F'],['warning','#E6A44F'],['danger','#E86E6E'],['sk-construction','#4FA3E6'],['sk-external','#C77DFF'],['sk-constraint','#E6A44F'],['sk-preselect','#F2D479'],['axis-x','#E86E6E'],['axis-y','#4FD08F'],['axis-z','#4FA3E6']].map(([name,value]) => ({ name, value }));
+    const M = (icon, color, bg, border, title, body) => ({ icon, color, bg, border, title, body });
+    const messages = [M('check','#4FD08F','rgba(79,208,143,.08)','rgba(79,208,143,.35)','Fully constrained','0 degrees of freedom.'), M('info','#4FA3E6','rgba(79,163,230,.08)','rgba(79,163,230,.35)','Under-constrained','2 DoF remain.'), M('warning','#E6A44F','rgba(230,164,79,.08)','rgba(230,164,79,.4)','Redundant constraint','Constraint 9 auto-removed.'), M('error','#E86E6E','rgba(232,110,110,.08)','rgba(232,110,110,.4)','Recompute failed','Fillet: radius exceeds edge length.')];
+    const I = (icon, label, key, color) => ({ icon, label, key: key || '', color: color || '#E6EBF0' });
+    const ctx = [I('sketch-edit','Edit sketch','⏎'), I('eye','Toggle visibility','Space'), I('tree-tip','Set as tip'), {sep:true}, I('fit-selection','Fit selection','V,S'), I('material','Appearance…'), {sep:true}, I('copy','Copy','⌘C'), I('paste','Paste','⌘V'), I('delete','Delete','⌫','#E86E6E')];
+    const N = (label, icon, depth, o = {}) => ({ label, icon, pad: 8 + depth * 16, iconColor: o.iconColor || '#9AA5B1', bg: o.sel ? 'rgba(79,163,230,.16)' : 'transparent', edge: o.sel ? '#4FA3E6' : 'transparent', hint: o.hint || '' });
+    const treeRows = [N('Body','tree-body',0,{iconColor:'#4FA3E6'}), N('Sketch','tree-sketch',1,{hint:'hidden'}), N('Pad','tree-feature',1,{sel:true,iconColor:'#4FA3E6',hint:'selected'}), N('Pocket','tree-feature',1), N('Fillet','tree-feature',1,{iconColor:'#4FD08F',hint:'tip'})];
+    const icons = this.state.icons;
+    const pick = (re) => icons.filter(n => re.test(n));
+    const used = new Set();
+    const grp = (title, re) => { const items = pick(re).filter(n => !used.has(n)); items.forEach(n => used.add(n)); return { title, items }; };
+    const iconGroups = [
+      grp('Part Design features', /^(body|sketch|pad|pocket|revolution|groove|hole|additive-|subtractive-|fillet|chamfer|draft|thickness|mirrored|linear-pattern|polar-pattern|multi-transform|scaled|boolean|datum-|coordinate-system|shape-binder|sub-shape-binder|clone$|migrate|sprocket|involute-gear|check-geometry)/),
+      grp('Sketcher geometry', /^(sketch-|construction-mode|point|line|polyline|arc|circle|ellipse|bspline|periodic-bspline|rectangle|rounded-rectangle|slot|triangle|square|pentagon|hexagon|heptagon|octagon|regular-polygon|trim|extend|split|external-geometry|carbon-copy|copy-geometry|clone-geometry|move-geometry|rotate-geometry|scale-geometry|offset-geometry|symmetry-geometry|rectangular-array|delete-all)/),
+      grp('Sketcher constraints & tools', /^(constraint-|toggle-|show-hide|select-|switch-virtual|grid|snap|rendering-order|auto-|dimensional)/),
+      grp('View & navigation', /^(fit-|view-|draw-style|toggle-axis|clipping|nav-cube)/),
+      grp('Tree & documents', /^(tree-|expression|export-|material|workbench-|file-fcstd|folder|print-bed)/),
+      grp('General UI', /./),
+    ];
+    return { colors, messages, ctx, treeRows, iconGroups, iconCount: icons.length ? icons.length + ' icons' : '' };
+  }
+}
+</script>
+</body>
+</html>

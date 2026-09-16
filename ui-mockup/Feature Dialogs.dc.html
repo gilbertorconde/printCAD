@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>body{margin:0;background:#0F1216;color:#E6EBF0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px}a{color:#4FA3E6;text-decoration:none}a:hover{color:#6DB5EC}*{box-sizing:border-box}</style>
+</helmet>
+<div data-screen-label="Feature Dialogs" style="padding:32px;display:flex;flex-direction:column;gap:20px;background:#0F1216;color:#E6EBF0;font-family:'IBM Plex Sans',system-ui,sans-serif;font-size:13px;min-height:900px">
+  <div style="display:flex;flex-direction:column;gap:4px"><span style="font-size:18px;font-weight:600">Feature task dialogs</span><span style="font-size:12px;color:#9AA5B1">Rendered in the combo view (300px). Every dialog shares: OK/Cancel bar, parameter card, quantity fields with expression button, checkbox block.</span></div>
+  <div style="display:flex;flex-wrap:wrap;gap:20px;align-items:flex-start">
+    <sc-for list="{{ dialogs }}" as="d" hint-placeholder-count="6">
+      <div style="width:300px;border:1px solid #2B333E;border-radius:8px;background:#151A20;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.5)">
+        <div style="display:flex;gap:8px;padding:10px 12px;border-bottom:1px solid #2B333E;background:#1C222A">
+          <button style="flex:1;height:28px;border:0;border-radius:5px;background:#4FA3E6;color:#0B1520;font-weight:600;font-size:12px;cursor:pointer;font-family:inherit" style-hover="background:#6DB5EC">OK</button>
+          <button style="flex:1;height:28px;border:1px solid #3A4553;border-radius:5px;background:transparent;color:#E6EBF0;font-size:12px;cursor:pointer;font-family:inherit" style-hover="background:#242C36">Cancel</button>
+        </div>
+        <div style="padding:12px;display:flex;flex-direction:column;gap:12px">
+          <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:5px;background:#1C222A;border:1px solid #2B333E">
+            <i style="display:inline-block;width:18px;height:18px;background:#4FA3E6;-webkit-mask:url(icons/{{ d.icon }}.svg) center/contain no-repeat;mask:url(icons/{{ d.icon }}.svg) center/contain no-repeat"></i>
+            <span style="font-weight:600">{{ d.title }}</span><div style="flex:1"></div>
+            <i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/chevron-up.svg) center/contain no-repeat;mask:url(icons/chevron-up.svg) center/contain no-repeat"></i>
+          </div>
+          <sc-if value="{{ d.selection }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;flex-direction:column;gap:6px">
+              <div style="display:flex;gap:6px"><button style="flex:1;height:26px;border:1px solid #4FA3E6;border-radius:4px;background:rgba(79,163,230,.14);color:#4FA3E6;font-size:12px;cursor:pointer;font-family:inherit">Add</button><button style="flex:1;height:26px;border:1px solid #3A4553;border-radius:4px;background:transparent;color:#E6EBF0;font-size:12px;cursor:pointer;font-family:inherit">Remove</button></div>
+              <div style="border:1px solid #2B333E;border-radius:4px;background:#1C222A;padding:4px;display:flex;flex-direction:column;gap:1px;font-family:'IBM Plex Mono',monospace;font-size:11.5px">
+                <sc-for list="{{ d.selection }}" as="s" hint-placeholder-count="3"><div style="height:22px;display:flex;align-items:center;padding:0 6px;border-radius:3px;color:#E6EBF0" style-hover="background:#242C36">{{ s }}</div></sc-for>
+              </div>
+            </div>
+          </sc-if>
+          <div style="display:grid;grid-template-columns:96px 1fr;gap:8px 10px;align-items:center;font-size:12px">
+            <sc-for list="{{ d.fields }}" as="f" hint-placeholder-count="4">
+              <span style="color:#9AA5B1">{{ f.label }}</span>
+              <sc-if value="{{ f.select }}" hint-placeholder-val="{{ false }}"><div style="height:26px;display:flex;align-items:center;padding:0 8px;border:1px solid #2B333E;border-radius:4px;background:#1C222A;gap:6px"><span style="flex:1">{{ f.value }}</span><i style="display:inline-block;width:12px;height:12px;background:#667180;-webkit-mask:url(icons/chevron-down.svg) center/contain no-repeat;mask:url(icons/chevron-down.svg) center/contain no-repeat"></i></div></sc-if>
+              <sc-if value="{{ f.qty }}" hint-placeholder-val="{{ true }}"><div style="height:26px;display:flex;align-items:center;border:1px solid {{ f.border }};border-radius:4px;background:#1C222A;box-shadow:{{ f.shadow }}"><span style="flex:1;padding:0 8px;font-family:'IBM Plex Mono',monospace;color:{{ f.color }}">{{ f.value }}</span><span style="width:1px;height:100%;background:#2B333E"></span><span style="width:22px;display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:12px;height:12px;background:{{ f.exprColor }};-webkit-mask:url(icons/expression.svg) center/contain no-repeat;mask:url(icons/expression.svg) center/contain no-repeat"></i></span></div></sc-if>
+            </sc-for>
+          </div>
+          <sc-if value="{{ d.checks }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:8px;font-size:12px">
+            <sc-for list="{{ d.checks }}" as="c" hint-placeholder-count="3"><label style="display:flex;align-items:center;gap:8px;color:{{ c.color }}"><span style="width:14px;height:14px;border-radius:3px;border:1px solid {{ c.border }};background:{{ c.bg }};display:flex;align-items:center;justify-content:center"><i style="display:inline-block;width:10px;height:10px;background:#0B1520;-webkit-mask:url(icons/check.svg) center/contain no-repeat;mask:url(icons/check.svg) center/contain no-repeat;opacity:{{ c.op }}"></i></span>{{ c.label }}</label></sc-for>
+          </div>
+          </sc-if>
+          <sc-if value="{{ d.note }}" hint-placeholder-val="{{ false }}"><div style="padding:8px 10px;border-radius:5px;background:{{ d.noteBg }};border:1px solid {{ d.noteBorder }};font-size:11.5px;color:#9AA5B1;line-height:1.45;display:flex;gap:8px"><i style="display:inline-block;width:14px;height:14px;flex:none;background:{{ d.noteColor }};-webkit-mask:url(icons/{{ d.noteIcon }}.svg) center/contain no-repeat;mask:url(icons/{{ d.noteIcon }}.svg) center/contain no-repeat"></i><span>{{ d.note }}</span></div></sc-if>
+        </div>
+      </div>
+    </sc-for>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:900}}">
+class Component extends DCLogic {
+  renderVals() {
+    const Q = (label, value, o = {}) => ({ label, value, qty: true, border: o.focus ? '#4FA3E6' : '#2B333E', shadow: o.focus ? '0 0 0 2px rgba(79,163,230,.18)' : 'none', color: o.dim ? '#667180' : '#E6EBF0', exprColor: o.expr ? '#4FA3E6' : '#667180' });
+    const S = (label, value) => ({ label, value, select: true });
+    const C = (label, on) => ({ label, color: on ? '#E6EBF0' : '#9AA5B1', border: on ? '#4FA3E6' : '#3A4553', bg: on ? '#4FA3E6' : '#1C222A', op: on ? 1 : 0 });
+    const note = (kind, text) => ({ note: text, noteIcon: kind, noteColor: kind === 'warning' ? '#E6A44F' : (kind === 'error' ? '#E86E6E' : '#4FA3E6'), noteBg: kind === 'warning' ? 'rgba(230,164,79,.08)' : (kind === 'error' ? 'rgba(232,110,110,.08)' : 'rgba(79,163,230,.08)'), noteBorder: kind === 'warning' ? 'rgba(230,164,79,.35)' : (kind === 'error' ? 'rgba(232,110,110,.4)' : 'rgba(79,163,230,.25)') });
+    return { dialogs: [
+      { icon:'pocket', title:'Pocket parameters', fields:[S('Type','Through all'), Q('Length','42,00 mm',{dim:true}), S('Direction','Sketch normal'), Q('Offset','0,00 mm',{dim:true})], checks:[C('Symmetric to plane',false),C('Reversed',true),C('Update view',true)] },
+      { icon:'fillet', title:'Fillet parameters', selection:['Pad:Edge3','Pad:Edge7','Pad:Edge11'], fields:[Q('Radius','2,50 mm',{focus:true})], checks:[C('Use all edges',false),C('Update view',true)], ...note('info','Fillets larger than half the wall thickness will fail to recompute.') },
+      { icon:'hole', title:'Hole parameters', fields:[S('Profile','ISO metric regular'), S('Size','M3'), S('Fit','Normal'), Q('Diameter','3,40 mm',{expr:true}), S('Depth','Through all'), S('Thread','Modeled thread')], checks:[C('Countersink',false),C('Counterbore',true),C('Reversed',false)], ...note('warning','Counterbore Ø 6,00 mm exceeds boss width on Face4.') },
+      { icon:'revolution', title:'Revolution parameters', fields:[S('Axis','Vertical sketch axis'), Q('Angle','360,00 °',{focus:true}), S('Type','Dimension')], checks:[C('Symmetric to plane',false),C('Reversed',false),C('Update view',true)] },
+      { icon:'polar-pattern', title:'Polar pattern parameters', selection:['Hole','Fillet'], fields:[S('Axis','Normal sketch axis'), S('Mode','Overall angle'), Q('Angle','360,00 °'), Q('Occurrences','6',{focus:true})], checks:[C('Reverse direction',false),C('Update view',true)] },
+      { icon:'chamfer', title:'Chamfer parameters', selection:['Pocket:Edge2','Pocket:Edge5'], fields:[S('Type','Equal distance'), Q('Size','1,00 mm',{focus:true}), Q('Size 2','1,00 mm',{dim:true})], checks:[C('Flip direction',false),C('Use all edges',false)] },
+      { icon:'additive-loft', title:'Loft parameters', selection:['Sketch002','Sketch003','Sketch004'], fields:[], checks:[C('Ruled surface',false),C('Closed',false),C('Update view',true)], ...note('error','Sketch004 has 2 unconstrained DoF — result may shift on recompute.') },
+      { icon:'linear-pattern', title:'Linear pattern parameters', selection:['Pocket'], fields:[S('Direction','Horizontal sketch axis'), S('Mode','Overall length'), Q('Length','60,00 mm',{expr:true}), Q('Occurrences','4')], checks:[C('Reverse direction',false),C('Update view',true)] },
+    ]};
+  }
+}
+</script>
+</body>
+</html>

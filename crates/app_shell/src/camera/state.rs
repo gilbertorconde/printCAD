@@ -150,14 +150,14 @@ impl CadCameraState {
         let eye = self.eye_vec3();
         let at = self.focal_point_vec3(axes);
         let up = self.up_world(axes);
-        Mat4::look_at_rh(eye, at, up)
+        glam::camera::rh::view::look_at_mat4(eye, at, up)
     }
 
     pub fn view_projection(&self, axes: &axes::AxisSystem) -> Mat4 {
         let view = self.view_matrix(axes);
         let aspect = self.aspect().max(0.001);
         let mut proj = match self.projection {
-            ProjectionMode::Perspective => Mat4::perspective_rh(
+            ProjectionMode::Perspective => glam::camera::rh::proj::directx::perspective(
                 self.height_angle_rad as f32,
                 aspect,
                 self.near_plane as f32,
@@ -166,7 +166,7 @@ impl CadCameraState {
             ProjectionMode::Orthographic => {
                 let half_h = (self.ortho_height * 0.5) as f32;
                 let half_w = half_h * aspect;
-                Mat4::orthographic_rh(
+                glam::camera::rh::proj::directx::orthographic(
                     -half_w,
                     half_w,
                     -half_h,
@@ -176,7 +176,7 @@ impl CadCameraState {
                 )
             }
         };
-        // Vulkan clip-space Y flip (same as previous implementation).
+        // Vulkan clip space is Y-down; the projection above is Y-up.
         proj.y_axis.y *= -1.0;
         proj * view
     }
