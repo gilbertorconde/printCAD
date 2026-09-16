@@ -87,86 +87,150 @@ const ADVISORY = [
   ],
 ];
 
-const SLASH = new Set([".rs", ".ts", ".tsx", ".js", ".mjs", ".cjs", ".vert", ".frag", ".glsl", ".comp"]);
-const HASH = new Set([".toml", ".yml", ".yaml", ".sh", ".bash"]);
-const HASH_NAMES = new Set(["justfile", "Dockerfile", ".dockerignore"]);
-const DASH = new Set([".sql"]);
+// What this tree holds: Rust crates, GLSL shaders compiled by the renderer's
+// build script, TOML manifests, the CI workflow, and this script. Markdown
+// is prose rather than comments, SVG icons and STEP fixtures carry no
+// commentary worth gating, and `.spv` and `.lock` are generated.
+const LANG_BY_EXT = new Map([
+  [".rs", "rust"],
+  [".vert", "c"],
+  [".frag", "c"],
+  [".comp", "c"],
+  [".glsl", "c"],
+  [".mjs", "js"],
+  [".js", "js"],
+  [".toml", "hash"],
+  [".yml", "hash"],
+  [".yaml", "hash"],
+  [".sh", "hash"],
+]);
 
-const SKIP_DIRS = new Set(["node_modules", "target", "dist", ".git", "vendor"]);
+const SKIP_DIRS = new Set(["target", ".git"]);
 // Vendored third-party code is not ours to reword; test data is not prose.
 const SKIP_PATH = [/(^|\/)crates\/egui-ash-renderer-vendored\//, /(^|\/)tests\/data\//];
 
 function lang(rel) {
-  const base = basename(rel);
-  if (HASH_NAMES.has(base)) return "hash";
-  const ext = extname(rel);
-  if (SLASH.has(ext)) return "slash";
-  if (HASH.has(ext)) return "hash";
-  if (DASH.has(ext)) return "dash";
-  return null;
+  return LANG_BY_EXT.get(extname(rel)) ?? null;
 }
 
-function markerOutsideStrings(line, marker, requireLeadingSpace = false) {
+// `#` is a comment only outside a quoted string. YAML doubles a single
+// quote to escape it inside single-quoted scalars.
+function hashComment(line) {
+  if (line.trim().startsWith("#!")) return "";
   let i = 0;
   while (i < line.length) {
     const ch = line[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      const quote = ch;
+    if (ch === '"' || ch === "'") {
       i++;
       while (i < line.length) {
         if (line[i] === "\\") { i += 2; continue; }
-        // SQL and YAML escape a single quote by doubling it.
-        if (quote === "'" && line[i] === "'" && line[i + 1] === "'") { i += 2; continue; }
-        if (line[i] === quote) { i++; break; }
+        if (ch === "'" && line[i] === "'" && line[i + 1] === "'") { i += 2; continue; }
+        if (line[i] === ch) { i++; break; }
         i++;
       }
       continue;
     }
-    if (line.startsWith(marker, i) && (!requireLeadingSpace || i === 0 || /\s/.test(line[i - 1]))) {
-      return i;
-    }
+    if (ch === "#" && (i === 0 || /\s/.test(line[i - 1]))) return line.slice(i + 1);
+    i++;
+  }
+  return "";
+}
+
+// Per-language lexical facts for the `//` and `/* */` family. Rust is the
+// one that needs care: `'` opens a char literal only when one closes it
+// (`'x'`, `'\n'`, `'\u{1F600}'`) and is otherwise a lifetime or a loop
+// label; `r"…"`, `r#"…"#` and `br"…"` take no escapes and close on the
+// matching hash count; block comments nest. A Rust string literal may span
+// lines, so an open one is carried in `state` exactly like an open block
+// comment, or a `//` inside a multi-line `format!` template would read as
+// a comment. Only the quotes listed in `multiline` carry over: a GLSL
+// string or a JS single- or double-quoted string ends with its line, and
+// forgetting that lets one stray quote in a regex literal swallow the rest
+// of the file.
+const SLASH_LANGS = {
+  rust: { quotes: ['"'], multiline: ['"'], charLiterals: true, rawStrings: true, nestedBlocks: true },
+  c: { quotes: ['"'], multiline: [], charLiterals: false, rawStrings: false, nestedBlocks: false },
+  js: { quotes: ['"', "'", "`"], multiline: ["`"], charLiterals: false, rawStrings: false, nestedBlocks: false },
+};
+
+const CHAR_LITERAL = /^'(?:\\(?:u\{[0-9a-fA-F]{1,6}\}|x[0-9a-fA-F]{2}|.)|[^'\\])'/;
+const RAW_STRING_OPEN = /^b?r(#*)"/;
+
+// Advance past the rest of an open string; -1 when it runs off the line.
+function closeString(line, i, str) {
+  if (str.rawHashes !== null) {
+    const term = '"' + "#".repeat(str.rawHashes);
+    const k = line.indexOf(term, i);
+    return k === -1 ? -1 : k + term.length;
+  }
+  while (i < line.length) {
+    if (line[i] === "\\") { i += 2; continue; }
+    if (line[i] === str.quote) return i + 1;
     i++;
   }
   return -1;
 }
 
-// Strip string literals so a URL or an error message cannot look like a
-// comment, then return the comment text on this line (or "" if none).
-function commentOf(line, l, state) {
-  if (l === "hash") {
-    const s = line.trim();
-    if (s.startsWith("#!")) return "";
-    const i = markerOutsideStrings(line, "#", true);
-    return i === -1 ? "" : line.slice(i + 1);
-  }
-  if (l === "dash") {
-    const i = markerOutsideStrings(line, "--");
-    return i === -1 ? "" : line.slice(i + 2);
-  }
-  // slash languages: track block comments across lines
+function slashComment(line, facts, state) {
   let out = "";
   let i = 0;
   while (i < line.length) {
-    if (state.block) {
+    if (state.block > 0) {
       const end = line.indexOf("*/", i);
-      if (end === -1) { out += line.slice(i); break; }
+      const open = facts.nestedBlocks ? line.indexOf("/*", i) : -1;
+      if (open !== -1 && (end === -1 || open < end)) {
+        out += line.slice(i, open);
+        state.block++;
+        i = open + 2;
+        continue;
+      }
+      if (end === -1) return out + line.slice(i);
       out += line.slice(i, end);
-      state.block = false;
+      state.block--;
       i = end + 2;
       continue;
     }
+    if (state.str) {
+      const close = closeString(line, i, state.str);
+      if (close === -1) return out;
+      state.str = null;
+      i = close;
+      continue;
+    }
     const ch = line[i];
-    if (ch === '"' || ch === "'" || ch === "`") {
-      i++;
-      while (i < line.length && line[i] !== ch) i += line[i] === "\\" ? 2 : 1;
+    if (ch === "/" && line[i + 1] === "/") return out + line.slice(i + 2);
+    if (ch === "/" && line[i + 1] === "*") { state.block = 1; i += 2; continue; }
+    if (facts.rawStrings && (ch === "r" || ch === "b") && !/[A-Za-z0-9_]/.test(line[i - 1] ?? "")) {
+      const raw = RAW_STRING_OPEN.exec(line.slice(i));
+      if (raw) {
+        state.str = { quote: '"', rawHashes: raw[1].length };
+        i += raw[0].length;
+        continue;
+      }
+    }
+    if (facts.quotes.includes(ch)) {
+      state.str = { quote: ch, rawHashes: null };
       i++;
       continue;
     }
-    if (ch === "/" && line[i + 1] === "/") { out += line.slice(i + 2); break; }
-    if (ch === "/" && line[i + 1] === "*") { state.block = true; i += 2; continue; }
+    if (facts.charLiterals && ch === "'") {
+      const lit = CHAR_LITERAL.exec(line.slice(i));
+      i += lit ? lit[0].length : 1;
+      continue;
+    }
     i++;
   }
+  if (state.str && state.str.rawHashes === null && !facts.multiline.includes(state.str.quote)) {
+    state.str = null;
+  }
   return out;
+}
+
+// The comment text on this line, or "" when there is none. `state` carries
+// open block comments and open strings from line to line.
+function commentOf(line, l, state) {
+  if (l === "hash") return hashComment(line);
+  return slashComment(line, SLASH_LANGS[l], state);
 }
 
 const PEDANTIC = flag("--pedantic");
@@ -206,7 +270,7 @@ const violations = [];
 if (MODE_ALL) {
   for (const norm of tracked()) {
     if (!eligible(norm) || !existsSync(join(root, norm))) continue;
-    const state = { block: false };
+    const state = { block: 0, str: null };
     readFileSync(join(root, norm), "utf8").split("\n").forEach((line, i) => {
       const c = commentOf(line, lang(norm), state);
       if (!c.trim()) return;
@@ -249,7 +313,7 @@ if (MODE_ALL) {
 
   for (const [rel, linesAdded] of added) {
     if (!eligible(rel) || (!MODE_STAGED && !existsSync(join(root, rel)))) continue;
-    const state = { block: false };
+    const state = { block: 0, str: null };
     postChange(rel).split("\n").forEach((line, i) => {
       const c = commentOf(line, lang(rel), state);
       const currentLine = i + 1;
