@@ -9,13 +9,14 @@ mod menu_bar;
 mod overlays;
 mod property_panel;
 mod settings_panel;
+mod start_page;
 mod status_bar;
 mod step_import_modal;
 mod task_panel;
 mod toolbar;
 mod view_toolbar;
 
-pub use commands::{FileCommand, UiCommand};
+pub use commands::{FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{HoverCard, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
@@ -28,6 +29,15 @@ use settings::ProjectionMode;
 use winit::{event::WindowEvent, window::Window};
 
 use crate::orientation_cube::{self, OrientationCubeConfig, OrientationCubeResult};
+
+/// Which top-level screen the window shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    /// The launch page: new-document cards, recent files.
+    Start,
+    /// The modelling workspace.
+    Workspace,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveWorkbench(pub WorkbenchId);
@@ -81,6 +91,8 @@ pub struct UiLayer {
     tree_filter: String,
     property_tab: property_panel::PropertyTab,
     rename_buffer: Option<(TreeItemId, String)>,
+    /// The start page's recent-files filter; UI-local.
+    recent_search: String,
 }
 
 impl UiLayer {
@@ -107,6 +119,7 @@ impl UiLayer {
             tree_filter: String::new(),
             property_tab: property_panel::PropertyTab::default(),
             rename_buffer: None,
+            recent_search: String::new(),
         }
     }
 
@@ -120,6 +133,8 @@ impl UiLayer {
 
     pub fn run(&mut self, window: &Window, inputs: UiFrameInputs<'_>) -> UiFrameOutput {
         let UiFrameInputs {
+            screen,
+            recent,
             active_tool: host_active_tool,
             active_workbench: host_active_workbench,
             settings,
@@ -196,6 +211,8 @@ impl UiLayer {
                     breadcrumb: breadcrumb.as_deref(),
                     show_log_panel: settings.rendering.show_log_panel,
                     projection,
+                    recent,
+                    screen,
                 },
                 &mut active_workbench,
                 &mut active_tool,
@@ -213,6 +230,35 @@ impl UiLayer {
             // PLANNED: the command palette opens from the search box and
             // Ctrl+K; until it exists the request is dropped.
             let mut open_palette = menu.open_palette;
+
+            if screen == Screen::Start {
+                // The start page covers the whole viewport; the scene
+                // underneath carries no bodies.
+                viewport_rect_logical = ui.available_rect_before_wrap();
+                let start = start_page::draw_start_page(
+                    ui,
+                    start_page::StartPageInputs {
+                        recent,
+                        search: &mut self.recent_search,
+                    },
+                    &mut commands,
+                );
+                if start.show_preferences {
+                    show_settings = true;
+                }
+                let outcome = settings_panel::draw_settings_window(
+                    ui.ctx(),
+                    settings,
+                    document,
+                    &mut show_settings,
+                    &mut settings_tab,
+                    gpus,
+                    gpu_name,
+                );
+                settings_changed |= outcome.any;
+                camera_settings_changed |= outcome.camera_prefs;
+                return;
+            }
 
             toolbar::draw_toolbars(
                 ui,

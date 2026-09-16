@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use ui::{ActiveTool, ActiveWorkbench, TreeItemId, UiLayer};
+use ui::{ActiveTool, ActiveWorkbench, Screen, TreeItemId, UiLayer};
 use uuid::Uuid;
 use winit::{
     application::ApplicationHandler,
@@ -158,6 +158,10 @@ struct PrintCadApp {
     tree_selection: Option<TreeItemId>,
     // Current file on disk (if any).
     current_file: Option<PathBuf>,
+    /// Recently opened documents and the last dialog directory.
+    recent: settings::recent::RecentStore,
+    /// Start page or workspace.
+    screen: Screen,
     // Pending file dialog result from background thread.
     file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
     // Background worker that owns the geometry kernel. STEP imports run there
@@ -280,6 +284,25 @@ struct PrintCadApp {
     dimension_cache: Option<DimensionCache>,
 }
 
+/// The start page opens the session unless a bench hook asks for a
+/// document or a scene straight away.
+fn launch_screen() -> Screen {
+    let straight_in = [
+        "PRINTCAD_OPEN_FILE",
+        "PRINTCAD_OPEN_DOC",
+        "PRINTCAD_BENCH_SKETCH",
+        "PRINTCAD_BENCH_ORBIT",
+        "PRINTCAD_BENCH_SPIN",
+    ]
+    .iter()
+    .any(|k| std::env::var_os(k).is_some());
+    if straight_in {
+        Screen::Workspace
+    } else {
+        Screen::Start
+    }
+}
+
 impl PrintCadApp {
     fn new(
         settings: RenderSettings,
@@ -370,6 +393,8 @@ impl PrintCadApp {
             task_open: false,
             window_title: String::new(),
             dimension_cache: None,
+            recent: app::doc_io::load_recent(),
+            screen: launch_screen(),
         }
     }
 

@@ -428,7 +428,8 @@ impl PrintCadApp {
             ));
         }
 
-        crate::app::doc_io::write_recent_dir(path);
+        self.remember_recent_dir(path);
+        self.screen = crate::ui::Screen::Workspace;
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
         info!(
             path = %path.display(),

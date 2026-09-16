@@ -7,7 +7,9 @@ use settings::UserSettings;
 
 use super::feature_tree::TreeItemId;
 use super::host_ctx::HostCtxParams;
-use super::{ActiveTool, ActiveWorkbench};
+use settings::recent::RecentEntry;
+
+use super::{ActiveTool, ActiveWorkbench, Screen};
 use crate::orientation_cube::OrientationCubeInput;
 
 /// The body under the cursor and the point hit on it.
@@ -21,6 +23,9 @@ pub struct HoverCard {
 /// the call site — the fields borrow disjoint pieces of `PrintCadApp`, which
 /// a `&mut self` builder method could not express.
 pub struct UiFrameInputs<'a> {
+    pub screen: Screen,
+    /// Recently opened documents, most recent first.
+    pub recent: &'a [RecentEntry],
     /// The host's tool state — authoritative. The host consumes Action tool
     /// ids (e.g. `part.new_body`, a used `sketch.create`) from its copy, so
     /// the UI must re-seed from it each frame rather than keeping its own.

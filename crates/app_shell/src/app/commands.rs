@@ -12,7 +12,9 @@ use crate::orientation_cube::{CameraSnapView, RotateDelta};
 use core_document::WorkbenchFeature;
 
 use crate::PrintCadApp;
-use crate::ui::{ActiveWorkbench, FileCommand, TreeFeatureCommand, TreeItemId, UiCommand};
+use crate::ui::{
+    ActiveWorkbench, FileCommand, Screen, StartKind, TreeFeatureCommand, TreeItemId, UiCommand,
+};
 
 /// Phase 1 of the two-phase dispatch: commands folded into per-frame
 /// intents. Phase 2 applies them in the frame order the pre-command code
@@ -44,6 +46,10 @@ struct FrameIntents {
     recompute_all: bool,
     task_closed: Option<core_document::TaskOutcome>,
     rename: Option<(TreeItemId, String)>,
+    show_start_page: bool,
+    start_new: Option<StartKind>,
+    open_recent: Option<std::path::PathBuf>,
+    remove_recent: Vec<std::path::PathBuf>,
 }
 
 impl PrintCadApp {
@@ -110,6 +116,10 @@ impl PrintCadApp {
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
                 UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
+                UiCommand::ShowStartPage => intents.show_start_page = true,
+                UiCommand::StartNew(kind) => intents.start_new = Some(kind),
+                UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
+                UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
             }
         }
 
@@ -230,6 +240,27 @@ impl PrintCadApp {
 
         if intents.new_document && self.confirm_discard_or_save() {
             self.reset_to_new_document();
+        }
+        if let Some(kind) = intents.start_new
+            && self.confirm_discard_or_save()
+        {
+            self.start_new_document(kind);
+        }
+        if let Some(path) = intents.open_recent
+            && self.confirm_discard_or_save()
+        {
+            if path.exists() {
+                self.open_document_at(path);
+            } else {
+                app_log::error(format!("`{}` is gone; removed from recent", path.display()));
+                self.remove_recent(&path);
+            }
+        }
+        for path in intents.remove_recent {
+            self.remove_recent(&path);
+        }
+        if intents.show_start_page {
+            self.screen = Screen::Start;
         }
 
         match intents.file_dialog {
@@ -466,6 +497,35 @@ impl PrintCadApp {
                 }
                 self.journal.label_next("Move tip");
                 self.journal.note(&mut self.document);
+            }
+        }
+    }
+}
+
+impl PrintCadApp {
+    /// A fresh document from a start-page card: one body in Part Design,
+    /// plus an XY sketch open for editing when asked.
+    fn start_new_document(&mut self, kind: StartKind) {
+        let part = ActiveWorkbench::default();
+        if self.active_workbench != part {
+            let old = self.active_workbench.0.clone();
+            self.call_workbench_deactivate(&old);
+            self.active_workbench = part.clone();
+            self.call_workbench_activate(&part.0);
+        }
+        self.return_workbench = None;
+        self.reset_to_new_document();
+        self.create_new_body();
+        if kind == StartKind::EmptySketch && self.active_body_id.is_some() {
+            let sketch = wb_sketch::sketch::Sketch::new("Sketch");
+            let plane = sketch.plane;
+            match self.document.add_feature_in_body(
+                wb_sketch::SketchFeature::new(sketch, plane),
+                "Sketch".into(),
+                self.active_body_id,
+            ) {
+                Ok(id) => self.apply_tree_activation(TreeItemId::Feature(id)),
+                Err(err) => app_log::error(format!("Failed to create sketch: {err}")),
             }
         }
     }

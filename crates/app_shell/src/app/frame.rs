@@ -298,6 +298,9 @@ impl PrintCadApp {
         // Update camera animation and assemble this frame's scene submission
         // before the UI/render block takes its borrows on `gfx`.
         let viewport_data = self.build_scene_submission(dt_secs);
+        if self.screen == crate::ui::Screen::Start {
+            self.frame_submission.bodies.clear();
+        }
         let ViewportData {
             overlays: screen_space_overlays,
             marks: screen_space_marks,
@@ -349,6 +352,8 @@ impl PrintCadApp {
                 let ui_result = ui_layer.run(
                     window,
                     ui::UiFrameInputs {
+                        screen: self.screen,
+                        recent: &self.recent.files,
                         active_tool: self.active_tool.clone(),
                         active_workbench: self.active_workbench.clone(),
                         settings: &mut self.user_settings,
@@ -405,7 +410,9 @@ impl PrintCadApp {
                 self.task_open = ui_result.task_open;
 
                 // The window title follows the document and its dirty state.
-                let title = if self.document.metadata().dirty() {
+                let title = if self.screen == crate::ui::Screen::Start {
+                    "printCAD".to_string()
+                } else if self.document.metadata().dirty() {
                     format!("{} • — printCAD", self.document.name())
                 } else {
                     format!("{} — printCAD", self.document.name())

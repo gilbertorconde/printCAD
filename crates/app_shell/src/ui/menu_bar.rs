@@ -9,7 +9,7 @@ use ui_kit::{sans, sans_semibold};
 use workbenches::REGISTERED_WORKBENCHES;
 
 use super::toolbar::activate_tool;
-use super::{ActiveTool, ActiveWorkbench, FileCommand, UiCommand};
+use super::{ActiveTool, ActiveWorkbench, FileCommand, Screen, UiCommand};
 use crate::orientation_cube::CameraSnapView;
 
 /// What the menu bar reads this frame.
@@ -21,6 +21,8 @@ pub struct MenuBarInputs<'a> {
     pub breadcrumb: Option<&'a str>,
     pub show_log_panel: bool,
     pub projection: ProjectionMode,
+    pub recent: &'a [settings::recent::RecentEntry],
+    pub screen: Screen,
 }
 
 /// Menu-driven requests that are UI-local state rather than app commands.
@@ -163,6 +165,22 @@ pub fn draw_menu_bar(
                         if item(ui, "Open…", Some(&sc_open)) {
                             commands.push(UiCommand::File(FileCommand::Open));
                         }
+                        ui.menu_button(RichText::new("Open recent").font(sans(FONT_SM)), |ui| {
+                            if inputs.recent.is_empty() {
+                                ui.add_enabled(
+                                    false,
+                                    egui::Button::new(
+                                        RichText::new("Nothing yet").font(sans(FONT_SM)),
+                                    ),
+                                );
+                            }
+                            for entry in inputs.recent {
+                                if item(ui, &entry.name(), None) {
+                                    commands.push(UiCommand::OpenRecent(entry.path.clone()));
+                                    ui.close();
+                                }
+                            }
+                        });
                         ui.separator();
                         if item(ui, "Save", Some(&sc_save)) {
                             commands.push(UiCommand::File(FileCommand::Save));
@@ -173,6 +191,14 @@ pub fn draw_menu_bar(
                         ui.separator();
                         if item(ui, "Import STEP…", Some(&sc_import)) {
                             commands.push(UiCommand::File(FileCommand::ImportStep));
+                        }
+                        ui.separator();
+                        if inputs.screen == Screen::Start {
+                            if item(ui, "Workspace", None) {
+                                commands.push(UiCommand::StartNew(super::StartKind::PartDesign));
+                            }
+                        } else if item(ui, "Start page", None) {
+                            commands.push(UiCommand::ShowStartPage);
                         }
                         ui.separator();
                         if item(ui, "Preferences…", Some(&sc_prefs)) {

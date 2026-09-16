@@ -18,6 +18,15 @@ pub enum FileCommand {
     ImportStep,
 }
 
+/// What a start-page NEW card creates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StartKind {
+    /// A document with one body, in the Part Design workbench.
+    PartDesign,
+    /// A document with one body and an XY sketch open for editing.
+    EmptySketch,
+}
+
 #[derive(Debug, Clone)]
 pub enum UiCommand {
     File(FileCommand),
@@ -69,4 +78,12 @@ pub enum UiCommand {
         item: TreeItemId,
         name: String,
     },
+    /// Leave the workspace for the start page.
+    ShowStartPage,
+    /// A start-page NEW card.
+    StartNew(StartKind),
+    /// Open a document from the recent list.
+    OpenRecent(std::path::PathBuf),
+    /// Forget a document in the recent list.
+    RemoveRecent(std::path::PathBuf),
 }

@@ -25,28 +25,11 @@ pub(crate) fn document_name_from_file_name(file_name: &str) -> &str {
     file_name
 }
 
-/// Directory the last document was opened from / saved to, used to seed
-/// file dialogs. Best-effort: any failure just means no seeding.
-pub(crate) fn read_recent_dir() -> Option<PathBuf> {
-    let recent_path = settings::SettingsStore::recent_file_path().ok()?;
-    let file = std::fs::File::open(recent_path).ok()?;
-    let saved_dir: String = serde_json::from_reader(file).ok()?;
-    Some(PathBuf::from(saved_dir))
-}
-
-/// Persist the parent directory of `path` for future dialog seeding.
-/// Best-effort: failures are ignored.
-pub(crate) fn write_recent_dir(path: &Path) {
-    if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
-        && let Some(dir) = path.parent()
-        && let Ok(file) = std::fs::File::create(&recent_path)
-    {
-        let mut s = dir.to_string_lossy().to_string();
-        if !s.ends_with(std::path::MAIN_SEPARATOR) {
-            s.push(std::path::MAIN_SEPARATOR);
-        }
-        let _ = serde_json::to_writer(file, &s);
-    }
+/// The on-disk recent list; missing or unreadable means empty.
+pub(crate) fn load_recent() -> settings::recent::RecentStore {
+    settings::SettingsStore::recent_file_path()
+        .map(|p| settings::recent::RecentStore::load(&p))
+        .unwrap_or_default()
 }
 
 /// Button labels for the unsaved-changes dialog. GTK and Zenity backends report
@@ -109,7 +92,7 @@ impl PrintCadApp {
             p.clone()
         } else {
             let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
-            if let Some(recent_dir) = read_recent_dir() {
+            if let Some(recent_dir) = self.recent.last_dir.clone() {
                 dialog = dialog.set_directory(recent_dir);
             }
             match dialog.set_file_name("untitled.prtcad").save_file() {
@@ -155,7 +138,34 @@ impl PrintCadApp {
         self.server
             .send(core_document::server::ClientMessage::Rebase);
         self.switch_server_to(doc_server::socket_path_for_untitled());
+        self.screen = crate::ui::Screen::Workspace;
         app_log::info("New document");
+    }
+
+    /// Front the recent list with `path` and write it out.
+    pub(crate) fn touch_recent(&mut self, path: &Path) {
+        self.recent.touch(path);
+        self.save_recent();
+    }
+
+    /// Remember only the directory of `path`, for files that are not
+    /// documents (STEP imports).
+    pub(crate) fn remember_recent_dir(&mut self, path: &Path) {
+        self.recent.remember_dir(path);
+        self.save_recent();
+    }
+
+    pub(crate) fn remove_recent(&mut self, path: &Path) {
+        self.recent.remove(path);
+        self.save_recent();
+    }
+
+    fn save_recent(&self) {
+        if let Ok(recent_path) = settings::SettingsStore::recent_file_path()
+            && let Err(err) = self.recent.save(&recent_path)
+        {
+            app_log::error(format!("Failed to write the recent list: {err}"));
+        }
     }
 
     /// The server hands over opaque bytes; the client owns the parsing.
@@ -190,7 +200,8 @@ impl PrintCadApp {
         self.selected_body = None;
 
         self.document.mark_clean();
-        write_recent_dir(&path);
+        self.touch_recent(&path);
+        self.screen = crate::ui::Screen::Workspace;
         // Match STEP import: reframe imported mesh bounds so scene AABB and auto
         // near/far use the same view as STEP apply (opening only updated zoom
         // limits before, which left stale eye/target → marginal clipping until the
@@ -360,7 +371,7 @@ impl PrintCadApp {
                         self.document.mark_clean();
                     }
                     self.current_file = Some(path.clone());
-                    write_recent_dir(&path);
+                    self.touch_recent(&path);
                     app_log::info(format!("Saved document to {}", path.display()));
                 }
                 ServerMessage::SaveFailed { path, error } => {
@@ -451,7 +462,7 @@ impl PrintCadApp {
         }
 
         self.current_file = Some(path.to_path_buf());
-        write_recent_dir(path);
+        self.touch_recent(path);
         self.document.mark_clean();
         app_log::info(format!("Saved document to {}", path.display()));
         Ok(())
@@ -584,6 +595,7 @@ impl PrintCadApp {
         self.file_dialog_rx = Some(rx);
 
         let current_path = self.current_file.clone();
+        let recent_dir = self.recent.last_dir.clone();
 
         std::thread::spawn(move || {
             let mut dialog = match kind {
@@ -593,7 +605,7 @@ impl PrintCadApp {
                 _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
             };
 
-            if let Some(recent_dir) = read_recent_dir() {
+            if let Some(recent_dir) = recent_dir {
                 dialog = dialog.set_directory(recent_dir);
             }
 

@@ -1,3 +1,5 @@
+pub mod recent;
+
 use axes::{AxisPreset, AxisSystem};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
