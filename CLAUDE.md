@@ -225,6 +225,19 @@ rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_BENCH_ORBIT` /
 mesh.rs); the 1 s `printcad.frame` log reports fps + phase costs while
 frames are being produced.
 
+**The 3D scene is cached between changes.** The scene pass resolves into a
+persistent scene image and runs only when `scene_fingerprint(frame)`
+(`render_vk/src/core.rs`) changes; every frame copies that image under the
+UI pass. UI-only frames (hover, panels, typing) therefore cost ~2 ms on any
+model. **Completeness of the fingerprint is the contract**: anything the
+scene pass reads — camera, viewport, lighting, per-body id/revision/mesh
+pointer/color/highlight/wireframe, edge suppression — must be hashed there,
+or a change shows stale. The status bar shows both numbers because they are
+two things: `FPS` (UI frames presented) and `scene: N/s` (scene redraws;
+"cached" when zero). `PRINTCAD_BENCH_SPIN` keeps the loop awake with no
+scene change (expect zero redraws); `PRINTCAD_BENCH_ORBIT` expects one per
+frame.
+
 ## Interaction model (current bindings)
 
 MMB drag = orbit (MMB click = pivot pick) · RMB drag = pan · wheel = zoom ·

@@ -60,6 +60,18 @@ pub(crate) struct RendererCore {
     current_frame: usize,
     egui_renderer: Option<EguiRenderer>,
     textures_to_free: Vec<Vec<TextureId>>,
+    /// The rendered 3D scene, single-sample, kept between frames. The scene
+    /// pass writes it only when the scene changed; every frame copies it
+    /// under the UI. Lives in TRANSFER_SRC_OPTIMAL between frames.
+    scene_image: vk::Image,
+    scene_image_memory: vk::DeviceMemory,
+    scene_image_view: vk::ImageView,
+    /// Fingerprint of the scene last drawn into `scene_image`; `None`
+    /// forces a redraw (first frame, swapchain recreation).
+    last_scene_fingerprint: Option<u64>,
+    /// Whether the last recorded frame re-rendered the scene (vs. reused
+    /// the cached image). Feeds the frame log and the status bar.
+    scene_redrawn_last_frame: bool,
     mesh_renderer: Option<MeshRenderer>,
     /// Per-body GPU buffer cache shared between mesh and pick passes. Bodies
     /// only re-upload when their `BodySubmission::revision` advances.
@@ -224,6 +236,11 @@ impl RendererCore {
             current_frame: 0,
             egui_renderer: None,
             textures_to_free: vec![Vec::new(); MAX_FRAMES_IN_FLIGHT],
+            scene_image: vk::Image::null(),
+            scene_image_memory: vk::DeviceMemory::null(),
+            scene_image_view: vk::ImageView::null(),
+            last_scene_fingerprint: None,
+            scene_redrawn_last_frame: false,
             mesh_renderer: None,
             mesh_cache: MeshCache::new(),
             gpu_name,
@@ -247,6 +264,7 @@ impl RendererCore {
         core.create_swapchain(extent)?;
         core.create_depth_resources()?;
         core.create_color_resources()?;
+        core.create_scene_target()?;
         core.create_render_pass()?;
         core.create_ui_render_pass()?;
         core.create_framebuffers()?;
@@ -300,6 +318,7 @@ impl RendererCore {
         self.create_swapchain(extent)?;
         self.create_depth_resources()?;
         self.create_color_resources()?;
+        self.create_scene_target()?;
         self.create_render_pass()?;
         self.create_ui_render_pass()?;
         self.create_framebuffers()?;
@@ -341,6 +360,10 @@ impl RendererCore {
 
     pub(crate) fn last_draw_stats(&self) -> crate::mesh::DrawStats {
         self.last_draw_stats
+    }
+
+    pub(crate) fn scene_redrawn_last_frame(&self) -> bool {
+        self.scene_redrawn_last_frame
     }
 
     pub(crate) fn request_pick(&mut self, x: u32, y: u32) {
@@ -438,7 +461,8 @@ impl RendererCore {
 
         let signal_semaphores = [self.render_finished_semaphores[image_index as usize]];
         let wait_semaphores = [self.image_available_semaphores[self.current_frame]];
-        let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+        // The acquired image's first use is the scene copy, not a render pass.
+        let wait_stages = [vk::PipelineStageFlags::TRANSFER];
 
         let command_buffers = [self.command_buffers[self.current_frame]];
         let submit_info = vk::SubmitInfo::default()
@@ -526,7 +550,7 @@ impl RendererCore {
             .image_color_space(surface_format.color_space)
             .image_extent(extent)
             .image_array_layers(1)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_DST)
             .image_sharing_mode(image_sharing_mode)
             .queue_family_indices(p_queue_family_indices)
             .pre_transform(support.capabilities.current_transform)
@@ -660,6 +684,55 @@ impl RendererCore {
         Ok(())
     }
 
+    /// The persistent scene target the scene pass resolves into. Recreated
+    /// with the swapchain (same extent and format), which also forces the
+    /// next frame to redraw.
+    fn create_scene_target(&mut self) -> Result<(), RenderError> {
+        self.cleanup_scene_target();
+        let (image, memory) = self.create_image(
+            self.swapchain_extent.width,
+            self.swapchain_extent.height,
+            self.swapchain_format,
+            vk::ImageTiling::OPTIMAL,
+            vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            vk::SampleCountFlags::TYPE_1,
+        )?;
+        let view_info = vk::ImageViewCreateInfo::default()
+            .image(image)
+            .view_type(vk::ImageViewType::TYPE_2D)
+            .format(self.swapchain_format)
+            .subresource_range(vk::ImageSubresourceRange {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                base_mip_level: 0,
+                level_count: 1,
+                base_array_layer: 0,
+                layer_count: 1,
+            });
+        let view = unsafe { self.device.create_image_view(&view_info, None) }
+            .map_err(RenderError::from)?;
+        self.scene_image = image;
+        self.scene_image_memory = memory;
+        self.scene_image_view = view;
+        self.last_scene_fingerprint = None;
+        Ok(())
+    }
+
+    fn cleanup_scene_target(&mut self) {
+        unsafe {
+            if self.scene_image_view != vk::ImageView::null() {
+                self.device.destroy_image_view(self.scene_image_view, None);
+                self.scene_image_view = vk::ImageView::null();
+            }
+            if self.scene_image != vk::Image::null() {
+                self.device.destroy_image(self.scene_image, None);
+                self.device.free_memory(self.scene_image_memory, None);
+                self.scene_image = vk::Image::null();
+                self.scene_image_memory = vk::DeviceMemory::null();
+            }
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn create_image(
         &self,
@@ -744,8 +817,8 @@ impl RendererCore {
                 .initial_layout(vk::ImageLayout::UNDEFINED)
                 .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL);
 
-            // Attachment 2: Resolve target (swapchain image)
-            // Final layout is COLOR_ATTACHMENT_OPTIMAL so UI pass can render on top
+            // Attachment 2: Resolve target (the persistent scene image).
+            // Ends in TRANSFER_SRC so each frame can copy it under the UI.
             let color_resolve_attachment = vk::AttachmentDescription::default()
                 .format(self.swapchain_format)
                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -754,7 +827,7 @@ impl RendererCore {
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+                .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
             let attachments = [color_attachment, depth_attachment, color_resolve_attachment];
 
@@ -804,8 +877,8 @@ impl RendererCore {
             self.render_pass = unsafe { self.device.create_render_pass(&render_pass_info, None) }
                 .map_err(RenderError::from)?;
         } else {
-            // Non-MSAA render pass with depth
-            // Final layout is COLOR_ATTACHMENT_OPTIMAL so UI pass can render on top
+            // Non-MSAA render pass with depth, drawing straight into the
+            // persistent scene image; ends in TRANSFER_SRC for the copy.
             let color_attachment = vk::AttachmentDescription::default()
                 .format(self.swapchain_format)
                 .samples(vk::SampleCountFlags::TYPE_1)
@@ -814,7 +887,7 @@ impl RendererCore {
                 .stencil_load_op(vk::AttachmentLoadOp::DONT_CARE)
                 .stencil_store_op(vk::AttachmentStoreOp::DONT_CARE)
                 .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL);
+                .final_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL);
 
             let depth_attachment = vk::AttachmentDescription::default()
                 .format(self.depth_format)
@@ -923,28 +996,28 @@ impl RendererCore {
         self.cleanup_framebuffers();
 
         let using_msaa = self.msaa_samples != vk::SampleCountFlags::TYPE_1;
-        let mut framebuffers = Vec::with_capacity(self.swapchain_image_views.len());
-
-        for &swapchain_view in &self.swapchain_image_views {
-            let attachments = if using_msaa {
-                // MSAA: [color_msaa, depth, resolve_target]
-                vec![self.color_image_view, self.depth_image_view, swapchain_view]
-            } else {
-                // No MSAA: [color, depth]
-                vec![swapchain_view, self.depth_image_view]
-            };
-
-            let framebuffer_info = vk::FramebufferCreateInfo::default()
-                .render_pass(self.render_pass)
-                .attachments(&attachments)
-                .width(self.swapchain_extent.width)
-                .height(self.swapchain_extent.height)
-                .layers(1);
-            let framebuffer = unsafe { self.device.create_framebuffer(&framebuffer_info, None) }
-                .map_err(RenderError::from)?;
-            framebuffers.push(framebuffer);
-        }
-        self.framebuffers = framebuffers;
+        // One framebuffer: the scene pass no longer targets the swapchain,
+        // it targets the persistent scene image that every frame copies in.
+        let attachments = if using_msaa {
+            // MSAA: [color_msaa, depth, resolve -> scene image]
+            vec![
+                self.color_image_view,
+                self.depth_image_view,
+                self.scene_image_view,
+            ]
+        } else {
+            // No MSAA: [scene image, depth]
+            vec![self.scene_image_view, self.depth_image_view]
+        };
+        let framebuffer_info = vk::FramebufferCreateInfo::default()
+            .render_pass(self.render_pass)
+            .attachments(&attachments)
+            .width(self.swapchain_extent.width)
+            .height(self.swapchain_extent.height)
+            .layers(1);
+        let framebuffer = unsafe { self.device.create_framebuffer(&framebuffer_info, None) }
+            .map_err(RenderError::from)?;
+        self.framebuffers = vec![framebuffer];
         Ok(())
     }
 
@@ -1141,36 +1214,134 @@ impl RendererCore {
             offset: vk::Offset2D { x: 0, y: 0 },
             extent: self.swapchain_extent,
         };
-        let render_pass_info = vk::RenderPassBeginInfo::default()
-            .render_pass(self.render_pass)
-            .framebuffer(self.framebuffers[image_index as usize])
-            .render_area(render_area)
-            .clear_values(&clear_values);
 
+        // The scene is redrawn only when something in it changed; UI-only
+        // frames (hover, panels, typing) reuse the cached scene image and
+        // pay a copy instead of a full 3D pass.
+        let fingerprint = scene_fingerprint(frame);
+        let scene_dirty = self.last_scene_fingerprint != Some(fingerprint);
+        self.scene_redrawn_last_frame = scene_dirty;
+        if scene_dirty {
+            let render_pass_info = vk::RenderPassBeginInfo::default()
+                .render_pass(self.render_pass)
+                .framebuffer(self.framebuffers[0])
+                .render_area(render_area)
+                .clear_values(&clear_values);
+
+            unsafe {
+                self.device.cmd_begin_render_pass(
+                    command_buffer,
+                    &render_pass_info,
+                    vk::SubpassContents::INLINE,
+                );
+            }
+
+            if let Some(mesh_renderer) = self.mesh_renderer.as_mut() {
+                self.last_draw_stats = mesh_renderer.draw(
+                    &mut self.mesh_cache,
+                    command_buffer,
+                    self.swapchain_extent,
+                    frame.viewport_rect.as_ref(),
+                    &frame.bodies,
+                    frame.view_proj,
+                    frame.camera_pos,
+                    &frame.lighting,
+                    frame.suppress_edges,
+                )?;
+            }
+
+            unsafe {
+                self.device.cmd_end_render_pass(command_buffer);
+            }
+            self.last_scene_fingerprint = Some(fingerprint);
+        }
+
+        // Copy the (possibly cached) scene under where the UI will draw.
+        let swapchain_image = self.swapchain_images[image_index as usize];
+        let color_range = vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        };
         unsafe {
-            self.device.cmd_begin_render_pass(
+            // Scene writes (this frame or an earlier one) become visible to
+            // the transfer read; the swapchain image becomes a copy target.
+            let scene_to_src = vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::COLOR_ATTACHMENT_WRITE)
+                .dst_access_mask(vk::AccessFlags::TRANSFER_READ)
+                .old_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .new_layout(vk::ImageLayout::TRANSFER_SRC_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(self.scene_image)
+                .subresource_range(color_range);
+            let swap_to_dst = vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::empty())
+                .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(swapchain_image)
+                .subresource_range(color_range);
+            self.device.cmd_pipeline_barrier(
                 command_buffer,
-                &render_pass_info,
-                vk::SubpassContents::INLINE,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT
+                    | vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[scene_to_src, swap_to_dst],
             );
-        }
 
-        if let Some(mesh_renderer) = self.mesh_renderer.as_mut() {
-            self.last_draw_stats = mesh_renderer.draw(
-                &mut self.mesh_cache,
+            let layers = vk::ImageSubresourceLayers {
+                aspect_mask: vk::ImageAspectFlags::COLOR,
+                mip_level: 0,
+                base_array_layer: 0,
+                layer_count: 1,
+            };
+            let region = vk::ImageCopy::default()
+                .src_subresource(layers)
+                .dst_subresource(layers)
+                .extent(vk::Extent3D {
+                    width: self.swapchain_extent.width,
+                    height: self.swapchain_extent.height,
+                    depth: 1,
+                });
+            self.device.cmd_copy_image(
                 command_buffer,
-                self.swapchain_extent,
-                frame.viewport_rect.as_ref(),
-                &frame.bodies,
-                frame.view_proj,
-                frame.camera_pos,
-                &frame.lighting,
-                frame.suppress_edges,
-            )?;
-        }
+                self.scene_image,
+                vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+                swapchain_image,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                &[region],
+            );
 
-        unsafe {
-            self.device.cmd_end_render_pass(command_buffer);
+            // Hand the swapchain image to the UI pass as a color attachment.
+            let swap_to_color = vk::ImageMemoryBarrier::default()
+                .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                .dst_access_mask(
+                    vk::AccessFlags::COLOR_ATTACHMENT_READ
+                        | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                )
+                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .src_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .dst_queue_family_index(vk::QUEUE_FAMILY_IGNORED)
+                .image(swapchain_image)
+                .subresource_range(color_range);
+            self.device.cmd_pipeline_barrier(
+                command_buffer,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                vk::DependencyFlags::empty(),
+                &[],
+                &[],
+                &[swap_to_color],
+            );
         }
 
         // Second render pass for UI (loads existing content, no MSAA)
@@ -1222,6 +1393,7 @@ impl RendererCore {
         self.cleanup_render_pass();
         self.cleanup_depth_resources();
         self.cleanup_color_resources();
+        self.cleanup_scene_target();
         self.cleanup_image_views();
         if self.swapchain != vk::SwapchainKHR::null() {
             unsafe {
@@ -1372,6 +1544,57 @@ impl Drop for RendererCore {
             "renderer torn down"
         );
     }
+}
+
+/// Everything that determines what the scene pass would draw. Two frames
+/// with equal fingerprints render identical scene images, so the second
+/// reuses the first. Completeness is the contract: anything the scene pass
+/// reads must be hashed here, or a change to it would show stale.
+fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let f32s = |h: &mut std::collections::hash_map::DefaultHasher, xs: &[f32]| {
+        for x in xs {
+            x.to_bits().hash(h);
+        }
+    };
+    for col in &frame.view_proj {
+        f32s(&mut h, col);
+    }
+    f32s(&mut h, &frame.camera_pos);
+    if let Some(r) = &frame.viewport_rect {
+        (r.x, r.y, r.width, r.height).hash(&mut h);
+    } else {
+        0u8.hash(&mut h);
+    }
+    frame.suppress_edges.hash(&mut h);
+    let l = &frame.lighting;
+    for light in [&l.main_light, &l.backlight, &l.fill_light] {
+        f32s(&mut h, &light.direction_intensity);
+        f32s(&mut h, &light.color_enabled);
+    }
+    f32s(&mut h, &l.ambient_color);
+    f32s(
+        &mut h,
+        &[
+            l.ambient_intensity,
+            l.specular_shininess,
+            l.specular_intensity,
+            l.edge_line_width,
+        ],
+    );
+    f32s(&mut h, &l.edge_line_color);
+    frame.bodies.len().hash(&mut h);
+    for body in &frame.bodies {
+        body.id.hash(&mut h);
+        body.revision.hash(&mut h);
+        // The mesh pointer catches overlays rebuilt without a revision bump.
+        (std::sync::Arc::as_ptr(&body.mesh) as usize).hash(&mut h);
+        f32s(&mut h, &body.color);
+        (body.highlight as u8).hash(&mut h);
+        body.is_wireframe.hash(&mut h);
+    }
+    h.finish()
 }
 
 fn create_instance(

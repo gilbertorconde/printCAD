@@ -28,6 +28,9 @@ pub struct UiFrameInputs<'a> {
     /// render loop is about to sleep (render on demand), so the display
     /// can say "idle" instead of freezing at the last busy number.
     pub fps: Option<f32>,
+    /// Scene redraws in the last second. Zero while the cached scene is
+    /// being reused under fresh UI frames.
+    pub scene_redraws_per_s: u32,
     pub gpu_name: Option<&'a str>,
     pub gpus: &'a [String],
     pub hovered_point: Option<[f32; 3]>,

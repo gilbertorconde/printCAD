@@ -106,6 +106,7 @@ impl UiLayer {
             registry,
             orientation_input,
             fps,
+            scene_redraws_per_s,
             gpu_name,
             gpus,
             hovered_point,
@@ -231,6 +232,7 @@ impl UiLayer {
             cancel_kernel_requested = layout::draw_bottom_panel(
                 ui,
                 fps,
+                scene_redraws_per_s,
                 hovered_point,
                 axis_system,
                 document.display_unit(),

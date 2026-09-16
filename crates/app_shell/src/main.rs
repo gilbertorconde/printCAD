@@ -196,6 +196,11 @@ struct PrintCadApp {
     /// Rolling per-phase frame cost, emitted once a second alongside the FPS
     /// counter (target `printcad.frame`): (ui ms, render ms, frames).
     frame_phase_accum: (f32, f32, u32),
+    /// Scene redraws in the current 1 s window and the last completed one.
+    /// The scene is cached between changes, so this diverges from fps: it
+    /// is what "the parts' fps" actually is.
+    scene_redraw_accum: u32,
+    scene_redraws_per_s: u32,
     /// Last frame's view-projection, to detect camera motion. While the
     /// camera moves the edge pass is skipped (see `FrameSubmission::
     /// suppress_edges`); the first still frame restores it.
@@ -323,6 +328,8 @@ impl PrintCadApp {
             bench_open_fired: false,
             bench_started: Instant::now(),
             frame_phase_accum: (0.0, 0.0, 0),
+            scene_redraw_accum: 0,
+            scene_redraws_per_s: 0,
             prev_view_proj: None,
             last_input_time: None,
             last_wake_reason: (false, false, false, false),

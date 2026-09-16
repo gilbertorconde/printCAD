@@ -599,6 +599,7 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
 pub fn draw_bottom_panel(
     ui: &mut egui::Ui,
     fps: Option<f32>,
+    scene_redraws_per_s: u32,
     hovered_point: Option<[f32; 3]>,
     axis_system: AxisSystem,
     display_unit: Unit,
@@ -615,6 +616,9 @@ pub fn draw_bottom_panel(
         ui.horizontal(|ui| {
             ui.label(server_label);
             ui.separator();
+            // Two numbers because they are two things: UI frames presented,
+            // and how often the 3D scene actually had to be re-rendered under
+            // them (cached otherwise).
             let fps_text = match fps {
                 Some(fps) if fps > 0.0 => format!("FPS: {fps:.1}"),
                 Some(_) => "FPS: …".to_string(),
@@ -623,6 +627,12 @@ pub fn draw_bottom_panel(
                 None => "FPS: idle".to_string(),
             };
             ui.label(fps_text);
+            ui.separator();
+            ui.label(if fps.is_none() || scene_redraws_per_s == 0 {
+                "scene: cached".to_string()
+            } else {
+                format!("scene: {scene_redraws_per_s}/s")
+            });
             ui.separator();
             let axes = [
                 ("H", axis_system.horizontal()),

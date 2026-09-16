@@ -158,7 +158,8 @@ impl PrintCadApp {
             let animating = self.camera.is_animating()
                 || self.frame_submission.suppress_edges
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
-                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some();
+                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
+                || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
             if !(self.redraw_needed
                 || input_active
                 || self.async_work_pending()
@@ -217,11 +218,14 @@ impl PrintCadApp {
                             culled = stats.bodies_culled,
                             tri_idx = stats.triangle_indices,
                             edge_idx = stats.edge_indices,
+                            scene_redraws = self.scene_redraw_accum,
                             wake = ?self.last_wake_reason,
                             "frame phases (1s avg)"
                         );
                     }
                     self.frame_phase_accum = (0.0, 0.0, 0);
+                    self.scene_redraws_per_s = self.scene_redraw_accum;
+                    self.scene_redraw_accum = 0;
                 }
             }
             dt
@@ -325,6 +329,7 @@ impl PrintCadApp {
                         registry: &mut self.registry,
                         orientation_input: Some(&orientation_input),
                         fps: (!self.fps_display_idle).then_some(self.current_fps),
+                        scene_redraws_per_s: self.scene_redraws_per_s,
                         gpu_name: self.gpu_name.as_deref(),
                         gpus: &self.available_gpus,
                         hovered_point: self.hovered_world_pos,
@@ -391,6 +396,9 @@ impl PrintCadApp {
             }
             self.frame_phase_accum.1 += render_started.elapsed().as_secs_f32() * 1000.0;
             self.frame_phase_accum.2 += 1;
+            if renderer.scene_redrawn_last_frame() {
+                self.scene_redraw_accum += 1;
+            }
 
             // Render on demand: another frame is scheduled only while
             // something is moving, pending, or animating. A short tail after
@@ -413,7 +421,8 @@ impl PrintCadApp {
             let animating = self.camera.is_animating()
                 || self.frame_submission.suppress_edges
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
-                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some();
+                || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
+                || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
             self.pending_ui_repaint = ui_repaint_delay;
             self.last_wake_reason = (
                 input_active,

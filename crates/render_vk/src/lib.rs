@@ -373,6 +373,14 @@ impl RenderBackend for VulkanRenderer {
 
 impl VulkanRenderer {
     /// Request a pick at the given screen coordinates (will be processed next frame)
+    /// Whether the last frame re-rendered the 3D scene or reused the cached
+    /// scene image under fresh UI.
+    pub fn scene_redrawn_last_frame(&self) -> bool {
+        self.core
+            .as_ref()
+            .is_some_and(|c| c.scene_redrawn_last_frame())
+    }
+
     /// What the mesh renderer actually submitted last frame.
     pub fn last_draw_stats(&self) -> DrawStats {
         self.core

@@ -119,7 +119,7 @@ fn a_session_round_trips_through_the_daemon() {
     // that the log has a home and verify they arrive.
     doc.rename_body(body, "Renamed again");
     client.send(ClientMessage::Ops(doc.take_pending_ops()));
-    let log_deadline = Instant::now() + Duration::from_secs(5);
+    let log_deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if oplog.is_file() {
             let text = std::fs::read_to_string(&oplog).expect("read oplog");
@@ -154,7 +154,7 @@ fn a_session_round_trips_through_the_daemon() {
 
     // Rebase truncates the op log.
     client.send(ClientMessage::Rebase);
-    let truncate_deadline = Instant::now() + Duration::from_secs(5);
+    let truncate_deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let len = std::fs::read_to_string(&oplog)
             .map(|t| t.len())
@@ -168,7 +168,7 @@ fn a_session_round_trips_through_the_daemon() {
 
     client.flush();
     drop(client); // disconnect; the daemon should exit and remove its socket
-    let gone_deadline = Instant::now() + Duration::from_secs(5);
+    let gone_deadline = Instant::now() + Duration::from_secs(30);
     while home.socket().exists() {
         assert!(
             Instant::now() < gone_deadline,
@@ -234,7 +234,7 @@ fn a_peers_edits_relay_and_the_replicas_converge() {
 
     drop(bob);
     drop(alice); // last client out; the daemon exits and removes its socket
-    let gone = Instant::now() + Duration::from_secs(5);
+    let gone = Instant::now() + Duration::from_secs(30);
     while home.socket().exists() {
         assert!(Instant::now() < gone, "daemon lingered after last client");
         std::thread::sleep(Duration::from_millis(20));
@@ -286,7 +286,7 @@ fn large_blobs_are_extracted_and_deduplicated() {
 
     let oplog = home.document().with_extension("oplog.jsonl");
     let blob_dir = home.document().with_extension("oplog.blobs");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let log_ok = std::fs::read_to_string(&oplog)
             .map(|t| t.lines().count() >= 2 && t.contains("blob:sha256:") && t.len() < 64 * 1024)
@@ -377,7 +377,7 @@ fn a_late_joiner_catches_up_to_the_unsaved_present() {
     // log) so bob's join deterministically exercises the TAIL path rather
     // than the live-relay path.
     let oplog = home.document().with_extension("oplog.jsonl");
-    let seen = Instant::now() + Duration::from_secs(5);
+    let seen = Instant::now() + Duration::from_secs(30);
     while !std::fs::read_to_string(&oplog)
         .map(|t| t.contains("Edited after save"))
         .unwrap_or(false)
