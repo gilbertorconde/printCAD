@@ -50,7 +50,10 @@ pub struct DocumentTree {
 struct TreeNode {
     id: TreeItemId,
     label: String,
-    badge: Option<String>,
+    /// What this item is, spelled out ("Instance of assembly Frame",
+    /// "Sketch feature"). Shown in the details line under the tree when the
+    /// item is selected — never inline, where it only crowds the names.
+    detail: Option<String>,
     tooltip: Option<String>,
     dirty: bool,
     visible: bool,
@@ -154,6 +157,25 @@ impl DocumentTree {
         }
     }
 
+    /// The spelled-out description of a tree item, for the details line.
+    pub fn detail_for(&self, id: TreeItemId) -> Option<String> {
+        fn find(nodes: &[TreeNode], id: TreeItemId) -> Option<&TreeNode> {
+            for node in nodes {
+                if node.id == id {
+                    return Some(node);
+                }
+                if let Some(found) = find(&node.children, id) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        if id == TreeItemId::DocumentRoot {
+            return Some("Document".to_string());
+        }
+        find(&self.nodes, id).and_then(|n| n.detail.clone())
+    }
+
     pub fn document_label(&self) -> &str {
         &self.document_label
     }
@@ -195,7 +217,7 @@ fn build_feature_node(
     TreeNode {
         id: TreeItemId::Feature(node.id),
         label: node.name.clone(),
-        badge: Some(format_workbench_tag(node.workbench_id.as_str())),
+        detail: Some(describe_workbench(node.workbench_id.as_str())),
         tooltip: Some(feature_tooltip(node, after_tip)),
         dirty: node.dirty,
         visible: node.visible,
@@ -214,7 +236,7 @@ fn build_body_node(body: &Body) -> TreeNode {
     TreeNode {
         id: TreeItemId::Body(body.id),
         label: body.name.clone(),
-        badge: None,
+        detail: Some("Body".to_string()),
         tooltip: None,
         dirty: false,
         visible: true,
@@ -229,8 +251,42 @@ fn build_body_node(body: &Body) -> TreeNode {
     }
 }
 
+fn kind_word(kind: kernel_api::ImportedNodeKind) -> &'static str {
+    match kind {
+        kernel_api::ImportedNodeKind::Assembly => "assembly",
+        kernel_api::ImportedNodeKind::Part => "part",
+        kernel_api::ImportedNodeKind::Instance => "instance",
+    }
+}
+
 fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
     let imported = document.imported_object(id)?;
+
+    // An instance whose only child is the product it instances is one thing
+    // to the user, not two: show a single row named for the instance, with
+    // the product's children hoisted under it. Selection and visibility keep
+    // the instance's identity — hiding an instance hides that placement.
+    if imported.kind == kernel_api::ImportedNodeKind::Instance && imported.children.len() == 1 {
+        if let Some(target) = document.imported_object(imported.children[0]) {
+            if target.kind != kernel_api::ImportedNodeKind::Instance {
+                let mut merged = build_imported_node(document, target.id)?;
+                merged.id = TreeItemId::ImportedObject(imported.id);
+                merged.imported_object_id = Some(imported.id);
+                merged.visible = imported.visible && target.visible;
+                let instance_name = imported.name.trim();
+                if !instance_name.is_empty() && instance_name != "Instance" {
+                    merged.label = imported.name.clone();
+                }
+                merged.detail = Some(format!(
+                    "Instance of {} {}",
+                    kind_word(target.kind),
+                    target.name
+                ));
+                return Some(merged);
+            }
+        }
+    }
+
     let mut children = Vec::new();
     for child_id in &imported.children {
         if let Some(child) = build_imported_node(document, *child_id) {
@@ -242,15 +298,18 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
     } else {
         imported.name.clone()
     };
-    let kind_badge = match imported.kind {
-        kernel_api::ImportedNodeKind::Assembly => Some("asm".to_string()),
-        kernel_api::ImportedNodeKind::Part => Some("part".to_string()),
-        kernel_api::ImportedNodeKind::Instance => Some("inst".to_string()),
+    let detail = match imported.kind {
+        kernel_api::ImportedNodeKind::Assembly => "Assembly".to_string(),
+        kernel_api::ImportedNodeKind::Part if imported.body_id.is_some() => {
+            "Part, linked to a body".to_string()
+        }
+        kernel_api::ImportedNodeKind::Part => "Part".to_string(),
+        kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),
     };
     Some(TreeNode {
         id: TreeItemId::ImportedObject(imported.id),
         label,
-        badge: kind_badge,
+        detail: Some(detail),
         tooltip: imported
             .body_id
             .map(|body| format!("Linked body: {}", body.0)),
@@ -267,8 +326,16 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
     })
 }
 
-fn format_workbench_tag(raw: &str) -> String {
-    raw.trim_start_matches("wb.").replace(['-', '_'], " ")
+fn describe_workbench(raw: &str) -> String {
+    match raw {
+        "wb.sketch" => "Sketch".to_string(),
+        "wb.part" => "Part design feature".to_string(),
+        "core.datum" => "Datum".to_string(),
+        other => format!(
+            "{} feature",
+            other.trim_start_matches("wb.").replace(['-', '_'], " ")
+        ),
+    }
 }
 
 pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, selected: Option<TreeItemId>) -> TreeUiResult {
@@ -434,9 +501,6 @@ fn compose_label(node: &TreeNode) -> RichText {
     if node.error.is_some() {
         pieces.push("⚠".to_string());
     }
-    if let Some(tag) = &node.badge {
-        pieces.push(format!("[{}]", tag));
-    }
     pieces.push(node.label.clone());
     if node.is_tip {
         pieces.push("◄ tip".into());
@@ -460,10 +524,7 @@ fn compose_label(node: &TreeNode) -> RichText {
 
 fn feature_tooltip(node: &FeatureNode, after_tip: bool) -> String {
     let mut parts = Vec::new();
-    parts.push(format!(
-        "Workbench: {}",
-        format_workbench_tag(node.workbench_id.as_str())
-    ));
+    parts.push(describe_workbench(node.workbench_id.as_str()));
     parts.push(format!("Visible: {}", node.visible));
     parts.push(format!("Suppressed: {}", node.suppressed));
     if node.dirty {
@@ -530,5 +591,132 @@ mod tests {
         assert!(ids.contains(&TreeItemId::ImportedObject(root)));
         assert!(ids.contains(&TreeItemId::ImportedObject(leaf)));
         assert!(!ids.contains(&TreeItemId::Body(body_id)));
+    }
+
+    fn node(
+        id: Uuid,
+        parent: Option<Uuid>,
+        children: Vec<Uuid>,
+        kind: kernel_api::ImportedNodeKind,
+        name: &str,
+    ) -> core_document::ImportedObjectNode {
+        core_document::ImportedObjectNode {
+            id,
+            parent_id: parent,
+            children,
+            kind,
+            name: name.into(),
+            visible: true,
+            body_id: None,
+            local_transform: None,
+        }
+    }
+
+    /// An instance whose only child is the assembly it instances shows as
+    /// ONE row — named for the instance, carrying the assembly's children,
+    /// keeping the instance's identity — and the row says what it is.
+    #[test]
+    fn an_instance_and_its_product_collapse_into_one_row() {
+        use kernel_api::ImportedNodeKind as K;
+        let mut doc = Document::new("tree");
+        let (root, inst, asm, leaf_a, leaf_b) = (
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+            Uuid::new_v4(),
+        );
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(root, node(root, None, vec![inst], K::Assembly, "Top"));
+        graph.insert(
+            inst,
+            node(inst, Some(root), vec![asm], K::Instance, "Frame:1"),
+        );
+        graph.insert(
+            asm,
+            node(asm, Some(inst), vec![leaf_a, leaf_b], K::Assembly, "Frame"),
+        );
+        graph.insert(
+            leaf_a,
+            node(leaf_a, Some(asm), vec![], K::Instance, "Vertical1:1"),
+        );
+        graph.insert(
+            leaf_b,
+            node(leaf_b, Some(asm), vec![], K::Instance, "Vertical2:1"),
+        );
+        doc.set_imported_object_graph(vec![root], graph);
+
+        let tree = DocumentTree::build(&doc);
+        let top = &tree.nodes()[0];
+        assert_eq!(top.children.len(), 1, "Top holds one merged row");
+        let row = &top.children[0];
+        assert_eq!(
+            row.id,
+            TreeItemId::ImportedObject(inst),
+            "row keeps the instance id"
+        );
+        assert_eq!(row.label, "Frame:1", "named for the instance");
+        assert_eq!(row.children.len(), 2, "the assembly's children are hoisted");
+        assert_eq!(
+            row.detail.as_deref(),
+            Some("Instance of assembly Frame"),
+            "the kind is spelled out for the details line"
+        );
+        let mut ids = Vec::new();
+        collect_ids(tree.nodes(), &mut ids);
+        assert!(
+            !ids.contains(&TreeItemId::ImportedObject(asm)),
+            "the assembly node no longer appears as its own row"
+        );
+        assert_eq!(
+            tree.detail_for(TreeItemId::ImportedObject(inst)).as_deref(),
+            Some("Instance of assembly Frame")
+        );
+    }
+
+    /// A generically named instance takes its product's name.
+    #[test]
+    fn a_generic_instance_borrows_its_products_name() {
+        use kernel_api::ImportedNodeKind as K;
+        let mut doc = Document::new("tree");
+        let (root, inst, part) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(root, node(root, None, vec![inst], K::Assembly, "Top"));
+        graph.insert(
+            inst,
+            node(inst, Some(root), vec![part], K::Instance, "Instance"),
+        );
+        graph.insert(
+            part,
+            node(part, Some(inst), vec![], K::Part, "Anet v1-body"),
+        );
+        doc.set_imported_object_graph(vec![root], graph);
+
+        let tree = DocumentTree::build(&doc);
+        let row = &tree.nodes()[0].children[0];
+        assert_eq!(row.label, "Anet v1-body");
+        assert_eq!(row.detail.as_deref(), Some("Instance of part Anet v1-body"));
+    }
+
+    /// Bracket tags are gone from labels: a label is just the name.
+    #[test]
+    fn labels_carry_no_kind_tags() {
+        let mut doc = Document::new("tree");
+        let root = Uuid::new_v4();
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            root,
+            node(
+                root,
+                None,
+                vec![],
+                kernel_api::ImportedNodeKind::Assembly,
+                "Asm",
+            ),
+        );
+        doc.set_imported_object_graph(vec![root], graph);
+        let tree = DocumentTree::build(&doc);
+        let text = compose_label(&tree.nodes()[0]).text().to_string();
+        assert_eq!(text, "Asm");
     }
 }

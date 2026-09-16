@@ -438,6 +438,7 @@ pub fn draw_left_panel(
         .default_size(260.0)
         .show_inside(ui, |ui| {
             ui.heading("Model");
+            let mut selected_detail: Option<String> = None;
             egui::ScrollArea::vertical().show(ui, |ui| {
                 let tree_model = feature_tree::DocumentTree::build(document);
                 let selected_id = active_tree_selection
@@ -448,7 +449,15 @@ pub fn draw_left_panel(
                 panel_result.tree_activation = tree_ui_result.activation;
                 panel_result.imported_visibility_change = tree_ui_result.imported_visibility_change;
                 panel_result.tree_feature_command = tree_ui_result.feature_command;
+                selected_detail = tree_model.detail_for(selected_id);
             });
+
+            // What the selected item is, spelled out — kept off the rows
+            // themselves so names stay readable at depth.
+            if let Some(detail) = selected_detail {
+                ui.add_space(2.0);
+                ui.weak(detail);
+            }
 
             ui.separator();
 
