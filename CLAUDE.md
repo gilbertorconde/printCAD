@@ -25,11 +25,12 @@ cargo fmt --all                   # CI enforces --check
 - No system CAD libraries needed — the ogeom kernel is pure Rust, pulled as a
   pinned git dependency (bump the rev in the workspace `Cargo.toml`; a
   commented `[patch]` there points at a local checkout for kernel dev).
-- 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate, which
-  lives in its own repo next to this one (`../sixdof`, consumed by path) and
-  needs no system library: it speaks the spacenavd socket protocol itself,
-  with the display-server (Magellan) protocol behind its `magellan` feature.
-  Nothing is required to build or run without a device.
+- 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate
+  (github.com/gilbertorconde/sixdof), pinned by rev in the workspace
+  `Cargo.toml` exactly as the kernel is, with a commented `[patch]` beside it
+  for local work. It needs no system library: it speaks the spacenavd socket
+  protocol itself, with the display-server (Magellan) protocol behind its
+  `magellan` feature. Nothing is required to build or run without a device.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
   `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an

@@ -54,7 +54,12 @@ zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
 ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec" }
+sixdof = { git = "https://github.com/gilbertorconde/sixdof", rev = "01bab7911f8d0440d40f9d4c8564975ac625d104", features = ["magellan"] }
 
 # Uncomment to develop against the local kernel checkout instead of the pin:
 #[patch."https://github.com/gilbertorconde/ogeom-rs"]
 #ogeom = { path = "../openGeometry/crates/ogeom" }
+
+# Uncomment to develop against the local 6-DoF client instead of the pin:
+#[patch."https://github.com/gilbertorconde/sixdof"]
+#sixdof = { path = "../sixdof" }
