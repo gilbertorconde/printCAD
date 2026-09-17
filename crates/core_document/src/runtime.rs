@@ -445,6 +445,9 @@ pub enum WorkbenchInputEvent {
     KeyPress { key: KeyCode },
     /// Key released.
     KeyRelease { key: KeyCode },
+    /// A tool was activated from the toolbar, a menu or the palette. Action
+    /// tools run on this, in the frame the click happened.
+    ToolActivated,
 }
 
 /// Mouse button identifier.

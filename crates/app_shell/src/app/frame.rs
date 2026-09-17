@@ -522,6 +522,8 @@ impl PrintCadApp {
 
         // Apply this frame's UI actions now that the renderer borrow is over.
         self.apply_ui_commands(commands, new_body_requested, event_loop);
+        // A tool clicked in the toolbar acts in the same frame.
+        self.dispatch_activated_tools();
 
         self.publish_presence();
 

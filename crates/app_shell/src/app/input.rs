@@ -278,6 +278,33 @@ impl PrintCadApp {
         result
     }
 
+    /// Hand every active Action tool to the workbench now. The toolbar only
+    /// sets the id; without this the tool would sit there highlighted until
+    /// some unrelated event reached the workbench.
+    pub(crate) fn dispatch_activated_tools(&mut self) {
+        let wb_id = self.active_workbench_id();
+        let pending: Vec<String> = self
+            .active_tool
+            .active_ids
+            .iter()
+            .filter(|id| self.tool_is_action(&wb_id, id))
+            .cloned()
+            .collect();
+        for tool_id in pending {
+            let result = self.call_workbench_input(
+                &wb_id,
+                &WorkbenchInputEvent::ToolActivated,
+                Some(&tool_id),
+            );
+            if result.consumed {
+                self.active_tool.active_ids.remove(&tool_id);
+            }
+            if result.redraw || result.consumed {
+                self.redraw_needed = true;
+            }
+        }
+    }
+
     fn tool_is_action(&self, wb_id: &WorkbenchId, tool_id: &str) -> bool {
         self.registry
             .tools_for(wb_id)

@@ -691,9 +691,9 @@ impl Workbench for PartDesignWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        // Feature tools are Actions: they fire once on the first input event
-        // after the toolbar click (the host clears consumed actions).
-        // `part.new_body` is handled host-side.
+        // Feature tools are Actions: the host hands them over the moment they
+        // are activated and clears them once handled. `part.new_body` is
+        // handled host-side.
         let base = active_tool.map(base_tool_id);
         match base {
             Some(tool @ ("part.datum_plane" | "part.datum_line" | "part.datum_point")) => {
