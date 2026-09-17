@@ -53,8 +53,8 @@ flate2 = "1.1.10"
 zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
-ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "58c6d4ec036db22a94dace59f4f2f4e79aeae6f6" }
+ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec" }
 
 # Uncomment to develop against the local kernel checkout instead of the pin:
-[patch."https://github.com/gilbertorconde/ogeom-rs"]
-ogeom = { path = "../openGeometry/crates/ogeom" }
+#[patch."https://github.com/gilbertorconde/ogeom-rs"]
+#ogeom = { path = "../openGeometry/crates/ogeom" }

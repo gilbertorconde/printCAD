@@ -1961,6 +1961,7 @@ dependencies = [
 [[package]]
 name = "ogeom"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -1981,6 +1982,7 @@ dependencies = [
 [[package]]
 name = "ogeom-algo"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -1995,6 +1997,7 @@ dependencies = [
 [[package]]
 name = "ogeom-bool"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
@@ -2011,6 +2014,7 @@ dependencies = [
 [[package]]
 name = "ogeom-core"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "robust",
  "smallvec",
@@ -2020,6 +2024,7 @@ dependencies = [
 [[package]]
 name = "ogeom-doc"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -2030,6 +2035,7 @@ dependencies = [
 [[package]]
 name = "ogeom-fillet"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2044,6 +2050,7 @@ dependencies = [
 [[package]]
 name = "ogeom-geom"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2053,6 +2060,7 @@ dependencies = [
 [[package]]
 name = "ogeom-heal"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "nalgebra",
  "ogeom-algo",
@@ -2066,6 +2074,7 @@ dependencies = [
 [[package]]
 name = "ogeom-hlr"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2080,6 +2089,7 @@ dependencies = [
 [[package]]
 name = "ogeom-intersect"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2090,6 +2100,7 @@ dependencies = [
 [[package]]
 name = "ogeom-io"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-algo",
  "ogeom-core",
@@ -2103,6 +2114,7 @@ dependencies = [
 [[package]]
 name = "ogeom-math"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2112,6 +2124,7 @@ dependencies = [
 [[package]]
 name = "ogeom-mesh"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -2123,6 +2136,7 @@ dependencies = [
 [[package]]
 name = "ogeom-offset"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2137,6 +2151,7 @@ dependencies = [
 [[package]]
 name = "ogeom-topo"
 version = "0.0.0"
+source = "git+https://github.com/gilbertorconde/ogeom-rs?rev=81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec#81d26c2f0b4e14b47670f6a35f0bdad86d4d40ec"
 dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
