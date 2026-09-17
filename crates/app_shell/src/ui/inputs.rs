@@ -85,5 +85,7 @@ pub struct UiFrameInputs<'a> {
     pub server_label: String,
     /// The navigation device the reader thread has, if any.
     pub nav_device: Option<String>,
+    /// How many buttons it has, so Preferences offers a row per button.
+    pub nav_buttons: u32,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
 }

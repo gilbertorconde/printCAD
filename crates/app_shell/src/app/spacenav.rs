@@ -76,6 +76,8 @@ struct Shared {
     buttons: Vec<ButtonEvent>,
     /// The connected device's name, for the status bar.
     device: Option<String>,
+    /// How many buttons it has, so Preferences can offer a row per button.
+    button_count: u32,
 }
 
 fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
@@ -125,6 +127,11 @@ impl SpaceNavWorker {
     /// The connected device's name, or `None` when there is none.
     pub fn device_name(&self) -> Option<String> {
         lock(&self.shared).device.clone()
+    }
+
+    /// How many buttons the connected device has; zero when there is none.
+    pub fn button_count(&self) -> u32 {
+        lock(&self.shared).button_count
     }
 }
 
@@ -210,6 +217,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
     if state.device.take().is_some() {
         app_log::info("Navigation device disconnected");
     }
+    state.button_count = 0;
     let was_moving = !state.motion.is_idle();
     state.motion = DeviceMotion::default();
     state.buttons.clear();
@@ -224,6 +232,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
 /// Records which device is connected, logging only when it changes. The
 /// display-server protocol never names one, so the route stands in for it.
 fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
+    let buttons = source.device().map_or(0, |device| device.buttons);
     let name = source.device().map_or_else(
         || match source.backend() {
             spacenav::Backend::Daemon => None,
@@ -232,6 +241,7 @@ fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
         |device| Some(device.name.clone()),
     );
     let mut state = lock(shared);
+    state.button_count = buttons;
     if state.device == name {
         return;
     }

@@ -9,12 +9,12 @@ use render_vk::{
     BodySubmission, GpuLight, HighlightState, LightingData, RenderBackend,
     ViewportRect as RenderViewportRect,
 };
-use settings::UserSettings;
+use settings::{ProjectionMode, SpaceNavButtonAction, UserSettings};
 use uuid::Uuid;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
 use crate::log_panel as app_log;
-use crate::orientation_cube::OrientationCubeInput;
+use crate::orientation_cube::{CameraSnapView, OrientationCubeInput};
 use crate::{Document, PrintCadApp, ui};
 
 /// Stable u64 fingerprint of a [`kernel_api::TriMesh`]'s geometry. Used as
@@ -111,6 +111,32 @@ pub(crate) fn lighting_data_from_settings(user: &UserSettings) -> LightingData {
     }
 }
 
+/// The command a button action asks for. Switching projection needs to know
+/// which one is in force, since it names the one to change to.
+fn device_button_command(
+    action: SpaceNavButtonAction,
+    projection: ProjectionMode,
+) -> Option<ui::UiCommand> {
+    let snap = |view| Some(ui::UiCommand::CameraSnap(view));
+    match action {
+        SpaceNavButtonAction::None => None,
+        SpaceNavButtonAction::FitView => Some(ui::UiCommand::FitView),
+        SpaceNavButtonAction::ViewIsometric => snap(CameraSnapView::FrontTopRight),
+        SpaceNavButtonAction::ViewFront => snap(CameraSnapView::Front),
+        SpaceNavButtonAction::ViewRear => snap(CameraSnapView::Rear),
+        SpaceNavButtonAction::ViewLeft => snap(CameraSnapView::Left),
+        SpaceNavButtonAction::ViewRight => snap(CameraSnapView::Right),
+        SpaceNavButtonAction::ViewTop => snap(CameraSnapView::Top),
+        SpaceNavButtonAction::ViewBottom => snap(CameraSnapView::Bottom),
+        SpaceNavButtonAction::ToggleProjection => {
+            Some(ui::UiCommand::SetProjection(match projection {
+                ProjectionMode::Perspective => ProjectionMode::Orthographic,
+                ProjectionMode::Orthographic => ProjectionMode::Perspective,
+            }))
+        }
+    }
+}
+
 impl PrintCadApp {
     /// Body of `about_to_wait`: pace the frame, drain worker channels,
     /// assemble the scene, run the UI, render, read back the pick, and
@@ -127,10 +153,12 @@ impl PrintCadApp {
             || !self.nav_device.motion().is_idle()
     }
 
-    /// Read the buttons the navigation device reported since the last frame.
+    /// What the navigation device's buttons ask for, as commands. The device
+    /// reports a press and a release; the press is the one that acts.
     /// Its motion is read in [`Self::build_scene_submission`], where the
     /// camera is.
-    fn drain_device_input(&mut self) {
+    fn device_button_commands(&mut self) -> Vec<ui::UiCommand> {
+        let mut commands = Vec::new();
         for button in self.nav_device.take_buttons() {
             tracing::debug!(
                 target: "printcad.input",
@@ -138,7 +166,23 @@ impl PrintCadApp {
                 pressed = button.pressed,
                 "navigation device button"
             );
+            if !button.pressed {
+                continue;
+            }
+            let action = self
+                .user_settings
+                .spacenav
+                .buttons
+                .get(button.index as usize)
+                .copied()
+                .unwrap_or_default();
+            if let Some(command) =
+                device_button_command(action, self.user_settings.camera.projection)
+            {
+                commands.push(command);
+            }
         }
+        commands
     }
 
     pub(crate) fn frame(&mut self, event_loop: &ActiveEventLoop) {
@@ -302,7 +346,6 @@ impl PrintCadApp {
         // the frame they actually became visible in. Has to happen before
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
-        self.drain_device_input();
         self.drain_server_messages();
         self.drive_part_recompute();
 
@@ -418,6 +461,7 @@ impl PrintCadApp {
                             (true, n) => format!("{} · {n} peers", self.server.name()),
                         },
                         nav_device: self.nav_device.device_name(),
+                        nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
                 );
@@ -537,6 +581,8 @@ impl PrintCadApp {
         }
 
         // Apply this frame's UI actions now that the renderer borrow is over.
+        let mut commands = commands;
+        commands.extend(self.device_button_commands());
         self.apply_ui_commands(commands, new_body_requested, event_loop);
         // A tool clicked in the toolbar acts in the same frame.
         self.dispatch_activated_tools();

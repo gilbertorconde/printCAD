@@ -122,7 +122,30 @@ pub struct PreferencesInputs<'a> {
     pub registry: &'a mut DocumentService,
     pub gpus: &'a [String],
     pub gpu_name: Option<&'a str>,
+    /// How many buttons the connected navigation device has, so the page
+    /// offers a row per button it actually owns. Zero when none is connected.
+    pub nav_buttons: u32,
 }
+
+/// One widget id per button row; a chooser needs its own.
+const NAV_BUTTON_IDS: [&str; 16] = [
+    "prefs_nav_button_1",
+    "prefs_nav_button_2",
+    "prefs_nav_button_3",
+    "prefs_nav_button_4",
+    "prefs_nav_button_5",
+    "prefs_nav_button_6",
+    "prefs_nav_button_7",
+    "prefs_nav_button_8",
+    "prefs_nav_button_9",
+    "prefs_nav_button_10",
+    "prefs_nav_button_11",
+    "prefs_nav_button_12",
+    "prefs_nav_button_13",
+    "prefs_nav_button_14",
+    "prefs_nav_button_15",
+    "prefs_nav_button_16",
+];
 
 /// The values to commit, when Apply or OK was pressed this frame.
 pub struct Commit {
@@ -640,6 +663,32 @@ fn display_page(
                 .map(|(inverted, label)| PrefRow::toggle(label, inverted))
                 .collect();
             pref_group(ui, "Reverse an axis", rows, filter);
+
+            // A device with no buttons still gets the two rows a common puck
+            // has, so the page is not empty before one is plugged in.
+            let count = (inputs.nav_buttons.max(2) as usize).min(NAV_BUTTON_IDS.len());
+            if device.buttons.len() < count {
+                device
+                    .buttons
+                    .resize(count, settings::SpaceNavButtonAction::None);
+            }
+            let actions: Vec<(settings::SpaceNavButtonAction, &str)> =
+                settings::SpaceNavButtonAction::ALL
+                    .iter()
+                    .map(|action| (*action, action.label()))
+                    .collect();
+            let button_labels: Vec<String> = (1..=count)
+                .map(|button| format!("Button {button}"))
+                .collect();
+            let rows = device
+                .buttons
+                .iter_mut()
+                .take(count)
+                .zip(&button_labels)
+                .zip(NAV_BUTTON_IDS)
+                .map(|((action, label), id)| PrefRow::select(label, id, action, &actions))
+                .collect();
+            pref_group(ui, "Buttons", rows, filter);
         }
         2 => {
             let camera = &mut draft.camera;

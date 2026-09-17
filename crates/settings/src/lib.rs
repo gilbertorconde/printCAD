@@ -93,6 +93,9 @@ pub struct SpaceNavSettings {
     /// Which of the six axes read backwards, in the order pan-x, pan-y,
     /// zoom, pitch, yaw, roll.
     pub invert: [bool; 6],
+    /// What each of the device's buttons does, by button number. Buttons
+    /// past the end of the list do nothing.
+    pub buttons: Vec<SpaceNavButtonAction>,
 }
 
 impl Default for SpaceNavSettings {
@@ -110,6 +113,64 @@ impl Default for SpaceNavSettings {
             zoom: true,
             dominant_axis: false,
             invert: [false; 6],
+            buttons: vec![
+                SpaceNavButtonAction::FitView,
+                SpaceNavButtonAction::ToggleProjection,
+            ],
+        }
+    }
+}
+
+/// What pressing a button on the device does.
+///
+/// These are the app's own actions. The daemon has button actions of its own
+/// — hold rotation or translation at zero, pass only the dominant axis — that
+/// act before anything reaches the app, and belong to it rather than here.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SpaceNavButtonAction {
+    #[default]
+    None,
+    /// Frame the whole model.
+    FitView,
+    ViewFront,
+    ViewRear,
+    ViewLeft,
+    ViewRight,
+    ViewTop,
+    ViewBottom,
+    /// The three-quarter view from the front, top and right.
+    ViewIsometric,
+    /// Switch between perspective and orthographic.
+    ToggleProjection,
+}
+
+impl SpaceNavButtonAction {
+    /// Every action, in the order a chooser should list them.
+    pub const ALL: [SpaceNavButtonAction; 10] = [
+        SpaceNavButtonAction::None,
+        SpaceNavButtonAction::FitView,
+        SpaceNavButtonAction::ViewIsometric,
+        SpaceNavButtonAction::ViewFront,
+        SpaceNavButtonAction::ViewRear,
+        SpaceNavButtonAction::ViewLeft,
+        SpaceNavButtonAction::ViewRight,
+        SpaceNavButtonAction::ViewTop,
+        SpaceNavButtonAction::ViewBottom,
+        SpaceNavButtonAction::ToggleProjection,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SpaceNavButtonAction::None => "Nothing",
+            SpaceNavButtonAction::FitView => "Fit the model",
+            SpaceNavButtonAction::ViewIsometric => "Isometric view",
+            SpaceNavButtonAction::ViewFront => "Front view",
+            SpaceNavButtonAction::ViewRear => "Rear view",
+            SpaceNavButtonAction::ViewLeft => "Left view",
+            SpaceNavButtonAction::ViewRight => "Right view",
+            SpaceNavButtonAction::ViewTop => "Top view",
+            SpaceNavButtonAction::ViewBottom => "Bottom view",
+            SpaceNavButtonAction::ToggleProjection => "Switch projection",
         }
     }
 }

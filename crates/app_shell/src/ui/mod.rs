@@ -192,6 +192,7 @@ impl UiLayer {
             kernel_progress,
             server_label,
             nav_device,
+            nav_buttons,
             document_saving,
             mut step_import_pending,
         } = inputs;
@@ -285,6 +286,7 @@ impl UiLayer {
                         registry,
                         gpus,
                         gpu_name,
+                        nav_buttons,
                     },
                 );
                 return;
@@ -433,6 +435,7 @@ impl UiLayer {
                     registry,
                     gpus,
                     gpu_name,
+                    nav_buttons,
                 },
             );
 
