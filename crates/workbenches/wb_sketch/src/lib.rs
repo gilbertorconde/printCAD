@@ -72,19 +72,20 @@ struct PendingCreation {
 struct BoxSelect {
     anchor: Vec2D,
     current: Vec2D,
-    /// Ctrl was held at press time: the box ADDS to the selection instead
-    /// of replacing it (and a below-threshold release keeps it).
-    additive: bool,
 }
 
-/// In-progress drag of a point in select mode.
+/// In-progress drag of sketch geometry in select mode.
 struct DragState {
-    point: Uuid,
-    original: Vec2D,
+    /// Every point the drag moves, with its position at press time.
+    points: Vec<(Uuid, Vec2D)>,
+    /// Cursor position (sketch coords) at press time.
+    grab: Vec2D,
+    /// The element the press landed on.
+    hit: Uuid,
+    /// It was already selected when the press landed: the drag carries the
+    /// whole selection, and a release without movement drops it again.
+    was_selected: bool,
     moved: bool,
-    /// Ctrl was held at press time: a release-without-move toggles the
-    /// point in the selection instead of replacing it.
-    additive: bool,
 }
 
 /// In-progress drag of a dimension label (select mode).
@@ -128,6 +129,8 @@ pub struct SketchWorkbench {
     dragging: Option<DragState>,
     /// Box selection in progress (select mode).
     box_select: Option<BoxSelect>,
+    /// Viewport position of a right press the camera is free to pan with.
+    right_press: Option<(f32, f32)>,
     /// In-progress drawing-tool state.
     tool_state: ToolState,
     /// Selected geometry ids (select mode; click toggles).
@@ -239,6 +242,17 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
     ("sketch.mirror", "Symmetry", "symmetry-geometry"),
 ];
 
+/// The points a drag of `id` moves: the point itself, or every point the
+/// curve is pinned to. Moving them all translates the element, and
+/// anything sharing those points comes with it.
+fn drag_point_ids(sketch: &Sketch, id: Uuid) -> Vec<Uuid> {
+    match sketch.get_geometry(id) {
+        Some(sketch::GeometryElement::Point(p)) => vec![p.id],
+        Some(other) => Sketch::curve_point_ids(other),
+        None => Vec::new(),
+    }
+}
+
 /// The icon of a canonical tool id, for the viewport hint.
 fn tool_icon(tool: &str) -> &'static str {
     match tool {
@@ -322,18 +336,38 @@ impl SketchWorkbench {
         }
     }
 
-    /// Click-selection semantics: a plain click replaces the selection with
-    /// just `id`; ctrl+click (`additive`) toggles `id` in/out of it.
-    fn select_click(&mut self, id: Uuid, additive: bool) {
-        if additive {
-            if !self.selected.remove(&id) {
-                self.selected.insert(id);
-            }
-        } else {
-            self.selected.clear();
-            self.selected_constraints.clear();
+    /// Press on `id`: it joins the selection when it is new, and a drag is
+    /// armed — of the whole selection when the press landed inside it, of
+    /// this element alone otherwise. Selection inside a sketch accumulates,
+    /// so no modifier is needed; clicking empty space clears it.
+    fn begin_drag(&mut self, sketch: &Sketch, id: Uuid, cursor: Vec2D) {
+        let was_selected = self.selected.contains(&id);
+        if !was_selected {
             self.selected.insert(id);
         }
+        let moving: Vec<Uuid> = if was_selected {
+            self.selected.iter().copied().collect()
+        } else {
+            vec![id]
+        };
+        let mut points: Vec<(Uuid, Vec2D)> = Vec::new();
+        for element in moving {
+            for pid in drag_point_ids(sketch, element) {
+                if points.iter().any(|(seen, _)| *seen == pid) {
+                    continue;
+                }
+                if let Some(pos) = sketch.point_position(pid) {
+                    points.push((pid, pos));
+                }
+            }
+        }
+        self.dragging = Some(DragState {
+            points,
+            grab: cursor,
+            hit: id,
+            was_selected,
+            moved: false,
+        });
     }
 
     fn clear_interaction_state(&mut self) {
@@ -344,6 +378,7 @@ impl SketchWorkbench {
         self.cursor = None;
         self.dragging = None;
         self.box_select = None;
+        self.right_press = None;
         self.last_diagnosis = None;
         self.pending_focus = None;
         self.selected_constraints.clear();
@@ -565,42 +600,34 @@ impl SketchWorkbench {
         };
         let tol = Self::snap_tolerance(ctx, &plane);
         self.cursor = Some(cursor);
+        // A new press ends whatever the last one armed.
+        self.dragging = None;
+        self.box_select = None;
 
         match tool {
             Some(t) if t != "sketch.select" => self.apply_tool_click(ctx, t, cursor, false),
             _ => {
                 // Select mode. Constraint glyphs sit on top of geometry, so
-                // they win the hit-test. Pressing on a point begins a drag
-                // (the release decides between "click to select" and "drag
-                // finished"); curves select immediately. A plain click
-                // REPLACES the selection, ctrl+click toggles the element
-                // in/out of it (multi-select). Empty space starts a box
-                // selection (resolved on release).
+                // they win the hit-test. Pressing on geometry selects it and
+                // arms a drag: moving carries the element (and everything
+                // sharing its points) to the cursor, releasing in place
+                // leaves it selected. Empty space starts a box selection
+                // (resolved on release).
                 if let Some(hit) = self.glyph_hit(ctx, &feature, viewport_pos) {
                     return self.handle_glyph_press(ctx, &feature, hit, cursor);
                 }
                 match snap::hit_test(&feature.sketch, cursor, tol) {
-                    Some(id) if feature.sketch.point_position(id).is_some() => {
-                        self.dragging = Some(DragState {
-                            point: id,
-                            original: feature.sketch.point_position(id).unwrap(),
-                            moved: false,
-                            additive: ctx.ctrl_down,
-                        });
-                        InputResult::consumed()
-                    }
                     Some(id) => {
-                        self.select_click(id, ctx.ctrl_down);
+                        self.begin_drag(&feature.sketch, id, cursor);
                         InputResult::consumed()
                     }
                     None => {
                         // Empty space: begin a box selection. The release
-                        // decides between a real box and a plain click
-                        // (which clears the selection unless ctrl is held).
+                        // decides between a real box (which adds what it
+                        // covers) and a plain click (which clears).
                         self.box_select = Some(BoxSelect {
                             anchor: cursor,
                             current: cursor,
-                            additive: ctx.ctrl_down,
                         });
                         InputResult::consumed()
                     }
@@ -666,13 +693,9 @@ impl SketchWorkbench {
             return InputResult::consumed();
         }
 
-        if ctx.ctrl_down {
-            if !self.selected_constraints.remove(&hit.constraint) {
-                self.selected_constraints.insert(hit.constraint);
-            }
-        } else {
-            self.selected.clear();
-            self.selected_constraints.clear();
+        // Selection accumulates: a second click on the same glyph takes it
+        // back out, and empty space clears everything.
+        if !self.selected_constraints.remove(&hit.constraint) {
             self.selected_constraints.insert(hit.constraint);
         }
         if hit.dimensional {
@@ -713,21 +736,30 @@ impl SketchWorkbench {
             }
             return InputResult::consumed();
         }
-        // Constraint-aware point drag: move the point to the cursor and let
-        // the solver re-project it onto whatever its constraints allow.
-        // Consumed so the camera doesn't orbit underneath the drag.
+        // Constraint-aware drag: carry every point of the grabbed geometry
+        // by the cursor delta and let the solver settle the rest — whatever
+        // shares those points comes along, and the dimensions that are not
+        // driving adjust. Consumed so the camera doesn't orbit underneath.
         if let Some(drag) = self.dragging.as_mut() {
-            if let Some(cursor) = self.cursor {
-                let point = drag.point;
-                drag.moved = true;
-                if let Some(sketch::GeometryElement::Point(p)) =
-                    feature.sketch.get_geometry_mut(point)
-                {
-                    p.position = cursor;
-                }
-                self.solve(ctx, &mut feature);
-                self.store_sketch(ctx, feature);
+            let Some(cursor) = self.cursor else {
+                return InputResult::consumed();
+            };
+            let delta = cursor - drag.grab;
+            // A dead zone the size of the snap tolerance: a click that
+            // trembles selects instead of nudging the geometry.
+            if !drag.moved && delta.to_glam().length() <= Self::snap_tolerance(ctx, &plane) {
+                return InputResult::consumed();
             }
+            drag.moved = true;
+            let points = drag.points.clone();
+            for (id, original) in points {
+                if let Some(sketch::GeometryElement::Point(p)) = feature.sketch.get_geometry_mut(id)
+                {
+                    p.position = original + delta;
+                }
+            }
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
             return InputResult::consumed();
         }
         // Box selection in progress: track the moving corner. Consumed so
@@ -758,10 +790,11 @@ impl SketchWorkbench {
             return self.finish_box_select(ctx, bs);
         }
         if let Some(drag) = self.dragging.take() {
-            if !drag.moved {
-                // A press+release without movement is a click: select the
-                // point (replace, or toggle when ctrl was held at press).
-                self.select_click(drag.point, drag.additive);
+            // A press+release without movement is a click. The press put a
+            // new element in the selection already, so only one that was
+            // there before comes back out.
+            if !drag.moved && drag.was_selected {
+                self.selected.remove(&drag.hit);
             }
             return InputResult::consumed();
         }
@@ -781,19 +814,15 @@ impl SketchWorkbench {
             return InputResult::consumed();
         };
         let tol = Self::snap_tolerance(ctx, &feature.plane);
+        // A press and release in the same spot is a click on empty space:
+        // the one gesture that clears the selection.
         if (bs.current - bs.anchor).to_glam().length() <= tol {
-            if !bs.additive {
-                self.selected.clear();
-                self.selected_constraints.clear();
-            }
+            self.selected.clear();
+            self.selected_constraints.clear();
             return InputResult::consumed();
         }
         let min = Vec2D::new(bs.anchor.x.min(bs.current.x), bs.anchor.y.min(bs.current.y));
         let max = Vec2D::new(bs.anchor.x.max(bs.current.x), bs.anchor.y.max(bs.current.y));
-        if !bs.additive {
-            self.selected.clear();
-            self.selected_constraints.clear();
-        }
         for geom in &feature.sketch.geometry {
             if element_fully_inside(&feature.sketch, geom, min, max) {
                 self.selected.insert(geom.id());
@@ -884,6 +913,26 @@ impl SketchWorkbench {
         }
     }
 
+    /// A right click that stayed put (a pan moves the camera instead) with
+    /// no gesture in flight hands the pointer back to the Select tool.
+    fn handle_right_release(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        viewport_pos: (f32, f32),
+    ) -> InputResult {
+        /// How far the pointer may travel and still count as a click.
+        const CLICK_SLOP_PX: f32 = 4.0;
+        let Some(press) = self.right_press.take() else {
+            return InputResult::ignored();
+        };
+        let travelled = (viewport_pos.0 - press.0).hypot(viewport_pos.1 - press.1);
+        if travelled <= CLICK_SLOP_PX && self.tool_state.is_idle() {
+            ctx.active_tool_request = Some("sketch.select".to_string());
+        }
+        // Never consumed: the camera still has a pan to finish.
+        InputResult::ignored()
+    }
+
     /// Panel-editable tool parameters (also used by integration tests to
     /// set copy counts, offset distances, …).
     pub fn tool_params_mut(&mut self) -> &mut ToolParams {
@@ -913,14 +962,16 @@ impl SketchWorkbench {
             return InputResult::consumed();
         }
         if let Some(drag) = self.dragging.take() {
-            // Restore the pre-drag position.
+            // Put every dragged point back where the press found it.
             if drag.moved
                 && let Some(mut feature) = self.get_active_sketch(ctx)
             {
-                if let Some(sketch::GeometryElement::Point(p)) =
-                    feature.sketch.get_geometry_mut(drag.point)
-                {
-                    p.position = drag.original;
+                for (id, original) in drag.points {
+                    if let Some(sketch::GeometryElement::Point(p)) =
+                        feature.sketch.get_geometry_mut(id)
+                    {
+                        p.position = original;
+                    }
                 }
                 self.solve(ctx, &mut feature);
                 self.store_sketch(ctx, feature);
@@ -1573,8 +1624,21 @@ impl Workbench for SketchWorkbench {
             } => self.handle_left_click(ctx, tool, *viewport_pos),
             WorkbenchInputEvent::MousePress {
                 button: core_document::MouseButton::Right,
-                ..
-            } => self.handle_finish_gesture(ctx),
+                viewport_pos,
+            } => {
+                // A gesture in flight ends here. Otherwise the press is the
+                // camera's (right-drag pans) and the release tells a click
+                // from a pan.
+                let result = self.handle_finish_gesture(ctx);
+                if !result.consumed {
+                    self.right_press = Some(*viewport_pos);
+                }
+                result
+            }
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Right,
+                viewport_pos,
+            } => self.handle_right_release(ctx, *viewport_pos),
             WorkbenchInputEvent::MouseRelease {
                 button: core_document::MouseButton::Left,
                 ..

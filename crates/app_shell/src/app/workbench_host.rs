@@ -38,6 +38,8 @@ pub(crate) struct WbHookOutcome {
     pub camera_orient_request: Option<CameraOrientRequest>,
     pub active_document_object: Option<FeatureId>,
     pub workbench_switch_request: Option<WorkbenchId>,
+    /// The workbench asked for a different active tool.
+    pub active_tool_request: Option<String>,
     pub start_sketch_on_body: Option<core_document::SketchAttachRequest>,
     /// Carried for parity with the context; no call site handles it yet
     /// (the pre-existing "finish sketch" flow was never wired up).
@@ -132,6 +134,7 @@ impl PrintCadApp {
             camera_orient_request: ctx.camera_orient_request.take(),
             active_document_object: ctx.active_document_object,
             workbench_switch_request: ctx.workbench_switch_request.take(),
+            active_tool_request: ctx.active_tool_request.take(),
             start_sketch_on_body: ctx.start_sketch_on_body,
             finish_sketch_requested: ctx.finish_sketch_requested,
         };
@@ -148,6 +151,10 @@ impl PrintCadApp {
         // The context was seeded with the pending request; a consuming
         // workbench takes it (None comes back), a requesting one sets it.
         self.pending_sketch_creation = outcome.start_sketch_on_body;
+        if let Some(tool) = outcome.active_tool_request {
+            self.active_tool.active_ids.clear();
+            self.active_tool.active_ids.insert(tool);
+        }
         if let Some(target) = outcome.workbench_switch_request {
             self.switch_workbench_for_flow(target);
         }

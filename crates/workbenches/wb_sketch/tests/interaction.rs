@@ -49,6 +49,8 @@ struct Harness {
     wb: SketchWorkbench,
     active_object: Option<FeatureId>,
     vp: [[f32; 4]; 4],
+    /// The tool the workbench last asked the host to make active.
+    tool_request: Option<String>,
 }
 
 impl Harness {
@@ -58,6 +60,7 @@ impl Harness {
             wb: SketchWorkbench::default(),
             active_object: None,
             vp: view_proj(),
+            tool_request: None,
         }
     }
 
@@ -75,6 +78,7 @@ impl Harness {
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         self.wb.on_input(&event, tool, &mut ctx);
         self.active_object = ctx.active_document_object;
+        self.tool_request = ctx.active_tool_request.take();
     }
 
     /// Viewport pixel coordinates for a sketch-plane point (the inverse of
@@ -236,12 +240,54 @@ impl Harness {
         );
     }
 
+    fn drag(&mut self, from: (f32, f32), to: (f32, f32)) {
+        self.click(from.0, from.1, "sketch.select");
+        self.mouse_move(to.0, to.1, "sketch.select");
+        self.release(to.0, to.1, "sketch.select");
+    }
+
+    fn point_at(&self, x: f32, y: f32) -> bool {
+        self.sketch().geometry.iter().any(|g| match g {
+            GeometryElement::Point(p) => {
+                (p.position.x - x).abs() < 0.05 && (p.position.y - y).abs() < 0.05
+            }
+            _ => false,
+        })
+    }
+
     fn right_click(&mut self, x: f32, y: f32, tool: &str) {
         let viewport_pos = self.px_of(x, y);
         self.event(
             WorkbenchInputEvent::MousePress {
                 button: MouseButton::Right,
                 viewport_pos,
+            },
+            Some(tool),
+        );
+        self.event(
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Right,
+                viewport_pos,
+            },
+            Some(tool),
+        );
+    }
+
+    /// Right press, move, release: the camera's pan gesture.
+    fn right_drag(&mut self, from: (f32, f32), to: (f32, f32), tool: &str) {
+        let start = self.px_of(from.0, from.1);
+        let end = self.px_of(to.0, to.1);
+        self.event(
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Right,
+                viewport_pos: start,
+            },
+            Some(tool),
+        );
+        self.event(
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Right,
+                viewport_pos: end,
             },
             Some(tool),
         );
@@ -295,7 +341,7 @@ fn cross_workbench_sketch_request_is_consumed() {
 }
 
 #[test]
-fn dragging_a_point_moves_it_and_click_still_selects() {
+fn dragging_a_point_moves_it_and_leaves_it_selected() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
@@ -317,13 +363,13 @@ fn dragging_a_point_moves_it_and_click_still_selects() {
         .any(|p| (p.x - 14.0).abs() < 0.05 && (p.y - 9.0).abs() < 0.05);
     assert!(moved, "endpoint followed the drag");
 
-    // Press+release without movement is still a click (selects the point,
-    // so Delete cascades the line away).
+    // The dragged point stays selected, and a press+release without
+    // movement adds the other endpoint: Delete takes the whole line.
     h.click(0.0, 0.0, "sketch.select");
     h.release(0.0, 0.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (1, 0), "clicked point deleted with its line");
+    assert_eq!((p, l), (0, 0), "both endpoints deleted with their line");
 }
 
 #[test]
@@ -447,7 +493,7 @@ fn circle_and_arc_tools_work_end_to_end() {
 }
 
 #[test]
-fn select_and_delete_line_keeps_shared_points() {
+fn deleting_a_line_takes_the_points_nothing_else_uses() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
@@ -456,7 +502,7 @@ fn select_and_delete_line_keeps_shared_points() {
     h.click(5.0, 3.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 0), "line removed, endpoints kept");
+    assert_eq!((p, l), (0, 0), "line removed with its endpoints");
 }
 
 #[test]
@@ -471,7 +517,11 @@ fn deleting_a_point_cascades_to_its_line() {
     h.release(10.0, 7.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (1, 0), "line cascaded away with its endpoint");
+    assert_eq!(
+        (p, l),
+        (0, 0),
+        "the line cascaded away, and its now-unused endpoints with it"
+    );
 }
 
 #[test]
@@ -880,62 +930,66 @@ fn two_lines(h: &mut Harness) {
 }
 
 #[test]
-fn plain_click_replaces_selection() {
+fn clicking_a_second_element_adds_it_to_the_selection() {
     let mut h = Harness::new();
     two_lines(&mut h);
-    // Click L1, then L2: the second plain click replaces the first, so
-    // Delete only removes L2.
+    // Click L1, then L2: selection inside a sketch accumulates with no
+    // modifier, so Delete removes both.
     h.click(5.0, 3.5, "sketch.select");
     h.click(5.0, 23.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 1), "only the last-clicked line deleted");
+    assert_eq!((p, l), (0, 0), "both lines deleted with their endpoints");
 }
 
 #[test]
-fn ctrl_click_accumulates_selection() {
+fn ctrl_click_still_accumulates() {
     let mut h = Harness::new();
     two_lines(&mut h);
     h.click(5.0, 3.5, "sketch.select");
     h.click_ctrl(5.0, 23.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 0), "both lines deleted, endpoints kept");
+    assert_eq!((p, l), (0, 0), "both lines deleted with their endpoints");
 }
 
 #[test]
-fn ctrl_click_toggles_element_out_of_selection() {
+fn clicking_a_selected_element_again_drops_it() {
     let mut h = Harness::new();
     two_lines(&mut h);
     h.click(5.0, 3.5, "sketch.select");
-    h.click_ctrl(5.0, 23.5, "sketch.select");
-    // Ctrl-click L1 again: it leaves the selection, L2 stays.
-    h.click_ctrl(5.0, 3.5, "sketch.select");
+    h.click(5.0, 23.5, "sketch.select");
+    // Click L1 again and release in place: it leaves the selection (the
+    // press keeps it so a drag can carry it), L2 stays.
+    h.click(5.0, 3.5, "sketch.select");
+    h.release(5.0, 3.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 1), "only L2 was still selected");
+    assert_eq!((p, l), (2, 1), "only L2 was still selected");
 }
 
 #[test]
-fn plain_empty_click_clears_selection_but_ctrl_empty_click_keeps_it() {
+fn an_empty_click_clears_the_selection() {
     let mut h = Harness::new();
     two_lines(&mut h);
 
-    // Ctrl+click empty space: selection untouched.
+    // A click on empty space is the gesture that clears, with or without
+    // the modifier: Delete afterwards is a no-op.
     h.click(5.0, 3.5, "sketch.select");
     h.click_ctrl(50.0, 3.5, "sketch.select");
     h.release_ctrl(50.0, 3.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 1), "ctrl empty click kept L1 selected");
+    assert_eq!(h.counts(), (4, 2, 0, 0), "ctrl empty click cleared it too");
 
-    // Plain click on empty space: selection cleared, Delete is a no-op.
     h.click(5.0, 23.5, "sketch.select");
     h.click(50.0, 3.5, "sketch.select");
     h.release(50.0, 3.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 1), "plain empty click cleared the selection");
+    assert_eq!(
+        h.counts(),
+        (4, 2, 0, 0),
+        "empty click cleared the selection"
+    );
 }
 
 #[test]
@@ -954,21 +1008,17 @@ fn ctrl_click_accumulates_points_via_release() {
 }
 
 #[test]
-fn plain_click_on_point_replaces_selection() {
+fn clicking_a_curve_then_a_point_selects_both() {
     let mut h = Harness::new();
     two_lines(&mut h);
-    // Select L1 (curve), then plain-click an L2 endpoint: replaces, so
-    // Delete only cascades L2.
+    // Select L1 (curve), then click an L2 endpoint: both are selected, so
+    // Delete takes L1 and cascades L2 from its endpoint.
     h.click(5.0, 3.5, "sketch.select");
     h.click(0.0, 20.0, "sketch.select");
     h.release(0.0, 20.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!(
-        (p, l),
-        (3, 1),
-        "L2 cascaded away with its endpoint, L1 kept"
-    );
+    assert_eq!((p, l), (0, 0), "both lines gone, with every endpoint");
 }
 
 /// `two_lines` plus a third line off to the right: L3 (20,0)→(28,7).
@@ -1004,30 +1054,23 @@ fn box_selection_excludes_partially_covered_elements() {
     h.release(12.0, 23.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    // L1 + endpoints gone; L2 cascaded with its (0,20) endpoint; L3 intact.
-    assert_eq!(
-        (p, l),
-        (3, 1),
-        "straddling line only cascades via its endpoint"
-    );
+    // L1 + endpoints gone; L2 cascaded via its (0,20) endpoint, taking the
+    // other one with it; L3 intact.
+    assert_eq!((p, l), (2, 1), "straddling line cascades via its endpoint");
 }
 
 #[test]
-fn ctrl_box_adds_to_existing_selection() {
+fn a_box_adds_to_the_existing_selection() {
     let mut h = Harness::new();
     three_lines(&mut h);
-    // Select L3, then ctrl-box around L1+L2: everything is selected.
+    // Select L3, then box around L1+L2: everything is selected.
     h.click(24.0, 3.5, "sketch.select");
-    h.click_ctrl(-2.0, -2.0, "sketch.select");
+    h.click(-2.0, -2.0, "sketch.select");
     h.mouse_move(12.0, 28.5, "sketch.select");
     h.release(12.0, 28.5, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!(
-        (p, l),
-        (2, 0),
-        "L1+L2 cascaded, L3 deleted; L3 endpoints kept"
-    );
+    assert_eq!((p, l), (0, 0), "every line and its endpoints deleted");
 }
 
 #[test]
@@ -1061,8 +1104,8 @@ fn escape_cancels_box_selection_and_keeps_prior_selection() {
     let (p, l, _, _) = h.counts();
     assert_eq!(
         (p, l),
-        (4, 1),
-        "box cancelled: only pre-selected L1 deleted"
+        (2, 1),
+        "box cancelled: only pre-selected L1 deleted, with its endpoints"
     );
 }
 
@@ -1870,7 +1913,7 @@ fn geometry_delete_still_works_when_no_constraint_selected() {
     h.click(3.0, 0.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 0), "line deleted");
+    assert_eq!((p, l), (0, 0), "line deleted with its endpoints");
     assert!(
         h.sketch().constraints.is_empty(),
         "constraint cascaded away"
@@ -1988,7 +2031,7 @@ fn dim_edit_cancel_leaves_constraint_untouched() {
 }
 
 #[test]
-fn ctrl_glyph_click_keeps_geometry_selection() {
+fn glyph_click_keeps_geometry_selection() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.line");
@@ -2021,7 +2064,7 @@ fn ctrl_glyph_click_keeps_geometry_selection() {
     assert_eq!((p, l), (2, 1), "geometry kept for the next Delete");
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 0), "geometry Delete still works afterwards");
+    assert_eq!((p, l), (0, 0), "geometry Delete still works afterwards");
 }
 
 #[test]
@@ -2099,4 +2142,81 @@ fn live_readouts_follow_the_cursor_while_drawing() {
         length.locked && length.value == "7",
         "typed buffer shown: {length:?}"
     );
+}
+
+#[test]
+fn dragging_a_line_carries_both_ends_and_the_line_attached_to_it() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // A chain: L1 (0,0)→(10,0), L2 (10,0)→(10,10). They share the corner
+    // point, so moving L1 has to bring L2's start with it.
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.click(10.0, 10.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    // Grab L1 mid-span and move it 4 up.
+    h.drag((5.0, 0.0), (5.0, 4.0));
+
+    assert!(h.point_at(0.0, 4.0), "the free end followed the drag");
+    assert!(h.point_at(10.0, 4.0), "the shared corner followed too");
+    assert!(
+        h.point_at(10.0, 10.0),
+        "the far end of the attached line stayed put, so it stretched"
+    );
+}
+
+#[test]
+fn dragging_inside_a_selection_moves_every_selected_element() {
+    let mut h = Harness::new();
+    two_lines(&mut h);
+    // Select both lines, then drag from a point of one of them.
+    h.click(5.0, 3.5, "sketch.select");
+    h.click(5.0, 23.5, "sketch.select");
+    h.drag((5.0, 3.5), (5.0, 8.5));
+
+    assert!(h.point_at(0.0, 5.0), "L1 moved by the drag delta");
+    assert!(h.point_at(0.0, 25.0), "L2 came along with the selection");
+}
+
+#[test]
+fn a_drag_below_the_snap_tolerance_leaves_the_geometry_alone() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    h.drag((5.0, 0.0), (5.05, 0.05));
+    assert!(
+        h.point_at(0.0, 0.0) && h.point_at(10.0, 0.0),
+        "nothing moved"
+    );
+}
+
+#[test]
+fn right_click_on_an_idle_tool_asks_for_the_select_tool() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    // Mid-chain the right click ends the chain and keeps the tool.
+    h.right_click(10.0, 0.0, "sketch.line");
+    assert_eq!(h.tool_request, None, "the chain ended, the tool stayed");
+
+    // With nothing in flight it hands the pointer back to Select.
+    h.right_click(20.0, 20.0, "sketch.line");
+    assert_eq!(h.tool_request.as_deref(), Some("sketch.select"));
+}
+
+#[test]
+fn a_right_drag_pans_instead_of_changing_the_tool() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    h.right_drag((20.0, 20.0), (30.0, 26.0), "sketch.line");
+    assert_eq!(h.tool_request, None, "the pan left the tool alone");
 }

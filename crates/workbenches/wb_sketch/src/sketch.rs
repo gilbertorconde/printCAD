@@ -143,7 +143,9 @@ impl Sketch {
 
     /// Remove elements by id with cascade semantics:
     /// - removing a point also removes every curve that references it;
-    /// - removing a curve leaves its points in place (they may be shared);
+    /// - removing a curve takes the points it defined, unless a remaining
+    ///   curve shares them (a standalone point is never touched: nothing
+    ///   referenced it in the first place);
     /// - constraints referencing any removed element are dropped.
     ///
     /// Returns the ids of every element actually removed.
@@ -161,6 +163,24 @@ impl Sketch {
                 .any(|pid| doomed.contains(pid))
             {
                 doomed.insert(geom.id());
+            }
+        }
+
+        // Points that only the doomed curves held on to go with them;
+        // points a surviving curve still references stay.
+        let mut released: HashSet<Uuid> = HashSet::new();
+        let mut still_referenced: HashSet<Uuid> = HashSet::new();
+        for geom in &self.geometry {
+            let points = Self::curve_point_ids(geom);
+            if doomed.contains(&geom.id()) {
+                released.extend(points);
+            } else {
+                still_referenced.extend(points);
+            }
+        }
+        for point in released {
+            if !still_referenced.contains(&point) {
+                doomed.insert(point);
             }
         }
 
@@ -907,7 +927,10 @@ mod construction_tests {
         assert!(sketch.get_geometry(e).is_none(), "ellipse follows center");
         sketch.remove_geometry_cascade(&[p2]);
         assert!(sketch.get_geometry(b).is_none(), "spline follows its cp");
-        assert!(sketch.get_geometry(p1).is_some(), "other points remain");
+        assert!(
+            sketch.get_geometry(p1).is_none(),
+            "the spline's other control points go with it"
+        );
     }
 
     #[test]

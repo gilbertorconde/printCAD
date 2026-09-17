@@ -68,8 +68,9 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
     }
 
     egui::Panel::right("task_panel")
-        .exact_size(TASK_PANEL_WIDTH)
-        .resizable(false)
+        .resizable(true)
+        .default_size(TASK_PANEL_WIDTH)
+        .size_range(260.0..=480.0)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
             let rect = ui.max_rect().intersect(ui.clip_rect());
