@@ -27,6 +27,8 @@ pub struct StatusBarInputs<'a> {
     pub server_label: &'a str,
     pub document_saving: bool,
     pub nav_style: &'a str,
+    /// The connected navigation device, when there is one.
+    pub nav_device: Option<&'a str>,
     pub items: Option<&'a StatusItems>,
     pub preselect: Option<&'a str>,
     /// "w × h × d" of the selection, already formatted.
@@ -81,6 +83,11 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> bool 
                             .font(sans(FONT_XS))
                             .color(TEXT2),
                     );
+                    if let Some(device) = inputs.nav_device {
+                        vseparator(ui, 14.0);
+                        ui.label(RichText::new(device).font(sans(FONT_XS)).color(TEXT2))
+                            .on_hover_text("Navigation device connected");
+                    }
                     vseparator(ui, 14.0);
                     // Two numbers because they are two things: UI frames
                     // presented, and how often the 3D scene was re-rendered

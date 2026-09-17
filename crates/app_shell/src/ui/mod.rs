@@ -191,6 +191,7 @@ impl UiLayer {
             kernel_cancellable,
             kernel_progress,
             server_label,
+            nav_device,
             document_saving,
             mut step_import_pending,
         } = inputs;
@@ -361,6 +362,7 @@ impl UiLayer {
                     server_label: &server_label,
                     document_saving,
                     nav_style,
+                    nav_device: nav_device.as_deref(),
                     items: status_items.as_ref(),
                     preselect: hover_card.as_ref().map(|h| h.title.as_str()),
                     dimensions: dimensions.as_deref(),

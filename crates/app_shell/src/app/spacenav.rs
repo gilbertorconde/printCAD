@@ -44,6 +44,19 @@ pub struct DeviceMotion {
 }
 
 impl DeviceMotion {
+    /// The six readings in the order the device reports them: three
+    /// translations, then three rotations.
+    pub fn axis_readings(&self) -> [f32; 6] {
+        [
+            self.translate[0],
+            self.translate[1],
+            self.translate[2],
+            self.rotate[0],
+            self.rotate[1],
+            self.rotate[2],
+        ]
+    }
+
     /// Whether the puck is at rest, which is what lets the render loop sleep.
     pub fn is_idle(&self) -> bool {
         self.translate.iter().chain(&self.rotate).all(|v| *v == 0.0)

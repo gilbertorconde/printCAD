@@ -127,10 +127,9 @@ impl PrintCadApp {
             || !self.nav_device.motion().is_idle()
     }
 
-    /// Read what the navigation device is doing. Its reader thread holds the
-    /// puck's deflection until the device reports a new one, so this is the
-    /// current value rather than a queue; buttons are a queue and come out in
-    /// the order they were pressed.
+    /// Read the buttons the navigation device reported since the last frame.
+    /// Its motion is read in [`Self::build_scene_submission`], where the
+    /// camera is.
     fn drain_device_input(&mut self) {
         for button in self.nav_device.take_buttons() {
             tracing::debug!(
@@ -138,16 +137,6 @@ impl PrintCadApp {
                 index = button.index,
                 pressed = button.pressed,
                 "navigation device button"
-            );
-        }
-        let motion = self.nav_device.motion();
-        if !motion.is_idle() {
-            tracing::debug!(
-                target: "printcad.input",
-                device = ?self.nav_device.device_name(),
-                translate = ?motion.translate,
-                rotate = ?motion.rotate,
-                "navigation device motion"
             );
         }
     }
@@ -428,6 +417,7 @@ impl PrintCadApp {
                             (true, 1) => format!("{} · 1 peer", self.server.name()),
                             (true, n) => format!("{} · {n} peers", self.server.name()),
                         },
+                        nav_device: self.nav_device.device_name(),
                         step_import_pending: self.step_import_pending.as_mut(),
                     },
                 );
@@ -588,6 +578,15 @@ impl PrintCadApp {
     fn build_scene_submission(&mut self, dt_secs: f32) -> ViewportData {
         self.camera.set_orbit_lock(self.sketch_editing_active());
         self.camera.flush_pending_wheel(&self.user_settings.camera);
+        // Before the clip planes, so they are computed for the pose this
+        // frame actually shows.
+        let device_motion = self.nav_device.motion();
+        self.camera.apply_device_motion(
+            device_motion.axis_readings(),
+            dt_secs,
+            &self.user_settings.camera,
+            &self.user_settings.spacenav,
+        );
         self.camera
             .apply_auto_clip_planes(&self.user_settings.camera);
         self.camera.update(dt_secs, &self.user_settings.camera);

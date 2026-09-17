@@ -38,6 +38,9 @@ pub struct UserSettings {
     pub preferred_gpu: Option<String>,
     /// Optional FPS cap. 0.0 = uncapped (driven by vsync / driver).
     pub fps_cap: f32,
+    /// How a 6-degree-of-freedom navigation device drives the view.
+    #[serde(default)]
+    pub spacenav: SpaceNavSettings,
 }
 
 impl Default for UserSettings {
@@ -49,9 +52,78 @@ impl Default for UserSettings {
             import: ImportSettings::default(),
             preferred_gpu: None,
             fps_cap: 0.0,
+            spacenav: SpaceNavSettings::default(),
         }
     }
 }
+
+/// How a 6-degree-of-freedom navigation device drives the view.
+///
+/// Readings arrive in the device's own units and are divided by
+/// [`SpaceNavSettings::full_scale`] before anything else, so the speeds below
+/// are "how far the view moves per second at full deflection" and stay
+/// meaningful across devices. The daemon has its own sensitivity, dead zone
+/// and inversion settings that act first; these sit on top, for tuning the
+/// feel inside the app without changing what every other application sees.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SpaceNavSettings {
+    /// Whether the device steers the view at all.
+    pub enabled: bool,
+    /// The reading a fully deflected axis produces.
+    pub full_scale: f32,
+    /// Deflection below this fraction of full scale is treated as rest.
+    pub dead_zone: f32,
+    /// Pixels per second of pan at full deflection.
+    pub translate_speed: f32,
+    /// Degrees per second of orbit at full deflection.
+    pub rotate_speed: f32,
+    /// Zoom steps per second at full deflection.
+    pub zoom_speed: f32,
+    /// Roll, as a fraction of the orbit speed.
+    pub roll_speed: f32,
+    /// Push and pull the view sideways and up.
+    pub translation: bool,
+    /// Tilt and turn the view.
+    pub rotation: bool,
+    /// Push and pull to zoom.
+    pub zoom: bool,
+    /// Pass only the axis that moved most, so a gesture stays square.
+    pub dominant_axis: bool,
+    /// Which of the six axes read backwards, in the order pan-x, pan-y,
+    /// zoom, pitch, yaw, roll.
+    pub invert: [bool; 6],
+}
+
+impl Default for SpaceNavSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            full_scale: 350.0,
+            dead_zone: 0.02,
+            translate_speed: 900.0,
+            rotate_speed: 90.0,
+            zoom_speed: 6.0,
+            roll_speed: 0.5,
+            translation: true,
+            rotation: true,
+            zoom: true,
+            dominant_axis: false,
+            invert: [false; 6],
+        }
+    }
+}
+
+/// Which camera motion each device axis drives. The order is the one the
+/// device reports: three translations, then three rotations.
+pub const SPACENAV_AXIS_LABELS: [&str; 6] = [
+    "Pan sideways",
+    "Pan up and down",
+    "Zoom",
+    "Tilt",
+    "Turn",
+    "Roll",
+];
 
 /// Import defaults.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

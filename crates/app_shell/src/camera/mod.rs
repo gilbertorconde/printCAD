@@ -18,10 +18,44 @@ use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
-use settings::CameraSettings;
+use settings::{CameraSettings, SpaceNavSettings};
 use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
+
+/// Normalizes one device reading: full scale to ±1, dead zone to rest,
+/// inverted axes flipped, and the dominant axis alone when asked for.
+/// `None` when the puck is at rest.
+fn device_axes(readings: [f32; 6], device: &SpaceNavSettings) -> Option<[f32; 6]> {
+    let scale = device.full_scale.abs().max(1.0);
+    let dead_zone = device.dead_zone.clamp(0.0, 0.95);
+
+    let mut axes = [0.0f32; 6];
+    for (index, raw) in readings.iter().enumerate() {
+        let mut value = raw / scale;
+        if device.invert[index] {
+            value = -value;
+        }
+        if value.abs() < dead_zone {
+            value = 0.0;
+        }
+        axes[index] = value.clamp(-1.0, 1.0);
+    }
+
+    if device.dominant_axis {
+        let mut strongest = 0;
+        for index in 1..axes.len() {
+            if axes[index].abs() > axes[strongest].abs() {
+                strongest = index;
+            }
+        }
+        let kept = axes[strongest];
+        axes = [0.0; 6];
+        axes[strongest] = kept;
+    }
+
+    axes.iter().any(|value| *value != 0.0).then_some(axes)
+}
 
 pub struct CameraController {
     pub(crate) state: CadCameraState,
@@ -299,6 +333,81 @@ impl CameraController {
             lines,
             settings,
         );
+    }
+
+    /// Steer the view with one reading from a 6-degree-of-freedom navigation
+    /// device.
+    ///
+    /// `axis_readings` is the device's own six numbers — three translations,
+    /// then three rotations — as the daemon sends them. They describe a rate,
+    /// not a step: the puck is held at a deflection and the view moves for as
+    /// long as it is held, so each reading is integrated over the frame.
+    /// Returns whether the view moved.
+    pub fn apply_device_motion(
+        &mut self,
+        axis_readings: [f32; 6],
+        dt_secs: f32,
+        settings: &CameraSettings,
+        device: &SpaceNavSettings,
+    ) -> bool {
+        if !device.enabled {
+            return false;
+        }
+        let Some(axes) = device_axes(axis_readings, device) else {
+            return false;
+        };
+        // A frame after waking from sleep can be arbitrarily long; integrating
+        // it whole would throw the view across the scene.
+        let dt = dt_secs.clamp(0.001, 0.1);
+        self.cancel_animation();
+
+        if device.translation {
+            let scale = device.translate_speed * dt;
+            let delta = Vec2::new(axes[0] * scale, -axes[1] * scale);
+            ops::pan_pixels(&mut self.state, &self.axes, delta, settings);
+        }
+
+        if device.zoom {
+            // A positive push-and-pull reading zooms in, the way scrolling up
+            // does. Which way the puck has to move for that is the device's
+            // business, and the axis inverts if it disagrees.
+            let lines = axes[2] * device.zoom_speed * dt;
+            zoom_cursor::apply_zoom_wheels(&mut self.state, &self.axes, None, lines, settings);
+        }
+
+        if device.rotation {
+            // Orbit takes pixels, and `orbit_sensitivity * 0.005` is the
+            // radians each one turns; go the other way to land on the
+            // configured degrees per second.
+            let radians_per_px = (settings.orbit_sensitivity * 0.005).max(1e-6);
+            let degrees = device.rotate_speed * dt;
+            let px = degrees.to_radians() / radians_per_px;
+
+            // A sketch locks the view to its plane: the two axes that would
+            // tilt out of it are dropped, and the one about the plane's
+            // normal — roll — is kept.
+            if !self.orbit_locked {
+                let delta = Vec2::new(-axes[4] * px, -axes[3] * px);
+                match self.orbit_lmb_anchor_world {
+                    Some(pivot) if settings.orbit_pivot_pick => {
+                        ops::orbit_pixels_around_world_anchor(
+                            &mut self.state,
+                            &self.axes,
+                            pivot,
+                            delta,
+                            settings,
+                        );
+                    }
+                    _ => ops::orbit_pixels(&mut self.state, &self.axes, delta, settings),
+                }
+            }
+
+            // Roll works in its own units, where one pixel is 0.01 radians.
+            let roll_px = axes[5] * device.roll_speed * degrees.to_radians() / 0.01;
+            ops::roll_pixels(&mut self.state, &self.axes, roll_px);
+        }
+
+        true
     }
 
     /// Middle mouse — uses current pick world position supplied by caller.

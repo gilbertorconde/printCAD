@@ -7,7 +7,7 @@ use egui::{
     Align, Context, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use kernel_api::LinearDeflectionMode;
-use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, UserSettings};
+use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SPACENAV_AXIS_LABELS, UserSettings};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
     Note, PrefRow, QtyField, note_card, pref_group, primary_button, secondary_button,
@@ -55,7 +55,13 @@ impl PrefGroup {
     pub fn tabs(self) -> &'static [&'static str] {
         match self {
             PrefGroup::General => &["Interface", "About"],
-            PrefGroup::Display => &["Navigation", "Camera", "Lighting", "Rendering"],
+            PrefGroup::Display => &[
+                "Navigation",
+                "Navigation device",
+                "Camera",
+                "Lighting",
+                "Rendering",
+            ],
             PrefGroup::Sketcher => &["General"],
             PrefGroup::PartDesign => &["General"],
             PrefGroup::Units => &["Units"],
@@ -429,6 +435,7 @@ fn reset_group(state: &mut PreferencesState) {
         }
         PrefGroup::Display => {
             state.draft.camera = defaults.camera;
+            state.draft.spacenav = defaults.spacenav;
             state.draft.lighting = defaults.lighting;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.preferred_gpu = defaults.preferred_gpu;
@@ -557,6 +564,84 @@ fn display_page(
             );
         }
         1 => {
+            let device = &mut draft.spacenav;
+            pref_group(
+                ui,
+                "Navigation device",
+                vec![
+                    PrefRow::toggle("Steer the view with the device", &mut device.enabled)
+                        .hint("A six-axis puck moves the view while it is held"),
+                    PrefRow::toggle("Pan", &mut device.translation),
+                    PrefRow::toggle("Zoom", &mut device.zoom),
+                    PrefRow::toggle("Rotate", &mut device.rotation),
+                    PrefRow::qty(
+                        "Pan speed",
+                        QtyField::new(&mut device.translate_speed)
+                            .unit("px/s")
+                            .range(50.0..=4000.0)
+                            .speed(10.0)
+                            .decimals(0),
+                    )
+                    .hint("How far the view slides per second at full deflection"),
+                    PrefRow::qty(
+                        "Zoom speed",
+                        QtyField::new(&mut device.zoom_speed)
+                            .range(0.5..=40.0)
+                            .speed(0.25)
+                            .decimals(2),
+                    )
+                    .hint("Wheel steps per second at full deflection"),
+                    PrefRow::qty(
+                        "Rotate speed",
+                        QtyField::new(&mut device.rotate_speed)
+                            .unit("deg/s")
+                            .range(5.0..=360.0)
+                            .speed(1.0)
+                            .decimals(0),
+                    ),
+                    PrefRow::qty(
+                        "Roll speed",
+                        QtyField::new(&mut device.roll_speed)
+                            .range(0.0..=3.0)
+                            .speed(0.05)
+                            .decimals(2),
+                    )
+                    .hint("As a share of the rotate speed"),
+                    PrefRow::qty(
+                        "Dead zone",
+                        QtyField::new(&mut device.dead_zone)
+                            .range(0.0..=0.5)
+                            .speed(0.005)
+                            .decimals(3),
+                    )
+                    .hint("Deflection below this share of full scale counts as rest"),
+                    PrefRow::qty(
+                        "Full deflection",
+                        QtyField::new(&mut device.full_scale)
+                            .range(50.0..=2000.0)
+                            .speed(5.0)
+                            .decimals(0),
+                    )
+                    .hint("The reading a fully pushed axis produces"),
+                    PrefRow::toggle("One axis at a time", &mut device.dominant_axis)
+                        .hint("Only the axis pushed hardest acts, so a gesture stays square"),
+                ],
+                filter,
+            );
+
+            let labels: Vec<String> = SPACENAV_AXIS_LABELS
+                .iter()
+                .map(|motion| format!("Reverse {}", motion.to_lowercase()))
+                .collect();
+            let rows = device
+                .invert
+                .iter_mut()
+                .zip(&labels)
+                .map(|(inverted, label)| PrefRow::toggle(label, inverted))
+                .collect();
+            pref_group(ui, "Reverse an axis", rows, filter);
+        }
+        2 => {
             let camera = &mut draft.camera;
             let preset_hint = camera.axis_preset.description();
             pref_group(
@@ -633,7 +718,7 @@ fn display_page(
                 filter,
             );
         }
-        2 => {
+        3 => {
             let lighting = &mut draft.lighting;
             let mut rows = Vec::new();
             for (label, light) in [

@@ -83,5 +83,7 @@ pub struct UiFrameInputs<'a> {
     /// Which document server serves this session, with a degraded marker —
     /// e.g. "local daemon" or "local daemon (disconnected)".
     pub server_label: String,
+    /// The navigation device the reader thread has, if any.
+    pub nav_device: Option<String>,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
 }
