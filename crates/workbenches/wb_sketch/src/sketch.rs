@@ -122,7 +122,15 @@ impl Sketch {
     }
 
     /// Position of a point element, if `id` refers to one.
+    /// Position of `id`, including the origin reference.
     pub fn point_position(&self, id: Uuid) -> Option<Vec2D> {
+        if id == ORIGIN_ID {
+            return Some(Vec2D::new(0.0, 0.0));
+        }
+        self.stored_point_position(id)
+    }
+
+    fn stored_point_position(&self, id: Uuid) -> Option<Vec2D> {
         match self.get_geometry(id)? {
             GeometryElement::Point(p) => Some(p.position),
             _ => None,
@@ -216,6 +224,55 @@ impl Sketch {
                 _ => None,
             })
             .collect()
+    }
+}
+
+/// The reference geometry every sketch carries: the origin and the two
+/// axes through it. They hold no entry in `geometry` — nothing can move,
+/// delete or extrude them — but they answer to fixed ids so constraints can
+/// pin real geometry against them.
+pub const ORIGIN_ID: Uuid = Uuid::from_u128(0x5c_e701_0000_0000_0000_0000_0000_0001);
+pub const X_AXIS_ID: Uuid = Uuid::from_u128(0x5c_e701_0000_0000_0000_0000_0000_0002);
+pub const Y_AXIS_ID: Uuid = Uuid::from_u128(0x5c_e701_0000_0000_0000_0000_0000_0003);
+
+/// Which piece of reference geometry an id names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reference {
+    Origin,
+    XAxis,
+    YAxis,
+}
+
+impl Reference {
+    pub fn of(id: Uuid) -> Option<Self> {
+        match id {
+            ORIGIN_ID => Some(Reference::Origin),
+            X_AXIS_ID => Some(Reference::XAxis),
+            Y_AXIS_ID => Some(Reference::YAxis),
+            _ => None,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Reference::Origin => "Origin",
+            Reference::XAxis => "X axis",
+            Reference::YAxis => "Y axis",
+        }
+    }
+
+    /// Whether the reference behaves as a point (the origin) or a line.
+    pub fn is_point(self) -> bool {
+        matches!(self, Reference::Origin)
+    }
+
+    /// Direction of an axis in sketch coordinates; `None` for the origin.
+    pub fn direction(self) -> Option<Vec2D> {
+        match self {
+            Reference::Origin => None,
+            Reference::XAxis => Some(Vec2D::new(1.0, 0.0)),
+            Reference::YAxis => Some(Vec2D::new(0.0, 1.0)),
+        }
     }
 }
 

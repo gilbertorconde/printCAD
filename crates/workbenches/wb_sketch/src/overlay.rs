@@ -323,25 +323,52 @@ fn push_element(
     }
 }
 
-/// The sketch's own axes, drawn faintly under the geometry.
-fn push_axes(out: &mut Overlays, proj: &SketchProjector, pal: &SketchPalette) {
+/// The sketch's reference geometry: the two axes and the origin they cross
+/// at. Faint until picked — they take constraints like anything else, so
+/// selection and hover have to read.
+fn push_axes(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    selected: &HashSet<Uuid>,
+    hovered: Option<Uuid>,
+) {
+    let state = |id: Uuid, base: [f32; 3]| {
+        if selected.contains(&id) {
+            (pal.selected, 2.0, 1.0)
+        } else if hovered == Some(id) {
+            (pal.preselect, 1.5, 1.0)
+        } else {
+            (base, 1.0, AXIS_ALPHA)
+        }
+    };
     let axes = [
         (
+            crate::sketch::X_AXIS_ID,
             Vec2D::new(-AXIS_EXTENT_UNITS, 0.0),
             Vec2D::new(AXIS_EXTENT_UNITS, 0.0),
             pal.axis_x,
         ),
         (
+            crate::sketch::Y_AXIS_ID,
             Vec2D::new(0.0, -AXIS_EXTENT_UNITS),
             Vec2D::new(0.0, AXIS_EXTENT_UNITS),
             pal.axis_y,
         ),
     ];
-    for (a, b, color) in axes {
+    for (id, a, b, base) in axes {
+        let (color, thickness, alpha) = state(id, base);
         if let (Some(pa), Some(pb)) = (proj.to_px(a), proj.to_px(b)) {
             out.lines
-                .push(ScreenSpaceOverlay::new(pa, pb, color, 1.0).with_alpha(AXIS_ALPHA));
+                .push(ScreenSpaceOverlay::new(pa, pb, color, thickness).with_alpha(alpha));
         }
+    }
+    let (color, _, alpha) = state(crate::sketch::ORIGIN_ID, pal.reference);
+    if let Some(p) = proj.to_px(Vec2D::new(0.0, 0.0)) {
+        let picked = selected.contains(&crate::sketch::ORIGIN_ID)
+            || hovered == Some(crate::sketch::ORIGIN_ID);
+        out.marks
+            .push(ScreenSpaceMark::dot(p, if picked { 4.5 } else { 3.0 }, color).with_alpha(alpha));
     }
 }
 
@@ -946,7 +973,7 @@ pub fn build_overlays(
     snap_tol: f32,
 ) -> Overlays {
     let mut out = Overlays::default();
-    push_axes(&mut out, proj, pal);
+    push_axes(&mut out, proj, pal, selected, hovered);
 
     let centers: HashSet<Uuid> = sketch
         .geometry

@@ -10,7 +10,10 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2D};
+use crate::sketch::{
+    AxisDirection, ConstraintKind, GeometryElement, ORIGIN_ID, Reference, Sketch, Vec2D, X_AXIS_ID,
+    Y_AXIS_ID, constraint_refs,
+};
 
 /// Maximum number of outer (Jacobian) iterations.
 const MAX_ITERATIONS: usize = 100;
@@ -90,7 +93,10 @@ pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
             };
             cap_step(&mut step, var_scale(&x));
 
-            let trial: Vec<f64> = x.iter().zip(&step).map(|(xi, di)| xi + di).collect();
+            let mut trial = x.clone();
+            for (column, &j) in sys.free.iter().enumerate() {
+                trial[j] += step[column];
+            }
             let trial_r = eval_residuals(&sys, &trial);
             let trial_cost = sq_norm(&trial_r);
             if trial_cost.is_finite() && trial_cost < cost {
@@ -133,8 +139,8 @@ pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
 /// rank of the constraint Jacobian at the current configuration.
 pub fn dof_estimate(sketch: &Sketch) -> i32 {
     let sys = build_system(sketch);
-    let n = sys.vars.len() as i32;
-    if sys.specs.is_empty() || sys.vars.is_empty() {
+    let n = sys.free.len() as i32;
+    if sys.specs.is_empty() || sys.free.is_empty() {
         return n;
     }
     let jac = jacobian(&sys, &sys.vars);
@@ -498,8 +504,12 @@ fn wrap_angle(a: f64) -> f64 {
 
 /// The constraint system: free variables plus resolved residual specs.
 struct System {
-    /// Initial values for all free variables.
+    /// Initial values for every variable, free or pinned.
     vars: Vec<f64>,
+    /// Indices the solver may move. Reference geometry (the origin and the
+    /// axes) sits in `vars` so residuals can address it, but stays out of
+    /// here: it holds still and costs no degree of freedom.
+    free: Vec<usize>,
     /// Point id -> index of its x variable (y is at index + 1).
     point_vars: HashMap<Uuid, usize>,
     /// Circle/arc id -> index of its radius variable.
@@ -524,6 +534,33 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
     let mut vars = Vec::new();
     let mut point_vars = HashMap::new();
     let mut radius_vars = HashMap::new();
+    // The origin and a tip along each axis, pinned where they belong. They
+    // only join the system when a constraint points at them, and they bring
+    // one residual per variable, so they cost no degree of freedom.
+    let references_used = sketch.constraints.iter().any(|c| {
+        c.is_solved()
+            && constraint_refs(&c.kind)
+                .iter()
+                .any(|id| Reference::of(*id).is_some())
+    });
+    let mut pinned: Vec<usize> = Vec::new();
+    let mut reference_var = |vars: &mut Vec<f64>, x: f64, y: f64| {
+        let at = vars.len();
+        vars.push(x);
+        vars.push(y);
+        pinned.push(at);
+        pinned.push(at + 1);
+        at
+    };
+    let (origin_var, x_tip_var, y_tip_var) = if references_used {
+        (
+            Some(reference_var(&mut vars, 0.0, 0.0)),
+            Some(reference_var(&mut vars, 1.0, 0.0)),
+            Some(reference_var(&mut vars, 0.0, 1.0)),
+        )
+    } else {
+        (None, None, None)
+    };
     for element in &sketch.geometry {
         match element {
             GeometryElement::Point(p) => {
@@ -547,11 +584,21 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
         }
     }
 
-    let point_var = |id: Uuid| point_vars.get(&id).copied();
+    let point_var = |id: Uuid| {
+        if id == ORIGIN_ID {
+            return origin_var;
+        }
+        point_vars.get(&id).copied()
+    };
     // Line -> (start x-var, end x-var), only when both endpoints are points.
-    let line_vars = |id: Uuid| match sketch.get_geometry(id) {
-        Some(GeometryElement::Line(l)) => Some((point_var(l.start)?, point_var(l.end)?)),
-        _ => None,
+    // The axes run from the origin through their tip.
+    let line_vars = |id: Uuid| match id {
+        X_AXIS_ID => Some((origin_var?, x_tip_var?)),
+        Y_AXIS_ID => Some((origin_var?, y_tip_var?)),
+        _ => match sketch.get_geometry(id) {
+            Some(GeometryElement::Line(l)) => Some((point_var(l.start)?, point_var(l.end)?)),
+            _ => None,
+        },
     };
     // Circle or arc -> (center x-var, radius var).
     let circle_vars = |id: Uuid| match sketch.get_geometry(id) {
@@ -841,8 +888,10 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
     }
 
     let residual_len = specs.iter().map(ResidualSpec::dim).sum();
+    let free: Vec<usize> = (0..vars.len()).filter(|i| !pinned.contains(i)).collect();
     System {
         vars,
+        free,
         point_vars,
         radius_vars,
         specs,
@@ -872,10 +921,11 @@ fn eval_residuals(sys: &System, x: &[f64]) -> Vec<f64> {
 
 /// Central-difference Jacobian (m residuals x n variables).
 fn jacobian(sys: &System, x: &[f64]) -> Vec<Vec<f64>> {
-    let n = x.len();
-    let mut jac = vec![vec![0.0; n]; sys.residual_len];
+    // One column per movable variable: a pinned reference contributes none,
+    // so nothing can trade a constraint against tilting an axis.
+    let mut jac = vec![vec![0.0; sys.free.len()]; sys.residual_len];
     let mut probe = x.to_vec();
-    for j in 0..n {
+    for (column, &j) in sys.free.iter().enumerate() {
         let eps = FD_EPS * x[j].abs().max(1.0);
         let original = probe[j];
         probe[j] = original + eps;
@@ -884,7 +934,7 @@ fn jacobian(sys: &System, x: &[f64]) -> Vec<Vec<f64>> {
         let r_minus = eval_residuals(sys, &probe);
         probe[j] = original;
         for (row, (rp, rm)) in jac.iter_mut().zip(r_plus.iter().zip(&r_minus)) {
-            row[j] = (rp - rm) / (2.0 * eps);
+            row[column] = (rp - rm) / (2.0 * eps);
         }
     }
     jac
@@ -1972,5 +2022,92 @@ mod tests {
         let diag = diagnose(&sketch);
         assert!(!diag.analyzed, "too many constraints to analyze");
         assert!(diag.conflicting.is_empty() && diag.redundant.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod reference_tests {
+    use super::*;
+    use crate::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
+    use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+
+    fn add_point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+        sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+    }
+
+    #[test]
+    fn a_point_made_coincident_with_the_origin_lands_on_it() {
+        let mut sketch = Sketch::new("t");
+        let p = add_point(&mut sketch, 3.0, 4.0);
+        sketch.add_constraint(ConstraintKind::Coincident {
+            point1: p,
+            point2: ORIGIN_ID,
+        });
+        solve(&mut sketch);
+        let at = sketch.point_position(p).unwrap();
+        assert!(at.x.abs() < 1e-4 && at.y.abs() < 1e-4, "landed at {at:?}");
+    }
+
+    #[test]
+    fn a_point_put_on_an_axis_slides_onto_it() {
+        let mut sketch = Sketch::new("t");
+        let p = add_point(&mut sketch, 5.0, 3.0);
+        sketch.add_constraint(ConstraintKind::PointOnLine {
+            point: p,
+            line: X_AXIS_ID,
+        });
+        solve(&mut sketch);
+        let at = sketch.point_position(p).unwrap();
+        assert!(at.y.abs() < 1e-4, "dropped to the axis: {at:?}");
+        assert!((at.x - 5.0).abs() < 0.5, "slid along it, not to the origin");
+
+        let q = add_point(&mut sketch, 4.0, 7.0);
+        sketch.add_constraint(ConstraintKind::PointOnLine {
+            point: q,
+            line: Y_AXIS_ID,
+        });
+        solve(&mut sketch);
+        let at = sketch.point_position(q).unwrap();
+        assert!(at.x.abs() < 1e-4, "dropped to the vertical axis: {at:?}");
+    }
+
+    #[test]
+    fn the_references_hold_still_and_cost_no_freedom() {
+        // A line from the origin along the X axis with a driving length has
+        // nothing left to move.
+        let mut sketch = Sketch::new("t");
+        let a = add_point(&mut sketch, 1.0, 1.0);
+        let b = add_point(&mut sketch, 6.0, 2.0);
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(ConstraintKind::Coincident {
+            point1: a,
+            point2: ORIGIN_ID,
+        });
+        sketch.add_constraint(ConstraintKind::PointOnLine {
+            point: b,
+            line: X_AXIS_ID,
+        });
+        sketch.add_constraint(ConstraintKind::Length { line, length: 10.0 });
+        solve(&mut sketch);
+
+        assert_eq!(dof_estimate(&sketch), 0, "nothing is free any more");
+        assert!(sketch.is_fully_constrained);
+        let start = sketch.point_position(a).unwrap();
+        let end = sketch.point_position(b).unwrap();
+        assert!(start.x.abs() < 1e-4 && start.y.abs() < 1e-4);
+        assert!(end.y.abs() < 1e-4 && (end.x.abs() - 10.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_sketch_that_never_mentions_them_solves_exactly_as_before() {
+        let mut sketch = Sketch::new("t");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 4.0, 0.0);
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(ConstraintKind::Length { line, length: 6.0 });
+        let before = dof_estimate(&sketch);
+        solve(&mut sketch);
+        assert_eq!(before, 3, "four point variables, one length residual");
+        assert_eq!(dof_estimate(&sketch), 3);
     }
 }

@@ -1137,7 +1137,8 @@ fn box_selection_draws_dashed_rectangle_overlay() {
         h.wb.get_screen_space_overlays(&ctx, h.active_object).len()
     };
     let idle_count = overlays_of(&mut h); // axes only
-    h.click(0.0, 0.0, "sketch.select");
+    // Start clear of the axes and the origin, which are selectable now.
+    h.click(4.0, 4.0, "sketch.select");
     h.mouse_move(10.0, 8.0, "sketch.select");
     let box_count = overlays_of(&mut h);
     assert_eq!(
@@ -2259,4 +2260,78 @@ fn selecting_two_lines_enables_the_constraint_tools_that_fit_them() {
         !h.tool_enabled("sketch.constrain.radius"),
         "a radius needs a circle"
     );
+}
+
+#[test]
+fn a_point_can_be_pinned_to_the_origin_from_the_viewport() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(6.0, 4.0, "sketch.point");
+
+    // Select the point, then the crossing of the axes.
+    h.click(6.0, 4.0, "sketch.select");
+    h.release(6.0, 4.0, "sketch.select");
+    h.click(0.0, 0.0, "sketch.select");
+    h.release(0.0, 0.0, "sketch.select");
+    assert!(
+        h.tool_enabled("sketch.constrain.coincident"),
+        "a point and the origin fit a coincident constraint"
+    );
+
+    h.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    let sketch = h.sketch();
+    assert!(
+        sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::Coincident { point2, .. } if point2 == wb_sketch::sketch::ORIGIN_ID
+        )),
+        "the constraint points at the origin"
+    );
+    assert!(h.point_at(0.0, 0.0), "and the point moved onto it");
+}
+
+#[test]
+fn a_line_can_be_squared_against_an_axis() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    // A line that is clearly not horizontal, away from the axes.
+    h.click(4.0, 4.0, "sketch.line");
+    h.click(12.0, 9.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    h.click(8.0, 6.5, "sketch.select");
+    h.click(20.0, 0.0, "sketch.select"); // the X axis, clear of the line
+    h.release(20.0, 0.0, "sketch.select");
+    assert!(
+        h.tool_enabled("sketch.constrain.parallel"),
+        "a line and an axis fit a parallel constraint"
+    );
+
+    h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+    let sketch = h.sketch();
+    let ys: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.y),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        ys.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-3),
+        "the line came level with the axis: {ys:?}"
+    );
+}
+
+#[test]
+fn the_axes_and_the_origin_cannot_be_deleted() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(6.0, 4.0, "sketch.point");
+    h.click(0.0, 0.0, "sketch.select"); // the origin
+    h.release(0.0, 0.0, "sketch.select");
+    h.click(20.0, 0.0, "sketch.select"); // the X axis
+    h.release(20.0, 0.0, "sketch.select");
+    h.key(KeyCode::Delete, Some("sketch.select"));
+    assert_eq!(h.counts().0, 1, "the drawn point is still there");
 }

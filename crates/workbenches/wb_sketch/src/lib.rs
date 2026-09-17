@@ -838,7 +838,12 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let doomed: Vec<Uuid> = self.selected.drain().collect();
+        // The origin and the axes are not the sketch's to delete.
+        let doomed: Vec<Uuid> = self
+            .selected
+            .drain()
+            .filter(|id| sketch::Reference::of(*id).is_none())
+            .collect();
         let removed = feature.sketch.remove_geometry_cascade(&doomed);
         self.hovered = None;
         if removed.is_empty() {

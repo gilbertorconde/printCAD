@@ -548,6 +548,50 @@ impl SketchWorkbench {
         let mut toggle_construction: Option<Uuid> = None;
         let mut hovered_row: Option<Uuid> = None;
         let mut clicked: Option<Uuid> = None;
+
+        // The reference geometry every sketch has: pickable from here as
+        // well as from the viewport, but never drawn into a shape.
+        if self.element_filter == ElementFilter::All {
+            for reference in [
+                crate::sketch::Reference::Origin,
+                crate::sketch::Reference::XAxis,
+                crate::sketch::Reference::YAxis,
+            ] {
+                let id = match reference {
+                    crate::sketch::Reference::Origin => crate::sketch::ORIGIN_ID,
+                    crate::sketch::Reference::XAxis => crate::sketch::X_AXIS_ID,
+                    crate::sketch::Reference::YAxis => crate::sketch::Y_AXIS_ID,
+                };
+                let fill = if self.selected.contains(&id) {
+                    ACCENT_DIM
+                } else {
+                    egui::Color32::TRANSPARENT
+                };
+                let hit = list_row(ui, fill, ("reference_row", id), |ui| {
+                    let icon = if reference.is_point() {
+                        "point"
+                    } else {
+                        "line"
+                    };
+                    ui_kit::icon::draw(ui, icon, 14.0, TEXT3);
+                    ui.label(
+                        RichText::new(reference.label())
+                            .font(sans(FONT_SM))
+                            .color(TEXT2),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        mono_label(ui, "Reference", FONT_XS, TEXT3);
+                    });
+                });
+                if hit.hovered() {
+                    hovered_row = Some(id);
+                }
+                if hit.clicked() {
+                    clicked = Some(id);
+                }
+            }
+        }
+
         for geom in &sketch.geometry {
             let id = geom.id();
             if !self.element_filter.accepts(sketch, id) {

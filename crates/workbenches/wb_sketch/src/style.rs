@@ -63,6 +63,9 @@ pub fn element_kind(element: &GeometryElement) -> &'static str {
 /// "Line 3": the element's kind and its 1-based ordinal among elements of
 /// that kind, in sketch order.
 pub fn element_name(sketch: &Sketch, id: Uuid) -> String {
+    if let Some(reference) = crate::sketch::Reference::of(id) {
+        return reference.label().to_string();
+    }
     let mut ordinal = 0;
     for g in &sketch.geometry {
         let same_kind = sketch

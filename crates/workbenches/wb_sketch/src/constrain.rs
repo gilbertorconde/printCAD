@@ -7,7 +7,10 @@ use std::collections::HashSet;
 
 use uuid::Uuid;
 
-use crate::sketch::{self, AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2D};
+use crate::sketch::{
+    self, AxisDirection, ConstraintKind, GeometryElement, ORIGIN_ID, Reference, Sketch, Vec2D,
+    X_AXIS_ID, Y_AXIS_ID,
+};
 
 /// The selection sorted by element kind, in sketch order.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -35,6 +38,19 @@ impl SelectionShape {
                 GeometryElement::Circle(_) | GeometryElement::Arc(_) => shape.circles.push(id),
                 GeometryElement::Ellipse(_) => shape.ellipses.push(id),
                 GeometryElement::BSpline(_) => {}
+            }
+        }
+        // The origin and the axes hold no entry in `geometry`, but they take
+        // constraints like the geometry that does. They come last and in a
+        // fixed order, so a selection reads the same every time.
+        for id in [ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID] {
+            if !selected.contains(&id) {
+                continue;
+            }
+            shape.all.push(id);
+            match Reference::of(id) {
+                Some(reference) if reference.is_point() => shape.points.push(id),
+                _ => shape.lines.push(id),
             }
         }
         shape

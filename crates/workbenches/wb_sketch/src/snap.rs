@@ -263,7 +263,22 @@ pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<Uuid> {
             *slot = Some((geom.id(), d));
         }
     }
-    best_point.or(best_curve).map(|(id, _)| id)
+    if let Some((id, _)) = best_point.or(best_curve) {
+        return Some(id);
+    }
+    // Reference geometry answers where nothing drawn does: the origin first,
+    // then whichever axis runs closer.
+    if pos.to_glam().length() <= tol {
+        return Some(crate::sketch::ORIGIN_ID);
+    }
+    let on_x = pos.y.abs() <= tol;
+    let on_y = pos.x.abs() <= tol;
+    match (on_x, on_y) {
+        (true, true) if pos.x.abs() < pos.y.abs() => Some(crate::sketch::Y_AXIS_ID),
+        (true, _) => Some(crate::sketch::X_AXIS_ID),
+        (_, true) => Some(crate::sketch::Y_AXIS_ID),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -367,8 +382,36 @@ mod tests {
         let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 5.0)));
         assert_eq!(hit_test(&sketch, Vec2D::new(5.1, 0.0), 0.5), Some(circle));
-        // Near the middle of the circle nothing is hit (center point wins
-        // only within tolerance of the center itself).
-        assert_eq!(hit_test(&sketch, Vec2D::new(2.5, 0.0), 0.5), None);
+        // Inside the circle, off both axes, nothing is hit (the center point
+        // wins only within tolerance of the center itself).
+        assert_eq!(hit_test(&sketch, Vec2D::new(2.5, 2.5), 0.5), None);
+    }
+
+    #[test]
+    fn the_axes_and_the_origin_answer_where_nothing_is_drawn() {
+        let sketch = Sketch::new("t");
+        assert_eq!(
+            hit_test(&sketch, Vec2D::new(7.0, 0.2), 0.5),
+            Some(crate::sketch::X_AXIS_ID)
+        );
+        assert_eq!(
+            hit_test(&sketch, Vec2D::new(-0.1, 9.0), 0.5),
+            Some(crate::sketch::Y_AXIS_ID)
+        );
+        // Their crossing is the origin, which wins over both.
+        assert_eq!(
+            hit_test(&sketch, Vec2D::new(0.2, 0.1), 0.5),
+            Some(crate::sketch::ORIGIN_ID)
+        );
+        assert_eq!(hit_test(&sketch, Vec2D::new(4.0, 4.0), 0.5), None);
+    }
+
+    #[test]
+    fn drawn_geometry_wins_over_the_reference_under_it() {
+        let (sketch, a, _, l) = sketch_with_line();
+        // The line runs along the X axis from the origin: it answers for
+        // both its mid-span and its endpoint.
+        assert_eq!(hit_test(&sketch, Vec2D::new(5.0, 0.1), 0.5), Some(l));
+        assert_eq!(hit_test(&sketch, Vec2D::new(0.05, 0.0), 0.5), Some(a));
     }
 }
