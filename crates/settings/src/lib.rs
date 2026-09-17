@@ -38,7 +38,7 @@ pub struct UserSettings {
     pub preferred_gpu: Option<String>,
     /// Optional FPS cap. 0.0 = uncapped (driven by vsync / driver).
     pub fps_cap: f32,
-    /// How a 6-degree-of-freedom navigation device drives the view.
+    /// How a 6-DoF mouse drives the view.
     #[serde(default)]
     pub spacenav: SpaceNavSettings,
 }
@@ -57,7 +57,7 @@ impl Default for UserSettings {
     }
 }
 
-/// How a 6-degree-of-freedom navigation device drives the view.
+/// How a 6-DoF mouse — a six-axis navigation puck — drives the view.
 ///
 /// Readings arrive in the device's own units and are divided by
 /// [`SpaceNavSettings::full_scale`] before anything else, so the speeds below
@@ -68,7 +68,7 @@ impl Default for UserSettings {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SpaceNavSettings {
-    /// Whether the device steers the view at all.
+    /// Whether a 6-DoF mouse steers the view at all.
     pub enabled: bool,
     /// The reading a fully deflected axis produces.
     pub full_scale: f32,
@@ -121,7 +121,7 @@ impl Default for SpaceNavSettings {
     }
 }
 
-/// What pressing a button on the device does.
+/// What pressing a button on a 6-DoF mouse does.
 ///
 /// These are the app's own actions. The daemon has button actions of its own
 /// — hold rotation or translation at zero, pass only the dominant axis — that

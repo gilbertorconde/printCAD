@@ -27,7 +27,7 @@ pub struct StatusBarInputs<'a> {
     pub server_label: &'a str,
     pub document_saving: bool,
     pub nav_style: &'a str,
-    /// The connected navigation device, when there is one.
+    /// The connected 6-DoF mouse, when there is one.
     pub nav_device: Option<&'a str>,
     pub items: Option<&'a StatusItems>,
     pub preselect: Option<&'a str>,
@@ -86,7 +86,7 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> bool 
                     if let Some(device) = inputs.nav_device {
                         vseparator(ui, 14.0);
                         ui.label(RichText::new(device).font(sans(FONT_XS)).color(TEXT2))
-                            .on_hover_text("Navigation device connected");
+                            .on_hover_text("6-DoF mouse connected");
                     }
                     vseparator(ui, 14.0);
                     // Two numbers because they are two things: UI frames

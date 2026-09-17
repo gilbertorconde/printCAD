@@ -57,7 +57,7 @@ impl PrefGroup {
             PrefGroup::General => &["Interface", "About"],
             PrefGroup::Display => &[
                 "Navigation",
-                "Navigation device",
+                "6-DoF mouse",
                 "Camera",
                 "Lighting",
                 "Rendering",
@@ -122,12 +122,12 @@ pub struct PreferencesInputs<'a> {
     pub registry: &'a mut DocumentService,
     pub gpus: &'a [String],
     pub gpu_name: Option<&'a str>,
-    /// How many buttons the connected navigation device has, so the page
-    /// offers a row per button it actually owns. Zero when none is connected.
+    /// How many buttons the connected 6-DoF mouse has, so the page offers a
+    /// row per button it actually owns. Zero when none is connected.
     pub nav_buttons: u32,
 }
 
-/// One widget id per button row; a chooser needs its own.
+/// One widget id per 6-DoF mouse button row; a chooser needs its own.
 const NAV_BUTTON_IDS: [&str; 16] = [
     "prefs_nav_button_1",
     "prefs_nav_button_2",
@@ -590,9 +590,9 @@ fn display_page(
             let device = &mut draft.spacenav;
             pref_group(
                 ui,
-                "Navigation device",
+                "6-DoF mouse",
                 vec![
-                    PrefRow::toggle("Steer the view with the device", &mut device.enabled)
+                    PrefRow::toggle("Steer the view with a 6-DoF mouse", &mut device.enabled)
                         .hint("A six-axis puck moves the view while it is held"),
                     PrefRow::toggle("Pan", &mut device.translation),
                     PrefRow::toggle("Zoom", &mut device.zoom),

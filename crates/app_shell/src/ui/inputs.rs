@@ -83,7 +83,7 @@ pub struct UiFrameInputs<'a> {
     /// Which document server serves this session, with a degraded marker —
     /// e.g. "local daemon" or "local daemon (disconnected)".
     pub server_label: String,
-    /// The navigation device the reader thread has, if any.
+    /// The 6-DoF mouse the reader thread has, if any.
     pub nav_device: Option<String>,
     /// How many buttons it has, so Preferences offers a row per button.
     pub nav_buttons: u32,

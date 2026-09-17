@@ -123,7 +123,7 @@ fn main() -> Result<()> {
 /// produces no window event has to knock on the door itself.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppEvent {
-    /// The navigation device moved or a button changed.
+    /// The 6-DoF mouse moved or a button changed.
     DeviceInput,
 }
 
@@ -181,8 +181,8 @@ struct PrintCadApp {
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
     kernel_worker: KernelWorker,
-    /// Background reader for a 6-degree-of-freedom navigation device. It
-    /// holds the puck's current deflection; the frame loop integrates it.
+    /// Background reader for a 6-DoF mouse. It holds the puck's current
+    /// deflection; the frame loop integrates it.
     nav_device: app::spacenav::SpaceNavWorker,
     /// The document server connection — local daemon by default, direct
     /// files when no daemon can run, a remote plugin someday. Everything

@@ -153,7 +153,7 @@ impl PrintCadApp {
             || !self.nav_device.motion().is_idle()
     }
 
-    /// What the navigation device's buttons ask for, as commands. The device
+    /// What the 6-DoF mouse's buttons ask for, as commands. The device
     /// reports a press and a release; the press is the one that acts.
     /// Its motion is read in [`Self::build_scene_submission`], where the
     /// camera is.
@@ -164,7 +164,7 @@ impl PrintCadApp {
                 target: "printcad.input",
                 index = button.index,
                 pressed = button.pressed,
-                "navigation device button"
+                "6-DoF mouse button"
             );
             if !button.pressed {
                 continue;

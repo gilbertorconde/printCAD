@@ -335,8 +335,7 @@ impl CameraController {
         );
     }
 
-    /// Steer the view with one reading from a 6-degree-of-freedom navigation
-    /// device.
+    /// Steer the view with one reading from a 6-DoF mouse.
     ///
     /// `axis_readings` is the device's own six numbers — three translations,
     /// then three rotations — as the daemon sends them. They describe a rate,

@@ -1,4 +1,4 @@
-//! Background reader for a 6-degree-of-freedom navigation device.
+//! Background reader for a 6-DoF mouse — a six-axis navigation puck.
 //!
 //! The daemon that owns the device publishes events on a UNIX socket, and the
 //! vendor's own driver publishes them through the display server instead; one
@@ -107,9 +107,9 @@ impl SpaceNavWorker {
         let worker_shared = Arc::clone(&shared);
         let worker_stop = Arc::clone(&stop);
         thread::Builder::new()
-            .name("printcad-navigation-device".to_string())
+            .name("printcad-6dof-mouse".to_string())
             .spawn(move || worker_loop(&worker_shared, &worker_stop, &wake))
-            .expect("failed to spawn the navigation device thread");
+            .expect("failed to spawn the 6-DoF mouse thread");
 
         Self { shared, stop }
     }
@@ -152,7 +152,7 @@ fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn F
             Err(err) => {
                 // No device reachable by either route. Ordinary: say so only
                 // in the trace log, and look again a little later each time.
-                tracing::debug!(target: "printcad.input", "no navigation device: {err}");
+                tracing::debug!(target: "printcad.input", "no 6-DoF mouse: {err}");
                 sleep_until_stopped(retry, stop);
                 retry = (retry * 2).min(RETRY_MAX);
             }
@@ -165,7 +165,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
     tracing::debug!(
         target: "printcad.input",
         backend = %source.backend(),
-        "navigation device connected"
+        "6-DoF mouse connected"
     );
     source.set_name("printCAD").ok();
     source
@@ -207,7 +207,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
             }
             Ok(Some(_)) => {}
             Err(err) => {
-                tracing::debug!(target: "printcad.input", "navigation device read failed: {err}");
+                tracing::debug!(target: "printcad.input", "6-DoF mouse read failed: {err}");
                 break;
             }
         }
@@ -215,7 +215,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
 
     let mut state = lock(shared);
     if state.device.take().is_some() {
-        app_log::info("Navigation device disconnected");
+        app_log::info("6-DoF mouse disconnected");
     }
     state.button_count = 0;
     let was_moving = !state.motion.is_idle();
@@ -246,8 +246,8 @@ fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
         return;
     }
     match &name {
-        Some(name) => app_log::info(format!("Navigation device connected: {name}")),
-        None => app_log::info("Navigation device disconnected"),
+        Some(name) => app_log::info(format!("6-DoF mouse connected: {name}")),
+        None => app_log::info("6-DoF mouse disconnected"),
     }
     state.device = name;
 }
