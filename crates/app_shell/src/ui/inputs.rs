@@ -39,6 +39,8 @@ pub struct UiFrameInputs<'a> {
     /// Camera and viewport facts for the contexts panel hooks receive.
     pub host: HostCtxParams,
     pub orientation_input: Option<&'a OrientationCubeInput>,
+    /// A sketch is open: the view only rotates about its plane normal.
+    pub planar_view_lock: bool,
     /// Smoothed frames-per-second while rendering; `None` when the
     /// render loop is about to sleep (render on demand), so the display
     /// can say "idle" instead of freezing at the last busy number.

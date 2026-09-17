@@ -310,6 +310,7 @@ impl PrintCadApp {
             task,
             editing_feature,
         } = viewport_data;
+        let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
         let dimensions = self.selection_dimensions();
         let host_params = ui::HostCtxParams {
@@ -361,6 +362,7 @@ impl PrintCadApp {
                         registry: &mut self.registry,
                         host: host_params,
                         orientation_input: Some(&orientation_input),
+                        planar_view_lock,
                         fps: (!self.fps_display_idle).then_some(self.current_fps),
                         scene_redraws_per_s: self.scene_redraws_per_s,
                         gpu_name: self.gpu_name.as_deref(),

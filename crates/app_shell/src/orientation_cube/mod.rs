@@ -39,6 +39,9 @@ pub struct OrientationCubeConfig {
     pub show_rotation_arrows: bool,
     /// Whether to show axis arrows
     pub show_axis_arrows: bool,
+    /// The host only accepts rotations that keep the view direction (a
+    /// sketch is open): the pitch and yaw arrows draw inert.
+    pub planar_only: bool,
 }
 
 impl Default for OrientationCubeConfig {
@@ -50,6 +53,7 @@ impl Default for OrientationCubeConfig {
             border_color: Color32::from_gray(80),
             show_rotation_arrows: true,
             show_axis_arrows: true,
+            planar_only: false,
         }
     }
 }
@@ -173,6 +177,15 @@ pub enum RotateAxis {
     ScreenZ, // Z axis (roll)
 }
 
+impl RotateAxis {
+    /// Whether the rotation leaves the camera looking along the same
+    /// direction. Only roll does: it spins the view about the axis it
+    /// looks down, which while editing is the sketch plane's normal.
+    pub fn keeps_view_direction(self) -> bool {
+        matches!(self, RotateAxis::ScreenZ)
+    }
+}
+
 /// 3×3 rotation for the orientation cube (horizontal / vertical / depth basis).
 fn camera_display_rotation(input: &OrientationCubeInput) -> Mat3 {
     let q_world = Quat::from_array(input.camera_orientation).inverse();
@@ -274,6 +287,7 @@ pub fn draw(
                     config.widget_size,
                     &response,
                     y_offset,
+                    config.planar_only,
                 )
             {
                 result.rotate_delta = Some(delta);
@@ -876,6 +890,7 @@ fn draw_rotation_arrows_interactive(
     widget_size: f32,
     response: &Response,
     y_offset: f32,
+    planar_only: bool,
 ) -> Option<RotateDelta> {
     let mut result: Option<RotateDelta> = None;
     let arrow_radius = widget_size / 2.0 - 2.0;
@@ -939,11 +954,19 @@ fn draw_rotation_arrows_interactive(
             .map(|p| point_in_polygon(p, &triangle_pts))
             .unwrap_or(false);
 
-        if is_clicked {
+        // Pitch and yaw would tilt the view off the sketch plane.
+        let inert = planar_only && !axis.keeps_view_direction();
+        if is_clicked && !inert {
             result = Some(RotateDelta { degrees, axis });
         }
 
-        let color = if is_hovered { hover_color } else { arrow_color };
+        let color = if inert {
+            Color32::from_gray(58)
+        } else if is_hovered {
+            hover_color
+        } else {
+            arrow_color
+        };
         painter.add(egui::Shape::convex_polygon(
             triangle_pts,
             color,
@@ -1338,4 +1361,16 @@ fn point_in_polygon(point: Pos2, polygon: &[Pos2]) -> bool {
     }
 
     inside
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RotateAxis;
+
+    #[test]
+    fn only_roll_leaves_the_view_direction_alone() {
+        assert!(RotateAxis::ScreenZ.keeps_view_direction());
+        assert!(!RotateAxis::ScreenX.keeps_view_direction());
+        assert!(!RotateAxis::ScreenY.keeps_view_direction());
+    }
 }

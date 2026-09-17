@@ -181,19 +181,23 @@ impl PrintCadApp {
 
         // ---- Phase 2: apply in legacy frame order ----
 
-        // Orientation-cube rotations are locked during sketch editing:
-        // the view must stay planar to the sketch.
-        if self.sketch_editing_active() {
-            if intents.camera_snap.is_some() || intents.camera_rotate.is_some() {
-                app_log::info("View rotation is locked while editing a sketch");
+        // An open sketch keeps the view square to its plane: standard
+        // views and out-of-plane rotation are refused, but rolling about
+        // the plane normal (the direction the camera looks down) is not.
+        let planar_only = self.sketch_editing_active();
+        match intents.camera_snap {
+            Some(_) if planar_only => {
+                app_log::info("Standard views are locked while a sketch is open")
             }
-        } else {
-            if let Some(view) = intents.camera_snap {
-                self.camera.snap_to_view(view, &self.user_settings.camera);
-            }
-            if let Some(ref delta) = intents.camera_rotate {
+            Some(view) => self.camera.snap_to_view(view, &self.user_settings.camera),
+            None => {}
+        }
+        if let Some(ref delta) = intents.camera_rotate {
+            if !planar_only || delta.axis.keeps_view_direction() {
                 self.camera
                     .apply_rotate_delta(delta, &self.user_settings.camera);
+            } else {
+                app_log::info("The view only turns in the sketch plane while a sketch is open");
             }
         }
 

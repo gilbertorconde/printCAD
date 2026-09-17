@@ -166,6 +166,7 @@ impl UiLayer {
             registry,
             host,
             orientation_input,
+            planar_view_lock,
             fps,
             scene_redraws_per_s,
             gpu_name,
@@ -208,7 +209,8 @@ impl UiLayer {
         // resurrect them every frame (infinite "New Body" loop).
         let mut active_tool = host_active_tool;
 
-        let cube_config = self.orientation_cube_config.clone();
+        let mut cube_config = self.orientation_cube_config.clone();
+        cube_config.planar_only = planar_view_lock;
         let mut commands: Vec<UiCommand> = Vec::new();
         let mut settings_commit: Option<preferences::Commit> = None;
         let mut palette_activate: Option<(ActiveWorkbench, String)> = None;
