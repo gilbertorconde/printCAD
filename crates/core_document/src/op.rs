@@ -95,8 +95,9 @@ pub enum DocumentOp {
         id: BodyId,
         name: String,
     },
-    /// Exists as the inverse of `CreateBody` (per-user undo); the UI offers
-    /// no direct body deletion yet. Any features still attached go with it.
+    /// Delete a body: the inverse of `CreateBody`, and what the tree's
+    /// Delete does. Any features still attached go with it, along with the
+    /// body's geometry.
     RemoveBody {
         id: BodyId,
     },

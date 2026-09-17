@@ -20,6 +20,8 @@ pub struct ComboViewResult {
     pub tree_feature_command: Option<(core_document::FeatureId, feature_tree::TreeFeatureCommand)>,
     /// The property panel's Label row committed a new name.
     pub rename: Option<(TreeItemId, String)>,
+    /// A row the user asked to delete.
+    pub delete_item: Option<TreeItemId>,
 }
 
 pub struct ComboViewInputs<'a> {
@@ -157,6 +159,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.tree_activation = tree_ui.activation;
                     result.imported_visibility_change = tree_ui.imported_visibility_change;
                     result.tree_feature_command = tree_ui.feature_command;
+                    result.delete_item = tree_ui.delete_item;
                     // Hover wins; the selection stands in when the pointer
                     // is elsewhere, so the line never goes blank mid-glance.
                     selected_detail = tree_ui
@@ -164,6 +167,20 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .and_then(|id| tree_model.detail_for(id))
                         .or_else(|| tree_model.detail_for(selected_id));
                 });
+
+            // The tree owns Delete whenever nothing is being typed and no
+            // sketch is open — an open sketch keeps it for its geometry.
+            let deletable = matches!(
+                selected_id,
+                TreeItemId::Feature(_) | TreeItemId::Body(_) | TreeItemId::ImportedObject(_)
+            );
+            if deletable
+                && editing_feature.is_none()
+                && !ui.ctx().egui_wants_keyboard_input()
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
+            {
+                result.delete_item = Some(selected_id);
+            }
 
             let props = property_panel::draw_property_panel(
                 ui,

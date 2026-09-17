@@ -74,6 +74,8 @@ pub enum UiCommand {
     RecomputeAll,
     /// The task panel closed with this outcome.
     TaskClosed(TaskOutcome),
+    /// Delete a tree item: a feature, or a body with everything on it.
+    DeleteTreeItem(TreeItemId),
     /// The property panel's Label row renamed a tree item.
     RenameTreeItem {
         item: TreeItemId,

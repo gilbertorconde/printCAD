@@ -45,6 +45,7 @@ fn scripted_session(doc: &mut Document) {
     assert!(doc.move_feature_in_history(d2, true), "swap d1/d2");
     doc.remove_feature(d1).expect("remove");
     doc.set_body_tip(body, Some(d2));
+    assert!(doc.remove_body(other), "the second body goes away");
     doc.set_display_unit(Unit::In);
     doc.set_name("Replayed");
 }
@@ -200,4 +201,38 @@ fn concurrent_inserts_order_identically_on_every_replica() {
         order(&bob),
         "replicas must agree on history order despite the seq collision"
     );
+}
+
+#[test]
+fn removing_a_body_takes_its_features_and_its_geometry() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Base".into()));
+    let keep = doc.create_body(Some("Keep".into()));
+    let feature = doc
+        .add_feature_in_body(datum(BasePlane::XY), "Datum".into(), Some(body))
+        .expect("add");
+    let kept = doc
+        .add_feature_in_body(datum(BasePlane::XY), "Kept".into(), Some(keep))
+        .expect("add");
+    doc.set_imported_geometry(
+        body,
+        core_document::ImportedGeometry {
+            mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+        },
+    );
+
+    assert!(doc.remove_body(body));
+    assert!(doc.bodies().iter().all(|b| b.id != body), "body gone");
+    assert!(doc.get_feature_meta(feature).is_none(), "its features too");
+    assert!(doc.imported_geometry(body).is_none(), "and its geometry");
+    assert!(
+        doc.get_feature_meta(kept).is_some(),
+        "other bodies untouched"
+    );
+    assert!(!doc.remove_body(body), "removing it again does nothing");
 }

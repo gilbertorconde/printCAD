@@ -403,6 +403,9 @@ impl UiLayer {
             if let Some((item, name)) = combo.rename {
                 commands.push(UiCommand::RenameTreeItem { item, name });
             }
+            if let Some(item) = combo.delete_item {
+                commands.push(UiCommand::DeleteTreeItem(item));
+            }
 
             let task_result = task_panel::draw_task_panel(
                 ui,

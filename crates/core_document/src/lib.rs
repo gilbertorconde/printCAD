@@ -835,6 +835,17 @@ impl Document {
         Ok(())
     }
 
+    /// Remove a body with every feature attached to it and the geometry it
+    /// carried. Deleting a body has no inverse, so the entry it records is
+    /// a history barrier.
+    pub fn remove_body(&mut self, body: BodyId) -> bool {
+        if !self.bodies.iter().any(|b| b.id == body) {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::RemoveBody { id: body });
+        true
+    }
+
     /// Get all dirty features.
     pub fn dirty_features(&self) -> Vec<FeatureId> {
         self.feature_tree.dirty_features()

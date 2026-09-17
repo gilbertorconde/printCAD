@@ -44,6 +44,8 @@ pub struct TreeUiResult {
     pub hovered: Option<TreeItemId>,
     pub imported_visibility_change: Option<(Uuid, bool)>,
     pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
+    /// The row the user asked to delete (menu or the Delete key).
+    pub delete_item: Option<TreeItemId>,
 }
 
 /// View model describing the current document tree.
@@ -690,12 +692,14 @@ fn draw_node(
     }
 }
 
-/// History context menu on feature rows (right-click).
+/// Right-click menu: history actions on feature rows, Delete on anything
+/// that can go.
 fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiResult) -> Response {
     let Some(feature_id) = node.feature_menu else {
-        return response;
+        return attach_body_menu(response, node, result);
     };
     let mut command = None;
+    let mut delete = false;
     response.context_menu(|ui| {
         let suppress_label = if node.suppressed {
             "Unsuppress"
@@ -747,12 +751,38 @@ fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiR
         }
         ui.separator();
         if ui.button("Delete").clicked() {
-            command = Some(TreeFeatureCommand::Delete);
+            delete = true;
             ui.close();
         }
     });
+    if delete {
+        result.delete_item = Some(node.id);
+    }
     if let Some(command) = command {
         result.feature_command = Some((feature_id, command));
+    }
+    response
+}
+
+/// Bodies and imported parts carry a single action: Delete, which takes
+/// the body's features and geometry with it.
+fn attach_body_menu(response: Response, node: &TreeNode, result: &mut TreeUiResult) -> Response {
+    if !matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_)) {
+        return response;
+    }
+    let mut delete = false;
+    response.context_menu(|ui| {
+        if ui
+            .button("Delete")
+            .on_hover_text("Remove this body, its features and its geometry")
+            .clicked()
+        {
+            delete = true;
+            ui.close();
+        }
+    });
+    if delete {
+        result.delete_item = Some(node.id);
     }
     response
 }

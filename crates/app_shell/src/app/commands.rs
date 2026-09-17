@@ -47,6 +47,7 @@ struct FrameIntents {
     recompute_all: bool,
     task_closed: Option<core_document::TaskOutcome>,
     rename: Option<(TreeItemId, String)>,
+    delete_item: Option<TreeItemId>,
     show_start_page: bool,
     release_active_object: bool,
     start_new: Option<StartKind>,
@@ -119,6 +120,7 @@ impl PrintCadApp {
                 UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
+                UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),
                 UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
                 UiCommand::ReleaseActiveObject => intents.release_active_object = true,
                 UiCommand::ShowStartPage => intents.show_start_page = true,
@@ -250,6 +252,10 @@ impl PrintCadApp {
         }
         if let Some((feature, command)) = intents.tree_feature {
             self.apply_tree_feature_command(feature, command);
+        }
+
+        if let Some(item) = intents.delete_item {
+            self.delete_tree_item(item);
         }
 
         if let Some(req) = intents.orient_to_plane {
@@ -466,6 +472,106 @@ impl PrintCadApp {
     }
 
     /// Apply a history context-menu action from the feature tree.
+    /// Delete what a tree row stands for: a feature, or a body with every
+    /// feature and every bit of geometry on it.
+    fn delete_tree_item(&mut self, item: TreeItemId) {
+        match item {
+            TreeItemId::Feature(feature) => {
+                self.apply_tree_feature_command(feature, TreeFeatureCommand::Delete);
+            }
+            TreeItemId::Body(body) => self.delete_body(body),
+            TreeItemId::ImportedObject(node) => self.delete_imported_node(node),
+            TreeItemId::DocumentRoot => {}
+        }
+    }
+
+    /// Remove `body` and forget every reference the app holds to it.
+    fn delete_body(&mut self, body: core_document::BodyId) {
+        let name = self
+            .document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| "body".to_string());
+        if !self.document.remove_body(body) {
+            return;
+        }
+        if self.active_body_id == Some(body) {
+            self.active_body_id = None;
+        }
+        if self.selected_body == Some(body.0) {
+            self.selected_body = None;
+        }
+        if self.hovered_body == Some(body.0) {
+            self.hovered_body = None;
+            self.hovered_world_pos = None;
+        }
+        if self.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
+            self.face_highlight = None;
+        }
+        if self.last_face_hit.map(|(b, _)| b) == Some(body.0) {
+            self.last_face_hit = None;
+        }
+        // Features of the body went with it; anything pointing at one of
+        // them now points at nothing.
+        if self
+            .active_document_object
+            .is_some_and(|id| self.document.get_feature_meta(id).is_none())
+        {
+            self.active_document_object = None;
+        }
+        self.tree_selection = Some(TreeItemId::DocumentRoot);
+        // Deleting a body has no inverse: the entry closes the history.
+        self.journal.label_next("Delete body");
+        self.journal.note(&mut self.document);
+        app_log::info(format!("Deleted `{name}` and everything on it"));
+    }
+
+    /// Delete an imported row: its subtree leaves the graph and the bodies
+    /// those rows stood for go with it.
+    fn delete_imported_node(&mut self, node: uuid::Uuid) {
+        let mut doomed: Vec<uuid::Uuid> = Vec::new();
+        let mut stack = vec![node];
+        while let Some(id) = stack.pop() {
+            let Some(entry) = self.document.imported_object(id) else {
+                continue;
+            };
+            stack.extend(entry.children.iter().copied());
+            doomed.push(id);
+        }
+        let bodies: Vec<core_document::BodyId> = doomed
+            .iter()
+            .filter_map(|id| self.document.imported_object(*id).and_then(|n| n.body_id))
+            .collect();
+
+        // Rebuild what stays, with the deleted rows dropped from their
+        // parents' children.
+        let roots: Vec<uuid::Uuid> = self
+            .document
+            .imported_object_roots()
+            .iter()
+            .copied()
+            .filter(|id| !doomed.contains(id))
+            .collect();
+        let mut kept: std::collections::HashMap<uuid::Uuid, core_document::ImportedObjectNode> =
+            std::collections::HashMap::new();
+        let mut stack: Vec<uuid::Uuid> = roots.clone();
+        while let Some(id) = stack.pop() {
+            let Some(entry) = self.document.imported_object(id) else {
+                continue;
+            };
+            let mut entry = entry.clone();
+            entry.children.retain(|child| !doomed.contains(child));
+            stack.extend(entry.children.iter().copied());
+            kept.insert(id, entry);
+        }
+        self.document.set_imported_object_graph(roots, kept);
+        for body in bodies {
+            self.delete_body(body);
+        }
+    }
+
     fn apply_tree_feature_command(
         &mut self,
         feature: core_document::FeatureId,
