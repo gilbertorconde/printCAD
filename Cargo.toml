@@ -53,7 +53,7 @@ flate2 = "1.1.10"
 zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
-ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "7741df548a682419fc7f891e46ad9789815e4862" }
+ogeom = { git = "https://github.com/gilbertorconde/ogeom-rs", rev = "fc910b9885fc154f44aa3af202da276ec59c8e43" }
 sixdof = { git = "https://github.com/gilbertorconde/sixdof", rev = "01bab7911f8d0440d40f9d4c8564975ac625d104", features = ["magellan"] }
 
 # Uncomment to develop against the local kernel checkout instead of the pin:

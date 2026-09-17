@@ -454,14 +454,11 @@ fn face_triangulations_stay_inside_their_boundaries() {
 }
 
 /// A single M5x16 BHCS in its original exporter encoding (entities verbatim
-/// from the source assembly, not a round-trip). A third of its mesh vertices
-/// land outside the bounds the body reports, by the same 3.02 mm at every
-/// deflection: the mesh is right and the bounds are short, because the
-/// kernel's own `shape_bounds` answers with the untrimmed carrier extent and
-/// the fallback is a hull of the topological vertices, which misses the
-/// bulge of a sphere zone between its rims.
+/// from the source assembly, not a round-trip). Its button head is a sphere
+/// zone that bulges between its rims, so a body whose bounds came from its
+/// vertices would report a screw 3 mm too narrow and the mesh would spill
+/// out of it.
 #[test]
-#[ignore = "kernel: a body's bounds come from its vertex hull, not its faces (ogeom-rs#40)"]
 fn bolt_faces_stay_inside_their_boundaries() {
     let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data/M5x16_BHCS_original_encoding.step");
