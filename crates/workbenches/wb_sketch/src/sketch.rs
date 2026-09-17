@@ -523,8 +523,13 @@ impl SketchPlane {
         };
         let x_axis = reference.cross(n).normalize();
         let y_axis = n.cross(x_axis).normalize();
+        // The document origin dropped onto the plane, not the spot that was
+        // clicked: every sketch on a given plane then shares one frame, and
+        // geometry built around the origin keeps its place on the far face.
+        let picked = glam::Vec3::from_array(point);
+        let origin = n * picked.dot(n);
         Self {
-            origin: point,
+            origin: origin.to_array(),
             normal: n.to_array(),
             x_axis: x_axis.to_array(),
             y_axis: y_axis.to_array(),
@@ -1156,12 +1161,32 @@ mod plane_tests {
 
     #[test]
     fn face_plane_top_face_matches_world_axes() {
-        // Top face of a padded box: normal +Z at height 8.
+        // Top face of a padded box: normal +Z at height 8. Wherever the face
+        // was clicked, the sketch starts at the document origin's projection.
         let plane = SketchPlane::from_face([5.0, 3.0, 8.0], [0.0, 0.0, 1.0]);
         assert_orthonormal(&plane);
-        assert_eq!(plane.origin, [5.0, 3.0, 8.0]);
+        assert_eq!(plane.origin, [0.0, 0.0, 8.0]);
         let n = glam::Vec3::from_array(plane.normal);
         assert!((n - glam::Vec3::Z).length() < 1e-5);
+    }
+
+    #[test]
+    fn facing_faces_of_one_solid_share_a_centre() {
+        // A pad around the origin: sketches on its two ends land on the same
+        // axis, so a circle drawn at 0,0 on one is concentric with the other.
+        let front = SketchPlane::from_face([4.0, -2.0, 10.0], [0.0, 0.0, 1.0]);
+        let back = SketchPlane::from_face([-7.0, 5.0, 0.0], [0.0, 0.0, -1.0]);
+        assert_eq!(front.origin, [0.0, 0.0, 10.0]);
+        assert_eq!(back.origin, [0.0, 0.0, 0.0]);
+        assert_orthonormal(&front);
+        assert_orthonormal(&back);
+    }
+
+    #[test]
+    fn a_face_away_from_the_origin_keeps_its_own_plane() {
+        // Normal +X at x = 500: the origin drops onto the plane, not to zero.
+        let plane = SketchPlane::from_face([500.0, 120.0, 30.0], [1.0, 0.0, 0.0]);
+        assert_eq!(plane.origin, [500.0, 0.0, 0.0]);
     }
 
     #[test]

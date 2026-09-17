@@ -124,11 +124,13 @@ fn pad_feature_builds_a_box_through_the_full_stack() {
 fn pocket_feature_cuts_into_the_pad() {
     let (mut doc, body, rect_id) = setup(20.0, 20.0);
     // The hole sketch sits on the pad's top face (z = 6, normal +Z), exactly
-    // as produced by clicking the face and choosing "Selected face".
+    // as produced by clicking the face and choosing "Selected face". The
+    // plane's frame starts at the document origin, so the pad's middle is at
+    // (10, 10) on it.
     let top_face = wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let hole_id = doc
         .add_feature_in_body(
-            circle_sketch_on(top_face, 0.0, 0.0, 3.0),
+            circle_sketch_on(top_face, 10.0, 10.0, 3.0),
             "hole".into(),
             Some(body),
         )
@@ -321,12 +323,13 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     )
     .unwrap();
 
-    // Two hole positions on the pad's top face.
+    // Two hole positions on the pad's top face, either side of its middle
+    // (the plane's frame starts at the document origin).
     let top_face = wb_sketch::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let mut holes = Sketch::new("holes");
     holes.plane = top_face;
-    for x in [-8.0f32, 8.0] {
-        let center = holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))));
+    for x in [7.0f32, 23.0] {
+        let center = holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 10.0))));
         holes.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
     }
     let holes_id = doc
