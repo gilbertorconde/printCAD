@@ -431,6 +431,22 @@ fn events_that_land_during_a_request_are_kept() {
 }
 
 #[test]
+fn a_timed_read_gives_up_and_then_finds_the_event() {
+    let daemon = Daemon::start("timeout", false);
+    let mut client = daemon.client();
+
+    assert_eq!(
+        client.read_timeout(Duration::from_millis(20)).unwrap(),
+        None
+    );
+    daemon.push(motion([0, 0, -5], [0, 0, 0], 8));
+    assert!(matches!(
+        client.read_timeout(Duration::from_secs(2)).unwrap(),
+        Some(Event::Motion(_))
+    ));
+}
+
+#[test]
 fn a_daemon_that_stops_surfaces_as_a_disconnect() {
     let mut daemon = Daemon::start("disconnect", false);
     let mut client = daemon.client();

@@ -110,6 +110,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "settings",
+ "spacenav",
  "tiny-skia 0.12.0",
  "tracing",
  "tracing-appender",

@@ -168,6 +168,9 @@ struct PrintCadApp {
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
     kernel_worker: KernelWorker,
+    /// Background reader for a 6-degree-of-freedom navigation device. It
+    /// holds the puck's current deflection; the frame loop integrates it.
+    nav_device: app::spacenav::SpaceNavWorker,
     /// The document server connection — local daemon by default, direct
     /// files when no daemon can run, a remote plugin someday. Everything
     /// that crosses it is the wire protocol; `document_load_epoch` rides
@@ -352,6 +355,7 @@ impl PrintCadApp {
             current_file: None,
             file_dialog_rx: None,
             kernel_worker: KernelWorker::spawn(),
+            nav_device: app::spacenav::SpaceNavWorker::spawn(),
             server,
             server_socket,
             last_server_reconnect: None,

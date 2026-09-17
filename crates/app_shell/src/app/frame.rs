@@ -126,6 +126,31 @@ impl PrintCadApp {
             || self.step_import_pending.is_some()
     }
 
+    /// Read what the navigation device is doing. Its reader thread holds the
+    /// puck's deflection until the device reports a new one, so this is the
+    /// current value rather than a queue; buttons are a queue and come out in
+    /// the order they were pressed.
+    fn drain_device_input(&mut self) {
+        for button in self.nav_device.take_buttons() {
+            tracing::debug!(
+                target: "printcad.input",
+                index = button.index,
+                pressed = button.pressed,
+                "navigation device button"
+            );
+        }
+        let motion = self.nav_device.motion();
+        if !motion.is_idle() {
+            tracing::debug!(
+                target: "printcad.input",
+                device = ?self.nav_device.device_name(),
+                translate = ?motion.translate,
+                rotate = ?motion.rotate,
+                "navigation device motion"
+            );
+        }
+    }
+
     pub(crate) fn frame(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
         // Optional FPS cap from settings (0 = uncapped).
@@ -287,6 +312,7 @@ impl PrintCadApp {
         // the frame they actually became visible in. Has to happen before
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
+        self.drain_device_input();
         self.drain_server_messages();
         self.drive_part_recompute();
 

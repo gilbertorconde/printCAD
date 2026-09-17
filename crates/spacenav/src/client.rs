@@ -188,6 +188,25 @@ impl Client {
         }
     }
 
+    /// Waits for the next event, giving up after `timeout`.
+    ///
+    /// `None` means the wait expired. A packet that arrived only in part is
+    /// kept, so the next call picks it up where this one left off.
+    pub fn read_timeout(&mut self, timeout: Duration) -> Result<Option<Event>, Error> {
+        if let Some(event) = self.queued.pop_front() {
+            return Ok(Some(event));
+        }
+        loop {
+            self.set_mode(Mode::Deadline(timeout))?;
+            let Some(words) = self.fill_packet()? else {
+                return Ok(None);
+            };
+            if is_event(&words) {
+                return decode_event(&words).map(Some);
+            }
+        }
+    }
+
     /// Takes the next event if one is already waiting.
     pub fn poll(&mut self) -> Result<Option<Event>, Error> {
         if let Some(event) = self.queued.pop_front() {
