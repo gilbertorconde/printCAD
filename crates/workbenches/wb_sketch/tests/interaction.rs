@@ -79,6 +79,13 @@ impl Harness {
         self.wb.on_input(&event, tool, &mut ctx);
         self.active_object = ctx.active_document_object;
         self.tool_request = ctx.active_tool_request.take();
+        // The host runs this hook once per frame; tool enablement reads
+        // the state it refreshes.
+        let mut frame_ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        frame_ctx.view_proj = Some(self.vp);
+        frame_ctx.active_document_object = self.active_object;
+        self.wb.on_frame(0.016, &mut frame_ctx);
     }
 
     /// Viewport pixel coordinates for a sketch-plane point (the inverse of
@@ -244,6 +251,16 @@ impl Harness {
         self.click(from.0, from.1, "sketch.select");
         self.mouse_move(to.0, to.1, "sketch.select");
         self.release(to.0, to.1, "sketch.select");
+    }
+
+    /// Whether the toolbar would light this tool up right now.
+    fn tool_enabled(&mut self, id: &str) -> bool {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(self.vp);
+        ctx.active_document_object = self.active_object;
+        ctx.selected_body_id = Some(uuid::Uuid::new_v4());
+        self.wb.is_tool_enabled(id, &ctx)
     }
 
     fn point_at(&self, x: f32, y: f32) -> bool {
@@ -2219,4 +2236,27 @@ fn a_right_drag_pans_instead_of_changing_the_tool() {
 
     h.right_drag((20.0, 20.0), (30.0, 26.0), "sketch.line");
     assert_eq!(h.tool_request, None, "the pan left the tool alone");
+}
+
+#[test]
+fn selecting_two_lines_enables_the_constraint_tools_that_fit_them() {
+    let mut h = Harness::new();
+    two_lines(&mut h);
+    assert!(
+        !h.tool_enabled("sketch.constrain.parallel"),
+        "nothing selected, nothing to constrain"
+    );
+
+    h.click(5.0, 3.5, "sketch.select");
+    h.click(5.0, 23.5, "sketch.select");
+
+    assert!(
+        h.tool_enabled("sketch.constrain.parallel"),
+        "two lines fit a parallel constraint"
+    );
+    assert!(h.tool_enabled("sketch.constrain.equal"));
+    assert!(
+        !h.tool_enabled("sketch.constrain.radius"),
+        "a radius needs a circle"
+    );
 }

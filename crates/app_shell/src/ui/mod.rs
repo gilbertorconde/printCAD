@@ -248,6 +248,7 @@ impl UiLayer {
                 &mut active_tool,
                 &mut commands,
             );
+            palette_activate = menu.activate_tool.clone();
             // About lands on its page; Preferences keeps the last group.
             let unit = document.display_unit();
             if menu.show_about {
@@ -338,7 +339,9 @@ impl UiLayer {
                     let (group, tab) = (self.preferences.group, self.preferences.tab);
                     self.preferences.open_at(settings, unit, group, tab);
                 }
-                palette_activate = palette.activate_tool;
+                if palette.activate_tool.is_some() {
+                    palette_activate = palette.activate_tool;
+                }
             }
 
             // Bottom bars before the side panels so they span the width.

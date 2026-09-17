@@ -35,7 +35,11 @@ impl PrintCadApp {
             self.document.clear_body_feature_errors(body_id);
             match wb_part::body_build_ops(&self.document, body_id) {
                 Ok(plan) if plan.ops.is_empty() => {
-                    self.document.remove_imported_geometry(body_id);
+                    // Only geometry the features produced is cleared; an
+                    // imported solid outlives an empty history.
+                    if !wb_part::imported_body(&self.document, body_id) {
+                        self.document.remove_imported_geometry(body_id);
+                    }
                 }
                 Ok(plan) => {
                     self.kernel_worker.request_build_solid(

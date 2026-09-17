@@ -142,6 +142,19 @@ impl PrintCadApp {
         Some((result, outcome))
     }
 
+    /// The active workbench's per-frame hook. Tool enablement, overlays
+    /// and the HUD all read state it refreshes, so it runs before the
+    /// scene and the UI are built.
+    pub(crate) fn call_workbench_on_frame(&mut self, dt: f32) {
+        let wb_id = self.active_workbench_id();
+        let params = self.interaction_ctx_params();
+        if let Some((_, outcome)) =
+            self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.on_frame(dt, ctx))
+        {
+            self.apply_hook_outcome(outcome);
+        }
+    }
+
     /// Apply an input hook's write-backs: sync the active document object
     /// and honour a camera orient request.
     pub(crate) fn apply_hook_outcome(&mut self, outcome: WbHookOutcome) {

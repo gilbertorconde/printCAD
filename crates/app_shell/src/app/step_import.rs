@@ -416,8 +416,18 @@ impl PrintCadApp {
 
         if let Some(body_id) = first_body {
             self.active_body_id = Some(body_id);
-            self.tree_selection = Some(TreeItemId::Body(body_id));
-            self.selected_body = Some(body_id.0);
+            // The tree draws imported parts as their own rows and hides the
+            // body behind them, so point the selection at the row on screen.
+            self.tree_selection = Some(
+                self.document
+                    .imported_object_for_body(body_id)
+                    .map(TreeItemId::ImportedObject)
+                    .unwrap_or(TreeItemId::Body(body_id)),
+            );
+            // No viewport selection: the first click on the model picks a
+            // face rather than undoing a selection nobody made.
+            self.selected_body = None;
+            self.last_select_click = None;
         }
 
         if let Some(unit) = adopt_unit {

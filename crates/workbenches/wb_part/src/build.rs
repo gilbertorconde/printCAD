@@ -72,6 +72,15 @@ pub fn pending_body_rebuilds(document: &Document) -> Vec<BodyId> {
     bodies
 }
 
+/// Whether this body's geometry came from an import rather than from its
+/// feature history. Only the import path stamps the source asset; a
+/// rebuild's own result leaves it unset.
+pub fn imported_body(document: &Document, body: BodyId) -> bool {
+    document
+        .imported_geometry(body)
+        .is_some_and(|geometry| geometry.source_asset.is_some())
+}
+
 /// Feature ids of this body's part features (for dirty-flag bookkeeping).
 pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
     part_features_of_body(document, body)
@@ -114,6 +123,17 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
 /// its solid).
 pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, BuildError> {
     let features = part_features_of_body(document, body);
+    // A body whose shape came from an import has no history to rebuild
+    // from: running the features alone would replace the imported solid
+    // with whatever they make on their own.
+    if !features.is_empty() && imported_body(document, body) {
+        return Err(BuildError {
+            feature: features.first().map(|(id, _)| *id),
+            message: "this body's shape came from an import, so it has no history to rebuild; \
+                      features need a body of their own"
+                .into(),
+        });
+    }
     let mut plan = BuildPlan {
         ops: Vec::with_capacity(features.len()),
         op_features: Vec::with_capacity(features.len()),
@@ -1301,6 +1321,58 @@ mod tests {
 
     fn boolean_of(op: &SolidOp) -> BooleanOp {
         op.boolean_op().expect("shape-producing op")
+    }
+
+    /// Mark `body` as carrying an imported solid, the way a STEP import does.
+    fn import_into(doc: &mut Document, body: BodyId) {
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                source_asset: Some(uuid::Uuid::new_v4()),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+            },
+        );
+    }
+
+    #[test]
+    fn an_imported_body_is_not_rebuilt_from_features() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        import_into(&mut doc, body);
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+
+        let err = body_build_ops(&doc, body).expect_err("the import has no history to rebuild");
+        assert_eq!(err.feature, Some(pad_id));
+        assert!(err.message.contains("import"), "{}", err.message);
+    }
+
+    #[test]
+    fn a_body_built_from_features_is_not_taken_for_an_import() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        // A rebuild's own result carries no source asset.
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+            },
+        );
+        assert!(!imported_body(&doc, body));
+        assert!(
+            body_build_ops(&doc, body).is_ok(),
+            "still rebuilds normally"
+        );
     }
 
     #[test]

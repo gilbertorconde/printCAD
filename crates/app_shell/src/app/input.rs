@@ -432,17 +432,24 @@ impl PrintCadApp {
             // Face-first selection: the first click selects the FACE under the
             // cursor; a double click promotes to the whole body.
             let now = Instant::now();
-            let is_double = self
-                .last_select_click
+            let previous = self.last_select_click;
+            let is_double = previous
                 .map(|(t, target)| target == hovered && now.duration_since(t).as_millis() < 400)
                 .unwrap_or(false);
+            // Whether the last viewport click also landed on this body: a
+            // selection made from the tree or by an import is not something
+            // the next click should undo.
+            let clicked_before = previous.is_some_and(|(_, target)| target == hovered);
             self.last_select_click = Some((now, hovered));
 
             if is_double {
                 self.face_highlight = None;
                 self.selected_body = Some(hovered);
                 app_log::info(format!("Selected body: {hovered:?}"));
-            } else if self.selected_body == Some(hovered) && self.face_highlight.is_none() {
+            } else if self.selected_body == Some(hovered)
+                && self.face_highlight.is_none()
+                && clicked_before
+            {
                 // Clicking an already fully-selected body deselects it.
                 self.selected_body = None;
                 self.last_face_hit = None;

@@ -31,6 +31,8 @@ pub struct MenuBarResult {
     pub show_preferences: bool,
     pub show_about: bool,
     pub open_palette: bool,
+    /// A tool of another workbench: switch to it, then run the tool.
+    pub activate_tool: Option<(ActiveWorkbench, String)>,
 }
 
 fn shortcut(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
@@ -352,7 +354,10 @@ pub fn draw_menu_bar(
                                     if is_active_bench {
                                         activate_tool(active_tool, &tools, tool, &tool.id);
                                     } else {
-                                        *active_workbench = ActiveWorkbench(wb_id.clone());
+                                        // The switch resets the tool state, so
+                                        // the activation rides along with it.
+                                        result.activate_tool =
+                                            Some((ActiveWorkbench(wb_id.clone()), tool.id.clone()));
                                     }
                                     ui.close();
                                 }

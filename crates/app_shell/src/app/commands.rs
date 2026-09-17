@@ -159,12 +159,13 @@ impl PrintCadApp {
             }
         }
         if intents.release_active_object {
-            self.active_document_object = None;
-            self.tree_selection = Some(
-                self.active_body_id
-                    .map(TreeItemId::Body)
-                    .unwrap_or(TreeItemId::DocumentRoot),
-            );
+            // The body the task or sketch belonged to stays selected, so the
+            // next feature has a target without another trip to the tree.
+            let target = self
+                .active_body_id
+                .map(TreeItemId::Body)
+                .unwrap_or(TreeItemId::DocumentRoot);
+            self.apply_tree_selection(target);
         }
         if let Some((item, name)) = intents.rename {
             match item {
@@ -402,6 +403,9 @@ impl PrintCadApp {
 
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
         self.tree_selection = Some(selection);
+        // A selection made here is not a viewport click, so the next click
+        // on that body picks a face instead of undoing this.
+        self.last_select_click = None;
         match selection {
             TreeItemId::DocumentRoot => {
                 self.active_document_object = None;

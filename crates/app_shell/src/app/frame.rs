@@ -297,6 +297,7 @@ impl PrintCadApp {
 
         // Update camera animation and assemble this frame's scene submission
         // before the UI/render block takes its borrows on `gfx`.
+        self.call_workbench_on_frame(dt_secs);
         let viewport_data = self.build_scene_submission(dt_secs);
         if self.screen == crate::ui::Screen::Start {
             self.frame_submission.bodies.clear();

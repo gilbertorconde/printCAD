@@ -11,9 +11,9 @@ mod feature;
 mod task;
 
 pub use build::{
-    BuildError, BuildPlan, body_build_ops, hole_diameter, mark_all_part_features_dirty,
-    part_feature_ids, part_features_of_body, pending_body_rebuilds, retarget_feature_sketch,
-    sketch_plane_description, sketches_of_body,
+    BuildError, BuildPlan, body_build_ops, hole_diameter, imported_body,
+    mark_all_part_features_dirty, part_feature_ids, part_features_of_body, pending_body_rebuilds,
+    retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
     ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
@@ -454,6 +454,26 @@ impl PartDesignWorkbench {
         let Some(body) = Self::target_body(ctx) else {
             ctx.log_warn("Select a body (or one of its features) first");
             return InputResult::consumed();
+        };
+        // An imported body's solid lives in the import, not in the tree, so
+        // a feature can't extend it. It goes to a body of its own instead,
+        // which leaves the import exactly as it was.
+        let body = if imported_body(ctx.document, body) {
+            let imported = ctx
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.id == body)
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| "the imported body".to_string());
+            let fresh = ctx.document.create_body(None);
+            ctx.log_warn(format!(
+                "`{imported}` came from an import and has no history to build on; \
+                 the feature goes into a new body"
+            ));
+            fresh
+        } else {
+            body
         };
         let (feature, base) =
             match Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body) {
