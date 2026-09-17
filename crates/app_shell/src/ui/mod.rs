@@ -133,6 +133,25 @@ impl UiLayer {
         self.ctx.egui_wants_keyboard_input()
     }
 
+    /// Whether something floating owns the pointer: a modal, a menu, a
+    /// tooltip, a combo list.
+    ///
+    /// The viewport and the panels around it live in egui's background
+    /// layer, so anything above that is drawn over the 3D scene and should
+    /// be the only thing acting on the wheel or showing what is under the
+    /// cursor. egui answers with the modal's own layer whenever one is open,
+    /// wherever the pointer is, which is what makes a modal modal. Overlays
+    /// the shell paints without interaction — the HUD cards, the axis
+    /// triad — are built `interactable(false)` and are skipped here.
+    pub fn pointer_over_floating_ui(&self) -> bool {
+        let Some(pos) = self.ctx.pointer_latest_pos() else {
+            return false;
+        };
+        self.ctx
+            .layer_id_at(pos)
+            .is_some_and(|layer| layer.order != egui::Order::Background)
+    }
+
     /// The workbench consumed `key`: keep egui from acting on it too.
     pub fn swallow_key(&mut self, key: egui::Key) {
         self.swallowed_keys.push(key);

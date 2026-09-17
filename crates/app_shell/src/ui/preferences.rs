@@ -84,6 +84,10 @@ pub struct PreferencesState {
     pub draft: UserSettings,
     pub draft_unit: Unit,
     pub search: String,
+    /// Where the dialog was dragged to, and how big it was left. `None`
+    /// means it has not been moved, so it opens centred.
+    pos: Option<egui::Pos2>,
+    size: Vec2,
     /// The frame the dialog opened on: the search field takes focus once.
     just_opened: bool,
 }
@@ -97,6 +101,8 @@ impl Default for PreferencesState {
             draft: UserSettings::default(),
             draft_unit: Unit::Mm,
             search: String::new(),
+            pos: None,
+            size: DIALOG,
             just_opened: false,
         }
     }
@@ -201,6 +207,11 @@ pub struct Commit {
 }
 
 const DIALOG: Vec2 = vec2(900.0, 620.0);
+/// Small enough to tuck out of the way, large enough that the rail, a tab
+/// strip and a row still fit.
+const DIALOG_MIN: Vec2 = vec2(640.0, 420.0);
+/// The corner that resizes the dialog.
+const GRIP: f32 = 16.0;
 const HEADER: f32 = 44.0;
 const RAIL: f32 = 200.0;
 const TABS: f32 = 36.0;
@@ -222,11 +233,31 @@ pub fn draw_preferences(
         .corner_radius(RADIUS_LG as u8)
         .shadow(SHADOW_DIALOG)
         .inner_margin(0);
-    let modal = egui::Modal::new(egui::Id::new("preferences"))
+    // The dialog keeps whatever the user dragged and resized it to; until
+    // then it opens centred at its own size.
+    // Built by hand rather than from `Modal::default_area`, which anchors
+    // itself to the centre every frame — an anchored area cannot be dragged.
+    let id = egui::Id::new("preferences");
+    let area = egui::Area::new(id)
+        .kind(egui::UiKind::Modal)
+        .sense(Sense::hover())
+        .order(egui::Order::Foreground)
+        .interactable(true);
+    let area = match state.pos {
+        Some(pos) => area.fixed_pos(pos),
+        None => area.anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO),
+    };
+    let screen = ctx.content_rect();
+    state.size = state.size.max(DIALOG_MIN).min(screen.size());
+    let mut drag = Vec2::ZERO;
+    let mut resize = Vec2::ZERO;
+
+    let modal = egui::Modal::new(id)
+        .area(area)
         .frame(frame)
         .backdrop_color(egui::Color32::from_black_alpha(140))
         .show(ctx, |ui| {
-            let (rect, _) = ui.allocate_exact_size(DIALOG, Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(state.size, Sense::hover());
             let header = Rect::from_min_size(rect.min, vec2(rect.width(), HEADER));
             let footer = Rect::from_min_max(
                 pos2(rect.left(), rect.bottom() - FOOTER),
@@ -239,16 +270,31 @@ pub fn draw_preferences(
             let content =
                 Rect::from_min_max(pos2(rail.right(), header.bottom()), footer.right_top());
 
-            draw_header(ui, header, state, &mut close);
+            drag = draw_header(ui, header, state, &mut close);
             draw_rail(ui, rail, state);
             draw_content(ui, content, state, &mut inputs);
             draw_footer(ui, footer, state, &mut commit, &mut close);
+
+            resize = draw_resize_grip(ui, rect);
 
             let painter = ui.painter();
             painter.hline(rect.x_range(), header.bottom(), Stroke::new(1.0, BORDER));
             painter.vline(rail.right(), rail.y_range(), Stroke::new(1.0, BORDER));
             painter.hline(rect.x_range(), footer.top(), Stroke::new(1.0, BORDER));
         });
+
+    if resize != Vec2::ZERO {
+        state.size = (state.size + resize).max(DIALOG_MIN).min(screen.size());
+    }
+    if drag != Vec2::ZERO {
+        // Keep the header reachable: the dialog can go off the edges, but
+        // never so far that there is nothing left to grab.
+        let at = state.pos.unwrap_or(modal.response.rect.min) + drag;
+        state.pos = Some(egui::pos2(
+            at.x.clamp(screen.left() - state.size.x + RAIL, screen.right() - RAIL),
+            at.y.clamp(screen.top(), screen.bottom() - HEADER),
+        ));
+    }
     if modal.should_close() {
         close = true;
     }
@@ -262,7 +308,35 @@ fn region(ui: &mut Ui, rect: Rect, layout: Layout) -> Ui {
     ui.new_child(UiBuilder::new().max_rect(rect).layout(layout))
 }
 
-fn draw_header(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, close: &mut bool) {
+/// The corner grip: drag it to resize. Returns this frame's change.
+fn draw_resize_grip(ui: &mut Ui, rect: Rect) -> Vec2 {
+    let corner = Rect::from_min_max(rect.right_bottom() - vec2(GRIP, GRIP), rect.right_bottom());
+    let grip = ui.interact(corner, ui.id().with("resize"), Sense::drag());
+    if grip.hovered() || grip.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeNwSe);
+    }
+    let painter = ui.painter();
+    let stroke = Stroke::new(1.0, if grip.dragged() { TEXT2 } else { TEXT3 });
+    for step in 1..=3 {
+        let inset = GRIP - step as f32 * 4.0;
+        painter.line_segment(
+            [
+                corner.right_bottom() - vec2(inset, 3.0),
+                corner.right_bottom() - vec2(3.0, inset),
+            ],
+            stroke,
+        );
+    }
+    grip.drag_delta()
+}
+
+/// The header doubles as the dialog's handle; returns how far it was dragged
+/// this frame.
+fn draw_header(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, close: &mut bool) -> Vec2 {
+    let handle = ui.interact(rect, ui.id().with("drag"), Sense::drag());
+    if handle.hovered() || handle.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
     let mut h = region(
         ui,
         rect.shrink2(vec2(16.0, 0.0)),
@@ -313,6 +387,7 @@ fn draw_header(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, close: &mu
             state.just_opened = false;
         }
     });
+    handle.drag_delta()
 }
 
 fn draw_rail(ui: &mut Ui, rect: Rect, state: &mut PreferencesState) {

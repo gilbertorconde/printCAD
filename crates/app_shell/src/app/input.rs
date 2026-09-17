@@ -76,6 +76,13 @@ impl PrintCadApp {
         // Update picking + viewport-local cursor *before* egui. Cursor events can be marked
         // consumed while dragging UI; we still need consistent coords for 3D hit testing and
         // zoom-to-focal-plane math.
+        // A modal, menu or tooltip drawn over the viewport owns the pointer:
+        // the scene must neither hover nor zoom under it.
+        let floating_ui_owns_pointer = self
+            .gfx
+            .as_ref()
+            .is_some_and(|gfx| gfx.ui_layer.pointer_over_floating_ui());
+
         if let WindowEvent::CursorMoved { position, .. } = &event {
             // `CursorMoved` is already [`PhysicalPosition`]; match renderer + viewport_rect.
             let phys_x = position.x.max(0.0).round() as u32;
@@ -89,6 +96,7 @@ impl PrintCadApp {
                 && cursor_y >= 0.0
                 && cursor_x < vp.2 as f32
                 && cursor_y < vp.3 as f32
+                && !floating_ui_owns_pointer
             {
                 self.cursor_in_viewport = Some((cursor_x, cursor_y));
                 // Only pick while the cursor is over the 3D viewport; over
@@ -117,8 +125,9 @@ impl PrintCadApp {
         let vp_cursor = self.cursor_in_viewport.map(|p| Vec2::new(p.0, p.1));
         self.camera.set_cursor_viewport(vp_cursor);
 
-        let zoom_wheel_over_viewport =
-            matches!(event, WindowEvent::MouseWheel { .. }) && self.cursor_in_viewport.is_some();
+        let zoom_wheel_over_viewport = matches!(event, WindowEvent::MouseWheel { .. })
+            && self.cursor_in_viewport.is_some()
+            && !floating_ui_owns_pointer;
 
         if let Some(gfx) = self.gfx.as_mut() {
             let response = gfx.ui_layer.on_window_event(&gfx.window, &event);
