@@ -149,6 +149,7 @@ impl PrintCadApp {
         self.kernel_worker.in_flight() > 0
             || self.server.status().busy()
             || self.file_dialog_rx.is_some()
+            || self.document_save_rx.is_some()
             || self.step_import_pending.is_some()
             || !self.nav_device.motion().is_idle()
     }
@@ -346,6 +347,7 @@ impl PrintCadApp {
         // the frame they actually became visible in. Has to happen before
         // we take a mutable borrow on `self.renderer` below.
         self.drain_kernel_responses();
+        self.drain_document_saves();
         self.drain_server_messages();
         self.drive_part_recompute();
 
@@ -453,7 +455,11 @@ impl PrintCadApp {
                         },
                         kernel_progress: self.kernel_worker.progress(),
                         kernel_cancellable: self.kernel_worker.is_cancellable(),
-                        document_saving: server_status.saves_in_flight > 0,
+                        // Field reads, not `&self` methods: `gfx` is borrowed
+                        // for the whole block.
+                        document_saving: self.document_save_rx.is_some()
+                            || server_status.saves_in_flight > 0,
+                        save_progress: self.save_progress.as_ref().and_then(|p| p.read()),
                         server_label: match (server_status.connected, server_status.peers) {
                             (false, _) => format!("{} (disconnected)", self.server.name()),
                             (true, 0) => self.server.name().to_string(),
@@ -540,6 +546,7 @@ impl PrintCadApp {
             let work_pending = self.kernel_worker.in_flight() > 0
                 || self.server.status().busy()
                 || self.file_dialog_rx.is_some()
+                || self.document_save_rx.is_some()
                 || self.step_import_pending.is_some()
                 || !self.nav_device.motion().is_idle();
             let animating = self.camera.is_animating()

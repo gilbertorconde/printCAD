@@ -1,6 +1,8 @@
 //! Document file I/O: open/save/dialog plumbing and shared helpers.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
 use glam::Vec3;
@@ -37,6 +39,32 @@ pub(crate) fn load_recent() -> settings::recent::RecentStore {
 const UNSAVED_CHANGES_SAVE: &str = "Save";
 const UNSAVED_CHANGES_DISCARD: &str = "Discard";
 const UNSAVED_CHANGES_CANCEL: &str = "Cancel";
+
+/// A packed archive on its way back from the save worker.
+pub(crate) struct SaveJob {
+    path: std::path::PathBuf,
+    at_seq: u64,
+    result: Result<Vec<u8>, String>,
+}
+
+/// How far the worker has got, shared with the UI thread.
+#[derive(Default)]
+pub(crate) struct SaveProgress {
+    done: AtomicU64,
+    total: AtomicU64,
+}
+
+impl SaveProgress {
+    fn set(&self, done: u64, total: u64) {
+        self.done.store(done, Ordering::Relaxed);
+        self.total.store(total, Ordering::Relaxed);
+    }
+
+    pub(crate) fn read(&self) -> Option<(u64, u64)> {
+        let total = self.total.load(Ordering::Relaxed);
+        (total > 0).then(|| (self.done.load(Ordering::Relaxed), total))
+    }
+}
 
 pub(crate) enum FileDialogKind {
     Open,
@@ -434,29 +462,17 @@ impl PrintCadApp {
                 };
 
                 // A `.prtcad` carries every snapshot blob and the source
-                // file, so writing it takes seconds on a large import. The
-                // serialization is cheap (payloads sit behind Arcs in the
-                // clone); the server owns the actual write, and the rest of
-                // the bookkeeping happens in `drain_server_messages` when
-                // its completion lands.
+                // file, so packing one takes seconds on a large import —
+                // long enough that it cannot happen on the UI thread. The
+                // clone is cheap (payloads sit behind Arcs), a worker packs
+                // the archive, and the bytes go to the server when it
+                // finishes; the server owns the write itself.
                 if self.current_file.as_deref() != Some(path) {
                     // Save As gives the document a new identity — and a new
                     // daemon to own it.
                     self.switch_server_to(doc_server::socket_path_for(path));
                 }
-                let at_seq = self.document.mutation_seq();
-                let bytes = self
-                    .document
-                    .clone()
-                    .save_to_bytes(compression)
-                    .with_context(|| "Failed to serialize document")?;
-                app_log::info(format!("Saving `{}`...", path.display()));
-                self.server
-                    .send(core_document::server::ClientMessage::SaveDocument {
-                        path: path.to_path_buf(),
-                        bytes,
-                        at_seq,
-                    });
+                self.start_document_save(path, compression);
                 return Ok(());
             }
         }
@@ -548,8 +564,81 @@ impl PrintCadApp {
     /// Only worth doing on the way out: the process exiting would abandon a
     /// write in flight and could leave a truncated document behind. Every
     /// exit path must call this (CLAUDE.md invariant).
+    /// Pack the archive on a worker and hand the bytes to the server when it
+    /// is done.
+    fn start_document_save(&mut self, path: &Path, compression: core_document::Compression) {
+        let mut document = self.document.clone();
+        let at_seq = self.document.mutation_seq();
+        let path = path.to_path_buf();
+        let progress = Arc::new(SaveProgress::default());
+        let worker_progress = Arc::clone(&progress);
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let spawned = std::thread::Builder::new()
+            .name("printcad-document-save".to_string())
+            .spawn(move || {
+                let packed = document.save_to_bytes_watched(compression, &move |done, total| {
+                    worker_progress.set(done, total);
+                });
+                let _ = tx.send(SaveJob {
+                    path,
+                    at_seq,
+                    result: packed.map_err(|err| err.to_string()),
+                });
+            });
+        match spawned {
+            Ok(_) => {
+                app_log::info(format!("Saving `{}`…", self.document.name()));
+                self.document_save_rx = Some(rx);
+                self.save_progress = Some(progress);
+            }
+            Err(err) => app_log::error(format!("Failed to start the save: {err}")),
+        }
+    }
+
+    /// Take the packed archive once the worker has it.
+    pub(crate) fn drain_document_saves(&mut self) {
+        let Some(rx) = self.document_save_rx.as_ref() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(job) => {
+                self.document_save_rx = None;
+                self.save_progress = None;
+                self.send_packed_document(job);
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.document_save_rx = None;
+                self.save_progress = None;
+                app_log::error("The save worker stopped without packing the document");
+            }
+        }
+    }
+
+    fn send_packed_document(&mut self, job: SaveJob) {
+        match job.result {
+            Ok(bytes) => self
+                .server
+                .send(core_document::server::ClientMessage::SaveDocument {
+                    path: job.path,
+                    bytes,
+                    at_seq: job.at_seq,
+                }),
+            Err(err) => app_log::error(format!("Failed to serialize document: {err}")),
+        }
+    }
+
     pub(crate) fn wait_for_document_saves(&mut self) {
-        if self.server.status().busy() {
+        // A packing worker has bytes nobody has sent yet; abandoning it would
+        // lose the save outright.
+        if let Some(rx) = self.document_save_rx.take() {
+            app_log::info("Finishing document save before exit…");
+            self.save_progress = None;
+            if let Ok(job) = rx.recv() {
+                self.send_packed_document(job);
+            }
+        } else if self.server.status().busy() {
             app_log::info("Finishing document save before exit…");
         }
         self.server.flush();

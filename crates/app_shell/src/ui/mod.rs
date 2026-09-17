@@ -194,6 +194,7 @@ impl UiLayer {
             nav_device,
             nav_buttons,
             document_saving,
+            save_progress,
             mut step_import_pending,
         } = inputs;
 
@@ -363,6 +364,7 @@ impl UiLayer {
                     kernel_progress,
                     server_label: &server_label,
                     document_saving,
+                    save_progress,
                     nav_style,
                     nav_device: nav_device.as_deref(),
                     items: status_items.as_ref(),

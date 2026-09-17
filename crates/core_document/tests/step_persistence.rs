@@ -260,3 +260,53 @@ fn a_cloned_document_saves_independently_from_another_thread() {
     );
     let _ = std::fs::remove_file(&tmp);
 }
+
+#[test]
+fn packing_an_archive_reports_what_it_has_packed() {
+    let mut doc = Document::new("ProgressTest");
+    let body_id = doc.create_body(Some("Imported Body".into()));
+
+    // A blob big enough that it dominates the archive, the way a real
+    // import's source file does.
+    let raw_bytes = vec![b'X'; 512 * 1024];
+    let asset = AssetReference::new(
+        "assets/big.step".to_string(),
+        AssetType::Step,
+        json!({"source_path": "/tmp/big.step"}),
+    );
+    let asset_id = doc.add_asset_with_data(asset, raw_bytes.clone());
+    doc.set_imported_geometry(
+        body_id,
+        ImportedGeometry {
+            mesh: fake_mesh(),
+            source_asset: Some(asset_id),
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+        },
+    );
+
+    assert!(doc.archive_payload_bytes() >= raw_bytes.len() as u64);
+
+    let seen = std::sync::Mutex::new(Vec::new());
+    let bytes = doc
+        .save_to_bytes_watched(Compression::None, &|done, total| {
+            seen.lock().unwrap().push((done, total));
+        })
+        .expect("pack the archive");
+    assert!(!bytes.is_empty());
+
+    let seen = seen.into_inner().unwrap();
+    assert!(seen.len() >= 2, "every blob reports: {seen:?}");
+
+    // The count only ever climbs, the total never moves, and the last report
+    // is the whole archive.
+    let total = seen[0].1;
+    assert!(total >= raw_bytes.len() as u64);
+    for pair in seen.windows(2) {
+        assert!(pair[1].0 >= pair[0].0, "progress went backwards: {seen:?}");
+        assert_eq!(pair[1].1, total, "the total moved: {seen:?}");
+    }
+    assert_eq!(seen.last().unwrap(), &(total, total));
+}

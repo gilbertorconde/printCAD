@@ -177,6 +177,11 @@ struct PrintCadApp {
     screen: Screen,
     // Pending file dialog result from background thread.
     file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
+    /// The worker packing a `.prtcad` archive, and how far it has got.
+    /// Packing carries every blob in the document, so it happens off the UI
+    /// thread and the window keeps drawing while it runs.
+    document_save_rx: Option<std::sync::mpsc::Receiver<app::doc_io::SaveJob>>,
+    save_progress: Option<std::sync::Arc<app::doc_io::SaveProgress>>,
     // Background worker that owns the geometry kernel. STEP imports run there
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
@@ -368,6 +373,8 @@ impl PrintCadApp {
             tree_selection: Some(TreeItemId::DocumentRoot),
             current_file: None,
             file_dialog_rx: None,
+            document_save_rx: None,
+            save_progress: None,
             kernel_worker: KernelWorker::spawn(),
             nav_device: app::sixdof::SixDofWorker::spawn(move || {
                 let _ = proxy.send_event(AppEvent::DeviceInput);

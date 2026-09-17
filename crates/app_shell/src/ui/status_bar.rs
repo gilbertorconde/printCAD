@@ -26,6 +26,8 @@ pub struct StatusBarInputs<'a> {
     pub kernel_progress: Option<(u64, u64)>,
     pub server_label: &'a str,
     pub document_saving: bool,
+    /// Bytes packed into the archive being saved, out of the whole.
+    pub save_progress: Option<(u64, u64)>,
     pub nav_style: &'a str,
     /// The connected 6-DoF mouse, when there is one.
     pub nav_device: Option<&'a str>,
@@ -33,6 +35,18 @@ pub struct StatusBarInputs<'a> {
     pub preselect: Option<&'a str>,
     /// "w × h × d" of the selection, already formatted.
     pub dimensions: Option<&'a str>,
+}
+
+fn progress_bar(ui: &mut egui::Ui, done: u64, total: u64) {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(120.0, 6.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 3.0, BG4);
+    let mut fill = rect;
+    fill.set_width(rect.width() * (done as f32 / total as f32));
+    ui.painter().rect_filled(fill, 3.0, ACCENT);
+}
+
+fn megabytes(bytes: u64) -> f64 {
+    bytes as f64 / (1024.0 * 1024.0)
 }
 
 /// Returns true when the user asked to stop the running kernel job.
@@ -181,14 +195,20 @@ fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut b
         ui.spacing_mut().item_spacing.x = SPACE_2;
         // A stage that announced its counts earns a real bar; anything
         // else keeps the honest spinner.
-        match inputs.kernel_progress {
-            Some((done, total)) if total > 0 => {
-                let (rect, _) = ui.allocate_exact_size(Vec2::new(120.0, 6.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, 3.0, BG4);
-                let mut fill = rect;
-                fill.set_width(rect.width() * (done as f32 / total as f32));
-                ui.painter().rect_filled(fill, 3.0, ACCENT);
+        match (inputs.kernel_progress, inputs.save_progress) {
+            (Some((done, total)), _) if total > 0 => {
+                progress_bar(ui, done, total);
                 mono_label(ui, format!("{done}/{total}"), FONT_XS, TEXT3);
+            }
+            // A save counts bytes, which read better as megabytes.
+            (None, Some((done, total))) if total > 0 => {
+                progress_bar(ui, done, total);
+                mono_label(
+                    ui,
+                    format!("{:.0}/{:.0} MB", megabytes(done), megabytes(total)),
+                    FONT_XS,
+                    TEXT3,
+                );
             }
             _ => {
                 ui.add(egui::Spinner::new().size(12.0).color(ACCENT));

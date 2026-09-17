@@ -1104,31 +1104,73 @@ impl Document {
     /// Save document to a .prtcad file (tar archive, optionally compressed).
     pub fn save_to_file(&mut self, path: &Path, compression: Compression) -> DocumentResult<()> {
         let file = File::create(path)?;
-        self.save_to_writer(file, compression)
+        self.save_to_writer(file, compression, None)
     }
 
     /// Serialize the whole `.prtcad` container into memory — what a client
     /// hands a document server that owns the file but never parses it.
     pub fn save_to_bytes(&mut self, compression: Compression) -> DocumentResult<Vec<u8>> {
         let mut bytes = Vec::new();
-        self.save_to_writer(&mut bytes, compression)?;
+        self.save_to_writer(&mut bytes, compression, None)?;
         Ok(bytes)
     }
 
-    fn save_to_writer<W: Write>(&mut self, out: W, compression: Compression) -> DocumentResult<()> {
+    /// The same, reporting how much of the archive has been packed.
+    ///
+    /// The archive carries the document, the file every import came from and
+    /// every snapshot blob, so a document with an import takes long enough
+    /// that the caller wants to say so.
+    pub fn save_to_bytes_watched(
+        &mut self,
+        compression: Compression,
+        progress: ArchiveProgress<'_>,
+    ) -> DocumentResult<Vec<u8>> {
+        let mut bytes = Vec::with_capacity(self.archive_payload_bytes() as usize);
+        self.save_to_writer(&mut bytes, compression, Some(progress))?;
+        Ok(bytes)
+    }
+
+    /// What the blobs in this document add up to: the part of a save whose
+    /// cost grows with the model.
+    pub fn archive_payload_bytes(&self) -> u64 {
+        let assets: u64 = self
+            .assets
+            .keys()
+            .filter_map(|id| self.asset_blobs.get(id))
+            .map(|bytes| bytes.len() as u64)
+            .sum();
+        let breps: u64 = self
+            .imported_brep_blobs
+            .values()
+            .map(|bytes| bytes.len() as u64)
+            .sum();
+        let colors: u64 = self
+            .imported_brep_face_colors
+            .values()
+            .map(|colors| colors.len() as u64 * 4)
+            .sum();
+        assets + breps + colors
+    }
+
+    fn save_to_writer<W: Write>(
+        &mut self,
+        out: W,
+        compression: Compression,
+        progress: Option<ArchiveProgress<'_>>,
+    ) -> DocumentResult<()> {
         Self::sync_brep_paths_for_archive(self);
         let file = out;
 
         match compression {
             Compression::None => {
                 let mut builder = Builder::new(file);
-                Self::write_archive(&mut builder, self)?;
+                Self::write_archive(&mut builder, self, progress)?;
                 builder.finish()?;
             }
             Compression::Gzip => {
                 let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
                 let mut builder = Builder::new(encoder);
-                Self::write_archive(&mut builder, self)?;
+                Self::write_archive(&mut builder, self, progress)?;
                 let encoder = builder.into_inner().map_err(|e| {
                     DocumentError::Compression(format!("gzip encoder finalize failed: {e}"))
                 })?;
@@ -1139,7 +1181,7 @@ impl Document {
                     .map_err(|e| DocumentError::Compression(e.to_string()))?;
                 {
                     let mut builder = Builder::new(&mut encoder);
-                    Self::write_archive(&mut builder, self)?;
+                    Self::write_archive(&mut builder, self, progress)?;
                     builder.finish()?;
                 }
                 encoder
@@ -1280,14 +1322,29 @@ impl Document {
         Ok(doc)
     }
 
-    fn write_archive<W: Write>(builder: &mut Builder<W>, doc: &Document) -> DocumentResult<()> {
+    fn write_archive<W: Write>(
+        builder: &mut Builder<W>,
+        doc: &Document,
+        progress: Option<ArchiveProgress<'_>>,
+    ) -> DocumentResult<()> {
         let json = serde_json::to_vec_pretty(doc)?;
+        // The document's own JSON is only known once it is built, so the
+        // total the caller sees settles here and holds for the rest.
+        let total = doc.archive_payload_bytes() + json.len() as u64;
+        let mut packed = 0u64;
+        let report = |packed: u64| {
+            if let Some(progress) = progress {
+                progress(packed.min(total), total);
+            }
+        };
         let mut header = Header::new_gnu();
         header.set_path("document.json")?;
         header.set_size(json.len() as u64);
         header.set_mode(0o644);
         header.set_cksum();
         builder.append(&header, &json[..])?;
+        packed += json.len() as u64;
+        report(packed);
 
         // Emit asset blobs alongside the document so future reloads can recover
         // the original imported file (e.g. for re-tessellation at a different
@@ -1302,6 +1359,8 @@ impl Document {
             header.set_mode(0o644);
             header.set_cksum();
             builder.append(&header, &bytes[..])?;
+            packed += bytes.len() as u64;
+            report(packed);
         }
 
         for (body_id, geom) in &doc.imported_meshes {
@@ -1335,7 +1394,10 @@ impl Document {
             header.set_mode(0o644);
             header.set_cksum();
             builder.append(&header, &colors_bytes[..])?;
+            packed += brep_bytes.len() as u64 + colors_bytes.len() as u64;
+            report(packed);
         }
+        report(total);
         Ok(())
     }
 
@@ -1494,6 +1556,10 @@ pub enum DocumentError {
     #[error("compression error: {0}")]
     Compression(String),
 }
+
+/// Called as an archive is built, with the bytes packed so far and what the
+/// whole archive adds up to. Both climb only forward.
+pub type ArchiveProgress<'a> = &'a (dyn Fn(u64, u64) + Send + Sync);
 
 #[derive(Debug, Clone, Copy)]
 pub enum Compression {

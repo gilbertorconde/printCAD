@@ -80,6 +80,8 @@ pub struct UiFrameInputs<'a> {
     pub kernel_progress: Option<(u64, u64)>,
     /// A document write is in flight.
     pub document_saving: bool,
+    /// Bytes packed into the archive being saved, out of the whole.
+    pub save_progress: Option<(u64, u64)>,
     /// Which document server serves this session, with a degraded marker —
     /// e.g. "local daemon" or "local daemon (disconnected)".
     pub server_label: String,
