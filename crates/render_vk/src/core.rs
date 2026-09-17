@@ -1238,7 +1238,6 @@ impl RendererCore {
                     frame.view_proj,
                     frame.camera_pos,
                     &frame.lighting,
-                    frame.suppress_edges,
                 )?;
             }
 
@@ -1559,7 +1558,6 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
     } else {
         0u8.hash(&mut h);
     }
-    frame.suppress_edges.hash(&mut h);
     let l = &frame.lighting;
     for light in [&l.main_light, &l.backlight, &l.fill_light] {
         f32s(&mut h, &light.direction_intensity);

@@ -270,8 +270,7 @@ hacks, no silently degraded feature). Instead:
 Frames are rendered **on demand**, not continuously: a frame is scheduled
 while input is fresh (150 ms tail), async work is pending (kernel jobs,
 document open/save, file dialog, deferred import), the camera tween or bench
-orbit is running, the last frame was drawn edge-suppressed (one restore
-frame), or egui asked for a repaint (`repaint_delay` == 0; finite delays
+orbit is running, or egui asked for a repaint (`repaint_delay` == 0; finite delays
 become `WaitUntil`, e.g. caret blink). Otherwise the event loop sleeps in
 `ControlFlow::Wait` until the next OS event. Consequences: anything that
 completes on a background channel must be covered by one of the
@@ -284,13 +283,21 @@ constrained sketch for editing and `=pad` pads it and opens the Pad task.
 Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
+Face-boundary edges draw on every frame, moving or still. They are cheap
+next to the solids: a 123-body assembly (9 M triangle indices, 419 k edge
+indices) spends 1–2 ms of its frame on the edge pass, and a 272-body one
+(133 M triangle indices, ~130 ms/frame) spends none, because
+`PRINTCAD_EDGE_MIN_PX` (24 px of body AABB on screen, mesh.rs) has already
+culled every body's edges. Measure with `PRINTCAD_NO_EDGES=1` against the
+same orbit before assuming the pass costs anything.
+
 **The 3D scene is cached between changes.** The scene pass resolves into a
 persistent scene image and runs only when `scene_fingerprint(frame)`
 (`render_vk/src/core.rs`) changes; every frame copies that image under the
 UI pass. UI-only frames (hover, panels, typing) therefore cost ~2 ms on any
 model. **Completeness of the fingerprint is the contract**: anything the
 scene pass reads — camera, viewport, lighting, per-body id/revision/mesh
-pointer/color/highlight/wireframe, edge suppression — must be hashed there,
+pointer/color/highlight/wireframe — must be hashed there,
 or a change shows stale. The status bar shows both numbers because they are
 two things: `FPS` (UI frames presented) and `scene: N/s` (scene redraws;
 "cached" when zero). `PRINTCAD_BENCH_SPIN` keeps the loop awake with no

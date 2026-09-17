@@ -227,11 +227,6 @@ pub struct FrameSubmission {
     pub egui: Option<EguiSubmission>,
     /// The 3D viewport rect (area where mesh should be rendered)
     pub viewport_rect: Option<ViewportRect>,
-    /// Skip the edge-line pass this frame. Set while the camera is moving:
-    /// the line raster is the most expensive part of a dense assembly frame,
-    /// and during interaction the hairlines read as noise anyway. The first
-    /// still frame draws them again.
-    pub suppress_edges: bool,
 }
 
 impl Default for FrameSubmission {
@@ -243,7 +238,6 @@ impl Default for FrameSubmission {
             lighting: LightingData::default(),
             egui: None,
             viewport_rect: None,
-            suppress_edges: false,
         }
     }
 }

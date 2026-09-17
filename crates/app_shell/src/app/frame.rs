@@ -156,7 +156,6 @@ impl PrintCadApp {
                 .last_input_time
                 .is_some_and(|t| t.elapsed() < Duration::from_millis(150));
             let animating = self.camera.is_animating()
-                || self.frame_submission.suppress_edges
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
                 || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
@@ -482,7 +481,6 @@ impl PrintCadApp {
                 || self.file_dialog_rx.is_some()
                 || self.step_import_pending.is_some();
             let animating = self.camera.is_animating()
-                || self.frame_submission.suppress_edges
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()
                 || std::env::var_os("PRINTCAD_BENCH_SPIN").is_some();
@@ -770,24 +768,6 @@ impl PrintCadApp {
 
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.view_proj = self.camera.view_projection();
-        // Edge lines are the most expensive part of a dense frame. On a
-        // heavy scene they are dropped while the camera moves and restored
-        // on the first still frame; an ordinary part keeps its outlines
-        // throughout, where losing them only reads as flicker. The threshold
-        // is line segments in the submission, which is what the edge pass
-        // costs.
-        const EDGE_SUPPRESS_INDICES: usize = 200_000;
-        let moving = self
-            .prev_view_proj
-            .is_some_and(|prev| prev != self.frame_submission.view_proj);
-        self.prev_view_proj = Some(self.frame_submission.view_proj);
-        let edge_indices: usize = self
-            .frame_submission
-            .bodies
-            .iter()
-            .map(|body| body.mesh.edges.len())
-            .sum();
-        self.frame_submission.suppress_edges = moving && edge_indices > EDGE_SUPPRESS_INDICES;
         self.frame_submission.camera_pos = self.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);
 

@@ -213,10 +213,6 @@ struct PrintCadApp {
     /// being overwritten by twenty threads changes every frame.
     status_changes_accum: u32,
     last_status_text: Option<String>,
-    /// Last frame's view-projection, to detect camera motion. While the
-    /// camera moves the edge pass is skipped (see `FrameSubmission::
-    /// suppress_edges`); the first still frame restores it.
-    prev_view_proj: Option<[[f32; 4]; 4]>,
     /// When user input last arrived. Frames keep coming for a short tail
     /// after input so egui reactions and pick readbacks land, then the loop
     /// sleeps until the next event (render on demand).
@@ -371,7 +367,6 @@ impl PrintCadApp {
             scene_redraws_per_s: 0,
             status_changes_accum: 0,
             last_status_text: None,
-            prev_view_proj: None,
             last_input_time: None,
             last_wake_reason: (false, false, false, false),
             redraw_needed: true,
