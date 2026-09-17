@@ -25,6 +25,10 @@ pub struct DaemonClient {
     stream: UnixStream,
     /// Frames the reader thread has decoded, drained by `poll`.
     rx: Receiver<ServerMessage>,
+    /// Messages queued for the writer thread. A save carries the whole
+    /// document, so encoding and writing it must not happen on the caller's
+    /// thread — that thread is the one drawing the window.
+    tx_out: Sender<ClientMessage>,
     /// Keeps the child handle so a daemon we spawned is reaped on drop.
     child: Option<std::process::Child>,
     opens_in_flight: u32,
@@ -80,6 +84,18 @@ impl DaemonClient {
             }
         };
 
+        let (tx_out, out_rx): (Sender<ClientMessage>, Receiver<ClientMessage>) = channel();
+        let mut writer = stream.try_clone()?;
+        std::thread::Builder::new()
+            .name("printcad-server-writer".into())
+            .spawn(move || {
+                for message in out_rx {
+                    if write_frame(&mut writer, &message).is_err() {
+                        return; // disconnect; the reader notices too
+                    }
+                }
+            })?;
+
         let (tx, rx): (Sender<ServerMessage>, Receiver<ServerMessage>) = channel();
         let reader = stream.try_clone()?;
         std::thread::Builder::new()
@@ -102,6 +118,7 @@ impl DaemonClient {
             actor,
             stream,
             rx,
+            tx_out,
             child,
             opens_in_flight: 0,
             saves_in_flight: 0,
@@ -118,28 +135,26 @@ impl DocumentServer for DaemonClient {
     }
 
     fn send(&mut self, msg: ClientMessage) {
-        match &msg {
-            ClientMessage::OpenDocument { .. } => {
-                self.opens_in_flight = self.opens_in_flight.saturating_add(1);
-            }
-            ClientMessage::SaveDocument { .. } => {
-                self.saves_in_flight = self.saves_in_flight.saturating_add(1);
-            }
-            _ => {}
+        // What is in flight is counted before the message is handed over,
+        // since it leaves this thread and cannot be looked at afterwards.
+        let is_open = matches!(msg, ClientMessage::OpenDocument { .. });
+        let is_save = matches!(msg, ClientMessage::SaveDocument { .. });
+        if is_open {
+            self.opens_in_flight = self.opens_in_flight.saturating_add(1);
         }
-        if let Err(err) = write_frame(&mut self.stream, &msg) {
+        if is_save {
+            self.saves_in_flight = self.saves_in_flight.saturating_add(1);
+        }
+        if let Err(err) = self.tx_out.send(msg) {
             self.connected = false;
             self.last_error = Some(format!("send failed: {err}"));
-            // The in-flight request will never be answered; undo the count
-            // so the frame loop doesn't spin on a dead connection.
-            match &msg {
-                ClientMessage::OpenDocument { .. } => {
-                    self.opens_in_flight = self.opens_in_flight.saturating_sub(1);
-                }
-                ClientMessage::SaveDocument { .. } => {
-                    self.saves_in_flight = self.saves_in_flight.saturating_sub(1);
-                }
-                _ => {}
+            // The request will never be answered; undo the count so the
+            // frame loop doesn't spin on a dead connection.
+            if is_open {
+                self.opens_in_flight = self.opens_in_flight.saturating_sub(1);
+            }
+            if is_save {
+                self.saves_in_flight = self.saves_in_flight.saturating_sub(1);
             }
         }
     }

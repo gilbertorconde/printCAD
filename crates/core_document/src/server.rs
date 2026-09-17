@@ -26,7 +26,51 @@ use crate::op::DocumentOp;
 ///
 /// v2: `Hello` carries the client's actor id; the server relays each
 /// client's ops to every *other* client as [`ServerMessage::Ops`].
-pub const SERVER_PROTOCOL_VERSION: u32 = 2;
+pub const SERVER_PROTOCOL_VERSION: u32 = 3;
+
+/// A message whose container bytes travel beside it rather than inside it.
+///
+/// A document's archive is far too big to encode into the message itself: as
+/// JSON it is an array of decimal numbers, four times the size of what it
+/// carries, and a 420 MB document overran the frame limit outright. The bytes
+/// are lifted out before the message is encoded and put back after it is
+/// decoded, so they cross as themselves.
+pub trait Payload {
+    /// The bytes that travel beside this message; empty for most of them.
+    fn payload(&self) -> &[u8];
+    /// Put bytes back into a message that was decoded without them.
+    fn set_payload(&mut self, bytes: Vec<u8>);
+}
+
+impl Payload for ClientMessage {
+    fn payload(&self) -> &[u8] {
+        match self {
+            ClientMessage::SaveDocument { bytes, .. } => bytes,
+            _ => &[],
+        }
+    }
+
+    fn set_payload(&mut self, payload: Vec<u8>) {
+        if let ClientMessage::SaveDocument { bytes, .. } = self {
+            *bytes = payload;
+        }
+    }
+}
+
+impl Payload for ServerMessage {
+    fn payload(&self) -> &[u8] {
+        match self {
+            ServerMessage::Opened { bytes, .. } => bytes,
+            _ => &[],
+        }
+    }
+
+    fn set_payload(&mut self, payload: Vec<u8>) {
+        if let ServerMessage::Opened { bytes, .. } = self {
+            *bytes = payload;
+        }
+    }
+}
 
 /// Client → server messages.
 #[derive(Debug, Serialize, Deserialize)]
@@ -47,6 +91,8 @@ pub enum ClientMessage {
     /// the document is truly clean (edits may have landed mid-save).
     SaveDocument {
         path: PathBuf,
+        /// Carried beside the message, not inside it — see [`Payload`].
+        #[serde(skip)]
         bytes: Vec<u8>,
         at_seq: u64,
     },
@@ -107,6 +153,8 @@ pub enum ServerMessage {
     Opened {
         token: u64,
         path: PathBuf,
+        /// Carried beside the message, not inside it — see [`Payload`].
+        #[serde(skip)]
         bytes: Vec<u8>,
     },
     OpenFailed {

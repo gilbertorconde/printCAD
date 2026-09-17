@@ -74,7 +74,9 @@ cargo fmt --all                   # CI enforces --check
   plane/line/point + attachment + offset, shared across workbenches).
 - `doc_server` — the document server: `printcad-serverd` binary +
   `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
-  length-prefixed JSON frames (`framing.rs`), integration-tested against the
+  length-prefixed JSON frames with the container bytes beside them, never
+  inside (`framing.rs`, `server::Payload`) — a document as JSON numbers is
+  four times its size and overran the frame cap outright, integration-tested against the
   real spawned daemon (`tests/daemon.rs`).
 - `ui_kit` — the design system, below the workbenches so their panel code
   can use it (behind their `egui` feature): `tokens` (the palette and
