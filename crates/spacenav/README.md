@@ -8,6 +8,7 @@ The daemon owns device detection, calibration, dead zones and per-device
 configuration; a client just opens its UNIX socket and reads events.
 
 ```rust
+// `Source::connect` when either route will do; `Client` for the daemon alone.
 let mut client = spacenav::Client::connect()?;
 client.set_name("my-app")?;
 client.set_event_mask(spacenav::EventMask::DEFAULT)?;
@@ -34,7 +35,11 @@ loop {
   dead zones, axis inversion, axis and button mapping, button actions, key
   emulation, LED, device grab, repeat interval — and can save them to its
   configuration file.
-- No dependencies, no C library, no unsafe code.
+- Falls back to the Magellan protocol over the display server, which is what
+  3Dconnexion's own driver speaks (`magellan` feature, one dependency:
+  [x11rb]). `Source::connect` takes whichever route answers.
+- No C library and no unsafe code; no dependencies at all with the default
+  feature set.
 
 ```rust
 let mut config = client.config();
@@ -55,3 +60,4 @@ config.save()?;
 MIT or Apache-2.0, at your option.
 
 [spacenavd]: https://spacenav.sourceforge.net/
+[x11rb]: https://crates.io/crates/x11rb

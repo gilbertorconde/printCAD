@@ -1,9 +1,11 @@
 //! Background reader for a 6-degree-of-freedom navigation device.
 //!
-//! The daemon that owns the device publishes events on a UNIX socket; one
-//! thread here blocks on that socket so the UI thread never waits on it. The
-//! thread reconnects on its own, because a daemon with no device plugged in —
-//! or no daemon at all — is an ordinary state, not an error worth reporting.
+//! The daemon that owns the device publishes events on a UNIX socket, and the
+//! vendor's own driver publishes them through the display server instead; one
+//! thread here blocks on whichever answered, so the UI thread never waits on
+//! it. The thread reconnects on its own, because a daemon with no device
+//! plugged in — or no daemon at all — is an ordinary state, not an error
+//! worth reporting.
 //!
 //! The daemon sends a reading only when the puck's deflection *changes*, so
 //! the last reading is held until the next one arrives; letting go sends
@@ -15,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use spacenav::{Client, EventMask};
+use spacenav::{EventMask, Source};
 
 use crate::log_panel as app_log;
 
@@ -122,15 +124,15 @@ impl Drop for SpaceNavWorker {
 fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
     let mut retry = RETRY_FIRST;
     while !stop.load(Ordering::SeqCst) {
-        match Client::connect() {
-            Ok(client) => {
+        match Source::connect() {
+            Ok(source) => {
                 retry = RETRY_FIRST;
-                serve(client, shared, stop, wake);
+                serve(source, shared, stop, wake);
             }
             Err(err) => {
-                // No daemon, or none reachable. Ordinary: say so only in the
-                // trace log, and look again a little later each time.
-                tracing::debug!(target: "printcad.input", "navigation daemon unreachable: {err}");
+                // No device reachable by either route. Ordinary: say so only
+                // in the trace log, and look again a little later each time.
+                tracing::debug!(target: "printcad.input", "no navigation device: {err}");
                 sleep_until_stopped(retry, stop);
                 retry = (retry * 2).min(RETRY_MAX);
             }
@@ -139,20 +141,20 @@ fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn F
 }
 
 /// Reads one connection until it fails, then leaves the device state clean.
-fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
+fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
     tracing::debug!(
         target: "printcad.input",
-        protocol = client.protocol_version(),
-        "navigation daemon connected"
+        backend = %source.backend(),
+        "navigation device connected"
     );
-    client.set_name("printCAD").ok();
-    client
+    source.set_name("printCAD").ok();
+    source
         .set_event_mask(EventMask::INPUT | EventMask::DEVICE)
         .ok();
-    announce(&client, shared);
+    announce(&source, shared);
 
     while !stop.load(Ordering::SeqCst) {
-        match client.read_timeout(READ_TIMEOUT) {
+        match source.read_timeout(READ_TIMEOUT) {
             Ok(None) => {}
             Ok(Some(spacenav::Event::Motion(motion))) => {
                 let motion = DeviceMotion {
@@ -180,8 +182,8 @@ fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
                 wake();
             }
             Ok(Some(spacenav::Event::Device { .. })) => {
-                client.refresh_device().ok();
-                announce(&client, shared);
+                source.refresh_device().ok();
+                announce(&source, shared);
             }
             Ok(Some(_)) => {}
             Err(err) => {
@@ -206,9 +208,16 @@ fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
     }
 }
 
-/// Records which device the daemon is driving, logging only when it changes.
-fn announce(client: &Client, shared: &Arc<Mutex<Shared>>) {
-    let name = client.device().map(|device| device.name.clone());
+/// Records which device is connected, logging only when it changes. The
+/// display-server protocol never names one, so the route stands in for it.
+fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
+    let name = source.device().map_or_else(
+        || match source.backend() {
+            spacenav::Backend::Daemon => None,
+            spacenav::Backend::Magellan => Some("device on the display server".to_string()),
+        },
+        |device| Some(device.name.clone()),
+    );
     let mut state = lock(shared);
     if state.device == name {
         return;

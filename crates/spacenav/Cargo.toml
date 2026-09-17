@@ -9,4 +9,11 @@ keywords = ["spacenavd", "6dof", "input", "cad"]
 categories = ["hardware-support"]
 readme = "README.md"
 
+[features]
+default = []
+# The second backend: the Magellan protocol, spoken over a display-server
+# connection by the vendor's own driver as well as by spacenavd.
+magellan = ["dep:x11rb"]
+
 [dependencies]
+x11rb = { version = "0.13", optional = true }

@@ -26,10 +26,14 @@
 mod client;
 mod codec;
 mod config;
+#[cfg(feature = "magellan")]
+pub mod magellan;
 mod request;
+mod source;
 
 pub use client::{Client, DEFAULT_SOCKET, socket_path};
 pub use config::{ButtonAction, Config, LedMode};
+pub use source::{Backend, Source};
 
 use std::fmt;
 
