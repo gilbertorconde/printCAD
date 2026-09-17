@@ -8,6 +8,7 @@ members = [
   "crates/render_vk",
   "crates/workbenches",
 "crates/settings",
+  "crates/spacenav",
 "crates/axes",
   "crates/ui_kit",
 ]
