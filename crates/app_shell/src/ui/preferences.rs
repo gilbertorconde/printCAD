@@ -19,6 +19,7 @@ pub enum PrefGroup {
     #[default]
     General,
     Display,
+    Input,
     Sketcher,
     PartDesign,
     Units,
@@ -28,9 +29,10 @@ pub enum PrefGroup {
 }
 
 impl PrefGroup {
-    pub const ALL: [PrefGroup; 8] = [
+    pub const ALL: [PrefGroup; 9] = [
         PrefGroup::General,
         PrefGroup::Display,
+        PrefGroup::Input,
         PrefGroup::Sketcher,
         PrefGroup::PartDesign,
         PrefGroup::Units,
@@ -43,6 +45,7 @@ impl PrefGroup {
         match self {
             PrefGroup::General => "General",
             PrefGroup::Display => "Display",
+            PrefGroup::Input => "Input",
             PrefGroup::Sketcher => "Sketcher",
             PrefGroup::PartDesign => "Part Design",
             PrefGroup::Units => "Units",
@@ -55,13 +58,8 @@ impl PrefGroup {
     pub fn tabs(self) -> &'static [&'static str] {
         match self {
             PrefGroup::General => &["Interface", "About"],
-            PrefGroup::Display => &[
-                "Navigation",
-                "6-DoF mouse",
-                "Camera",
-                "Lighting",
-                "Rendering",
-            ],
+            PrefGroup::Display => &["Camera", "Lighting", "Rendering"],
+            PrefGroup::Input => &["Mouse", "6-DoF mouse"],
             PrefGroup::Sketcher => &["General"],
             PrefGroup::PartDesign => &["General"],
             PrefGroup::Units => &["Units"],
@@ -365,6 +363,7 @@ fn draw_content(
                     match state.group {
                         PrefGroup::General => general_page(ui, state, inputs, &filter),
                         PrefGroup::Display => display_page(ui, state, inputs, &filter),
+                        PrefGroup::Input => input_page(ui, state, inputs, &filter),
                         PrefGroup::Sketcher => {
                             workbench_page(ui, inputs.registry, "wb.sketch", &filter)
                         }
@@ -457,11 +456,34 @@ fn reset_group(state: &mut PreferencesState) {
             state.draft.rendering.show_log_panel = defaults.rendering.show_log_panel;
         }
         PrefGroup::Display => {
-            state.draft.camera = defaults.camera;
-            state.draft.sixdof = defaults.sixdof;
+            let camera = &mut state.draft.camera;
+            camera.projection = defaults.camera.projection;
+            camera.fov_degrees = defaults.camera.fov_degrees;
+            camera.ortho_height_mm = defaults.camera.ortho_height_mm;
+            camera.min_focal_distance = defaults.camera.min_focal_distance;
+            camera.max_focal_distance = defaults.camera.max_focal_distance;
+            camera.auto_near_far = defaults.camera.auto_near_far;
+            camera.near_far_near_ratio = defaults.camera.near_far_near_ratio;
+            camera.near_far_depth_ratio_cap = defaults.camera.near_far_depth_ratio_cap;
+            camera.near_far_margin = defaults.camera.near_far_margin;
+            camera.view_transition_ms = defaults.camera.view_transition_ms;
+            camera.axis_preset = defaults.camera.axis_preset;
             state.draft.lighting = defaults.lighting;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.preferred_gpu = defaults.preferred_gpu;
+        }
+        PrefGroup::Input => {
+            let camera = &mut state.draft.camera;
+            camera.navigation_style = defaults.camera.navigation_style;
+            camera.zoom_to_cursor = defaults.camera.zoom_to_cursor;
+            camera.invert_zoom = defaults.camera.invert_zoom;
+            camera.wheel_zoom_factor = defaults.camera.wheel_zoom_factor;
+            camera.orbit_sensitivity = defaults.camera.orbit_sensitivity;
+            camera.orbit_pivot_pick = defaults.camera.orbit_pivot_pick;
+            camera.pan_sensitivity = defaults.camera.pan_sensitivity;
+            camera.orbit_yaw_axis = defaults.camera.orbit_yaw_axis;
+            camera.click_drag_threshold_px = defaults.camera.click_drag_threshold_px;
+            state.draft.sixdof = defaults.sixdof;
         }
         PrefGroup::Units => state.draft_unit = Unit::Mm,
         PrefGroup::ImportExport => state.draft.import = defaults.import,
@@ -516,6 +538,365 @@ fn general_page(
 }
 
 fn display_page(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    inputs: &PreferencesInputs<'_>,
+    filter: &str,
+) {
+    let draft = &mut state.draft;
+    match state.tab {
+        0 => {
+            let camera = &mut draft.camera;
+            let preset_hint = camera.axis_preset.description();
+            pref_group(
+                ui,
+                "Camera",
+                vec![
+                    PrefRow::select(
+                        "Projection",
+                        "prefs_projection",
+                        &mut camera.projection,
+                        &[
+                            (ProjectionMode::Perspective, "Perspective"),
+                            (ProjectionMode::Orthographic, "Orthographic"),
+                        ],
+                    ),
+                    PrefRow::qty(
+                        "Field of view",
+                        QtyField::degrees(&mut camera.fov_degrees).range(10.0..=120.0),
+                    )
+                    .hint("Vertical, for perspective"),
+                    PrefRow::qty(
+                        "Orthographic height",
+                        QtyField::mm(&mut camera.ortho_height_mm).range(1.0..=500_000.0),
+                    ),
+                    PrefRow::qty(
+                        "Minimum focal distance",
+                        QtyField::mm(&mut camera.min_focal_distance).range(0.1..=50.0),
+                    ),
+                    PrefRow::qty(
+                        "Maximum focal distance",
+                        QtyField::mm(&mut camera.max_focal_distance).range(50.0..=500_000.0),
+                    ),
+                    PrefRow::toggle("Auto near / far planes", &mut camera.auto_near_far)
+                        .hint("Clip planes follow the scene bounds"),
+                    PrefRow::qty(
+                        "Near distance ratio",
+                        QtyField::new(&mut camera.near_far_near_ratio)
+                            .range(0.00001..=0.1)
+                            .speed(0.0001)
+                            .decimals(5),
+                    )
+                    .hint("Times the focal distance"),
+                    PrefRow::qty(
+                        "Far / near ratio cap",
+                        QtyField::new(&mut camera.near_far_depth_ratio_cap)
+                            .range(1000.0..=500_000.0)
+                            .speed(100.0)
+                            .decimals(0),
+                    ),
+                    PrefRow::qty(
+                        "Far plane margin",
+                        QtyField::mm(&mut camera.near_far_margin).range(1.0..=10_000.0),
+                    ),
+                    PrefRow::qty(
+                        "View transition",
+                        QtyField::new(&mut camera.view_transition_ms)
+                            .unit("ms")
+                            .range(120.0..=1200.0)
+                            .speed(10.0)
+                            .decimals(0),
+                    ),
+                    PrefRow::select(
+                        "Axis preset",
+                        "prefs_axis_preset",
+                        &mut camera.axis_preset,
+                        &[
+                            (AxisPreset::ALL[0], AxisPreset::ALL[0].label()),
+                            (AxisPreset::ALL[1], AxisPreset::ALL[1].label()),
+                            (AxisPreset::ALL[2], AxisPreset::ALL[2].label()),
+                        ],
+                    )
+                    .hint(preset_hint),
+                ],
+                filter,
+            );
+        }
+        1 => {
+            let lighting = &mut draft.lighting;
+            let mut rows = Vec::new();
+            for (label, light) in [
+                ("Main light", &mut lighting.main_light),
+                ("Backlight", &mut lighting.backlight),
+                ("Fill light", &mut lighting.fill_light),
+            ] {
+                rows.push(
+                    PrefRow::new(label, move |ui| {
+                        let mut changed = false;
+                        changed |= QtyField::new(&mut light.intensity)
+                            .range(0.0..=1.0)
+                            .speed(0.01)
+                            .width(70.0)
+                            .show(ui);
+                        let mut color = egui::Color32::from_rgb(
+                            (light.color[0] * 255.0) as u8,
+                            (light.color[1] * 255.0) as u8,
+                            (light.color[2] * 255.0) as u8,
+                        );
+                        if ui.color_edit_button_srgba(&mut color).changed() {
+                            light.color = [
+                                color.r() as f32 / 255.0,
+                                color.g() as f32 / 255.0,
+                                color.b() as f32 / 255.0,
+                            ];
+                            changed = true;
+                        }
+                        changed |= QtyField::degrees(&mut light.vertical_angle)
+                            .range(-90.0..=90.0)
+                            .decimals(0)
+                            .width(70.0)
+                            .show(ui);
+                        changed |= QtyField::degrees(&mut light.horizontal_angle)
+                            .range(-180.0..=180.0)
+                            .decimals(0)
+                            .width(70.0)
+                            .show(ui);
+                        changed |= ui_kit::widgets::toggle(ui, &mut light.enabled).changed();
+                        changed
+                    })
+                    .hint("On · horizontal · vertical · color · intensity"),
+                );
+            }
+            pref_group(ui, "Light sources", rows, filter);
+            pref_group(
+                ui,
+                "Ambient and specular",
+                vec![
+                    PrefRow::color("Ambient color", &mut lighting.ambient_color),
+                    PrefRow::qty(
+                        "Ambient intensity",
+                        QtyField::new(&mut lighting.ambient_intensity)
+                            .range(0.0..=1.0)
+                            .speed(0.01),
+                    ),
+                    PrefRow::qty(
+                        "Specular shininess",
+                        QtyField::new(&mut lighting.specular_shininess)
+                            .range(8.0..=128.0)
+                            .speed(1.0)
+                            .decimals(0),
+                    )
+                    .hint("Larger is a tighter highlight"),
+                    PrefRow::qty(
+                        "Specular intensity",
+                        QtyField::new(&mut lighting.specular_intensity)
+                            .range(0.0..=1.0)
+                            .speed(0.01),
+                    ),
+                ],
+                filter,
+            );
+            pref_group(
+                ui,
+                "Edge lines",
+                vec![
+                    PrefRow::color("Edge color", &mut lighting.edge_line_color),
+                    PrefRow::qty(
+                        "Edge width",
+                        QtyField::new(&mut lighting.edge_line_width)
+                            .unit("px")
+                            .range(0.5..=8.0)
+                            .speed(0.1)
+                            .decimals(1),
+                    ),
+                ],
+                filter,
+            );
+        }
+        _ => {
+            let gpus = inputs.gpus;
+            let preferred_gpu = &mut draft.preferred_gpu;
+            let msaa = &mut draft.rendering.msaa_samples;
+            let mut gpu_rows = vec![
+                PrefRow::new("Preferred GPU", move |ui| {
+                    let current = preferred_gpu
+                        .clone()
+                        .unwrap_or_else(|| "Automatic".to_string());
+                    let mut selected = current.clone();
+                    let options: Vec<(String, String)> = std::iter::once("Automatic".to_string())
+                        .chain(gpus.iter().cloned())
+                        .map(|g| (g.clone(), g))
+                        .collect();
+                    let mut changed = false;
+                    egui::ComboBox::from_id_salt("prefs_gpu")
+                        .width(220.0)
+                        .selected_text(RichText::new(&current).font(sans(FONT_SM)))
+                        .show_ui(ui, |ui| {
+                            for (value, label) in &options {
+                                if ui
+                                    .selectable_value(&mut selected, value.clone(), label)
+                                    .clicked()
+                                {
+                                    changed = true;
+                                }
+                            }
+                        });
+                    if changed {
+                        *preferred_gpu = (selected != "Automatic").then_some(selected);
+                    }
+                    changed
+                })
+                .hint("Takes effect after a restart"),
+            ];
+            gpu_rows.push(
+                PrefRow::select(
+                    "Anti-aliasing",
+                    "prefs_msaa",
+                    msaa,
+                    &[(1, "Off"), (2, "2× MSAA"), (4, "4× MSAA"), (8, "8× MSAA")],
+                )
+                .hint("Takes effect after a restart"),
+            );
+            pref_group(ui, "Rendering", gpu_rows, filter);
+        }
+    }
+}
+
+fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, id: &str, filter: &str) {
+    if let Ok(wb) = registry.workbench_mut(&WorkbenchId::from(id)) {
+        wb.ui_settings(ui, filter);
+    }
+}
+
+/// Every page in turn, each group filtered; pages with no match draw
+/// nothing, so only hits remain.
+fn search_results(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    inputs: &mut PreferencesInputs<'_>,
+    filter: &str,
+) {
+    let (group, tab) = (state.group, state.tab);
+    for g in PrefGroup::ALL {
+        for t in 0..g.tabs().len() {
+            state.group = g;
+            state.tab = t;
+            match g {
+                PrefGroup::General => general_page(ui, state, inputs, filter),
+                PrefGroup::Display => display_page(ui, state, inputs, filter),
+                PrefGroup::Input => input_page(ui, state, inputs, filter),
+                PrefGroup::Sketcher => workbench_page(ui, inputs.registry, "wb.sketch", filter),
+                PrefGroup::PartDesign => workbench_page(ui, inputs.registry, "wb.part", filter),
+                PrefGroup::Units => units_page(ui, state, filter),
+                PrefGroup::ImportExport => import_page(ui, state, filter),
+                PrefGroup::Printing | PrefGroup::Updates => {}
+            }
+        }
+    }
+    state.group = group;
+    state.tab = tab;
+    if ui.min_rect().height() < 4.0 {
+        ui.label(
+            RichText::new("No setting matches.")
+                .font(sans(FONT_SM))
+                .color(TEXT3),
+        );
+    }
+}
+
+fn units_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
+    pref_group(
+        ui,
+        "Units",
+        vec![
+            PrefRow::select(
+                "Display unit",
+                "prefs_unit",
+                &mut state.draft_unit,
+                &[
+                    (Unit::Mm, Unit::Mm.long_label()),
+                    (Unit::Cm, Unit::Cm.long_label()),
+                    (Unit::M, Unit::M.long_label()),
+                    (Unit::In, Unit::In.long_label()),
+                    (Unit::Ft, Unit::Ft.long_label()),
+                ],
+            )
+            .hint("Lengths are stored in millimetres; this only changes how they read"),
+        ],
+        filter,
+    );
+    if filter.is_empty() {
+        ui.label(
+            RichText::new("Saved with the document, not the app.")
+                .font(mono(FONT_XS))
+                .color(TEXT3),
+        );
+    }
+}
+
+fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
+    let t = &mut state.draft.import.tessellation;
+    let absolute = t.linear_deflection_mode == LinearDeflectionMode::AbsoluteMm;
+    let mut rows = vec![PrefRow::select(
+        "Linear deflection",
+        "prefs_step_linear",
+        &mut t.linear_deflection_mode,
+        &[
+            (
+                LinearDeflectionMode::BboxScaled,
+                "Scaled by the bounding box",
+            ),
+            (LinearDeflectionMode::AbsoluteMm, "Absolute chord height"),
+        ],
+    )];
+    if absolute {
+        rows.push(PrefRow::qty(
+            "Chord tolerance",
+            QtyField::mm(&mut t.chord_tolerance)
+                .range(0.001..=5.0)
+                .speed(0.01)
+                .decimals(3),
+        ));
+    } else {
+        rows.push(PrefRow::qty(
+            "Mesh deviation",
+            QtyField::new(&mut t.mesh_deviation)
+                .range(0.01..=1.0)
+                .speed(0.005)
+                .decimals(3),
+        ));
+    }
+    rows.push(PrefRow::qty(
+        "Angular tolerance",
+        QtyField::degrees(&mut t.angular_tolerance_deg).range(0.5..=90.0),
+    ));
+    rows.push(
+        PrefRow::toggle("Weld across faces", &mut t.weld_cross_face)
+            .hint("Merge vertices shared by faces with close normals"),
+    );
+    rows.push(PrefRow::qty(
+        "Weld angle threshold",
+        QtyField::degrees(&mut t.weld_angle_threshold_deg).range(0.0..=90.0),
+    ));
+    rows.push(
+        PrefRow::toggle("Keep shape snapshots", &mut t.persist_brep_snapshot)
+            .hint("Serialize each body's shape and mesh in the background"),
+    );
+    rows.push(
+        PrefRow::toggle("Boundary edges", &mut t.generate_boundary_edges)
+            .hint("Face boundaries as edge lines"),
+    );
+    pref_group(ui, "STEP import defaults", rows, filter);
+    if filter.is_empty() {
+        ui.label(
+            RichText::new("The import dialog opens with these values.")
+                .font(mono(FONT_XS))
+                .color(TEXT3),
+        );
+    }
+}
+
+fn input_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
     inputs: &PreferencesInputs<'_>,
@@ -690,352 +1071,6 @@ fn display_page(
                 .collect();
             pref_group(ui, "Buttons", rows, filter);
         }
-        2 => {
-            let camera = &mut draft.camera;
-            let preset_hint = camera.axis_preset.description();
-            pref_group(
-                ui,
-                "Camera",
-                vec![
-                    PrefRow::select(
-                        "Projection",
-                        "prefs_projection",
-                        &mut camera.projection,
-                        &[
-                            (ProjectionMode::Perspective, "Perspective"),
-                            (ProjectionMode::Orthographic, "Orthographic"),
-                        ],
-                    ),
-                    PrefRow::qty(
-                        "Field of view",
-                        QtyField::degrees(&mut camera.fov_degrees).range(10.0..=120.0),
-                    )
-                    .hint("Vertical, for perspective"),
-                    PrefRow::qty(
-                        "Orthographic height",
-                        QtyField::mm(&mut camera.ortho_height_mm).range(1.0..=500_000.0),
-                    ),
-                    PrefRow::qty(
-                        "Minimum focal distance",
-                        QtyField::mm(&mut camera.min_focal_distance).range(0.1..=50.0),
-                    ),
-                    PrefRow::qty(
-                        "Maximum focal distance",
-                        QtyField::mm(&mut camera.max_focal_distance).range(50.0..=500_000.0),
-                    ),
-                    PrefRow::toggle("Auto near / far planes", &mut camera.auto_near_far)
-                        .hint("Clip planes follow the scene bounds"),
-                    PrefRow::qty(
-                        "Near distance ratio",
-                        QtyField::new(&mut camera.near_far_near_ratio)
-                            .range(0.00001..=0.1)
-                            .speed(0.0001)
-                            .decimals(5),
-                    )
-                    .hint("Times the focal distance"),
-                    PrefRow::qty(
-                        "Far / near ratio cap",
-                        QtyField::new(&mut camera.near_far_depth_ratio_cap)
-                            .range(1000.0..=500_000.0)
-                            .speed(100.0)
-                            .decimals(0),
-                    ),
-                    PrefRow::qty(
-                        "Far plane margin",
-                        QtyField::mm(&mut camera.near_far_margin).range(1.0..=10_000.0),
-                    ),
-                    PrefRow::qty(
-                        "View transition",
-                        QtyField::new(&mut camera.view_transition_ms)
-                            .unit("ms")
-                            .range(120.0..=1200.0)
-                            .speed(10.0)
-                            .decimals(0),
-                    ),
-                    PrefRow::select(
-                        "Axis preset",
-                        "prefs_axis_preset",
-                        &mut camera.axis_preset,
-                        &[
-                            (AxisPreset::ALL[0], AxisPreset::ALL[0].label()),
-                            (AxisPreset::ALL[1], AxisPreset::ALL[1].label()),
-                            (AxisPreset::ALL[2], AxisPreset::ALL[2].label()),
-                        ],
-                    )
-                    .hint(preset_hint),
-                ],
-                filter,
-            );
-        }
-        3 => {
-            let lighting = &mut draft.lighting;
-            let mut rows = Vec::new();
-            for (label, light) in [
-                ("Main light", &mut lighting.main_light),
-                ("Backlight", &mut lighting.backlight),
-                ("Fill light", &mut lighting.fill_light),
-            ] {
-                rows.push(
-                    PrefRow::new(label, move |ui| {
-                        let mut changed = false;
-                        changed |= QtyField::new(&mut light.intensity)
-                            .range(0.0..=1.0)
-                            .speed(0.01)
-                            .width(70.0)
-                            .show(ui);
-                        let mut color = egui::Color32::from_rgb(
-                            (light.color[0] * 255.0) as u8,
-                            (light.color[1] * 255.0) as u8,
-                            (light.color[2] * 255.0) as u8,
-                        );
-                        if ui.color_edit_button_srgba(&mut color).changed() {
-                            light.color = [
-                                color.r() as f32 / 255.0,
-                                color.g() as f32 / 255.0,
-                                color.b() as f32 / 255.0,
-                            ];
-                            changed = true;
-                        }
-                        changed |= QtyField::degrees(&mut light.vertical_angle)
-                            .range(-90.0..=90.0)
-                            .decimals(0)
-                            .width(70.0)
-                            .show(ui);
-                        changed |= QtyField::degrees(&mut light.horizontal_angle)
-                            .range(-180.0..=180.0)
-                            .decimals(0)
-                            .width(70.0)
-                            .show(ui);
-                        changed |= ui_kit::widgets::toggle(ui, &mut light.enabled).changed();
-                        changed
-                    })
-                    .hint("On · horizontal · vertical · color · intensity"),
-                );
-            }
-            pref_group(ui, "Light sources", rows, filter);
-            pref_group(
-                ui,
-                "Ambient and specular",
-                vec![
-                    PrefRow::color("Ambient color", &mut lighting.ambient_color),
-                    PrefRow::qty(
-                        "Ambient intensity",
-                        QtyField::new(&mut lighting.ambient_intensity)
-                            .range(0.0..=1.0)
-                            .speed(0.01),
-                    ),
-                    PrefRow::qty(
-                        "Specular shininess",
-                        QtyField::new(&mut lighting.specular_shininess)
-                            .range(8.0..=128.0)
-                            .speed(1.0)
-                            .decimals(0),
-                    )
-                    .hint("Larger is a tighter highlight"),
-                    PrefRow::qty(
-                        "Specular intensity",
-                        QtyField::new(&mut lighting.specular_intensity)
-                            .range(0.0..=1.0)
-                            .speed(0.01),
-                    ),
-                ],
-                filter,
-            );
-            pref_group(
-                ui,
-                "Edge lines",
-                vec![
-                    PrefRow::color("Edge color", &mut lighting.edge_line_color),
-                    PrefRow::qty(
-                        "Edge width",
-                        QtyField::new(&mut lighting.edge_line_width)
-                            .unit("px")
-                            .range(0.5..=8.0)
-                            .speed(0.1)
-                            .decimals(1),
-                    ),
-                ],
-                filter,
-            );
-        }
-        _ => {
-            let gpus = inputs.gpus;
-            let preferred_gpu = &mut draft.preferred_gpu;
-            let msaa = &mut draft.rendering.msaa_samples;
-            let mut gpu_rows = vec![
-                PrefRow::new("Preferred GPU", move |ui| {
-                    let current = preferred_gpu
-                        .clone()
-                        .unwrap_or_else(|| "Automatic".to_string());
-                    let mut selected = current.clone();
-                    let options: Vec<(String, String)> = std::iter::once("Automatic".to_string())
-                        .chain(gpus.iter().cloned())
-                        .map(|g| (g.clone(), g))
-                        .collect();
-                    let mut changed = false;
-                    egui::ComboBox::from_id_salt("prefs_gpu")
-                        .width(220.0)
-                        .selected_text(RichText::new(&current).font(sans(FONT_SM)))
-                        .show_ui(ui, |ui| {
-                            for (value, label) in &options {
-                                if ui
-                                    .selectable_value(&mut selected, value.clone(), label)
-                                    .clicked()
-                                {
-                                    changed = true;
-                                }
-                            }
-                        });
-                    if changed {
-                        *preferred_gpu = (selected != "Automatic").then_some(selected);
-                    }
-                    changed
-                })
-                .hint("Takes effect after a restart"),
-            ];
-            gpu_rows.push(
-                PrefRow::select(
-                    "Anti-aliasing",
-                    "prefs_msaa",
-                    msaa,
-                    &[(1, "Off"), (2, "2× MSAA"), (4, "4× MSAA"), (8, "8× MSAA")],
-                )
-                .hint("Takes effect after a restart"),
-            );
-            pref_group(ui, "Rendering", gpu_rows, filter);
-        }
-    }
-}
-
-fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, id: &str, filter: &str) {
-    if let Ok(wb) = registry.workbench_mut(&WorkbenchId::from(id)) {
-        wb.ui_settings(ui, filter);
-    }
-}
-
-/// Every page in turn, each group filtered; pages with no match draw
-/// nothing, so only hits remain.
-fn search_results(
-    ui: &mut Ui,
-    state: &mut PreferencesState,
-    inputs: &mut PreferencesInputs<'_>,
-    filter: &str,
-) {
-    let (group, tab) = (state.group, state.tab);
-    for g in PrefGroup::ALL {
-        for t in 0..g.tabs().len() {
-            state.group = g;
-            state.tab = t;
-            match g {
-                PrefGroup::General => general_page(ui, state, inputs, filter),
-                PrefGroup::Display => display_page(ui, state, inputs, filter),
-                PrefGroup::Sketcher => workbench_page(ui, inputs.registry, "wb.sketch", filter),
-                PrefGroup::PartDesign => workbench_page(ui, inputs.registry, "wb.part", filter),
-                PrefGroup::Units => units_page(ui, state, filter),
-                PrefGroup::ImportExport => import_page(ui, state, filter),
-                PrefGroup::Printing | PrefGroup::Updates => {}
-            }
-        }
-    }
-    state.group = group;
-    state.tab = tab;
-    if ui.min_rect().height() < 4.0 {
-        ui.label(
-            RichText::new("No setting matches.")
-                .font(sans(FONT_SM))
-                .color(TEXT3),
-        );
-    }
-}
-
-fn units_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
-    pref_group(
-        ui,
-        "Units",
-        vec![
-            PrefRow::select(
-                "Display unit",
-                "prefs_unit",
-                &mut state.draft_unit,
-                &[
-                    (Unit::Mm, Unit::Mm.long_label()),
-                    (Unit::Cm, Unit::Cm.long_label()),
-                    (Unit::M, Unit::M.long_label()),
-                    (Unit::In, Unit::In.long_label()),
-                    (Unit::Ft, Unit::Ft.long_label()),
-                ],
-            )
-            .hint("Lengths are stored in millimetres; this only changes how they read"),
-        ],
-        filter,
-    );
-    if filter.is_empty() {
-        ui.label(
-            RichText::new("Saved with the document, not the app.")
-                .font(mono(FONT_XS))
-                .color(TEXT3),
-        );
-    }
-}
-
-fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
-    let t = &mut state.draft.import.tessellation;
-    let absolute = t.linear_deflection_mode == LinearDeflectionMode::AbsoluteMm;
-    let mut rows = vec![PrefRow::select(
-        "Linear deflection",
-        "prefs_step_linear",
-        &mut t.linear_deflection_mode,
-        &[
-            (
-                LinearDeflectionMode::BboxScaled,
-                "Scaled by the bounding box",
-            ),
-            (LinearDeflectionMode::AbsoluteMm, "Absolute chord height"),
-        ],
-    )];
-    if absolute {
-        rows.push(PrefRow::qty(
-            "Chord tolerance",
-            QtyField::mm(&mut t.chord_tolerance)
-                .range(0.001..=5.0)
-                .speed(0.01)
-                .decimals(3),
-        ));
-    } else {
-        rows.push(PrefRow::qty(
-            "Mesh deviation",
-            QtyField::new(&mut t.mesh_deviation)
-                .range(0.01..=1.0)
-                .speed(0.005)
-                .decimals(3),
-        ));
-    }
-    rows.push(PrefRow::qty(
-        "Angular tolerance",
-        QtyField::degrees(&mut t.angular_tolerance_deg).range(0.5..=90.0),
-    ));
-    rows.push(
-        PrefRow::toggle("Weld across faces", &mut t.weld_cross_face)
-            .hint("Merge vertices shared by faces with close normals"),
-    );
-    rows.push(PrefRow::qty(
-        "Weld angle threshold",
-        QtyField::degrees(&mut t.weld_angle_threshold_deg).range(0.0..=90.0),
-    ));
-    rows.push(
-        PrefRow::toggle("Keep shape snapshots", &mut t.persist_brep_snapshot)
-            .hint("Serialize each body's shape and mesh in the background"),
-    );
-    rows.push(
-        PrefRow::toggle("Boundary edges", &mut t.generate_boundary_edges)
-            .hint("Face boundaries as edge lines"),
-    );
-    pref_group(ui, "STEP import defaults", rows, filter);
-    if filter.is_empty() {
-        ui.label(
-            RichText::new("The import dialog opens with these values.")
-                .font(mono(FONT_XS))
-                .color(TEXT3),
-        );
+        _ => {}
     }
 }
