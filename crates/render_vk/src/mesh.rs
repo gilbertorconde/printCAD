@@ -912,13 +912,20 @@ impl MeshRenderer {
         // pointing into its own vertex buffer.
         // Experiment hook: PRINTCAD_NO_EDGES=1 skips the edge pass so its
         // cost can be measured; not a user-facing setting.
-        let no_edges = suppress_edges || std::env::var_os("PRINTCAD_NO_EDGES").is_some();
-        let has_edges = !no_edges
-            && bodies
-                .iter()
-                .zip(&edges_eligible)
-                .filter(|(b, v)| **v && !b.is_wireframe)
-                .any(|(b, _)| matches!(cache.get(&b.id), Some(c) if c.edge_index_count > 0));
+        let force_off = std::env::var_os("PRINTCAD_NO_EDGES").is_some();
+        // Suppression drops the boundary edges of solids while the camera
+        // moves. A body that is nothing but lines — a sketch — has no
+        // surface standing in for it, so it draws either way.
+        let draws_edges = |cached: &CachedMesh| {
+            cached.edge_index_count > 0
+                && !force_off
+                && (!suppress_edges || cached.index_count == 0)
+        };
+        let has_edges = bodies
+            .iter()
+            .zip(&edges_eligible)
+            .filter(|(b, v)| **v && !b.is_wireframe)
+            .any(|(b, _)| matches!(cache.get(&b.id), Some(c) if draws_edges(c)));
         if has_edges {
             unsafe {
                 self.device.cmd_bind_pipeline(
@@ -940,7 +947,7 @@ impl MeshRenderer {
                 .filter(|(b, v)| **v && !b.is_wireframe)
             {
                 let cached = match cache.get(&body.id) {
-                    Some(c) if c.edge_index_count > 0 => c,
+                    Some(c) if draws_edges(c) => c,
                     _ => continue,
                 };
                 stats.edge_indices += u64::from(cached.edge_index_count);
