@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use spacenav::{EventMask, Source};
+use sixdof::{EventMask, Source};
 
 use crate::log_panel as app_log;
 
@@ -87,12 +87,12 @@ fn lock(shared: &Mutex<Shared>) -> std::sync::MutexGuard<'_, Shared> {
 }
 
 /// UI-side handle to the device thread.
-pub struct SpaceNavWorker {
+pub struct SixDofWorker {
     shared: Arc<Mutex<Shared>>,
     stop: Arc<AtomicBool>,
 }
 
-impl SpaceNavWorker {
+impl SixDofWorker {
     /// Starts the reader thread. It runs for the life of the process, looking
     /// for the daemon until it finds one.
     ///
@@ -135,7 +135,7 @@ impl SpaceNavWorker {
     }
 }
 
-impl Drop for SpaceNavWorker {
+impl Drop for SixDofWorker {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
     }
@@ -176,7 +176,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
     while !stop.load(Ordering::SeqCst) {
         match source.read_timeout(READ_TIMEOUT) {
             Ok(None) => {}
-            Ok(Some(spacenav::Event::Motion(motion))) => {
+            Ok(Some(sixdof::Event::Motion(motion))) => {
                 let motion = DeviceMotion {
                     translate: motion.translate.map(|v| v as f32),
                     rotate: motion.rotate.map(|v| v as f32),
@@ -192,7 +192,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
                     wake();
                 }
             }
-            Ok(Some(spacenav::Event::Button { index, pressed })) => {
+            Ok(Some(sixdof::Event::Button { index, pressed })) => {
                 let mut state = lock(shared);
                 if state.buttons.len() >= MAX_QUEUED_BUTTONS {
                     state.buttons.remove(0);
@@ -201,7 +201,7 @@ fn serve(mut source: Source, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
                 drop(state);
                 wake();
             }
-            Ok(Some(spacenav::Event::Device { .. })) => {
+            Ok(Some(sixdof::Event::Device { .. })) => {
                 source.refresh_device().ok();
                 announce(&source, shared);
             }
@@ -235,8 +235,8 @@ fn announce(source: &Source, shared: &Arc<Mutex<Shared>>) {
     let buttons = source.device().map_or(0, |device| device.buttons);
     let name = source.device().map_or_else(
         || match source.backend() {
-            spacenav::Backend::Daemon => None,
-            spacenav::Backend::Magellan => Some("device on the display server".to_string()),
+            sixdof::Backend::Daemon => None,
+            sixdof::Backend::Magellan => Some("device on the display server".to_string()),
         },
         |device| Some(device.name.clone()),
     );

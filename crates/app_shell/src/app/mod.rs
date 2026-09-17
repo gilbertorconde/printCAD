@@ -6,7 +6,7 @@ pub(crate) mod frame;
 pub(crate) mod gfx;
 pub(crate) mod input;
 pub(crate) mod recompute;
-pub(crate) mod spacenav;
+pub(crate) mod sixdof;
 pub(crate) mod step_import;
 pub(crate) mod undo_host;
 pub(crate) mod workbench_host;

@@ -22,7 +22,7 @@ wb_sketch = { path = "../workbenches/wb_sketch", features = ["egui"] }
 kernel_api = { path = "../kernel_api" }
 kernel_ogeom = { path = "../kernel_ogeom" }
 settings = { path = "../settings" }
-spacenav = { path = "../spacenav", features = ["magellan"] }
+sixdof = { path = "../../../sixdof", features = ["magellan"] }
 ui_kit = { path = "../ui_kit" }
 glam.workspace = true
 uuid.workspace = true

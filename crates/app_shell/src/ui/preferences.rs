@@ -7,7 +7,7 @@ use egui::{
     Align, Context, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use kernel_api::LinearDeflectionMode;
-use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SPACENAV_AXIS_LABELS, UserSettings};
+use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SIXDOF_AXIS_LABELS, UserSettings};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
     Note, PrefRow, QtyField, note_card, pref_group, primary_button, secondary_button,
@@ -458,7 +458,7 @@ fn reset_group(state: &mut PreferencesState) {
         }
         PrefGroup::Display => {
             state.draft.camera = defaults.camera;
-            state.draft.spacenav = defaults.spacenav;
+            state.draft.sixdof = defaults.sixdof;
             state.draft.lighting = defaults.lighting;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.preferred_gpu = defaults.preferred_gpu;
@@ -587,7 +587,7 @@ fn display_page(
             );
         }
         1 => {
-            let device = &mut draft.spacenav;
+            let device = &mut draft.sixdof;
             pref_group(
                 ui,
                 "6-DoF mouse",
@@ -652,7 +652,7 @@ fn display_page(
                 filter,
             );
 
-            let labels: Vec<String> = SPACENAV_AXIS_LABELS
+            let labels: Vec<String> = SIXDOF_AXIS_LABELS
                 .iter()
                 .map(|motion| format!("Reverse {}", motion.to_lowercase()))
                 .collect();
@@ -670,10 +670,10 @@ fn display_page(
             if device.buttons.len() < count {
                 device
                     .buttons
-                    .resize(count, settings::SpaceNavButtonAction::None);
+                    .resize(count, settings::SixDofButtonAction::None);
             }
-            let actions: Vec<(settings::SpaceNavButtonAction, &str)> =
-                settings::SpaceNavButtonAction::ALL
+            let actions: Vec<(settings::SixDofButtonAction, &str)> =
+                settings::SixDofButtonAction::ALL
                     .iter()
                     .map(|action| (*action, action.label()))
                     .collect();

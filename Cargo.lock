@@ -110,7 +110,7 @@ dependencies = [
  "rfd",
  "serde_json",
  "settings",
- "spacenav",
+ "sixdof",
  "tiny-skia 0.12.0",
  "tracing",
  "tracing-appender",
@@ -2844,6 +2844,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ee5873ec9cce0195efcb7a4e9507a04cd49aec9c83d0389df45b1ef7ba2e649"
 
 [[package]]
+name = "sixdof"
+version = "0.1.0"
+dependencies = [
+ "x11rb",
+]
+
+[[package]]
 name = "skrifa"
 version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2944,13 +2951,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "spacenav"
-version = "0.1.0"
-dependencies = [
- "x11rb",
 ]
 
 [[package]]

@@ -40,7 +40,7 @@ pub struct UserSettings {
     pub fps_cap: f32,
     /// How a 6-DoF mouse drives the view.
     #[serde(default)]
-    pub spacenav: SpaceNavSettings,
+    pub sixdof: SixDofSettings,
 }
 
 impl Default for UserSettings {
@@ -52,7 +52,7 @@ impl Default for UserSettings {
             import: ImportSettings::default(),
             preferred_gpu: None,
             fps_cap: 0.0,
-            spacenav: SpaceNavSettings::default(),
+            sixdof: SixDofSettings::default(),
         }
     }
 }
@@ -60,14 +60,14 @@ impl Default for UserSettings {
 /// How a 6-DoF mouse — a six-axis navigation puck — drives the view.
 ///
 /// Readings arrive in the device's own units and are divided by
-/// [`SpaceNavSettings::full_scale`] before anything else, so the speeds below
+/// [`SixDofSettings::full_scale`] before anything else, so the speeds below
 /// are "how far the view moves per second at full deflection" and stay
 /// meaningful across devices. The daemon has its own sensitivity, dead zone
 /// and inversion settings that act first; these sit on top, for tuning the
 /// feel inside the app without changing what every other application sees.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-pub struct SpaceNavSettings {
+pub struct SixDofSettings {
     /// Whether a 6-DoF mouse steers the view at all.
     pub enabled: bool,
     /// The reading a fully deflected axis produces.
@@ -95,10 +95,10 @@ pub struct SpaceNavSettings {
     pub invert: [bool; 6],
     /// What each of the device's buttons does, by button number. Buttons
     /// past the end of the list do nothing.
-    pub buttons: Vec<SpaceNavButtonAction>,
+    pub buttons: Vec<SixDofButtonAction>,
 }
 
-impl Default for SpaceNavSettings {
+impl Default for SixDofSettings {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -114,8 +114,8 @@ impl Default for SpaceNavSettings {
             dominant_axis: false,
             invert: [false; 6],
             buttons: vec![
-                SpaceNavButtonAction::FitView,
-                SpaceNavButtonAction::ToggleProjection,
+                SixDofButtonAction::FitView,
+                SixDofButtonAction::ToggleProjection,
             ],
         }
     }
@@ -127,7 +127,7 @@ impl Default for SpaceNavSettings {
 /// — hold rotation or translation at zero, pass only the dominant axis — that
 /// act before anything reaches the app, and belong to it rather than here.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SpaceNavButtonAction {
+pub enum SixDofButtonAction {
     #[default]
     None,
     /// Frame the whole model.
@@ -144,40 +144,40 @@ pub enum SpaceNavButtonAction {
     ToggleProjection,
 }
 
-impl SpaceNavButtonAction {
+impl SixDofButtonAction {
     /// Every action, in the order a chooser should list them.
-    pub const ALL: [SpaceNavButtonAction; 10] = [
-        SpaceNavButtonAction::None,
-        SpaceNavButtonAction::FitView,
-        SpaceNavButtonAction::ViewIsometric,
-        SpaceNavButtonAction::ViewFront,
-        SpaceNavButtonAction::ViewRear,
-        SpaceNavButtonAction::ViewLeft,
-        SpaceNavButtonAction::ViewRight,
-        SpaceNavButtonAction::ViewTop,
-        SpaceNavButtonAction::ViewBottom,
-        SpaceNavButtonAction::ToggleProjection,
+    pub const ALL: [SixDofButtonAction; 10] = [
+        SixDofButtonAction::None,
+        SixDofButtonAction::FitView,
+        SixDofButtonAction::ViewIsometric,
+        SixDofButtonAction::ViewFront,
+        SixDofButtonAction::ViewRear,
+        SixDofButtonAction::ViewLeft,
+        SixDofButtonAction::ViewRight,
+        SixDofButtonAction::ViewTop,
+        SixDofButtonAction::ViewBottom,
+        SixDofButtonAction::ToggleProjection,
     ];
 
     pub fn label(self) -> &'static str {
         match self {
-            SpaceNavButtonAction::None => "Nothing",
-            SpaceNavButtonAction::FitView => "Fit the model",
-            SpaceNavButtonAction::ViewIsometric => "Isometric view",
-            SpaceNavButtonAction::ViewFront => "Front view",
-            SpaceNavButtonAction::ViewRear => "Rear view",
-            SpaceNavButtonAction::ViewLeft => "Left view",
-            SpaceNavButtonAction::ViewRight => "Right view",
-            SpaceNavButtonAction::ViewTop => "Top view",
-            SpaceNavButtonAction::ViewBottom => "Bottom view",
-            SpaceNavButtonAction::ToggleProjection => "Switch projection",
+            SixDofButtonAction::None => "Nothing",
+            SixDofButtonAction::FitView => "Fit the model",
+            SixDofButtonAction::ViewIsometric => "Isometric view",
+            SixDofButtonAction::ViewFront => "Front view",
+            SixDofButtonAction::ViewRear => "Rear view",
+            SixDofButtonAction::ViewLeft => "Left view",
+            SixDofButtonAction::ViewRight => "Right view",
+            SixDofButtonAction::ViewTop => "Top view",
+            SixDofButtonAction::ViewBottom => "Bottom view",
+            SixDofButtonAction::ToggleProjection => "Switch projection",
         }
     }
 }
 
 /// Which camera motion each device axis drives. The order is the one the
 /// device reports: three translations, then three rotations.
-pub const SPACENAV_AXIS_LABELS: [&str; 6] = [
+pub const SIXDOF_AXIS_LABELS: [&str; 6] = [
     "Pan sideways",
     "Pan up and down",
     "Zoom",

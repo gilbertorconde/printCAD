@@ -9,7 +9,7 @@ use render_vk::{
     BodySubmission, GpuLight, HighlightState, LightingData, RenderBackend,
     ViewportRect as RenderViewportRect,
 };
-use settings::{ProjectionMode, SpaceNavButtonAction, UserSettings};
+use settings::{ProjectionMode, SixDofButtonAction, UserSettings};
 use uuid::Uuid;
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 
@@ -114,21 +114,21 @@ pub(crate) fn lighting_data_from_settings(user: &UserSettings) -> LightingData {
 /// The command a button action asks for. Switching projection needs to know
 /// which one is in force, since it names the one to change to.
 fn device_button_command(
-    action: SpaceNavButtonAction,
+    action: SixDofButtonAction,
     projection: ProjectionMode,
 ) -> Option<ui::UiCommand> {
     let snap = |view| Some(ui::UiCommand::CameraSnap(view));
     match action {
-        SpaceNavButtonAction::None => None,
-        SpaceNavButtonAction::FitView => Some(ui::UiCommand::FitView),
-        SpaceNavButtonAction::ViewIsometric => snap(CameraSnapView::FrontTopRight),
-        SpaceNavButtonAction::ViewFront => snap(CameraSnapView::Front),
-        SpaceNavButtonAction::ViewRear => snap(CameraSnapView::Rear),
-        SpaceNavButtonAction::ViewLeft => snap(CameraSnapView::Left),
-        SpaceNavButtonAction::ViewRight => snap(CameraSnapView::Right),
-        SpaceNavButtonAction::ViewTop => snap(CameraSnapView::Top),
-        SpaceNavButtonAction::ViewBottom => snap(CameraSnapView::Bottom),
-        SpaceNavButtonAction::ToggleProjection => {
+        SixDofButtonAction::None => None,
+        SixDofButtonAction::FitView => Some(ui::UiCommand::FitView),
+        SixDofButtonAction::ViewIsometric => snap(CameraSnapView::FrontTopRight),
+        SixDofButtonAction::ViewFront => snap(CameraSnapView::Front),
+        SixDofButtonAction::ViewRear => snap(CameraSnapView::Rear),
+        SixDofButtonAction::ViewLeft => snap(CameraSnapView::Left),
+        SixDofButtonAction::ViewRight => snap(CameraSnapView::Right),
+        SixDofButtonAction::ViewTop => snap(CameraSnapView::Top),
+        SixDofButtonAction::ViewBottom => snap(CameraSnapView::Bottom),
+        SixDofButtonAction::ToggleProjection => {
             Some(ui::UiCommand::SetProjection(match projection {
                 ProjectionMode::Perspective => ProjectionMode::Orthographic,
                 ProjectionMode::Orthographic => ProjectionMode::Perspective,
@@ -171,7 +171,7 @@ impl PrintCadApp {
             }
             let action = self
                 .user_settings
-                .spacenav
+                .sixdof
                 .buttons
                 .get(button.index as usize)
                 .copied()
@@ -631,7 +631,7 @@ impl PrintCadApp {
             device_motion.axis_readings(),
             dt_secs,
             &self.user_settings.camera,
-            &self.user_settings.spacenav,
+            &self.user_settings.sixdof,
         );
         self.camera
             .apply_auto_clip_planes(&self.user_settings.camera);

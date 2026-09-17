@@ -2,7 +2,7 @@
 
 use axes::AxisSystem;
 use glam::Vec2;
-use settings::{CameraSettings, ProjectionMode, SpaceNavSettings};
+use settings::{CameraSettings, ProjectionMode, SixDofSettings};
 
 use super::ops;
 use super::state::CadCameraState;
@@ -134,10 +134,10 @@ fn deflect(axis: usize, amount: f32) -> [f32; 6] {
     readings
 }
 
-fn controller() -> (super::CameraController, CameraSettings, SpaceNavSettings) {
+fn controller() -> (super::CameraController, CameraSettings, SixDofSettings) {
     let settings = CameraSettings::default();
     let camera = super::CameraController::new(&settings, (800, 600));
-    (camera, settings, SpaceNavSettings::default())
+    (camera, settings, SixDofSettings::default())
 }
 
 #[test]

@@ -18,7 +18,7 @@ use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
-use settings::{CameraSettings, SpaceNavSettings};
+use settings::{CameraSettings, SixDofSettings};
 use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
@@ -26,7 +26,7 @@ use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
 /// Normalizes one device reading: full scale to ±1, dead zone to rest,
 /// inverted axes flipped, and the dominant axis alone when asked for.
 /// `None` when the puck is at rest.
-fn device_axes(readings: [f32; 6], device: &SpaceNavSettings) -> Option<[f32; 6]> {
+fn device_axes(readings: [f32; 6], device: &SixDofSettings) -> Option<[f32; 6]> {
     let scale = device.full_scale.abs().max(1.0);
     let dead_zone = device.dead_zone.clamp(0.0, 0.95);
 
@@ -347,7 +347,7 @@ impl CameraController {
         axis_readings: [f32; 6],
         dt_secs: f32,
         settings: &CameraSettings,
-        device: &SpaceNavSettings,
+        device: &SixDofSettings,
     ) -> bool {
         if !device.enabled {
             return false;

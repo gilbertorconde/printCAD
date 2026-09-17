@@ -25,6 +25,11 @@ cargo fmt --all                   # CI enforces --check
 - No system CAD libraries needed — the ogeom kernel is pure Rust, pulled as a
   pinned git dependency (bump the rev in the workspace `Cargo.toml`; a
   commented `[patch]` there points at a local checkout for kernel dev).
+- 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate, which
+  lives in its own repo next to this one (`../sixdof`, consumed by path) and
+  needs no system library: it speaks the spacenavd socket protocol itself,
+  with the display-server (Magellan) protocol behind its `magellan` feature.
+  Nothing is required to build or run without a device.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
   `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an
@@ -99,7 +104,9 @@ cargo fmt --all                   # CI enforces --check
 - `app_shell` — binary. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `workbench_host.rs` (ctx
-  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive).
+  plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive),
+  `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
+  which `camera::apply_device_motion` integrates once per frame).
   `ui/` is one module per region: `menu_bar`, `toolbar` (rows from
   `ToolDescriptor.row`, variant dropdowns), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
@@ -269,12 +276,15 @@ hacks, no silently degraded feature). Instead:
 
 Frames are rendered **on demand**, not continuously: a frame is scheduled
 while input is fresh (150 ms tail), async work is pending (kernel jobs,
-document open/save, file dialog, deferred import), the camera tween or bench
-orbit is running, or egui asked for a repaint (`repaint_delay` == 0; finite delays
+document open/save, file dialog, deferred import), a 6-DoF puck is deflected,
+the camera tween or bench orbit is running, or egui asked for a repaint (`repaint_delay` == 0; finite delays
 become `WaitUntil`, e.g. caret blink). Otherwise the event loop sleeps in
 `ControlFlow::Wait` until the next OS event. Consequences: anything that
 completes on a background channel must be covered by one of the
-"work pending" flags or it will not surface until the next input event, and
+"work pending" flags or it will not surface until the next input event; a
+thread whose work produces no window event (the 6-DoF reader) must also wake
+the loop itself, through `EventLoopProxy::send_event` and the `AppEvent`
+user event; and
 `fps_cap` now caps the *active* rate rather than implying continuous
 rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_OPEN_DOC` /
 `PRINTCAD_BENCH_ORBIT` / `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are
