@@ -18,7 +18,7 @@ use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
-use settings::{CameraSettings, SixDofSettings};
+use settings::{CameraSettings, SixDofMotion, SixDofSettings};
 use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
@@ -355,55 +355,79 @@ impl CameraController {
         let Some(axes) = device_axes(axis_readings, device) else {
             return false;
         };
+
+        // Each of the puck's six movements adds to whatever it is assigned
+        // to, so two of them can drive the same motion if that is what the
+        // assignment says.
+        let mut pan = Vec2::ZERO;
+        let mut zoom = 0.0f32;
+        let mut orbit = Vec2::ZERO;
+        let mut roll = 0.0f32;
+        for (reading, motion) in axes.iter().zip(&device.assign) {
+            match motion {
+                SixDofMotion::None => {}
+                SixDofMotion::PanSideways => pan.x += reading,
+                SixDofMotion::PanUpDown => pan.y -= reading,
+                SixDofMotion::Zoom => zoom += reading,
+                SixDofMotion::Tilt => orbit.y -= reading,
+                SixDofMotion::Turn => orbit.x -= reading,
+                SixDofMotion::Roll => roll += reading,
+            }
+        }
+
         // A frame after waking from sleep can be arbitrarily long; integrating
         // it whole would throw the view across the scene.
         let dt = dt_secs.clamp(0.001, 0.1);
         self.cancel_animation();
 
-        if device.translation {
-            let scale = device.translate_speed * dt;
-            let delta = Vec2::new(axes[0] * scale, -axes[1] * scale);
-            ops::pan_pixels(&mut self.state, &self.axes, delta, settings);
+        if pan != Vec2::ZERO {
+            ops::pan_pixels(
+                &mut self.state,
+                &self.axes,
+                pan * device.translate_speed * dt,
+                settings,
+            );
         }
 
-        if device.zoom {
-            // A positive push-and-pull reading zooms in, the way scrolling up
-            // does. Which way the puck has to move for that is the device's
-            // business, and the axis inverts if it disagrees.
-            let lines = axes[2] * device.zoom_speed * dt;
+        if zoom != 0.0 {
+            // Positive zooms in, the way scrolling up does.
+            let lines = zoom * device.zoom_speed * dt;
             zoom_cursor::apply_zoom_wheels(&mut self.state, &self.axes, None, lines, settings);
         }
 
-        if device.rotation {
-            // Orbit takes pixels, and `orbit_sensitivity * 0.005` is the
-            // radians each one turns; go the other way to land on the
-            // configured degrees per second.
-            let radians_per_px = (settings.orbit_sensitivity * 0.005).max(1e-6);
-            let degrees = device.rotate_speed * dt;
-            let px = degrees.to_radians() / radians_per_px;
+        // Orbit takes pixels, and `orbit_sensitivity * 0.005` is the radians
+        // each one turns; go the other way to land on the configured degrees
+        // per second.
+        let radians_per_px = (settings.orbit_sensitivity * 0.005).max(1e-6);
+        let degrees = device.rotate_speed * dt;
+        let px = degrees.to_radians() / radians_per_px;
 
-            // A sketch locks the view to its plane: the two axes that would
-            // tilt out of it are dropped, and the one about the plane's
-            // normal — roll — is kept.
-            if !self.orbit_locked {
-                let delta = Vec2::new(-axes[4] * px, -axes[3] * px);
-                match self.orbit_lmb_anchor_world {
-                    Some(pivot) if settings.orbit_pivot_pick => {
-                        ops::orbit_pixels_around_world_anchor(
-                            &mut self.state,
-                            &self.axes,
-                            pivot,
-                            delta,
-                            settings,
-                        );
-                    }
-                    _ => ops::orbit_pixels(&mut self.state, &self.axes, delta, settings),
+        // A sketch locks the view to its plane: the two movements that would
+        // tilt out of it are dropped, and the one about the plane's own
+        // normal — roll — is kept.
+        if orbit != Vec2::ZERO && !self.orbit_locked {
+            let delta = orbit * px;
+            match self.orbit_lmb_anchor_world {
+                Some(pivot) if settings.orbit_pivot_pick => {
+                    ops::orbit_pixels_around_world_anchor(
+                        &mut self.state,
+                        &self.axes,
+                        pivot,
+                        delta,
+                        settings,
+                    );
                 }
+                _ => ops::orbit_pixels(&mut self.state, &self.axes, delta, settings),
             }
+        }
 
+        if roll != 0.0 {
             // Roll works in its own units, where one pixel is 0.01 radians.
-            let roll_px = axes[5] * device.roll_speed * degrees.to_radians() / 0.01;
-            ops::roll_pixels(&mut self.state, &self.axes, roll_px);
+            ops::roll_pixels(
+                &mut self.state,
+                &self.axes,
+                roll * device.roll_speed * degrees.to_radians() / 0.01,
+            );
         }
 
         true

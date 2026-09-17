@@ -7,7 +7,7 @@ use egui::{
     Align, Context, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use kernel_api::LinearDeflectionMode;
-use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SIXDOF_AXIS_LABELS, UserSettings};
+use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, UserSettings};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{
     Note, PrefRow, QtyField, note_card, pref_group, primary_button, secondary_button,
@@ -124,6 +124,33 @@ pub struct PreferencesInputs<'a> {
     /// row per button it actually owns. Zero when none is connected.
     pub nav_buttons: u32,
 }
+
+/// The six ways the puck moves, in the order the device reports them: what
+/// the hand does, and the icon that shows it.
+const SIXDOF_GESTURES: [(&str, &str, &str); 6] = [
+    (
+        "Push left and right",
+        "gesture-slide-x",
+        "prefs_sixdof_axis_1",
+    ),
+    (
+        "Pull up and push down",
+        "gesture-slide-y",
+        "prefs_sixdof_axis_2",
+    ),
+    (
+        "Push away and pull back",
+        "gesture-slide-z",
+        "prefs_sixdof_axis_3",
+    ),
+    (
+        "Tilt forward and back",
+        "gesture-tilt",
+        "prefs_sixdof_axis_4",
+    ),
+    ("Twist", "gesture-twist", "prefs_sixdof_axis_5"),
+    ("Rock side to side", "gesture-rock", "prefs_sixdof_axis_6"),
+];
 
 /// One widget id per 6-DoF mouse button row; a chooser needs its own.
 const NAV_BUTTON_IDS: [&str; 16] = [
@@ -975,9 +1002,6 @@ fn input_page(
                 vec![
                     PrefRow::toggle("Steer the view with a 6-DoF mouse", &mut device.enabled)
                         .hint("A six-axis puck moves the view while it is held"),
-                    PrefRow::toggle("Pan", &mut device.translation),
-                    PrefRow::toggle("Zoom", &mut device.zoom),
-                    PrefRow::toggle("Rotate", &mut device.rotation),
                     PrefRow::qty(
                         "Pan speed",
                         QtyField::new(&mut device.translate_speed)
@@ -1033,17 +1057,34 @@ fn input_page(
                 filter,
             );
 
-            let labels: Vec<String> = SIXDOF_AXIS_LABELS
+            let motions: Vec<(SixDofMotion, &str)> = SixDofMotion::ALL
                 .iter()
-                .map(|motion| format!("Reverse {}", motion.to_lowercase()))
+                .map(|motion| (*motion, motion.label()))
+                .collect();
+            let rows = device
+                .assign
+                .iter_mut()
+                .zip(SIXDOF_GESTURES)
+                .map(|(assigned, (gesture, icon, id))| {
+                    PrefRow::select(gesture, id, assigned, &motions).icon(icon)
+                })
+                .collect();
+            pref_group(ui, "What each movement does", rows, filter);
+
+            let reversed: Vec<String> = SIXDOF_GESTURES
+                .iter()
+                .map(|(gesture, _, _)| format!("Reverse {}", gesture.to_lowercase()))
                 .collect();
             let rows = device
                 .invert
                 .iter_mut()
-                .zip(&labels)
-                .map(|(inverted, label)| PrefRow::toggle(label, inverted))
+                .zip(&reversed)
+                .zip(SIXDOF_GESTURES)
+                .map(|((inverted, label), (_, icon, _))| {
+                    PrefRow::toggle(label, inverted).icon(icon)
+                })
                 .collect();
-            pref_group(ui, "Reverse an axis", rows, filter);
+            pref_group(ui, "Reverse a movement", rows, filter);
 
             // A device with no buttons still gets the two rows a common puck
             // has, so the page is not empty before one is plugged in.

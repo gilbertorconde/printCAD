@@ -32,7 +32,12 @@ const SKIP = new Set([
 ]);
 // Icons authored in this repo (not part of the source set) that the table
 // must keep.
-const LOCAL = new Set(["select", "expression"]);
+const LOCAL = new Set([
+  "select", "expression",
+  // The 6-DoF mouse gestures, drawn here because no icon set has them.
+  "gesture-slide-x", "gesture-slide-y", "gesture-slide-z",
+  "gesture-tilt", "gesture-twist", "gesture-rock",
+]);
 
 mkdirSync(dest, { recursive: true });
 for (const f of readdirSync(dest)) {

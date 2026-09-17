@@ -200,13 +200,13 @@ fn an_inverted_axis_pans_the_other_way() {
 fn push_and_pull_zooms_both_ways() {
     let (mut camera, settings, device) = controller();
     let start = camera.state.focal_distance;
-    camera.apply_device_motion(deflect(2, device.full_scale), 0.1, &settings, &device);
+    camera.apply_device_motion(deflect(1, device.full_scale), 0.1, &settings, &device);
     let zoomed_in = camera.state.focal_distance;
     assert!(zoomed_in < start);
 
     // The same deflection the other way undoes it: zoom is exponential, so
     // equal and opposite steps land back where they started.
-    camera.apply_device_motion(deflect(2, -device.full_scale), 0.1, &settings, &device);
+    camera.apply_device_motion(deflect(1, -device.full_scale), 0.1, &settings, &device);
     let zoomed_out = camera.state.focal_distance;
     assert!(zoomed_out > zoomed_in);
     assert!((zoomed_out - start).abs() < start * 1e-3);
@@ -217,7 +217,7 @@ fn twisting_turns_the_view_without_moving_the_focal_point() {
     let (mut camera, settings, device) = controller();
     let focal_before = camera.focal_point_world();
     let orientation_before = camera.state.orientation;
-    camera.apply_device_motion(deflect(4, device.full_scale), 0.1, &settings, &device);
+    camera.apply_device_motion(deflect(5, device.full_scale), 0.1, &settings, &device);
     assert!(camera.state.orientation.angle_between(orientation_before) > 1e-3);
     assert!((camera.focal_point_world() - focal_before).length() < 1e-2);
 }
@@ -228,7 +228,7 @@ fn rolling_keeps_the_view_pointing_where_it_was() {
     let axes = camera.axis_system();
     let forward_before = camera.state.forward_world(&axes).normalize();
     let up_before = camera.state.up_world(&axes).normalize();
-    camera.apply_device_motion(deflect(5, device.full_scale), 0.1, &settings, &device);
+    camera.apply_device_motion(deflect(4, device.full_scale), 0.1, &settings, &device);
     let forward_after = camera.state.forward_world(&axes).normalize();
     let up_after = camera.state.up_world(&axes).normalize();
 
@@ -245,7 +245,7 @@ fn a_sketch_keeps_its_plane_square_to_the_view() {
 
     // Tilt and turn are dropped under the lock...
     camera.apply_device_motion(deflect(3, device.full_scale), 0.1, &settings, &device);
-    camera.apply_device_motion(deflect(4, device.full_scale), 0.1, &settings, &device);
+    camera.apply_device_motion(deflect(5, device.full_scale), 0.1, &settings, &device);
     assert!(
         camera
             .state
@@ -257,7 +257,7 @@ fn a_sketch_keeps_its_plane_square_to_the_view() {
 
     // ...while roll, which turns about the plane's own normal, still works.
     let up_before = camera.state.up_world(&axes).normalize();
-    camera.apply_device_motion(deflect(5, device.full_scale), 0.1, &settings, &device);
+    camera.apply_device_motion(deflect(4, device.full_scale), 0.1, &settings, &device);
     assert!(camera.state.up_world(&axes).normalize().dot(up_before) < 0.999);
     assert!(
         camera
@@ -271,22 +271,18 @@ fn a_sketch_keeps_its_plane_square_to_the_view() {
 
 #[test]
 fn one_axis_at_a_time_drops_the_rest() {
+    // A gesture that is mostly sideways, with a little forward push in it.
+    let mut readings = [0.0f32; 6];
+    readings[0] = SixDofSettings::default().full_scale;
+    readings[2] = SixDofSettings::default().full_scale * 0.3;
+
     let (mut camera, settings, mut device) = controller();
     device.dominant_axis = true;
-    device.rotation = false;
-    device.zoom = false;
-
-    // A gesture that is mostly sideways, with a little lift in it.
     let start = camera.position_vec();
-    let mut readings = [0.0f32; 6];
-    readings[0] = device.full_scale;
-    readings[1] = device.full_scale * 0.3;
     camera.apply_device_motion(readings, 0.1, &settings, &device);
     let with_filter = camera.position_vec() - start;
 
-    let (mut camera, settings, mut device) = controller();
-    device.rotation = false;
-    device.zoom = false;
+    let (mut camera, settings, device) = controller();
     let start = camera.position_vec();
     camera.apply_device_motion(readings, 0.1, &settings, &device);
     let without_filter = camera.position_vec() - start;
@@ -294,6 +290,32 @@ fn one_axis_at_a_time_drops_the_rest() {
     let up = camera.state.up_world(&camera.axis_system()).normalize();
     assert!(with_filter.dot(up).abs() < 1e-4);
     assert!(without_filter.dot(up).abs() > 1e-3);
+}
+
+#[test]
+fn a_movement_drives_whatever_it_is_assigned_to() {
+    // The sideways push pans by default...
+    let (mut camera, settings, device) = controller();
+    let focal_before = camera.state.focal_distance;
+    camera.apply_device_motion(deflect(0, device.full_scale), 0.1, &settings, &device);
+    assert!((camera.state.focal_distance - focal_before).abs() < 1e-6);
+
+    // ...and zooms when that is what it is assigned to.
+    let (mut camera, settings, mut device) = controller();
+    device.assign[0] = settings::SixDofMotion::Zoom;
+    let start = camera.position_vec();
+    camera.apply_device_motion(deflect(0, device.full_scale), 0.1, &settings, &device);
+    assert!(camera.state.focal_distance < focal_before);
+    assert!((camera.position_vec() - start).length() > 1e-3);
+}
+
+#[test]
+fn an_unassigned_movement_does_nothing() {
+    let (mut camera, settings, mut device) = controller();
+    device.assign[0] = settings::SixDofMotion::None;
+    let before = camera.position_vec();
+    camera.apply_device_motion(deflect(0, device.full_scale), 0.1, &settings, &device);
+    assert_eq!(camera.position_vec(), before);
 }
 
 #[test]

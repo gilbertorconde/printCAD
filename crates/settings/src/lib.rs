@@ -82,16 +82,12 @@ pub struct SixDofSettings {
     pub zoom_speed: f32,
     /// Roll, as a fraction of the orbit speed.
     pub roll_speed: f32,
-    /// Push and pull the view sideways and up.
-    pub translation: bool,
-    /// Tilt and turn the view.
-    pub rotation: bool,
-    /// Push and pull to zoom.
-    pub zoom: bool,
     /// Pass only the axis that moved most, so a gesture stays square.
     pub dominant_axis: bool,
-    /// Which of the six axes read backwards, in the order pan-x, pan-y,
-    /// zoom, pitch, yaw, roll.
+    /// What each of the puck's six movements does to the view, in the order
+    /// the device reports them: three pushes, then three turns.
+    pub assign: [SixDofMotion; 6],
+    /// Which of those six read backwards.
     pub invert: [bool; 6],
     /// What each of the device's buttons does, by button number. Buttons
     /// past the end of the list do nothing.
@@ -108,10 +104,18 @@ impl Default for SixDofSettings {
             rotate_speed: 90.0,
             zoom_speed: 6.0,
             roll_speed: 0.5,
-            translation: true,
-            rotation: true,
-            zoom: true,
             dominant_axis: false,
+            // Measured against a SpaceMouse Pro Wireless: axis 0 is the
+            // sideways push, 1 the lift, 2 the forward push, 3 the tilt, 4
+            // the twist and 5 the rocking.
+            assign: [
+                SixDofMotion::PanSideways,
+                SixDofMotion::Zoom,
+                SixDofMotion::PanUpDown,
+                SixDofMotion::Tilt,
+                SixDofMotion::Roll,
+                SixDofMotion::Turn,
+            ],
             invert: [false; 6],
             buttons: vec![
                 SixDofButtonAction::FitView,
@@ -175,16 +179,50 @@ impl SixDofButtonAction {
     }
 }
 
-/// Which camera motion each device axis drives. The order is the one the
-/// device reports: three translations, then three rotations.
-pub const SIXDOF_AXIS_LABELS: [&str; 6] = [
-    "Pan sideways",
-    "Pan up and down",
-    "Zoom",
-    "Tilt",
-    "Turn",
-    "Roll",
-];
+/// What one movement of the puck does to the view.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SixDofMotion {
+    /// The movement is ignored.
+    #[default]
+    None,
+    /// Slide the view left and right.
+    PanSideways,
+    /// Slide the view up and down.
+    PanUpDown,
+    /// Move closer and further away.
+    Zoom,
+    /// Turn about the screen's horizontal.
+    Tilt,
+    /// Turn about the screen's vertical.
+    Turn,
+    /// Spin about the direction the view points.
+    Roll,
+}
+
+impl SixDofMotion {
+    /// Every motion, in the order a chooser should list them.
+    pub const ALL: [SixDofMotion; 7] = [
+        SixDofMotion::None,
+        SixDofMotion::PanSideways,
+        SixDofMotion::PanUpDown,
+        SixDofMotion::Zoom,
+        SixDofMotion::Tilt,
+        SixDofMotion::Turn,
+        SixDofMotion::Roll,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SixDofMotion::None => "Nothing",
+            SixDofMotion::PanSideways => "Pan sideways",
+            SixDofMotion::PanUpDown => "Pan up and down",
+            SixDofMotion::Zoom => "Zoom",
+            SixDofMotion::Tilt => "Tilt",
+            SixDofMotion::Turn => "Turn",
+            SixDofMotion::Roll => "Roll",
+        }
+    }
+}
 
 /// Import defaults.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]

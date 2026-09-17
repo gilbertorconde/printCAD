@@ -709,6 +709,9 @@ pub fn text(s: impl Into<String>, size: f32, color: Color32) -> WidgetText {
 pub struct PrefRow<'a> {
     pub label: &'a str,
     pub hint: Option<&'a str>,
+    /// An icon drawn ahead of the label, for rows whose subject is easier to
+    /// show than to name.
+    pub icon: Option<&'a str>,
     control: Box<dyn FnOnce(&mut Ui) -> bool + 'a>,
 }
 
@@ -717,12 +720,18 @@ impl<'a> PrefRow<'a> {
         Self {
             label,
             hint: None,
+            icon: None,
             control: Box::new(control),
         }
     }
 
     pub fn hint(mut self, hint: &'a str) -> Self {
         self.hint = Some(hint);
+        self
+    }
+
+    pub fn icon(mut self, icon: &'a str) -> Self {
+        self.icon = Some(icon);
         self
     }
 
@@ -838,12 +847,23 @@ pub fn pref_group(ui: &mut Ui, title: &str, rows: Vec<PrefRow<'_>>, filter: &str
                 let PrefRow {
                     label,
                     hint,
+                    icon,
                     control,
                 } = row;
                 let height = if hint.is_some() { 44.0 } else { 40.0 };
                 let (rect, _) =
                     ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
-                let inner = rect.shrink2(Vec2::new(14.0, 0.0));
+                let mut inner = rect.shrink2(Vec2::new(14.0, 0.0));
+                if let Some(icon) = icon {
+                    let box_size = 20.0;
+                    let at = egui::Rect::from_center_size(
+                        egui::pos2(inner.left() + box_size / 2.0, inner.center().y),
+                        Vec2::splat(box_size),
+                    );
+                    let mut slot = ui.new_child(egui::UiBuilder::new().max_rect(at));
+                    crate::icon::draw(&mut slot, icon, box_size, TEXT2);
+                    inner.set_left(at.right() + SPACE_3);
+                }
                 let mut left = ui.new_child(
                     egui::UiBuilder::new()
                         .max_rect(inner)
