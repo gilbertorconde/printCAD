@@ -22,6 +22,10 @@ cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 ```
 
+- The document server is a separate binary the app spawns from its own
+  directory, so a release run needs `cargo build --release` for the whole
+  workspace — `-p app_shell` alone leaves `target/release/printcad-serverd`
+  missing and the app falls back to direct file I/O with a warning.
 - No system CAD libraries needed — the ogeom kernel is pure Rust, pulled as a
   pinned git dependency (bump the rev in the workspace `Cargo.toml`; a
   commented `[patch]` there points at a local checkout for kernel dev).
