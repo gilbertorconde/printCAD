@@ -181,6 +181,8 @@ struct PrintCadApp {
     /// Packing carries every blob in the document, so it happens off the UI
     /// thread and the window keeps drawing while it runs.
     document_save_rx: Option<std::sync::mpsc::Receiver<app::doc_io::SaveJob>>,
+    /// The worker parsing an opened document, for the same reason.
+    document_open_rx: Option<std::sync::mpsc::Receiver<app::doc_io::OpenJob>>,
     save_progress: Option<std::sync::Arc<app::doc_io::SaveProgress>>,
     // Background worker that owns the geometry kernel. STEP imports run there
     // so the viewport stays interactive while a multi-million-tri model is
@@ -374,6 +376,7 @@ impl PrintCadApp {
             current_file: None,
             file_dialog_rx: None,
             document_save_rx: None,
+            document_open_rx: None,
             save_progress: None,
             kernel_worker: KernelWorker::spawn(),
             nav_device: app::sixdof::SixDofWorker::spawn(move || {

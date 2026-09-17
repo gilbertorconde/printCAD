@@ -150,6 +150,7 @@ impl PrintCadApp {
             || self.server.status().busy()
             || self.file_dialog_rx.is_some()
             || self.document_save_rx.is_some()
+            || self.document_open_rx.is_some()
             || self.step_import_pending.is_some()
             || !self.nav_device.motion().is_idle()
     }
@@ -349,6 +350,7 @@ impl PrintCadApp {
         self.drain_kernel_responses();
         self.drain_document_saves();
         self.drain_server_messages();
+        self.drain_document_opens();
         self.drive_part_recompute();
 
         if self.gfx.is_none() {
@@ -444,7 +446,8 @@ impl PrintCadApp {
                         screen_space_labels: &screen_space_labels,
                         pending_imports: self.kernel_worker.in_flight(),
                         pending_document_open: server_status.opens_in_flight
-                            + server_status.saves_in_flight,
+                            + server_status.saves_in_flight
+                            + u32::from(self.document_open_rx.is_some()),
                         kernel_status: {
                             let status = self.kernel_worker.status();
                             if status != self.last_status_text {
@@ -547,6 +550,7 @@ impl PrintCadApp {
                 || self.server.status().busy()
                 || self.file_dialog_rx.is_some()
                 || self.document_save_rx.is_some()
+                || self.document_open_rx.is_some()
                 || self.step_import_pending.is_some()
                 || !self.nav_device.motion().is_idle();
             let animating = self.camera.is_animating()

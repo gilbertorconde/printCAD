@@ -40,6 +40,13 @@ const UNSAVED_CHANGES_SAVE: &str = "Save";
 const UNSAVED_CHANGES_DISCARD: &str = "Discard";
 const UNSAVED_CHANGES_CANCEL: &str = "Cancel";
 
+/// A parsed document on its way back from the open worker.
+pub(crate) struct OpenJob {
+    token: u64,
+    path: PathBuf,
+    result: Result<Document, String>,
+}
+
 /// A packed archive on its way back from the save worker.
 pub(crate) struct SaveJob {
     path: std::path::PathBuf,
@@ -366,20 +373,7 @@ impl PrintCadApp {
                     if token != self.document_load_epoch {
                         continue;
                     }
-                    match Self::parse_document_bytes(&path, bytes) {
-                        Ok(document) => {
-                            self.apply_opened_document(path, document);
-                            for (actor, ops) in std::mem::take(&mut self.held_remote_ops) {
-                                self.apply_remote_ops(actor, ops);
-                            }
-                        }
-                        Err(err) => {
-                            app_log::error(format!(
-                                "Failed to open document {}: {err:#}",
-                                path.display()
-                            ));
-                        }
-                    }
+                    self.start_document_parse(token, path, bytes);
                 }
                 ServerMessage::OpenFailed { token, path, error } => {
                     self.held_remote_ops.clear();
@@ -564,6 +558,61 @@ impl PrintCadApp {
     /// Only worth doing on the way out: the process exiting would abandon a
     /// write in flight and could leave a truncated document behind. Every
     /// exit path must call this (CLAUDE.md invariant).
+    /// Parse opened bytes on a worker. Unpacking an archive costs what
+    /// packing one does, so it does not belong on the UI thread either.
+    fn start_document_parse(&mut self, token: u64, path: PathBuf, bytes: Vec<u8>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawned = std::thread::Builder::new()
+            .name("printcad-document-open".to_string())
+            .spawn(move || {
+                let parsed = Self::parse_document_bytes(&path, bytes);
+                let _ = tx.send(OpenJob {
+                    token,
+                    path,
+                    result: parsed.map_err(|err| format!("{err:#}")),
+                });
+            });
+        match spawned {
+            Ok(_) => self.document_open_rx = Some(rx),
+            Err(err) => app_log::error(format!("Failed to start the open: {err}")),
+        }
+    }
+
+    /// Take the parsed document once the worker has it.
+    pub(crate) fn drain_document_opens(&mut self) {
+        let Some(rx) = self.document_open_rx.as_ref() else {
+            return;
+        };
+        let job = match rx.try_recv() {
+            Ok(job) => job,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.document_open_rx = None;
+                app_log::error("The open worker stopped without parsing the document");
+                return;
+            }
+        };
+        self.document_open_rx = None;
+
+        // Another open may have started while this one was parsing; the
+        // token says whether this document is still the one being waited on.
+        if job.token != self.document_load_epoch {
+            return;
+        }
+        match job.result {
+            Ok(document) => {
+                self.apply_opened_document(job.path, document);
+                for (actor, ops) in std::mem::take(&mut self.held_remote_ops) {
+                    self.apply_remote_ops(actor, ops);
+                }
+            }
+            Err(err) => app_log::error(format!(
+                "Failed to open document {}: {err}",
+                job.path.display()
+            )),
+        }
+    }
+
     /// Pack the archive on a worker and hand the bytes to the server when it
     /// is done.
     fn start_document_save(&mut self, path: &Path, compression: core_document::Compression) {
