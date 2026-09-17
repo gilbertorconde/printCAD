@@ -833,8 +833,10 @@ pub fn pref_group(ui: &mut Ui, title: &str, rows: Vec<PrefRow<'_>>, filter: &str
         return false;
     }
     let mut changed = false;
-    overline(ui, title);
-    ui.add_space(SPACE_1);
+    if !title.is_empty() {
+        overline(ui, title);
+        ui.add_space(SPACE_1);
+    }
     Frame::new()
         .fill(BG1)
         .stroke(Stroke::new(1.0, BORDER))

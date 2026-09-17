@@ -74,14 +74,9 @@ pub struct SixDofSettings {
     pub full_scale: f32,
     /// Deflection below this fraction of full scale is treated as rest.
     pub dead_zone: f32,
-    /// Pixels per second of pan at full deflection.
-    pub translate_speed: f32,
-    /// Degrees per second of orbit at full deflection.
-    pub rotate_speed: f32,
-    /// Zoom steps per second at full deflection.
-    pub zoom_speed: f32,
-    /// Roll, as a fraction of the orbit speed.
-    pub roll_speed: f32,
+    /// How fast each movement drives the view at full deflection, in the
+    /// units of whatever it is assigned to.
+    pub speed: [f32; 6],
     /// Pass only the axis that moved most, so a gesture stays square.
     pub dominant_axis: bool,
     /// What each of the puck's six movements does to the view, in the order
@@ -100,10 +95,6 @@ impl Default for SixDofSettings {
             enabled: true,
             full_scale: 350.0,
             dead_zone: 0.02,
-            translate_speed: 900.0,
-            rotate_speed: 90.0,
-            zoom_speed: 6.0,
-            roll_speed: 0.5,
             dominant_axis: false,
             // Measured against a SpaceMouse Pro Wireless: axis 0 is the
             // sideways push, 1 the lift, 2 the forward push, 3 the tilt, 4
@@ -117,6 +108,7 @@ impl Default for SixDofSettings {
                 SixDofMotion::Turn,
             ],
             invert: [false; 6],
+            speed: [900.0, 6.0, 900.0, 90.0, 45.0, 90.0],
             buttons: vec![
                 SixDofButtonAction::FitView,
                 SixDofButtonAction::ToggleProjection,
@@ -210,6 +202,37 @@ impl SixDofMotion {
         SixDofMotion::Turn,
         SixDofMotion::Roll,
     ];
+
+    /// What one unit of speed means for this motion.
+    pub fn speed_unit(self) -> &'static str {
+        match self {
+            SixDofMotion::None => "",
+            SixDofMotion::PanSideways | SixDofMotion::PanUpDown => "px/s",
+            SixDofMotion::Zoom => "steps/s",
+            SixDofMotion::Tilt | SixDofMotion::Turn | SixDofMotion::Roll => "deg/s",
+        }
+    }
+
+    /// A speed worth starting from, since the units differ per motion.
+    pub fn default_speed(self) -> f32 {
+        match self {
+            SixDofMotion::None => 0.0,
+            SixDofMotion::PanSideways | SixDofMotion::PanUpDown => 900.0,
+            SixDofMotion::Zoom => 6.0,
+            SixDofMotion::Tilt | SixDofMotion::Turn => 90.0,
+            SixDofMotion::Roll => 45.0,
+        }
+    }
+
+    /// The range a speed field should offer for this motion.
+    pub fn speed_range(self) -> std::ops::RangeInclusive<f64> {
+        match self {
+            SixDofMotion::None => 0.0..=0.0,
+            SixDofMotion::PanSideways | SixDofMotion::PanUpDown => 50.0..=4000.0,
+            SixDofMotion::Zoom => 0.5..=40.0,
+            SixDofMotion::Tilt | SixDofMotion::Turn | SixDofMotion::Roll => 5.0..=360.0,
+        }
+    }
 
     pub fn label(self) -> &'static str {
         match self {

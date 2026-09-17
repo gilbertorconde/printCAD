@@ -1,5 +1,9 @@
 //! The line-icon set: 24px, 1.5px stroke, painted white and tinted at draw
-//! time. Textures rasterize once per name and live in the egui context.
+//! time. Textures rasterize once per name and size, and live in the egui
+//! context.
+//!
+//! The same table also carries the motion drawings, which are larger, keep
+//! their own colours, and are drawn through [`drawing`].
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,18 +34,28 @@ pub fn names() -> impl Iterator<Item = &'static str> {
     ICONS.iter().map(|(n, _)| *n)
 }
 
+/// A drawing shown at this many points or larger rasterizes at twice its
+/// size, so it stays sharp where an icon-sized texture would smear.
+const DRAWING_SCALE: f32 = 2.0;
+
 #[derive(Default, Clone)]
 struct IconCache {
-    handles: HashMap<String, TextureHandle>,
+    handles: HashMap<(String, u32), TextureHandle>,
 }
 
-/// The white texture for `name`, rasterized on first use. Unknown names
-/// log once and yield `None`.
+/// The white texture for `name` at the icon set's own size.
 pub fn texture(ctx: &Context, name: &str) -> Option<TextureHandle> {
+    texture_at(ctx, name, RASTER_PX)
+}
+
+/// The texture for `name` rasterized to `px`, on first use. Unknown names
+/// log once and yield `None`.
+pub fn texture_at(ctx: &Context, name: &str, px: u32) -> Option<TextureHandle> {
     let cache_id = Id::new("ui_kit::icon_cache");
+    let key = (name.to_owned(), px);
     if let Some(handle) = ctx.data(|d| {
         d.get_temp::<IconCache>(cache_id)
-            .and_then(|c| c.handles.get(name).cloned())
+            .and_then(|c| c.handles.get(&key).cloned())
     }) {
         return Some(handle);
     }
@@ -56,14 +70,22 @@ pub fn texture(ctx: &Context, name: &str) -> Option<TextureHandle> {
         }
         return None;
     };
-    let image = rasterize(source, RASTER_PX)?;
-    let handle = ctx.load_texture(format!("icon::{name}"), image, TextureOptions::LINEAR);
+    let image = rasterize(source, px)?;
+    let handle = ctx.load_texture(format!("icon::{name}@{px}"), image, TextureOptions::LINEAR);
     ctx.data_mut(|d| {
         d.get_temp_mut_or_insert_with(cache_id, IconCache::default)
             .handles
-            .insert(name.to_owned(), handle.clone());
+            .insert(key, handle.clone());
     });
     Some(handle)
+}
+
+/// An `Image` widget for a drawing at `size` points, in its own colours and
+/// rasterized for the size it is shown at.
+pub fn drawing(ctx: &Context, name: &str, size: f32) -> Option<Image<'static>> {
+    let px = (size * DRAWING_SCALE).round().max(1.0) as u32;
+    let handle = texture_at(ctx, name, px)?;
+    Some(Image::from_texture(&handle).fit_to_exact_size(egui::vec2(size, size)))
 }
 
 /// An `Image` widget for `name` at `size` px, tinted `tint`.

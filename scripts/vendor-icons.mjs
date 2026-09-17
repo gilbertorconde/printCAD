@@ -32,16 +32,28 @@ const SKIP = new Set([
 ]);
 // Icons authored in this repo (not part of the source set) that the table
 // must keep.
-const LOCAL = new Set([
-  "select", "expression",
-  // The 6-DoF mouse gestures, drawn here because no icon set has them.
-  "gesture-slide-x", "gesture-slide-y", "gesture-slide-z",
-  "gesture-tilt", "gesture-twist", "gesture-rock",
-]);
+const LOCAL = new Set(["select", "expression"]);
+
+// The source set also carries a handful of 200x200 illustrations of the
+// movements a 6-DoF mouse makes. They are drawings rather than icons: they
+// keep their own colours, so the copy strips metadata and nothing else, and
+// they are named apart from the icon set.
+const MOTION_DIR = "motion";
+const MOTION_PREFIX = "motion-";
 
 mkdirSync(dest, { recursive: true });
 for (const f of readdirSync(dest)) {
   if (f.endsWith(".svg") && !LOCAL.has(f.slice(0, -4))) unlinkSync(join(dest, f));
+}
+
+function stripMetadata(svg) {
+  return (
+    svg
+      .replace(/<metadata>.*?<\/metadata>/s, "")
+      .replace(/\s+xmlns:c2pa="[^"]*"/, "")
+      .replace(/>\s+</g, "><")
+      .trim() + "\n"
+  );
 }
 
 const names = [];
@@ -54,13 +66,23 @@ for (const file of readdirSync(src).sort()) {
     console.error(`vendor-icons: more than one file-* icon in the source set`);
     process.exit(1);
   }
-  let svg = readFileSync(join(src, file), "utf8");
-  svg = svg.replace(/<metadata>.*?<\/metadata>/s, "");
-  svg = svg.replace(/\s+xmlns:c2pa="[^"]*"/, "");
+  let svg = stripMetadata(readFileSync(join(src, file), "utf8"));
   svg = svg.replace(/currentColor/g, "#FFFFFF");
-  svg = svg.replace(/>\s+</g, "><").trim() + "\n";
   writeFileSync(join(dest, `${name}.svg`), svg);
   names.push(name);
+}
+
+const motionSrc = join(src, MOTION_DIR);
+if (existsSync(motionSrc)) {
+  for (const file of readdirSync(motionSrc).sort()) {
+    if (!file.endsWith(".svg")) continue;
+    const name = MOTION_PREFIX + file.slice(0, -4);
+    writeFileSync(
+      join(dest, `${name}.svg`),
+      stripMetadata(readFileSync(join(motionSrc, file), "utf8")),
+    );
+    names.push(name);
+  }
 }
 for (const local of LOCAL) {
   if (!existsSync(join(dest, `${local}.svg`))) {

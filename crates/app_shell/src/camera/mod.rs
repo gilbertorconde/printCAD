@@ -363,15 +363,16 @@ impl CameraController {
         let mut zoom = 0.0f32;
         let mut orbit = Vec2::ZERO;
         let mut roll = 0.0f32;
-        for (reading, motion) in axes.iter().zip(&device.assign) {
+        for ((reading, motion), speed) in axes.iter().zip(&device.assign).zip(&device.speed) {
+            let amount = reading * speed;
             match motion {
                 SixDofMotion::None => {}
-                SixDofMotion::PanSideways => pan.x += reading,
-                SixDofMotion::PanUpDown => pan.y -= reading,
-                SixDofMotion::Zoom => zoom += reading,
-                SixDofMotion::Tilt => orbit.y -= reading,
-                SixDofMotion::Turn => orbit.x -= reading,
-                SixDofMotion::Roll => roll += reading,
+                SixDofMotion::PanSideways => pan.x += amount,
+                SixDofMotion::PanUpDown => pan.y -= amount,
+                SixDofMotion::Zoom => zoom += amount,
+                SixDofMotion::Tilt => orbit.y -= amount,
+                SixDofMotion::Turn => orbit.x -= amount,
+                SixDofMotion::Roll => roll += amount,
             }
         }
 
@@ -380,33 +381,27 @@ impl CameraController {
         let dt = dt_secs.clamp(0.001, 0.1);
         self.cancel_animation();
 
+        // Pan is already in pixels per second.
         if pan != Vec2::ZERO {
-            ops::pan_pixels(
-                &mut self.state,
-                &self.axes,
-                pan * device.translate_speed * dt,
-                settings,
-            );
+            ops::pan_pixels(&mut self.state, &self.axes, pan * dt, settings);
         }
 
+        // Zoom is in wheel steps per second; positive zooms in, the way
+        // scrolling up does.
         if zoom != 0.0 {
-            // Positive zooms in, the way scrolling up does.
-            let lines = zoom * device.zoom_speed * dt;
-            zoom_cursor::apply_zoom_wheels(&mut self.state, &self.axes, None, lines, settings);
+            zoom_cursor::apply_zoom_wheels(&mut self.state, &self.axes, None, zoom * dt, settings);
         }
 
-        // Orbit takes pixels, and `orbit_sensitivity * 0.005` is the radians
-        // each one turns; go the other way to land on the configured degrees
-        // per second.
+        // The turns arrive in degrees per second, and orbit takes pixels:
+        // `orbit_sensitivity * 0.005` is the radians one pixel turns, so go
+        // the other way.
         let radians_per_px = (settings.orbit_sensitivity * 0.005).max(1e-6);
-        let degrees = device.rotate_speed * dt;
-        let px = degrees.to_radians() / radians_per_px;
 
         // A sketch locks the view to its plane: the two movements that would
         // tilt out of it are dropped, and the one about the plane's own
         // normal — roll — is kept.
         if orbit != Vec2::ZERO && !self.orbit_locked {
-            let delta = orbit * px;
+            let delta = orbit * dt * std::f32::consts::PI / 180.0 / radians_per_px;
             match self.orbit_lmb_anchor_world {
                 Some(pivot) if settings.orbit_pivot_pick => {
                     ops::orbit_pixels_around_world_anchor(
@@ -423,11 +418,7 @@ impl CameraController {
 
         if roll != 0.0 {
             // Roll works in its own units, where one pixel is 0.01 radians.
-            ops::roll_pixels(
-                &mut self.state,
-                &self.axes,
-                roll * device.roll_speed * degrees.to_radians() / 0.01,
-            );
+            ops::roll_pixels(&mut self.state, &self.axes, (roll * dt).to_radians() / 0.01);
         }
 
         true

@@ -83,7 +83,10 @@ cargo fmt --all                   # CI enforces --check
   set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a
   generated `icon_table.rs`; `icon::texture/draw` rasterize with a
   font-free usvg — the system-font scan is far too slow for 200 icons;
-  `select.svg` and `expression.svg` are hand-authored locals). A test
+  `select.svg` and `expression.svg` are hand-authored locals). The same
+  table carries the `motion-*` drawings — 200×200, their own colours, one
+  per movement of a 6-DoF mouse — drawn through `icon::drawing`, which
+  rasterizes for the size it is shown at rather than the icon size. A test
   fails when the table and the directory disagree.
 - `workbenches/wb_sketch` — sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
@@ -336,7 +339,7 @@ disabled; pan/zoom/roll allowed). The window opens on the start page
 - UI-local state (filters, drafts, palette query) lives on `UiLayer`;
   anything the host mutates is seeded from `UiFrameInputs` every frame.
 - `ui-mockup/` is the design reference and stays untracked; only tokens,
-  icons and fonts are vendored from it.
+  icons, motion drawings and fonts are vendored from it.
 
 ## Testing conventions
 
