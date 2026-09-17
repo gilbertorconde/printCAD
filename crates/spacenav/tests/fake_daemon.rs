@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use spacenav::{Client, Error, Event, EventMask, Motion};
+use spacenav::{ButtonAction, Client, Error, Event, EventMask, LedMode, Motion};
 
 // The protocol's own numbers, spelled out again here so the test pins them
 // rather than agreeing with the client by construction.
@@ -23,6 +23,28 @@ const REQ_DEV_NAXES: i32 = 0x2002;
 const REQ_DEV_NBUTTONS: i32 = 0x2003;
 const REQ_DEV_USBID: i32 = 0x2004;
 const REQ_DEV_TYPE: i32 = 0x2005;
+const REQ_SET_SENS: i32 = 0x1001;
+const REQ_GET_SENS: i32 = 0x1002;
+const REQ_GET_EVMASK: i32 = 0x1004;
+const REQ_SCFG_SENS: i32 = 0x3000;
+const REQ_GCFG_SENS: i32 = 0x3001;
+const REQ_SCFG_SENS_AXIS: i32 = 0x3002;
+const REQ_GCFG_SENS_AXIS: i32 = 0x3003;
+const REQ_SCFG_DEADZONE: i32 = 0x3004;
+const REQ_GCFG_DEADZONE: i32 = 0x3005;
+const REQ_SCFG_INVERT: i32 = 0x3006;
+const REQ_GCFG_INVERT: i32 = 0x3007;
+const REQ_SCFG_BNACTION: i32 = 0x300c;
+const REQ_GCFG_BNACTION: i32 = 0x300d;
+const REQ_SCFG_SWAPYZ: i32 = 0x3010;
+const REQ_GCFG_SWAPYZ: i32 = 0x3011;
+const REQ_SCFG_LED: i32 = 0x3012;
+const REQ_GCFG_LED: i32 = 0x3013;
+const REQ_SCFG_SERDEV: i32 = 0x3016;
+const REQ_GCFG_SERDEV: i32 = 0x3017;
+const REQ_SCFG_REPEAT: i32 = 0x3018;
+const REQ_GCFG_REPEAT: i32 = 0x3019;
+const REQ_CFG_SAVE: i32 = 0x3ffe;
 const REQ_CHANGE_PROTO: i32 = 0x5500;
 const CONT_BIT: i32 = 0x1_0000;
 
@@ -65,11 +87,44 @@ fn motion(translate: [i32; 3], rotate: [i32; 3], period: i32) -> Words {
     ]
 }
 
-/// What the daemon under test recorded about its client.
+/// What the daemon under test recorded about its client, and the settings it
+/// is holding on everyone's behalf.
 #[derive(Default)]
 struct Seen {
     name: Option<String>,
     event_mask: Option<u32>,
+    client_sensitivity: f32,
+    config: Settings,
+    saved: bool,
+}
+
+/// The daemon-wide settings, as the real one keeps them.
+struct Settings {
+    sensitivity: f32,
+    axis_sensitivity: [f32; 6],
+    dead_zone: [i32; 8],
+    inverted: [i32; 6],
+    button_action: [i32; 4],
+    swap_yz: i32,
+    led: i32,
+    repeat_msec: i32,
+    serial_device: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            sensitivity: 1.0,
+            axis_sensitivity: [1.0; 6],
+            dead_zone: [0; 8],
+            inverted: [0; 6],
+            button_action: [0; 4],
+            swap_yz: 0,
+            led: 2,
+            repeat_msec: -1,
+            serial_device: String::new(),
+        }
+    }
 }
 
 struct Daemon {
@@ -170,6 +225,7 @@ fn serve_client(
     }
 
     let mut name = StringReader::default();
+    let mut serial = StringReader::default();
     let mut buf = [0u8; 32];
     let mut filled = 0;
 
@@ -186,7 +242,7 @@ fn serve_client(
                     if interleave {
                         write_packet(&mut stream, &motion([9, 9, 9], [9, 9, 9], 4));
                     }
-                    answer(&mut stream, &request, seen, &mut name);
+                    answer(&mut stream, &request, seen, &mut name, &mut serial);
                 }
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {}
@@ -237,6 +293,7 @@ fn answer(
     request: &Words,
     seen: &Arc<Mutex<Seen>>,
     name: &mut StringReader,
+    serial: &mut StringReader,
 ) {
     let mut reply = *request;
     match request[0] & 0xffff {
@@ -273,11 +330,81 @@ fn answer(
             reply[7] = 0;
             write_packet(stream, &reply);
         }
-        _ => {
-            reply[7] = -1;
+        REQ_SET_SENS => {
+            seen.lock().unwrap().client_sensitivity = f32::from_bits(request[1] as u32);
             write_packet(stream, &reply);
         }
+        REQ_GET_SENS => {
+            reply[1] = seen.lock().unwrap().client_sensitivity.to_bits() as i32;
+            write_packet(stream, &reply);
+        }
+        REQ_GET_EVMASK => {
+            reply[1] = seen.lock().unwrap().event_mask.unwrap_or(0) as i32;
+            write_packet(stream, &reply);
+        }
+        _ => {
+            if !config(stream, request, &mut reply, seen, serial) {
+                reply[7] = -1;
+                write_packet(stream, &reply);
+            }
+        }
     }
+}
+
+/// The daemon-wide settings, which is most of the request surface.
+fn config(
+    stream: &mut UnixStream,
+    request: &Words,
+    reply: &mut Words,
+    seen: &Arc<Mutex<Seen>>,
+    serial: &mut StringReader,
+) -> bool {
+    let mut state = seen.lock().unwrap();
+    let cfg = &mut state.config;
+    match request[0] & 0xffff {
+        REQ_SCFG_SENS => cfg.sensitivity = f32::from_bits(request[1] as u32),
+        REQ_GCFG_SENS => reply[1] = cfg.sensitivity.to_bits() as i32,
+        REQ_SCFG_SENS_AXIS => {
+            for (axis, word) in cfg.axis_sensitivity.iter_mut().zip(&request[1..7]) {
+                *axis = f32::from_bits(*word as u32);
+            }
+        }
+        REQ_GCFG_SENS_AXIS => {
+            for (word, axis) in reply[1..7].iter_mut().zip(&cfg.axis_sensitivity) {
+                *word = axis.to_bits() as i32;
+            }
+        }
+        REQ_SCFG_DEADZONE => cfg.dead_zone[request[1] as usize] = request[2],
+        REQ_GCFG_DEADZONE => reply[2] = cfg.dead_zone[request[1] as usize],
+        REQ_SCFG_INVERT => cfg.inverted.copy_from_slice(&request[1..7]),
+        REQ_GCFG_INVERT => reply[1..7].copy_from_slice(&cfg.inverted),
+        REQ_SCFG_BNACTION => cfg.button_action[request[1] as usize] = request[2],
+        REQ_GCFG_BNACTION => reply[2] = cfg.button_action[request[1] as usize],
+        REQ_SCFG_SWAPYZ => cfg.swap_yz = request[1],
+        REQ_GCFG_SWAPYZ => reply[1] = cfg.swap_yz,
+        REQ_SCFG_LED => cfg.led = request[1],
+        REQ_GCFG_LED => reply[1] = cfg.led,
+        REQ_SCFG_REPEAT => cfg.repeat_msec = request[1],
+        REQ_GCFG_REPEAT => reply[1] = cfg.repeat_msec,
+        REQ_CFG_SAVE => state.saved = true,
+        // A string setting arrives in pieces and is answered with nothing.
+        REQ_SCFG_SERDEV => {
+            if let Some(text) = serial.push(request) {
+                cfg.serial_device = text;
+            }
+            return true;
+        }
+        REQ_GCFG_SERDEV => {
+            let text = cfg.serial_device.clone();
+            drop(state);
+            write_string(stream, request[0], &text);
+            return true;
+        }
+        _ => return false,
+    }
+    drop(state);
+    write_packet(stream, reply);
+    true
 }
 
 fn write_packet(stream: &mut UnixStream, words: &Words) {
@@ -374,6 +501,74 @@ fn the_client_names_itself_and_chooses_its_events() {
         assert!(Instant::now() < deadline, "the daemon saw no requests");
         thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn the_client_scales_its_own_readings() {
+    let daemon = Daemon::start("sensitivity", false);
+    let mut client = daemon.client();
+
+    assert_eq!(client.sensitivity().unwrap(), 0.0);
+    client.set_sensitivity(0.25).unwrap();
+    assert_eq!(client.sensitivity().unwrap(), 0.25);
+
+    client.set_event_mask(EventMask::ALL).unwrap();
+    assert_eq!(client.event_mask().unwrap(), EventMask::ALL);
+}
+
+#[test]
+fn the_daemons_own_settings_round_trip() {
+    let daemon = Daemon::start("config", false);
+    let mut client = daemon.client();
+    let mut config = client.config();
+
+    assert_eq!(config.sensitivity().unwrap(), 1.0);
+    config.set_sensitivity(2.5).unwrap();
+    assert_eq!(config.sensitivity().unwrap(), 2.5);
+
+    let per_axis = [1.0, 0.5, 2.0, 1.5, 0.25, 3.0];
+    config.set_axis_sensitivity(per_axis).unwrap();
+    assert_eq!(config.axis_sensitivity().unwrap(), per_axis);
+
+    config.set_dead_zone(3, 12).unwrap();
+    assert_eq!(config.dead_zone(3).unwrap(), 12);
+    assert_eq!(config.dead_zone(0).unwrap(), 0);
+
+    let inverted = [true, false, true, false, false, true];
+    config.set_inverted(inverted).unwrap();
+    assert_eq!(config.inverted().unwrap(), inverted);
+
+    config
+        .set_button_action(1, ButtonAction::DominantAxis)
+        .unwrap();
+    assert_eq!(config.button_action(1).unwrap(), ButtonAction::DominantAxis);
+    assert_eq!(config.button_action(0).unwrap(), ButtonAction::None);
+
+    config.set_swap_yz(true).unwrap();
+    assert!(config.swap_yz().unwrap());
+
+    assert_eq!(config.led().unwrap(), LedMode::Auto);
+    config.set_led(LedMode::Off).unwrap();
+    assert_eq!(config.led().unwrap(), LedMode::Off);
+
+    // No repeat is the default, and it is not simply zero: a daemon that
+    // repeats every 0 ms would flood the socket.
+    assert_eq!(config.repeat_interval().unwrap(), None);
+    config
+        .set_repeat_interval(Some(Duration::from_millis(20)))
+        .unwrap();
+    assert_eq!(
+        config.repeat_interval().unwrap(),
+        Some(Duration::from_millis(20))
+    );
+    config.set_repeat_interval(None).unwrap();
+    assert_eq!(config.repeat_interval().unwrap(), None);
+
+    config.set_serial_device("/dev/ttyS0").unwrap();
+    assert_eq!(config.serial_device().unwrap(), "/dev/ttyS0");
+
+    config.save().unwrap();
+    assert!(daemon.seen.lock().unwrap().saved);
 }
 
 #[test]

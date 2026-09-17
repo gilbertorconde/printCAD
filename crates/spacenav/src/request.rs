@@ -17,7 +17,10 @@ pub(crate) const REQ_TAG: i32 = 0x7faa_0000;
 
 const REQ_BASE: i32 = 0x1000;
 pub(crate) const REQ_SET_NAME: i32 = REQ_BASE;
+pub(crate) const REQ_SET_SENS: i32 = REQ_BASE + 1;
+pub(crate) const REQ_GET_SENS: i32 = REQ_BASE + 2;
 pub(crate) const REQ_SET_EVMASK: i32 = REQ_BASE + 3;
+pub(crate) const REQ_GET_EVMASK: i32 = REQ_BASE + 4;
 
 const REQ_DEV_BASE: i32 = 0x2000;
 pub(crate) const REQ_DEV_NAME: i32 = REQ_DEV_BASE;
@@ -26,6 +29,41 @@ pub(crate) const REQ_DEV_NAXES: i32 = REQ_DEV_BASE + 2;
 pub(crate) const REQ_DEV_NBUTTONS: i32 = REQ_DEV_BASE + 3;
 pub(crate) const REQ_DEV_USBID: i32 = REQ_DEV_BASE + 4;
 pub(crate) const REQ_DEV_TYPE: i32 = REQ_DEV_BASE + 5;
+
+/// Settings that belong to the daemon rather than to one client. Every pair
+/// is set-then-get, in the order the daemon lists them.
+const REQ_CFG_BASE: i32 = 0x3000;
+pub(crate) const REQ_SCFG_SENS: i32 = REQ_CFG_BASE;
+pub(crate) const REQ_GCFG_SENS: i32 = REQ_CFG_BASE + 1;
+pub(crate) const REQ_SCFG_SENS_AXIS: i32 = REQ_CFG_BASE + 2;
+pub(crate) const REQ_GCFG_SENS_AXIS: i32 = REQ_CFG_BASE + 3;
+pub(crate) const REQ_SCFG_DEADZONE: i32 = REQ_CFG_BASE + 4;
+pub(crate) const REQ_GCFG_DEADZONE: i32 = REQ_CFG_BASE + 5;
+pub(crate) const REQ_SCFG_INVERT: i32 = REQ_CFG_BASE + 6;
+pub(crate) const REQ_GCFG_INVERT: i32 = REQ_CFG_BASE + 7;
+pub(crate) const REQ_SCFG_AXISMAP: i32 = REQ_CFG_BASE + 8;
+pub(crate) const REQ_GCFG_AXISMAP: i32 = REQ_CFG_BASE + 9;
+pub(crate) const REQ_SCFG_BNMAP: i32 = REQ_CFG_BASE + 10;
+pub(crate) const REQ_GCFG_BNMAP: i32 = REQ_CFG_BASE + 11;
+pub(crate) const REQ_SCFG_BNACTION: i32 = REQ_CFG_BASE + 12;
+pub(crate) const REQ_GCFG_BNACTION: i32 = REQ_CFG_BASE + 13;
+pub(crate) const REQ_SCFG_KBMAP: i32 = REQ_CFG_BASE + 14;
+pub(crate) const REQ_GCFG_KBMAP: i32 = REQ_CFG_BASE + 15;
+pub(crate) const REQ_SCFG_SWAPYZ: i32 = REQ_CFG_BASE + 16;
+pub(crate) const REQ_GCFG_SWAPYZ: i32 = REQ_CFG_BASE + 17;
+pub(crate) const REQ_SCFG_LED: i32 = REQ_CFG_BASE + 18;
+pub(crate) const REQ_GCFG_LED: i32 = REQ_CFG_BASE + 19;
+pub(crate) const REQ_SCFG_GRAB: i32 = REQ_CFG_BASE + 20;
+pub(crate) const REQ_GCFG_GRAB: i32 = REQ_CFG_BASE + 21;
+pub(crate) const REQ_SCFG_SERDEV: i32 = REQ_CFG_BASE + 22;
+pub(crate) const REQ_GCFG_SERDEV: i32 = REQ_CFG_BASE + 23;
+pub(crate) const REQ_SCFG_REPEAT: i32 = REQ_CFG_BASE + 24;
+pub(crate) const REQ_GCFG_REPEAT: i32 = REQ_CFG_BASE + 25;
+pub(crate) const REQ_SCFG_SOCKET: i32 = REQ_CFG_BASE + 26;
+pub(crate) const REQ_GCFG_SOCKET: i32 = REQ_CFG_BASE + 27;
+pub(crate) const REQ_CFG_SAVE: i32 = 0x3ffe;
+pub(crate) const REQ_CFG_RESTORE: i32 = 0x3fff;
+pub(crate) const REQ_CFG_RESET: i32 = 0x4000;
 
 pub(crate) const REQ_CHANGE_PROTO: i32 = 0x5500;
 

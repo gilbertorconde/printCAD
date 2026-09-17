@@ -78,7 +78,12 @@ pub struct SpaceNavWorker {
 impl SpaceNavWorker {
     /// Starts the reader thread. It runs for the life of the process, looking
     /// for the daemon until it finds one.
-    pub fn spawn() -> Self {
+    ///
+    /// `wake` is called when the puck starts or stops moving and on every
+    /// button change — the moments a sleeping frame loop has to be told
+    /// about. While the puck is deflected the loop keeps itself awake, so
+    /// nothing is called for the readings in between.
+    pub fn spawn(wake: impl Fn() + Send + 'static) -> Self {
         let shared = Arc::new(Mutex::new(Shared::default()));
         let stop = Arc::new(AtomicBool::new(false));
 
@@ -86,7 +91,7 @@ impl SpaceNavWorker {
         let worker_stop = Arc::clone(&stop);
         thread::Builder::new()
             .name("printcad-navigation-device".to_string())
-            .spawn(move || worker_loop(&worker_shared, &worker_stop))
+            .spawn(move || worker_loop(&worker_shared, &worker_stop, &wake))
             .expect("failed to spawn the navigation device thread");
 
         Self { shared, stop }
@@ -114,13 +119,13 @@ impl Drop for SpaceNavWorker {
     }
 }
 
-fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>) {
+fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
     let mut retry = RETRY_FIRST;
     while !stop.load(Ordering::SeqCst) {
         match Client::connect() {
             Ok(client) => {
                 retry = RETRY_FIRST;
-                serve(client, shared, stop);
+                serve(client, shared, stop, wake);
             }
             Err(err) => {
                 // No daemon, or none reachable. Ordinary: say so only in the
@@ -134,7 +139,7 @@ fn worker_loop(shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>) {
 }
 
 /// Reads one connection until it fails, then leaves the device state clean.
-fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>) {
+fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>, wake: &dyn Fn()) {
     tracing::debug!(
         target: "printcad.input",
         protocol = client.protocol_version(),
@@ -150,10 +155,20 @@ fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
         match client.read_timeout(READ_TIMEOUT) {
             Ok(None) => {}
             Ok(Some(spacenav::Event::Motion(motion))) => {
-                lock(shared).motion = DeviceMotion {
+                let motion = DeviceMotion {
                     translate: motion.translate.map(|v| v as f32),
                     rotate: motion.rotate.map(|v| v as f32),
                 };
+                let mut state = lock(shared);
+                // Starting and stopping are the edges the frame loop cannot
+                // see for itself: one wakes it, the other gets it the frame
+                // that brings the view to rest.
+                let edge = state.motion.is_idle() != motion.is_idle();
+                state.motion = motion;
+                drop(state);
+                if edge {
+                    wake();
+                }
             }
             Ok(Some(spacenav::Event::Button { index, pressed })) => {
                 let mut state = lock(shared);
@@ -161,6 +176,8 @@ fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
                     state.buttons.remove(0);
                 }
                 state.buttons.push(ButtonEvent { index, pressed });
+                drop(state);
+                wake();
             }
             Ok(Some(spacenav::Event::Device { .. })) => {
                 client.refresh_device().ok();
@@ -178,8 +195,15 @@ fn serve(mut client: Client, shared: &Arc<Mutex<Shared>>, stop: &Arc<AtomicBool>
     if state.device.take().is_some() {
         app_log::info("Navigation device disconnected");
     }
+    let was_moving = !state.motion.is_idle();
     state.motion = DeviceMotion::default();
     state.buttons.clear();
+    drop(state);
+    if was_moving {
+        // A view left drifting by a device that vanished mid-motion needs one
+        // more frame to stop.
+        wake();
+    }
 }
 
 /// Records which device the daemon is driving, logging only when it changes.

@@ -30,14 +30,25 @@ loop {
 - Blocking (`read_blocking`) and non-blocking (`poll`) reads, plus
   `as_raw_fd` for `select`/`poll`/`epoll` loops.
 - Queries the connected device: name, path, axis and button counts, USB id.
+- Reads and writes the daemon's settings — global and per-axis sensitivity,
+  dead zones, axis inversion, axis and button mapping, button actions, key
+  emulation, LED, device grab, repeat interval — and can save them to its
+  configuration file.
 - No dependencies, no C library, no unsafe code.
+
+```rust
+let mut config = client.config();
+config.set_axis_sensitivity([1.0, 1.0, 1.0, 0.5, 0.5, 0.5])?;
+config.set_led(spacenav::LedMode::On)?;
+config.save()?;
+# Ok::<(), spacenav::Error>(())
+```
 
 ## What it does not do
 
 - No Windows or macOS backend.
-- No daemon-less path: without spacenavd running, `connect` fails and the
+- No daemon-less path: without a daemon running, `connect` fails and the
   caller is expected to retry.
-- No configuration writes — the daemon's own tools own the config file.
 
 ## Licence
 

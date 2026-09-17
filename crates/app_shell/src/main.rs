@@ -97,7 +97,9 @@ fn main() -> Result<()> {
         }
     };
 
-    let event_loop = EventLoop::new().context("failed to create event loop")?;
+    let event_loop = EventLoop::<AppEvent>::with_user_event()
+        .build()
+        .context("failed to create event loop")?;
     let render_settings = RenderSettings {
         preferred_gpu: user_settings.preferred_gpu.clone(),
         msaa_samples: user_settings.rendering.msaa_samples,
@@ -109,9 +111,20 @@ fn main() -> Result<()> {
         user_settings,
         document,
         registry,
+        event_loop.create_proxy(),
     );
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())
+}
+
+/// What a background thread needs the event loop to notice.
+///
+/// The loop renders on demand and sleeps in between, so a thread whose work
+/// produces no window event has to knock on the door itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppEvent {
+    /// The navigation device moved or a button changed.
+    DeviceInput,
 }
 
 /// Where a re-derived remote import's meshes belong.
@@ -309,6 +322,7 @@ impl PrintCadApp {
         user_settings: UserSettings,
         document: Document,
         registry: DocumentService,
+        proxy: winit::event_loop::EventLoopProxy<AppEvent>,
     ) -> Self {
         let camera = CameraController::new(&user_settings.camera, (1, 1));
         let step_import_defaults = user_settings.import.tessellation.clone();
@@ -355,7 +369,9 @@ impl PrintCadApp {
             current_file: None,
             file_dialog_rx: None,
             kernel_worker: KernelWorker::spawn(),
-            nav_device: app::spacenav::SpaceNavWorker::spawn(),
+            nav_device: app::spacenav::SpaceNavWorker::spawn(move || {
+                let _ = proxy.send_event(AppEvent::DeviceInput);
+            }),
             server,
             server_socket,
             last_server_reconnect: None,
@@ -424,7 +440,7 @@ impl Drop for PrintCadApp {
     }
 }
 
-impl ApplicationHandler for PrintCadApp {
+impl ApplicationHandler<AppEvent> for PrintCadApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         self.init_gfx(event_loop);
     }
@@ -436,6 +452,15 @@ impl ApplicationHandler for PrintCadApp {
         event: WindowEvent,
     ) {
         self.handle_window_event(event_loop, window_id, event);
+    }
+
+    fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: AppEvent) {
+        match event {
+            // The device thread only knocks when the puck starts or stops
+            // moving, or a button changes; while it is deflected the frame
+            // loop keeps itself awake.
+            AppEvent::DeviceInput => self.redraw_needed = true,
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {

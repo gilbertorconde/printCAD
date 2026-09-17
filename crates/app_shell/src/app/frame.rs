@@ -124,6 +124,7 @@ impl PrintCadApp {
             || self.server.status().busy()
             || self.file_dialog_rx.is_some()
             || self.step_import_pending.is_some()
+            || !self.nav_device.motion().is_idle()
     }
 
     /// Read what the navigation device is doing. Its reader thread holds the
@@ -505,7 +506,8 @@ impl PrintCadApp {
             let work_pending = self.kernel_worker.in_flight() > 0
                 || self.server.status().busy()
                 || self.file_dialog_rx.is_some()
-                || self.step_import_pending.is_some();
+                || self.step_import_pending.is_some()
+                || !self.nav_device.motion().is_idle();
             let animating = self.camera.is_animating()
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()

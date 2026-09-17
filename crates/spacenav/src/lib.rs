@@ -25,9 +25,11 @@
 
 mod client;
 mod codec;
+mod config;
 mod request;
 
 pub use client::{Client, DEFAULT_SOCKET, socket_path};
+pub use config::{ButtonAction, Config, LedMode};
 
 use std::fmt;
 
@@ -140,6 +142,12 @@ impl EventMask {
     #[must_use]
     pub fn bits(self) -> u32 {
         self.0
+    }
+
+    /// Reads a mask back from the daemon's own representation.
+    #[must_use]
+    pub fn from_bits(bits: u32) -> EventMask {
+        EventMask(bits & Self::ALL.0)
     }
 
     #[must_use]

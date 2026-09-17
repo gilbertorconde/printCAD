@@ -9,10 +9,11 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::codec::{PACKET_BYTES, Words, decode_event, is_event, words_from_bytes};
+use crate::config::Config;
 use crate::request::{
     MAX_PROTO_VER, REQ_CHANGE_PROTO, REQ_DEV_NAME, REQ_DEV_NAXES, REQ_DEV_NBUTTONS, REQ_DEV_PATH,
-    REQ_DEV_TYPE, REQ_DEV_USBID, REQ_SET_EVMASK, REQ_SET_NAME, REQ_TAG, StringReader, check_reply,
-    reply_status, request_packet, string_packets,
+    REQ_DEV_TYPE, REQ_DEV_USBID, REQ_GET_EVMASK, REQ_GET_SENS, REQ_SET_EVMASK, REQ_SET_NAME,
+    REQ_SET_SENS, REQ_TAG, StringReader, check_reply, reply_status, request_packet, string_packets,
 };
 use crate::{DeviceInfo, Error, Event, EventMask};
 
@@ -117,11 +118,31 @@ impl Client {
 
     /// Tells the daemon what to call this client in its logs.
     pub fn set_name(&mut self, name: &str) -> Result<(), Error> {
-        self.require_requests()?;
-        for packet in string_packets(REQ_SET_NAME, name) {
-            self.send(&packet)?;
-        }
-        Ok(())
+        self.send_string(REQ_SET_NAME, name)
+    }
+
+    /// Scales this client's motion readings, leaving other clients alone.
+    pub fn set_sensitivity(&mut self, sensitivity: f32) -> Result<(), Error> {
+        self.request(REQ_SET_SENS, &[sensitivity.to_bits() as i32])
+            .map(drop)
+    }
+
+    /// This client's motion scale.
+    pub fn sensitivity(&mut self) -> Result<f32, Error> {
+        let reply = self.request(REQ_GET_SENS, &[])?;
+        Ok(f32::from_bits(reply[1] as u32))
+    }
+
+    /// Which events the daemon is sending.
+    pub fn event_mask(&mut self) -> Result<EventMask, Error> {
+        let reply = self.request(REQ_GET_EVMASK, &[])?;
+        Ok(EventMask::from_bits(reply[1] as u32))
+    }
+
+    /// The daemon's own settings, shared by every client and by the device
+    /// itself: sensitivities, dead zones, axis and button mapping, LED.
+    pub fn config(&mut self) -> Config<'_> {
+        Config { client: self }
     }
 
     /// Chooses which events the daemon sends.
@@ -268,7 +289,7 @@ impl Client {
 
     /// Sends a request and waits for its answer, queueing any events that
     /// arrive in between.
-    fn request(&mut self, request: i32, args: &[i32]) -> Result<Words, Error> {
+    pub(crate) fn request(&mut self, request: i32, args: &[i32]) -> Result<Words, Error> {
         self.require_requests()?;
         self.send(&request_packet(request, args))?;
         let reply = self.await_reply()?;
@@ -277,7 +298,7 @@ impl Client {
     }
 
     /// Sends a request whose answer is a string, arriving 24 bytes per packet.
-    fn request_string(&mut self, request: i32) -> Result<String, Error> {
+    pub(crate) fn request_string(&mut self, request: i32) -> Result<String, Error> {
         self.require_requests()?;
         self.send(&request_packet(request, &[]))?;
         let mut reader = StringReader::default();
@@ -288,6 +309,15 @@ impl Client {
                 return Ok(text);
             }
         }
+    }
+
+    /// Sends a string the daemon takes without answering.
+    pub(crate) fn send_string(&mut self, request: i32, text: &str) -> Result<(), Error> {
+        self.require_requests()?;
+        for packet in string_packets(request, text) {
+            self.send(&packet)?;
+        }
+        Ok(())
     }
 
     /// A count the daemon reports in the first word of its answer.
