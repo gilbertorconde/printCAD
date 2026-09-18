@@ -31,8 +31,6 @@ pub struct MenuBarResult {
     pub show_preferences: bool,
     pub show_about: bool,
     pub open_palette: bool,
-    /// A tool of another workbench: switch to it, then run the tool.
-    pub activate_tool: Option<(ActiveWorkbench, String)>,
 }
 
 fn shortcut(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
@@ -45,6 +43,28 @@ fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<&KeyboardShortcut>) -> 
         button = button.shortcut_text(ui.ctx().format_shortcut(sc));
     }
     let clicked = ui.add(button).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
+/// A row that needs a document on screen. Disabled rows say what they are
+/// waiting for rather than doing nothing when clicked.
+fn item_needing_document(
+    ui: &mut egui::Ui,
+    label: &str,
+    shortcut: Option<&KeyboardShortcut>,
+    have_document: bool,
+) -> bool {
+    let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(ui.ctx().format_shortcut(sc));
+    }
+    let response = ui
+        .add_enabled(have_document, button)
+        .on_disabled_hover_text(format!("{label} — open or create a document first"));
+    let clicked = response.clicked();
     if clicked {
         ui.close();
     }
@@ -72,6 +92,10 @@ pub fn draw_menu_bar(
     commands: &mut Vec<UiCommand>,
 ) -> MenuBarResult {
     let mut result = MenuBarResult::default();
+    // The start page has no document and no viewport: the rows that act on
+    // one say so instead of doing nothing, and their shortcuts hold their
+    // fire.
+    let have_document = inputs.screen == Screen::Workspace;
 
     // `Modifiers::COMMAND` maps to Ctrl on Linux and Windows and Cmd on
     // macOS.
@@ -98,13 +122,13 @@ pub fn draw_menu_bar(
         if i.consume_shortcut(&sc_open) {
             commands.push(UiCommand::File(FileCommand::Open));
         }
-        if i.consume_shortcut(&sc_save_as) {
+        if i.consume_shortcut(&sc_save_as) && have_document {
             commands.push(UiCommand::File(FileCommand::SaveAs));
         }
-        if i.consume_shortcut(&sc_save) {
+        if i.consume_shortcut(&sc_save) && have_document {
             commands.push(UiCommand::File(FileCommand::Save));
         }
-        if i.consume_shortcut(&sc_import) {
+        if i.consume_shortcut(&sc_import) && have_document {
             commands.push(UiCommand::File(FileCommand::ImportStep));
         }
         if i.consume_shortcut(&sc_quit) {
@@ -118,13 +142,14 @@ pub fn draw_menu_bar(
         }
         // Text fields own their own undo and the letter F.
         if !typing {
-            if i.consume_shortcut(&sc_redo) || i.consume_shortcut(&sc_redo_y) {
+            let redo = i.consume_shortcut(&sc_redo) || i.consume_shortcut(&sc_redo_y);
+            if redo && have_document {
                 commands.push(UiCommand::Redo);
             }
-            if i.consume_shortcut(&sc_undo) {
+            if i.consume_shortcut(&sc_undo) && have_document {
                 commands.push(UiCommand::Undo);
             }
-            if i.consume_shortcut(&sc_fit) {
+            if i.consume_shortcut(&sc_fit) && have_document {
                 commands.push(UiCommand::FitView);
             }
         }
@@ -186,14 +211,20 @@ pub fn draw_menu_bar(
                             }
                         });
                         ui.separator();
-                        if item(ui, "Save", Some(&sc_save)) {
+                        if item_needing_document(ui, "Save", Some(&sc_save), have_document) {
                             commands.push(UiCommand::File(FileCommand::Save));
                         }
-                        if item(ui, "Save As…", Some(&sc_save_as)) {
+                        if item_needing_document(ui, "Save As…", Some(&sc_save_as), have_document)
+                        {
                             commands.push(UiCommand::File(FileCommand::SaveAs));
                         }
                         ui.separator();
-                        if item(ui, "Import STEP…", Some(&sc_import)) {
+                        if item_needing_document(
+                            ui,
+                            "Import STEP…",
+                            Some(&sc_import),
+                            have_document,
+                        ) {
                             commands.push(UiCommand::File(FileCommand::ImportStep));
                         }
                         ui.separator();
@@ -214,10 +245,10 @@ pub fn draw_menu_bar(
                         }
                     });
                     ui.menu_button(menu_title("Edit"), |ui| {
-                        if item(ui, "Undo", Some(&sc_undo)) {
+                        if item_needing_document(ui, "Undo", Some(&sc_undo), have_document) {
                             commands.push(UiCommand::Undo);
                         }
-                        if item(ui, "Redo", Some(&sc_redo)) {
+                        if item_needing_document(ui, "Redo", Some(&sc_redo), have_document) {
                             commands.push(UiCommand::Redo);
                         }
                         ui.separator();
@@ -303,13 +334,17 @@ pub fn draw_menu_bar(
                         });
                     });
 
-                    // One menu per workbench, listing its tools. The active
-                    // bench's tools activate; the other bench's rows switch
-                    // to it first.
+                    // The active workbench's menu, listing its tools. Another
+                    // bench's menu would name work that belongs to a bench
+                    // the user is not in; View › Workbench is how they get
+                    // there, and the start page has no bench at all.
                     let benches: Vec<(WorkbenchId, String)> = REGISTERED_WORKBENCHES
                         .lock()
                         .unwrap()
                         .iter()
+                        .filter(|wb| {
+                            have_document && active_workbench.0 == WorkbenchId::from(wb.id.as_str())
+                        })
                         .map(|wb| (WorkbenchId::from(wb.id.as_str()), wb.label.clone()))
                         .collect();
                     for (wb_id, label) in benches {
@@ -318,7 +353,6 @@ pub fn draw_menu_bar(
                             .tools_for(&wb_id)
                             .map(|t| t.to_vec())
                             .unwrap_or_default();
-                        let is_active_bench = active_workbench.0 == wb_id;
                         ui.menu_button(menu_title(&label), |ui| {
                             let mut last_category: Option<String> = None;
                             for tool in &tools {
@@ -351,14 +385,7 @@ pub fn draw_menu_bar(
                                     continue;
                                 }
                                 if r.clicked() {
-                                    if is_active_bench {
-                                        activate_tool(active_tool, &tools, tool, &tool.id);
-                                    } else {
-                                        // The switch resets the tool state, so
-                                        // the activation rides along with it.
-                                        result.activate_tool =
-                                            Some((ActiveWorkbench(wb_id.clone()), tool.id.clone()));
-                                    }
+                                    activate_tool(active_tool, &tools, tool, &tool.id);
                                     ui.close();
                                 }
                             }

@@ -270,7 +270,7 @@ impl UiLayer {
                 &mut active_tool,
                 &mut commands,
             );
-            palette_activate = menu.activate_tool.clone();
+
             // About lands on its page; Preferences keeps the last group.
             let unit = document.display_unit();
             if menu.show_about {
