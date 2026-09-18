@@ -469,6 +469,7 @@ impl PrintCadApp {
                             (true, 1) => format!("{} · 1 peer", self.server.name()),
                             (true, n) => format!("{} · {n} peers", self.server.name()),
                         },
+                        reveal_body: self.reveal_body.take(),
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.step_import_pending.as_mut(),

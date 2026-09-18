@@ -85,6 +85,8 @@ pub struct UiFrameInputs<'a> {
     /// Which document server serves this session, with a degraded marker —
     /// e.g. "local daemon" or "local daemon (disconnected)".
     pub server_label: String,
+    /// A body double-clicked in the viewport: the tree jumps to its row.
+    pub reveal_body: Option<core_document::BodyId>,
     /// The 6-DoF mouse the reader thread has, if any.
     pub nav_device: Option<String>,
     /// How many buttons it has, so Preferences offers a row per button.

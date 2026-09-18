@@ -481,6 +481,12 @@ impl PrintCadApp {
             if is_double {
                 self.face_highlight = None;
                 self.selected_body = Some(hovered);
+                if self.active_workbench.0.as_str() == "wb.part" {
+                    // Part Design works from the tree, so a double click on
+                    // a face says "this one" there too — the assembly branch
+                    // it lives in opens and the row scrolls into view.
+                    self.reveal_body = Some(core_document::BodyId(hovered));
+                }
                 app_log::info(format!("Selected body: {hovered:?}"));
             } else if self.selected_body == Some(hovered)
                 && self.face_highlight.is_none()

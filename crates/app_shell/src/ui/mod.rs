@@ -210,6 +210,7 @@ impl UiLayer {
             kernel_cancellable,
             kernel_progress,
             server_label,
+            reveal_body,
             nav_device,
             nav_buttons,
             document_saving,
@@ -399,6 +400,7 @@ impl UiLayer {
             let combo = combo_view::draw_combo_view(
                 ui,
                 combo_view::ComboViewInputs {
+                    reveal_body,
                     active_workbench: active_workbench.clone(),
                     document,
                     registry,

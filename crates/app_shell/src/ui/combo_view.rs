@@ -32,6 +32,8 @@ pub struct ComboViewInputs<'a> {
     pub active_tree_selection: Option<TreeItemId>,
     pub active_document_object: Option<core_document::FeatureId>,
     pub editing_feature: Option<core_document::FeatureId>,
+    /// A body double-clicked in the viewport: the tree jumps to its row.
+    pub reveal_body: Option<core_document::BodyId>,
     /// UI-local substring filter over tree labels.
     pub filter: &'a mut String,
     pub property_tab: &'a mut PropertyTab,
@@ -48,6 +50,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         active_tree_selection,
         active_document_object,
         editing_feature,
+        reveal_body,
         filter,
         property_tab,
         rename_buffer,
@@ -149,11 +152,12 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     let tree_ui = feature_tree::draw_tree(
                         ui,
                         &tree_model,
-                        feature_tree::TreeDrawOptions {
-                            selected: Some(selected_id),
-                            editing: editing_feature,
-                            filter: filter.trim(),
-                        },
+                        feature_tree::TreeDrawOptions::new(
+                            Some(selected_id),
+                            editing_feature,
+                            filter.trim(),
+                        )
+                        .revealing(reveal_body),
                     );
                     result.tree_selection = tree_ui.selection;
                     result.tree_activation = tree_ui.activation;

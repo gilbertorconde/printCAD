@@ -291,6 +291,9 @@ struct PrintCadApp {
     face_highlight_id: Uuid,
     /// Timestamp + target of the last selection click (double-click detect).
     last_select_click: Option<(Instant, Uuid)>,
+    /// A body double-clicked in the viewport, for the one frame it takes the
+    /// tree to jump to its row.
+    reveal_body: Option<BodyId>,
     /// Workbench to return to when sketch editing finishes, when the sketch
     /// flow was started from another workbench (e.g. Part Design).
     return_workbench: Option<ActiveWorkbench>,
@@ -415,6 +418,7 @@ impl PrintCadApp {
             hovered_sketch: None,
             face_highlight_id: Uuid::new_v4(),
             last_select_click: None,
+            reveal_body: None,
             return_workbench: None,
             task_open: false,
             window_title: String::new(),

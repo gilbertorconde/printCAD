@@ -78,6 +78,10 @@ struct TreeNode {
     seq: u64,
     children: Vec<TreeNode>,
     imported_object_id: Option<Uuid>,
+    /// The body this row stands for, when it stands for one. An imported
+    /// part merged into its instance keeps the part's body here, which is
+    /// what lets a face picked in the viewport find this row.
+    body: Option<BodyId>,
     /// The design set's icon for this item.
     icon: &'static str,
     /// Bodies and linked parts read their icon in accent.
@@ -171,6 +175,26 @@ impl DocumentTree {
     }
 
     /// The spelled-out description of a tree item, for the details line.
+    /// The row that stands for `body`, with every row above it, root first.
+    ///
+    /// A pick in the viewport names a body; the tree is the only thing that
+    /// knows which row shows it, since an imported part merged into its
+    /// instance answers to the instance's id.
+    pub fn path_to_body(&self, body: BodyId) -> Option<Vec<TreeItemId>> {
+        fn walk(nodes: &[TreeNode], body: BodyId, trail: &mut Vec<TreeItemId>) -> bool {
+            for node in nodes {
+                trail.push(node.id);
+                if node.body == Some(body) || walk(&node.children, body, trail) {
+                    return true;
+                }
+                trail.pop();
+            }
+            false
+        }
+        let mut trail = Vec::new();
+        walk(&self.nodes, body, &mut trail).then_some(trail)
+    }
+
     pub fn detail_for(&self, id: TreeItemId) -> Option<String> {
         fn find(nodes: &[TreeNode], id: TreeItemId) -> Option<&TreeNode> {
             for node in nodes {
@@ -242,6 +266,7 @@ fn build_feature_node(
         seq: node.seq,
         children,
         imported_object_id: None,
+        body: None,
         icon: feature_icon(node),
         accent_icon: false,
     }
@@ -282,6 +307,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         seq: 0,
         children: Vec::new(),
         imported_object_id: None,
+        body: Some(body.id),
         icon: "tree-body",
         accent_icon: true,
     }
@@ -359,6 +385,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         seq: 0,
         children,
         imported_object_id: Some(imported.id),
+        body: imported.body_id,
         icon: match imported.kind {
             kernel_api::ImportedNodeKind::Assembly => "tree-group",
             kernel_api::ImportedNodeKind::Part => "tree-body",
@@ -384,12 +411,36 @@ pub(crate) fn describe_workbench(raw: &str) -> String {
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TreeDrawOptions<'a> {
     pub selected: Option<TreeItemId>,
+    /// A body picked in the viewport that the tree should jump to: its row
+    /// is selected, every branch above it opens, and the list scrolls to it.
+    pub reveal_body: Option<BodyId>,
     /// The feature whose edit session is open: badged `EDITING`, and every
     /// other row dims.
     pub editing: Option<FeatureId>,
     /// Case-insensitive substring over labels; a branch stays visible when
     /// any descendant matches.
     pub filter: &'a str,
+    /// Resolved from `reveal_body` at the top of a draw; the row that should
+    /// be brought into view.
+    scroll_to: Option<TreeItemId>,
+}
+
+impl<'a> TreeDrawOptions<'a> {
+    pub fn new(selected: Option<TreeItemId>, editing: Option<FeatureId>, filter: &'a str) -> Self {
+        Self {
+            selected,
+            reveal_body: None,
+            editing,
+            filter,
+            scroll_to: None,
+        }
+    }
+
+    /// Jump to the row for a body picked in the viewport.
+    pub fn revealing(mut self, body: Option<BodyId>) -> Self {
+        self.reveal_body = body;
+        self
+    }
 }
 
 fn matches_filter(node: &TreeNode, filter: &str) -> bool {
@@ -404,6 +455,28 @@ fn matches_filter(node: &TreeNode, filter: &str) -> bool {
 pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>) -> TreeUiResult {
     let mut result = TreeUiResult::default();
     ui.spacing_mut().item_spacing.y = 0.0;
+
+    // A row hidden inside a closed branch cannot be scrolled to, so the
+    // branches above it open first and the row names itself as the
+    // selection — the same answer a click on it would give.
+    let mut options = options;
+    let mut scroll_to = None;
+    if let Some(body) = options.reveal_body
+        && let Some(trail) = model.path_to_body(body)
+        && let Some((row, ancestors)) = trail.split_last()
+    {
+        for ancestor in ancestors {
+            set_open_state(ui, *ancestor, true);
+        }
+        set_open_state(ui, TreeItemId::DocumentRoot, true);
+        options.selected = Some(*row);
+        result.selection = Some(*row);
+        scroll_to = Some(*row);
+    }
+    let options = TreeDrawOptions {
+        scroll_to,
+        ..options
+    };
 
     let root = RowSpec {
         id: TreeItemId::DocumentRoot,
@@ -485,6 +558,9 @@ fn draw_row(
         Vec2::new(ui.available_width(), TREE_ROW),
         egui::Sense::click(),
     );
+    if options.scroll_to == Some(spec.id) {
+        ui.scroll_to_rect(rect, Some(egui::Align::Center));
+    }
     if selected {
         ui.painter().rect_filled(rect, 0.0, ACCENT_DIM);
         ui.painter().rect_filled(
@@ -868,6 +944,108 @@ mod tests {
         assert!(ids.contains(&TreeItemId::ImportedObject(root)));
         assert!(ids.contains(&TreeItemId::ImportedObject(leaf)));
         assert!(!ids.contains(&TreeItemId::Body(body_id)));
+    }
+
+    #[test]
+    fn a_plain_body_is_found_by_its_own_row() {
+        let mut doc = Document::new("tree");
+        let body = doc.create_body(Some("Body".into()));
+        let tree = DocumentTree::build(&doc);
+        assert_eq!(
+            tree.path_to_body(body),
+            Some(vec![TreeItemId::Body(body)]),
+            "a body with no import above it is its own row"
+        );
+    }
+
+    #[test]
+    fn an_imported_part_is_found_under_the_assembly_that_holds_it() {
+        let mut doc = Document::new("tree");
+        let body = doc.create_body(Some("Imported Body".into()));
+        let root = Uuid::new_v4();
+        let leaf = Uuid::new_v4();
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            root,
+            node(
+                root,
+                None,
+                vec![leaf],
+                kernel_api::ImportedNodeKind::Assembly,
+                "Asm",
+            ),
+        );
+        let mut part = node(
+            leaf,
+            Some(root),
+            Vec::new(),
+            kernel_api::ImportedNodeKind::Part,
+            "Part",
+        );
+        part.body_id = Some(body);
+        graph.insert(leaf, part);
+        doc.set_imported_object_graph(vec![root], graph);
+
+        let tree = DocumentTree::build(&doc);
+        assert_eq!(
+            tree.path_to_body(body),
+            Some(vec![
+                TreeItemId::ImportedObject(root),
+                TreeItemId::ImportedObject(leaf),
+            ]),
+            "the assembly above the part is on the way to it"
+        );
+    }
+
+    #[test]
+    fn a_part_merged_into_its_instance_answers_to_the_instance() {
+        let mut doc = Document::new("tree");
+        let body = doc.create_body(Some("Imported Body".into()));
+        let asm = Uuid::new_v4();
+        let instance = Uuid::new_v4();
+        let part = Uuid::new_v4();
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            asm,
+            node(
+                asm,
+                None,
+                vec![instance],
+                kernel_api::ImportedNodeKind::Assembly,
+                "Asm",
+            ),
+        );
+        graph.insert(
+            instance,
+            node(
+                instance,
+                Some(asm),
+                vec![part],
+                kernel_api::ImportedNodeKind::Instance,
+                "Screw:1",
+            ),
+        );
+        let mut leaf = node(
+            part,
+            Some(instance),
+            Vec::new(),
+            kernel_api::ImportedNodeKind::Part,
+            "Screw",
+        );
+        leaf.body_id = Some(body);
+        graph.insert(part, leaf);
+        doc.set_imported_object_graph(vec![asm], graph);
+
+        // The instance and its only part draw as one row, which carries the
+        // instance's id — so that is the row a pick has to land on.
+        let tree = DocumentTree::build(&doc);
+        assert_eq!(
+            tree.path_to_body(body),
+            Some(vec![
+                TreeItemId::ImportedObject(asm),
+                TreeItemId::ImportedObject(instance),
+            ])
+        );
     }
 
     fn node(
