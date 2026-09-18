@@ -255,6 +255,31 @@ static OPLOG_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// Appends and truncations serialize here — ops arrive from N client threads.
 static OPLOG_WRITE: Mutex<()> = Mutex::new(());
 
+/// Where this daemon's ops live until its document has a file.
+///
+/// One per daemon, named after the socket it serves. A single shared file
+/// would be a rendezvous between documents: two unsaved documents would both
+/// write to it, and whichever saved first would take the other's history
+/// into its own log and leave it with none.
+static UNHOMED_PATH: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+fn claim_unhomed_oplog(socket: &Path) {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    // The whole path, not its file name: a socket is named `doc.sock` in a
+    // directory of its own often enough that the name alone collides.
+    let mut hasher = DefaultHasher::new();
+    socket.hash(&mut hasher);
+    let key = hasher.finish();
+    *lock(&UNHOMED_PATH) =
+        Some(crate::runtime_dir_for_logs().join(format!("unhomed-{key:016x}.oplog.jsonl")));
+}
+
+fn unhomed_oplog() -> PathBuf {
+    lock(&UNHOMED_PATH).clone().unwrap_or_else(unhomed_oplog)
+}
+
 fn set_oplog_home(document: &Path) {
     let home = document.with_extension("oplog.jsonl");
     let mut slot = lock(&OPLOG_PATH);
@@ -264,7 +289,7 @@ fn set_oplog_home(document: &Path) {
     // Ops recorded before the document had a file live in the unhomed log;
     // carry them over so the document's history starts at its beginning,
     // not at its first save.
-    let orphan = crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl");
+    let orphan = unhomed_oplog();
     if let Ok(text) = std::fs::read_to_string(&orphan)
         && !text.is_empty()
     {
@@ -275,7 +300,9 @@ fn set_oplog_home(document: &Path) {
             .and_then(|mut file| file.write_all(text.as_bytes()));
         match appended {
             Ok(()) => {
-                let _ = std::fs::write(&orphan, b"");
+                // Gone rather than emptied: this daemon's history has a home
+                // now, and a file left behind is one more thing to explain.
+                let _ = std::fs::remove_file(&orphan);
                 // The log's blob markers reference the unhomed store;
                 // the blobs move with the lines they back.
                 let orphan_blobs = orphan.with_extension("blobs");
@@ -296,8 +323,7 @@ fn set_oplog_home(document: &Path) {
 
 fn oplog_path() -> PathBuf {
     let slot = lock(&OPLOG_PATH);
-    slot.clone()
-        .unwrap_or_else(|| crate::runtime_dir_for_logs().join("unhomed.oplog.jsonl"))
+    slot.clone().unwrap_or_else(unhomed_oplog)
 }
 
 /// Payload strings at or above this length are pulled out of the log into
@@ -399,6 +425,7 @@ pub fn run(socket: &Path) -> std::io::Result<()> {
     if let Some(parent) = socket.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    claim_unhomed_oplog(socket);
     // A stale socket from a dead daemon would make bind fail forever.
     let _ = std::fs::remove_file(socket);
     let listener = UnixListener::bind(socket)?;

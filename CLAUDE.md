@@ -242,7 +242,10 @@ hacks, no silently degraded feature). Instead:
   daemon — one per session, unix socket under `$XDG_RUNTIME_DIR/printcad`,
   single client, exits on disconnect — plus the `DirectFiles` fallback). The
   daemon stores opaque `.prtcad` bytes and op envelopes
-  (`<file>.oplog.jsonl`), never deserializing a `Document`. Saves cross as
+  (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops recorded
+  before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
+  keyed by the socket so two unsaved documents cannot end up sharing — one
+  file for all of them meant the first to save took the other's history. Saves cross as
   client-serialized bytes with `at_seq`; `mark_clean()` only fires if
   `at_seq` still equals `mutation_seq` on completion. Undo/redo/new/open send
   `Rebase`. **Every exit path must call `wait_for_document_saves()`** (which

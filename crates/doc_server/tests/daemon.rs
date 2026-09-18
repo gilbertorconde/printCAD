@@ -87,6 +87,111 @@ fn wait_for<T>(
     panic!("timed out waiting for {what}");
 }
 
+/// Two documents are two daemons, and until each is saved its ops have
+/// nowhere of its own to live. Neither may end up holding the other's
+/// history.
+#[test]
+fn two_documents_do_not_swap_their_unsaved_history() {
+    daemon_env();
+    let home_a = TestHome::new("split_a");
+    let home_b = TestHome::new("split_b");
+
+    let mut a = DaemonClient::spawn_or_connect(&home_a.socket()).expect("daemon a");
+    let mut b = DaemonClient::spawn_or_connect(&home_b.socket()).expect("daemon b");
+    let mut inbox_a = Inbox::default();
+    let mut inbox_b = Inbox::default();
+
+    // Both record an edit before either has a file, so both histories are
+    // homeless at the same time.
+    let mut doc_a = Document::new("A");
+    doc_a.create_body(Some("only-in-a".into()));
+    a.send(ClientMessage::Ops(doc_a.take_pending_ops()));
+
+    let mut doc_b = Document::new("B");
+    doc_b.create_body(Some("only-in-b".into()));
+    b.send(ClientMessage::Ops(doc_b.take_pending_ops()));
+
+    // Wait until both histories really are homeless together, which is when
+    // one could take the other's: the daemons are separate processes, so
+    // without this the first save can land before the second edit is even
+    // written.
+    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir)
+        .join("printcad");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < deadline {
+        let mut seen_a = false;
+        let mut seen_b = false;
+        if let Ok(entries) = std::fs::read_dir(&runtime) {
+            for entry in entries.flatten() {
+                let name = entry.file_name();
+                let name = name.to_string_lossy();
+                if !name.starts_with("unhomed") {
+                    continue;
+                }
+                let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+                seen_a |= text.contains("only-in-a");
+                seen_b |= text.contains("only-in-b");
+            }
+        }
+        if seen_a && seen_b {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    for (client, inbox, doc, home) in [
+        (&mut a, &mut inbox_a, &mut doc_a, &home_a),
+        (&mut b, &mut inbox_b, &mut doc_b, &home_b),
+    ] {
+        let bytes = doc
+            .save_to_bytes(core_document::Compression::None)
+            .expect("serialize");
+        client.send(ClientMessage::SaveDocument {
+            path: home.document(),
+            bytes,
+            at_seq: doc.mutation_seq(),
+        });
+        wait_for(client, inbox, "save completion", |m| match m {
+            ServerMessage::SaveCompleted { .. } => Some(()),
+            ServerMessage::SaveFailed { error, .. } => panic!("save failed: {error}"),
+            _ => None,
+        });
+    }
+
+    let read = |home: &TestHome| -> String {
+        let log = home.document().with_extension("oplog.jsonl");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let text = std::fs::read_to_string(&log).unwrap_or_default();
+            if !text.is_empty() || Instant::now() > deadline {
+                return text;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    };
+    let log_a = read(&home_a);
+    let log_b = read(&home_b);
+
+    assert!(
+        log_a.contains("only-in-a"),
+        "A kept its own history: {log_a}"
+    );
+    assert!(
+        log_b.contains("only-in-b"),
+        "B kept its own history: {log_b}"
+    );
+    assert!(
+        !log_a.contains("only-in-b"),
+        "A swallowed B's history: {log_a}"
+    );
+    assert!(
+        !log_b.contains("only-in-a"),
+        "B swallowed A's history: {log_b}"
+    );
+}
+
 #[test]
 fn a_session_round_trips_through_the_daemon() {
     daemon_env();
