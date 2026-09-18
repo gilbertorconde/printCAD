@@ -15,7 +15,7 @@ assistants have a quick reference. Each section links back to the relevant topic
 
 ## 2. Camera & View Controls
 
-- ✅ Rewrote the camera controller based on `camera_movements.md`.
+- ✅ Rewrote the camera controller on the focal-distance model in `camera_system.md`.
 - ✅ Added axis presets (`horizontal`, `vertical`, `depth`) and exposed them in settings.
 - ✅ Fixed orbit/pan/zoom parity issues for all axis presets.
 - ✅ Implemented the orientation cube: chamfered inner cube, labeled faces via SVG, interactive
@@ -75,28 +75,44 @@ assistants have a quick reference. Each section links back to the relevant topic
 - ✅ Added hovered/selected body IDs in runtime context and UI status.
 - ✅ Ensured orientation cube/pivot UI uses picking to rotate around hovered objects.
 
-## 10. Outstanding / Next Steps (for future LLMs)
+## 10. Document Server & Persistence
 
-1. **Tree interaction & modes** (see `docs/WB_IMP.md`):
-   - Double-clicking tree items to set active document object and enter the appropriate editing mode.
-   - Restoring previous camera pose when exiting sketch mode.
-2. **Plane selection dialog** for “Create Sketch” (base planes or selected faces).
-3. **Sketch tool improvements**:
-   - Constraint solving, dimension inputs, snapping/grid overlays.
-   - Persisting tool state in workbench storage.
-4. **Body/workbench flows**:
-   - Enforce active body selection before sketch/part tools.
-   - Mirror the same flows for PartDesign (pads/pockets/etc.).
-5. **Document tree UI**:
-   - Real tree view with bodies/features/sketches; double-click events.
-6. **Rendering**:
-   - Investigate why sketch geometry is not yet visible (validate tessellation submission).
-7. **Camera**:
-   - Store/restore camera pose when switching in/out of editing modes.
-8. **Persistence**:
-   - Hook document save/load to the TAR-based `.prtcad` format.
-9. **Workbench plugins**:
-   - Expose APIs for third-party workbenches (UI hooks, debug panel integration, etc.).
+- ✅ Moved file ownership behind a `DocumentServer` trait: `printcad-serverd`, one daemon per
+  document over a UNIX socket, with direct file I/O as the fallback.
+- ✅ Replaced snapshot undo with per-edit inverse operations recorded by the document's mutators,
+  and an op log the daemon stores beside the file.
+- ✅ Packed and unpacked `.prtcad` archives off the UI thread, with the container bytes crossing
+  the wire beside the message rather than encoded into it.
 
-Keep this file updated whenever new milestones are reached so every LLM agent can quickly align with
+## 11. Sketcher & Part Design
+
+- ✅ Constraint solver (Levenberg–Marquardt) with degrees-of-freedom reporting and conflict
+  diagnostics; the origin and its axes take constraints like any geometry.
+- ✅ Sketch tools: line, arc, circle, rectangle, spline, with snapping, dragging, box select and
+  typed dimensions.
+- ✅ Part Design features: pad, pocket, revolution, groove, loft, pipe, helix, primitives, hole,
+  fillet, chamfer, draft, thickness, patterns, booleans — each editable in a task panel and
+  rebuilt through the dependency graph.
+- ✅ Sketch-on-face with re-resolved face references, and a planar view lock while editing.
+
+## 12. Shell & Interaction
+
+- ✅ Design system (`ui_kit`): tokens, widgets, vendored icons and fonts, used by the panels and
+  the workbenches.
+- ✅ Start page, command palette (Ctrl+K), Preferences with a page per group, log panel.
+- ✅ Render on demand: frames only while something is moving, pending or animating.
+- ✅ 6-DoF mouse support through the external `sixdof` crate, with a Preferences page that assigns
+  each movement of the puck.
+
+## 13. Outstanding / Next Steps
+
+1. **STEP export** — the kernel writes STEP; the app has no command for it yet.
+2. **Assembly constraints** — placement between bodies, not just imported transforms.
+3. **Slicing hand-off** — the point of the whole thing: get a part to a printer.
+4. **Kernel gaps** — tests marked `#[ignore = "kernel: …"]` document what the geometry kernel
+   cannot do yet; each names the issue that tracks it.
+5. **Face and edge identity** — faces are matched geometrically rather than by kernel id, which is
+   what limits dress-up selection and up-to-face terminations.
+
+Keep this file updated whenever new milestones are reached so every agent can quickly align with
 the project history and roadmap.

@@ -16,8 +16,8 @@
 
 ## Architecture Overview
 
-- **App shell**: Wayland windowing via `winit` (Wayland backend) or `smithay-client-toolkit` integrated with a central async event loop.
-- **UI layer**: Prefer `egui + egui_winit_vulkano` for rapid tooling; keep UI behind an adapter trait to allow swapping with `iced` or other frontends.
+- **App shell**: `winit` on its Wayland backend, driving a render-on-demand loop rather than an async one — frames are produced only while something is moving, pending or animating.
+- **UI layer**: `egui` through `egui-winit`, drawn by the project's own Vulkan backend. The panels sit above a design system (`ui_kit`) so a workbench never reaches for a colour or a size itself.
 - **Core services**:
   - Document manager with versioned history.
   - Feature/constraint graph engine with dependency tracking.
@@ -30,11 +30,10 @@
 ## Technology Choices
 
 - **Geometry kernel**: [ogeom](https://github.com/gilbertorconde/ogeom-rs), a pure-Rust B-rep kernel (booleans, meshing, STEP IO), wrapped through a dedicated `kernel_ogeom` crate. The kernel stays behind traits so alternatives can be slotted in later.
-- **Math layer**: Use `nalgebra`/`glam` for light linear algebra; consider GLM-style APIs via `glam` if ergonomic needs arise. Eigen is unnecessary unless a C++ dependency mandates it.
-- **Constraint solving**: Lightweight solver built in Rust (e.g., `ncollide` + custom) for 2D sketches, with the option to integrate CGAL constraint solvers if needed.
-- **Rendering**: Vulkan with `vulkano` (higher-level, safer) or `ash` (lower-level control). Keep renderer modular for future Metal/OpenGL/OpenXR targets.
-- **UI toolkit**: Begin with `egui` for immediate-mode editing tools; evaluate `iced` once docking/layout needs increase.
-- **Wayland integration**: `winit` provides Wayland support and input abstractions; only drop to `smithay-client-toolkit` if tighter control is required. SDL3 is unnecessary unless cross-platform goals expand.
+- **Math layer**: `glam` throughout, with an `axes` crate on top so nothing hardcodes which way is up — the axis preset decides.
+- **Constraint solving**: a Levenberg–Marquardt solver written for the sketcher, over a uniform constraint record that also carries its own diagnostics.
+- **Rendering**: Vulkan through `ash`, behind a `RenderBackend` trait that takes data and returns pixels.
+- **Wayland integration**: `winit`, which also gives X11 for free.
 
 ## Parametric & Data Model
 
@@ -105,11 +104,12 @@
 
 - Kernel co-evolution (ogeom lives in its own repo); pin revisions and bump deliberately.
 - Constraint solver performance for complex sketches—prototype early.
-- UI toolkit commitment (egui vs iced) affects docking and layout flexibility.
+- egui is an immediate-mode toolkit: docking and free-floating panels are the project's to build, not the toolkit's to provide.
 - Future cross-platform requirements might necessitate different windowing/input stacks; keep layers clean.
 
-## Immediate Next Steps
+## Where this stands
 
-1. Prototype kernel and Vulkan + egui integration to derisk core tech choices.
-2. Lock crate layout and coding standards.
-3. Begin implementing Foundation milestone per roadmap.
+The foundation, both workbenches, persistence and the document server are
+built; `PROJECT_STEPS.md` tracks what landed, and its last section is the
+current list of what has not. The nearest items are STEP export, assembly
+constraints, and the hand-off to slicing that the whole thing is for.

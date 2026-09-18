@@ -3,141 +3,183 @@
 A parametric CAD application focused on designing parts for FDM/SLA 3D printing, built entirely in Rust with a Vulkan renderer.
 
 ![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue)
-![Rust](https://img.shields.io/badge/rust-1.92%2B-orange)
+![Rust](https://img.shields.io/badge/rust-1.98%2B-orange)
 ![Platform](https://img.shields.io/badge/platform-Linux-lightgrey)
 
-> ⚠️ **Early Development** - This project is in early development and is not yet usable for actual CAD work. Core features like sketch constraints, part operations, and file I/O are still being implemented.
+> ⚠️ **Early development** — the modelling core works end to end (sketch →
+> constraint solve → feature → solid → save), but this is not yet a tool to
+> rely on for real work. Expect rough edges, and no STEP export yet.
 
 ## Overview
 
-printCAD is a Linux-native, Wayland-first CAD application designed for creating parametric 3D models optimized for 3D printing workflows. It features a modular architecture with clean abstractions for future extensibility.
+printCAD is a Linux-native, Wayland-first CAD application for parametric
+models aimed at 3D printing. The geometry kernel, the renderer, the document
+model and the UI are all Rust; there are no system CAD libraries to install.
 
-### Key Features
+### What works today
 
-- **Vulkan Rendering** - Hardware-accelerated 3D viewport with perspective/orthographic projection
-- **CAD-style gesture navigation** - Orbit, pan, zoom, and roll plus optional orbit around GPU-picked points without reframing the view
-- **Interactive Orientation Cube** - Click faces, edges, or corners for standard views; arc and triangle arrows for incremental rotation
-- **Modular Workbenches** - Extensible architecture for Sketch and Part Design workflows
-- **Parametric Core** - Feature tree with dependency graph and snapshot-based undo/redo (parametric recompute planned)
-- **GPU Selection** - Choose between available graphics cards in hybrid GPU systems
-
-## Screenshots
-
-_Coming soon_
+- **Sketcher** — lines, arcs, circles, rectangles and splines with geometric
+  and dimensional constraints, solved by a Levenberg–Marquardt solver that
+  reports degrees of freedom and diagnoses conflicts. The origin and its axes
+  are constrainable, so a sketch can be driven fully constrained.
+- **Part Design** — Pad, Pocket, Revolution, Groove, Loft, Pipe, Helix,
+  primitives, Hole, Fillet, Chamfer, Draft, Thickness, patterns and booleans,
+  each an editable feature in a dependency-tracked tree that rebuilds on
+  change.
+- **STEP import** — assemblies arrive as placed bodies with their hierarchy,
+  per-face colours and the original file kept inside the document. Export is
+  still to come.
+- **Native documents** — `.prtcad` (a tar container, optionally gzip or zstd
+  compressed) holding the feature tree, the B-rep snapshots and the source
+  files an import came from. Saving and opening run off the UI thread.
+- **Undo/redo** — per-edit inverse operations rather than snapshots, so a
+  gesture is one step and the history survives a large document.
+- **Vulkan rendering** — hardware-accelerated viewport, GPU picking with
+  async readback, and a scene cached between changes so UI-only frames are
+  cheap on any model.
+- **6-DoF mouse** — SpaceMouse and friends drive the view, through the
+  [sixdof](https://github.com/gilbertorconde/sixdof) client.
 
 ## Building
 
 ### Prerequisites
 
-- Rust 1.92 or later
-- Vulkan SDK and drivers
-- Linux with Wayland (X11/XWayland fallback supported)
+- Rust 1.98 or later (edition 2024)
+- Vulkan drivers
+- Linux with Wayland (X11 also works)
 
 The geometry kernel ([ogeom](https://github.com/gilbertorconde/ogeom-rs)) is
 pure Rust and builds with the workspace — no system CAD libraries needed.
 
-### Build & Run
+### Build & run
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/printCAD.git
+git clone https://github.com/gilbertorconde/printCAD.git
 cd printCAD
 
-# Build and run
-cargo run -p app_shell
-
-# For release build
-cargo run -p app_shell --release
+# Build everything, then run. The whole workspace matters: the app spawns a
+# document server from its own directory, and `-p app_shell` alone would
+# leave that binary unbuilt and quietly fall back to direct file I/O.
+cargo build --release
+./target/release/app_shell
 ```
 
-### GPU Selection (Hybrid Systems)
+For day-to-day work a debug build is fine — dependencies are compiled
+optimized even in dev (the kernel is numeric code and runs about 26× slower
+unoptimized), while the project's own crates stay unoptimized for fast
+rebuilds:
 
-For systems with multiple GPUs, you can select the preferred GPU in Settings > Rendering.
+```bash
+cargo build && cargo run -p app_shell
+```
 
-## Project Structure
+### 6-DoF mouse
+
+Install and start [spacenavd](https://spacenav.sourceforge.net/); printCAD
+picks the device up on its own and names it in the status bar. The vendor's
+own driver works too — the client falls back to the Magellan protocol over
+the display server. Nothing is required to build or run without one.
+
+## Controls
+
+### Viewport
+
+| Action | Control |
+| ------ | ------- |
+| **Orbit** | Middle drag |
+| **Pivot on geometry** | Middle click — the orbit pivot snaps to the point under the cursor |
+| **Pan** | Right drag |
+| **Zoom** | Wheel (optionally toward the cursor) |
+| **Select a face** | Left click |
+| **Select a whole body** | Left double click — in Part Design the tree jumps to that body's row |
+| **Box select** | Left drag, in a sketch |
+| **Add to the selection** | Ctrl (a sketch selects cumulatively without it) |
+| **Pivot on the focal plane** | **`H`** with the cursor over the viewport |
+| **Fit the model** | **`F`** |
+| Snap to a standard view | Orientation cube face, edge or corner |
+| Nudge ±45° | Orientation cube arrows |
+
+While a sketch is open the view is locked to its plane: pan, zoom and roll
+about the plane's normal stay, and the rotations that would tilt out of it
+are dropped.
+
+### Everywhere
+
+| Action | Control |
+| ------ | ------- |
+| Command palette | **Ctrl+K** |
+| New / Open / Save / Save As | **Ctrl+N** / **Ctrl+O** / **Ctrl+S** / **Ctrl+Shift+S** |
+| Import STEP | **Ctrl+I** |
+| Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** or **Ctrl+Y** |
+| Preferences | **Ctrl+,** |
+| Delete the selected row | **Del** in the tree |
+
+## Configuration
+
+Settings live in `~/.config/printcad/settings.json` and are edited in
+Preferences (**Ctrl+,**):
+
+- **General** — log panel, frame rate cap
+- **Display** — camera (projection, field of view, clip planes, axis preset),
+  lighting, rendering (MSAA, preferred GPU on hybrid systems)
+- **Input** — mouse navigation (style, sensitivities, zoom to cursor, orbit
+  around the point under the cursor) and the 6-DoF mouse: what each of its
+  six movements does, how fast, which read backwards, and what its buttons do
+- **Units**, **Import / Export**, and a page per workbench
+
+## Project structure
 
 ```
 printCAD/
 ├── crates/
-│   ├── app_shell/       # Main application, windowing, UI
-│   ├── core_document/   # Document model and feature tree
-│   ├── kernel_api/      # Geometry kernel abstraction trait
-│   ├── kernel_ogeom/    # ogeom (pure-Rust B-rep) kernel implementation
-│   ├── render_vk/       # Vulkan rendering backend
-│   ├── settings/        # Application settings persistence
+│   ├── app_shell/       # The binary: window, frame loop, UI, input
+│   ├── core_document/   # Document, feature tree, undo, persistence
+│   ├── doc_server/      # printcad-serverd: the document server + its client
+│   ├── kernel_api/      # Geometry contract (meshes, profiles, solid ops)
+│   ├── kernel_ogeom/    # ogeom (pure-Rust B-rep) implementation of it
+│   ├── render_vk/       # Vulkan backend: data in, pixels out
+│   ├── settings/        # Settings persistence
+│   ├── ui_kit/          # Design system: tokens, widgets, icons, fonts
+│   ├── axes/            # Axis presets, so nothing hardcodes X/Y/Z
 │   └── workbenches/
-│       ├── wb_part/     # Part Design workbench
-│       └── wb_sketch/   # Sketch workbench
+│       ├── wb_part/     # Part Design
+│       └── wb_sketch/   # Sketcher: tools, solver, constraints
 └── docs/
-    ├── plan.md          # Detailed architecture and roadmap
-    └── WORKBENCH_GUIDE.md # Guide for creating custom workbenches
+    ├── plan.md            # Architecture and roadmap
+    ├── DOCUMENT_MODEL.md  # How documents, features and assets are stored
+    └── WORKBENCH_GUIDE.md # Writing a workbench
 ```
 
-## Controls
-
-### Camera Navigation
-
-Gesture-style navigation applies in the central 3D viewport (click vs drag distinguishes select from orbit):
-
-| Action | Control |
-| ------ | ------- |
-| **Orbit** | Left drag (after a small pixel threshold — short click selects instead) |
-| **Pan** | Right drag |
-| **Roll / tilt camera** | Left + right buttons drag |
-| **Zoom** | Scroll wheel (optional **zoom toward cursor**) |
-| **Pivot on geometry** | Middle click snaps the orbit pivot to the point under the cursor (reframes to that pivot on the lens axis) |
-| **Pivot on focal plane** | **`H`** with the cursor over the viewport — moves pivot to intersection of the ray under the cursor with the current focal plane |
-| Snap to standard view | Orientation cube face / edge / corner |
-| Nudge ±45° | Orientation cube triangular or arc arrows |
-
-When **Settings → Camera → “Orbit around point under cursor”** is enabled, an LMB orbit that starts over mesh uses that pick as an **off-axis orbit anchor**: the scene does **not** jump to center it; the small red orbit marker is drawn at the **projected anchor** while you drag.
-
-### Orientation Cube
-
-- **Faces** - Snap to front, back, left, right, top, bottom views
-- **Edges** - Snap to 45° between two faces
-- **Corners** - Snap to isometric views (45° in two axes)
-
-## Configuration
-
-Settings are stored in `~/.config/printCAD/settings.json` and include:
-
-- Preferred GPU selection
-- FPS cap (0 = uncapped)
-- Camera: projection (perspective / orthographic), FOV / ortho height, orbit & pan sensitivity, zoom-to-cursor, **orbit around point under cursor** (GPU pick orbit anchor), yaw axis for orbit, focal distance clamps, clip auto near/far, click↔drag threshold
-- Rendering quality (MSAA sample count)
-- Debug options such as the in-app log panel
-
-## Documentation
-
-- **[Development Plan](docs/plan.md)** - Detailed architecture and roadmap
-- **[Workbench Development Guide](docs/WORKBENCH_GUIDE.md)** - Guide for creating custom workbenches
+The app is a client of a document server: `printcad-serverd` owns the file,
+one daemon per document, over a UNIX socket. When no daemon can start the app
+falls back to direct file I/O and says so in the status bar.
 
 ## Roadmap
 
-See [docs/plan.md](docs/plan.md) for the detailed development roadmap.
+See [docs/plan.md](docs/plan.md).
 
-### Current Status
+- [x] Vulkan renderer, GPU picking, cached scene
+- [x] Camera with orbit / pan / zoom / roll and an orientation cube
+- [x] Settings persistence and GPU selection on hybrid systems
+- [x] Sketcher with a constraint solver
+- [x] Part Design feature set on a parametric feature tree
+- [x] Undo/redo (per-edit inverse operations)
+- [x] STEP import
+- [x] Native `.prtcad` documents through a document server
+- [x] 6-DoF mouse navigation
+- [ ] STEP export
+- [ ] Assembly constraints
+- [ ] Slicing hand-off for printing
 
-- [x] Vulkan renderer with basic mesh display
-- [x] Camera controller with gesture navigation (orbit / pan / roll / zoom-to-cursor / optional orbit around pick)
-- [x] Interactive orientation cube for standard views
-- [x] Settings persistence
-- [x] GPU selection for hybrid or multi gpu systems
-- [ ] Sketch workbench with constraint solver
-- [ ] Part Design workbench (pad, pocket, revolve)
-- [x] STEP/STP import — experimental; export still planned
-- [ ] Full parametric feature tree
-- [x] Undo/redo system (snapshot-based; Ctrl+Z / Ctrl+Shift+Z)
+## Technology stack
 
-## Technology Stack
-
-- **Language**: Rust
+- **Language**: Rust (edition 2024)
 - **Windowing**: winit (Wayland-native)
 - **Graphics**: Vulkan via ash
 - **UI**: egui
 - **Math**: glam
-- **Geometry Kernel**: [ogeom](https://github.com/gilbertorconde/ogeom-rs) — pure-Rust B-rep modelling and STEP exchange
+- **Geometry kernel**: [ogeom](https://github.com/gilbertorconde/ogeom-rs) — pure-Rust B-rep modelling and STEP exchange
+- **6-DoF input**: [sixdof](https://github.com/gilbertorconde/sixdof) — dependency-free client for spacenavd
 
 ## License
 
@@ -151,7 +193,3 @@ at your option.
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.
-
-## Acknowledgments
-
-- Built with the excellent Rust ecosystem

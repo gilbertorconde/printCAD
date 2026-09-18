@@ -290,15 +290,18 @@ The document is stored as a **`.prtcad` file**, which is a tar archive (optional
 
 ```
 document.prtcad/
-├── document.json          # Main document data (features, metadata, etc.)
-├── assets/                # Referenced external files
-│   ├── imported_base.step # Imported STEP file (if any)
-│   ├── imported_mesh.stl  # Imported STL file (if any)
-│   └── ...
-└── cache/                 # Cached computed data (optional)
-    ├── body_001.mesh      # Cached tessellation
-    └── ...
+├── document.json             # Features, bodies, metadata, meshes
+├── assets/                   # The files an import came from, kept verbatim
+│   └── <uuid>.step
+└── brep/                     # Per-body B-rep snapshots, ogeom native text
+    ├── <uuid>.bin
+    └── <uuid>.colors         # That body's per-face colours
 ```
+
+The archive carries the source file and every snapshot, so a document with an
+import runs to hundreds of megabytes. Packing and unpacking therefore happen
+on a worker rather than the UI thread, and the status bar counts the megabytes
+as they go.
 
 ### Document Structure
 
@@ -385,41 +388,32 @@ pub enum Compression {
 - `.prtcad.gz` - Tar archive compressed with gzip
 - `.prtcad.zst` - Tar archive compressed with zstd (recommended for better compression)
 
-## Implementation Plan
+## How an edit reaches the file
 
-1. **Phase 1: Generic Core Structure**
+The Document is not saved by whoever edited it. Three rules hold the model
+together:
 
-   - Define `FeatureId`, `BodyId` types
-   - Implement generic `FeatureTree` with DAG operations
-   - Create `FeatureNode` (type-erased feature storage)
-   - Update `Document` with generic feature tree
-   - Add `WorkbenchStorage` for workbench-specific data
+1. **Every user-edit mutator records exactly one operation.** Mutators
+   validate, resolve ids and timestamps, build a `DocumentOp`, apply it and
+   record it. Replay runs the same code the live edit ran, so a document
+   rebuilt from its operations is the document that was edited. Derived state
+   — dirty flags, recompute errors, the imported-geometry sidecars — records
+   nothing: it is a consequence, not history.
 
-2. **Phase 2: WorkbenchFeature Trait**
+2. **Undo is the inverse of those operations, not a snapshot.** Each mutator
+   computes its inverse from the state before it applied. Gestures close at
+   journal boundaries, so a drag is one step. A few operations cannot be
+   inverted — an import, an asset add — and those are barriers that clear the
+   history behind them.
 
-   - Define `WorkbenchFeature` trait
-   - Add serialization/deserialization helpers
-   - Implement generic `add_feature()` method
+3. **The app is a client of a document server.** `core_document::server`
+   is the wire protocol; `printcad-serverd` implements it, one daemon per
+   document over a UNIX socket, storing opaque `.prtcad` bytes and an
+   operation log beside them (`<file>.oplog.jsonl`). The daemon never
+   deserializes a Document: the client serializes, the server stores. When no
+   daemon can start, the same trait is satisfied by direct file I/O and the
+   status bar says so.
 
-3. **Phase 3: Sketch Workbench Integration**
-
-   - Implement `SketchFeature` with `WorkbenchFeature` trait
-   - Add convenience methods in `wb_sketch` crate
-   - Migrate sketch storage from workbench state to Document
-
-4. **Phase 4: Dependency Tracking**
-
-   - Implement dependency graph (already generic)
-   - Add dirty flag propagation
-   - Implement topological sort for recomputation
-
-5. **Phase 5: Part Design Features**
-
-   - Implement `PadFeature`, `PocketFeature`, etc. with `WorkbenchFeature`
-   - Add convenience methods in `wb_part` crate
-   - Link features to bodies
-
-6. **Phase 6: Bodies**
-   - Add Body storage
-   - Link features to bodies
-   - Support kernel handle storage
+The point of the three together is that a second editor is a transport
+change, not a rewrite: operations already describe every edit, already carry
+their author, and already replay identically.
