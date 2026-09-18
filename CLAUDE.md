@@ -2,7 +2,7 @@
 
 Linux-native parametric CAD app aimed at FDM/SLA printing.
 Rust workspace + Vulkan (ash) + egui + the pure-Rust ogeom B-rep kernel
-(github.com/gilbertorconde/ogeom-rs, pinned by rev in `Cargo.toml`).
+(crates.io, `Cargo.lock` holds the exact version).
 
 **Never name the tools or systems this project draws on** — FreeCAD, X11,
 or any other reference point — anywhere in the project: no code, comments,
@@ -26,13 +26,14 @@ cargo fmt --all                   # CI enforces --check
   directory, so a release run needs `cargo build --release` for the whole
   workspace — `-p app_shell` alone leaves `target/release/printcad-serverd`
   missing and the app falls back to direct file I/O with a warning.
-- No system CAD libraries needed — the ogeom kernel is pure Rust, pulled as a
-  pinned git dependency (bump the rev in the workspace `Cargo.toml`; a
-  commented `[patch]` there points at a local checkout for kernel dev).
+- No system CAD libraries needed — the ogeom kernel is pure Rust, released to
+  crates.io. Bump it with `cargo update -p ogeom`; a commented
+  `[patch.crates-io]` in the workspace `Cargo.toml` points at a local checkout
+  for kernel dev.
 - 6-DoF input (SpaceMouse and the like) comes from the `sixdof` crate
-  (github.com/gilbertorconde/sixdof), pinned by rev in the workspace
-  `Cargo.toml` exactly as the kernel is, with a commented `[patch]` beside it
-  for local work. It needs no system library: it speaks the spacenavd socket
+  (crates.io, this project's own), consumed by version exactly as the kernel
+  is, with the same commented `[patch.crates-io]` for local work. It needs no
+  system library: it speaks the spacenavd socket
   protocol itself, with the display-server (Magellan) protocol behind its
   `magellan` feature. Nothing is required to build or run without a device.
 - STEP tests use the bundled fixture

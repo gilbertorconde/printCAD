@@ -102,7 +102,7 @@
 
 ## Risks & Open Questions
 
-- Kernel co-evolution (ogeom lives in its own repo); pin revisions and bump deliberately.
+- Kernel co-evolution (ogeom is released from its own repo); `Cargo.lock` holds the version and `cargo update -p ogeom` is the deliberate bump.
 - Constraint solver performance for complex sketches—prototype early.
 - egui is an immediate-mode toolkit: docking and free-floating panels are the project's to build, not the toolkit's to provide.
 - Future cross-platform requirements might necessitate different windowing/input stacks; keep layers clean.
