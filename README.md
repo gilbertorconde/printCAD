@@ -119,13 +119,28 @@ are dropped.
 Settings live in `~/.config/printcad/settings.json` and are edited in
 Preferences (**Ctrl+,**):
 
-- **General** — log panel, frame rate cap
+- **General** — log panel, frame rate cap, and a diagnostics switch (off by
+  default) that writes a report for every STEP import
 - **Display** — camera (projection, field of view, clip planes, axis preset),
   lighting, rendering (MSAA, preferred GPU on hybrid systems)
 - **Input** — mouse navigation (style, sensitivities, zoom to cursor, orbit
   around the point under the cursor) and the 6-DoF mouse: what each of its
   six movements does, how fast, which read backwards, and what its buttons do
 - **Units**, **Import / Export**, and a page per workbench
+
+## Reporting an import problem
+
+The STEP reader says everything it had to say about a file — an edge that
+misses its vertex by a micron, a face it could not trim — and on a real-world
+file that is hundreds of lines. They stay out of your way unless you ask:
+turn on **Preferences › General › Diagnostics › Write a report for every STEP
+import**, import the file again, and the log names a file in the temp dir
+(`/tmp/printcad/import-reports/<name>-<stamp>.txt`) holding the kernel's
+version, the warnings counted by kind with the worst value and an entity to
+look at first, the faces that will draw with gaps, and every line. Send that
+file, with the STEP file if you can, to the
+[kernel](https://github.com/gilbertorconde/ogeom-rs/issues) or printCAD
+issue tracker. The temp dir clears itself, so nothing accumulates.
 
 ## Project structure
 

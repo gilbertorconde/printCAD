@@ -41,6 +41,9 @@ pub struct UserSettings {
     /// How a 6-DoF mouse drives the view.
     #[serde(default)]
     pub sixdof: SixDofSettings,
+    /// What the app writes down for someone else to read.
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
 }
 
 impl Default for UserSettings {
@@ -53,8 +56,21 @@ impl Default for UserSettings {
             preferred_gpu: None,
             fps_cap: 0.0,
             sixdof: SixDofSettings::default(),
+            diagnostics: DiagnosticsSettings::default(),
         }
     }
+}
+
+/// Files the app writes for a developer rather than for the user — off by
+/// default, since they are only worth having when there is someone to send
+/// them to.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiagnosticsSettings {
+    /// Every STEP import writes what the reader had to say — the warnings by
+    /// kind and in full, the faces that will draw with gaps, what was skipped
+    /// — to a file in the temp dir, for the kernel's or printCAD's developers.
+    pub import_report: bool,
 }
 
 /// How a 6-DoF mouse — a six-axis navigation puck — drives the view.
@@ -574,5 +590,23 @@ impl Clone for SettingsStore {
         Self {
             path: self.path.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn diagnostics_are_off_until_asked_for() {
+        assert!(!UserSettings::default().diagnostics.import_report);
+        // A settings file written before the field existed still loads, and
+        // lands on the default rather than failing.
+        let older = serde_json::to_value(UserSettings::default()).unwrap();
+        let mut older = older.as_object().unwrap().clone();
+        older.remove("diagnostics");
+        let loaded: UserSettings =
+            serde_json::from_value(serde_json::Value::Object(older)).unwrap();
+        assert!(!loaded.diagnostics.import_report);
     }
 }

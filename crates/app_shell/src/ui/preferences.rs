@@ -578,6 +578,7 @@ fn reset_group(state: &mut PreferencesState) {
         PrefGroup::General => {
             state.draft.fps_cap = defaults.fps_cap;
             state.draft.rendering.show_log_panel = defaults.rendering.show_log_panel;
+            state.draft.diagnostics = defaults.diagnostics;
         }
         PrefGroup::Display => {
             let camera = &mut state.draft.camera;
@@ -639,6 +640,21 @@ fn general_page(
                             .decimals(0),
                     )
                     .hint("0 leaves the rate to the display"),
+                ],
+                filter,
+            );
+            pref_group(
+                ui,
+                "Diagnostics",
+                vec![
+                    PrefRow::toggle(
+                        "Write a report for every STEP import",
+                        &mut draft.diagnostics.import_report,
+                    )
+                    .hint(
+                        "Everything the reader had to say about the file, written to the temp \
+                         dir for sending to the kernel or printCAD developers",
+                    ),
                 ],
                 filter,
             );

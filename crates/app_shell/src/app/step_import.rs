@@ -225,9 +225,18 @@ impl PrintCadApp {
             source_unit,
         } = imported;
 
-        // The reader's warnings go to a file, whole: a thousand lines in the
-        // terminal help nobody, and a file is what gets sent to the kernel.
-        if !report.is_clean() {
+        // The reader's warnings never reach the terminal one by one: a
+        // thousand lines help nobody. With the diagnostic on they go to a
+        // file, whole, which is what gets sent to a developer; otherwise one
+        // line says how many there were and where the switch is.
+        if !report.is_clean() && !self.user_settings.diagnostics.import_report {
+            app_log::warn(format!(
+                "STEP import read with {} warnings and {} untrimmed faces \
+                 (Preferences › General › Diagnostics writes them to a file)",
+                report.warnings.len(),
+                report.untrimmed_faces.len()
+            ));
+        } else if !report.is_clean() {
             match crate::app::import_report::write(
                 path,
                 raw_bytes.len(),
