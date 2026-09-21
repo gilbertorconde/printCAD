@@ -220,9 +220,32 @@ impl PrintCadApp {
 
         let ImportedModel {
             bodies: imported_bodies,
+            report,
             nodes: imported_nodes,
             source_unit,
         } = imported;
+
+        // The reader's warnings go to a file, whole: a thousand lines in the
+        // terminal help nobody, and a file is what gets sent to the kernel.
+        if !report.is_clean() {
+            match crate::app::import_report::write(
+                path,
+                raw_bytes.len(),
+                imported_bodies.len(),
+                &report,
+            ) {
+                Ok(written) => app_log::warn(format!(
+                    "STEP import read with {} warnings and {} untrimmed faces; report at {}",
+                    report.warnings.len(),
+                    report.untrimmed_faces.len(),
+                    written.display()
+                )),
+                Err(err) => app_log::warn(format!(
+                    "STEP import read with {} warnings; the report could not be written: {err}",
+                    report.warnings.len()
+                )),
+            }
+        }
 
         if imported_bodies.is_empty() {
             app_log::warn(format!(

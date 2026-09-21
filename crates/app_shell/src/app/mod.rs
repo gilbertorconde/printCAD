@@ -4,6 +4,7 @@ pub(crate) mod commands;
 pub(crate) mod doc_io;
 pub(crate) mod frame;
 pub(crate) mod gfx;
+pub(crate) mod import_report;
 pub(crate) mod input;
 pub(crate) mod recompute;
 pub(crate) mod sixdof;

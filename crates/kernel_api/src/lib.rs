@@ -266,6 +266,11 @@ pub enum LengthUnit {
 pub struct ImportedModel {
     /// One entry per top-level body in the source file.
     pub bodies: Vec<ImportedBody>,
+    /// Everything the reader had to say about the file, kept whole so it
+    /// can be handed to whoever maintains the kernel rather than scrolled
+    /// past in a terminal.
+    #[serde(default)]
+    pub report: ImportReport,
     /// Optional assembly/object tree reconstructed from STEP/XCAF labels.
     #[serde(default)]
     pub nodes: Vec<ImportedNode>,
@@ -274,6 +279,49 @@ pub struct ImportedModel {
     /// is purely informational and used by the UI to pick a display unit.
     #[serde(default)]
     pub source_unit: Option<LengthUnit>,
+}
+
+/// What the reader had to say about a file.
+///
+/// A community STEP file routinely produces a thousand lines of "this edge
+/// misses its vertex by a micron"; each one is true and none is actionable
+/// on its own. The kernel counts them by kind, and the whole prose stays
+/// here for the report a user can send along with the file.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ImportReport {
+    /// The kernel that read the file, by name and version.
+    pub kernel: String,
+    /// One entry per kind of imperfection, largest count first.
+    pub summary: Vec<ImportWarningKind>,
+    /// Every warning, one line each, in the order the reader met them.
+    pub warnings: Vec<String>,
+    /// STEP entity ids of faces that read without a complete trim, so they
+    /// draw with gaps unless healed.
+    pub untrimmed_faces: Vec<u64>,
+    /// Entity keywords the reader never visited, with counts. Presentation
+    /// and annotation land here by design; geometry landing here is a gap.
+    pub skipped: Vec<(String, usize)>,
+}
+
+impl ImportReport {
+    /// Whether there is anything worth writing down.
+    pub fn is_clean(&self) -> bool {
+        self.warnings.is_empty() && self.untrimmed_faces.is_empty()
+    }
+}
+
+/// One kind of imperfect import, counted rather than repeated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportWarningKind {
+    /// Stable across runs: `vertex-miss`, `boundary-slop`, `fit-short`,
+    /// `untrimmed`.
+    pub kind: String,
+    pub count: usize,
+    /// The worst measured value among them, in millimetres, for the kinds
+    /// that measure one; zero otherwise.
+    pub worst: f64,
+    /// One entity id to look at first.
+    pub exemplar: u64,
 }
 
 /// One segment of a closed 2D profile wire, in sketch-plane coordinates

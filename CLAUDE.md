@@ -177,8 +177,12 @@ op/face/solid loops call `progress::checkpoint()` themselves, since
 `(done, total)` — kernel-side, or ours via `progress::stage_at` fed by a
 shared monotone counter in the parallel import loop — draw as a determinate
 bar instead of the spinner; a new context resets counts to unknown.
-`report.untrimmed_faces` (STEP entity ids of faces that will draw with gaps)
-is logged structured at import. **Announcement discipline:** `progress::
+The reader's warnings never reach the terminal one by one: `ImportedModel.report`
+carries them (by kind with counts, the full prose, untrimmed face ids, skipped
+keywords) and `app/import_report.rs` writes them to
+`$TMPDIR/printcad/import-reports/<stem>-<stamp>.txt` (temp, so the system
+clears them), logging one line with the path — that file is what goes to the
+kernel's maintainer. **Announcement discipline:** `progress::
 context` marks a *phase* and resets the display — call it once per phase,
 never per body or per face. Anything emitted inside a loop is
 `progress::detail` (a kernel-style sub-stage: shown under a sequential

@@ -18,7 +18,7 @@ use ogeom::core::parallel::map_ordered;
 use ogeom::doc::{Document, ProductId, ProductKind};
 use ogeom::math::{Point, Transform, Vector};
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::{progress, tess};
 
@@ -42,9 +42,38 @@ pub fn import_step(
         .map_err(|e| KernelError::Import(format!("STEP read failed: {e}")))?;
     let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
 
+    // A thousand true lines nobody can act on one by one: they go into the
+    // report the app writes out, and reach the terminal only when asked.
     for warning in &import.report.warnings {
-        warn!(target: "printcad.kernel", "STEP import warning: {warning}");
+        debug!(target: "printcad.kernel", "STEP import warning: {warning}");
     }
+    let report = kernel_api::ImportReport {
+        kernel: format!("ogeom {}", ogeom::VERSION),
+        summary: import
+            .report
+            .summary
+            .iter()
+            .map(|kind| kernel_api::ImportWarningKind {
+                kind: kind.kind.to_string(),
+                count: kind.count,
+                worst: kind.worst,
+                exemplar: kind.exemplar,
+            })
+            .collect(),
+        warnings: import.report.warnings.clone(),
+        untrimmed_faces: import
+            .report
+            .untrimmed_faces
+            .iter()
+            .map(|f| f.entity)
+            .collect(),
+        skipped: import
+            .report
+            .skipped
+            .iter()
+            .map(|(keyword, count)| (keyword.clone(), *count))
+            .collect(),
+    };
     if !import.report.untrimmed_faces.is_empty() {
         // The structured form of the warnings above: STEP entity ids of faces
         // whose boundary could not be trimmed to the surface, so their bodies
@@ -165,6 +194,7 @@ pub fn import_step(
 
     Ok(ImportedModel {
         bodies,
+        report,
         nodes,
         source_unit,
     })
