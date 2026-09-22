@@ -846,14 +846,26 @@ fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiR
     response
 }
 
-/// Bodies and imported parts carry a single action: Delete, which takes
-/// the body's features and geometry with it.
+/// Bodies and imported parts: select the body, or Delete, which takes the
+/// body's features and geometry with it.
 fn attach_body_menu(response: Response, node: &TreeNode, result: &mut TreeUiResult) -> Response {
     if !matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_)) {
         return response;
     }
+    let mut select = false;
     let mut delete = false;
     response.context_menu(|ui| {
+        if node.body.is_some() {
+            if ui
+                .button("Select body")
+                .on_hover_text("Select the whole body in the viewport")
+                .clicked()
+            {
+                select = true;
+                ui.close();
+            }
+            ui.separator();
+        }
         if ui
             .button("Delete")
             .on_hover_text("Remove this body, its features and its geometry")
@@ -863,6 +875,9 @@ fn attach_body_menu(response: Response, node: &TreeNode, result: &mut TreeUiResu
             ui.close();
         }
     });
+    if select {
+        result.selection = Some(node.id);
+    }
     if delete {
         result.delete_item = Some(node.id);
     }

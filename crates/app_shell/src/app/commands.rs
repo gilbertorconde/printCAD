@@ -457,6 +457,11 @@ impl PrintCadApp {
     /// Design panel with its settings editor open.
     pub(crate) fn apply_tree_activation(&mut self, item: TreeItemId) {
         let TreeItemId::Feature(id) = item else {
+            // A body or an imported part: the whole body is the selection,
+            // the same answer the row's menu gives.
+            if matches!(item, TreeItemId::Body(_) | TreeItemId::ImportedObject(_)) {
+                self.apply_tree_selection(item);
+            }
             return;
         };
         let Some(node) = self.document.get_feature_meta(id) else {

@@ -346,12 +346,14 @@ selected face, or the whole selected body, draws as a translucent overlay
 over itself, never as a tint (`rendering.selection_color` /
 `selection_opacity`, Preferences › Display › Rendering) through the
 renderer's blended pass: any `BodySubmission` with `opacity < 1` draws
-after the opaque bodies and their edges, depth-tested, never writing depth.
+after the opaque bodies and their edges, depth-tested, never writing depth,
+and the pick pass skips it — an overlay is never what the cursor is over.
 While editing a sketch the view is locked planar (orbit + cube rotation
 disabled; pan/zoom/roll allowed). In the tree, bodies and features start
 open and imported assemblies start closed; the filter looks through closed
-branches, and a double click or "Show in tree" opens a body's way to
-itself. The window opens
+branches, a double click or "Show in tree" opens a body's way to itself,
+and a body row's double click or "Select body" selects the whole body. The
+window opens
 on the start page (`Screen::Start`); the recent list lives in
 `settings::recent`.
 
