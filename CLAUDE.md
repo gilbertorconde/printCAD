@@ -339,7 +339,9 @@ MMB drag = orbit (MMB click = pivot pick) · RMB drag = pan · wheel = zoom ·
 LMB = select (click sketch → tree-select; click solid → face-first, double
 click → whole body; LMB drag in sketch = box select; ctrl = additive).
 While editing a sketch the view is locked planar (orbit + cube rotation
-disabled; pan/zoom/roll allowed). The window opens on the start page
+disabled; pan/zoom/roll allowed). In the tree, bodies and features start
+open and imported assemblies start closed; the filter looks through closed
+branches, and a double-clicked body opens its way to itself. The window opens on the start page
 (`Screen::Start`); the recent list lives in `settings::recent`.
 
 ## UI conventions

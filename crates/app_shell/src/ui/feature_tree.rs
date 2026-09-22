@@ -492,7 +492,7 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         tooltip: None,
     };
     let open = draw_row(ui, &root, &options, &mut result, None);
-    if open {
+    if open || !options.filter.is_empty() {
         for node in model.nodes() {
             if matches_filter(node, options.filter) {
                 draw_node(ui, node, 1, &options, &mut result);
@@ -528,9 +528,13 @@ struct RowSpec<'a> {
 
 const ROW_FONT: f32 = 12.5;
 
+/// Whether a branch shows its children. Until the user says otherwise, a
+/// body and its features are open — that is the work in progress — and an
+/// imported assembly is closed: a real-world STEP file is hundreds of parts,
+/// and unfolding all of them would bury the rest of the tree.
 fn open_state(ui: &Ui, id: TreeItemId) -> bool {
     ui.data(|d| d.get_temp::<bool>(egui::Id::new(("tree_open", id))))
-        .unwrap_or(true)
+        .unwrap_or(!matches!(id, TreeItemId::ImportedObject(_)))
 }
 
 fn set_open_state(ui: &Ui, id: TreeItemId, open: bool) {
@@ -759,7 +763,9 @@ fn draw_node(
         tooltip: node.tooltip.as_deref(),
     };
     let open = draw_row(ui, &spec, options, result, Some(node));
-    if open {
+    // A closed branch stays closed to the eye, but not to a filter: what
+    // matches is shown wherever it sits.
+    if open || !options.filter.is_empty() {
         for child in &node.children {
             if matches_filter(child, options.filter) {
                 draw_node(ui, child, depth + 1, options, result);
