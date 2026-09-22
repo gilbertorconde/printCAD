@@ -37,7 +37,7 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use units::{Unit, format_length_mm};
 pub use workbench::{
-    CommandDescriptor, MarkKind, OvpRow, OvpWidget, ScreenSpaceLabel, ScreenSpaceMark,
+    CommandDescriptor, FeatureInfo, MarkKind, OvpRow, OvpWidget, ScreenSpaceLabel, ScreenSpaceMark,
     ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
     ToolDescriptor, ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
@@ -1564,6 +1564,8 @@ pub enum DocumentError {
     WorkbenchExists(String),
     #[error("workbench `{0}` is not registered")]
     WorkbenchMissing(String),
+    #[error("feature kind `{kind}` is already claimed by workbench `{by}`")]
+    FeatureKindClaimed { kind: String, by: String },
     #[error("document serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("feature not found: {0:?}")]

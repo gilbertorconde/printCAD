@@ -127,7 +127,19 @@ cargo fmt --all                   # CI enforces --check
   draft `UserSettings`, committed by `CommitSettings`), `command_palette`
   (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.
 
-The `Workbench` trait's UI surface: `configure` registers
+The `Workbench` trait is the only seam between the host and a bench; the
+host never names a bench (`git grep -E 'wb_part|wb_sketch|"wb\.(part|sketch)"|core\.datum' -- crates/app_shell/src`
+counts the remaining exceptions and must only fall). `descriptor()` says
+what a bench is: `icon`, the `feature_kinds` it claims (the
+`FeatureNode::workbench_id` values it presents, edits, renders, picks and
+deletes — Part Design claims `core.datum` too; a kind claimed twice fails
+registration), and `modal` for an edit-session bench (entering it remembers
+the bench to return to; the first non-modal registration is where a new
+document lands, `DocumentService::landing_workbench`). The registry answers
+by kind (`owner_of`, `feature_info`), so the tree's icon and Kind row, the
+hover card, the double-click edit route and the view lock come from the
+owning bench's `feature_info`/`locks_view_to_plane`, whichever bench is
+active. The UI surface: `configure` registers
 `ToolDescriptor`s (icon, row, category, variants, `planned` note);
 `is_tool_enabled`/`tool_toggled` decide button state each frame; `task()` +
 `ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);

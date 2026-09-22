@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::FeatureId;
+use crate::feature::FeatureNode;
 use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -262,12 +263,23 @@ pub enum TaskOutcome {
     Cancelled,
 }
 
-/// User-facing description provided by workbenches to populate menus.
+/// What a workbench is, for the switcher, the menus, the Preferences rail
+/// and the registry's lookups.
 #[derive(Debug, Clone)]
 pub struct WorkbenchDescriptor {
     pub id: WorkbenchId,
     pub label: String,
     pub description: String,
+    /// The design set's icon for the bench.
+    pub icon: &'static str,
+    /// The `FeatureNode::workbench_id` values this bench presents, renders,
+    /// picks, edits and deletes. Its own id is one of them whenever it
+    /// stores features. Registration fails when two benches claim one.
+    pub feature_kinds: Vec<WorkbenchId>,
+    /// An edit-session bench: entering it from another bench remembers
+    /// that bench as the one to return to when the session ends. Never
+    /// the bench a new document lands in.
+    pub modal: bool,
 }
 
 impl WorkbenchDescriptor {
@@ -280,6 +292,62 @@ impl WorkbenchDescriptor {
             id: WorkbenchId::new(id),
             label: label.into(),
             description: description.into(),
+            icon: "workbench-print",
+            feature_kinds: Vec::new(),
+            modal: false,
+        }
+    }
+
+    pub fn icon(mut self, icon: &'static str) -> Self {
+        self.icon = icon;
+        self
+    }
+
+    pub fn feature_kinds<I, S>(mut self, kinds: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.feature_kinds = kinds.into_iter().map(WorkbenchId::new).collect();
+        self
+    }
+
+    pub fn modal(mut self) -> Self {
+        self.modal = true;
+        self
+    }
+}
+
+/// How a feature shows up outside its bench: the tree row, the property
+/// panel, the hover card.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeatureInfo {
+    /// The design set's icon for the row.
+    pub icon: &'static str,
+    /// What this particular feature is: "Pad", "Datum plane", "Sketch".
+    pub kind_label: String,
+    /// The family the tree's Kind row names: "Part design feature".
+    pub family_label: String,
+    /// The feature contributes to its body's solid; the hover card names
+    /// a body after the last such feature.
+    pub builds_solid: bool,
+}
+
+impl FeatureInfo {
+    /// What a feature of a kind no bench claims looks like.
+    pub fn fallback(node: &FeatureNode) -> Self {
+        let family = format!(
+            "{} feature",
+            node.workbench_id
+                .as_str()
+                .trim_start_matches("wb.")
+                .replace(['-', '_'], " ")
+        );
+        Self {
+            icon: "tree-feature",
+            kind_label: family.clone(),
+            family_label: family,
+            builds_solid: false,
         }
     }
 }
@@ -291,6 +359,19 @@ impl WorkbenchDescriptor {
 pub trait Workbench: Send {
     /// Returns metadata describing this workbench.
     fn descriptor(&self) -> WorkbenchDescriptor;
+
+    /// How a feature of one of this bench's `feature_kinds` presents. The
+    /// registry calls it on the owning bench whichever bench is active.
+    fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {
+        FeatureInfo::fallback(node)
+    }
+
+    /// While this bench has an edit session open (`editing_feature` is
+    /// `Some`) the view stays square to its plane: orbit off, pan, zoom
+    /// and roll on.
+    fn locks_view_to_plane(&self) -> bool {
+        false
+    }
 
     /// Called once at registration to declare tools and commands.
     fn configure(&self, context: &mut WorkbenchContext);

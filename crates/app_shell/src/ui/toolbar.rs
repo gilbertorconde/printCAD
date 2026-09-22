@@ -223,12 +223,11 @@ fn draw_tool(
 
 fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
     let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
-    let current = workbenches
+    let (current, icon) = workbenches
         .iter()
         .find(|wb| wb.id == active_workbench.0)
-        .map(|wb| (wb.label.clone(), wb.description.clone()))
-        .unwrap_or_else(|| ("(none)".to_string(), String::new()));
-    let icon = workbench_icon(active_workbench.0.as_str());
+        .map(|wb| ((wb.label.clone(), wb.description.clone()), wb.icon))
+        .unwrap_or_else(|| (("(none)".to_string(), String::new()), "workbench-print"));
     // An exact footprint: a frame grown inside the row would claim the
     // rest of it.
     let (rect, response) =
@@ -262,12 +261,7 @@ fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
             let selected = *active_workbench == target;
             let row = ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_2;
-                ui_kit::icon::draw(
-                    ui,
-                    workbench_icon(wb.id.as_str()),
-                    16.0,
-                    if selected { ACCENT } else { TEXT2 },
-                );
+                ui_kit::icon::draw(ui, wb.icon, 16.0, if selected { ACCENT } else { TEXT2 });
                 ui.label(RichText::new(&wb.label).font(sans(FONT_SM)).color(TEXT1));
             });
             let r = ui
@@ -283,15 +277,6 @@ fn workbench_combo(ui: &mut egui::Ui, active_workbench: &mut ActiveWorkbench) {
             }
         }
     });
-}
-
-/// The design set's icon for a workbench id.
-pub fn workbench_icon(id: &str) -> &'static str {
-    match id {
-        "wb.part" => "workbench-part-design",
-        "wb.sketch" => "workbench-sketcher",
-        _ => "workbench-print",
-    }
 }
 
 fn row_frame() -> egui::Frame {

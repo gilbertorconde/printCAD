@@ -262,7 +262,11 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 /// The rows of the Data tab for `selected`.
-fn data_groups(document: &Document, selected: TreeItemId) -> Vec<(String, Vec<PropRow>)> {
+fn data_groups(
+    document: &Document,
+    registry: &core_document::DocumentService,
+    selected: TreeItemId,
+) -> Vec<(String, Vec<PropRow>)> {
     let unit = document.display_unit();
     match selected {
         TreeItemId::DocumentRoot => vec![(
@@ -321,7 +325,7 @@ fn data_groups(document: &Document, selected: TreeItemId) -> Vec<(String, Vec<Pr
                 PropRow::text("Label", &node.name),
                 PropRow::text(
                     "Kind",
-                    super::feature_tree::describe_workbench(node.workbench_id.as_str()),
+                    super::feature_tree::feature_info(registry, node).family_label,
                 ),
                 PropRow::mono("Created", format_created(node.created_at)),
             ];
@@ -365,6 +369,7 @@ fn data_groups(document: &Document, selected: TreeItemId) -> Vec<(String, Vec<Pr
 pub fn draw_property_panel(
     ui: &mut egui::Ui,
     document: &Document,
+    registry: &core_document::DocumentService,
     selected: TreeItemId,
     detail: Option<&str>,
     tab: &mut PropertyTab,
@@ -447,7 +452,7 @@ pub fn draw_property_panel(
         .auto_shrink([false, false])
         .show(ui, |ui| match *tab {
             PropertyTab::Data => {
-                for (group, rows) in data_groups(document, selected) {
+                for (group, rows) in data_groups(document, registry, selected) {
                     group_header(ui, &group);
                     for row in rows {
                         let editable_label =

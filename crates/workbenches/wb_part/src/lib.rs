@@ -22,7 +22,7 @@ pub use feature::{
 };
 
 use core_document::{
-    BodyId, FeatureId, InputResult, TaskInfo, ToolDescriptor, ToolVariant, Workbench,
+    BodyId, FeatureId, FeatureInfo, InputResult, TaskInfo, ToolDescriptor, ToolVariant, Workbench,
     WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
     WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
@@ -513,6 +513,30 @@ impl Workbench for PartDesignWorkbench {
             "Part Design",
             "Feature-based solid modeling workbench.",
         )
+        .icon("workbench-part-design")
+        .feature_kinds(["wb.part", "core.datum"])
+    }
+
+    fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
+        if node.workbench_id.as_str() == "core.datum" {
+            let datum = core_document::DatumFeature::from_json(&node.data).ok();
+            return FeatureInfo {
+                icon: datum.as_ref().map(datum_icon).unwrap_or("datum-plane"),
+                kind_label: "Datum".to_string(),
+                family_label: "Datum".to_string(),
+                builds_solid: false,
+            };
+        }
+        let feature = PartFeature::from_json(&node.data).ok();
+        FeatureInfo {
+            icon: feature.as_ref().map(|f| f.icon()).unwrap_or("tree-feature"),
+            kind_label: feature
+                .as_ref()
+                .map(|f| f.kind_label().to_string())
+                .unwrap_or_else(|| "Part design feature".to_string()),
+            family_label: "Part design feature".to_string(),
+            builds_solid: true,
+        }
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -938,10 +962,50 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
     mesh
 }
 
+/// The design set's icon for a datum's shape.
+pub(crate) fn datum_icon(datum: &core_document::DatumFeature) -> &'static str {
+    match datum.shape {
+        core_document::DatumShape::Plane { .. } => "datum-plane",
+        core_document::DatumShape::Line { .. } => "datum-line",
+        core_document::DatumShape::Point => "datum-point",
+    }
+}
+
 #[cfg(all(test, feature = "egui"))]
 mod icon_coverage {
     use super::*;
     use core_document::{Workbench, WorkbenchContext};
+
+    #[test]
+    fn the_bench_and_every_feature_family_name_an_icon_in_the_set() {
+        let wb = PartDesignWorkbench::default();
+        assert!(ui_kit::icon::exists(wb.descriptor().icon));
+        for shape in ["datum-plane", "datum-line", "datum-point"] {
+            assert!(ui_kit::icon::exists(shape), "unknown icon {shape}");
+        }
+        let node = core_document::FeatureNode::new(
+            FeatureId(uuid::Uuid::new_v4()),
+            &PartFeature::Pad {
+                sketch: FeatureId(uuid::Uuid::new_v4()),
+                length: 10.0,
+                reversed: false,
+                symmetric: false,
+                mode: ExtrudeMode::Dimension,
+                length2: 0.0,
+                taper_deg: 0.0,
+                up_to_face: None,
+                up_to_offset: 0.0,
+            },
+        );
+        let info = wb.feature_info(&node);
+        assert!(
+            ui_kit::icon::exists(info.icon),
+            "unknown icon {}",
+            info.icon
+        );
+        assert_eq!(info.kind_label, "Pad");
+        assert!(info.builds_solid);
+    }
 
     #[test]
     fn every_tool_names_an_icon_in_the_set() {

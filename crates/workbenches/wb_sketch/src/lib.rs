@@ -22,10 +22,10 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use core_document::{
-    BodyId, CommandDescriptor, FeatureId, InputResult, KeyCode, ScreenSpaceLabel, ScreenSpaceMark,
-    SketchPalette, StatusItems, TaskInfo, ToolDescriptor, ToolHint, ToolVariant, ViewportHud,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BodyId, CommandDescriptor, FeatureId, FeatureInfo, InputResult, KeyCode, ScreenSpaceLabel,
+    ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo, ToolDescriptor, ToolHint, ToolVariant,
+    ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
+    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use feature::SketchFeature;
 use overlay::SketchProjector;
@@ -1164,6 +1164,22 @@ impl Workbench for SketchWorkbench {
             "Sketch",
             "2D sketching environment with constraints and profiles.",
         )
+        .icon("workbench-sketcher")
+        .feature_kinds(["wb.sketch"])
+        .modal()
+    }
+
+    fn feature_info(&self, _node: &core_document::FeatureNode) -> FeatureInfo {
+        FeatureInfo {
+            icon: "tree-sketch",
+            kind_label: "Sketch".to_string(),
+            family_label: "Sketch".to_string(),
+            builds_solid: false,
+        }
+    }
+
+    fn locks_view_to_plane(&self) -> bool {
+        true
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -2303,6 +2319,17 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
 mod icon_coverage {
     use super::*;
     use core_document::{Workbench, WorkbenchContext};
+
+    #[test]
+    fn the_bench_and_its_feature_name_an_icon_in_the_set() {
+        let wb = SketchWorkbench::default();
+        assert!(ui_kit::icon::exists(wb.descriptor().icon));
+        let node = core_document::FeatureNode::new(
+            FeatureId(uuid::Uuid::new_v4()),
+            &SketchFeature::new(Sketch::new("s"), SketchPlane::default()),
+        );
+        assert!(ui_kit::icon::exists(wb.feature_info(&node).icon));
+    }
 
     #[test]
     fn every_tool_names_an_icon_in_the_set() {

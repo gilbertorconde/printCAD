@@ -148,7 +148,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 .min_scrolled_height(tree_height)
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    let tree_model = feature_tree::DocumentTree::build(document);
+                    let tree_model = feature_tree::DocumentTree::build(document, registry);
                     let tree_ui = feature_tree::draw_tree(
                         ui,
                         &tree_model,
@@ -189,6 +189,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             let props = property_panel::draw_property_panel(
                 ui,
                 document,
+                registry,
                 selected_id,
                 selected_detail.as_deref(),
                 property_tab,

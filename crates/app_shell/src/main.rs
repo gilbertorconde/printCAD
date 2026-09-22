@@ -313,6 +313,14 @@ struct PrintCadApp {
     dimension_cache: Option<DimensionCache>,
 }
 
+/// The bench a new document lands in. A registry with no non-modal bench
+/// cannot host a document at all.
+fn landing_workbench(registry: &DocumentService) -> WorkbenchId {
+    registry
+        .landing_workbench()
+        .expect("a workbench that is not an edit session is registered")
+}
+
 /// The start page opens the session unless a bench hook asks for a
 /// document or a scene straight away.
 fn launch_screen() -> Screen {
@@ -359,6 +367,7 @@ impl PrintCadApp {
             };
         tracing::info!(server = server.name(), "document server connected");
 
+        let landing = landing_workbench(&registry);
         Self {
             settings,
             frame_submission: FrameSubmission::default(),
@@ -379,7 +388,7 @@ impl PrintCadApp {
             cursor_in_viewport: None,
             document,
             registry,
-            active_workbench: ActiveWorkbench::default(),
+            active_workbench: ActiveWorkbench(landing),
             active_document_object: None,
             active_body_id: None,
             tree_selection: Some(TreeItemId::DocumentRoot),
@@ -439,6 +448,11 @@ impl PrintCadApp {
     }
 
     /// Get the workbench ID for the currently active workbench.
+    /// The bench a new document lands in, as the registry orders them.
+    pub(crate) fn landing_workbench(&self) -> ActiveWorkbench {
+        ActiveWorkbench(landing_workbench(&self.registry))
+    }
+
     fn active_workbench_id(&self) -> WorkbenchId {
         self.active_workbench.0.clone()
     }

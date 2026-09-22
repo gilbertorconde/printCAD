@@ -391,12 +391,12 @@ impl PrintCadApp {
 
     /// Host-driven workbench switch (create-sketch flow, return-on-finish).
     /// Remembers the outgoing workbench as the return target when jumping
-    /// INTO the sketcher so finishing can jump back.
+    /// INTO an edit-session bench so finishing can jump back.
     pub(crate) fn switch_workbench_for_flow(&mut self, target: crate::WorkbenchId) {
         if self.active_workbench.0 == target {
             return;
         }
-        if target.as_str() == "wb.sketch" {
+        if self.registry.is_modal(&target) {
             self.return_workbench = Some(self.active_workbench.clone());
         }
         let old = self.active_workbench.0.clone();
@@ -464,25 +464,18 @@ impl PrintCadApp {
         let Some(node) = self.document.get_feature_meta(id) else {
             return;
         };
-        let workbench = node.workbench_id.clone();
+        let kind = node.workbench_id.clone();
         self.apply_tree_selection(item);
-        match workbench.as_str() {
-            "wb.sketch" => {
-                // The sketcher enters edit mode when the active document
-                // object is one of its sketches.
-                if self.active_workbench.0.as_str() != "wb.sketch" {
-                    self.switch_workbench_for_flow(core_document::WorkbenchId::from("wb.sketch"));
-                }
-                self.active_document_object = Some(id);
-            }
-            "wb.part" | "core.datum" => {
-                if self.active_workbench.0.as_str() != "wb.part" {
-                    self.switch_workbench_for_flow(core_document::WorkbenchId::from("wb.part"));
-                }
-                self.active_document_object = Some(id);
-            }
-            _ => {}
+        // The bench that claimed the feature's kind edits it: it becomes
+        // active and finds the feature as the active document object. A
+        // kind no bench claims is only selected.
+        let Some(owner) = self.registry.owner_id_of(&kind).cloned() else {
+            return;
+        };
+        if self.active_workbench.0 != owner {
+            self.switch_workbench_for_flow(owner);
         }
+        self.active_document_object = Some(id);
     }
 
     /// Apply a history context-menu action from the feature tree.
@@ -661,7 +654,7 @@ impl PrintCadApp {
     /// A fresh document from a start-page card: one body in Part Design,
     /// plus an XY sketch open for editing when asked.
     fn start_new_document(&mut self, kind: StartKind) {
-        let part = ActiveWorkbench::default();
+        let part = self.landing_workbench();
         if self.active_workbench != part {
             let old = self.active_workbench.0.clone();
             self.call_workbench_deactivate(&old);

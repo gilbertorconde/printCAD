@@ -648,15 +648,14 @@ impl PrintCadApp {
     /// (sketch tessellations, imported bodies, workbench overlay meshes).
     /// Returns the workbench's screen-space overlays, which are drawn via
     /// egui rather than the 3D pass.
-    /// True while the sketch workbench is editing a sketch. Gates the
-    /// camera's out-of-plane rotation so the view stays planar.
+    /// True while the active workbench has an edit session open that keeps
+    /// the view square to its plane. Gates the camera's out-of-plane
+    /// rotation and the hover feedback that would compete with the bench's
+    /// own.
     pub(crate) fn sketch_editing_active(&self) -> bool {
-        self.active_workbench.0.as_str() == "wb.sketch"
-            && self
-                .active_document_object
-                .and_then(|id| self.document.get_feature_meta(id))
-                .map(|n| n.workbench_id.as_str() == "wb.sketch")
-                .unwrap_or(false)
+        self.registry
+            .workbench(&self.active_workbench.0)
+            .is_ok_and(|wb| wb.locks_view_to_plane() && wb.editing_feature().is_some())
     }
 
     fn build_scene_submission(&mut self, dt_secs: f32) -> ViewportData {
@@ -1069,9 +1068,18 @@ impl PrintCadApp {
             .iter()
             .find(|b| b.id == body)
             .map(|b| b.name.clone())?;
-        let feature = wb_part::part_features_of_body(&self.document, body)
-            .last()
-            .map(|(_, f)| f.kind_label());
+        // The body is named after the last feature that shaped its solid.
+        let feature = self
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(body))
+            .filter_map(|(id, n)| {
+                let info = self.registry.feature_info(n)?;
+                info.builds_solid.then_some((n.seq, *id, info.kind_label))
+            })
+            .max_by_key(|(seq, id, _)| (*seq, *id))
+            .map(|(_, _, kind)| kind);
         let title = match feature {
             Some(kind) => format!("{body_name} · {kind}"),
             None => body_name,

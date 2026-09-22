@@ -45,14 +45,6 @@ pub enum Screen {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveWorkbench(pub WorkbenchId);
 
-impl Default for ActiveWorkbench {
-    fn default() -> Self {
-        // Part Design is the natural landing place: create a body, sketch on
-        // it, pad it. The Sketch workbench is one click away.
-        Self(WorkbenchId::from("wb.part"))
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct ActiveTool {
     /// Set of active tool IDs. For Radio tools, only one per group is active.

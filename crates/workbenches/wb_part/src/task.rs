@@ -54,11 +54,7 @@ impl PartDesignWorkbench {
                 .map(|f| f.icon())
                 .unwrap_or("tree-feature"),
             TaskKind::Datum => core_document::DatumFeature::from_json(&node.data)
-                .map(|d| match d.shape {
-                    core_document::DatumShape::Plane { .. } => "datum-plane",
-                    core_document::DatumShape::Line { .. } => "datum-line",
-                    core_document::DatumShape::Point => "datum-point",
-                })
+                .map(|d| crate::datum_icon(&d))
                 .unwrap_or("datum-plane"),
         };
         Some(TaskInfo {

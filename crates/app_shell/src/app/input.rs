@@ -508,11 +508,12 @@ impl PrintCadApp {
 
             if is_double {
                 // The whole body the face belongs to — one part of an
-                // assembly, not the assembly. Part Design works from the
-                // tree, so there the body's row opens and scrolls into view.
+                // assembly, not the assembly. A modelling bench works from
+                // the tree, so there the body's row opens and scrolls into
+                // view; an edit session keeps the tree still.
                 self.face_highlight = None;
                 self.selected_body = Some(hovered);
-                if self.active_workbench.0.as_str() == "wb.part" {
+                if !self.registry.is_modal(&self.active_workbench.0) {
                     self.reveal_body = Some(core_document::BodyId(hovered));
                 }
                 app_log::info(format!("Selected body: {hovered:?}"));

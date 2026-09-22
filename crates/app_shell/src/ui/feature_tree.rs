@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
 use core_document::{
-    Body, BodyId, Document, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature,
+    Body, BodyId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode, FeatureTree,
 };
 use egui::{Response, Ui, Vec2};
 use ui_kit::sans;
@@ -89,7 +89,7 @@ struct TreeNode {
 }
 
 impl DocumentTree {
-    pub fn build(document: &Document) -> Self {
+    pub fn build(document: &Document, registry: &DocumentService) -> Self {
         let feature_tree = document.feature_tree();
         let mut visited = HashSet::new();
         let mut roots_by_body: HashMap<Option<BodyId>, Vec<TreeNode>> = HashMap::new();
@@ -116,8 +116,13 @@ impl DocumentTree {
         for &root_id in feature_tree.roots() {
             if let Some(node) = feature_tree.get_node(root_id) {
                 let body = node.body;
-                let tree_node =
-                    build_feature_node(feature_tree, node, &mut visited, &tip_seq_by_body);
+                let tree_node = build_feature_node(
+                    feature_tree,
+                    node,
+                    &mut visited,
+                    &tip_seq_by_body,
+                    registry,
+                );
                 push_root(body, tree_node, &mut roots_by_body);
             }
         }
@@ -127,8 +132,13 @@ impl DocumentTree {
         for (&id, node) in feature_tree.all_nodes() {
             if !visited.contains(&id) {
                 let body = node.body;
-                let tree_node =
-                    build_feature_node(feature_tree, node, &mut visited, &tip_seq_by_body);
+                let tree_node = build_feature_node(
+                    feature_tree,
+                    node,
+                    &mut visited,
+                    &tip_seq_by_body,
+                    registry,
+                );
                 push_root(body, tree_node, &mut roots_by_body);
             }
         }
@@ -227,6 +237,7 @@ fn build_feature_node(
     node: &FeatureNode,
     visited: &mut HashSet<FeatureId>,
     tip_seq_by_body: &HashMap<BodyId, (FeatureId, u64)>,
+    registry: &DocumentService,
 ) -> TreeNode {
     visited.insert(node.id);
 
@@ -241,6 +252,7 @@ fn build_feature_node(
                 child,
                 visited,
                 tip_seq_by_body,
+                registry,
             ));
         }
     }
@@ -251,11 +263,12 @@ fn build_feature_node(
     let is_tip = tip.map(|(id, _)| *id == node.id).unwrap_or(false);
     let after_tip = tip.map(|(_, seq)| node.seq > *seq).unwrap_or(false);
 
+    let info = feature_info(registry, node);
     TreeNode {
         id: TreeItemId::Feature(node.id),
         label: node.name.clone(),
-        detail: Some(describe_workbench(node.workbench_id.as_str())),
-        tooltip: Some(feature_tooltip(node, after_tip)),
+        detail: Some(info.family_label.clone()),
+        tooltip: Some(feature_tooltip(node, &info.family_label, after_tip)),
         dirty: node.dirty,
         visible: node.visible,
         suppressed: node.suppressed,
@@ -267,28 +280,17 @@ fn build_feature_node(
         children,
         imported_object_id: None,
         body: None,
-        icon: feature_icon(node),
+        icon: info.icon,
         accent_icon: false,
     }
 }
 
-/// The icon a feature row draws: the part feature's own, the datum's
-/// shape, or the sketch glyph.
-fn feature_icon(node: &FeatureNode) -> &'static str {
-    match node.workbench_id.as_str() {
-        "wb.sketch" => "tree-sketch",
-        "wb.part" => wb_part::PartFeature::from_json(&node.data)
-            .map(|f| f.icon())
-            .unwrap_or("tree-feature"),
-        "core.datum" => core_document::DatumFeature::from_json(&node.data)
-            .map(|d| match d.shape {
-                core_document::DatumShape::Plane { .. } => "datum-plane",
-                core_document::DatumShape::Line { .. } => "datum-line",
-                core_document::DatumShape::Point => "datum-point",
-            })
-            .unwrap_or("datum-plane"),
-        _ => "tree-feature",
-    }
+/// How a feature row presents: what the bench that claimed its kind says,
+/// or the plain fallback for a kind no bench claims.
+pub(crate) fn feature_info(registry: &DocumentService, node: &FeatureNode) -> FeatureInfo {
+    registry
+        .feature_info(node)
+        .unwrap_or_else(|| FeatureInfo::fallback(node))
 }
 
 fn build_body_node(body: &Body) -> TreeNode {
@@ -393,18 +395,6 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         },
         accent_icon: imported.body_id.is_some(),
     })
-}
-
-pub(crate) fn describe_workbench(raw: &str) -> String {
-    match raw {
-        "wb.sketch" => "Sketch".to_string(),
-        "wb.part" => "Part design feature".to_string(),
-        "core.datum" => "Datum".to_string(),
-        other => format!(
-            "{} feature",
-            other.trim_start_matches("wb.").replace(['-', '_'], " ")
-        ),
-    }
 }
 
 /// What the tree draws with this frame.
@@ -896,9 +886,9 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
     }
 }
 
-fn feature_tooltip(node: &FeatureNode, after_tip: bool) -> String {
+fn feature_tooltip(node: &FeatureNode, family: &str, after_tip: bool) -> String {
     let mut parts = Vec::new();
-    parts.push(describe_workbench(node.workbench_id.as_str()));
+    parts.push(family.to_string());
     parts.push(format!("Visible: {}", node.visible));
     parts.push(format!("Suppressed: {}", node.suppressed));
     if node.dirty {
@@ -959,7 +949,7 @@ mod tests {
         );
         doc.set_imported_object_graph(vec![root], graph);
 
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         let mut ids = Vec::new();
         collect_ids(tree.nodes(), &mut ids);
         assert!(ids.contains(&TreeItemId::ImportedObject(root)));
@@ -971,7 +961,7 @@ mod tests {
     fn a_plain_body_is_found_by_its_own_row() {
         let mut doc = Document::new("tree");
         let body = doc.create_body(Some("Body".into()));
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         assert_eq!(
             tree.path_to_body(body),
             Some(vec![TreeItemId::Body(body)]),
@@ -1007,7 +997,7 @@ mod tests {
         graph.insert(leaf, part);
         doc.set_imported_object_graph(vec![root], graph);
 
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         assert_eq!(
             tree.path_to_body(body),
             Some(vec![
@@ -1059,7 +1049,7 @@ mod tests {
 
         // The instance and its only part draw as one row, which carries the
         // instance's id — so that is the row a pick has to land on.
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         assert_eq!(
             tree.path_to_body(body),
             Some(vec![
@@ -1122,7 +1112,7 @@ mod tests {
         );
         doc.set_imported_object_graph(vec![root], graph);
 
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         let top = &tree.nodes()[0];
         assert_eq!(top.children.len(), 1, "Top holds one merged row");
         let row = &top.children[0];
@@ -1168,7 +1158,7 @@ mod tests {
         );
         doc.set_imported_object_graph(vec![root], graph);
 
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         let row = &tree.nodes()[0].children[0];
         assert_eq!(row.label, "Anet v1-body");
         assert_eq!(row.detail.as_deref(), Some("Instance of part Anet v1-body"));
@@ -1191,7 +1181,7 @@ mod tests {
             ),
         );
         doc.set_imported_object_graph(vec![root], graph);
-        let tree = DocumentTree::build(&doc);
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
         assert_eq!(tree.nodes()[0].label, "Asm");
         assert_eq!(tree.nodes()[0].icon, "tree-group");
     }
