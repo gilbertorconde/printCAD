@@ -69,6 +69,9 @@ pub struct CameraController {
     lmb_anchor_vp: Vec2,
     /// True once movement from [`lmb_anchor_vp`] crosses `click_drag_threshold_px`.
     lmb_dragging_scene: bool,
+    /// Where the right button went down, so its release can tell a click
+    /// from a pan.
+    rmb_anchor_vp: Vec2,
     rmb_dragging_scene: bool,
     lmb_dragging_roll: bool,
     lmb_was_down_scene: bool,
@@ -97,6 +100,7 @@ impl CameraController {
             last_cursor_vp_for_drag: None,
             lmb_anchor_vp: Vec2::ZERO,
             lmb_dragging_scene: false,
+            rmb_anchor_vp: Vec2::ZERO,
             rmb_dragging_scene: false,
             lmb_dragging_roll: false,
             lmb_was_down_scene: false,
@@ -162,6 +166,9 @@ impl CameraController {
                 self.cancel_animation();
                 self.rmb_dragging_scene = true;
                 self.last_cursor_vp_for_drag = self.last_cursor_viewport;
+                if let Some(p) = self.last_cursor_viewport {
+                    self.rmb_anchor_vp = p;
+                }
                 CameraPointerResult::Redraw
             }
             WindowEvent::MouseInput {
@@ -224,9 +231,21 @@ impl CameraController {
                 state: winit::event::ElementState::Released,
                 ..
             } => {
+                let was_down = self.rmb_dragging_scene;
                 self.last_cursor_vp_for_drag = None;
                 self.rmb_dragging_scene = false;
                 self.lmb_dragging_roll = false;
+                // A press and release in the same place is a click, not a
+                // pan, whatever few pixels the pan moved on the way.
+                let threshold = settings.click_drag_threshold_px;
+                let clicked = was_down
+                    && !self.lmb_was_down_scene
+                    && self.last_cursor_viewport.is_some_and(|p| {
+                        (p - self.rmb_anchor_vp).length_squared() <= threshold * threshold
+                    });
+                if clicked {
+                    return CameraPointerResult::RmbReleasedMaybeMenu;
+                }
                 CameraPointerResult::None
             }
             WindowEvent::CursorMoved { .. } => {
@@ -733,6 +752,8 @@ pub enum CameraPointerResult {
     Redraw,
     /// Caller should fire select-on-click heuristics (only if no drag happened).
     LmbReleasedMaybeSelect,
+    /// The right button came up where it went down: a click, not a pan.
+    RmbReleasedMaybeMenu,
 }
 
 impl CameraPointerResult {

@@ -196,6 +196,10 @@ pub struct BodySubmission {
     pub revision: u64,
     pub mesh: Arc<TriMesh>,
     pub color: [f32; 3],
+    /// 1.0 draws opaque in the solid pass; anything under it draws after
+    /// everything opaque, blended over it, without writing depth — a
+    /// selection highlight that lets the face show through.
+    pub opacity: f32,
     pub highlight: HighlightState,
     /// If true, render as wireframe/line with depth bias to appear on top of solid geometry
     pub is_wireframe: bool,

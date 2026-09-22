@@ -32,6 +32,12 @@ pub enum UiCommand {
     File(FileCommand),
     Quit,
     FitView,
+    /// The tree opens its way to this body and scrolls to it.
+    RevealInTree(core_document::BodyId),
+    /// The whole body, as a double click would.
+    SelectBody(core_document::BodyId),
+    /// The viewport's context menu was dismissed or used.
+    CloseViewportMenu,
     CameraSnap(CameraSnapView),
     CameraRotate(RotateDelta),
     /// Stop the kernel job that is running now.

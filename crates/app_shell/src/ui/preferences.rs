@@ -595,6 +595,8 @@ fn reset_group(state: &mut PreferencesState) {
             camera.axis_preset = defaults.camera.axis_preset;
             state.draft.lighting = defaults.lighting;
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
+            state.draft.rendering.selection_color = defaults.rendering.selection_color;
+            state.draft.rendering.selection_opacity = defaults.rendering.selection_opacity;
             state.draft.preferred_gpu = defaults.preferred_gpu;
         }
         PrefGroup::Input => {
@@ -898,6 +900,40 @@ fn display_page(
                 .hint("Takes effect after a restart"),
             );
             pref_group(ui, "Rendering", gpu_rows, filter);
+
+            let selection_color = &mut draft.rendering.selection_color;
+            pref_group(
+                ui,
+                "Selection",
+                vec![
+                    PrefRow::new("Face colour", move |ui| {
+                        let mut color = egui::Color32::from_rgb(
+                            (selection_color[0] * 255.0) as u8,
+                            (selection_color[1] * 255.0) as u8,
+                            (selection_color[2] * 255.0) as u8,
+                        );
+                        let changed = ui.color_edit_button_srgba(&mut color).changed();
+                        if changed {
+                            *selection_color = [
+                                color.r() as f32 / 255.0,
+                                color.g() as f32 / 255.0,
+                                color.b() as f32 / 255.0,
+                            ];
+                        }
+                        changed
+                    })
+                    .hint("What a selected face is painted"),
+                    PrefRow::qty(
+                        "Face opacity",
+                        QtyField::new(&mut draft.rendering.selection_opacity)
+                            .range(0.1..=1.0)
+                            .speed(0.01)
+                            .decimals(2),
+                    )
+                    .hint("1 covers the face; less lets it show through"),
+                ],
+                filter,
+            );
         }
     }
 }

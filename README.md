@@ -91,7 +91,8 @@ the display server. Nothing is required to build or run without one.
 | **Pan** | Right drag |
 | **Zoom** | Wheel (optionally toward the cursor) |
 | **Select a face** | Left click |
-| **Select a whole body** | Left double click — in Part Design the tree jumps to that body's row |
+| **Select a whole body** | Left double click on one of its faces (one part of an assembly, not the assembly) |
+| **Body menu** | Right click on a body: show it in the tree, select it, hide it |
 | **Box select** | Left drag, in a sketch |
 | **Add to the selection** | Ctrl (a sketch selects cumulatively without it) |
 | **Pivot on the focal plane** | **`H`** with the cursor over the viewport |

@@ -87,6 +87,8 @@ pub struct UiFrameInputs<'a> {
     pub server_label: String,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
+    /// The context menu a right click asked for, if one is open.
+    pub viewport_menu: Option<super::ViewportMenu>,
     /// The 6-DoF mouse the reader thread has, if any.
     pub nav_device: Option<String>,
     /// How many buttons it has, so Preferences offers a row per button.

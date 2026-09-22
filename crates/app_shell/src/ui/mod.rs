@@ -1,5 +1,7 @@
 mod combo_view;
 mod command_palette;
+mod context_menu;
+pub use context_menu::ViewportMenu;
 mod commands;
 mod feature_tree;
 mod host_ctx;
@@ -211,6 +213,7 @@ impl UiLayer {
             kernel_progress,
             server_label,
             reveal_body,
+            viewport_menu,
             nav_device,
             nav_buttons,
             document_saving,
@@ -488,6 +491,9 @@ impl UiLayer {
                 viewport_hud.as_ref(),
                 &footer,
             );
+            if let Some(menu) = &viewport_menu {
+                context_menu::draw(ui.ctx(), menu, document, &mut commands);
+            }
             if let Some(card) = &hover_card {
                 hud::draw_hover_card(
                     ui.ctx(),

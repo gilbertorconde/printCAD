@@ -294,6 +294,9 @@ struct PrintCadApp {
     /// A body double-clicked in the viewport, for the one frame it takes the
     /// tree to jump to its row.
     reveal_body: Option<BodyId>,
+    /// The context menu a right click on a body asked for, until it is used
+    /// or dismissed.
+    viewport_menu: Option<ui::ViewportMenu>,
     /// Workbench to return to when sketch editing finishes, when the sketch
     /// flow was started from another workbench (e.g. Part Design).
     return_workbench: Option<ActiveWorkbench>,
@@ -419,6 +422,7 @@ impl PrintCadApp {
             face_highlight_id: Uuid::new_v4(),
             last_select_click: None,
             reveal_body: None,
+            viewport_menu: None,
             return_workbench: None,
             task_open: false,
             window_title: String::new(),

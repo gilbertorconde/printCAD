@@ -277,6 +277,21 @@ pub struct RenderingSettings {
     pub msaa_samples: u8,
     /// Whether to show the in-app log panel at the bottom of the viewport
     pub show_log_panel: bool,
+    /// The colour a selected face is painted.
+    #[serde(default = "default_selection_color")]
+    pub selection_color: [f32; 3],
+    /// How much of that paint: 1.0 hides the face under it, less lets the
+    /// face show through.
+    #[serde(default = "default_selection_opacity")]
+    pub selection_opacity: f32,
+}
+
+fn default_selection_color() -> [f32; 3] {
+    [0.35, 0.95, 0.45]
+}
+
+fn default_selection_opacity() -> f32 {
+    0.45
 }
 
 impl Default for RenderingSettings {
@@ -284,6 +299,8 @@ impl Default for RenderingSettings {
         Self {
             msaa_samples: 4, // 4x MSAA by default
             show_log_panel: false,
+            selection_color: default_selection_color(),
+            selection_opacity: default_selection_opacity(),
         }
     }
 }

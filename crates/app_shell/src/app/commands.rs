@@ -92,6 +92,18 @@ impl PrintCadApp {
                     crate::log_panel::info("Cancelling the running kernel job…");
                 }
                 UiCommand::FitView => intents.fit_view = true,
+                UiCommand::RevealInTree(body) => {
+                    self.viewport_menu = None;
+                    self.reveal_body = Some(body);
+                }
+                UiCommand::SelectBody(body) => {
+                    self.viewport_menu = None;
+                    self.face_highlight = None;
+                    self.last_face_hit = None;
+                    self.selected_body = Some(body.0);
+                    app_log::info(format!("Selected body: {:?}", body.0));
+                }
+                UiCommand::CloseViewportMenu => self.viewport_menu = None,
                 UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
                 UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
                 UiCommand::CommitSettings {

@@ -470,6 +470,7 @@ impl PrintCadApp {
                             (true, n) => format!("{} · {n} peers", self.server.name()),
                         },
                         reveal_body: self.reveal_body.take(),
+                        viewport_menu: self.viewport_menu.clone(),
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.step_import_pending.as_mut(),
@@ -708,6 +709,7 @@ impl PrintCadApp {
                     color,
                     highlight: HighlightState::None,
                     is_wireframe: false,
+                    opacity: 1.0,
                 })
             })
             .collect();
@@ -755,6 +757,7 @@ impl PrintCadApp {
                     revision: geometry.revision,
                     mesh: Arc::clone(&geometry.mesh),
                     color: base_color,
+                    opacity: 1.0,
                     highlight,
                     is_wireframe: false,
                 }
@@ -786,6 +789,7 @@ impl PrintCadApp {
                     revision: hash_trimesh(&mesh),
                     mesh: Arc::new(mesh),
                     color,
+                    opacity: 1.0,
                     highlight: HighlightState::None,
                     is_wireframe,
                 }
@@ -838,14 +842,15 @@ impl PrintCadApp {
         all_meshes.extend(imported_meshes);
         all_meshes.append(&mut overlay_meshes);
 
-        // Selected-face highlight: the coplanar sub-mesh, slightly lifted
-        // off the surface, in the selection green.
+        // Selected-face highlight: the face's own triangles, slightly lifted
+        // off the surface, in the selection paint at the chosen opacity.
         if let Some(face) = &self.face_highlight {
             all_meshes.push(BodySubmission {
                 id: self.face_highlight_id,
                 revision: face.revision,
                 mesh: Arc::clone(&face.mesh),
-                color: [0.35, 0.95, 0.45],
+                color: self.user_settings.rendering.selection_color,
+                opacity: self.user_settings.rendering.selection_opacity,
                 highlight: HighlightState::None,
                 is_wireframe: false,
             });
@@ -1008,7 +1013,10 @@ impl PrintCadApp {
     /// point hit on it. Hidden while a button is down or a sketch is being
     /// edited, when the card would only get in the way.
     fn hover_card(&self) -> Option<ui::HoverCard> {
-        if self.mouse_buttons_down > 0 || self.sketch_editing_active() {
+        if self.mouse_buttons_down > 0
+            || self.sketch_editing_active()
+            || self.viewport_menu.is_some()
+        {
             return None;
         }
         let body = core_document::BodyId(self.hovered_body?);

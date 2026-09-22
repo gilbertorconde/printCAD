@@ -224,6 +224,9 @@ impl PrintCadApp {
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
             redraw |= self.toggle_body_under_cursor_selection();
         }
+        if matches!(cam_res, CameraPointerResult::RmbReleasedMaybeMenu) {
+            redraw |= self.open_viewport_menu();
+        }
 
         if redraw && let Some(gfx) = self.gfx.as_ref() {
             gfx.window.request_redraw();
@@ -438,6 +441,31 @@ impl PrintCadApp {
         }
     }
 
+    /// A right click that did not pan: over a body, the menu for that body
+    /// opens where the pointer is; anywhere else it closes whatever was open.
+    fn open_viewport_menu(&mut self) -> bool {
+        let Some(gfx) = self.gfx.as_ref() else {
+            return false;
+        };
+        let body = self.hovered_body.filter(|id| {
+            // Sketch feature meshes pick as bodies too; they have no body menu.
+            self.document
+                .get_feature_meta(core_document::FeatureId(*id))
+                .is_none()
+        });
+        let Some((cx, cy)) = self.cursor_in_viewport else {
+            self.viewport_menu = None;
+            return true;
+        };
+        let vp = self.camera.viewport_info();
+        let scale = gfx.window.scale_factor() as f32;
+        self.viewport_menu = body.map(|body| crate::ui::ViewportMenu {
+            body: core_document::BodyId(body),
+            at: [(vp.0 + cx) / scale, (vp.1 + cy) / scale],
+        });
+        true
+    }
+
     fn toggle_body_under_cursor_selection(&mut self) -> bool {
         // Sketch curves first: their tessellated lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
@@ -479,14 +507,11 @@ impl PrintCadApp {
             self.last_select_click = Some((now, hovered));
 
             if is_double {
+                // The whole body the face belongs to — one part of an
+                // assembly, not the assembly. Finding it in the tree is the
+                // context menu's job.
                 self.face_highlight = None;
                 self.selected_body = Some(hovered);
-                if self.active_workbench.0.as_str() == "wb.part" {
-                    // Part Design works from the tree, so a double click on
-                    // a face says "this one" there too — the assembly branch
-                    // it lives in opens and the row scrolls into view.
-                    self.reveal_body = Some(core_document::BodyId(hovered));
-                }
                 app_log::info(format!("Selected body: {hovered:?}"));
             } else if self.selected_body == Some(hovered)
                 && self.face_highlight.is_none()

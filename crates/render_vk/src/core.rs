@@ -1590,6 +1590,7 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         // The mesh pointer catches overlays rebuilt without a revision bump.
         (std::sync::Arc::as_ptr(&body.mesh) as usize).hash(&mut h);
         f32s(&mut h, &body.color);
+        body.opacity.to_bits().hash(&mut h);
         (body.highlight as u8).hash(&mut h);
         body.is_wireframe.hash(&mut h);
     }

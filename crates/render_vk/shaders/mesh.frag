@@ -23,7 +23,7 @@ layout(push_constant) uniform PushConstants {
     Light light_fill;
     vec4 ambient;       // rgb = ambient color * intensity
     vec4 shading;       // x = specular exponent, y = specular intensity, zw unused
-    vec4 draw_color;    // xyz = final body color (already highlight-mixed); w unused
+    vec4 draw_color;    // xyz = final body color (already highlight-mixed); w = opacity
 } pc;
 
 vec3 lambert(Light light, vec3 normal) {
@@ -78,5 +78,5 @@ void main() {
     // Neutral grey specular tint (~0.52); not multiplied by albedo.
     const vec3 spec_tint = vec3(0.52);
     vec3 color = clamp(albedo * diffuse + spec_k * spec_tint * spec_sum, 0.0, 1.0);
-    out_color = vec4(color, 1.0);
+    out_color = vec4(color, pc.draw_color.w);
 }
