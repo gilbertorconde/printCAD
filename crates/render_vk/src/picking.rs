@@ -449,11 +449,10 @@ impl PickRenderer {
             device.cmd_set_scissor(command_buffer, 0, &[scissor]);
 
             // One draw per body, binding the cached vertex/index buffers
-            // directly out of the shared MeshCache. Translucent overlays
-            // are paint on a surface, not something to pick: a selection
-            // overlay sits on or above the face it marks and would take
-            // the pick from it.
-            for body in bodies.iter().filter(|b| b.opacity >= 1.0) {
+            // directly out of the shared MeshCache. Only what the host
+            // marked pickable: a selection overlay sits on or above the
+            // face it marks and would take the pick from it.
+            for body in bodies.iter().filter(|b| b.pickable) {
                 let cached = match cache.get(&body.id) {
                     Some(c) if c.index_count > 0 && c.vertex_buffer != vk::Buffer::null() => c,
                     _ => continue,

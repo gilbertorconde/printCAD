@@ -21,6 +21,7 @@ pub struct MenuBarInputs<'a> {
     pub breadcrumb: Option<&'a str>,
     pub show_log_panel: bool,
     pub projection: ProjectionMode,
+    pub draw_style: settings::DrawStyle,
     pub recent: &'a [settings::recent::RecentEntry],
     pub screen: Screen,
     /// The tab on screen has nothing in it yet: leaving its start page
@@ -302,8 +303,9 @@ pub fn draw_menu_bar(
                         if item(ui, "Fit view", Some(&sc_fit)) {
                             commands.push(UiCommand::FitView);
                         }
-                        // PLANNED: frame the selection instead of the scene.
-                        planned_item(ui, "Fit selection", "frames the selected bodies");
+                        if item_needing_document(ui, "Fit selection", None, have_document) {
+                            commands.push(UiCommand::FitSelection);
+                        }
                         ui.separator();
                         ui.menu_button(RichText::new("Standard views").font(sans(FONT_SM)), |ui| {
                             for (label, view) in [
@@ -336,8 +338,20 @@ pub fn draw_menu_bar(
                             ui.close();
                         }
                         ui.separator();
-                        // PLANNED: scene-wide draw styles.
-                        planned_item(ui, "Draw style", "shaded, wireframe or flat lines");
+                        ui.menu_button(RichText::new("Draw style").font(sans(FONT_SM)), |ui| {
+                            for style in settings::DrawStyle::ALL {
+                                if ui
+                                    .radio(
+                                        inputs.draw_style == style,
+                                        RichText::new(style.label()).font(sans(FONT_SM)),
+                                    )
+                                    .clicked()
+                                {
+                                    commands.push(UiCommand::SetDrawStyle(style));
+                                    ui.close();
+                                }
+                            }
+                        });
                         ui.separator();
                         if ui
                             .checkbox(

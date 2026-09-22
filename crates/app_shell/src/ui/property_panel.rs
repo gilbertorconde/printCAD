@@ -5,7 +5,7 @@ use core_document::{BodyId, Document, FeatureId, PropertyHints, Unit, format_len
 use egui::RichText;
 use ui_kit::sans;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{check_row, mono_label, planned};
+use ui_kit::widgets::{QtyField, check_row, mono_label};
 use uuid::Uuid;
 
 use super::feature_tree::{TreeFeatureCommand, TreeItemId};
@@ -22,6 +22,9 @@ pub struct PropertyPanelResult {
     pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
     pub imported_visibility: Option<(Uuid, bool)>,
     pub rename: Option<(TreeItemId, String)>,
+    /// The body's look changed: a colour and opacity of its own, or back
+    /// to the one it came with.
+    pub body_display: Option<(BodyId, Option<core_document::BodyDisplay>)>,
 }
 
 /// One value row.
@@ -613,13 +616,67 @@ fn view_rows(
         }
         _ => {}
     }
-    // PLANNED: per-item display color and transparency.
+    // A body's own look: the body row's, or the body an imported part is.
+    let body = match selected {
+        TreeItemId::Body(id) => Some(id),
+        TreeItemId::ImportedObject(id) => document.body_of_imported_object(id),
+        _ => None,
+    };
+    if let Some(body) = body
+        && let Some(entry) = document.bodies().iter().find(|b| b.id == body)
+    {
+        display_rows(ui, body, entry.display, result);
+    }
+}
+
+/// Custom colour on or off, and, on, the colour and how much of it shows.
+fn display_rows(
+    ui: &mut egui::Ui,
+    body: BodyId,
+    current: Option<core_document::BodyDisplay>,
+    result: &mut PropertyPanelResult,
+) {
     ui.horizontal(|ui| {
         ui.add_space(8.0);
-        planned(ui, "sets the item's display color", |ui| {
-            let mut on = false;
-            check_row(ui, &mut on, "Custom color");
-        });
+        let mut on = current.is_some();
+        if check_row(ui, &mut on, "Custom color").changed() {
+            result.body_display = Some((body, on.then(|| current.unwrap_or_default())));
+        }
+    });
+    let Some(mut display) = current else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(28.0);
+        let mut color = egui::Color32::from_rgb(
+            (display.color[0] * 255.0) as u8,
+            (display.color[1] * 255.0) as u8,
+            (display.color[2] * 255.0) as u8,
+        );
+        let mut changed = false;
+        if ui.color_edit_button_srgba(&mut color).changed() {
+            display.color = [
+                color.r() as f32 / 255.0,
+                color.g() as f32 / 255.0,
+                color.b() as f32 / 255.0,
+            ];
+            changed = true;
+        }
+        ui.label(RichText::new("Opacity").font(sans(FONT_XS)).color(TEXT2));
+        let mut opacity = display.opacity;
+        if QtyField::new(&mut opacity)
+            .range(0.05..=1.0)
+            .speed(0.01)
+            .decimals(2)
+            .width(64.0)
+            .show(ui)
+        {
+            display.opacity = opacity;
+            changed = true;
+        }
+        if changed {
+            result.body_display = Some((body, Some(display)));
+        }
     });
 }
 

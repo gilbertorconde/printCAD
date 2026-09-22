@@ -139,6 +139,27 @@ pub struct Body {
     /// (features after the tip are excluded from the build).
     #[serde(default)]
     pub tip: Option<FeatureId>,
+    /// How the body is drawn when the user chose, instead of the material
+    /// colour it came with.
+    #[serde(default)]
+    pub display: Option<BodyDisplay>,
+}
+
+/// A user-chosen look for a body: its colour and how much of it shows.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct BodyDisplay {
+    pub color: [f32; 3],
+    /// 1 is solid; less lets what is behind show through.
+    pub opacity: f32,
+}
+
+impl Default for BodyDisplay {
+    fn default() -> Self {
+        Self {
+            color: [0.78, 0.78, 0.82],
+            opacity: 1.0,
+        }
+    }
 }
 
 /// Tessellated geometry produced by an external import (STEP, STL, ...).
@@ -295,6 +316,10 @@ impl Document {
                 id: *id,
                 name: self.bodies.iter().find(|b| b.id == *id)?.name.clone(),
             },
+            Op::SetBodyDisplay { id, .. } => Op::SetBodyDisplay {
+                id: *id,
+                display: self.bodies.iter().find(|b| b.id == *id)?.display,
+            },
             Op::SetBodyTip { id, .. } => Op::SetBodyTip {
                 id: *id,
                 tip: self.bodies.iter().find(|b| b.id == *id)?.tip,
@@ -395,11 +420,17 @@ impl Document {
                     name: name.clone(),
                     created_at: *created_at,
                     tip: None,
+                    display: None,
                 });
             }
             Op::RenameBody { id, name } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.name.clone_from(name);
+                }
+            }
+            Op::SetBodyDisplay { id, display } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.display = *display;
                 }
             }
             Op::RemoveBody { id } => {
@@ -521,6 +552,7 @@ impl Document {
                         name: init.name.clone(),
                         created_at: init.created_at,
                         tip: None,
+                        display: None,
                     });
                 }
                 self.imported_object_roots.extend(roots.iter().copied());
@@ -731,6 +763,15 @@ impl Document {
             && !name.trim().is_empty()
         {
             self.record_and_apply(op::DocumentOp::RenameBody { id: body, name });
+        }
+    }
+
+    /// Give a body a look of its own, or `None` for the one it came with.
+    pub fn set_body_display(&mut self, body: BodyId, display: Option<BodyDisplay>) {
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+            && entry.display != display
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyDisplay { id: body, display });
         }
     }
 

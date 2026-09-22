@@ -36,6 +36,14 @@ pub enum UiCommand {
     File(FileCommand),
     Quit,
     FitView,
+    /// Frame the selected body, or the active one.
+    FitSelection,
+    SetDrawStyle(settings::DrawStyle),
+    /// A body's own look, or `None` for the one it came with.
+    SetBodyDisplay {
+        body: core_document::BodyId,
+        display: Option<core_document::BodyDisplay>,
+    },
     /// The tree opens its way to this body and scrolls to it.
     RevealInTree(core_document::BodyId),
     /// The whole body, as a double click would.

@@ -203,6 +203,9 @@ pub struct BodySubmission {
     pub highlight: HighlightState,
     /// If true, render as wireframe/line with depth bias to appear on top of solid geometry
     pub is_wireframe: bool,
+    /// Whether the pick pass sees it. Paint over a surface (a selection
+    /// overlay) and guides are not; a body is, however see-through.
+    pub pickable: bool,
 }
 
 impl fmt::Debug for BodySubmission {
@@ -234,6 +237,8 @@ pub struct FrameSubmission {
     pub egui: Option<EguiSubmission>,
     /// The 3D viewport rect (area where mesh should be rendered)
     pub viewport_rect: Option<ViewportRect>,
+    /// Whether face-boundary edges draw over the solids.
+    pub draw_edges: bool,
 }
 
 impl Default for FrameSubmission {
@@ -245,6 +250,7 @@ impl Default for FrameSubmission {
             lighting: LightingData::default(),
             egui: None,
             viewport_rect: None,
+            draw_edges: true,
         }
     }
 }

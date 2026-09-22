@@ -262,6 +262,7 @@ impl UiLayer {
                     breadcrumb: breadcrumb.as_deref(),
                     show_log_panel: settings.rendering.show_log_panel,
                     projection,
+                    draw_style: settings.rendering.draw_style,
                     recent,
                     screen,
                     active_tab_blank: tabs.iter().any(|t| t.active && t.blank),
@@ -437,6 +438,9 @@ impl UiLayer {
             if let Some(item) = combo.delete_item {
                 commands.push(UiCommand::DeleteTreeItem(item));
             }
+            if let Some((body, display)) = combo.body_display {
+                commands.push(UiCommand::SetBodyDisplay { body, display });
+            }
             if let Some((workbench, id, scope)) = combo.bench_command {
                 commands.push(UiCommand::BenchCommand {
                     workbench,
@@ -514,6 +518,7 @@ impl UiLayer {
                 ui.ctx(),
                 viewport_rect_logical,
                 projection,
+                settings.rendering.draw_style,
                 &mut commands,
             );
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);

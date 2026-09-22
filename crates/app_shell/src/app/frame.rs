@@ -712,6 +712,7 @@ impl PrintCadApp {
                     highlight: HighlightState::None,
                     is_wireframe: false,
                     opacity: 1.0,
+                    pickable: true,
                 }
             })
             .collect();
@@ -720,6 +721,8 @@ impl PrintCadApp {
         // The body id from the document is reused so picking/selection stays
         // stable, and the document's revision counter is forwarded to the
         // renderer so panning/orbiting never re-uploads the static mesh.
+        let draw_style = self.user_settings.rendering.draw_style;
+        let wireframe = draw_style == settings::DrawStyle::Wireframe;
         let imported_meshes: Vec<BodySubmission> = self
             .session
             .document
@@ -746,21 +749,34 @@ impl PrintCadApp {
                 } else {
                     HighlightState::None
                 };
-                let use_vertex_albedo = geometry.mesh.colors.len() == geometry.mesh.positions.len()
+                // A look the user chose wins over the material the body
+                // came with; a chosen colour also drops the per-vertex
+                // colours, which would tint it.
+                let chosen = self
+                    .session
+                    .document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.id == *body_id)
+                    .and_then(|b| b.display);
+                let use_vertex_albedo = chosen.is_none()
+                    && geometry.mesh.colors.len() == geometry.mesh.positions.len()
                     && !geometry.mesh.colors.is_empty();
-                let base_color = if use_vertex_albedo {
-                    [1.0, 1.0, 1.0]
-                } else {
-                    [0.78, 0.78, 0.82]
+                let base_color = match chosen {
+                    Some(display) => display.color,
+                    None if use_vertex_albedo => [1.0, 1.0, 1.0],
+                    None => [0.78, 0.78, 0.82],
                 };
+                let opacity = chosen.map(|d| d.opacity.clamp(0.05, 1.0)).unwrap_or(1.0);
                 BodySubmission {
                     id: body_id.0,
                     revision: geometry.revision,
                     mesh: Arc::clone(&geometry.mesh),
                     color: base_color,
-                    opacity: 1.0,
+                    opacity,
                     highlight,
-                    is_wireframe: false,
+                    is_wireframe: wireframe,
+                    pickable: true,
                 }
             })
             .collect();
@@ -796,6 +812,8 @@ impl PrintCadApp {
                     opacity: 1.0,
                     highlight: HighlightState::None,
                     is_wireframe,
+                    // A guide is drawn, never picked.
+                    pickable: false,
                 }
             })
             .collect();
@@ -869,6 +887,7 @@ impl PrintCadApp {
                 opacity,
                 highlight: HighlightState::None,
                 is_wireframe: false,
+                pickable: false,
             });
         } else if let Some(geometry) = self.session.selected_body.and_then(|id| {
             self.session
@@ -886,10 +905,12 @@ impl PrintCadApp {
                 opacity,
                 highlight: HighlightState::None,
                 is_wireframe: false,
+                pickable: false,
             });
         }
 
         self.frame_submission.bodies = all_meshes;
+        self.frame_submission.draw_edges = draw_style == settings::DrawStyle::ShadedEdges;
         self.frame_submission.view_proj = self.session.camera.view_projection();
         self.frame_submission.camera_pos = self.session.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);

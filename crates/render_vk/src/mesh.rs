@@ -810,6 +810,7 @@ impl MeshRenderer {
         view_proj: [[f32; 4]; 4],
         camera_pos: [f32; 3],
         lighting: &LightingData,
+        draw_edges: bool,
     ) -> Result<DrawStats, RenderError> {
         // Make sure every body has fresh GPU buffers in the cache.
         for body in bodies {
@@ -931,12 +932,13 @@ impl MeshRenderer {
         // Edges after solids: biased + LEQUAL depth test (see
         // `MeshPipelineMode::Edges`). Each body has its own edge index buffer
         // pointing into its own vertex buffer.
-        // Experiment hook: PRINTCAD_NO_EDGES=1 skips the edge pass so its
-        // cost can be measured; not a user-facing setting. The pass itself
-        // is cheap next to the solids — a 9 M-index assembly with 400 k edge
-        // indices spends about 1.5 ms of a 25 ms frame on it — so it runs
-        // every frame, moving or still.
-        let force_off = std::env::var_os("PRINTCAD_NO_EDGES").is_some();
+        // The frame says whether edges draw (the draw style); the
+        // experiment hook PRINTCAD_NO_EDGES=1 forces them off so the pass's
+        // cost can be measured. The pass itself is cheap next to the
+        // solids — a 9 M-index assembly with 400 k edge indices spends
+        // about 1.5 ms of a 25 ms frame on it — so it runs every frame,
+        // moving or still.
+        let force_off = !draw_edges || std::env::var_os("PRINTCAD_NO_EDGES").is_some();
         let draws_edges = |cached: &CachedMesh| cached.edge_index_count > 0 && !force_off;
         let has_edges = bodies
             .iter()

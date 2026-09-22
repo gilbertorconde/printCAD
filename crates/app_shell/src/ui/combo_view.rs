@@ -24,6 +24,8 @@ pub struct ComboViewResult {
     pub delete_item: Option<TreeItemId>,
     /// A bench's own row-menu entry was picked.
     pub bench_command: Option<(core_document::WorkbenchId, String, core_document::MenuScope)>,
+    /// The property panel changed a body's look.
+    pub body_display: Option<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
 }
 
 pub struct ComboViewInputs<'a> {
@@ -204,6 +206,9 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             }
             if props.imported_visibility.is_some() {
                 result.imported_visibility_change = props.imported_visibility;
+            }
+            if props.body_display.is_some() {
+                result.body_display = props.body_display;
             }
             result.rename = props.rename;
             let _ = vseparator;

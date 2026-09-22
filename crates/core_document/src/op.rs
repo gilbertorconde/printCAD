@@ -95,6 +95,10 @@ pub enum DocumentOp {
         id: BodyId,
         name: String,
     },
+    SetBodyDisplay {
+        id: BodyId,
+        display: Option<crate::BodyDisplay>,
+    },
     /// Delete a body: the inverse of `CreateBody`, and what the tree's
     /// Delete does. Any features still attached go with it, along with the
     /// body's geometry.
@@ -197,10 +201,19 @@ impl OpBuffer {
     /// Append an op, coalescing consecutive whole-payload writes to the same
     /// feature: a drag's per-frame updates collapse to the latest payload.
     pub fn record(&mut self, op: DocumentOp) {
-        if let DocumentOp::UpdateFeatureData { id, .. } = &op
-            && let Some(DocumentOp::UpdateFeatureData { id: tail_id, .. }) = self.0.last()
-            && tail_id == id
-        {
+        // A colour picker drag is one look per frame; the last is the op.
+        let same_target = match (&op, self.0.last()) {
+            (
+                DocumentOp::UpdateFeatureData { id, .. },
+                Some(DocumentOp::UpdateFeatureData { id: tail, .. }),
+            ) => tail == id,
+            (
+                DocumentOp::SetBodyDisplay { id, .. },
+                Some(DocumentOp::SetBodyDisplay { id: tail, .. }),
+            ) => tail == id,
+            _ => false,
+        };
+        if same_target {
             *self.0.last_mut().expect("tail exists") = op;
             return;
         }

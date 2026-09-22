@@ -1246,6 +1246,7 @@ impl RendererCore {
                     frame.view_proj,
                     frame.camera_pos,
                     &frame.lighting,
+                    frame.draw_edges,
                 )?;
             }
 
@@ -1562,6 +1563,7 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         f32s(&mut h, col);
     }
     f32s(&mut h, &frame.camera_pos);
+    frame.draw_edges.hash(&mut h);
     if let Some(r) = &frame.viewport_rect {
         (r.x, r.y, r.width, r.height).hash(&mut h);
     } else {

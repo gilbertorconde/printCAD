@@ -284,6 +284,37 @@ pub struct RenderingSettings {
     /// always shows through.
     #[serde(default = "default_selection_opacity")]
     pub selection_opacity: f32,
+    /// How every body in the scene is drawn.
+    #[serde(default)]
+    pub draw_style: DrawStyle,
+}
+
+/// How the scene draws its bodies.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum DrawStyle {
+    /// Lit surfaces with their face-boundary edges drawn over them.
+    #[default]
+    ShadedEdges,
+    /// Lit surfaces alone.
+    Shaded,
+    /// Every triangle as lines, nothing filled.
+    Wireframe,
+}
+
+impl DrawStyle {
+    pub const ALL: [DrawStyle; 3] = [
+        DrawStyle::ShadedEdges,
+        DrawStyle::Shaded,
+        DrawStyle::Wireframe,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            DrawStyle::ShadedEdges => "Shaded with edges",
+            DrawStyle::Shaded => "Shaded",
+            DrawStyle::Wireframe => "Wireframe",
+        }
+    }
 }
 
 /// The most opaque the selection paint gets. Short of fully opaque, so the
@@ -306,6 +337,7 @@ impl Default for RenderingSettings {
             show_log_panel: false,
             selection_color: default_selection_color(),
             selection_opacity: default_selection_opacity(),
+            draw_style: DrawStyle::default(),
         }
     }
 }

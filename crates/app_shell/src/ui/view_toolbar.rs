@@ -2,7 +2,7 @@
 //! views, draw style and projection.
 
 use egui::{Align2, Area, Context, Order, Vec2};
-use settings::ProjectionMode;
+use settings::{DrawStyle, ProjectionMode};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{ToolButtonState, tool_button, vseparator};
 
@@ -57,17 +57,13 @@ pub fn draw_view_toolbar(
     ctx: &Context,
     viewport: egui::Rect,
     projection: ProjectionMode,
+    draw_style: DrawStyle,
     commands: &mut Vec<UiCommand>,
 ) {
     let ortho = projection == ProjectionMode::Orthographic;
     let items = [
         button("fit-all", "Fit all", UiCommand::FitView),
-        // PLANNED: frame the selection instead of the whole scene.
-        planned(
-            "fit-selection",
-            "Fit selection",
-            "frames the selected bodies",
-        ),
+        button("fit-selection", "Fit selection", UiCommand::FitSelection),
         Item::Sep,
         button(
             "view-iso",
@@ -105,19 +101,23 @@ pub fn draw_view_toolbar(
             UiCommand::CameraSnap(CameraSnapView::Left),
         ),
         Item::Sep,
-        Item::Button {
-            icon: "draw-style-shaded",
-            label: "Shaded with edges",
-            on: true,
-            planned: None,
-            command: None,
-        },
-        // PLANNED: a scene-wide wireframe draw style; per-body wireframe
-        // exists for overlays only.
-        planned(
+        toggled(
+            "draw-style-shaded",
+            "Shaded with edges",
+            draw_style == DrawStyle::ShadedEdges,
+            UiCommand::SetDrawStyle(DrawStyle::ShadedEdges),
+        ),
+        toggled(
+            "draw-style-flat",
+            "Shaded",
+            draw_style == DrawStyle::Shaded,
+            UiCommand::SetDrawStyle(DrawStyle::Shaded),
+        ),
+        toggled(
             "draw-style-wireframe",
             "Wireframe",
-            "draws every body as wireframe",
+            draw_style == DrawStyle::Wireframe,
+            UiCommand::SetDrawStyle(DrawStyle::Wireframe),
         ),
         // PLANNED: a clipping plane through the scene.
         planned(

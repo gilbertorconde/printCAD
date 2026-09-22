@@ -28,6 +28,9 @@ struct FrameIntents {
     confirm_step_import: bool,
     cancel_step_import: bool,
     fit_view: bool,
+    fit_selection: bool,
+    set_draw_style: Option<settings::DrawStyle>,
+    body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
     set_visibility: Vec<(uuid::Uuid, bool)>,
     select_tree_item: Option<TreeItemId>,
     activate_tree_item: Option<TreeItemId>,
@@ -100,6 +103,11 @@ impl PrintCadApp {
                     crate::log_panel::info("Cancelling the running kernel job…");
                 }
                 UiCommand::FitView => intents.fit_view = true,
+                UiCommand::FitSelection => intents.fit_selection = true,
+                UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
+                UiCommand::SetBodyDisplay { body, display } => {
+                    intents.body_display.push((body, display));
+                }
                 UiCommand::RevealInTree(body) => {
                     self.session.viewport_menu = None;
                     self.session.reveal_body = Some(body);
@@ -179,6 +187,12 @@ impl PrintCadApp {
         if intents.toggle_log_panel {
             self.user_settings.rendering.show_log_panel =
                 !self.user_settings.rendering.show_log_panel;
+            intents.persist_settings = true;
+        }
+        if let Some(style) = intents.set_draw_style
+            && self.user_settings.rendering.draw_style != style
+        {
+            self.user_settings.rendering.draw_style = style;
             intents.persist_settings = true;
         }
         if let Some(mode) = intents.set_projection {
@@ -283,6 +297,12 @@ impl PrintCadApp {
 
         if intents.fit_view {
             self.fit_view_to_scene();
+        }
+        if intents.fit_selection {
+            self.fit_view_to_selection();
+        }
+        for (body, display) in intents.body_display {
+            self.session.document.set_body_display(body, display);
         }
 
         for (node_id, visible) in intents.set_visibility {
@@ -464,6 +484,29 @@ impl PrintCadApp {
     }
 
     /// Frame the camera around the imported geometry (or the default box).
+    /// Frame the selected body (else the active one); the whole scene when
+    /// neither has geometry.
+    fn fit_view_to_selection(&mut self) {
+        let body = self
+            .session
+            .selected_body
+            .map(core_document::BodyId)
+            .or(self.session.active_body_id);
+        let aabb = body.and_then(|body| {
+            let geometry = self.session.document.imported_geometry(body)?;
+            geometry.bounds_mm.or_else(|| geometry.mesh.bounds())
+        });
+        let Some((mn, mx)) = aabb else {
+            self.fit_view_to_scene();
+            return;
+        };
+        let (mn, mx) = (Vec3::from_array(mn), Vec3::from_array(mx));
+        let (center, radius) = aabb_fit_center_radius(mn, mx);
+        self.session
+            .camera
+            .reset_to_fit(center, radius, None, &self.user_settings.camera);
+    }
+
     fn fit_view_to_scene(&mut self) {
         app_log::info("Fit View requested");
         if let Some(aabb) = document_imported_aabb(&self.session.document) {
