@@ -28,9 +28,31 @@ use core_document::{
 };
 use wb_sketch::SketchFeature;
 
+/// The switches on the Part Design Preferences page.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PartOptions {
+    /// The preview rebuilds on every field change in the task panel; off,
+    /// it rebuilds when the task is accepted.
+    pub update_while_editing: bool,
+    /// A sketch a new feature consumes is hidden.
+    pub hide_used_sketches: bool,
+}
+
+impl Default for PartOptions {
+    fn default() -> Self {
+        Self {
+            update_while_editing: true,
+            hide_used_sketches: true,
+        }
+    }
+}
+
 /// Part Design workbench: feature-based solid modeling.
 #[derive(Default)]
 pub struct PartDesignWorkbench {
+    /// The Preferences page's switches.
+    pub options: PartOptions,
     /// The feature open in the task panel.
     #[cfg(feature = "egui")]
     task: Option<task::TaskState>,
@@ -494,10 +516,15 @@ impl PartDesignWorkbench {
             Ok(feature_id) => {
                 ctx.document.mark_feature_dirty(feature_id);
                 // Consumed sketches are hidden; the solid takes over visually.
-                for sketch in &sketches {
-                    ctx.document.set_feature_visible(*sketch, false);
-                }
-                self.pending_task_from_tool = Some((feature_id, sketches));
+                let hidden = if self.options.hide_used_sketches {
+                    for sketch in &sketches {
+                        ctx.document.set_feature_visible(*sketch, false);
+                    }
+                    sketches
+                } else {
+                    Vec::new()
+                };
+                self.pending_task_from_tool = Some((feature_id, hidden));
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
             }
@@ -876,27 +903,28 @@ impl Workbench for PartDesignWorkbench {
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
         use ui_kit::widgets::{PrefRow, pref_group};
-        // PLANNED: feature defaults applied when a feature is created.
         pref_group(
             ui,
             "Feature defaults",
             vec![
+                // PLANNED: merge coplanar faces after each boolean, once the
+                // kernel offers it.
                 PrefRow::planned_toggle(
                     "Refine result",
                     "merges coplanar faces after each boolean",
                     true,
                 )
                 .hint("Merge coplanar faces after booleans"),
-                PrefRow::planned_toggle(
+                PrefRow::toggle(
                     "Update view while editing",
-                    "rebuilds the preview on every field change",
-                    true,
-                ),
-                PrefRow::planned_toggle(
+                    &mut self.options.update_while_editing,
+                )
+                .hint("Rebuild the preview on every field change; off, on OK"),
+                PrefRow::toggle(
                     "Hide the sketch after a feature uses it",
-                    "keeps used sketches out of the viewport",
-                    true,
-                ),
+                    &mut self.options.hide_used_sketches,
+                )
+                .hint("Keep used sketches out of the viewport"),
             ],
             filter,
         );
@@ -926,17 +954,34 @@ impl Workbench for PartDesignWorkbench {
         build::delete_feature(ctx.document, id)
     }
 
+    fn settings_json(&self) -> Option<serde_json::Value> {
+        serde_json::to_value(self.options).ok()
+    }
+
+    fn apply_settings_json(&mut self, value: &serde_json::Value) {
+        if let Ok(options) = serde_json::from_value(value.clone()) {
+            self.options = options;
+        }
+    }
+
     /// The open task and the feature a tool just created are the editing
-    /// state; they belong to the tab they were opened in.
+    /// state; they belong to the tab they were opened in. The settings
+    /// stay: a fresh bench still keeps the user's switches.
     fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        Some(Box::new(std::mem::take(self)))
+        let options = self.options;
+        let mut state = std::mem::take(self);
+        self.options = options;
+        state.options = options;
+        Some(Box::new(state))
     }
 
     fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        let options = self.options;
         *self = state
             .and_then(|s| s.downcast::<Self>().ok())
             .map(|s| *s)
             .unwrap_or_default();
+        self.options = options;
     }
 
     fn property_hints(&self) -> core_document::PropertyHints {

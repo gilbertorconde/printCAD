@@ -14,6 +14,8 @@ use super::{ActiveTool, ActiveWorkbench, UiCommand};
 
 /// A button on the standard row that maps to an app command.
 struct ShellItem {
+    /// The button draws pressed.
+    on: bool,
     icon: &'static str,
     label: &'static str,
     command: Option<UiCommand>,
@@ -22,6 +24,17 @@ struct ShellItem {
 
 fn shell(icon: &'static str, label: &'static str, command: UiCommand) -> ShellItem {
     ShellItem {
+        on: false,
+        icon,
+        label,
+        command: Some(command),
+        planned: None,
+    }
+}
+
+fn toggle(icon: &'static str, label: &'static str, on: bool, command: UiCommand) -> ShellItem {
+    ShellItem {
+        on,
         icon,
         label,
         command: Some(command),
@@ -31,6 +44,7 @@ fn shell(icon: &'static str, label: &'static str, command: UiCommand) -> ShellIt
 
 fn planned(icon: &'static str, label: &'static str, note: &'static str) -> ShellItem {
     ShellItem {
+        on: false,
         icon,
         label,
         command: None,
@@ -38,7 +52,7 @@ fn planned(icon: &'static str, label: &'static str, note: &'static str) -> Shell
     }
 }
 
-fn standard_items() -> Vec<Option<ShellItem>> {
+fn standard_items(show_print_bed: bool) -> Vec<Option<ShellItem>> {
     use super::FileCommand;
     vec![
         Some(shell("new-file", "New", UiCommand::File(FileCommand::New))),
@@ -60,8 +74,12 @@ fn standard_items() -> Vec<Option<ShellItem>> {
         Some(shell("refresh", "Recompute", UiCommand::RecomputeAll)),
         // PLANNED: measure distances and angles between picked geometry.
         Some(planned("measure", "Measure", "measures picked geometry")),
-        // PLANNED: show the printer's build volume around the model.
-        Some(planned("print-bed", "Print bed", "shows the print volume")),
+        Some(toggle(
+            "print-bed",
+            "Print bed",
+            show_print_bed,
+            UiCommand::TogglePrintBed,
+        )),
     ]
 }
 
@@ -71,6 +89,8 @@ pub struct ToolbarInputs<'a> {
     pub document: &'a mut core_document::Document,
     pub host: HostCtxParams,
     pub active_document_object: Option<core_document::FeatureId>,
+    /// The print-bed button's state.
+    pub show_print_bed: bool,
 }
 
 /// The tool a variant dropdown last picked, remembered per tool id.
@@ -300,6 +320,7 @@ pub fn draw_toolbars(
         document,
         host,
         active_document_object,
+        show_print_bed,
     } = inputs;
     let tools: Vec<ToolDescriptor> = registry
         .tools_for(&active_workbench.0)
@@ -336,13 +357,13 @@ pub fn draw_toolbars(
             // Row 0: standard tools, the workbench switcher, the bench's
             // row-0 tools, then the tool search at the right.
             row(ui, 0, |ui| {
-                for item in standard_items() {
+                for item in standard_items(show_print_bed) {
                     match item {
                         None => separator(ui),
                         Some(item) => {
                             let state = ToolButtonState {
                                 enabled: item.command.is_some(),
-                                active: false,
+                                active: item.on,
                                 planned: item.planned,
                                 menu: false,
                             };

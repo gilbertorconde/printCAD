@@ -44,6 +44,35 @@ pub struct UserSettings {
     /// What the app writes down for someone else to read.
     #[serde(default)]
     pub diagnostics: DiagnosticsSettings,
+    /// The printer the models are for.
+    #[serde(default)]
+    pub printing: PrintingSettings,
+    /// Each workbench's own settings, by bench id, as the bench serialized
+    /// them; the app stores and returns them without reading them.
+    #[serde(default)]
+    pub workbenches: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// The printer's build volume, drawn around the model on request.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrintingSettings {
+    /// Bed width, depth and build height in millimetres.
+    pub bed_mm: [f32; 3],
+    /// The bed's origin sits at its centre rather than a corner.
+    pub origin_center: bool,
+    /// The build volume is drawn in the scene.
+    pub show_bed: bool,
+}
+
+impl Default for PrintingSettings {
+    fn default() -> Self {
+        Self {
+            bed_mm: [220.0, 220.0, 250.0],
+            origin_center: false,
+            show_bed: false,
+        }
+    }
 }
 
 impl Default for UserSettings {
@@ -57,6 +86,8 @@ impl Default for UserSettings {
             fps_cap: 0.0,
             sixdof: SixDofSettings::default(),
             diagnostics: DiagnosticsSettings::default(),
+            printing: PrintingSettings::default(),
+            workbenches: std::collections::HashMap::new(),
         }
     }
 }

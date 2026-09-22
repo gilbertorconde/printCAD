@@ -10,9 +10,7 @@ use egui::{
 use kernel_api::LinearDeflectionMode;
 use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, UserSettings};
 use ui_kit::tokens::*;
-use ui_kit::widgets::{
-    Note, PrefRow, QtyField, note_card, overline, pref_group, primary_button, secondary_button,
-};
+use ui_kit::widgets::{PrefRow, QtyField, overline, pref_group, primary_button, secondary_button};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -78,7 +76,7 @@ impl PrefGroup {
 
     /// Groups the app has no settings for yet.
     fn planned(self) -> bool {
-        matches!(self, PrefGroup::Printing | PrefGroup::Updates)
+        false
     }
 }
 
@@ -494,30 +492,11 @@ fn draw_content(
                         PrefGroup::General => general_page(ui, state, inputs, &filter),
                         PrefGroup::Display => display_page(ui, state, inputs, &filter),
                         PrefGroup::Input => input_page(ui, state, inputs, &filter),
-                        PrefGroup::Workbench(i) => {
-                            workbench_page(ui, inputs.registry, i, &filter)
-                        }
+                        PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, &filter),
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
-                        PrefGroup::Printing => {
-                            // PLANNED: printer profiles, bed size and export
-                            // presets for slicers.
-                            note_card(
-                                ui,
-                                Note::Info,
-                                Some("Planned"),
-                                "Printer profiles, bed size and slicer export presets live here once printing support lands.",
-                            );
-                        }
-                        PrefGroup::Updates => {
-                            // PLANNED: release channel and update checks.
-                            note_card(
-                                ui,
-                                Note::Info,
-                                Some("Planned"),
-                                "Update checks and the release channel live here once builds are published.",
-                            );
-                        }
+                        PrefGroup::Printing => printing_page(ui, state, &filter),
+                        PrefGroup::Updates => updates_page(ui),
                     }
                 });
         });
@@ -617,7 +596,8 @@ fn reset_group(state: &mut PreferencesState) {
         }
         PrefGroup::Units => state.draft_unit = Unit::Mm,
         PrefGroup::ImportExport => state.draft.import = defaults.import,
-        PrefGroup::Workbench(_) | PrefGroup::Printing | PrefGroup::Updates => {}
+        PrefGroup::Printing => state.draft.printing = defaults.printing,
+        PrefGroup::Workbench(_) | PrefGroup::Updates => {}
     }
 }
 
@@ -971,7 +951,8 @@ fn search_results(
                 PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, filter),
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),
-                PrefGroup::Printing | PrefGroup::Updates => {}
+                PrefGroup::Printing => printing_page(ui, state, filter),
+                PrefGroup::Updates => {}
             }
         }
     }
@@ -984,6 +965,56 @@ fn search_results(
                 .color(TEXT3),
         );
     }
+}
+
+/// The printer's build volume: what the print-bed overlay draws.
+fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
+    let printing = &mut state.draft.printing;
+    let [x, y, z] = &mut printing.bed_mm;
+    pref_group(
+        ui,
+        "Build volume",
+        vec![
+            PrefRow::qty(
+                "Bed width (X)",
+                QtyField::mm(x).range(10.0..=2000.0).speed(1.0).decimals(0),
+            ),
+            PrefRow::qty(
+                "Bed depth (Y)",
+                QtyField::mm(y).range(10.0..=2000.0).speed(1.0).decimals(0),
+            ),
+            PrefRow::qty(
+                "Build height (Z)",
+                QtyField::mm(z).range(10.0..=2000.0).speed(1.0).decimals(0),
+            ),
+            PrefRow::toggle("Origin at the bed centre", &mut printing.origin_center)
+                .hint("Off, the origin is the bed's front-left corner"),
+            PrefRow::toggle("Show the print bed", &mut printing.show_bed)
+                .hint("Draw the build volume around the model; the toolbar toggles it too"),
+        ],
+        filter,
+    );
+}
+
+/// The running version and where releases are published.
+fn updates_page(ui: &mut Ui) {
+    pref_group(
+        ui,
+        "Version",
+        vec![
+            PrefRow::text("printCAD", env!("CARGO_PKG_VERSION").to_string()),
+            PrefRow::new("Releases", |ui| {
+                ui.hyperlink_to(
+                    RichText::new("github.com/gilbertorconde/printCAD/releases")
+                        .font(sans(FONT_SM)),
+                    "https://github.com/gilbertorconde/printCAD/releases",
+                );
+                false
+            })
+            .hint("New builds are published there"),
+        ],
+        "",
+    );
 }
 
 fn units_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {

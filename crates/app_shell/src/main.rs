@@ -90,6 +90,9 @@ fn main() -> Result<()> {
         }
     };
 
+    // The benches' own settings, back from the file.
+    registry.apply_settings(&user_settings.workbenches);
+
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()
         .context("failed to create event loop")?;
@@ -223,6 +226,10 @@ struct PrintCadApp {
     face_highlight_id: Uuid,
     /// The submission id of the whole-body selection overlay.
     body_highlight_id: Uuid,
+    /// The print bed's submission id, and its line mesh keyed by the
+    /// settings it was built from.
+    print_bed_id: Uuid,
+    print_bed: Option<(u64, std::sync::Arc<kernel_api::TriMesh>)>,
     /// The title the window currently shows; rewritten only on change.
     window_title: String,
 }
@@ -316,6 +323,8 @@ impl PrintCadApp {
             modifiers: winit::keyboard::ModifiersState::default(),
             face_highlight_id: Uuid::new_v4(),
             body_highlight_id: Uuid::new_v4(),
+            print_bed_id: Uuid::new_v4(),
+            print_bed: None,
             window_title: String::new(),
             recent: app::doc_io::load_recent(),
         }

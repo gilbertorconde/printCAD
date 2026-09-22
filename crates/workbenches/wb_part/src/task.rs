@@ -119,6 +119,11 @@ impl PartDesignWorkbench {
             let label = self.task_label(ctx);
             self.task = None;
             ctx.active_document_object = None;
+            // With the live preview off, the accepted edit is what
+            // rebuilds.
+            if !self.options.update_while_editing {
+                ctx.document.mark_feature_dirty(target_id);
+            }
             return TaskOutcome::Accepted { label };
         }
 
@@ -292,7 +297,9 @@ impl PartDesignWorkbench {
                     ctx.document
                         .set_feature_dependencies(feature_id, deps_after);
                 }
-                ctx.document.mark_feature_dirty(feature_id);
+                if self.options.update_while_editing {
+                    ctx.document.mark_feature_dirty(feature_id);
+                }
             }
         }
 

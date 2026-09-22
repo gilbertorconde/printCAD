@@ -127,6 +127,30 @@ impl DocumentService {
             .map(|e| e.workbench.as_ref())
     }
 
+    /// Every bench's settings, keyed by bench id.
+    pub fn collect_settings(&self) -> HashMap<String, serde_json::Value> {
+        self.order
+            .iter()
+            .filter_map(|id| {
+                let value = self
+                    .workbenches
+                    .get(id.as_str())?
+                    .workbench
+                    .settings_json()?;
+                Some((id.as_str().to_owned(), value))
+            })
+            .collect()
+    }
+
+    /// Give every bench its settings back.
+    pub fn apply_settings(&mut self, settings: &HashMap<String, serde_json::Value>) {
+        for (id, value) in settings {
+            if let Some(entry) = self.workbenches.get_mut(id.as_str()) {
+                entry.workbench.apply_settings_json(value);
+            }
+        }
+    }
+
     /// Every bench's editing state for the document on screen, keyed by
     /// bench id; the benches are left as if no document were open.
     pub fn suspend_sessions(&mut self) -> HashMap<String, Box<dyn std::any::Any + Send>> {

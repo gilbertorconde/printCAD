@@ -39,6 +39,8 @@ pub enum UiCommand {
     /// Frame the selected body, or the active one.
     FitSelection,
     SetDrawStyle(settings::DrawStyle),
+    /// The print bed drawn around the model, or not.
+    TogglePrintBed,
     /// A body's own look, or `None` for the one it came with.
     SetBodyDisplay {
         body: core_document::BodyId,

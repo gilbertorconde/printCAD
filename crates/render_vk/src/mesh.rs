@@ -939,7 +939,11 @@ impl MeshRenderer {
         // about 1.5 ms of a 25 ms frame on it — so it runs every frame,
         // moving or still.
         let force_off = !draw_edges || std::env::var_os("PRINTCAD_NO_EDGES").is_some();
-        let draws_edges = |cached: &CachedMesh| cached.edge_index_count > 0 && !force_off;
+        // A line body (a sketch, a guide) is nothing but its edges and
+        // draws whatever the style; a solid's boundary edges follow it.
+        let draws_edges = |cached: &CachedMesh| {
+            cached.edge_index_count > 0 && (cached.index_count == 0 || !force_off)
+        };
         let has_edges = bodies
             .iter()
             .zip(&edges_eligible)

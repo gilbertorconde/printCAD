@@ -41,6 +41,41 @@ fn hash_trimesh(mesh: &kernel_api::TriMesh) -> u64 {
 /// Stable u64 fingerprint of a serde JSON value. Used as a `revision`
 /// counter for sketch geometry so the GPU mesh cache can skip the upload
 /// when the underlying sketch JSON hasn't changed between frames.
+/// The build volume as a line body: a box of the bed's width and depth,
+/// standing on Z, with the origin at the bed's corner or centre.
+fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh {
+    let [w, d, h] = printing.bed_mm;
+    let (x0, y0) = if printing.origin_center {
+        (-w / 2.0, -d / 2.0)
+    } else {
+        (0.0, 0.0)
+    };
+    let (x1, y1) = (x0 + w, y0 + d);
+    let positions = vec![
+        [x0, y0, 0.0],
+        [x1, y0, 0.0],
+        [x1, y1, 0.0],
+        [x0, y1, 0.0],
+        [x0, y0, h],
+        [x1, y0, h],
+        [x1, y1, h],
+        [x0, y1, h],
+    ];
+    let edges = vec![
+        0, 1, 1, 2, 2, 3, 3, 0, // bed outline
+        4, 5, 5, 6, 6, 7, 7, 4, // top
+        0, 4, 1, 5, 2, 6, 3, 7, // uprights
+    ];
+    kernel_api::TriMesh {
+        normals: vec![[0.0, 0.0, 1.0]; positions.len()],
+        positions,
+        indices: Vec::new(),
+        edges,
+        colors: Vec::new(),
+        faces: Vec::new(),
+    }
+}
+
 /// Union of all imported mesh AABBs in world space `(min, max)`.
 pub(crate) fn document_imported_aabb(document: &Document) -> Option<(Vec3, Vec3)> {
     let mut combined_min = [f32::INFINITY; 3];
@@ -907,6 +942,39 @@ impl PrintCadApp {
                 is_wireframe: false,
                 pickable: false,
             });
+        }
+
+        // The printer's build volume, as twelve lines around the model.
+        if self.user_settings.printing.show_bed {
+            let printing = &self.user_settings.printing;
+            let revision = {
+                use std::hash::{Hash, Hasher};
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                for v in printing.bed_mm {
+                    v.to_bits().hash(&mut h);
+                }
+                printing.origin_center.hash(&mut h);
+                h.finish()
+            };
+            if self
+                .print_bed
+                .as_ref()
+                .is_none_or(|(rev, _)| *rev != revision)
+            {
+                self.print_bed = Some((revision, Arc::new(print_bed_mesh(printing))));
+            }
+            if let Some((_, mesh)) = &self.print_bed {
+                all_meshes.push(BodySubmission {
+                    id: self.print_bed_id,
+                    revision,
+                    mesh: Arc::clone(mesh),
+                    color: [0.45, 0.52, 0.6],
+                    opacity: 1.0,
+                    highlight: HighlightState::None,
+                    is_wireframe: false,
+                    pickable: false,
+                });
+            }
         }
 
         self.frame_submission.bodies = all_meshes;

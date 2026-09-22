@@ -120,7 +120,8 @@ const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 /// Sketch workbench: 2D drawing with constraints.
 /// The switches on the sketcher's panel and Preferences page.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct SketchOptions {
     /// A grid on the sketch plane.
     pub grid_on: bool,
@@ -1291,17 +1292,34 @@ impl Workbench for SketchWorkbench {
         true
     }
 
+    fn settings_json(&self) -> Option<serde_json::Value> {
+        serde_json::to_value(self.options).ok()
+    }
+
+    fn apply_settings_json(&mut self, value: &serde_json::Value) {
+        if let Ok(options) = serde_json::from_value(value.clone()) {
+            self.options = options;
+        }
+    }
+
     /// The whole bench is its editing state: the open sketch, the tool in
     /// hand, the selection, the solver's last word.
     fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
-        Some(Box::new(std::mem::take(self)))
+        // The settings stay with the bench, not the tab.
+        let options = self.options;
+        let mut state = std::mem::take(self);
+        self.options = options;
+        state.options = options;
+        Some(Box::new(state))
     }
 
     fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        let options = self.options;
         *self = state
             .and_then(|s| s.downcast::<Self>().ok())
             .map(|s| *s)
             .unwrap_or_default();
+        self.options = options;
     }
 
     fn menu_items(&self, scope: &MenuScope, _document: &core_document::Document) -> Vec<MenuItem> {

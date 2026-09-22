@@ -635,6 +635,15 @@ pub trait Workbench: Send {
     /// Called when the user requests to finish editing (e.g., via UI button).
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
 
+    /// This bench's own settings, for the host to keep in the user's
+    /// settings file without reading them. `None` when it has none.
+    fn settings_json(&self) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// Settings `settings_json` produced earlier, back from the file.
+    fn apply_settings_json(&mut self, _value: &serde_json::Value) {}
+
     /// Hand the host this bench's editing state for the document on
     /// screen, leaving the bench as if no document were open. The host
     /// keeps it with the tab and gives it back through `resume_session`

@@ -325,6 +325,7 @@ impl UiLayer {
                     document,
                     host,
                     active_document_object,
+                    show_print_bed: settings.printing.show_bed,
                 },
                 &mut active_workbench,
                 &mut active_tool,

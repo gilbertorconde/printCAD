@@ -30,6 +30,7 @@ struct FrameIntents {
     fit_view: bool,
     fit_selection: bool,
     set_draw_style: Option<settings::DrawStyle>,
+    toggle_print_bed: bool,
     body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
     set_visibility: Vec<(uuid::Uuid, bool)>,
     select_tree_item: Option<TreeItemId>,
@@ -105,6 +106,7 @@ impl PrintCadApp {
                 UiCommand::FitView => intents.fit_view = true,
                 UiCommand::FitSelection => intents.fit_selection = true,
                 UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
+                UiCommand::TogglePrintBed => intents.toggle_print_bed = true,
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));
                 }
@@ -189,6 +191,10 @@ impl PrintCadApp {
                 !self.user_settings.rendering.show_log_panel;
             intents.persist_settings = true;
         }
+        if intents.toggle_print_bed {
+            self.user_settings.printing.show_bed = !self.user_settings.printing.show_bed;
+            intents.persist_settings = true;
+        }
         if let Some(style) = intents.set_draw_style
             && self.user_settings.rendering.draw_style != style
         {
@@ -270,8 +276,11 @@ impl PrintCadApp {
             }
             if *settings != self.user_settings {
                 self.user_settings = *settings;
-                intents.persist_settings = true;
             }
+            // A bench page applies to the bench as it is drawn; the commit
+            // writes what the benches hold now.
+            self.user_settings.workbenches = self.registry.collect_settings();
+            intents.persist_settings = true;
             if display_unit != self.session.document.display_unit() {
                 self.session.document.set_display_unit(display_unit);
             }
