@@ -22,7 +22,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use core_document::{
-    BodyId, CommandDescriptor, FeatureId, FeatureInfo, InputResult, KeyCode, ScreenSpaceLabel,
+    BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, ScreenSpaceLabel,
     ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo, ToolDescriptor, ToolHint, ToolVariant,
     ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
@@ -398,11 +398,13 @@ impl SketchWorkbench {
 
             if let Some(sketch_feature) = self.get_active_sketch(ctx) {
                 let plane = sketch_feature.plane;
-                ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
-                    plane_origin: plane.origin,
-                    plane_normal: plane.normal,
-                    plane_up: plane.y_axis,
-                });
+                ctx.request(HostRequest::OrientCamera(
+                    core_document::CameraOrientRequest {
+                        plane_origin: plane.origin,
+                        plane_normal: plane.normal,
+                        plane_up: plane.y_axis,
+                    },
+                ));
             }
         }
     }
@@ -476,11 +478,13 @@ impl SketchWorkbench {
                 self.active_sketch_id = Some(feature_id);
                 self.clear_interaction_state();
                 ctx.active_document_object = Some(feature_id);
-                ctx.camera_orient_request = Some(core_document::CameraOrientRequest {
-                    plane_origin: plane.origin,
-                    plane_normal: plane.normal,
-                    plane_up: plane.y_axis,
-                });
+                ctx.request(HostRequest::OrientCamera(
+                    core_document::CameraOrientRequest {
+                        plane_origin: plane.origin,
+                        plane_normal: plane.normal,
+                        plane_up: plane.y_axis,
+                    },
+                ));
                 ctx.log_info(format!("Created new sketch: {sketch_name}"));
             }
             Err(e) => {
@@ -932,7 +936,7 @@ impl SketchWorkbench {
         };
         let travelled = (viewport_pos.0 - press.0).hypot(viewport_pos.1 - press.1);
         if travelled <= CLICK_SLOP_PX && self.tool_state.is_idle() {
-            ctx.active_tool_request = Some("sketch.select".to_string());
+            ctx.request(HostRequest::ActivateTool("sketch.select".to_string()));
         }
         // Never consumed: the camera still has a pan to finish.
         InputResult::ignored()
@@ -1599,9 +1603,6 @@ impl Workbench for SketchWorkbench {
             .planned("draws construction or normal geometry on top")
             .row(2),
         );
-        // The solver runs automatically after every geometry/constraint
-        // edit, so no explicit solve command is registered.
-        context.register_command(CommandDescriptor::new("sketch.finish", "Close sketch"));
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -1632,7 +1633,7 @@ impl Workbench for SketchWorkbench {
 
         // Another workbench (or the host) asked us to create a sketch on a
         // specific body: take the request and open the plane picker.
-        if let Some(request) = ctx.start_sketch_on_body.take() {
+        if let Some(request) = ctx.attach_request.take() {
             let face_plane = request
                 .face
                 .map(|f| SketchPlane::from_face(f.point, f.normal));

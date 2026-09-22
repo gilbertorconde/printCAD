@@ -9,7 +9,6 @@ use crate::app::doc_io::FileDialogKind;
 use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
-use core_document::WorkbenchFeature;
 
 use crate::PrintCadApp;
 use crate::ui::{
@@ -53,13 +52,15 @@ struct FrameIntents {
     start_new: Option<StartKind>,
     open_recent: Option<std::path::PathBuf>,
     remove_recent: Vec<std::path::PathBuf>,
+    /// Bench requests from panel hooks that are not one of the intents
+    /// above, applied in the order they arrived.
+    host_requests: Vec<core_document::HostRequest>,
 }
 
 impl PrintCadApp {
     pub(crate) fn apply_ui_commands(
         &mut self,
         commands: Vec<UiCommand>,
-        new_body_requested: bool,
         event_loop: &ActiveEventLoop,
     ) {
         let mut intents = FrameIntents::default();
@@ -120,12 +121,21 @@ impl PrintCadApp {
                 }
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
-                UiCommand::FinishSketch => intents.finish_sketch = true,
-                UiCommand::OrientCameraToPlane(req) => intents.orient_to_plane = Some(req),
+                // A panel's requests take the same paths the UI's own
+                // commands take, so a frame carrying both stays in order.
+                UiCommand::HostRequest(core_document::HostRequest::FinishEditing) => {
+                    intents.finish_sketch = true;
+                }
+                UiCommand::HostRequest(core_document::HostRequest::OrientCamera(req)) => {
+                    intents.orient_to_plane = Some(req);
+                }
+                UiCommand::HostRequest(core_document::HostRequest::SwitchWorkbench(wb)) => {
+                    intents.request_workbench = Some(ActiveWorkbench(wb));
+                }
+                UiCommand::HostRequest(request) => intents.host_requests.push(request),
                 UiCommand::SwitchWorkbench { from, to } => {
                     intents.workbench_switch = Some((from, to));
                 }
-                UiCommand::RequestWorkbench(wb) => intents.request_workbench = Some(wb),
                 UiCommand::Undo => intents.undo = true,
                 UiCommand::Redo => intents.redo = true,
                 UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
@@ -282,6 +292,9 @@ impl PrintCadApp {
         if intents.finish_sketch {
             self.finish_active_workbench_editing();
         }
+        for request in intents.host_requests {
+            self.apply_host_request(request, crate::app::workbench_host::HookSite::Interaction);
+        }
 
         if let Some((path, detail)) = step_import_to_run {
             self.last_step_import_detail = detail.clone();
@@ -326,10 +339,6 @@ impl PrintCadApp {
 
         self.poll_file_dialog();
 
-        if new_body_requested {
-            self.create_new_body();
-        }
-
         // Workbench change last-but-one so the outgoing workbench sees the
         // frame's selection updates in its deactivate hook.
         if let Some((old_wb, new_wb)) = intents.workbench_switch {
@@ -371,13 +380,13 @@ impl PrintCadApp {
     /// workbench doesn't immediately re-enter editing on the next event.
     /// When the editing flow was started from another workbench (Part
     /// Design's "New Sketch"), jump back to it.
-    fn finish_active_workbench_editing(&mut self) {
+    pub(crate) fn finish_active_workbench_editing(&mut self) {
         let wb_id = self.active_workbench.0.clone();
         let params = self.interaction_ctx_params();
         if let Some(((), outcome)) =
             self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx))
         {
-            self.apply_hook_outcome(outcome);
+            self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
         }
         self.active_document_object = None;
         self.tree_selection = Some(TreeItemId::DocumentRoot);
@@ -596,20 +605,32 @@ impl PrintCadApp {
                 self.document.set_feature_visible(feature, visible);
             }
             TreeFeatureCommand::Delete => {
-                // Reveal sketches the feature consumed so they stay usable.
-                let sketches = self
+                // The bench that claimed the feature's kind removes it and
+                // settles what depended on it; a kind no bench claims is
+                // simply removed.
+                let owner = self
                     .document
-                    .get_feature_data(feature)
-                    .and_then(|d| wb_part::PartFeature::from_json(d).ok())
-                    .map(|f: wb_part::PartFeature| f.sketches())
-                    .unwrap_or_default();
-                if self.document.remove_feature(feature).is_ok() {
-                    for sketch in sketches {
-                        self.document.set_feature_visible(sketch, true);
+                    .get_feature_meta(feature)
+                    .and_then(|n| self.registry.owner_id_of(&n.workbench_id).cloned());
+                let removed = match owner {
+                    Some(owner) => {
+                        let params = self.interaction_ctx_params();
+                        match self.with_workbench_ctx(&owner, params, |wb, ctx| {
+                            wb.delete_feature(ctx, feature)
+                        }) {
+                            Some((removed, outcome)) => {
+                                self.apply_hook_outcome(
+                                    outcome,
+                                    crate::app::workbench_host::HookSite::Interaction,
+                                );
+                                removed
+                            }
+                            None => false,
+                        }
                     }
-                    if let Some(body) = body {
-                        self.registry.invalidate_body(&mut self.document, body);
-                    }
+                    None => self.document.remove_feature(feature).is_ok(),
+                };
+                if removed {
                     if self.active_document_object == Some(feature) {
                         self.active_document_object = None;
                     }

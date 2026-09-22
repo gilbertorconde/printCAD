@@ -62,26 +62,24 @@ pub fn flush_ctx_logs(ctx: &mut WorkbenchRuntimeContext) {
     }
 }
 
-/// Write-backs a panel hook can leave on its context.
+/// What a panel hook left on its context, for the UI to turn into
+/// commands. Every request survives the trip.
 #[derive(Debug, Default)]
 pub struct PanelWriteback {
-    pub finish_sketch_requested: bool,
-    pub camera_orient_request: Option<core_document::CameraOrientRequest>,
     /// The hook changed the active document object (feature created or
     /// released).
     pub active_object_changed: Option<Option<FeatureId>>,
-    pub workbench_switch_request: Option<core_document::WorkbenchId>,
+    pub requests: Vec<core_document::HostRequest>,
 }
 
 impl PanelWriteback {
     pub fn take(ctx: &mut WorkbenchRuntimeContext, before: Option<FeatureId>) -> Self {
+        let outcome = core_document::HookOutcome::take(ctx);
         let active_object_changed =
-            (ctx.active_document_object != before).then_some(ctx.active_document_object);
+            (outcome.active_document_object != before).then_some(outcome.active_document_object);
         Self {
-            finish_sketch_requested: ctx.finish_sketch_requested,
-            camera_orient_request: ctx.camera_orient_request.take(),
             active_object_changed,
-            workbench_switch_request: ctx.workbench_switch_request.take(),
+            requests: outcome.requests,
         }
     }
 }

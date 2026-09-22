@@ -35,16 +35,16 @@ pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
-    CameraOrientRequest, FaceRef, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
-    SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    CameraOrientRequest, FaceRef, HookOutcome, HostRequest, InputResult, KeyCode, LogEntry,
+    LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
 pub use units::{Unit, format_length_mm};
 pub use workbench::{
-    CommandDescriptor, FeatureInfo, MarkKind, OvpRow, OvpWidget, PassiveGeometry, ScreenSpaceLabel,
-    ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest,
-    ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
+    FeatureInfo, MarkKind, OvpRow, OvpWidget, PassiveGeometry, ScreenSpaceLabel, ScreenSpaceMark,
+    ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
+    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
 };
 
 /// Result type for document operations.

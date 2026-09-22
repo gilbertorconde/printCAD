@@ -26,9 +26,9 @@ pub struct UiFrameInputs<'a> {
     pub screen: Screen,
     /// Recently opened documents, most recent first.
     pub recent: &'a [RecentEntry],
-    /// The host's tool state — authoritative. The host consumes Action tool
-    /// ids (e.g. `part.new_body`, a used `sketch.create`) from its copy, so
-    /// the UI must re-seed from it each frame rather than keeping its own.
+    /// The host's tool state — authoritative. The host consumes a used
+    /// Action tool id from its copy once its bench has handled it, so the
+    /// UI must re-seed from it each frame rather than keeping its own.
     pub active_tool: ActiveTool,
     /// The host's active workbench — authoritative (the host can switch
     /// benches itself, e.g. the create-sketch flow).

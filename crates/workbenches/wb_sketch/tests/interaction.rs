@@ -78,7 +78,10 @@ impl Harness {
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         self.wb.on_input(&event, tool, &mut ctx);
         self.active_object = ctx.active_document_object;
-        self.tool_request = ctx.active_tool_request.take();
+        self.tool_request = ctx.take_requests().into_iter().find_map(|r| match r {
+            core_document::HostRequest::ActivateTool(tool) => Some(tool),
+            _ => None,
+        });
         // The host runs this hook once per frame; tool enablement reads
         // the state it refreshes.
         let mut frame_ctx =
@@ -345,14 +348,14 @@ fn cross_workbench_sketch_request_is_consumed() {
     let body = uuid::Uuid::new_v4();
     let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
     ctx.view_proj = Some(h.vp);
-    ctx.start_sketch_on_body = Some(core_document::SketchAttachRequest { body, face: None });
+    ctx.attach_request = Some(core_document::SketchAttachRequest { body, face: None });
     h.wb.on_input(
         &WorkbenchInputEvent::KeyPress { key: KeyCode::A },
         None,
         &mut ctx,
     );
     assert!(
-        ctx.start_sketch_on_body.is_none(),
+        ctx.attach_request.is_none(),
         "the sketch workbench takes the pending request"
     );
 }

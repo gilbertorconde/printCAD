@@ -457,16 +457,26 @@ impl PrintCadApp {
         self.active_workbench.0.clone()
     }
 
-    /// Call on_deactivate on a workbench.
+    /// Call on_deactivate on a workbench. It runs inside a switch, so its
+    /// requests apply except another switch.
     fn call_workbench_deactivate(&mut self, wb_id: &WorkbenchId) {
         let params = self.interaction_ctx_params();
-        self.with_workbench_ctx(wb_id, params, |wb, ctx| wb.on_deactivate(ctx));
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(wb_id, params, |wb, ctx| wb.on_deactivate(ctx))
+        {
+            self.apply_hook_outcome(outcome, app::workbench_host::HookSite::Lifecycle);
+        }
     }
 
-    /// Call on_activate on a workbench.
+    /// Call on_activate on a workbench. It runs inside a switch, so its
+    /// requests apply except another switch.
     fn call_workbench_activate(&mut self, wb_id: &WorkbenchId) {
         let params = self.interaction_ctx_params();
-        self.with_workbench_ctx(wb_id, params, |wb, ctx| wb.on_activate(ctx));
+        if let Some(((), outcome)) =
+            self.with_workbench_ctx(wb_id, params, |wb, ctx| wb.on_activate(ctx))
+        {
+            self.apply_hook_outcome(outcome, app::workbench_host::HookSite::Lifecycle);
+        }
     }
 }
 

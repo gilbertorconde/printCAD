@@ -1,16 +1,17 @@
 //! Shared plumbing for handing a [`WorkbenchRuntimeContext`] to workbench
-//! hooks. Context construction and write-back extraction have one shape,
+//! hooks. Context construction and outcome extraction have one shape,
 //! and this module is the single place it lives; hook call sites never
-//! build a context by hand.
+//! build a context by hand, and no hook's requests are dropped.
 
 use core_document::{
-    CameraOrientRequest, FeatureId, LogEntry, LogLevel, Workbench, WorkbenchId,
+    FeatureId, HookOutcome, HostRequest, LogEntry, LogLevel, Workbench, WorkbenchId,
     WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
 
 use crate::PrintCadApp;
 use crate::log_panel as app_log;
+use crate::ui::TreeItemId;
 
 /// Snapshot of host state a hook's context is built from. Constructed via
 /// [`PrintCadApp::interaction_ctx_params`] / [`PrintCadApp::overlay_ctx_params`]
@@ -27,24 +28,20 @@ pub(crate) struct WbCtxParams {
     pub selected_body_id: Option<Uuid>,
     pub cursor_viewport_pos: Option<(f32, f32)>,
     pub active_document_object: Option<FeatureId>,
-    pub start_sketch_on_body: Option<core_document::SketchAttachRequest>,
+    pub attach_request: Option<core_document::SketchAttachRequest>,
     pub selected_face: Option<core_document::FaceRef>,
     pub ctrl_down: bool,
 }
 
-/// Everything a hook may have written back into the context, extracted
-/// before the context borrow ends.
-pub(crate) struct WbHookOutcome {
-    pub camera_orient_request: Option<CameraOrientRequest>,
-    pub active_document_object: Option<FeatureId>,
-    pub workbench_switch_request: Option<WorkbenchId>,
-    /// The workbench asked for a different active tool.
-    pub active_tool_request: Option<String>,
-    pub start_sketch_on_body: Option<core_document::SketchAttachRequest>,
-    /// Carried for parity with the context; no call site handles it yet
-    /// (the pre-existing "finish sketch" flow was never wired up).
-    #[allow(dead_code)]
-    pub finish_sketch_requested: bool,
+/// Where a hook ran from, which decides what its requests may do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HookSite {
+    /// Input, per-frame and edit-session hooks: every request applies.
+    Interaction,
+    /// Activate, deactivate and the per-frame overlay getters: a bench
+    /// switch from inside a switch, or mid-scene, would re-enter, so
+    /// switch and start requests are dropped here.
+    Lifecycle,
 }
 
 impl PrintCadApp {
@@ -62,7 +59,7 @@ impl PrintCadApp {
             selected_body_id: self.selected_body,
             cursor_viewport_pos: self.cursor_in_viewport,
             active_document_object: self.active_document_object,
-            start_sketch_on_body: self.pending_sketch_creation,
+            attach_request: self.pending_sketch_creation,
             selected_face: self
                 .last_face_hit
                 .filter(|(body, _)| self.selected_body == Some(*body))
@@ -91,7 +88,7 @@ impl PrintCadApp {
             selected_body_id: self.active_body_id.map(|id| id.0),
             cursor_viewport_pos: None,
             active_document_object: self.active_document_object,
-            start_sketch_on_body: None,
+            attach_request: None,
             selected_face: None,
             ctrl_down: false,
         }
@@ -99,16 +96,15 @@ impl PrintCadApp {
 
     /// Run `f` with the workbench and a fully populated runtime context.
     ///
-    /// Logs are flushed unconditionally; every other write-back is returned
-    /// in [`WbHookOutcome`] so the call site decides what to apply (input
-    /// dispatches apply camera-orient requests, lifecycle hooks do not).
+    /// Logs are flushed unconditionally; everything else the hook left is
+    /// returned as a [`HookOutcome`] for [`Self::apply_hook_outcome`].
     /// Returns `None` when the workbench id is not registered.
     pub(crate) fn with_workbench_ctx<R>(
         &mut self,
         wb_id: &WorkbenchId,
         params: WbCtxParams,
         f: impl FnOnce(&mut dyn Workbench, &mut WorkbenchRuntimeContext<'_>) -> R,
-    ) -> Option<(R, WbHookOutcome)> {
+    ) -> Option<(R, HookOutcome)> {
         let Ok(wb) = self.registry.workbench_mut(wb_id) else {
             return None;
         };
@@ -124,20 +120,13 @@ impl PrintCadApp {
         ctx.selected_body_id = params.selected_body_id;
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
         ctx.active_document_object = params.active_document_object;
-        ctx.start_sketch_on_body = params.start_sketch_on_body;
+        ctx.attach_request = params.attach_request;
         ctx.selected_face = params.selected_face;
         ctx.ctrl_down = params.ctrl_down;
 
         let result = f(wb.as_mut(), &mut ctx);
 
-        let outcome = WbHookOutcome {
-            camera_orient_request: ctx.camera_orient_request.take(),
-            active_document_object: ctx.active_document_object,
-            workbench_switch_request: ctx.workbench_switch_request.take(),
-            active_tool_request: ctx.active_tool_request.take(),
-            start_sketch_on_body: ctx.start_sketch_on_body,
-            finish_sketch_requested: ctx.finish_sketch_requested,
-        };
+        let outcome = HookOutcome::take(&mut ctx);
         Self::flush_logs(ctx.drain_logs());
         Some((result, outcome))
     }
@@ -151,33 +140,58 @@ impl PrintCadApp {
         if let Some((_, outcome)) =
             self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.on_frame(dt, ctx))
         {
-            self.apply_hook_outcome(outcome);
+            self.apply_hook_outcome(outcome, HookSite::Interaction);
         }
     }
 
-    /// Apply an input hook's write-backs: sync the active document object
-    /// and honour a camera orient request.
-    pub(crate) fn apply_hook_outcome(&mut self, outcome: WbHookOutcome) {
+    /// Apply what a hook left: the active document object it may have
+    /// changed, the attach inbox as it left it, then its requests in the
+    /// host's order.
+    pub(crate) fn apply_hook_outcome(&mut self, outcome: HookOutcome, site: HookSite) {
         if outcome.active_document_object != self.active_document_object {
             self.active_document_object = outcome.active_document_object;
         }
-        // The context was seeded with the pending request; a consuming
-        // workbench takes it (None comes back), a requesting one sets it.
-        self.pending_sketch_creation = outcome.start_sketch_on_body;
-        if let Some(tool) = outcome.active_tool_request {
-            self.active_tool.active_ids.clear();
-            self.active_tool.active_ids.insert(tool);
+        // The context was seeded with the pending request; the bench it
+        // was for takes it (None comes back), any other leaves it.
+        if site == HookSite::Interaction {
+            self.pending_sketch_creation = outcome.attach_request;
         }
-        if let Some(target) = outcome.workbench_switch_request {
-            self.switch_workbench_for_flow(target);
+        for request in outcome.requests {
+            self.apply_host_request(request, site);
         }
-        if let Some(orient_req) = outcome.camera_orient_request {
-            self.camera.orient_to_plane(
-                glam::Vec3::from_array(orient_req.plane_origin),
-                glam::Vec3::from_array(orient_req.plane_normal),
-                glam::Vec3::from_array(orient_req.plane_up),
-                &self.user_settings.camera,
-            );
+    }
+
+    /// One request, as the host answers it.
+    pub(crate) fn apply_host_request(&mut self, request: HostRequest, site: HookSite) {
+        match request {
+            HostRequest::ActivateTool(tool) => {
+                self.active_tool.active_ids.clear();
+                self.active_tool.active_ids.insert(tool);
+            }
+            HostRequest::SelectBody(body) => {
+                self.apply_tree_selection(TreeItemId::Body(body));
+            }
+            HostRequest::JournalLabel(label) => self.journal.label_next(label),
+            HostRequest::StartOn { workbench, attach } => {
+                if site == HookSite::Interaction {
+                    self.pending_sketch_creation = Some(attach);
+                    self.switch_workbench_for_flow(workbench);
+                }
+            }
+            HostRequest::SwitchWorkbench(workbench) => {
+                if site == HookSite::Interaction {
+                    self.switch_workbench_for_flow(workbench);
+                }
+            }
+            HostRequest::OrientCamera(orient) => {
+                self.camera.orient_to_plane(
+                    glam::Vec3::from_array(orient.plane_origin),
+                    glam::Vec3::from_array(orient.plane_normal),
+                    glam::Vec3::from_array(orient.plane_up),
+                    &self.user_settings.camera,
+                );
+            }
+            HostRequest::FinishEditing => self.finish_active_workbench_editing(),
         }
     }
 

@@ -65,28 +65,17 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Current cursor position in viewport-local coordinates (if inside viewport).
     pub cursor_viewport_pos: Option<(f32, f32)>,
 
-    /// Request camera orientation to a plane (set by workbench, read by host).
-    pub camera_orient_request: Option<CameraOrientRequest>,
+    /// What the bench asked of the host during this hook, in the order it
+    /// asked. The host takes them when the hook returns.
+    requests: Vec<HostRequest>,
 
-    /// Request to exit sketch mode (set by workbench UI, read by host).
-    pub finish_sketch_requested: bool,
-
-    /// Workbench → host: switch the active workbench after this hook
-    /// returns (e.g. Part Design's "New Sketch" jumps to the sketcher).
-    pub workbench_switch_request: Option<crate::WorkbenchId>,
-
-    /// Host ⇄ sketch workbench: a pending "create a sketch on this body"
-    /// request. Set by a requesting workbench, carried by the host between
-    /// hooks, and TAKEN by the sketch workbench when it starts its plane
-    /// picker.
-    pub start_sketch_on_body: Option<SketchAttachRequest>,
+    /// Host → workbench: a "start on this body" request another bench
+    /// made ([`HostRequest::StartOn`]), carried by the host until the
+    /// bench it was for TAKES it, typically to open its plane picker.
+    pub attach_request: Option<SketchAttachRequest>,
 
     /// Host → workbench: whether Ctrl is held (multi-select modifier).
     pub ctrl_down: bool,
-
-    /// Workbench → host: make this tool the active one (a right click on
-    /// empty space drops the sketcher back to Select).
-    pub active_tool_request: Option<String>,
 
     /// Host → workbench: the face under the last body selection, when the
     /// GPU pick landed on solid geometry (surface point + outward normal in
@@ -114,11 +103,80 @@ pub struct SketchAttachRequest {
 }
 
 /// Request to orient camera to a specific plane.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CameraOrientRequest {
     pub plane_origin: [f32; 3],
     pub plane_normal: [f32; 3],
     pub plane_up: [f32; 3],
+}
+
+/// Something a bench asks the host to do once the hook returns. The host
+/// applies a hook's requests in this order, whatever order they were made
+/// in: tool, selection and journal first, then a bench switch, then the
+/// camera, then the end of an edit session. A lifecycle hook (activate,
+/// deactivate) cannot switch benches: its switch and start requests are
+/// dropped, since it is running inside a switch already.
+#[derive(Debug, Clone, PartialEq)]
+pub enum HostRequest {
+    /// Make this tool the active one (a right click on empty space drops
+    /// the sketcher back to Select).
+    ActivateTool(String),
+    /// Make `body` the tree selection and the active body.
+    SelectBody(crate::BodyId),
+    /// Label the undo entry this frame closes.
+    JournalLabel(String),
+    /// Switch to `workbench` and hand it `attach` on its next hook, as its
+    /// `attach_request`.
+    StartOn {
+        workbench: crate::WorkbenchId,
+        attach: SketchAttachRequest,
+    },
+    /// Switch the active workbench (Part Design's "Edit sketch" jumps to
+    /// the sketcher, which picks the active object up as its session).
+    SwitchWorkbench(crate::WorkbenchId),
+    /// Look square onto this plane.
+    OrientCamera(CameraOrientRequest),
+    /// End the active bench's edit session; the host also returns to the
+    /// bench the session was started from.
+    FinishEditing,
+}
+
+impl HostRequest {
+    /// The position in the host's application order.
+    pub fn rank(&self) -> u8 {
+        match self {
+            HostRequest::ActivateTool(_) => 0,
+            HostRequest::SelectBody(_) | HostRequest::JournalLabel(_) => 1,
+            HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,
+            HostRequest::OrientCamera(_) => 3,
+            HostRequest::FinishEditing => 4,
+        }
+    }
+}
+
+/// Everything a hook may have left for the host, taken from the context
+/// before its borrow ends.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HookOutcome {
+    /// The active document object as the hook left it.
+    pub active_document_object: Option<FeatureId>,
+    /// The attach inbox as the hook left it: `None` once the bench it was
+    /// for took it.
+    pub attach_request: Option<SketchAttachRequest>,
+    /// The hook's requests, in the host's application order.
+    pub requests: Vec<HostRequest>,
+}
+
+impl HookOutcome {
+    pub fn take(ctx: &mut WorkbenchRuntimeContext<'_>) -> Self {
+        let mut requests = ctx.take_requests();
+        requests.sort_by_key(HostRequest::rank);
+        Self {
+            active_document_object: ctx.active_document_object,
+            attach_request: ctx.attach_request,
+            requests,
+        }
+    }
 }
 
 impl<'a> WorkbenchRuntimeContext<'a> {
@@ -139,13 +197,10 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             hovered_body_id: None,
             selected_body_id: None,
             cursor_viewport_pos: None,
-            camera_orient_request: None,
-            finish_sketch_requested: false,
             active_document_object: None,
             view_proj: None,
-            workbench_switch_request: None,
-            active_tool_request: None,
-            start_sketch_on_body: None,
+            requests: Vec::new(),
+            attach_request: None,
             selected_face: None,
             ctrl_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
@@ -179,6 +234,17 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     /// Drain pending log entries (called by host after hook returns).
     pub fn drain_logs(&mut self) -> Vec<LogEntry> {
         std::mem::take(&mut self.pending_logs)
+    }
+
+    /// Ask the host for something once this hook returns.
+    pub fn request(&mut self, request: HostRequest) {
+        self.requests.push(request);
+    }
+
+    /// The requests made so far, in the order they were made (the host
+    /// takes them through [`HookOutcome::take`]).
+    pub fn take_requests(&mut self) -> Vec<HostRequest> {
+        std::mem::take(&mut self.requests)
     }
 
     /// Convert a world position to viewport-local pixel coordinates (the

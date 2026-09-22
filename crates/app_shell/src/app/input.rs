@@ -344,7 +344,7 @@ impl PrintCadApp {
             wb.on_input(event, active_tool, ctx)
         }) {
             Some((result, outcome)) => {
-                self.apply_hook_outcome(outcome);
+                self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
                 result
             }
             None => core_document::InputResult::ignored(),

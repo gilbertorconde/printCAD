@@ -38,6 +38,8 @@ pub enum UiCommand {
     SelectBody(core_document::BodyId),
     /// The viewport's context menu was dismissed or used.
     CloseViewportMenu,
+    /// A workbench panel hook asked the host for something.
+    HostRequest(core_document::HostRequest),
     CameraSnap(CameraSnapView),
     CameraRotate(RotateDelta),
     /// Stop the kernel job that is running now.
@@ -60,18 +62,10 @@ pub enum UiCommand {
     },
     ConfirmStepImport,
     CancelStepImport,
-    /// Exit the active workbench's editing session (e.g. "Exit Sketch
-    /// Mode" in the sketcher panel).
-    FinishSketch,
-    /// Orient the camera to a plane (sketch created from the panel).
-    OrientCameraToPlane(core_document::CameraOrientRequest),
     SwitchWorkbench {
         from: ActiveWorkbench,
         to: ActiveWorkbench,
     },
-    /// A panel hook asked for another workbench (e.g. New Sketch jumps to
-    /// the sketcher).
-    RequestWorkbench(ActiveWorkbench),
     Undo,
     Redo,
     ToggleLogPanel,

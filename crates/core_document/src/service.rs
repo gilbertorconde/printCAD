@@ -7,8 +7,8 @@ use crate::feature::FeatureId;
 use crate::feature::{BodyId, FeatureNode};
 use crate::rebuild::RebuildJob;
 use crate::workbench::{
-    CommandDescriptor, FeatureInfo, PassiveGeometry, ToolDescriptor, ViewportPick, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
+    FeatureInfo, PassiveGeometry, ToolDescriptor, ViewportPick, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchId,
 };
 use crate::{DocumentError, DocumentResult};
 
@@ -186,14 +186,6 @@ impl DocumentService {
             .get(id.as_str())
             .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
         Ok(entry.context.tools())
-    }
-
-    pub fn commands_for(&self, id: &WorkbenchId) -> DocumentResult<&[CommandDescriptor]> {
-        let entry = self
-            .workbenches
-            .get(id.as_str())
-            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
-        Ok(entry.context.commands())
     }
 
     pub fn workbench(&self, id: &WorkbenchId) -> DocumentResult<&dyn Workbench> {

@@ -46,8 +46,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
     let Ok(wb) = registry.workbench_mut(&active_workbench.0) else {
         return result;
     };
-    let legacy = task.is_none() && wb.wants_right_panel();
-    if task.is_none() && !legacy {
+    if task.is_none() {
         return result;
     }
     result.open = true;
@@ -174,18 +173,11 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             let mut ctx = panel_ctx(document, host, active_document_object);
-                            if legacy {
-                                wb.ui_right_panel(ui, &mut ctx);
-                                if request.accept || request.cancel {
-                                    ctx.finish_sketch_requested = true;
-                                }
-                            } else {
-                                match wb.ui_task_panel(ui, &mut ctx, request) {
-                                    TaskOutcome::Open => {}
-                                    outcome => {
-                                        result.outcome = Some(outcome);
-                                        result.open = false;
-                                    }
+                            match wb.ui_task_panel(ui, &mut ctx, request) {
+                                TaskOutcome::Open => {}
+                                outcome => {
+                                    result.outcome = Some(outcome);
+                                    result.open = false;
                                 }
                             }
                             result.writeback =

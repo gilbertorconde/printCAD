@@ -354,7 +354,6 @@ impl PrintCadApp {
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
         }
 
-        let mut new_body_requested = false;
         let server_status = self.server.status();
         let ui_repaint_delay;
 
@@ -526,15 +525,6 @@ impl PrintCadApp {
                     ),
                 );
 
-                // The Part Design workbench exposes "New Body" as an Action tool.
-                // Action tools live in `active_ids` for exactly one frame; we
-                // detect a fresh click here and consume it so the body-creation
-                // call (deferred until after the renderer borrow ends) only
-                // fires once.
-                if self.active_tool.active_ids.remove("part.new_body") {
-                    new_body_requested = true;
-                }
-
                 commands = ui_result.commands;
             }
 
@@ -612,7 +602,7 @@ impl PrintCadApp {
         // Apply this frame's UI actions now that the renderer borrow is over.
         let mut commands = commands;
         commands.extend(self.device_button_commands());
-        self.apply_ui_commands(commands, new_body_requested, event_loop);
+        self.apply_ui_commands(commands, event_loop);
         // A tool clicked in the toolbar acts in the same frame.
         self.dispatch_activated_tools();
 
@@ -757,7 +747,10 @@ impl PrintCadApp {
             .with_workbench_ctx(&wb_id, params, |wb, ctx| {
                 wb.get_overlay_meshes(ctx, ctx.active_document_object)
             })
-            .map(|(meshes, _outcome)| meshes)
+            .map(|(meshes, outcome)| {
+                self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Lifecycle);
+                meshes
+            })
             .unwrap_or_default()
             .into_iter()
             .enumerate()
@@ -784,18 +777,21 @@ impl PrintCadApp {
         // Screen-space overlays + labels from the active workbench
         // (constant-thickness lines and constant-size text).
         let params = self.overlay_ctx_params();
-        let mut data = self
-            .with_workbench_ctx(&wb_id, params, |wb, ctx| ViewportData {
-                overlays: wb.get_screen_space_overlays(ctx, ctx.active_document_object),
-                marks: wb.get_screen_space_marks(ctx, ctx.active_document_object),
-                labels: wb.get_screen_space_labels(ctx, ctx.active_document_object),
-                hud: wb.viewport_hud(ctx),
-                status: wb.status_items(ctx),
-                task: wb.task(ctx),
-                editing_feature: wb.editing_feature(),
-            })
-            .map(|(data, _outcome)| data)
-            .unwrap_or_default();
+        let mut data = match self.with_workbench_ctx(&wb_id, params, |wb, ctx| ViewportData {
+            overlays: wb.get_screen_space_overlays(ctx, ctx.active_document_object),
+            marks: wb.get_screen_space_marks(ctx, ctx.active_document_object),
+            labels: wb.get_screen_space_labels(ctx, ctx.active_document_object),
+            hud: wb.viewport_hud(ctx),
+            status: wb.status_items(ctx),
+            task: wb.task(ctx),
+            editing_feature: wb.editing_feature(),
+        }) {
+            Some((data, outcome)) => {
+                self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Lifecycle);
+                data
+            }
+            None => ViewportData::default(),
+        };
         let screen_space_labels = &mut data.labels;
 
         // Peers' cursors: a named marker where each other editor points.

@@ -11,7 +11,7 @@ mod feature;
 mod task;
 
 pub use build::{
-    BuildError, BuildPlan, body_build_ops, hole_diameter, invalidate_body,
+    BuildError, BuildPlan, body_build_ops, delete_feature, hole_diameter, invalidate_body,
     mark_all_part_features_dirty, part_feature_ids, part_features_of_body, pending_body_rebuilds,
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
@@ -22,8 +22,8 @@ pub use feature::{
 };
 
 use core_document::{
-    BodyId, Document, FeatureId, FeatureInfo, InputResult, TaskInfo, ToolDescriptor, ToolVariant,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    BodyId, Document, FeatureId, FeatureInfo, HostRequest, InputResult, TaskInfo, ToolDescriptor,
+    ToolVariant, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 
@@ -728,10 +728,23 @@ impl Workbench for PartDesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
         // Feature tools are Actions: the host hands them over the moment they
-        // are activated and clears them once handled. `part.new_body` is
-        // handled host-side.
+        // are activated and clears them once handled.
         let base = active_tool.map(base_tool_id);
         match base {
+            Some("part.new_body") => {
+                let body = ctx.document.create_body(None);
+                let name = ctx
+                    .document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.id == body)
+                    .map(|b| b.name.clone())
+                    .unwrap_or_else(|| format!("body {:?}", body));
+                ctx.log_info(format!("Created {name}"));
+                ctx.request(HostRequest::SelectBody(body));
+                ctx.request(HostRequest::JournalLabel("Create body".to_string()));
+                InputResult::consumed()
+            }
             Some(tool @ ("part.datum_plane" | "part.datum_line" | "part.datum_point")) => {
                 self.insert_datum(ctx, tool)
             }
@@ -739,7 +752,7 @@ impl Workbench for PartDesignWorkbench {
                 if Self::selected_sketch(ctx).is_some() {
                     // The sketcher picks the active object up as its edit
                     // session on activation.
-                    ctx.workbench_switch_request = Some(WorkbenchId::from("wb.sketch"));
+                    ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.sketch")));
                 } else {
                     ctx.log_warn("Select a sketch in the tree first");
                 }
@@ -754,14 +767,16 @@ impl Workbench for PartDesignWorkbench {
                 // for this body (offering the clicked face when the selection
                 // landed on solid geometry), and finishing the sketch returns
                 // here (the host tracks the return bench).
-                ctx.start_sketch_on_body = Some(core_document::SketchAttachRequest {
-                    body: body.0,
-                    face: ctx.selected_face,
+                ctx.request(HostRequest::StartOn {
+                    workbench: WorkbenchId::from("wb.sketch"),
+                    attach: core_document::SketchAttachRequest {
+                        body: body.0,
+                        face: ctx.selected_face,
+                    },
                 });
-                ctx.workbench_switch_request = Some(WorkbenchId::from("wb.sketch"));
                 InputResult::consumed()
             }
-            Some(tool) if tool.starts_with("part.") && tool != "part.new_body" => {
+            Some(tool) if tool.starts_with("part.") => {
                 let full = active_tool.unwrap_or(tool);
                 self.insert_feature(ctx, full)
             }
@@ -879,14 +894,8 @@ impl Workbench for PartDesignWorkbench {
         );
     }
 
-    fn feature_dependencies(
-        &self,
-        _workbench_id: &WorkbenchId,
-        data: &serde_json::Value,
-    ) -> Vec<FeatureId> {
-        PartFeature::from_json(data)
-            .map(|f| f.dependencies())
-            .unwrap_or_default()
+    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
+        build::delete_feature(ctx.document, id)
     }
 
     fn get_overlay_meshes(
@@ -972,6 +981,35 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
         }
     }
     mesh
+}
+
+#[cfg(test)]
+mod body_tool {
+    use super::*;
+    use core_document::{Document, WorkbenchInputEvent, WorkbenchRuntimeContext};
+
+    #[test]
+    fn the_body_tool_creates_a_body_and_asks_the_host_to_select_and_label_it() {
+        let mut wb = PartDesignWorkbench::default();
+        let mut doc = Document::new("t");
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let result = wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("part.new_body"),
+            &mut ctx,
+        );
+        assert!(result.consumed);
+        let requests = ctx.take_requests();
+        assert_eq!(doc.bodies().len(), 1);
+        let body = doc.bodies()[0].id;
+        assert_eq!(
+            requests,
+            vec![
+                HostRequest::SelectBody(body),
+                HostRequest::JournalLabel("Create body".to_string()),
+            ]
+        );
+    }
 }
 
 /// The design set's icon for a datum's shape.

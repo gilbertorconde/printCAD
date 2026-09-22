@@ -243,9 +243,13 @@ hacks, no silently degraded feature). Instead:
   document.
 - **UiLayer must never own state the host mutates.** `active_tool` and
   `active_workbench` are seeded from `UiFrameInputs` every frame. A parallel
-  copy in the UI caused an infinite New-Body loop once. Panel-hook ctx
-  write-backs (logs, orient requests, created features) must be propagated
-  through `LeftPanelResult`, never dropped.
+  copy in the UI caused an infinite New-Body loop once. A bench talks back
+  to the host only through `ctx.request(HostRequest)` (tool, selection,
+  journal label, bench switch or start-on, camera, finish editing) and
+  `ctx.active_document_object`; `HookOutcome::take` collects them and
+  `apply_hook_outcome` applies every one, from every hook site (a panel
+  hook's arrive as `UiCommand::HostRequest`; a lifecycle hook's switch
+  requests are the one thing dropped, since it runs inside a switch).
 - **Adding a UI action** = one variant in `ui/commands.rs` + one arm in
   `app/commands.rs::apply_ui_commands` (two-phase dispatch preserves ordering).
 - **Every user-edit mutator on `Document` records exactly one op; derived

@@ -374,7 +374,7 @@ impl FeatureInfo {
 
 /// Trait implemented by all workbench plugins.
 ///
-/// Workbenches declare their tools/commands via `configure`, and can optionally
+/// Workbenches declare their tools via `configure`, and can optionally
 /// implement runtime hooks for input handling, per-frame updates, and custom UI.
 pub trait Workbench: Send {
     /// Returns metadata describing this workbench.
@@ -433,7 +433,7 @@ pub trait Workbench: Send {
     /// Every derived solid this bench produces is stale.
     fn invalidate_all(&self, _document: &mut Document) {}
 
-    /// Called once at registration to declare tools and commands.
+    /// Called once at registration to declare tools.
     fn configure(&self, context: &mut WorkbenchContext);
 
     /// Called when this workbench becomes active.
@@ -460,17 +460,6 @@ pub trait Workbench: Send {
     /// Called every frame while this workbench is active.
     #[cfg(feature = "egui")]
     fn ui_left_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Draw custom UI in the right panel (properties/inspector area).
-    /// Called every frame while this workbench is active.
-    #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, _ui: &mut egui::Ui, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Whether this workbench exposes right-panel UI.
-    #[cfg(feature = "egui")]
-    fn wants_right_panel(&self) -> bool {
-        false
-    }
 
     /// What the task panel is editing, if anything. `Some` opens the panel.
     fn task(&self, _ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
@@ -529,25 +518,11 @@ pub trait Workbench: Send {
     /// Called when the user requests to finish editing (e.g., via UI button).
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
 
-    /// Deserialize a feature of this workbench's type from JSON.
-    /// Called by the document when loading features from storage.
-    /// Returns None if the feature type doesn't belong to this workbench.
-    fn deserialize_feature(
-        &self,
-        _workbench_id: &WorkbenchId,
-        _data: &serde_json::Value,
-    ) -> Option<Box<dyn std::any::Any>> {
-        None // Default: no feature deserialization
-    }
-
-    /// Get feature dependencies from serialized feature data.
-    /// Used by the document to build the dependency graph.
-    fn feature_dependencies(
-        &self,
-        _workbench_id: &WorkbenchId,
-        _data: &serde_json::Value,
-    ) -> Vec<FeatureId> {
-        Vec::new() // Default: no dependencies
+    /// Remove an owned feature and settle what depended on it: features
+    /// it hid come back, its body rebuilds. `false` when nothing was
+    /// removed.
+    fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool {
+        ctx.document.remove_feature(id).is_ok()
     }
 
     /// Get additional render meshes for overlay/helper visualization.
@@ -614,11 +589,10 @@ pub trait Workbench: Send {
     }
 }
 
-/// Registry used by workbenches to declare the tools/commands they expose.
+/// Registry used by workbenches to declare the tools they expose.
 #[derive(Debug, Default)]
 pub struct WorkbenchContext {
     tools: Vec<ToolDescriptor>,
-    commands: Vec<CommandDescriptor>,
 }
 
 impl WorkbenchContext {
@@ -626,16 +600,8 @@ impl WorkbenchContext {
         self.tools.push(tool);
     }
 
-    pub fn register_command(&mut self, command: CommandDescriptor) {
-        self.commands.push(command);
-    }
-
     pub fn tools(&self) -> &[ToolDescriptor] {
         &self.tools
-    }
-
-    pub fn commands(&self) -> &[CommandDescriptor] {
-        &self.commands
     }
 }
 
@@ -828,21 +794,5 @@ impl ToolDescriptor {
     pub fn align_end(mut self) -> Self {
         self.align_end = true;
         self
-    }
-}
-
-/// Simple metadata for commands that may be bound to shortcuts or macros.
-#[derive(Debug, Clone)]
-pub struct CommandDescriptor {
-    pub id: String,
-    pub label: String,
-}
-
-impl CommandDescriptor {
-    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            label: label.into(),
-        }
     }
 }

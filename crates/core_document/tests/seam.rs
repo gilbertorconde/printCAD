@@ -2,9 +2,9 @@
 //! bench from its descriptor alone.
 
 use core_document::{
-    Document, DocumentError, DocumentResult, DocumentService, FeatureId, FeatureNode,
-    PassiveGeometry, ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchFeature, WorkbenchId,
+    CameraOrientRequest, Document, DocumentError, DocumentResult, DocumentService, FeatureId,
+    FeatureNode, HookOutcome, HostRequest, PassiveGeometry, ViewportPick, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
 
@@ -251,4 +251,36 @@ fn passive_geometry_comes_from_owners_and_skips_the_hidden_and_the_edited() {
         .collect();
     assert_eq!(ids, vec![drawn]);
     assert!(!ids.contains(&silent) && !ids.contains(&hidden) && !ids.contains(&edited));
+}
+
+#[test]
+fn a_hook_outcome_keeps_every_request_in_the_hosts_order_and_the_active_object() {
+    let mut doc = Document::new("t");
+    let feature = doc.add_feature(Marker, "m".into()).unwrap();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    let orient = CameraOrientRequest {
+        plane_origin: [0.0; 3],
+        plane_normal: [0.0, 0.0, 1.0],
+        plane_up: [0.0, 1.0, 0.0],
+    };
+    ctx.request(HostRequest::FinishEditing);
+    ctx.request(HostRequest::OrientCamera(orient.clone()));
+    ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("b")));
+    ctx.request(HostRequest::JournalLabel("x".into()));
+    ctx.request(HostRequest::ActivateTool("t".into()));
+    ctx.active_document_object = Some(feature);
+
+    let outcome = HookOutcome::take(&mut ctx);
+    assert_eq!(outcome.active_document_object, Some(feature));
+    assert_eq!(
+        outcome.requests,
+        vec![
+            HostRequest::ActivateTool("t".into()),
+            HostRequest::JournalLabel("x".into()),
+            HostRequest::SwitchWorkbench(WorkbenchId::from("b")),
+            HostRequest::OrientCamera(orient),
+            HostRequest::FinishEditing,
+        ]
+    );
+    assert!(ctx.take_requests().is_empty(), "taken once");
 }

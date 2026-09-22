@@ -604,25 +604,20 @@ impl UiLayer {
 }
 
 /// Turn a panel hook's write-backs into commands. A feature the hook
-/// created becomes the tree selection so the host's active object follows.
+/// created becomes the tree selection so the host's active object follows;
+/// every request the hook made goes to the host as it is.
 fn apply_writeback(
     writeback: &host_ctx::PanelWriteback,
     commands: &mut Vec<UiCommand>,
     tree_selection: &mut Option<TreeItemId>,
 ) {
-    if writeback.finish_sketch_requested {
-        commands.push(UiCommand::FinishSketch);
-    }
-    if let Some(req) = writeback.camera_orient_request.clone() {
-        commands.push(UiCommand::OrientCameraToPlane(req));
-    }
     match writeback.active_object_changed {
         Some(Some(id)) => *tree_selection = Some(TreeItemId::Feature(id)),
         Some(None) => commands.push(UiCommand::ReleaseActiveObject),
         None => {}
     }
-    if let Some(wb) = writeback.workbench_switch_request.clone() {
-        commands.push(UiCommand::RequestWorkbench(ActiveWorkbench(wb)));
+    for request in &writeback.requests {
+        commands.push(UiCommand::HostRequest(request.clone()));
     }
 }
 

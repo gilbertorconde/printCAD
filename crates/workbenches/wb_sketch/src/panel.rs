@@ -50,7 +50,7 @@ impl SketchWorkbench {
             return TaskOutcome::Open;
         };
         if request.accept || request.cancel {
-            ctx.finish_sketch_requested = true;
+            ctx.request(core_document::HostRequest::FinishEditing);
             return TaskOutcome::Accepted {
                 label: format!("Edit {}", feature.sketch.name),
             };

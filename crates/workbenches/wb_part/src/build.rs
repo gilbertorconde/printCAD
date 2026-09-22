@@ -87,6 +87,28 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
         .collect()
 }
 
+/// Remove a feature and settle what depended on it: the sketches it
+/// consumed show again, and its body rebuilds from the start or drops the
+/// solid its history produced. `false` when nothing was removed.
+pub fn delete_feature(document: &mut Document, id: FeatureId) -> bool {
+    let body = document.get_feature_meta(id).and_then(|n| n.body);
+    let sketches = document
+        .get_feature_data(id)
+        .and_then(|d| PartFeature::from_json(d).ok())
+        .map(|f| f.sketches())
+        .unwrap_or_default();
+    if document.remove_feature(id).is_err() {
+        return false;
+    }
+    for sketch in sketches {
+        document.set_feature_visible(sketch, true);
+    }
+    if let Some(body) = body {
+        invalidate_body(document, body);
+    }
+    true
+}
+
 /// The body's history changed shape: rebuild it from its first feature,
 /// or, with no history left, drop the solid the history produced. An
 /// imported solid is not the history's to drop.
@@ -1458,6 +1480,33 @@ mod tests {
         assert!(!doc.get_feature_meta(sketch_id).unwrap().dirty);
         assert!(doc.get_feature_meta(other_sketch).unwrap().dirty);
         assert!(rebuild_jobs(&mut doc).is_empty(), "nothing comes back");
+    }
+
+    #[test]
+    fn deleting_a_feature_reveals_its_sketch_and_restarts_the_body() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        let pocket_id = doc
+            .add_feature_in_body(
+                pocket(sketch_id, 2.0, false, false),
+                "Pocket".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.set_feature_visible(sketch_id, false);
+        doc.clear_feature_dirty(pad_id);
+        doc.clear_feature_dirty(pocket_id);
+
+        assert!(delete_feature(&mut doc, pocket_id));
+        assert!(doc.get_feature_meta(pocket_id).is_none());
+        assert!(doc.get_feature_meta(sketch_id).unwrap().visible);
+        assert!(
+            doc.get_feature_meta(pad_id).unwrap().dirty,
+            "the body restarts"
+        );
+        assert!(!delete_feature(&mut doc, pocket_id), "gone already");
     }
 
     #[test]

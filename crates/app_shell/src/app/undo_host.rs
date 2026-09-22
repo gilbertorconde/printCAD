@@ -102,7 +102,11 @@ impl PrintCadApp {
             self.active_document_object = None;
             let wb_id = self.active_workbench.0.clone();
             let params = self.interaction_ctx_params();
-            self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx));
+            if let Some(((), outcome)) =
+                self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx))
+            {
+                self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
+            }
         }
     }
 }
