@@ -17,8 +17,7 @@ winit.workspace = true
 egui.workspace = true
 egui-winit.workspace = true
 workbenches = { path = "../workbenches" }
-wb_part = { path = "../workbenches/wb_part", features = ["egui"] }
-wb_sketch = { path = "../workbenches/wb_sketch", features = ["egui"] }
+bench_fixtures = { path = "../workbenches/fixtures" }
 kernel_api = { path = "../kernel_api" }
 kernel_ogeom = { path = "../kernel_ogeom" }
 settings = { path = "../settings" }

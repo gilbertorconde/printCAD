@@ -1,900 +1,219 @@
-# Creating Workbenches for printCAD
+# Writing a workbench
 
-This guide explains how to create custom workbenches for printCAD. Workbenches are modular plugins that extend the application with new tools, commands, and UI panels.
+A workbench is a crate that implements `core_document::Workbench`. The
+application host knows no workbench by name: everything a bench shows,
+draws, picks, rebuilds, deletes, offers in a menu or asks of the host
+goes through that trait and the registry (`DocumentService`). This guide
+walks through the surface in the order a new bench needs it. Part Design
+(`crates/workbenches/wb_part`) and the Sketcher
+(`crates/workbenches/wb_sketch`) are the reference implementations.
 
-## Architecture Note: Why is the Workbench Trait in `core_document`?
-
-The `Workbench` trait is defined in the `core_document` crate, which may seem unusual at first glance. Here's why this organization makes sense:
-
-1. **Tight Coupling to Document Model**: Workbenches are the primary mechanism for creating and managing document features. The `WorkbenchRuntimeContext` provides mutable access to the document, and workbenches directly call document methods like `add_feature()`, `update_feature_data()`, etc.
-
-2. **Document Service Registry**: The `DocumentService` (which manages workbenches) lives in `core_document`. The registry needs to know about the `Workbench` trait to store and invoke workbenches.
-
-3. **Feature Serialization**: The document needs to know about workbenches to properly serialize/deserialize features. Methods like `deserialize_feature()` and `feature_dependencies()` are part of the workbench interface.
-
-4. **Workbench Storage**: The document stores workbench-specific data (`WorkbenchStorage`), creating a bidirectional relationship between documents and workbenches.
-
-5. **Dependency Direction**: Currently, workbenches depend on `core_document` (not the other way around). This keeps the dependency graph clean: workbenches are extensions of the document system, not separate systems.
-
-While the trait includes UI-related methods (`ui_left_panel`, `ui_right_panel`), these are optional and feature-gated. The core relationship is between workbenches and the document model, which justifies placing the trait in `core_document`.
-
-## Overview
-
-A workbench in printCAD is a self-contained module that provides:
-
-- **Tools**: Interactive operations (e.g., Line, Circle, Pad, Fillet)
-- **Commands**: Non-interactive actions (e.g., Solve Constraints, Recompute)
-- **UI Panels**: Custom content in the left panel, right panel, and settings
-- **Input Handling**: Mouse and keyboard event processing
-- **Lifecycle Hooks**: Activation/deactivation callbacks
-
-## Quick Start
-
-### 1. Create a New Crate
-
-```bash
-cd crates
-cargo new wb_my_workbench --lib
-```
-
-### 2. Configure `Cargo.toml`
+## The crate
 
 ```toml
 [package]
-name = "wb_my_workbench"
-version = "0.1.0"
-edition = "2024"
+name = "wb_mine"
 
 [features]
 default = ["egui"]
-egui = ["core_document/egui", "dep:egui"]
+egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
-core_document = { path = "../core_document" }
+core_document = { path = "../../core_document" }
+kernel_api = { path = "../../kernel_api" }
+serde = { workspace = true }
+serde_json = { workspace = true }
 egui = { workspace = true, optional = true }
+ui_kit = { path = "../../ui_kit", optional = true }
 ```
 
-### 3. Implement the Workbench
+The `egui` feature gates the panel hooks; a bench with no panels needs no
+`egui` dependency at all. Colours and sizes in panel code come from
+`ui_kit::tokens`, never as literals.
+
+Register the crate in `crates/workbenches/src/lib.rs`:
 
 ```rust
-use core_document::{
-    CommandDescriptor, InputResult, ToolDescriptor, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchInputEvent,
-    WorkbenchRuntimeContext,
-};
-
-/// My custom workbench.
-#[derive(Default)]
-pub struct MyWorkbench {
-    // Your workbench state goes here
-    counter: u32,
-}
-
-impl Workbench for MyWorkbench {
-    fn descriptor(&self) -> WorkbenchDescriptor {
-        WorkbenchDescriptor::new(
-            "wb.my-workbench",        // Unique ID (use "wb." prefix)
-            "My Workbench",           // Display name
-            "Description of my workbench.",
-        )
-    }
-
-    fn configure(&self, context: &mut WorkbenchContext) {
-        // Register tools (radio button behavior by default)
-        context.register_tool(ToolDescriptor::new(
-            "my.tool1",
-            "Tool One",
-            Some("utility"),  // Optional category
-        ));
-
-        // Register commands
-        context.register_command(CommandDescriptor::new(
-            "my.do_something",
-            "Do Something",
-        ));
-    }
-}
+core_document::define_workbenches!(SketchWorkbench, PartDesignWorkbench, MyWorkbench);
 ```
 
-### 4. Register the Workbench
+Registration order matters twice: the first bench that is not an edit
+session is where a new document lands, and the Preferences rail lists the
+benches in this order.
 
-In `app_shell/src/main.rs`:
+## Saying what the bench is
 
 ```rust
-use wb_my_workbench::MyWorkbench;
-
-fn main() -> Result<()> {
-    // ...
-    let mut registry = DocumentService::default();
-    registry.register_workbench(Box::new(MyWorkbench::default()))?;
-    // ...
+fn descriptor(&self) -> WorkbenchDescriptor {
+    WorkbenchDescriptor::new("wb.mine", "Mine", "What it is for.")
+        .icon("workbench-mine")
+        .feature_kinds(["wb.mine"])
 }
 ```
 
----
+- `icon` names a drawing in the design set (`ui_kit::icon`), used by the
+  bench switcher, the menu and the Preferences rail. Add icons through
+  `scripts/vendor-icons.mjs`; a test in each bench asserts every icon it
+  names exists.
+- `feature_kinds` are the `FeatureNode::workbench_id` values the bench
+  **owns**: it presents, renders, picks, edits and deletes features of
+  those kinds. A bench that stores features lists its own id. A kind can be
+  claimed once; registration fails otherwise. Part Design also claims
+  `core.datum`, the document's own datum features.
+- `.modal()` marks an edit-session bench (the Sketcher): entering it from
+  another bench remembers that bench to return to when the session ends,
+  and it is never the landing bench.
 
-## The Workbench Trait
+## Tools, the toolbar and the bench menu
 
-The `Workbench` trait is the core interface for all workbenches:
-
-```rust
-pub trait Workbench: Send {
-    /// Returns metadata describing this workbench.
-    fn descriptor(&self) -> WorkbenchDescriptor;
-
-    /// Called once at registration to declare tools and commands.
-    fn configure(&self, context: &mut WorkbenchContext);
-
-    /// Called when this workbench becomes active.
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Called when this workbench is deactivated.
-    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Called every frame while this workbench is active.
-    fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Called when an input event occurs while this workbench is active.
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        InputResult::ignored()
-    }
-
-    // UI hooks (require "egui" feature)
-    #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {}
-
-    #[cfg(feature = "egui")]
-    fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Whether this workbench exposes right-panel UI.
-    /// Called by the host to determine if the right panel should be shown.
-    #[cfg(feature = "egui")]
-    fn wants_right_panel(&self) -> bool {
-        false
-    }
-
-    /// Check if a tool is enabled given the current runtime context.
-    /// Called by the UI to determine if a tool button should be enabled/disabled.
-    /// Default implementation returns true for all tools.
-    fn is_tool_enabled(&self, _tool_id: &str, _ctx: &WorkbenchRuntimeContext) -> bool {
-        true
-    }
-
-    #[cfg(feature = "egui")]
-    fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool { false }
-
-    /// Finish/close the current editing session (e.g., finish sketch).
-    /// Called when the user requests to finish editing (e.g., via UI button).
-    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
-
-    /// Get additional overlay meshes for visualization aids (grid lines, guides, etc.).
-    /// Called every frame to allow workbenches to contribute visual overlays.
-    /// Returns a vector of (mesh, color) tuples.
-    /// These meshes are rendered in 3D world space and will scale with zoom and rotate with the camera.
-    fn get_overlay_meshes(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<(kernel_api::TriMesh, [f32; 3])> {
-        Vec::new()
-    }
-
-    /// Get screen-space overlays for constant-thickness visualization.
-    /// Called every frame to allow workbenches to contribute visual aids that maintain
-    /// constant screen-space thickness regardless of zoom or camera rotation.
-    /// Returns a vector of screen-space line segments.
-    fn get_screen_space_overlays(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceOverlay> {
-        Vec::new()
-    }
-
-    fn get_screen_space_overlays(
-        &self,
-        _ctx: &WorkbenchRuntimeContext,
-        _active_feature: Option<FeatureId>,
-    ) -> Vec<ScreenSpaceOverlay> {
-        Vec::new()
-    }
-}
-```
-
----
-
-## Registering Tools and Commands
-
-### Tools
-
-Tools are interactive operations that respond to user input. Register them in `configure()`:
+`configure` runs once at registration and declares tools:
 
 ```rust
 fn configure(&self, context: &mut WorkbenchContext) {
-    // Action tools (fire-and-forget buttons, not toggles)
-    context.register_tool(ToolDescriptor::new_action(
-        "sketch.create",    // Unique tool ID
-        "Create Sketch",    // Display label
-        Some("sketch"),     // Optional category for grouping
-    ));
-
-    // Radio tools in a group (only one per group active at a time)
-    context.register_tool(ToolDescriptor::new_radio_group(
-        "sketch.line",      // Unique tool ID
-        "Line",             // Display label
-        Some("sketch"),     // Optional category
-        "drawing",          // Group name - tools in same group are mutually exclusive
-    ));
-    context.register_tool(ToolDescriptor::new_radio_group(
-        "sketch.arc",
-        "Arc",
-        Some("sketch"),
-        "drawing",          // Same group as Line
-    ));
-
-    // Check tools (independent toggles - multiple can be active)
-    context.register_tool(ToolDescriptor::new_check(
-        "view.grid",
-        "Show Grid",
-        Some("view"),
-    ));
-    context.register_tool(ToolDescriptor::new_check(
-        "view.snap",
-        "Snap to Grid",
-        Some("view"),
-    ));
+    context.register_tool(
+        ToolDescriptor::new_action("mine.thing", "Thing", Some("shape")).icon("thing").row(1),
+    );
 }
 ```
 
-**Tool Behavior:**
+The toolbar draws them (row 0 shares the standard row, rows 1 and 2 are
+the bench's own) and the bench's top menu lists them grouped by category.
+`new_radio_group`, `new_check` and `new_action` pick the button behaviour;
+`.variants(..)` adds a dropdown; `.planned(note)` shows a disabled button
+for something designed but not built. `is_tool_enabled` and `tool_toggled`
+are asked every frame. An Action tool reaches `on_input` as
+`WorkbenchInputEvent::ToolActivated` with the tool id the moment it is
+clicked; return `InputResult::consumed()` to clear it.
 
-- `ToolBehavior::Radio` (default) - Radio button behavior: only one tool per group can be active at a time. Clicking an active tool deactivates it. Tools in different groups are independent. Use `ToolDescriptor::new()` for single-tool groups or `ToolDescriptor::new_radio_group()` for grouped tools.
-- `ToolBehavior::Check` - Check button behavior: independent toggle. Each tool can be on or off independently. Multiple check tools can be active simultaneously. Use `ToolDescriptor::new_check()` to create check tools.
-- `ToolBehavior::Action` - Action button behavior: fire-and-forget. Clicking triggers the action but doesn't keep the tool "active". Use `ToolDescriptor::new_action()` to create action tools.
+## Owning features
 
-**Radio Groups:**
+Store features as a type implementing `WorkbenchFeature` (`workbench_id`,
+`to_json`, `from_json`, `dependencies`, `name`) and add them with
+`ctx.document.add_feature_in_body(feature, name, body)`. Dependencies
+declared there drive dirty propagation.
 
-Radio tools can be organized into groups. Only one tool per group can be active at a time, but tools in different groups are independent:
-
-```rust
-// Tools in the same group are mutually exclusive
-context.register_tool(ToolDescriptor::new_radio_group(
-    "sketch.line",
-    "Line",
-    Some("sketch"),
-    "drawing",  // Group name
-));
-context.register_tool(ToolDescriptor::new_radio_group(
-    "sketch.arc",
-    "Arc",
-    Some("sketch"),
-    "drawing",  // Same group - only one can be active
-));
-context.register_tool(ToolDescriptor::new_radio_group(
-    "sketch.circle",
-    "Circle",
-    Some("sketch"),
-    "drawing",  // Same group
-));
-
-// Different group - independent from drawing tools
-context.register_tool(ToolDescriptor::new_radio_group(
-    "sketch.constraint.distance",
-    "Distance Constraint",
-    Some("sketch"),
-    "constraints",  // Different group
-));
-```
-
-**Tool Categories:**
-
-The `category` parameter is optional and purely informational. It can be used for grouping/organization (e.g., `"sketch"`, `"modeling"`, `"utility"`). It doesn't affect tool behavior - that's controlled by the `behavior` and `group` fields.
-
-### Commands
-
-Commands are non-interactive actions (like menu items or shortcuts):
+For every kind the bench claims, the registry asks the bench:
 
 ```rust
-context.register_command(CommandDescriptor::new(
-    "sketch.constraints.solve",
-    "Solve Constraints",
-));
+/// The tree row's icon and labels; the hover card names a body after
+/// its last feature with `builds_solid`.
+fn feature_info(&self, node: &FeatureNode) -> FeatureInfo;
+
+/// What the scene draws for a feature that is visible and not under
+/// edit, with a revision the mesh cache keys on (`node_revision(node)`
+/// hashes the payload). The host colours it.
+fn passive_geometry(&self, doc: &Document, id: FeatureId, node: &FeatureNode)
+    -> Option<PassiveGeometry>;
+
+/// Pixels from the cursor to the feature, when close enough to count.
+/// `runtime::viewport_to_plane` and `world_to_viewport` do the projection.
+fn pick_feature(&self, doc: &Document, id: FeatureId, node: &FeatureNode, pick: &ViewportPick)
+    -> Option<f32>;
+
+/// Remove the feature and settle what depended on it. The default just
+/// removes it.
+fn delete_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, id: FeatureId) -> bool;
+
+/// Which payload fields are lengths (display unit) and which name other
+/// features or bodies, for the generic property panel.
+fn property_hints(&self) -> PropertyHints;
 ```
 
----
+A double click on a feature in the tree activates the bench that claims
+its kind and makes the feature the active document object; the bench
+picks it up in `on_frame`/`on_input` (the Sketcher's `editing_feature`
+comes from there). `locks_view_to_plane` keeps the camera square to the
+plane while an edit session is open.
 
-## Handling Input Events
+## Rebuilding solids
 
-Implement `on_input()` to respond to mouse and keyboard events:
+A bench whose features produce a body's solid implements:
 
 ```rust
-fn on_input(
-    &mut self,
-    event: &WorkbenchInputEvent,
-    active_tool: Option<&str>,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> InputResult {
-    // Only handle events if one of our tools is active
-    let tool = match active_tool {
-        Some(t) if t.starts_with("my.") => t,
-        _ => return InputResult::ignored(),
-    };
-
-    match event {
-        WorkbenchInputEvent::MousePress { button, viewport_pos } => {
-            if *button == MouseButton::Left {
-                ctx.log_info(format!("Click at {:?}", viewport_pos));
-                return InputResult::consumed();
-            }
-        }
-        WorkbenchInputEvent::KeyPress { key } => {
-            if *key == KeyCode::Escape {
-                ctx.log_info("Cancelled");
-                return InputResult::consumed();
-            }
-        }
-        _ => {}
-    }
-
-    InputResult::ignored()
-}
+/// Bodies to rebuild now, each with a plan. Called on every bench each
+/// frame. Settle the dirty flags of the plan's features and their inputs
+/// here, or the job comes back every frame.
+fn rebuild_jobs(&self, doc: &mut Document) -> Vec<RebuildJob>;
+/// The body's history changed shape: rebuild from the start, or drop the
+/// derived solid when no history is left.
+fn invalidate_body(&self, doc: &mut Document, body: BodyId);
+/// Every derived solid is stale (history jump, Recompute All).
+fn invalidate_all(&self, doc: &mut Document);
 ```
 
-### Input Events
+A `BuildPlan` is a chain of `kernel_api::SolidOp`s with the feature
+responsible for each op; the host runs it on the kernel worker and
+attributes a failure to `BuildError::feature`. An imported body's solid is
+not the history's to drop (`Document::body_solid_is_imported`).
+
+## Menus and start cards
 
 ```rust
-pub enum WorkbenchInputEvent {
-    MousePress { button: MouseButton, viewport_pos: (f32, f32) },
-    MouseRelease { button: MouseButton, viewport_pos: (f32, f32) },
-    MouseMove { viewport_pos: (f32, f32) },
-    KeyPress { key: KeyCode },
-    KeyRelease { key: KeyCode },
-}
+fn menu_items(&self, scope: &MenuScope, doc: &Document) -> Vec<MenuItem>;
+fn on_command(&mut self, id: &str, scope: &MenuScope, ctx: &mut WorkbenchRuntimeContext) -> bool;
 ```
 
-### Input Results
+Scopes: the viewport's right-click menu on a body, a tree feature row, a
+tree body row, and the start page's New cards. The host draws its own
+entries first, then every bench's, in registration order, and runs
+`on_command` on a pick. A start-page item becomes a card; its command
+runs in a fresh document with one body, in the bench, so the Sketcher's
+"Empty sketch" card is just an item plus a command.
+
+## Talking to the host
+
+Hooks get a `WorkbenchRuntimeContext`: the document (mutable), camera
+and viewport facts, hover and selection, the active document object
+(read and write: setting it selects the feature), `ctrl_down`, the
+selected face, `attach_request` (see below), projection helpers and
+logging (`log_info` and friends go to the app's log panel).
+
+Anything else the bench wants of the host is a request:
 
 ```rust
-InputResult::consumed()    // Event handled, stop propagation
-InputResult::ignored()     // Event not handled, continue propagation
-InputResult::redraw_only() // Request redraw but don't consume event
+ctx.request(HostRequest::ActivateTool("mine.select".into()));
+ctx.request(HostRequest::SelectBody(body));
+ctx.request(HostRequest::JournalLabel("Create thing".into()));
+ctx.request(HostRequest::StartOn { workbench: WorkbenchId::from("wb.sketch"), attach });
+ctx.request(HostRequest::SwitchWorkbench(WorkbenchId::from("wb.part")));
+ctx.request(HostRequest::OrientCamera(CameraOrientRequest { .. }));
+ctx.request(HostRequest::FinishEditing);
 ```
 
----
-
-## The Runtime Context
-
-`WorkbenchRuntimeContext` provides access to application state:
-
-```rust
-pub struct WorkbenchRuntimeContext<'a> {
-    /// The active document (mutable access for edits)
-    pub document: &'a mut Document,
-
-    /// Current camera position in world space
-    pub camera_position: [f32; 3],
-
-    /// Current camera target (orbit center) in world space
-    pub camera_target: [f32; 3],
-
-    /// Viewport dimensions (x, y, width, height) in pixels
-    pub viewport: (u32, u32, u32, u32),
-
-    /// World position under the cursor (if hovering geometry)
-    pub hovered_world_pos: Option<[f32; 3]>,
-
-    /// ID of the body under the cursor
-    pub hovered_body_id: Option<Uuid>,
-
-    /// ID of the currently selected body
-    pub selected_body_id: Option<Uuid>,
-
-    /// Active document object (selected feature in tree - separate from editing mode)
-    pub active_document_object: Option<FeatureId>,
-
-    /// Cursor position in viewport coordinates
-    pub cursor_viewport_pos: Option<(f32, f32)>,
-
-    /// Request camera orientation to a plane (set by workbench, read by host)
-    pub camera_orient_request: Option<CameraOrientRequest>,
-
-    /// Request to exit sketch mode (set by workbench UI, read by host)
-    pub finish_sketch_requested: bool,
-}
-```
-
-### Logging
-
-Use the context to log messages to the in-app log panel:
-
-```rust
-ctx.log_info("Operation completed");
-ctx.log_warn("Something might be wrong");
-ctx.log_error("Operation failed!");
-```
-
-### Document Access
-
-Modify the document through the context:
-
-```rust
-ctx.document.mark_dirty();  // Mark document as modified
-```
-
----
-
-## Feature Management
-
-The document provides a **generic, extensible feature tree** that allows workbenches to define their own feature types. Features are stored in a directed acyclic graph (DAG) with dependency tracking.
-
-### Defining Feature Types
-
-To create a feature type, implement the `WorkbenchFeature` trait:
-
-```rust
-use core_document::{FeatureId, WorkbenchFeature, WorkbenchId, DocumentResult, FeatureError};
-use serde::{Serialize, Deserialize};
-use serde_json;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MyFeature {
-    pub name: String,
-    pub value: f32,
-    pub depends_on: Option<FeatureId>, // Optional dependency
-}
-
-impl WorkbenchFeature for MyFeature {
-    fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.my-workbench")
-    }
-
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
-    }
-
-    fn from_json(value: &serde_json::Value) -> DocumentResult<Self> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| FeatureError::Deserialization(e.to_string()))
-    }
-
-    fn dependencies(&self) -> Vec<FeatureId> {
-        self.depends_on.into_iter().collect()
-    }
-
-    fn name(&self) -> &str {
-        &self.name
-    }
-}
-```
-
-### Adding Features to the Document
-
-Use the runtime context to add features:
-
-```rust
-fn on_input(
-    &mut self,
-    event: &WorkbenchInputEvent,
-    active_tool: Option<&str>,
-    ctx: &mut WorkbenchRuntimeContext,
-) -> InputResult {
-    match event {
-        WorkbenchInputEvent::MousePress { .. } => {
-            let feature = MyFeature {
-                name: "My Feature".to_string(),
-                value: 42.0,
-                depends_on: None,
-            };
-
-            match ctx.document.add_feature(feature, "My Feature".to_string()) {
-                Ok(feature_id) => {
-                    ctx.log_info(format!("Created feature: {:?}", feature_id));
-                    ctx.document.mark_dirty();
-                    InputResult::consumed()
-                }
-                Err(e) => {
-                    ctx.log_error(format!("Failed to create feature: {}", e));
-                    InputResult::consumed()
-                }
-            }
-        }
-        _ => InputResult::ignored(),
-    }
-}
-```
-
-### Reading Features
-
-Retrieve feature data from the document:
-
-```rust
-// Get feature data as JSON
-if let Some(data) = ctx.document.get_feature_data(feature_id) {
-    // Deserialize to your feature type
-    if let Ok(feature) = MyFeature::from_json(data) {
-        ctx.log_info(format!("Feature value: {}", feature.value));
-    }
-}
-
-// Get feature metadata (name, dirty flag, etc.)
-if let Some(meta) = ctx.document.get_feature_meta(feature_id) {
-    ctx.log_info(format!("Feature name: {}, dirty: {}", meta.name, meta.dirty));
-}
-```
-
-### Updating Features
-
-Update feature data:
-
-```rust
-let updated_feature = MyFeature {
-    name: "Updated Feature".to_string(),
-    value: 100.0,
-    depends_on: None,
-};
-
-if let Err(e) = ctx.document.update_feature_data(feature_id, updated_feature.to_json()) {
-    ctx.log_error(format!("Failed to update feature: {}", e));
-}
-```
-
-### Feature Dependencies
-
-Features can depend on other features. The document automatically tracks dependencies:
-
-```rust
-// Create a dependent feature
-let dependent = MyFeature {
-    name: "Dependent".to_string(),
-    value: 10.0,
-    depends_on: Some(base_feature_id), // Depends on base feature
-};
-
-let dependent_id = ctx.document.add_feature(dependent, "Dependent".to_string())?;
-
-// When base feature is marked dirty, dependent is automatically marked dirty too
-ctx.document.mark_feature_dirty(base_feature_id);
-// dependent_id is now also dirty
-```
-
-### Workbench Storage
-
-Store additional workbench-specific data outside the feature tree:
-
-```rust
-// Store workbench data
-let data = serde_json::json!({
-    "settings": {
-        "grid_snap": true,
-        "snap_distance": 1.0,
-    }
-});
-
-ctx.document.set_workbench_storage(
-    WorkbenchId::from("wb.my-workbench"),
-    data,
-);
-
-// Retrieve workbench data
-if let Some(storage) = ctx.document.get_workbench_storage(&WorkbenchId::from("wb.my-workbench")) {
-    // Use storage.data (serde_json::Value)
-}
-```
-
-### Feature API Summary
-
-| Method                                            | Description                                |
-| ------------------------------------------------- | ------------------------------------------ |
-| `add_feature<F: WorkbenchFeature>(feature, name)` | Add a feature to the document              |
-| `get_feature_data(id)`                            | Get feature data as JSON                   |
-| `get_feature_meta(id)`                            | Get feature metadata (name, dirty, etc.)   |
-| `update_feature_data(id, data)`                   | Update feature data                        |
-| `mark_feature_dirty(id)`                          | Mark feature and dependents as dirty       |
-| `dirty_features()`                                | Get all dirty features                     |
-| `recompute_order()`                               | Get recomputation order (topological sort) |
-| `get_workbench_storage(wb_id)`                    | Get workbench-specific storage             |
-| `set_workbench_storage(wb_id, data)`              | Set workbench-specific storage             |
-
----
-
-## Lifecycle Hooks
-
-### Activation/Deactivation
-
-```rust
-fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-    ctx.log_info("My workbench activated");
-    // Initialize state, load resources, etc.
-}
-
-fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-    ctx.log_info("My workbench deactivated");
-    // Clean up state, save temporary data, etc.
-}
-```
-
-### Per-Frame Updates
-
-```rust
-fn on_frame(&mut self, dt: f32, ctx: &mut WorkbenchRuntimeContext) {
-    // dt is the time since the last frame in seconds
-    // Use for animations, continuous updates, etc.
-}
-```
-
-### Overlay Meshes
-
-Workbenches can provide overlay meshes for visual aids like grid lines, guides, or helper geometry. These are rendered on top of regular geometry:
-
-```rust
-fn get_overlay_meshes(
-    &self,
-    ctx: &WorkbenchRuntimeContext,
-    active_feature: Option<FeatureId>,
-) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
-    // Only show overlays for active sketch
-    if let Some(feature_id) = active_feature {
-        if let Some(node) = ctx.document.get_feature_meta(feature_id) {
-            if node.workbench_id.as_str() == "wb.sketch" {
-                if let Some(sketch_data) = ctx.document.get_feature_data(feature_id) {
-                    if let Ok(sketch_feature) = SketchFeature::from_json(sketch_data) {
-                        // Create grid lines (red horizontal, green vertical)
-                        let (x_mesh, y_mesh) =
-                            render::create_grid_lines(&sketch_feature.plane);
-
-                        return vec![
-                            (x_mesh, [1.0, 0.0, 0.0], true),  // Red, wireframe
-                            (y_mesh, [0.0, 1.0, 0.0], true),  // Green, wireframe
-                        ];
-                    }
-                }
-            }
-        }
-    }
-    Vec::new()
-}
-```
-
-The method returns a vector of `(mesh, color, is_wireframe)` tuples where:
-
-- `mesh`: A `TriMesh` from `kernel_api` containing the geometry to render
-- `color`: RGB color `[r, g, b]` in range 0.0-1.0
-- `is_wireframe`: If `true`, the mesh is rendered as a wireframe with depth bias, ensuring it appears on top of solid geometry. This is useful for axis lines, grid lines, and other visual guides that should always be visible. If `false`, the mesh is rendered as solid geometry.
-
-**Wireframe Rendering**: When `is_wireframe` is `true`, the renderer uses Vulkan's depth bias feature to push the geometry slightly toward the camera, preventing z-fighting and ensuring wireframes (like axis lines) are always visible on top of solid geometry. This is the proper way to render lines and wireframes in 3D applications.
-
-Overlay meshes are rendered every frame and are useful for:
-
-- Grid lines and axes (typically wireframes)
-- Construction geometry
-- Visual guides and helpers
-- Temporary preview geometry
-
----
-
-## Tool Icons
-
-Icons come from the design system's line-icon set in `crates/ui_kit/icons`
-(24px grid, 1.5px stroke, painted white and tinted by the toolbar per state).
-A tool names its icon on its descriptor:
-
-```rust
-context.register_tool(
-    ToolDescriptor::new_action("part.pad", "Pad (Extrude)", Some("modeling")).icon("pad"),
-);
-```
-
-- `ui_kit::icon::names()` lists the set; `ui_kit::icon::exists(name)` checks one.
-- A tool without an icon renders as a text button.
-- New icons are added to the vendored set (see `scripts/vendor-icons.mjs`),
-  not to workbench crates.
-
----
-
-## Custom UI Panels
-
-Implement UI hooks to add custom content to the application panels:
-
-### Left Panel (Tool Info)
-
-```rust
-#[cfg(feature = "egui")]
-fn ui_left_panel(&mut self, ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext) {
-    ui.separator();
-    ui.heading("My Workbench Info");
-    ui.label(format!("Counter: {}", self.counter));
-
-    if ui.button("Increment").clicked() {
-        self.counter += 1;
-    }
-}
-```
-
-### Right Panel (Properties)
-
-The right panel is shown only when `wants_right_panel()` returns `true`. This allows workbenches to dynamically show/hide the panel based on their state:
-
-```rust
-#[cfg(feature = "egui")]
-fn wants_right_panel(&self) -> bool {
-    // Only show right panel when editing a sketch
-    self.active_sketch_id.is_some()
-}
-
-#[cfg(feature = "egui")]
-fn ui_right_panel(&mut self, ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
-    ui.heading("Properties");
-
-    if let Some(body_id) = ctx.selected_body_id {
-        ui.label(format!("Selected: {:?}", body_id));
-    } else {
-        ui.label("Nothing selected");
-    }
-
-    // Request to exit editing mode
-    if ui.button("Exit Sketch Mode").clicked() {
-        ctx.finish_sketch_requested = true;
-    }
-}
-```
-
-### Settings Panel
-
-```rust
-#[cfg(feature = "egui")]
-fn ui_settings(&mut self, ui: &mut egui::Ui) -> bool {
-    let mut changed = false;
-
-    ui.heading("My Workbench Settings");
-
-    // Return true if any settings were modified
-    changed
-}
-```
-
----
-
-## Complete Example
-
-Here's a complete example of a minimal workbench:
-
-```rust
-use core_document::{
-    CommandDescriptor, InputResult, MouseButton, KeyCode, ToolDescriptor,
-    Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
-};
-
-#[derive(Default)]
-pub struct CounterWorkbench {
-    click_count: u32,
-}
-
-impl Workbench for CounterWorkbench {
-    fn descriptor(&self) -> WorkbenchDescriptor {
-        WorkbenchDescriptor::new(
-            "wb.counter",
-            "Counter",
-            "A simple counter workbench for demonstration.",
-        )
-    }
-
-    fn configure(&self, context: &mut WorkbenchContext) {
-        context.register_tool(ToolDescriptor::new(
-            "counter.click",
-            "Click Counter",
-            Some("utility"),
-        ));
-        context.register_command(CommandDescriptor::new(
-            "counter.reset",
-            "Reset Counter",
-        ));
-    }
-
-    fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        ctx.log_info("Counter workbench activated");
-    }
-
-    fn on_input(
-        &mut self,
-        event: &WorkbenchInputEvent,
-        active_tool: Option<&str>,
-        ctx: &mut WorkbenchRuntimeContext,
-    ) -> InputResult {
-        // Only handle if our tool is active
-        if active_tool != Some("counter.click") {
-            return InputResult::ignored();
-        }
-
-        match event {
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Left,
-                viewport_pos,
-            } => {
-                self.click_count += 1;
-                ctx.log_info(format!(
-                    "Click #{} at ({:.0}, {:.0})",
-                    self.click_count, viewport_pos.0, viewport_pos.1
-                ));
-                InputResult::consumed()
-            }
-            WorkbenchInputEvent::KeyPress { key: KeyCode::R } => {
-                self.click_count = 0;
-                ctx.log_info("Counter reset");
-                InputResult::consumed()
-            }
-            _ => InputResult::ignored(),
-        }
-    }
-
-    #[cfg(feature = "egui")]
-    fn ui_left_panel(&mut self, ui: &mut egui::Ui, _ctx: &WorkbenchRuntimeContext) {
-        ui.separator();
-        ui.heading("Counter");
-        ui.label(format!("Clicks: {}", self.click_count));
-    }
-}
-```
-
----
-
-## Best Practices
-
-1. **Use unique IDs**: Prefix your workbench ID with `wb.` and tool IDs with your workbench prefix (e.g., `my.tool1`).
-
-2. **Handle only your tools**: In `on_input()`, check if the active tool belongs to your workbench before processing.
-
-3. **Return appropriate InputResults**: Use `consumed()` when you handle an event, `ignored()` otherwise.
-
-4. **Log user actions**: Use `ctx.log_info()` to provide feedback in the log panel.
-
-5. **Keep state in your struct**: Store tool state, temporary geometry, and configuration in your workbench struct.
-
-6. **Clean up on deactivation**: Use `on_deactivate()` to clean up temporary state.
-
-7. **Use the egui feature flag**: Wrap UI methods with `#[cfg(feature = "egui")]` to allow building without UI.
-
-8. **Use overlay meshes for visual aids**: Implement `get_overlay_meshes()` for 3D geometry that scales with the scene, or `get_screen_space_overlays()` for constant-thickness lines that maintain screen-space appearance regardless of zoom/rotation.
-
----
-
-## API Reference
-
-### Types
-
-| Type                      | Description                             |
-| ------------------------- | --------------------------------------- |
-| `Workbench`               | Main trait for workbench plugins        |
-| `WorkbenchDescriptor`     | Metadata (id, label, description)       |
-| `WorkbenchContext`        | Registration context for tools/commands |
-| `WorkbenchRuntimeContext` | Runtime access to app state             |
-| `ToolDescriptor`          | Tool metadata (id, label, kind)         |
-| `CommandDescriptor`       | Command metadata (id, label)            |
-| `WorkbenchInputEvent`     | Input event types                       |
-| `InputResult`             | Input handling result                   |
-
-### Key Codes
-
-Common key codes available in `KeyCode`:
-
-- Letters: `A` through `Z`
-- Numbers: `Key0` through `Key9`
-- Function keys: `F1` through `F12`
-- Special: `Escape`, `Enter`, `Space`, `Delete`, `Backspace`, `Tab`
-- Modifiers: `Shift`, `Control`, `Alt`
-
-### Mouse Buttons
-
-```rust
-pub enum MouseButton {
-    Left,
-    Middle,
-    Right,
-    Other(u16),
-}
-```
+The host applies a hook's requests in that order once the hook returns,
+from every hook site: input, per-frame, panels, activation, the overlay
+getters. A lifecycle hook (activate, deactivate) runs inside a switch, so
+its switch and start requests are dropped. `StartOn` switches to a bench
+and hands it `attach` as `ctx.attach_request` on its next hook; the
+receiving bench takes it (`ctx.attach_request.take()`).
+
+## Panels, HUD and status
+
+- `task()` returns `Some(TaskInfo)` to open the right-hand task panel;
+  `ui_task_panel` draws its body and answers OK/Cancel/Enter/Esc through
+  `TaskRequest` with a `TaskOutcome`. One task is one undo entry.
+- `ui_left_panel` draws under the model tree.
+- `viewport_hud` (tool hint, badge, legend, footer, OVP card) and
+  `status_items` feed the viewport corners and the status bar.
+- `get_overlay_meshes` and `get_screen_space_overlays/marks/labels` draw
+  for the active bench each frame, world-space and screen-space.
+- `ui_settings(ui, filter)` is the bench's Preferences page; the rail
+  gets one entry per registered bench automatically.
+
+## Checklist for a bench that owns a feature kind
+
+1. `descriptor` with `icon` and `feature_kinds`; a test that its icons exist.
+2. `configure` with the tools; `is_tool_enabled` for the ones with
+   preconditions.
+3. `feature_info`; `passive_geometry` and `pick_feature` if the feature
+   has geometry of its own; `delete_feature` if removing it must settle
+   other features; `property_hints` if its payload has lengths or refs.
+4. `rebuild_jobs`/`invalidate_body`/`invalidate_all` if it builds solids.
+5. `on_input` for the tools, requests for what the host must do.
+6. `task`/`ui_task_panel` for feature editing; `ui_settings` for prefs.
+7. `menu_items`/`on_command` for contextual entries and start cards.
+8. Register it in `crates/workbenches/src/lib.rs`.
+
+The host's own test `crates/app_shell/src/app/seam_lint.rs` fails when a
+bench name, id or feature type appears in the host, and CI greps for the
+same, so a bench can only ever reach the app through this trait.

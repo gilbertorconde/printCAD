@@ -42,3 +42,6 @@ jobs:
 
       - name: Comment-rot lint
         run: node scripts/lint-comment-rot.mjs --all
+
+      - name: The host names no workbench
+        run: "! git grep -nE 'wb_part|wb_sketch|\"wb\\.(part|sketch)\"|core\\.datum' -- crates/app_shell/src ':!crates/app_shell/src/app/seam_lint.rs'"

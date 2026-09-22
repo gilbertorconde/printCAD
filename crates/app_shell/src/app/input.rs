@@ -336,7 +336,7 @@ impl PrintCadApp {
         active_tool: Option<&str>,
     ) -> core_document::InputResult {
         // Workbenches project the cursor themselves when no geometry is
-        // hovered (e.g. wb_sketch casts onto its own sketch plane via
+        // hovered (the sketcher casts onto its own sketch plane via
         // `WorkbenchRuntimeContext::viewport_to_plane`).
         let params = self.interaction_ctx_params();
 

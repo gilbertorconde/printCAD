@@ -885,130 +885,23 @@ pub(crate) struct ViewportData {
 
 impl PrintCadApp {
     /// Dev/bench hook: a body with a small constrained sketch, opened for
-    /// editing, so the sketcher can be exercised without clicking.
+    /// editing, so the sketcher can be exercised without clicking; `pad`
+    /// pads it and selects the pad, `pocket` pockets the pad's top too.
     fn bench_open_sketch(&mut self) {
-        use wb_sketch::sketch::{
-            Circle, Constraint, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D,
-        };
         self.create_new_body();
-        let body = self.active_body_id;
-        let mut sketch = Sketch::new("Sketch");
-        let p = |s: &mut Sketch, x: f32, y: f32| {
-            s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
-        };
-        let a = p(&mut sketch, 0.0, 0.0);
-        let b = p(&mut sketch, 80.0, 0.0);
-        let c = p(&mut sketch, 80.0, 24.0);
-        let d = p(&mut sketch, 0.0, 24.0);
-        let bottom = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        let right = sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
-        sketch.add_geometry(GeometryElement::Line(Line::new(c, d)));
-        sketch.add_geometry(GeometryElement::Line(Line::new(d, a)));
-        let center = p(&mut sketch, 22.0, 12.0);
-        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 7.2)));
-        for kind in [
-            ConstraintKind::Horizontal { element: bottom },
-            ConstraintKind::Vertical { element: right },
-            ConstraintKind::Length {
-                line: bottom,
-                length: 80.0,
-            },
-            ConstraintKind::Length {
-                line: right,
-                length: 24.0,
-            },
-            ConstraintKind::Diameter {
-                circle,
-                diameter: 14.4,
-            },
-        ] {
-            sketch.constraints.push(Constraint::new(kind));
-        }
-        let plane = sketch.plane;
-        let sketch_id = match self.document.add_feature_in_body(
-            wb_sketch::SketchFeature::new(sketch, plane),
-            "Sketch".into(),
-            body,
-        ) {
-            Ok(id) => id,
-            Err(err) => {
-                app_log::error(format!("bench sketch: {err}"));
-                return;
-            }
-        };
-        // `pad` pads the sketch and opens the pad's task; anything else
-        // opens the sketch for editing.
-        let pad = std::env::var("PRINTCAD_BENCH_SKETCH").is_ok_and(|v| v == "pad" || v == "pocket");
-        if !pad {
-            self.apply_tree_activation(crate::ui::TreeItemId::Feature(sketch_id));
-            return;
-        }
-        let pad = wb_part::PartFeature::Pad {
-            sketch: sketch_id,
-            length: 20.0,
-            reversed: false,
-            symmetric: false,
-            mode: wb_part::ExtrudeMode::Dimension,
-            length2: 0.0,
-            taper_deg: 0.0,
-            up_to_face: None,
-            up_to_offset: 0.0,
-        };
-        let pad_id = match self.document.add_feature_in_body(pad, "Pad".into(), body) {
-            Ok(id) => {
-                self.document.mark_feature_dirty(id);
-                self.document.set_feature_visible(sketch_id, false);
-                self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
-                id
-            }
-            Err(err) => {
-                app_log::error(format!("bench pad: {err}"));
-                return;
-            }
-        };
-        // `pocket` adds a face sketch on the pad's top and pockets it.
-        if std::env::var("PRINTCAD_BENCH_SKETCH").is_ok_and(|v| v == "pocket") {
-            let mut top = Sketch::new("sketch_1");
-            top.plane =
-                wb_sketch::sketch::SketchPlane::from_face([0.0, 0.0, 20.0], [0.0, 0.0, 1.0]);
-            let center =
-                top.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 12.0))));
-            top.add_geometry(GeometryElement::Circle(Circle::new(center, 5.0)));
-            let plane = top.plane;
-            let top_id = match self.document.add_feature_in_body(
-                wb_sketch::SketchFeature::new(top, plane),
-                "sketch_1".into(),
-                body,
-            ) {
-                Ok(id) => id,
-                Err(err) => {
-                    app_log::error(format!("bench face sketch: {err}"));
-                    return;
+        let scene = bench_fixtures::Scene::named(
+            &std::env::var("PRINTCAD_BENCH_SKETCH").unwrap_or_default(),
+        );
+        match bench_fixtures::open_sketch_scene(&mut self.document, self.active_body_id, scene) {
+            Ok(handles) => {
+                if let Some(feature) = handles.activate {
+                    self.apply_tree_activation(crate::ui::TreeItemId::Feature(feature));
                 }
-            };
-            let pocket = wb_part::PartFeature::Pocket {
-                sketch: top_id,
-                depth: 5.0,
-                reversed: false,
-                through_all: false,
-                mode: wb_part::ExtrudeMode::Dimension,
-                depth2: 0.0,
-                taper_deg: 0.0,
-                up_to_face: None,
-                up_to_offset: 0.0,
-            };
-            match self
-                .document
-                .add_feature_in_body(pocket, "Pocket".into(), body)
-            {
-                Ok(id) => {
-                    let _ = pad_id;
-                    self.document.mark_feature_dirty(id);
-                    self.document.set_feature_visible(top_id, false);
-                    self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                if let Some(feature) = handles.select {
+                    self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature));
                 }
-                Err(err) => app_log::error(format!("bench pocket: {err}")),
             }
+            Err(err) => app_log::error(format!("bench scene: {err}")),
         }
     }
 }

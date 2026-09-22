@@ -54,7 +54,7 @@ assistants have a quick reference. Each section links back to the relevant topic
   storage and asset references.
 - ✅ Changed `.prtcad` package format to a TAR-based archive with `document.json` + `assets/`.
 - ✅ Introduced document runtime context (`DocumentService`, `WorkbenchContext`, `ToolDescriptor`,
-  `CommandDescriptor`, etc.).
+  `WorkbenchDescriptor`, etc.).
 
 ## 8. Sketch Workbench MVP
 

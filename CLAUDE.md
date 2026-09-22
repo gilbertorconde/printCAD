@@ -103,6 +103,12 @@ cargo fmt --all                   # CI enforces --check
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
+- `workbenches/fixtures` (`bench_fixtures`) — ready-made scenes built from
+  the benches' feature types (a dimensioned sketch, padded, pocketed) for
+  the app's `PRINTCAD_BENCH_SKETCH` hook and tests; the host composes
+  benches only through it, never by naming them. `app/seam_lint.rs` fails
+  when a bench crate, id or feature type appears in `app_shell/src`, and CI
+  greps for the same.
 - `workbenches/wb_part` — Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
   (`feature.rs`), per-feature panel editors (`editors.rs`), the task
@@ -128,8 +134,9 @@ cargo fmt --all                   # CI enforces --check
   (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.
 
 The `Workbench` trait is the only seam between the host and a bench; the
-host never names a bench (`git grep -E 'wb_part|wb_sketch|"wb\.(part|sketch)"|core\.datum' -- crates/app_shell/src`
-counts the remaining exceptions and must only fall). `descriptor()` says
+host never names a bench: `app/seam_lint.rs` and a CI grep over
+`crates/app_shell/src` (the lint's own token list excluded) refuse any
+line that does. `descriptor()` says
 what a bench is: `icon`, the `feature_kinds` it claims (the
 `FeatureNode::workbench_id` values it presents, edits, renders, picks and
 deletes — Part Design claims `core.datum` too; a kind claimed twice fails
@@ -145,9 +152,14 @@ active. The UI surface: `configure` registers
 `ui_task_panel()` own the right panel (`TaskRequest` in, `TaskOutcome` out);
 `viewport_hud()`, `status_items()`, `editing_feature()`,
 `get_screen_space_overlays/marks/labels()` feed the viewport and chrome;
-`ui_settings()` draws the bench's Preferences page. Colors reach the
-workbenches through `WorkbenchRuntimeContext.sketch_palette`, never as
-literals.
+`ui_settings()` draws the bench's Preferences page (one rail entry per
+registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
+`delete_feature`/`property_hints` answer for the feature kinds a bench
+claims; `rebuild_jobs`/`invalidate_body`/`invalidate_all` drive solids;
+`menu_items`/`on_command` add entries to the viewport body menu, tree rows
+and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
+walkthrough. Colors reach the workbenches through
+`WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
 **Placeholders.** The design shows Part Design and Sketcher elements the app
 does not implement yet. They stay on screen as disabled controls with a

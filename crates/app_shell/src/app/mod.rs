@@ -7,6 +7,8 @@ pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;
 pub(crate) mod recompute;
+#[cfg(test)]
+mod seam_lint;
 pub(crate) mod sixdof;
 pub(crate) mod step_import;
 pub(crate) mod undo_host;
