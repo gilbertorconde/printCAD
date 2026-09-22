@@ -288,6 +288,8 @@ impl UiLayer {
                     start_page::StartPageInputs {
                         recent,
                         search: &mut self.recent_search,
+                        document,
+                        registry,
                     },
                     &mut commands,
                 );
@@ -428,6 +430,13 @@ impl UiLayer {
             if let Some(item) = combo.delete_item {
                 commands.push(UiCommand::DeleteTreeItem(item));
             }
+            if let Some((workbench, id, scope)) = combo.bench_command {
+                commands.push(UiCommand::BenchCommand {
+                    workbench,
+                    id,
+                    scope,
+                });
+            }
 
             let task_result = task_panel::draw_task_panel(
                 ui,
@@ -484,7 +493,7 @@ impl UiLayer {
                 &footer,
             );
             if let Some(menu) = &viewport_menu {
-                context_menu::draw(ui.ctx(), menu, document, &mut commands);
+                context_menu::draw(ui.ctx(), menu, document, registry, &mut commands);
             }
             if let Some(card) = &hover_card {
                 hud::draw_hover_card(

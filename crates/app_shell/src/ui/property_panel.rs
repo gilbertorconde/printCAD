@@ -1,7 +1,7 @@
 //! The property panel under the model tree: what the selected item is and
 //! the values it carries, grouped the way the design shows them.
 
-use core_document::{BodyId, Document, FeatureId, Unit, format_length_mm};
+use core_document::{BodyId, Document, FeatureId, PropertyHints, Unit, format_length_mm};
 use egui::RichText;
 use ui_kit::sans;
 use ui_kit::tokens::*;
@@ -58,37 +58,6 @@ impl PropRow {
     }
 }
 
-/// Keys whose numbers are lengths in millimetres.
-const LENGTH_KEYS: &[&str] = &[
-    "length",
-    "length2",
-    "depth",
-    "depth2",
-    "radius",
-    "size",
-    "size2",
-    "value",
-    "diameter",
-    "pitch",
-    "height",
-    "up_to_offset",
-    "width",
-    "circumradius",
-    "radius1",
-    "radius2",
-    "radius3",
-];
-
-/// Keys whose strings are feature or body ids.
-const REF_KEYS: &[&str] = &[
-    "sketch",
-    "profile",
-    "spine",
-    "sections",
-    "originals",
-    "tool_body",
-];
-
 fn humanize_key(key: &str) -> String {
     let mut out = String::new();
     for (i, part) in key.split('_').enumerate() {
@@ -120,10 +89,10 @@ fn resolve_ref(document: &Document, raw: &str) -> Option<String> {
         .map(|b| b.name.clone())
 }
 
-fn number_row(name: &str, key: &str, n: f64, unit: Unit) -> PropRow {
+fn number_row(name: &str, key: &str, n: f64, hints: &PropertyHints, unit: Unit) -> PropRow {
     let text = if key.ends_with("_deg") {
         format!("{n:.2} °")
-    } else if LENGTH_KEYS.contains(&key) {
+    } else if hints.is_length(key) {
         format_length_mm(n as f32, unit, 2)
     } else if n.fract() == 0.0 {
         format!("{}", n as i64)
@@ -139,6 +108,7 @@ fn number_row(name: &str, key: &str, n: f64, unit: Unit) -> PropRow {
 fn flatten_feature_json(
     value: &serde_json::Value,
     document: &Document,
+    hints: &PropertyHints,
     unit: Unit,
 ) -> (String, Vec<PropRow>) {
     let mut rows = Vec::new();
@@ -152,7 +122,15 @@ fn flatten_feature_json(
     };
     if let serde_json::Value::Object(map) = fields {
         for (key, v) in map {
-            flatten_field(&mut rows, &key, &humanize_key(&key), &v, document, unit);
+            flatten_field(
+                &mut rows,
+                &key,
+                &humanize_key(&key),
+                &v,
+                document,
+                hints,
+                unit,
+            );
         }
     }
     (group, rows)
@@ -164,16 +142,23 @@ fn flatten_field(
     name: &str,
     v: &serde_json::Value,
     document: &Document,
+    hints: &PropertyHints,
     unit: Unit,
 ) {
     match v {
         serde_json::Value::Null => rows.push(PropRow::text(name, "—").dim(true)),
         serde_json::Value::Bool(b) => rows.push(PropRow::mono(name, b.to_string()).dim(!b)),
         serde_json::Value::Number(n) => {
-            rows.push(number_row(name, key, n.as_f64().unwrap_or(0.0), unit));
+            rows.push(number_row(
+                name,
+                key,
+                n.as_f64().unwrap_or(0.0),
+                hints,
+                unit,
+            ));
         }
         serde_json::Value::String(s) => {
-            if REF_KEYS.contains(&key)
+            if hints.is_reference(key)
                 && let Some(resolved) = resolve_ref(document, s)
             {
                 rows.push(PropRow::text(name, resolved));
@@ -188,7 +173,7 @@ fn flatten_field(
                     .map(|n| format!("{:.2}", n.as_f64().unwrap_or(0.0)))
                     .collect();
                 rows.push(PropRow::mono(name, format!("({})", parts.join(", "))));
-            } else if REF_KEYS.contains(&key) {
+            } else if hints.is_reference(key) {
                 let names: Vec<String> = items
                     .iter()
                     .filter_map(|i| i.as_str())
@@ -215,6 +200,7 @@ fn flatten_field(
                             &format!("{name} · {}", humanize_key(k)),
                             sv,
                             document,
+                            hints,
                             unit,
                         );
                     }
@@ -227,6 +213,7 @@ fn flatten_field(
                         &format!("{name} · {}", humanize_key(k)),
                         sv,
                         document,
+                        hints,
                         unit,
                     );
                 }
@@ -332,7 +319,8 @@ fn data_groups(
             if let Some(position) = position {
                 base.push(PropRow::mono("History position", position));
             }
-            let (group, rows) = flatten_feature_json(&node.data, document, unit);
+            let hints = registry.property_hints();
+            let (group, rows) = flatten_feature_json(&node.data, document, &hints, unit);
             vec![("Base".to_string(), base), (group, rows)]
         }
         TreeItemId::ImportedObject(id) => {
@@ -639,13 +627,21 @@ fn view_rows(
 mod tests {
     use super::*;
 
+    /// The keys Part Design's payloads use, as its hints declare them.
+    fn hints() -> PropertyHints {
+        PropertyHints {
+            length_keys: vec!["length", "length2", "depth", "depth2", "radius", "diameter"],
+            reference_keys: vec!["sketch", "profile", "originals"],
+        }
+    }
+
     #[test]
     fn a_pad_flattens_into_its_variant_group() {
         let doc = Document::new("t");
         let value = serde_json::json!({
             "Pad": { "sketch": Uuid::new_v4().to_string(), "length": 20.0, "reversed": false, "taper_deg": 5.0 }
         });
-        let (group, rows) = flatten_feature_json(&value, &doc, Unit::Mm);
+        let (group, rows) = flatten_feature_json(&value, &doc, &hints(), Unit::Mm);
         assert_eq!(group, "Pad");
         let length = rows.iter().find(|r| r.name == "Length").unwrap();
         assert!(length.mono && length.value.contains("20.00"));
@@ -661,7 +657,7 @@ mod tests {
         let value = serde_json::json!({
             "Hole": { "cut": { "Counterbore": { "diameter": 6.0, "depth": 2.0 } } }
         });
-        let (_, rows) = flatten_feature_json(&value, &doc, Unit::Mm);
+        let (_, rows) = flatten_feature_json(&value, &doc, &hints(), Unit::Mm);
         let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(
             names,

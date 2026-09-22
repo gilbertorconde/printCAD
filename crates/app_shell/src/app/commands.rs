@@ -55,6 +55,8 @@ struct FrameIntents {
     /// Bench requests from panel hooks that are not one of the intents
     /// above, applied in the order they arrived.
     host_requests: Vec<core_document::HostRequest>,
+    /// Bench menu entries picked this frame, in order.
+    bench_commands: Vec<(core_document::WorkbenchId, String, core_document::MenuScope)>,
 }
 
 impl PrintCadApp {
@@ -133,6 +135,11 @@ impl PrintCadApp {
                     intents.request_workbench = Some(ActiveWorkbench(wb));
                 }
                 UiCommand::HostRequest(request) => intents.host_requests.push(request),
+                UiCommand::BenchCommand {
+                    workbench,
+                    id,
+                    scope,
+                } => intents.bench_commands.push((workbench, id, scope)),
                 UiCommand::SwitchWorkbench { from, to } => {
                     intents.workbench_switch = Some((from, to));
                 }
@@ -294,6 +301,9 @@ impl PrintCadApp {
         }
         for request in intents.host_requests {
             self.apply_host_request(request, crate::app::workbench_host::HookSite::Interaction);
+        }
+        for (workbench, id, scope) in intents.bench_commands {
+            self.run_bench_command(workbench, &id, scope);
         }
 
         if let Some((path, detail)) = step_import_to_run {
@@ -680,17 +690,35 @@ impl PrintCadApp {
         self.return_workbench = None;
         self.reset_to_new_document();
         self.create_new_body();
-        if kind == StartKind::EmptySketch && self.active_body_id.is_some() {
-            let sketch = wb_sketch::sketch::Sketch::new("Sketch");
-            let plane = sketch.plane;
-            match self.document.add_feature_in_body(
-                wb_sketch::SketchFeature::new(sketch, plane),
-                "Sketch".into(),
-                self.active_body_id,
-            ) {
-                Ok(id) => self.apply_tree_activation(TreeItemId::Feature(id)),
-                Err(err) => app_log::error(format!("Failed to create sketch: {err}")),
-            }
+        if let StartKind::Bench { workbench, command } = kind {
+            self.switch_workbench_for_flow(workbench.clone());
+            self.run_bench_command(workbench, &command, core_document::MenuScope::StartPage);
+        }
+    }
+
+    /// Run one of a bench's menu entries. A feature the bench made the
+    /// active object becomes the tree selection, as a tree click would.
+    pub(crate) fn run_bench_command(
+        &mut self,
+        workbench: core_document::WorkbenchId,
+        id: &str,
+        scope: core_document::MenuScope,
+    ) {
+        let before = self.active_document_object;
+        let params = self.interaction_ctx_params();
+        let Some((known, outcome)) =
+            self.with_workbench_ctx(&workbench, params, |wb, ctx| wb.on_command(id, &scope, ctx))
+        else {
+            return;
+        };
+        self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
+        if !known {
+            app_log::warn(format!("{} offers no command `{id}`", workbench.as_str()));
+        }
+        if self.active_document_object != before
+            && let Some(feature) = self.active_document_object
+        {
+            self.tree_selection = Some(TreeItemId::Feature(feature));
         }
     }
 }

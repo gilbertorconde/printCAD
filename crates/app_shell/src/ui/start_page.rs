@@ -14,6 +14,10 @@ pub struct StartPageInputs<'a> {
     pub recent: &'a [RecentEntry],
     /// Substring filter over recent names; UI-local.
     pub search: &'a mut String,
+    /// The document the New cards start from, and the benches whose cards
+    /// they are.
+    pub document: &'a core_document::Document,
+    pub registry: &'a core_document::DocumentService,
 }
 
 #[derive(Default)]
@@ -243,6 +247,20 @@ pub fn draw_start_page(
 ) -> StartPageResult {
     let mut result = StartPageResult::default();
     let now = now_ms();
+    // The bench a new document lands in names the primary card and the
+    // rail's default-workbench note.
+    let landing = inputs
+        .registry
+        .landing_workbench()
+        .and_then(|id| inputs.registry.descriptor(&id).cloned());
+    let landing_label = landing
+        .as_ref()
+        .map(|d| d.label.clone())
+        .unwrap_or_else(|| "New document".to_string());
+    let landing_icon = landing
+        .as_ref()
+        .map(|d| d.icon)
+        .unwrap_or("workbench-print");
 
     egui::Panel::left("start_rail")
         .exact_size(RAIL_WIDTH)
@@ -292,9 +310,9 @@ pub fn draw_start_page(
                     );
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = SPACE_2;
-                        ui_kit::icon::draw(ui, "workbench-part-design", 14.0, ACCENT);
+                        ui_kit::icon::draw(ui, landing_icon, 14.0, ACCENT);
                         ui.label(
-                            RichText::new("Part Design")
+                            RichText::new(&landing_label)
                                 .font(sans_medium(FONT_SM))
                                 .color(TEXT1),
                         );
@@ -325,25 +343,34 @@ pub fn draw_start_page(
                             ui,
                             size,
                             true,
-                            Some("workbench-part-design"),
-                            "Part Design",
+                            Some(landing_icon),
+                            &landing_label,
                             "Body + sketch, ready to pad",
                         )
                         .clicked()
                         {
-                            commands.push(UiCommand::StartNew(StartKind::PartDesign));
+                            commands.push(UiCommand::StartNew(StartKind::Landing));
                         }
-                        if action_card(
-                            ui,
-                            size,
-                            false,
-                            Some("sketch-new"),
-                            "Empty sketch",
-                            "2D on XY plane",
-                        )
-                        .clicked()
+                        // One card per way a bench offers to begin.
+                        for (workbench, entry) in inputs
+                            .registry
+                            .menu_items(&core_document::MenuScope::StartPage, inputs.document)
                         {
-                            commands.push(UiCommand::StartNew(StartKind::EmptySketch));
+                            if action_card(
+                                ui,
+                                size,
+                                false,
+                                entry.icon,
+                                &entry.label,
+                                entry.hint.as_deref().unwrap_or(""),
+                            )
+                            .clicked()
+                            {
+                                commands.push(UiCommand::StartNew(StartKind::Bench {
+                                    workbench: workbench.clone(),
+                                    command: entry.id.clone(),
+                                }));
+                            }
                         }
                         // PLANNED: import STL / 3MF meshes as bodies.
                         planned(ui, "imports an STL or 3MF mesh as a body", |ui| {

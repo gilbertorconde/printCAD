@@ -357,9 +357,12 @@ frame.
 ## Interaction model (current bindings)
 
 MMB drag = orbit (MMB click = pivot pick) · RMB drag = pan · RMB click on a
-body = context menu (`ui/context_menu.rs`: show in tree, select body, hide;
-the host owns the open `ViewportMenu`, the UI draws it and answers with
-commands) · wheel = zoom · LMB = select (click sketch → tree-select; click
+body = context menu (`ui/context_menu.rs`: show in tree, select body, hide,
+then whatever the benches offer through `menu_items` for
+`MenuScope::ViewportBody`; the host owns the open `ViewportMenu`, the UI
+draws it and answers with commands; tree rows and the start page's New
+cards take bench entries the same way, and a pick runs the bench's
+`on_command`) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly, and in Part Design the tree opens to its row; LMB drag
 in sketch = box select; ctrl = additive). The

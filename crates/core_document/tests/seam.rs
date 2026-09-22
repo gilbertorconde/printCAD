@@ -3,8 +3,9 @@
 
 use core_document::{
     CameraOrientRequest, Document, DocumentError, DocumentResult, DocumentService, FeatureId,
-    FeatureNode, HookOutcome, HostRequest, PassiveGeometry, ViewportPick, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
+    FeatureNode, HookOutcome, HostRequest, MenuItem, MenuScope, PassiveGeometry, PropertyHints,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    WorkbenchRuntimeContext,
 };
 use uuid::Uuid;
 
@@ -16,6 +17,8 @@ struct FakeBench {
     modal: bool,
     pick_distance: Option<f32>,
     draws: bool,
+    items: Vec<&'static str>,
+    lengths: Vec<&'static str>,
 }
 
 impl FakeBench {
@@ -26,7 +29,17 @@ impl FakeBench {
             modal: false,
             pick_distance: None,
             draws: false,
+            items: Vec::new(),
+            lengths: Vec::new(),
         }
+    }
+    fn offering(mut self, items: &[&'static str]) -> Self {
+        self.items = items.to_vec();
+        self
+    }
+    fn measuring(mut self, keys: &[&'static str]) -> Self {
+        self.lengths = keys.to_vec();
+        self
     }
     fn picking_at(mut self, distance: f32) -> Self {
         self.pick_distance = Some(distance);
@@ -75,6 +88,26 @@ impl Workbench for FakeBench {
         _pick: &ViewportPick,
     ) -> Option<f32> {
         self.pick_distance
+    }
+    fn menu_items(&self, _scope: &MenuScope, _document: &Document) -> Vec<MenuItem> {
+        self.items
+            .iter()
+            .map(|id| MenuItem::new(*id, *id))
+            .collect()
+    }
+    fn on_command(
+        &mut self,
+        id: &str,
+        _scope: &MenuScope,
+        _ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        self.items.contains(&id)
+    }
+    fn property_hints(&self) -> PropertyHints {
+        PropertyHints {
+            length_keys: self.lengths.clone(),
+            reference_keys: Vec::new(),
+        }
     }
 }
 
@@ -283,4 +316,38 @@ fn a_hook_outcome_keeps_every_request_in_the_hosts_order_and_the_active_object()
         ]
     );
     assert!(ctx.take_requests().is_empty(), "taken once");
+}
+
+#[test]
+fn menu_entries_come_from_every_bench_in_registration_order_and_hints_merge() {
+    let mut registry = registry(vec![
+        FakeBench::new("b")
+            .offering(&["b.one"])
+            .measuring(&["length", "depth"]),
+        FakeBench::new("a")
+            .offering(&["a.one", "a.two"])
+            .measuring(&["depth", "radius"]),
+        FakeBench::new("quiet"),
+    ]);
+    let mut doc = Document::new("t");
+    let entries: Vec<(String, String)> = registry
+        .menu_items(&MenuScope::StartPage, &doc)
+        .into_iter()
+        .map(|(bench, item)| (bench.as_str().to_string(), item.id))
+        .collect();
+    assert_eq!(
+        entries,
+        vec![
+            ("b".to_string(), "b.one".to_string()),
+            ("a".to_string(), "a.one".to_string()),
+            ("a".to_string(), "a.two".to_string()),
+        ]
+    );
+    let hints = registry.property_hints();
+    assert_eq!(hints.length_keys, vec!["length", "depth", "radius"]);
+
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+    let a = registry.workbench_mut(&WorkbenchId::from("a")).unwrap();
+    assert!(a.on_command("a.two", &MenuScope::StartPage, &mut ctx));
+    assert!(!a.on_command("b.one", &MenuScope::StartPage, &mut ctx));
 }

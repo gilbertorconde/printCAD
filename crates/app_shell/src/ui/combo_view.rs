@@ -22,6 +22,8 @@ pub struct ComboViewResult {
     pub rename: Option<(TreeItemId, String)>,
     /// A row the user asked to delete.
     pub delete_item: Option<TreeItemId>,
+    /// A bench's own row-menu entry was picked.
+    pub bench_command: Option<(core_document::WorkbenchId, String, core_document::MenuScope)>,
 }
 
 pub struct ComboViewInputs<'a> {
@@ -157,8 +159,10 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                             editing_feature,
                             filter.trim(),
                         )
-                        .revealing(reveal_body),
+                        .revealing(reveal_body)
+                        .with_bench_menus(document, registry),
                     );
+                    result.bench_command = tree_ui.bench_command;
                     result.tree_selection = tree_ui.selection;
                     result.tree_activation = tree_ui.activation;
                     result.imported_visibility_change = tree_ui.imported_visibility_change;

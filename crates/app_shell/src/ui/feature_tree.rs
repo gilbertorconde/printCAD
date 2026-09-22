@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use core_document::{
     Body, BodyId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode, FeatureTree,
+    MenuScope, WorkbenchId,
 };
 use egui::{Response, Ui, Vec2};
 use ui_kit::sans;
@@ -46,6 +47,8 @@ pub struct TreeUiResult {
     pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
     /// The row the user asked to delete (menu or the Delete key).
     pub delete_item: Option<TreeItemId>,
+    /// A bench's own menu entry was picked: the bench, its id, the scope.
+    pub bench_command: Option<(WorkbenchId, String, MenuScope)>,
 }
 
 /// View model describing the current document tree.
@@ -413,6 +416,8 @@ pub struct TreeDrawOptions<'a> {
     /// Resolved from `reveal_body` at the top of a draw; the row that should
     /// be brought into view.
     scroll_to: Option<TreeItemId>,
+    /// The document and registry the row menus ask for bench entries.
+    bench_menus: Option<(&'a Document, &'a DocumentService)>,
 }
 
 impl<'a> TreeDrawOptions<'a> {
@@ -423,7 +428,18 @@ impl<'a> TreeDrawOptions<'a> {
             editing,
             filter,
             scroll_to: None,
+            bench_menus: None,
         }
+    }
+
+    /// Let the benches add their own entries to the row menus.
+    pub fn with_bench_menus(
+        mut self,
+        document: &'a Document,
+        registry: &'a DocumentService,
+    ) -> Self {
+        self.bench_menus = Some((document, registry));
+        self
     }
 
     /// Jump to the row for a body picked in the viewport.
@@ -680,7 +696,7 @@ fn draw_row(
         None => response,
     };
     let response = match node {
-        Some(node) => attach_feature_menu(response, node, result),
+        Some(node) => attach_feature_menu(response, node, options, result),
         None => response,
     };
     handle_response(response, spec.id, result);
@@ -766,12 +782,18 @@ fn draw_node(
 
 /// Right-click menu: history actions on feature rows, Delete on anything
 /// that can go.
-fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiResult) -> Response {
+fn attach_feature_menu(
+    response: Response,
+    node: &TreeNode,
+    options: &TreeDrawOptions<'_>,
+    result: &mut TreeUiResult,
+) -> Response {
     let Some(feature_id) = node.feature_menu else {
-        return attach_body_menu(response, node, result);
+        return attach_body_menu(response, node, options, result);
     };
     let mut command = None;
     let mut delete = false;
+    let mut bench_command = None;
     response.context_menu(|ui| {
         let suppress_label = if node.suppressed {
             "Unsuppress"
@@ -826,6 +848,7 @@ fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiR
             delete = true;
             ui.close();
         }
+        bench_command = bench_menu_entries(ui, options, MenuScope::TreeFeature(feature_id));
     });
     if delete {
         result.delete_item = Some(node.id);
@@ -833,17 +856,57 @@ fn attach_feature_menu(response: Response, node: &TreeNode, result: &mut TreeUiR
     if let Some(command) = command {
         result.feature_command = Some((feature_id, command));
     }
+    if bench_command.is_some() {
+        result.bench_command = bench_command;
+    }
     response
+}
+
+/// The benches' entries for `scope`, after a separator when there are
+/// any. The picked one, if any.
+fn bench_menu_entries(
+    ui: &mut Ui,
+    options: &TreeDrawOptions<'_>,
+    scope: MenuScope,
+) -> Option<(WorkbenchId, String, MenuScope)> {
+    let (document, registry) = options.bench_menus?;
+    let items = registry.menu_items(&scope, document);
+    if items.is_empty() {
+        return None;
+    }
+    ui.separator();
+    let mut picked = None;
+    for (bench, item) in items {
+        if item.separator_before {
+            ui.separator();
+        }
+        let button = ui.add_enabled(item.enabled, egui::Button::new(&item.label));
+        let button = match &item.hint {
+            Some(hint) => button.on_hover_text(hint),
+            None => button,
+        };
+        if button.clicked() {
+            picked = Some((bench, item.id, scope.clone()));
+            ui.close();
+        }
+    }
+    picked
 }
 
 /// Bodies and imported parts: select the body, or Delete, which takes the
 /// body's features and geometry with it.
-fn attach_body_menu(response: Response, node: &TreeNode, result: &mut TreeUiResult) -> Response {
+fn attach_body_menu(
+    response: Response,
+    node: &TreeNode,
+    options: &TreeDrawOptions<'_>,
+    result: &mut TreeUiResult,
+) -> Response {
     if !matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_)) {
         return response;
     }
     let mut select = false;
     let mut delete = false;
+    let mut bench_command = None;
     response.context_menu(|ui| {
         if node.body.is_some() {
             if ui
@@ -864,12 +927,18 @@ fn attach_body_menu(response: Response, node: &TreeNode, result: &mut TreeUiResu
             delete = true;
             ui.close();
         }
+        if let Some(body) = node.body {
+            bench_command = bench_menu_entries(ui, options, MenuScope::TreeBody(body));
+        }
     });
     if select {
         result.selection = Some(node.id);
     }
     if delete {
         result.delete_item = Some(node.id);
+    }
+    if bench_command.is_some() {
+        result.bench_command = bench_command;
     }
     response
 }

@@ -898,6 +898,38 @@ impl Workbench for PartDesignWorkbench {
         build::delete_feature(ctx.document, id)
     }
 
+    fn property_hints(&self) -> core_document::PropertyHints {
+        core_document::PropertyHints {
+            length_keys: vec![
+                "length",
+                "length2",
+                "depth",
+                "depth2",
+                "radius",
+                "size",
+                "size2",
+                "value",
+                "diameter",
+                "pitch",
+                "height",
+                "up_to_offset",
+                "width",
+                "circumradius",
+                "radius1",
+                "radius2",
+                "radius3",
+            ],
+            reference_keys: vec![
+                "sketch",
+                "profile",
+                "spine",
+                "sections",
+                "originals",
+                "tool_body",
+            ],
+        }
+    }
+
     fn get_overlay_meshes(
         &self,
         ctx: &WorkbenchRuntimeContext,

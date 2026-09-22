@@ -338,6 +338,100 @@ pub struct ViewportPick {
     pub cursor: (f32, f32),
 }
 
+/// Where a contextual menu is being built, and for what.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuScope {
+    /// The viewport's right-click menu on a body.
+    ViewportBody(BodyId),
+    /// A feature row's menu in the tree.
+    TreeFeature(FeatureId),
+    /// A body row's menu in the tree.
+    TreeBody(BodyId),
+    /// The start page's New cards: each item is a way to begin a document.
+    StartPage,
+}
+
+/// One entry a bench contributes to a contextual menu. Picking it calls
+/// the bench's `on_command` with `id` and the scope it was offered in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuItem {
+    pub id: String,
+    pub label: String,
+    pub icon: Option<&'static str>,
+    /// A line under the label where the menu has room for one (a start
+    /// card), the tooltip where it has not.
+    pub hint: Option<String>,
+    pub enabled: bool,
+    pub separator_before: bool,
+}
+
+impl MenuItem {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon: None,
+            hint: None,
+            enabled: true,
+            separator_before: false,
+        }
+    }
+
+    pub fn icon(mut self, icon: &'static str) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    pub fn hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
+
+    pub fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub fn separator_before(mut self) -> Self {
+        self.separator_before = true;
+        self
+    }
+}
+
+/// What the generic property panel needs to know about a bench's feature
+/// payloads to show them well: which numeric fields are lengths (so they
+/// take the display unit) and which strings name other features or bodies
+/// (so they show as names).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PropertyHints {
+    pub length_keys: Vec<&'static str>,
+    pub reference_keys: Vec<&'static str>,
+}
+
+impl PropertyHints {
+    pub fn is_length(&self, key: &str) -> bool {
+        self.length_keys.contains(&key)
+    }
+
+    pub fn is_reference(&self, key: &str) -> bool {
+        self.reference_keys.contains(&key)
+    }
+
+    /// Both lists, without duplicates.
+    pub fn merge(&mut self, other: PropertyHints) {
+        for key in other.length_keys {
+            if !self.length_keys.contains(&key) {
+                self.length_keys.push(key);
+            }
+        }
+        for key in other.reference_keys {
+            if !self.reference_keys.contains(&key) {
+                self.reference_keys.push(key);
+            }
+        }
+    }
+}
+
 /// How a feature shows up outside its bench: the tree row, the property
 /// panel, the hover card.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -415,6 +509,29 @@ pub trait Workbench: Send {
         _pick: &ViewportPick,
     ) -> Option<f32> {
         None
+    }
+
+    /// What this bench offers in a contextual menu, computed while the
+    /// menu is open. Every bench is asked, whichever is active.
+    fn menu_items(&self, _scope: &MenuScope, _document: &Document) -> Vec<MenuItem> {
+        Vec::new()
+    }
+
+    /// Run one of this bench's `menu_items` ids in the scope it was
+    /// offered in. `false` when the id is not one of this bench's.
+    fn on_command(
+        &mut self,
+        _id: &str,
+        _scope: &MenuScope,
+        _ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        false
+    }
+
+    /// What the generic property panel should know about this bench's
+    /// feature payloads.
+    fn property_hints(&self) -> PropertyHints {
+        PropertyHints::default()
     }
 
     /// The bodies whose derived solid this bench must rebuild now, each

@@ -19,12 +19,16 @@ pub enum FileCommand {
 }
 
 /// What a start-page NEW card creates.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StartKind {
-    /// A document with one body, in the Part Design workbench.
-    PartDesign,
-    /// A document with one body and an XY sketch open for editing.
-    EmptySketch,
+    /// A document with one body, in the bench new documents land in.
+    Landing,
+    /// The same, then one of a bench's start-page commands run in that
+    /// bench (the sketcher's "Empty sketch" opens an XY sketch).
+    Bench {
+        workbench: core_document::WorkbenchId,
+        command: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +44,12 @@ pub enum UiCommand {
     CloseViewportMenu,
     /// A workbench panel hook asked the host for something.
     HostRequest(core_document::HostRequest),
+    /// One of a bench's own menu entries was picked.
+    BenchCommand {
+        workbench: core_document::WorkbenchId,
+        id: String,
+        scope: core_document::MenuScope,
+    },
     CameraSnap(CameraSnapView),
     CameraRotate(RotateDelta),
     /// Stop the kernel job that is running now.

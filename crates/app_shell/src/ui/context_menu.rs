@@ -25,6 +25,7 @@ pub fn draw(
     ctx: &Context,
     menu: &ViewportMenu,
     document: &Document,
+    registry: &core_document::DocumentService,
     commands: &mut Vec<UiCommand>,
 ) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -67,6 +68,36 @@ pub fn draw(
                         visible: false,
                     });
                     commands.push(UiCommand::CloseViewportMenu);
+                }
+                // What the benches offer for this body, after the host's
+                // own entries.
+                let scope = core_document::MenuScope::ViewportBody(menu.body);
+                let bench_items = registry.menu_items(&scope, document);
+                if !bench_items.is_empty() {
+                    ui.separator();
+                }
+                for (workbench, entry) in bench_items {
+                    if entry.separator_before {
+                        ui.separator();
+                    }
+                    let button = ui.add_enabled(
+                        entry.enabled,
+                        egui::Button::new(RichText::new(&entry.label).font(sans(FONT_SM)))
+                            .frame(false)
+                            .min_size(egui::vec2(MENU_WIDTH, 22.0)),
+                    );
+                    let button = match &entry.hint {
+                        Some(hint) => button.on_hover_text(hint),
+                        None => button,
+                    };
+                    if button.clicked() {
+                        commands.push(UiCommand::BenchCommand {
+                            workbench: workbench.clone(),
+                            id: entry.id.clone(),
+                            scope: scope.clone(),
+                        });
+                        commands.push(UiCommand::CloseViewportMenu);
+                    }
                 }
             });
         });

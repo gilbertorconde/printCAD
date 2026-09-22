@@ -2389,3 +2389,31 @@ fn passive_geometry_follows_the_sketch_and_its_revision_moves_with_it() {
     assert_ne!(before.revision, after.revision);
     assert!(after.mesh.positions.len() > before.mesh.positions.len());
 }
+
+#[test]
+fn the_start_card_command_opens_a_blank_sketch_on_the_selected_body() {
+    let mut h = Harness::new();
+    let body = h.doc.create_body(None);
+    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+    ctx.view_proj = Some(h.vp);
+    ctx.selected_body_id = Some(body.0);
+    let items =
+        h.wb.menu_items(&core_document::MenuScope::StartPage, ctx.document);
+    assert_eq!(items.len(), 1);
+    assert!(
+        h.wb.on_command(&items[0].id, &core_document::MenuScope::StartPage, &mut ctx),
+        "the bench knows its own item"
+    );
+    assert!(!h.wb.on_command(
+        "sketch.nothing",
+        &core_document::MenuScope::StartPage,
+        &mut ctx
+    ));
+    let created = ctx
+        .active_document_object
+        .expect("the new sketch is the active object");
+    let node = h.doc.get_feature_meta(created).expect("the sketch exists");
+    assert_eq!(node.workbench_id.as_str(), "wb.sketch");
+    assert_eq!(node.body, Some(body));
+    assert_eq!(h.wb.editing_feature(), Some(created));
+}

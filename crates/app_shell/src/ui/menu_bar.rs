@@ -230,7 +230,7 @@ pub fn draw_menu_bar(
                         ui.separator();
                         if inputs.screen == Screen::Start {
                             if item(ui, "Workspace", None) {
-                                commands.push(UiCommand::StartNew(super::StartKind::PartDesign));
+                                commands.push(UiCommand::StartNew(super::StartKind::Landing));
                             }
                         } else if item(ui, "Start page", None) {
                             commands.push(UiCommand::ShowStartPage);

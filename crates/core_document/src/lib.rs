@@ -41,10 +41,10 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use units::{Unit, format_length_mm};
 pub use workbench::{
-    FeatureInfo, MarkKind, OvpRow, OvpWidget, PassiveGeometry, ScreenSpaceLabel, ScreenSpaceMark,
-    ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
-    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
+    FeatureInfo, MarkKind, MenuItem, MenuScope, OvpRow, OvpWidget, PassiveGeometry, PropertyHints,
+    ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome,
+    TaskRequest, ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
 };
 
 /// Result type for document operations.

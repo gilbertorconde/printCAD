@@ -7,8 +7,8 @@ use crate::feature::FeatureId;
 use crate::feature::{BodyId, FeatureNode};
 use crate::rebuild::RebuildJob;
 use crate::workbench::{
-    FeatureInfo, PassiveGeometry, ToolDescriptor, ViewportPick, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchId,
+    FeatureInfo, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ToolDescriptor, ViewportPick,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
 };
 use crate::{DocumentError, DocumentResult};
 
@@ -21,6 +21,14 @@ pub struct DocumentService {
     order: Vec<WorkbenchId>,
     /// Feature kind → the bench that claimed it.
     owners: HashMap<String, WorkbenchId>,
+}
+
+impl std::fmt::Debug for DocumentService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocumentService")
+            .field("workbenches", &self.order)
+            .finish()
+    }
 }
 
 struct WorkbenchEntry {
@@ -178,6 +186,35 @@ impl DocumentService {
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(id, _)| id)
+    }
+
+    /// Every bench's entries for a contextual menu, in registration order,
+    /// each with the bench that offers it.
+    pub fn menu_items(
+        &self,
+        scope: &MenuScope,
+        document: &Document,
+    ) -> Vec<(WorkbenchId, MenuItem)> {
+        self.order
+            .iter()
+            .filter_map(|id| self.workbenches.get(id.as_str()).map(|e| (id, e)))
+            .flat_map(|(id, entry)| {
+                entry
+                    .workbench
+                    .menu_items(scope, document)
+                    .into_iter()
+                    .map(move |item| (id.clone(), item))
+            })
+            .collect()
+    }
+
+    /// Every bench's property hints, merged.
+    pub fn property_hints(&self) -> PropertyHints {
+        let mut hints = PropertyHints::default();
+        for wb in self.benches() {
+            hints.merge(wb.property_hints());
+        }
+        hints
     }
 
     pub fn tools_for(&self, id: &WorkbenchId) -> DocumentResult<&[ToolDescriptor]> {

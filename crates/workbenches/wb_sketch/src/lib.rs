@@ -22,10 +22,10 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use core_document::{
-    BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, ScreenSpaceLabel,
-    ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo, ToolDescriptor, ToolHint, ToolVariant,
-    ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature,
-    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, MenuItem, MenuScope,
+    ScreenSpaceLabel, ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo, ToolDescriptor,
+    ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
+    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 pub use feature::SketchFeature;
 use overlay::SketchProjector;
@@ -1183,6 +1183,33 @@ impl Workbench for SketchWorkbench {
     }
 
     fn locks_view_to_plane(&self) -> bool {
+        true
+    }
+
+    fn menu_items(&self, scope: &MenuScope, _document: &core_document::Document) -> Vec<MenuItem> {
+        match scope {
+            MenuScope::StartPage => vec![
+                MenuItem::new("sketch.start_blank", "Empty sketch")
+                    .icon("sketch-new")
+                    .hint("2D on XY plane"),
+            ],
+            _ => Vec::new(),
+        }
+    }
+
+    /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
+    /// open for editing.
+    fn on_command(
+        &mut self,
+        id: &str,
+        _scope: &MenuScope,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> bool {
+        if id != "sketch.start_blank" {
+            return false;
+        }
+        let body = ctx.selected_body_id.map(BodyId);
+        self.create_sketch_on_plane(ctx, body, SketchPlane::default());
         true
     }
 
