@@ -54,7 +54,7 @@ flate2 = "1.1.10"
 zstd = "0.14"
 rustc-hash = "2.1"
 rayon = "1.12"
-ogeom = "0.1"
+ogeom = "0.2"
 sixdof = { version = "0.1", features = ["magellan"] }
 
 # Uncomment to build against a local checkout instead of the released crate:
