@@ -135,7 +135,10 @@ pub struct PickResult {
 /// Trait used by the app shell to talk to any renderer implementation.
 pub trait RenderBackend {
     fn initialize(&mut self, window: &Window) -> Result<(), RenderError>;
-    fn render(&mut self, frame: &FrameSubmission) -> Result<(), RenderError>;
+    /// Draws the frame. The egui texture deltas are taken out of the
+    /// submission here and held until a frame actually applies them, so a
+    /// frame skipped for an out-of-date swapchain loses no upload.
+    fn render(&mut self, frame: &mut FrameSubmission) -> Result<(), RenderError>;
     fn resize(&mut self, new_size: PhysicalSize<u32>);
     /// Most recent GPU pick readback. Picks are requested via
     /// `VulkanRenderer::request_pick` and resolved during `render`, so the
@@ -332,7 +335,7 @@ impl RenderBackend for VulkanRenderer {
         Ok(())
     }
 
-    fn render(&mut self, frame: &FrameSubmission) -> Result<(), RenderError> {
+    fn render(&mut self, frame: &mut FrameSubmission) -> Result<(), RenderError> {
         if let Some(ui) = &frame.egui {
             let texture_ops = ui.textures_delta.set.len() + ui.textures_delta.free.len();
             debug!(
@@ -343,6 +346,9 @@ impl RenderBackend for VulkanRenderer {
         }
         self.ensure_swapchain()?;
         let core = self.core.as_mut().ok_or(RenderError::NotReady)?;
+        if let Some(ui) = frame.egui.as_mut() {
+            core.take_textures(std::mem::take(&mut ui.textures_delta));
+        }
         match core.draw_frame(frame) {
             Err(RenderError::SwapchainOutOfDate) => {
                 self.pending_extent = Some(core.swapchain_extent());

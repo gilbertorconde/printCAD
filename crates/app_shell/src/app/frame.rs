@@ -522,7 +522,7 @@ impl PrintCadApp {
             }
 
             let render_started = Instant::now();
-            if let Err(err) = renderer.render(&self.frame_submission) {
+            if let Err(err) = renderer.render(&mut self.frame_submission) {
                 app_log::error(format!("Render failure: {err}"));
                 event_loop.exit();
                 return;

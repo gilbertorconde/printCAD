@@ -61,6 +61,9 @@ pub(crate) struct RendererCore {
     images_in_flight: Vec<vk::Fence>,
     current_frame: usize,
     egui_renderer: Option<EguiRenderer<DefaultAllocator>>,
+    /// egui texture uploads and frees handed over but not yet applied: a
+    /// frame that finds the swapchain out of date leaves them for the next.
+    pending_textures: egui::TexturesDelta,
     textures_to_free: Vec<Vec<TextureId>>,
     /// The rendered 3D scene, single-sample, kept between frames. The scene
     /// pass writes it only when the scene changed; every frame copies it
@@ -237,6 +240,7 @@ impl RendererCore {
             images_in_flight: Vec::new(),
             current_frame: 0,
             egui_renderer: None,
+            pending_textures: egui::TexturesDelta::default(),
             textures_to_free: vec![Vec::new(); MAX_FRAMES_IN_FLIGHT],
             scene_image: vk::Image::null(),
             scene_image_memory: vk::DeviceMemory::null(),
@@ -378,6 +382,12 @@ impl RendererCore {
         self.swapchain_extent
     }
 
+    /// Queues egui texture changes for the next frame that gets as far as
+    /// applying them.
+    pub(crate) fn take_textures(&mut self, deltas: egui::TexturesDelta) {
+        self.pending_textures.append(deltas);
+    }
+
     pub(crate) fn draw_frame(&mut self, frame: &FrameSubmission) -> Result<(), RenderError> {
         unsafe {
             self.device
@@ -443,8 +453,11 @@ impl RendererCore {
         }
         self.images_in_flight[image_index as usize] = self.in_flight_fences[self.current_frame];
 
-        if let (Some(ui), Some(renderer)) = (&frame.egui, self.egui_renderer.as_mut()) {
-            for (id, deltas) in &ui.textures_delta.set {
+        // Uploads now; frees once this frame's slot comes round again, when
+        // no command buffer still in flight can reference the texture.
+        let mut textures = std::mem::take(&mut self.pending_textures);
+        if let Some(renderer) = self.egui_renderer.as_mut() {
+            for (id, deltas) in &textures.set {
                 for delta in deltas {
                     renderer
                         .set_texture(self.graphics_queue, self.command_pool, *id, delta)
@@ -452,6 +465,8 @@ impl RendererCore {
                 }
             }
         }
+        self.textures_to_free[self.current_frame] = textures.free.iter().copied().collect();
+        textures.clear();
 
         self.record_command_buffer(self.command_buffers[self.current_frame], image_index, frame)?;
 
@@ -496,13 +511,6 @@ impl RendererCore {
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) => return Err(RenderError::SwapchainOutOfDate),
             Err(vk::Result::SUBOPTIMAL_KHR) => return Err(RenderError::SwapchainOutOfDate),
             Err(err) => return Err(RenderError::from(err)),
-        }
-
-        if let Some(ui) = &frame.egui {
-            self.textures_to_free[self.current_frame] =
-                ui.textures_delta.free.iter().copied().collect();
-        } else {
-            self.textures_to_free[self.current_frame].clear();
         }
 
         // Mesh-cache GC: drop GPU buffers for any body that's no longer in
@@ -1503,6 +1511,7 @@ impl Drop for RendererCore {
         // leaked by the validation layer. Take it down first, explicitly.
         drop(self.egui_renderer.take());
         self.textures_to_free.clear();
+        self.pending_textures.clear();
         self.cleanup_swapchain();
         self.cleanup_sync_objects();
         if self.command_pool != vk::CommandPool::null() {
