@@ -840,7 +840,11 @@ impl PrintCadApp {
         // the surface; a selected body is the whole body's mesh again,
         // drawn over itself.
         let paint = self.user_settings.rendering.selection_color;
-        let opacity = self.user_settings.rendering.selection_opacity;
+        let opacity = self
+            .user_settings
+            .rendering
+            .selection_opacity
+            .min(settings::MAX_SELECTION_OPACITY);
         if let Some(face) = &self.face_highlight {
             all_meshes.push(BodySubmission {
                 id: self.face_highlight_id,
@@ -855,9 +859,12 @@ impl PrintCadApp {
             .selected_body
             .and_then(|id| self.document.imported_geometry(core_document::BodyId(id)))
         {
+            // One slot serves every body; the body's id in the revision
+            // keeps two bodies at the same revision from sharing buffers.
+            let (hi, lo) = self.selected_body.unwrap_or_default().as_u64_pair();
             all_meshes.push(BodySubmission {
                 id: self.body_highlight_id,
-                revision: geometry.revision,
+                revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
                 color: paint,
                 opacity,

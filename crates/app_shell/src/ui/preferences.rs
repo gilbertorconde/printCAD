@@ -926,11 +926,11 @@ fn display_page(
                     PrefRow::qty(
                         "Face opacity",
                         QtyField::new(&mut draft.rendering.selection_opacity)
-                            .range(0.1..=1.0)
+                            .range(0.1..=f64::from(settings::MAX_SELECTION_OPACITY))
                             .speed(0.01)
                             .decimals(2),
                     )
-                    .hint("1 covers the face; less lets it show through"),
+                    .hint("How much paint goes over a selected face or body"),
                 ],
                 filter,
             );

@@ -74,7 +74,9 @@ void main() {
         spec_sum += spec_one(pc.light_fill, n, normalize(L2 + view_dir), shininess);
     }
 
-    vec3 albedo = v_color * pc.draw_color.rgb;
+    // A translucent draw is paint over a surface: its colour is the paint's
+    // alone, not the material's underneath.
+    vec3 albedo = pc.draw_color.w < 1.0 ? pc.draw_color.rgb : v_color * pc.draw_color.rgb;
     // Neutral grey specular tint (~0.52); not multiplied by albedo.
     const vec3 spec_tint = vec3(0.52);
     vec3 color = clamp(albedo * diffuse + spec_k * spec_tint * spec_sum, 0.0, 1.0);

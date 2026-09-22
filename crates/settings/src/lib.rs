@@ -280,11 +280,16 @@ pub struct RenderingSettings {
     /// The colour a selected face is painted.
     #[serde(default = "default_selection_color")]
     pub selection_color: [f32; 3],
-    /// How much of that paint: 1.0 hides the face under it, less lets the
-    /// face show through.
+    /// How much of that paint, up to [`MAX_SELECTION_OPACITY`]: the face
+    /// always shows through.
     #[serde(default = "default_selection_opacity")]
     pub selection_opacity: f32,
 }
+
+/// The most opaque the selection paint gets. Short of fully opaque, so the
+/// paint always draws as an overlay over the surface it selects rather than
+/// competing with it for the same depth.
+pub const MAX_SELECTION_OPACITY: f32 = 0.9;
 
 fn default_selection_color() -> [f32; 3] {
     [0.35, 0.95, 0.45]
