@@ -274,6 +274,7 @@ pub fn draw(
                 local_center,
                 config.cube_scale,
                 &rot,
+                &input.axis_system,
                 &response,
             ) {
                 result.snap_to_view = Some(snap);
@@ -341,6 +342,7 @@ fn draw_cube_interactive(
     center: Pos2,
     cube_scale: f32,
     rot: &Mat3,
+    axes: &AxisSystem,
     response: &Response,
 ) -> Option<CameraSnapView> {
     let ctx = ui.ctx();
@@ -354,13 +356,17 @@ fn draw_cube_interactive(
 
     let mut polygons: Vec<CubePolygon> = Vec::new();
 
-    // Face colors
-    let front_color = Color32::from_rgb(100, 130, 170);
-    let rear_color = Color32::from_rgb(100, 130, 170);
-    let right_color = Color32::from_rgb(170, 100, 100);
-    let left_color = Color32::from_rgb(100, 170, 100);
-    let top_color = Color32::from_rgb(150, 150, 170);
-    let bottom_color = Color32::from_rgb(120, 120, 140);
+    // A face wears the colour of the world axis it faces, as the triad in
+    // the corner draws that axis, so the two read as one thing. Faces are
+    // built canonical — Y up, Z toward the viewer — and the preset says which
+    // world axis each of those is, so opposite faces share a colour by
+    // construction.
+    let front_color = face_color(axes, Vec3::Z);
+    let rear_color = face_color(axes, Vec3::NEG_Z);
+    let right_color = face_color(axes, Vec3::X);
+    let left_color = face_color(axes, Vec3::NEG_X);
+    let top_color = face_color(axes, Vec3::Y);
+    let bottom_color = face_color(axes, Vec3::NEG_Y);
     let edge_color = Color32::from_rgb(160, 165, 175);
     let corner_color = Color32::from_rgb(145, 150, 160);
 
@@ -823,9 +829,9 @@ fn draw_axis_arrows(painter: &egui::Painter, axis_origin: Pos2, rot: &Mat3) {
     let axis_len = 18.0;
 
     let mut axis_data: Vec<_> = [
-        (Vec3::X, Color32::from_rgb(220, 80, 80), "X"),
-        (Vec3::Y, Color32::from_rgb(80, 200, 80), "Y"),
-        (Vec3::Z, Color32::from_rgb(80, 120, 220), "Z"),
+        (Vec3::X, ui_kit::tokens::AXIS_X, "X"),
+        (Vec3::Y, ui_kit::tokens::AXIS_Y, "Y"),
+        (Vec3::Z, ui_kit::tokens::AXIS_Z, "Z"),
     ]
     .into_iter()
     .map(|(dir, color, label)| {
@@ -1125,22 +1131,49 @@ fn rgb_to_hex(rgb: [u8; 3]) -> String {
     format!("#{:02X}{:02X}{:02X}", rgb[0], rgb[1], rgb[2])
 }
 
-/// Pre-render all face textures so the first cube draw doesn't block on SVG rasterization.
+/// Pre-render the face textures so the first cube draw doesn't block on SVG
+/// rasterization. Which axis a face gets depends on the preset, so every
+/// label is warmed in all three axis tints; a preset change then costs
+/// nothing.
 pub fn warm_face_textures(ctx: &Context) {
-    for (label, color) in face_texture_palette() {
-        let _ = get_face_texture(ctx, label, color, auto_text_color(color));
+    for label in ["FRONT", "REAR", "RIGHT", "LEFT", "TOP", "BOTTOM"] {
+        for axis in [Vec3::X, Vec3::Y, Vec3::Z] {
+            let color = face_tint(axis_color(axis));
+            let _ = get_face_texture(ctx, label, color, auto_text_color(color));
+        }
     }
 }
 
-fn face_texture_palette() -> [(&'static str, Color32); 6] {
-    [
-        ("FRONT", Color32::from_rgb(100, 130, 170)),
-        ("REAR", Color32::from_rgb(100, 130, 170)),
-        ("RIGHT", Color32::from_rgb(170, 100, 100)),
-        ("LEFT", Color32::from_rgb(100, 170, 100)),
-        ("TOP", Color32::from_rgb(150, 150, 170)),
-        ("BOTTOM", Color32::from_rgb(120, 120, 140)),
-    ]
+/// The colour of a cube face whose canonical normal is `canonical`: the
+/// triad's colour for the world axis it faces, calmed down to a face fill.
+fn face_color(axes: &AxisSystem, canonical: Vec3) -> Color32 {
+    face_tint(axis_color(axes.canonical_to_world(canonical)))
+}
+
+/// The triad's colour for the world axis a direction runs along.
+fn axis_color(world: Vec3) -> Color32 {
+    let a = world.abs();
+    if a.x >= a.y && a.x >= a.z {
+        ui_kit::tokens::AXIS_X
+    } else if a.y >= a.z {
+        ui_kit::tokens::AXIS_Y
+    } else {
+        ui_kit::tokens::AXIS_Z
+    }
+}
+
+/// An axis colour as a face fill: mixed toward the cube's grey so six of
+/// them side by side stay a cube rather than a beach ball, while each still
+/// reads unmistakably as its axis.
+fn face_tint(axis: Color32) -> Color32 {
+    const BASE: Color32 = Color32::from_rgb(112, 118, 132);
+    const AXIS_SHARE: f32 = 0.55;
+    let mix = |a: u8, b: u8| (a as f32 * AXIS_SHARE + b as f32 * (1.0 - AXIS_SHARE)) as u8;
+    Color32::from_rgb(
+        mix(axis.r(), BASE.r()),
+        mix(axis.g(), BASE.g()),
+        mix(axis.b(), BASE.b()),
+    )
 }
 
 pub(crate) fn rasterize_svg(svg: &str) -> Option<ColorImage> {
