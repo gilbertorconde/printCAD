@@ -486,3 +486,81 @@ fn bolt_faces_stay_inside_their_boundaries() {
         );
     }
 }
+
+/// Every triangle names the kernel face it was cut from, and a curved face
+/// is whole under that name where a plane would see one strip of it.
+#[test]
+fn triangles_know_their_faces_and_a_curved_face_is_whole() {
+    let sample = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/box_native.step");
+    let mut kernel = OgeomKernel::new();
+    kernel.initialize().expect("initialize ogeom kernel");
+    let imported = kernel
+        .import_step(&sample, &TessellationSettings::default())
+        .expect("import fixture");
+    let mesh = &imported.bodies[0].mesh;
+    assert_eq!(
+        mesh.faces.len(),
+        mesh.indices.len() / 3,
+        "one face id per triangle"
+    );
+    let mut ids: Vec<u32> = mesh.faces.clone();
+    ids.sort_unstable();
+    ids.dedup();
+    assert_eq!(ids.len(), 6, "a box has six faces");
+
+    let sample =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/data/drive_frame_upper.step");
+    let imported = kernel
+        .import_step(&sample, &TessellationSettings::default())
+        .expect("import fixture");
+    let mesh = &imported.bodies[0].mesh;
+    assert_eq!(mesh.faces.len(), mesh.indices.len() / 3);
+
+    // Find a face whose triangles do not all share a normal — a bore, a
+    // fillet — and check that its name gathers more of it than its plane.
+    let normal_of = |tri: &[u32; 3]| -> [f32; 3] {
+        let p = |i: u32| mesh.positions[i as usize];
+        let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-12);
+        [n[0] / len, n[1] / len, n[2] / len]
+    };
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let triangles = mesh.indices.as_chunks::<3>().0;
+    let mut curved = None;
+    for (tri, face) in triangles.iter().zip(&mesh.faces) {
+        let n0 = normal_of(tri);
+        let bent = triangles
+            .iter()
+            .zip(&mesh.faces)
+            .filter(|(_, f)| *f == face)
+            .any(|(t, _)| dot(normal_of(t), n0) < 0.9);
+        if bent {
+            curved = Some(*face);
+            break;
+        }
+    }
+    let face = curved.expect("the frame has holes, so at least one curved face");
+    let by_name = mesh.faces.iter().filter(|f| **f == face).count();
+    let first = triangles
+        .iter()
+        .zip(&mesh.faces)
+        .find(|(_, f)| **f == face)
+        .map(|(t, _)| normal_of(t))
+        .unwrap();
+    let by_plane = triangles
+        .iter()
+        .zip(&mesh.faces)
+        .filter(|(t, f)| **f == face && dot(normal_of(t), first) >= 0.999)
+        .count();
+    assert!(
+        by_name > by_plane,
+        "face {face}: {by_name} triangles by name, {by_plane} on one plane"
+    );
+}

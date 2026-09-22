@@ -249,6 +249,7 @@ pub fn mesh_shape_with(
             mesh.indices.push(base + t[0]);
             mesh.indices.push(base + t[1]);
             mesh.indices.push(base + t[2]);
+            mesh.faces.push(face_id);
         }
     }
 
@@ -503,6 +504,7 @@ mod tests {
                 [0.0, 0.0, 1.0],
                 [1.0, 0.0, 0.0],
             ],
+            faces: Vec::new(),
             indices: vec![0, 1, 2, 0, 2, 3],
             edges: Vec::new(),
             colors: vec![WHITE; 4],

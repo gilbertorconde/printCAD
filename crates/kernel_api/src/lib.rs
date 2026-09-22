@@ -142,6 +142,14 @@ pub struct TriMesh {
     /// Empty means the renderer uses the body tint from push constants only.
     #[serde(default)]
     pub colors: Vec<[f32; 3]>,
+    /// Which kernel face each triangle was cut from: one entry per triangle
+    /// (`indices.len() / 3`), an index into the body's faces in the kernel's
+    /// own order. A curved face is many triangles with many normals, and
+    /// this is what lets a click on one of them select the whole face.
+    /// Empty when the source has no faces — a sketch, a datum, a mesh saved
+    /// before faces were recorded — and a consumer falls back to geometry.
+    #[serde(default)]
+    pub faces: Vec<u32>,
 }
 
 impl TriMesh {

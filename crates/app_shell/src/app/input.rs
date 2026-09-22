@@ -505,7 +505,7 @@ impl PrintCadApp {
                     let geometry = self
                         .document
                         .imported_geometry(core_document::BodyId(body))?;
-                    let submesh = coplanar_face_submesh(&geometry.mesh, face.point, face.normal)?;
+                    let submesh = face_submesh(&geometry.mesh, face.point, face.normal)?;
                     let revision = self
                         .face_highlight
                         .as_ref()
@@ -616,21 +616,7 @@ pub(crate) fn face_ref_from_mesh(
     mesh: &kernel_api::TriMesh,
     point: glam::Vec3,
 ) -> Option<core_document::FaceRef> {
-    let mut best: Option<(f32, glam::Vec3, glam::Vec3)> = None; // (dist2, anchor, normal)
-    for tri in mesh.indices.as_chunks::<3>().0 {
-        let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
-        let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
-        let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
-        let normal = (b - a).cross(c - a);
-        if normal.length_squared() < 1e-12 {
-            continue;
-        }
-        let d = point_triangle_distance_sq(point, a, b, c);
-        if best.map(|(bd, _, _)| d < bd).unwrap_or(true) {
-            best = Some((d, a, normal.normalize()));
-        }
-    }
-    let (dist_sq, anchor, normal) = best?;
+    let (_, dist_sq, anchor, normal) = nearest_triangle(mesh, point)?;
 
     // Sanity bound relative to the model size: the pick already identified
     // this body, so the nearest triangle is the right face unless the
@@ -651,10 +637,81 @@ pub(crate) fn face_ref_from_mesh(
     })
 }
 
-/// Coplanar-region sub-mesh extracted around a face hit, used to render a
-/// single-face selection highlight. Approximation: coplanar-but-disjoint
-/// regions of the same solid highlight together (no kernel face ids in the
-/// mesh yet).
+/// The triangle of `mesh` nearest to `point`: its index, squared distance,
+/// one vertex, and unit normal.
+fn nearest_triangle(
+    mesh: &kernel_api::TriMesh,
+    point: glam::Vec3,
+) -> Option<(usize, f32, glam::Vec3, glam::Vec3)> {
+    let mut best: Option<(usize, f32, glam::Vec3, glam::Vec3)> = None;
+    for (index, tri) in mesh.indices.as_chunks::<3>().0.iter().enumerate() {
+        let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
+        let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
+        let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
+        let normal = (b - a).cross(c - a);
+        if normal.length_squared() < 1e-12 {
+            continue;
+        }
+        let d = point_triangle_distance_sq(point, a, b, c);
+        if best.map(|(_, bd, _, _)| d < bd).unwrap_or(true) {
+            best = Some((index, d, a, normal.normalize()));
+        }
+    }
+    best
+}
+
+/// The sub-mesh of one face, for the selection highlight.
+///
+/// When the mesh knows which kernel face each triangle came from, the face
+/// is the one under the hit, whole — a cylinder wall as much as a flat side.
+/// A mesh without that (a sketch, a document saved before faces were
+/// recorded) falls back to the plane through the hit, which is exact for a
+/// flat face and one strip of a curved one.
+pub(crate) fn face_submesh(
+    mesh: &kernel_api::TriMesh,
+    point: [f32; 3],
+    normal: [f32; 3],
+) -> Option<kernel_api::TriMesh> {
+    if mesh.faces.len() == mesh.indices.len() / 3 && !mesh.faces.is_empty() {
+        let hit = glam::Vec3::from_array(point);
+        if let Some((tri, _, _, _)) = nearest_triangle(mesh, hit) {
+            return face_submesh_by_id(mesh, mesh.faces[tri]);
+        }
+    }
+    coplanar_face_submesh(mesh, point, normal)
+}
+
+/// Every triangle cut from kernel face `face`, each lifted along its own
+/// normal so the highlight never z-fights the surface it covers.
+pub(crate) fn face_submesh_by_id(
+    mesh: &kernel_api::TriMesh,
+    face: u32,
+) -> Option<kernel_api::TriMesh> {
+    const LIFT: f32 = 0.05;
+    let mut out = kernel_api::TriMesh::default();
+    for (tri, id) in mesh.indices.as_chunks::<3>().0.iter().zip(&mesh.faces) {
+        if *id != face {
+            continue;
+        }
+        let a = glam::Vec3::from_array(*mesh.positions.get(tri[0] as usize)?);
+        let b = glam::Vec3::from_array(*mesh.positions.get(tri[1] as usize)?);
+        let c = glam::Vec3::from_array(*mesh.positions.get(tri[2] as usize)?);
+        let n = (b - a).cross(c - a);
+        if n.length_squared() < 1e-12 {
+            continue;
+        }
+        let n = n.normalize();
+        let base = out.positions.len() as u32;
+        for v in [a, b, c] {
+            out.positions.push((v + n * LIFT).to_array());
+            out.normals.push(n.to_array());
+        }
+        out.indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+    (!out.indices.is_empty()).then_some(out)
+}
+
+/// Sub-mesh rendered as the single-face selection highlight.
 pub(crate) struct FaceHighlight {
     pub body: Uuid,
     pub mesh: std::sync::Arc<kernel_api::TriMesh>,
@@ -662,9 +719,9 @@ pub(crate) struct FaceHighlight {
     pub revision: u64,
 }
 
-/// Extract every triangle of `mesh` lying on the plane (point, normal),
-/// offset slightly along the normal so the highlight never z-fights the
-/// face it covers.
+/// Every triangle of `mesh` lying on the plane (point, normal), lifted
+/// slightly along it. The face as geometry sees it: exact for a flat face,
+/// one strip of a curved one, and two flat faces on one plane together.
 pub(crate) fn coplanar_face_submesh(
     mesh: &kernel_api::TriMesh,
     point: [f32; 3],
@@ -710,6 +767,7 @@ pub(crate) fn coplanar_face_submesh(
         indices,
         edges: Vec::new(),
         colors: Vec::new(),
+        faces: Vec::new(),
     })
 }
 
@@ -783,6 +841,7 @@ mod tests {
             indices,
             edges: Vec::new(),
             colors: Vec::new(),
+            faces: Vec::new(),
         }
     }
 
@@ -819,6 +878,57 @@ mod tests {
         use super::face_ref_from_mesh;
         let mesh = two_face_mesh();
         assert!(face_ref_from_mesh(&mesh, glam::Vec3::new(50.0, 50.0, 50.0)).is_none());
+    }
+
+    /// A quarter-cylinder wall as three strips that turn 30° each, all cut
+    /// from one kernel face, next to one flat strip from another.
+    fn curved_face_mesh() -> TriMesh {
+        let mut mesh = TriMesh::default();
+        let mut strip = |angle_a: f32, angle_b: f32, face: u32| {
+            let (sa, ca) = angle_a.to_radians().sin_cos();
+            let (sb, cb) = angle_b.to_radians().sin_cos();
+            let base = mesh.positions.len() as u32;
+            mesh.positions
+                .extend([[ca, sa, 0.0], [cb, sb, 0.0], [cb, sb, 1.0], [ca, sa, 1.0]]);
+            mesh.indices
+                .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            mesh.faces.extend([face, face]);
+        };
+        strip(0.0, 30.0, 7);
+        strip(30.0, 60.0, 7);
+        strip(60.0, 90.0, 7);
+        strip(90.0, 120.0, 8);
+        mesh
+    }
+
+    #[test]
+    fn a_curved_face_selects_whole_when_the_mesh_knows_its_faces() {
+        use super::face_submesh;
+        let mesh = curved_face_mesh();
+        // A hit on the middle strip, with that strip's normal.
+        let hit = [45f32.to_radians().cos(), 45f32.to_radians().sin(), 0.5];
+        let normal = [hit[0], hit[1], 0.0];
+        let sub = face_submesh(&mesh, hit, normal).unwrap();
+        assert_eq!(
+            sub.indices.len(),
+            3 * 6,
+            "all three strips of face 7, not the fourth"
+        );
+    }
+
+    #[test]
+    fn without_face_ids_the_plane_selects_one_strip() {
+        use super::face_submesh;
+        let mut mesh = curved_face_mesh();
+        mesh.faces.clear();
+        let hit = [45f32.to_radians().cos(), 45f32.to_radians().sin(), 0.5];
+        let normal = [hit[0], hit[1], 0.0];
+        let sub = face_submesh(&mesh, hit, normal).unwrap();
+        assert_eq!(
+            sub.indices.len(),
+            6,
+            "the plane through the hit is one strip"
+        );
     }
 
     #[test]

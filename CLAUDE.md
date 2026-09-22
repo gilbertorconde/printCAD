@@ -52,7 +52,7 @@ cargo fmt --all                   # CI enforces --check
 
 ## Crate map / dataflow
 
-- `kernel_api` — pure data contract (TriMesh, ProfileWire w/ ellipse+B-spline
+- `kernel_api` — pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
 - `kernel_ogeom` — pure-Rust kernel adapter. STEP import builds bodies from
@@ -384,12 +384,15 @@ branches, and a double-clicked body opens its way to itself. The window opens on
 
 ## Known approximations / roadmap
 
-- Faces are identified geometrically (coplanar triangle regions), not
-  topologically — coplanar-but-disjoint faces select together. Dress-up edge
-  selection and up-to-face terminations therefore reference faces by a sample
-  point + normal (`FacePick`), re-resolved against the current solid each
-  rebuild. Kernel face/edge ids through the render mesh is still the next
-  big unlock (per-edge picking, true sketch-on-face references).
+- `TriMesh.faces` names the kernel face each triangle was cut from, so a click
+  selects a whole face — a bore or a fillet as much as a flat side
+  (`app/input.rs::face_submesh`). A mesh without faces (a sketch, a datum, a
+  document saved before they were recorded) falls back to the plane through
+  the hit. Persisted references are still geometric: dress-up edge selection
+  and up-to-face terminations carry a sample point + normal (`FacePick`),
+  re-resolved against the current solid each rebuild, because a rebuilt solid
+  numbers its faces afresh. Edge ids through the mesh (per-edge picking) are
+  the next unlock.
 - "Through all" derives its length from the base solid's bounding box; up-to-
   face trims with a half-space, so only PLANAR target faces terminate exactly
   (curved to-first/to-last faces stop at the profile-centroid hit distance).
