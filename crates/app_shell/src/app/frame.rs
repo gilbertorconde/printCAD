@@ -723,27 +723,20 @@ impl PrintCadApp {
             .imported_geometries()
             .filter(|(body_id, _)| self.document.imported_body_effective_visible(**body_id))
             .map(|(body_id, geometry)| {
-                // While a single FACE is the selection, the body itself is
-                // not tinted — only the face overlay below highlights.
-                let face_only = self
-                    .face_highlight
-                    .as_ref()
-                    .map(|f| f.body == body_id.0)
-                    .unwrap_or(false);
-                let is_selected = self.selected_body == Some(body_id.0) && !face_only;
+                // Selection is painted by the overlay below, never by a
+                // tint; hover brightens, and a peer's selection tints
+                // subordinate to it, so your own interaction always wins.
                 let is_hovered = self.hovered_body == Some(body_id.0);
-                // A peer's selection tints too — subordinate to anything
-                // local, so your own interaction always wins visually.
                 let is_peer_selected = self
                     .peer_presence
                     .values()
                     .any(|p| p.selected_body == Some(body_id.0));
-                let highlight = match (is_selected, is_hovered) {
-                    (true, true) => HighlightState::HoveredAndSelected,
-                    (true, false) => HighlightState::Selected,
-                    (false, true) => HighlightState::Hovered,
-                    (false, false) if is_peer_selected => HighlightState::PeerSelected,
-                    (false, false) => HighlightState::None,
+                let highlight = if is_hovered {
+                    HighlightState::Hovered
+                } else if is_peer_selected {
+                    HighlightState::PeerSelected
+                } else {
+                    HighlightState::None
                 };
                 let use_vertex_albedo = geometry.mesh.colors.len() == geometry.mesh.positions.len()
                     && !geometry.mesh.colors.is_empty();
@@ -842,15 +835,32 @@ impl PrintCadApp {
         all_meshes.extend(imported_meshes);
         all_meshes.append(&mut overlay_meshes);
 
-        // Selected-face highlight: the face's own triangles, slightly lifted
-        // off the surface, in the selection paint at the chosen opacity.
+        // The selection overlay, in the selection paint at the chosen
+        // opacity: a selected face is its own triangles, slightly lifted off
+        // the surface; a selected body is the whole body's mesh again,
+        // drawn over itself.
+        let paint = self.user_settings.rendering.selection_color;
+        let opacity = self.user_settings.rendering.selection_opacity;
         if let Some(face) = &self.face_highlight {
             all_meshes.push(BodySubmission {
                 id: self.face_highlight_id,
                 revision: face.revision,
                 mesh: Arc::clone(&face.mesh),
-                color: self.user_settings.rendering.selection_color,
-                opacity: self.user_settings.rendering.selection_opacity,
+                color: paint,
+                opacity,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+            });
+        } else if let Some(geometry) = self
+            .selected_body
+            .and_then(|id| self.document.imported_geometry(core_document::BodyId(id)))
+        {
+            all_meshes.push(BodySubmission {
+                id: self.body_highlight_id,
+                revision: geometry.revision,
+                mesh: Arc::clone(&geometry.mesh),
+                color: paint,
+                opacity,
                 highlight: HighlightState::None,
                 is_wireframe: false,
             });

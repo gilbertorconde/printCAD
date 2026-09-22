@@ -289,6 +289,8 @@ struct PrintCadApp {
     hovered_sketch: Option<core_document::FeatureId>,
     /// Stable renderer id for the face-highlight overlay slot.
     face_highlight_id: Uuid,
+    /// The submission id of the whole-body selection overlay.
+    body_highlight_id: Uuid,
     /// Timestamp + target of the last selection click (double-click detect).
     last_select_click: Option<(Instant, Uuid)>,
     /// A body double-clicked in the viewport, for the one frame it takes the
@@ -420,6 +422,7 @@ impl PrintCadApp {
             face_highlight: None,
             hovered_sketch: None,
             face_highlight_id: Uuid::new_v4(),
+            body_highlight_id: Uuid::new_v4(),
             last_select_click: None,
             reveal_body: None,
             viewport_menu: None,

@@ -341,7 +341,8 @@ the host owns the open `ViewportMenu`, the UI draws it and answers with
 commands) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly; LMB drag in sketch = box select; ctrl = additive). The
-selected face draws as a translucent overlay (`rendering.selection_color` /
+selected face, or the whole selected body, draws as a translucent overlay
+over itself, never as a tint (`rendering.selection_color` /
 `selection_opacity`, Preferences › Display › Rendering) through the
 renderer's blended pass: any `BodySubmission` with `opacity < 1` draws
 after the opaque bodies and their edges, depth-tested, never writing depth.
