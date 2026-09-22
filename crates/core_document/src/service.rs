@@ -2,7 +2,9 @@
 
 use std::collections::HashMap;
 
-use crate::feature::FeatureNode;
+use crate::Document;
+use crate::feature::{BodyId, FeatureNode};
+use crate::rebuild::RebuildJob;
 use crate::workbench::{
     CommandDescriptor, FeatureInfo, ToolDescriptor, Workbench, WorkbenchContext,
     WorkbenchDescriptor, WorkbenchId,
@@ -107,6 +109,32 @@ impl DocumentService {
     pub fn feature_info(&self, node: &FeatureNode) -> Option<FeatureInfo> {
         self.owner_of(&node.workbench_id)
             .map(|wb| wb.feature_info(node))
+    }
+
+    fn benches(&self) -> impl Iterator<Item = &dyn Workbench> {
+        self.order
+            .iter()
+            .filter_map(|id| self.workbenches.get(id.as_str()))
+            .map(|e| e.workbench.as_ref())
+    }
+
+    /// Every bench's rebuild jobs, in registration order.
+    pub fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
+        self.benches()
+            .flat_map(|wb| wb.rebuild_jobs(document))
+            .collect()
+    }
+
+    pub fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        for wb in self.benches() {
+            wb.invalidate_body(document, body);
+        }
+    }
+
+    pub fn invalidate_all(&self, document: &mut Document) {
+        for wb in self.benches() {
+            wb.invalidate_all(document);
+        }
     }
 
     pub fn tools_for(&self, id: &WorkbenchId) -> DocumentResult<&[ToolDescriptor]> {

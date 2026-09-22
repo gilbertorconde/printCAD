@@ -163,9 +163,12 @@ feature the tool just created). `frame.rs` skips the per-frame
 `TaskClosed` closes the gesture.
 
 Recompute loop: workbench edits document → features marked dirty via the
-dependency DAG → `drive_part_recompute` (each frame) builds `SolidOp` chains →
-kernel worker thread → results land in the document's imported-geometry
-sidecar → rendered/picked like any body.
+dependency DAG → `drive_part_recompute` (each frame) asks every bench for
+its `rebuild_jobs` (a `BuildPlan` of `SolidOp`s per body, the bench settling
+the dirty flags of the plan's features and inputs itself) → kernel worker
+thread → results land in the document's imported-geometry sidecar →
+rendered/picked like any body. A history that changed shape goes through
+`invalidate_body`; a history jump or Recompute All through `invalidate_all`.
 
 Import performance: the per-solid work and each mesh's face pass go through
 `ogeom_core::parallel::map_ordered` (order-preserving, so output is identical

@@ -10,7 +10,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{Card, Note, destructive_button, note_card};
 use ui_kit::{mono, sans, sans_semibold};
 
-use crate::build::{part_feature_ids, sketch_plane_description};
+use crate::build::sketch_plane_description;
 use crate::feature::PartFeature;
 use crate::{PartDesignWorkbench, editors};
 
@@ -171,10 +171,7 @@ impl PartDesignWorkbench {
                     ctx.document.set_feature_visible(sketch, true);
                 }
                 if let Some(body) = body {
-                    match part_feature_ids(ctx.document, body).first() {
-                        Some(first) => ctx.document.mark_feature_dirty(*first),
-                        None => ctx.document.remove_imported_geometry(body),
-                    }
+                    crate::build::invalidate_body(ctx.document, body);
                 }
                 ctx.log_info("Feature discarded");
             }

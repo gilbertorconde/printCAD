@@ -6,9 +6,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::FeatureId;
-use crate::feature::FeatureNode;
+use crate::feature::{BodyId, FeatureNode};
+use crate::rebuild::RebuildJob;
 use crate::runtime::{InputResult, WorkbenchInputEvent, WorkbenchRuntimeContext};
+use crate::{Document, FeatureId};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct WorkbenchId(String);
@@ -372,6 +373,22 @@ pub trait Workbench: Send {
     fn locks_view_to_plane(&self) -> bool {
         false
     }
+
+    /// The bodies whose derived solid this bench must rebuild now, each
+    /// with its plan. Called on every bench each frame. The bench settles
+    /// the dirty flags of every feature a plan consumed before returning,
+    /// or the same job comes back every frame.
+    fn rebuild_jobs(&self, _document: &mut Document) -> Vec<RebuildJob> {
+        Vec::new()
+    }
+
+    /// The body's history changed shape (a feature left it, its tip
+    /// moved): rebuild it from the start, or drop its derived solid when
+    /// no history is left.
+    fn invalidate_body(&self, _document: &mut Document, _body: BodyId) {}
+
+    /// Every derived solid this bench produces is stale.
+    fn invalidate_all(&self, _document: &mut Document) {}
 
     /// Called once at registration to declare tools and commands.
     fn configure(&self, context: &mut WorkbenchContext);

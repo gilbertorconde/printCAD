@@ -160,8 +160,8 @@ impl PrintCadApp {
             intents.apply_camera_settings = true;
         }
         if intents.recompute_all {
-            wb_part::mark_all_part_features_dirty(&mut self.document);
-            app_log::info("Recomputing every part feature");
+            self.registry.invalidate_all(&mut self.document);
+            app_log::info("Recomputing every feature");
         }
         if let Some(outcome) = intents.task_closed {
             // The task's edits form one undo entry; a closed task ends it.
@@ -608,10 +608,7 @@ impl PrintCadApp {
                         self.document.set_feature_visible(sketch, true);
                     }
                     if let Some(body) = body {
-                        match wb_part::part_feature_ids(&self.document, body).first() {
-                            Some(first) => self.document.mark_feature_dirty(*first),
-                            None => self.document.remove_imported_geometry(body),
-                        }
+                        self.registry.invalidate_body(&mut self.document, body);
                     }
                     if self.active_document_object == Some(feature) {
                         self.active_document_object = None;
@@ -640,9 +637,7 @@ impl PrintCadApp {
                 let tip = (command == TreeFeatureCommand::SetTip).then_some(feature);
                 self.document.set_body_tip(body, tip);
                 // The chain changes shape: rebuild from the first feature.
-                if let Some(first) = wb_part::part_feature_ids(&self.document, body).first() {
-                    self.document.mark_feature_dirty(*first);
-                }
+                self.registry.invalidate_body(&mut self.document, body);
                 self.journal.label_next("Move tip");
                 self.journal.note(&mut self.document);
             }

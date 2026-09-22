@@ -4,6 +4,7 @@ pub mod feature;
 pub mod history;
 pub mod op;
 pub mod palette;
+pub mod rebuild;
 pub mod registration;
 pub mod runtime;
 pub mod server;
@@ -30,6 +31,7 @@ pub use datum::{
 pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
+pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
     CameraOrientRequest, FaceRef, InputResult, KeyCode, LogEntry, LogLevel, MouseButton,
     SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
@@ -1017,6 +1019,14 @@ impl Document {
     }
 
     /// Look up tessellated geometry for a body.
+    /// Whether this body's solid came from an import rather than from a
+    /// feature history. Only the import path stamps the source asset; a
+    /// rebuild's own result leaves it unset.
+    pub fn body_solid_is_imported(&self, body: BodyId) -> bool {
+        self.imported_geometry(body)
+            .is_some_and(|geometry| geometry.source_asset.is_some())
+    }
+
     pub fn imported_geometry(&self, body: BodyId) -> Option<&ImportedGeometry> {
         self.imported_meshes.get(&body)
     }

@@ -1,10 +1,12 @@
 //! Translation of a body's Part Design features into kernel solid ops.
 //!
-//! The host (app shell) drives the recompute loop: it asks which bodies
-//! have dirty part features, converts each body's feature history into a
-//! [`SolidOp`] chain, and hands the chain to the kernel worker.
+//! The host drives the recompute loop through the registry: each frame it
+//! collects every bench's [`RebuildJob`]s and hands each plan to the kernel
+//! worker. This bench's jobs are the bodies with dirty part features, each
+//! with its feature history converted into a [`SolidOp`] chain.
 
-use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
+use core_document::{BodyId, Document, FeatureId, RebuildJob, WorkbenchFeature};
+pub use core_document::{BuildError, BuildPlan};
 use kernel_api::{
     BooleanOp, EdgeSelection, ExtrudeTermination, Profile, ProfileSegment, ProfileWire, SolidOp,
     SweepKind,
@@ -17,27 +19,6 @@ use crate::feature::{
     ExtrudeMode, FacePick, HelixMode, HoleCut, METRIC_SIZES, PartFeature, PatternAxis, RevolveAxis,
     TransformStep,
 };
-
-/// A body's translated build chain plus the feature responsible for each op
-/// (one feature can emit several ops, e.g. a counterbored hole).
-#[derive(Debug)]
-pub struct BuildPlan {
-    pub ops: Vec<SolidOp>,
-    pub op_features: Vec<FeatureId>,
-}
-
-/// A translation failure attributed to the feature that caused it.
-#[derive(Debug, Clone)]
-pub struct BuildError {
-    pub feature: Option<FeatureId>,
-    pub message: String,
-}
-
-impl std::fmt::Display for BuildError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
-    }
-}
 
 /// This body's part features in creation order (the build history).
 pub fn part_features_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, PartFeature)> {
@@ -72,21 +53,49 @@ pub fn pending_body_rebuilds(document: &Document) -> Vec<BodyId> {
     bodies
 }
 
-/// Whether this body's geometry came from an import rather than from its
-/// feature history. Only the import path stamps the source asset; a
-/// rebuild's own result leaves it unset.
-pub fn imported_body(document: &Document, body: BodyId) -> bool {
-    document
-        .imported_geometry(body)
-        .is_some_and(|geometry| geometry.source_asset.is_some())
-}
-
 /// Feature ids of this body's part features (for dirty-flag bookkeeping).
 pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
     part_features_of_body(document, body)
         .into_iter()
         .map(|(id, _)| id)
         .collect()
+}
+
+/// The bodies with dirty part features, each with its build plan. The
+/// dirty flags of the body's features and of the features they read
+/// (their sketches, the originals of a pattern) are settled first: the
+/// rebuild is now scheduled, or has failed with an attributed error, and
+/// either way the same job must not come back next frame.
+pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
+    pending_body_rebuilds(document)
+        .into_iter()
+        .map(|body| {
+            let features = part_feature_ids(document, body);
+            let inputs: Vec<FeatureId> = features
+                .iter()
+                .flat_map(|id| document.feature_tree().dependencies(*id))
+                .filter(|dep| document.get_feature_meta(*dep).is_some_and(|n| n.dirty))
+                .collect();
+            for id in features.iter().chain(&inputs) {
+                document.clear_feature_dirty(*id);
+            }
+            RebuildJob {
+                body,
+                plan: body_build_ops(document, body),
+            }
+        })
+        .collect()
+}
+
+/// The body's history changed shape: rebuild it from its first feature,
+/// or, with no history left, drop the solid the history produced. An
+/// imported solid is not the history's to drop.
+pub fn invalidate_body(document: &mut Document, body: BodyId) {
+    match part_feature_ids(document, body).first() {
+        Some(first) => document.mark_feature_dirty(*first),
+        None if !document.body_solid_is_imported(body) => document.remove_imported_geometry(body),
+        None => {}
+    }
 }
 
 fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
@@ -126,7 +135,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
     // A body whose shape came from an import has no history to rebuild
     // from: running the features alone would replace the imported solid
     // with whatever they make on their own.
-    if !features.is_empty() && imported_body(document, body) {
+    if !features.is_empty() && document.body_solid_is_imported(body) {
         return Err(BuildError {
             feature: features.first().map(|(id, _)| *id),
             message: "this body's shape came from an import, so it has no history to rebuild; \
@@ -1368,7 +1377,7 @@ mod tests {
                 face_colors_path: None,
             },
         );
-        assert!(!imported_body(&doc, body));
+        assert!(!doc.body_solid_is_imported(body));
         assert!(
             body_build_ops(&doc, body).is_ok(),
             "still rebuilds normally"
@@ -1425,6 +1434,61 @@ mod tests {
         .unwrap();
         let err = body_build_ops(&doc, body).unwrap_err();
         assert!(err.message.contains("material"), "{}", err.message);
+    }
+
+    #[test]
+    fn rebuild_jobs_settle_the_flags_of_the_plan_and_its_inputs_only() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        // A sketch of another body, dirty on its own: not this plan's input.
+        let other = doc.create_body(None);
+        let other_sketch = doc
+            .add_feature_in_body(rect_sketch(), "Other".into(), Some(other))
+            .unwrap();
+        doc.mark_feature_dirty(other_sketch);
+        doc.mark_feature_dirty(sketch_id);
+
+        let jobs = rebuild_jobs(&mut doc);
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].body, body);
+        assert!(jobs[0].plan.as_ref().is_ok_and(|p| !p.ops.is_empty()));
+        assert!(!doc.get_feature_meta(pad_id).unwrap().dirty);
+        assert!(!doc.get_feature_meta(sketch_id).unwrap().dirty);
+        assert!(doc.get_feature_meta(other_sketch).unwrap().dirty);
+        assert!(rebuild_jobs(&mut doc).is_empty(), "nothing comes back");
+    }
+
+    #[test]
+    fn invalidating_a_body_restarts_its_history_or_drops_a_built_solid() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        doc.clear_feature_dirty(pad_id);
+        invalidate_body(&mut doc, body);
+        assert!(doc.get_feature_meta(pad_id).unwrap().dirty);
+
+        doc.remove_feature(pad_id).unwrap();
+        doc.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+            },
+        );
+        invalidate_body(&mut doc, body);
+        assert!(doc.imported_geometry(body).is_none(), "a built solid goes");
+
+        let (mut doc, body, _) = doc_with_body_sketch();
+        import_into(&mut doc, body);
+        invalidate_body(&mut doc, body);
+        assert!(doc.imported_geometry(body).is_some(), "an import stays");
     }
 
     #[test]

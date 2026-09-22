@@ -11,9 +11,9 @@ mod feature;
 mod task;
 
 pub use build::{
-    BuildError, BuildPlan, body_build_ops, hole_diameter, imported_body,
+    BuildError, BuildPlan, body_build_ops, hole_diameter, invalidate_body,
     mark_all_part_features_dirty, part_feature_ids, part_features_of_body, pending_body_rebuilds,
-    retarget_feature_sketch, sketch_plane_description, sketches_of_body,
+    rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
     ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
@@ -22,9 +22,9 @@ pub use feature::{
 };
 
 use core_document::{
-    BodyId, FeatureId, FeatureInfo, InputResult, TaskInfo, ToolDescriptor, ToolVariant, Workbench,
-    WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId, WorkbenchInputEvent,
-    WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BodyId, Document, FeatureId, FeatureInfo, InputResult, TaskInfo, ToolDescriptor, ToolVariant,
+    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
+    WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
 
 /// Part Design workbench: feature-based solid modeling.
@@ -458,7 +458,7 @@ impl PartDesignWorkbench {
         // An imported body's solid lives in the import, not in the tree, so
         // a feature can't extend it. It goes to a body of its own instead,
         // which leaves the import exactly as it was.
-        let body = if imported_body(ctx.document, body) {
+        let body = if ctx.document.body_solid_is_imported(body) {
             let imported = ctx
                 .document
                 .bodies()
@@ -515,6 +515,18 @@ impl Workbench for PartDesignWorkbench {
         )
         .icon("workbench-part-design")
         .feature_kinds(["wb.part", "core.datum"])
+    }
+
+    fn rebuild_jobs(&self, document: &mut Document) -> Vec<core_document::RebuildJob> {
+        build::rebuild_jobs(document)
+    }
+
+    fn invalidate_body(&self, document: &mut Document, body: BodyId) {
+        build::invalidate_body(document, body);
+    }
+
+    fn invalidate_all(&self, document: &mut Document) {
+        build::mark_all_part_features_dirty(document);
     }
 
     fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {

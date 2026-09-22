@@ -92,9 +92,9 @@ impl PrintCadApp {
             .unwrap_or(false);
 
         // Solid geometry lives in derived sidecars that snapshot separately
-        // from the features that produce them; after a jump, rebuild every
-        // part body so the solids always match the restored feature state.
-        wb_part::mark_all_part_features_dirty(&mut self.document);
+        // from the features that produce them; after a jump, every bench
+        // rebuilds its bodies so the solids match the restored features.
+        self.registry.invalidate_all(&mut self.document);
 
         // If the feature under edit was undone away, end the workbench's
         // editing session so it doesn't write into a deleted feature.

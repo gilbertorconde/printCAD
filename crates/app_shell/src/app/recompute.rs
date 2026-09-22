@@ -1,9 +1,9 @@
-//! Parametric recompute driver for Part Design bodies.
+//! Parametric recompute driver.
 //!
-//! Once per frame the app checks for dirty part features, converts each
-//! affected body's feature history into a kernel extrude chain, and hands
-//! it to the kernel worker. Responses are folded back into the document by
-//! `drain_kernel_responses`.
+//! Once per frame the app asks every registered workbench, through the
+//! registry, which bodies it wants rebuilt and with what plan, and hands
+//! each plan to the kernel worker. Responses are folded back into the
+//! document by `drain_kernel_responses`.
 
 use kernel_api::TessellationSettings;
 
@@ -12,32 +12,14 @@ use crate::log_panel as app_log;
 
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {
-        let bodies = wb_part::pending_body_rebuilds(&self.document);
-        for body_id in bodies {
-            // Clear the dirty flags up front: the rebuild is now scheduled
-            // (or has failed with a logged error); either way re-submitting
-            // every frame would loop.
-            for feature_id in wb_part::part_feature_ids(&self.document, body_id) {
-                self.document.clear_feature_dirty(feature_id);
-            }
-            // Sketches only get dirty as rebuild inputs; clear those too.
-            let dirty_sketches: Vec<_> = self
-                .document
-                .feature_tree()
-                .all_nodes()
-                .filter(|(_, n)| n.workbench_id.as_str() == "wb.sketch" && n.dirty)
-                .map(|(id, _)| *id)
-                .collect();
-            for id in dirty_sketches {
-                self.document.clear_feature_dirty(id);
-            }
-
+        for job in self.registry.rebuild_jobs(&mut self.document) {
+            let body_id = job.body;
             self.document.clear_body_feature_errors(body_id);
-            match wb_part::body_build_ops(&self.document, body_id) {
+            match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
                     // Only geometry the features produced is cleared; an
                     // imported solid outlives an empty history.
-                    if !wb_part::imported_body(&self.document, body_id) {
+                    if !self.document.body_solid_is_imported(body_id) {
                         self.document.remove_imported_geometry(body_id);
                     }
                 }
