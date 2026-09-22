@@ -2,7 +2,7 @@
 //! group and rows edited on a draft that Apply or OK commit.
 
 use axes::AxisPreset;
-use core_document::{DocumentService, Unit, WorkbenchId};
+use core_document::{DocumentService, Unit};
 use egui::{
     Align, Context, CornerRadius, Frame, Layout, Rect, RichText, Sense, Stroke, Ui, UiBuilder,
     Vec2, pos2, vec2,
@@ -15,14 +15,15 @@ use ui_kit::widgets::{
 };
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PrefGroup {
     #[default]
     General,
     Display,
     Input,
-    Sketcher,
-    PartDesign,
+    /// A registered workbench's own page, by its place in registration
+    /// order.
+    Workbench(usize),
     Units,
     ImportExport,
     Printing,
@@ -30,29 +31,35 @@ pub enum PrefGroup {
 }
 
 impl PrefGroup {
-    pub const ALL: [PrefGroup; 9] = [
-        PrefGroup::General,
-        PrefGroup::Display,
-        PrefGroup::Input,
-        PrefGroup::Sketcher,
-        PrefGroup::PartDesign,
-        PrefGroup::Units,
-        PrefGroup::ImportExport,
-        PrefGroup::Printing,
-        PrefGroup::Updates,
-    ];
+    /// The rail, top to bottom: the app's groups with one page per
+    /// registered workbench between Input and Units.
+    pub fn all(registry: &DocumentService) -> Vec<PrefGroup> {
+        let mut groups = vec![PrefGroup::General, PrefGroup::Display, PrefGroup::Input];
+        groups.extend((0..registry.ids().len()).map(PrefGroup::Workbench));
+        groups.extend([
+            PrefGroup::Units,
+            PrefGroup::ImportExport,
+            PrefGroup::Printing,
+            PrefGroup::Updates,
+        ]);
+        groups
+    }
 
-    pub fn label(self) -> &'static str {
+    pub fn label(self, registry: &DocumentService) -> String {
         match self {
-            PrefGroup::General => "General",
-            PrefGroup::Display => "Display",
-            PrefGroup::Input => "Input",
-            PrefGroup::Sketcher => "Sketcher",
-            PrefGroup::PartDesign => "Part Design",
-            PrefGroup::Units => "Units",
-            PrefGroup::ImportExport => "Import / Export",
-            PrefGroup::Printing => "3D printing",
-            PrefGroup::Updates => "Updates",
+            PrefGroup::General => "General".to_string(),
+            PrefGroup::Display => "Display".to_string(),
+            PrefGroup::Input => "Input".to_string(),
+            PrefGroup::Workbench(i) => registry
+                .ids()
+                .get(i)
+                .and_then(|id| registry.descriptor(id))
+                .map(|d| d.label.clone())
+                .unwrap_or_default(),
+            PrefGroup::Units => "Units".to_string(),
+            PrefGroup::ImportExport => "Import / Export".to_string(),
+            PrefGroup::Printing => "3D printing".to_string(),
+            PrefGroup::Updates => "Updates".to_string(),
         }
     }
 
@@ -61,8 +68,7 @@ impl PrefGroup {
             PrefGroup::General => &["Interface", "About"],
             PrefGroup::Display => &["Camera", "Lighting", "Rendering"],
             PrefGroup::Input => &["Mouse", "6-DoF mouse"],
-            PrefGroup::Sketcher => &["General"],
-            PrefGroup::PartDesign => &["General"],
+            PrefGroup::Workbench(_) => &["General"],
             PrefGroup::Units => &["Units"],
             PrefGroup::ImportExport => &["STEP"],
             PrefGroup::Printing => &["Printer"],
@@ -271,7 +277,7 @@ pub fn draw_preferences(
                 Rect::from_min_max(pos2(rail.right(), header.bottom()), footer.right_top());
 
             drag = draw_header(ui, header, state, &mut close);
-            draw_rail(ui, rail, state);
+            draw_rail(ui, rail, state, inputs.registry);
             draw_content(ui, content, state, &mut inputs);
             draw_footer(ui, footer, state, &mut commit, &mut close);
 
@@ -390,14 +396,14 @@ fn draw_header(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, close: &mu
     handle.drag_delta()
 }
 
-fn draw_rail(ui: &mut Ui, rect: Rect, state: &mut PreferencesState) {
+fn draw_rail(ui: &mut Ui, rect: Rect, state: &mut PreferencesState, registry: &DocumentService) {
     let mut rail = region(
         ui,
         rect.shrink2(vec2(10.0, 12.0)),
         Layout::top_down(Align::Min),
     );
     rail.spacing_mut().item_spacing.y = 2.0;
-    for group in PrefGroup::ALL {
+    for group in PrefGroup::all(registry) {
         let active = state.group == group;
         let (row, response) =
             rail.allocate_exact_size(vec2(rail.available_width(), 30.0), Sense::click());
@@ -417,7 +423,7 @@ fn draw_rail(ui: &mut Ui, rect: Rect, state: &mut PreferencesState) {
         rail.painter().text(
             pos2(row.left() + 26.0, row.center().y),
             egui::Align2::LEFT_CENTER,
-            group.label(),
+            group.label(registry),
             sans_medium(FONT_SM),
             color,
         );
@@ -470,7 +476,7 @@ fn draw_content(
     let mut page = region(ui, body, Layout::top_down(Align::Min));
     page.set_clip_rect(body);
     egui::ScrollArea::vertical()
-        .id_salt(("prefs_page", state.group as u8, state.tab))
+        .id_salt(("prefs_page", state.group, state.tab))
         .auto_shrink([false, false])
         .show(&mut page, |ui| {
             egui::Frame::new()
@@ -488,11 +494,8 @@ fn draw_content(
                         PrefGroup::General => general_page(ui, state, inputs, &filter),
                         PrefGroup::Display => display_page(ui, state, inputs, &filter),
                         PrefGroup::Input => input_page(ui, state, inputs, &filter),
-                        PrefGroup::Sketcher => {
-                            workbench_page(ui, inputs.registry, "wb.sketch", &filter)
-                        }
-                        PrefGroup::PartDesign => {
-                            workbench_page(ui, inputs.registry, "wb.part", &filter)
+                        PrefGroup::Workbench(i) => {
+                            workbench_page(ui, inputs.registry, i, &filter)
                         }
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
@@ -614,7 +617,7 @@ fn reset_group(state: &mut PreferencesState) {
         }
         PrefGroup::Units => state.draft_unit = Unit::Mm,
         PrefGroup::ImportExport => state.draft.import = defaults.import,
-        PrefGroup::Sketcher | PrefGroup::PartDesign | PrefGroup::Printing | PrefGroup::Updates => {}
+        PrefGroup::Workbench(_) | PrefGroup::Printing | PrefGroup::Updates => {}
     }
 }
 
@@ -938,8 +941,12 @@ fn display_page(
     }
 }
 
-fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, id: &str, filter: &str) {
-    if let Ok(wb) = registry.workbench_mut(&WorkbenchId::from(id)) {
+/// The page of the `index`-th registered workbench: whatever it draws.
+fn workbench_page(ui: &mut Ui, registry: &mut DocumentService, index: usize, filter: &str) {
+    let Some(id) = registry.ids().get(index).cloned() else {
+        return;
+    };
+    if let Ok(wb) = registry.workbench_mut(&id) {
         wb.ui_settings(ui, filter);
     }
 }
@@ -953,7 +960,7 @@ fn search_results(
     filter: &str,
 ) {
     let (group, tab) = (state.group, state.tab);
-    for g in PrefGroup::ALL {
+    for g in PrefGroup::all(inputs.registry) {
         for t in 0..g.tabs().len() {
             state.group = g;
             state.tab = t;
@@ -961,8 +968,7 @@ fn search_results(
                 PrefGroup::General => general_page(ui, state, inputs, filter),
                 PrefGroup::Display => display_page(ui, state, inputs, filter),
                 PrefGroup::Input => input_page(ui, state, inputs, filter),
-                PrefGroup::Sketcher => workbench_page(ui, inputs.registry, "wb.sketch", filter),
-                PrefGroup::PartDesign => workbench_page(ui, inputs.registry, "wb.part", filter),
+                PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, filter),
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),
                 PrefGroup::Printing | PrefGroup::Updates => {}
@@ -1299,5 +1305,50 @@ fn input_page(
             pref_group(ui, "Buttons", rows, filter);
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod rail {
+    use super::*;
+    use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+
+    struct Bench(&'static str, &'static str);
+
+    impl Workbench for Bench {
+        fn descriptor(&self) -> WorkbenchDescriptor {
+            WorkbenchDescriptor::new(self.0, self.1, "")
+        }
+        fn configure(&self, _context: &mut WorkbenchContext) {}
+    }
+
+    #[test]
+    fn every_registered_workbench_gets_a_page_in_registration_order() {
+        let mut registry = DocumentService::default();
+        registry
+            .register_workbench(Box::new(Bench("z.second", "Second")))
+            .unwrap();
+        registry
+            .register_workbench(Box::new(Bench("a.first", "First")))
+            .unwrap();
+        let groups = PrefGroup::all(&registry);
+        let benches: Vec<PrefGroup> = groups
+            .iter()
+            .copied()
+            .filter(|g| matches!(g, PrefGroup::Workbench(_)))
+            .collect();
+        assert_eq!(
+            benches,
+            vec![PrefGroup::Workbench(0), PrefGroup::Workbench(1)]
+        );
+        assert_eq!(PrefGroup::Workbench(0).label(&registry), "Second");
+        assert_eq!(PrefGroup::Workbench(1).label(&registry), "First");
+        let input = groups.iter().position(|g| *g == PrefGroup::Input).unwrap();
+        let units = groups.iter().position(|g| *g == PrefGroup::Units).unwrap();
+        assert_eq!(
+            units - input,
+            3,
+            "the bench pages sit between Input and Units"
+        );
     }
 }
