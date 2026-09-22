@@ -28,7 +28,9 @@ pub use datum::{
     AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,
     datums_of_body,
 };
-pub use feature::{BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature};
+pub use feature::{
+    BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature, node_revision,
+};
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
@@ -39,10 +41,10 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use units::{Unit, format_length_mm};
 pub use workbench::{
-    CommandDescriptor, FeatureInfo, MarkKind, OvpRow, OvpWidget, ScreenSpaceLabel, ScreenSpaceMark,
-    ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest, ToolBehavior,
-    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
+    CommandDescriptor, FeatureInfo, MarkKind, OvpRow, OvpWidget, PassiveGeometry, ScreenSpaceLabel,
+    ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome, TaskRequest,
+    ToolBehavior, ToolDescriptor, ToolHint, ToolVariant, ViewportHud, ViewportPick, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchId, base_tool_id, tool_variant,
 };
 
 /// Result type for document operations.

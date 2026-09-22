@@ -288,7 +288,7 @@ struct PrintCadApp {
     /// is the selection.
     face_highlight: Option<app::input::FaceHighlight>,
     /// Sketch feature under the cursor (CPU hit-test, drives hover tint).
-    hovered_sketch: Option<core_document::FeatureId>,
+    hovered_feature: Option<core_document::FeatureId>,
     /// Stable renderer id for the face-highlight overlay slot.
     face_highlight_id: Uuid,
     /// The submission id of the whole-body selection overlay.
@@ -432,7 +432,7 @@ impl PrintCadApp {
             pending_sketch_creation: None,
             last_face_hit: None,
             face_highlight: None,
-            hovered_sketch: None,
+            hovered_feature: None,
             face_highlight_id: Uuid::new_v4(),
             body_highlight_id: Uuid::new_v4(),
             last_select_click: None,

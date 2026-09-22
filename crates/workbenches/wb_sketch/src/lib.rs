@@ -1182,6 +1182,59 @@ impl Workbench for SketchWorkbench {
         true
     }
 
+    fn passive_geometry(
+        &self,
+        _document: &core_document::Document,
+        _id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Option<core_document::PassiveGeometry> {
+        let feature = SketchFeature::from_json(&node.data).ok()?;
+        Some(core_document::PassiveGeometry {
+            mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
+            revision: core_document::node_revision(node),
+        })
+    }
+
+    /// The distance in pixels from the cursor to the sketch's nearest
+    /// curve: the cursor unprojected onto the sketch plane, the distance
+    /// measured in sketch units, then scaled by the pixels one unit spans
+    /// at the sketch origin so the answer is zoom-independent.
+    fn pick_feature(
+        &self,
+        _document: &core_document::Document,
+        _id: FeatureId,
+        node: &core_document::FeatureNode,
+        pick: &core_document::ViewportPick,
+    ) -> Option<f32> {
+        use core_document::runtime::{viewport_to_plane, world_to_viewport};
+        let feature = SketchFeature::from_json(&node.data).ok()?;
+        let plane = feature.plane;
+        let world = viewport_to_plane(
+            pick.view_proj,
+            pick.viewport,
+            pick.cursor,
+            plane.origin,
+            plane.normal,
+        )?;
+        let origin = glam::Vec3::from_array(plane.origin);
+        let rel = glam::Vec3::from_array(world) - origin;
+        let pos = Vec2D::new(
+            rel.dot(glam::Vec3::from_array(plane.x_axis)),
+            rel.dot(glam::Vec3::from_array(plane.y_axis)),
+        );
+        let o_px = world_to_viewport(pick.view_proj, pick.viewport, plane.origin)?;
+        let x_px = world_to_viewport(
+            pick.view_proj,
+            pick.viewport,
+            (origin + glam::Vec3::from_array(plane.x_axis)).to_array(),
+        )?;
+        let px_per_unit = ((x_px.0 - o_px.0).powi(2) + (x_px.1 - o_px.1).powi(2)).sqrt();
+        if px_per_unit < 1e-6 {
+            return None;
+        }
+        snap::nearest_curve_distance(&feature.sketch, pos).map(|units| units * px_per_unit)
+    }
+
     fn configure(&self, context: &mut WorkbenchContext) {
         // Row 0: sketch management, beside the standard tools.
         context.register_tool(

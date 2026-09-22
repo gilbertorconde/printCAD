@@ -8,7 +8,6 @@ use winit::{
     window::WindowId,
 };
 
-use core_document::WorkbenchFeature;
 use render_vk::RenderBackend;
 use std::time::Instant;
 use uuid::Uuid;
@@ -108,10 +107,10 @@ impl PrintCadApp {
                 // Sketch hover feedback (CPU hit-test; the GPU pick can't
                 // reliably hit hairline sketch curves). Skipped while
                 // editing — the sketcher renders its own hover state.
-                self.hovered_sketch = if self.sketch_editing_active() {
+                self.hovered_feature = if self.sketch_editing_active() {
                     None
                 } else {
-                    self.sketch_feature_under_cursor()
+                    self.feature_under_cursor()
                 };
             } else {
                 self.cursor_in_viewport = None;
@@ -470,7 +469,7 @@ impl PrintCadApp {
         // Sketch curves first: their tessellated lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
         // against sketch geometry on the CPU with a proper pixel tolerance.
-        if let Some(feature_id) = self.sketch_feature_under_cursor() {
+        if let Some(feature_id) = self.feature_under_cursor() {
             self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
             self.last_face_hit = None;
             self.face_highlight = None;
@@ -479,15 +478,10 @@ impl PrintCadApp {
         }
 
         if let Some(hovered) = self.hovered_body {
-            // Sketch feature meshes are occasionally GPU-picked too (e.g.
-            // clicking exactly on a line): same selection path.
+            // A feature's own geometry is occasionally GPU-picked too (e.g.
+            // clicking exactly on a sketch line): same selection path.
             let feature_id = core_document::FeatureId(hovered);
-            if self
-                .document
-                .get_feature_meta(feature_id)
-                .map(|n| n.workbench_id.as_str() == "wb.sketch")
-                .unwrap_or(false)
-            {
+            if self.document.get_feature_meta(feature_id).is_some() {
                 self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
                 self.last_face_hit = None;
                 return true;
@@ -558,67 +552,21 @@ impl PrintCadApp {
         true
     }
 
-    /// Find a visible sketch whose curves pass within a few pixels of the
-    /// cursor: unproject the click onto each sketch's plane and hit-test in
-    /// sketch coordinates (the same math the sketcher itself uses). Hidden
-    /// (pad-consumed) sketches are skipped. Returns the closest hit in
-    /// pixel distance.
-    fn sketch_feature_under_cursor(&self) -> Option<core_document::FeatureId> {
+    /// The visible feature whose geometry passes within a few pixels of the
+    /// cursor, as its bench measures it (a sketch: unprojected onto its
+    /// plane and hit-tested in sketch coordinates). Hidden features are
+    /// skipped; the nearest hit wins.
+    fn feature_under_cursor(&self) -> Option<core_document::FeatureId> {
         const TOLERANCE_PX: f32 = 8.0;
         let cursor = self.cursor_in_viewport?;
-        let view_proj = self.camera.view_projection();
         let vp = self.camera.viewport_info();
-        let viewport = (vp.0 as u32, vp.1 as u32, vp.2, vp.3);
-
-        let mut best: Option<(core_document::FeatureId, f32)> = None;
-        for (id, node) in self.document.feature_tree().all_nodes() {
-            if node.workbench_id.as_str() != "wb.sketch" || !node.visible {
-                continue;
-            }
-            let Ok(feature) = wb_sketch::SketchFeature::from_json(&node.data) else {
-                continue;
-            };
-            let plane = feature.plane;
-            let Some(world) = core_document::runtime::viewport_to_plane(
-                view_proj,
-                viewport,
-                cursor,
-                plane.origin,
-                plane.normal,
-            ) else {
-                continue;
-            };
-            // World hit → sketch 2D coordinates.
-            let origin = glam::Vec3::from_array(plane.origin);
-            let rel = glam::Vec3::from_array(world) - origin;
-            let pos = wb_sketch::sketch::Vec2D::new(
-                rel.dot(glam::Vec3::from_array(plane.x_axis)),
-                rel.dot(glam::Vec3::from_array(plane.y_axis)),
-            );
-            // Pixel scale at this sketch's origin (zoom-independent
-            // tolerance).
-            let to_px =
-                |p: [f32; 3]| core_document::runtime::world_to_viewport(view_proj, viewport, p);
-            let (Some(o_px), Some(x_px)) = (
-                to_px(plane.origin),
-                to_px((origin + glam::Vec3::from_array(plane.x_axis)).to_array()),
-            ) else {
-                continue;
-            };
-            let px_per_unit = ((x_px.0 - o_px.0).powi(2) + (x_px.1 - o_px.1).powi(2)).sqrt();
-            if px_per_unit < 1e-6 {
-                continue;
-            }
-
-            if let Some(dist_units) = wb_sketch::snap::nearest_curve_distance(&feature.sketch, pos)
-            {
-                let dist_px = dist_units * px_per_unit;
-                if dist_px <= TOLERANCE_PX && best.map(|(_, d)| dist_px < d).unwrap_or(true) {
-                    best = Some((*id, dist_px));
-                }
-            }
-        }
-        best.map(|(id, _)| id)
+        let pick = core_document::ViewportPick {
+            view_proj: self.camera.view_projection(),
+            viewport: (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            cursor,
+        };
+        self.registry
+            .pick_feature(&self.document, &pick, TOLERANCE_PX)
     }
 
     /// Derive the face (surface point + normal) under the cursor from the

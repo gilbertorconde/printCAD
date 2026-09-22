@@ -319,6 +319,25 @@ impl WorkbenchDescriptor {
     }
 }
 
+/// A feature's 3D presence while it is not under edit: what the scene
+/// draws for it, with a revision the mesh cache keys on.
+#[derive(Debug, Clone)]
+pub struct PassiveGeometry {
+    pub mesh: kernel_api::TriMesh,
+    /// Changes whenever `mesh` would.
+    pub revision: u64,
+}
+
+/// The cursor and the view it sits in, for picking.
+#[derive(Debug, Clone, Copy)]
+pub struct ViewportPick {
+    pub view_proj: [[f32; 4]; 4],
+    /// `(x, y, width, height)` in physical pixels.
+    pub viewport: (u32, u32, u32, u32),
+    /// Viewport-local, in physical pixels.
+    pub cursor: (f32, f32),
+}
+
 /// How a feature shows up outside its bench: the tree row, the property
 /// panel, the hover card.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -372,6 +391,30 @@ pub trait Workbench: Send {
     /// and roll on.
     fn locks_view_to_plane(&self) -> bool {
         false
+    }
+
+    /// What the scene draws for an owned feature that is visible and not
+    /// under edit. Called on the owner whichever bench is active; the host
+    /// colours it and skips the feature under edit.
+    fn passive_geometry(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Option<PassiveGeometry> {
+        None
+    }
+
+    /// How far, in pixels, the cursor is from an owned feature, when it is
+    /// close enough to count as over it. `None` when it is not.
+    fn pick_feature(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+        _pick: &ViewportPick,
+    ) -> Option<f32> {
+        None
     }
 
     /// The bodies whose derived solid this bench must rebuild now, each

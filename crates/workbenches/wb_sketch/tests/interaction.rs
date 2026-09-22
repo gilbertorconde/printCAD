@@ -4,8 +4,8 @@
 //! sketch plane by the workbench itself.
 
 use core_document::{
-    Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette, Workbench,
-    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette,
+    ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 use glam::{Mat4, Vec3};
 use wb_sketch::sketch::{GeometryElement, Sketch};
@@ -2334,4 +2334,55 @@ fn the_axes_and_the_origin_cannot_be_deleted() {
     h.release(20.0, 0.0, "sketch.select");
     h.key(KeyCode::Delete, Some("sketch.select"));
     assert_eq!(h.counts().0, 1, "the drawn point is still there");
+}
+
+#[test]
+fn a_sketch_measures_the_cursor_distance_to_its_curves_in_pixels() {
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    let node = h.doc.get_feature_meta(id).expect("sketch node").clone();
+    let on = h.px_of(5.0, 0.0);
+    let vp = h.vp;
+    let pick = |cursor: (f32, f32)| ViewportPick {
+        view_proj: vp,
+        viewport: VIEWPORT,
+        cursor,
+    };
+
+    let d =
+        h.wb.pick_feature(&h.doc, id, &node, &pick(on))
+            .expect("a sketch with a curve answers");
+    assert!(d < 0.5, "on the line: {d}");
+    let d =
+        h.wb.pick_feature(&h.doc, id, &node, &pick((on.0, on.1 + 3.0)))
+            .expect("answers");
+    assert!((2.5..3.5).contains(&d), "3 px off the line: {d}");
+    let d =
+        h.wb.pick_feature(&h.doc, id, &node, &pick((on.0, on.1 + 20.0)))
+            .expect("answers");
+    assert!((19.0..21.0).contains(&d), "20 px off the line: {d}");
+}
+
+#[test]
+fn passive_geometry_follows_the_sketch_and_its_revision_moves_with_it() {
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    let node = h.doc.get_feature_meta(id).expect("sketch node").clone();
+    let before =
+        h.wb.passive_geometry(&h.doc, id, &node)
+            .expect("a sketch has geometry");
+    assert!(!before.mesh.positions.is_empty());
+
+    h.click(0.0, 5.0, "sketch.line");
+    h.click(10.0, 5.0, "sketch.line");
+    let node = h.doc.get_feature_meta(id).expect("sketch node").clone();
+    let after =
+        h.wb.passive_geometry(&h.doc, id, &node)
+            .expect("still has geometry");
+    assert_ne!(before.revision, after.revision);
+    assert!(after.mesh.positions.len() > before.mesh.positions.len());
 }

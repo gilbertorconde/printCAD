@@ -3,11 +3,12 @@
 use std::collections::HashMap;
 
 use crate::Document;
+use crate::feature::FeatureId;
 use crate::feature::{BodyId, FeatureNode};
 use crate::rebuild::RebuildJob;
 use crate::workbench::{
-    CommandDescriptor, FeatureInfo, ToolDescriptor, Workbench, WorkbenchContext,
-    WorkbenchDescriptor, WorkbenchId,
+    CommandDescriptor, FeatureInfo, PassiveGeometry, ToolDescriptor, ViewportPick, Workbench,
+    WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
 };
 use crate::{DocumentError, DocumentResult};
 
@@ -135,6 +136,48 @@ impl DocumentService {
         for wb in self.benches() {
             wb.invalidate_all(document);
         }
+    }
+
+    /// The 3D presence of every visible feature not under edit, asked of
+    /// the bench that claimed its kind.
+    pub fn passive_geometries(
+        &self,
+        document: &Document,
+        editing: Option<FeatureId>,
+    ) -> Vec<(FeatureId, PassiveGeometry)> {
+        document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(id, node)| node.visible && Some(**id) != editing)
+            .filter_map(|(id, node)| {
+                let geometry = self
+                    .owner_of(&node.workbench_id)?
+                    .passive_geometry(document, *id, node)?;
+                Some((*id, geometry))
+            })
+            .collect()
+    }
+
+    /// The visible feature nearest the cursor within `tolerance_px`, asked
+    /// of the bench that claimed each feature's kind.
+    pub fn pick_feature(
+        &self,
+        document: &Document,
+        pick: &ViewportPick,
+        tolerance_px: f32,
+    ) -> Option<FeatureId> {
+        document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, node)| node.visible)
+            .filter_map(|(id, node)| {
+                let distance = self
+                    .owner_of(&node.workbench_id)?
+                    .pick_feature(document, *id, node, pick)?;
+                (distance <= tolerance_px).then_some((*id, distance))
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
     }
 
     pub fn tools_for(&self, id: &WorkbenchId) -> DocumentResult<&[ToolDescriptor]> {

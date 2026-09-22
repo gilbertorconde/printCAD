@@ -3,7 +3,6 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use core_document::WorkbenchFeature;
 use glam::Vec3;
 use render_vk::{
     BodySubmission, GpuLight, HighlightState, LightingData, RenderBackend,
@@ -42,14 +41,6 @@ fn hash_trimesh(mesh: &kernel_api::TriMesh) -> u64 {
 /// Stable u64 fingerprint of a serde JSON value. Used as a `revision`
 /// counter for sketch geometry so the GPU mesh cache can skip the upload
 /// when the underlying sketch JSON hasn't changed between frames.
-pub(crate) fn hash_revision(value: &serde_json::Value) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let bytes = serde_json::to_vec(value).unwrap_or_default();
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    bytes.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// Union of all imported mesh AABBs in world space `(min, max)`.
 pub(crate) fn document_imported_aabb(document: &Document) -> Option<(Vec3, Vec3)> {
     let mut combined_min = [f32::INFINITY; 3];
@@ -674,48 +665,25 @@ impl PrintCadApp {
             .apply_auto_clip_planes(&self.user_settings.camera);
         self.camera.update(dt_secs, &self.user_settings.camera);
 
-        // Collect sketch features from document and convert to meshes.
-        //
-        // Sketch geometry is recomputed every frame (it's cheap), but we
-        // bump a per-feature revision based on the underlying JSON so the
-        // renderer's cache only re-uploads when the sketch actually changes.
-        // The sketch currently being edited is drawn as crisp screen-space
-        // overlays by the workbench; only sketches NOT under edit get the 3D
-        // tessellation (drawing both would double-render the active one).
-        let editing_sketch = self
+        // Every visible feature not under edit draws what its bench says it
+        // looks like. The feature under edit is drawn as crisp screen-space
+        // overlays by its bench instead (drawing both would double it).
+        let editing_feature = self
             .registry
             .workbench(&self.active_workbench.0)
             .ok()
             .and_then(|wb| wb.editing_feature());
         let sketch_meshes: Vec<BodySubmission> = self
-            .document
-            .feature_tree()
-            .all_nodes()
-            .filter_map(|(feature_id, node)| {
-                if node.workbench_id.as_str() != "wb.sketch" {
-                    return None;
-                }
-                if Some(*feature_id) == editing_sketch || !node.visible {
-                    return None;
-                }
-
-                let sketch_feature = wb_sketch::SketchFeature::from_json(&node.data).ok()?;
-
-                let mesh = wb_sketch::render::sketch_to_lines(
-                    &sketch_feature.sketch,
-                    &sketch_feature.plane,
-                );
-
-                // Hash the serialized sketch JSON for a stable revision: the
-                // renderer skips the upload when the sketch is unchanged.
-                let revision = hash_revision(&node.data);
-
+            .registry
+            .passive_geometries(&self.document, editing_feature)
+            .into_iter()
+            .map(|(feature_id, geometry)| {
                 // Match the in-edit overlay palette: white geometry,
                 // orange hover, green selection. Color is baked directly so
                 // the tint is unmistakable even on hairline geometry.
-                let is_selected = self.active_document_object == Some(*feature_id)
-                    || self.tree_selection == Some(crate::ui::TreeItemId::Feature(*feature_id));
-                let is_hovered = self.hovered_sketch == Some(*feature_id);
+                let is_selected = self.active_document_object == Some(feature_id)
+                    || self.tree_selection == Some(crate::ui::TreeItemId::Feature(feature_id));
+                let is_hovered = self.hovered_feature == Some(feature_id);
                 let color = if is_selected {
                     [0.35, 0.95, 0.45]
                 } else if is_hovered {
@@ -726,15 +694,15 @@ impl PrintCadApp {
                 // The tint participates in the cache revision so hover /
                 // selection transitions actually re-upload the color.
                 let state_bits = (is_selected as u64) | ((is_hovered as u64) << 1);
-                Some(BodySubmission {
+                BodySubmission {
                     id: feature_id.0,
-                    revision: revision ^ (state_bits << 62),
-                    mesh: Arc::new(mesh),
+                    revision: geometry.revision ^ (state_bits << 62),
+                    mesh: Arc::new(geometry.mesh),
                     color,
                     highlight: HighlightState::None,
                     is_wireframe: false,
                     opacity: 1.0,
-                })
+                }
             })
             .collect();
 

@@ -84,7 +84,7 @@ impl PrintCadApp {
 
         self.face_highlight = None;
         self.last_face_hit = None;
-        self.hovered_sketch = None;
+        self.hovered_feature = None;
 
         let active_object_dangles = self
             .active_document_object
