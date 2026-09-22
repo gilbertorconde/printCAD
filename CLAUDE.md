@@ -308,8 +308,10 @@ user event; and
 rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_OPEN_DOC` /
 `PRINTCAD_BENCH_ORBIT` / `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are
 bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
-constrained sketch for editing and `=pad` pads it and opens the Pad task.
-Any of these skips the start page. The 1 s `printcad.frame` log reports
+constrained sketch for editing and `=pad` pads it and opens the Pad task;
+`PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
+the way a click on its tree row would, so a capture shows the selection
+overlay. Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
 Face-boundary edges draw on every frame, moving or still. They are cheap
@@ -352,8 +354,11 @@ While editing a sketch the view is locked planar (orbit + cube rotation
 disabled; pan/zoom/roll allowed). In the tree, bodies and features start
 open and imported assemblies start closed; the filter looks through closed
 branches, a double click or "Show in tree" opens a body's way to itself,
-and a body row's double click or "Select body" selects the whole body. The
-window opens
+and a body row's double click or "Select body" selects the whole body. An
+instance row that wraps a single part is one row with the instance's id and
+the part's body: resolve it through `Document::body_of_imported_object`,
+never through the node's own `body_id`, which an instance lacks. The window
+opens
 on the start page (`Screen::Start`); the recent list lives in
 `settings::recent`.
 

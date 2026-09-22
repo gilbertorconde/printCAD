@@ -1069,6 +1069,25 @@ impl Document {
         self.imported_body_to_object.get(&body).copied()
     }
 
+    /// The body an imported node stands for: its own, or, for an instance
+    /// whose only child is the part it places, that part's. The tree shows
+    /// such an instance and its part as one row, so selecting the row
+    /// means the part's body.
+    pub fn body_of_imported_object(&self, id: Uuid) -> Option<BodyId> {
+        let node = self.imported_object(id)?;
+        if let Some(body) = node.body_id {
+            return Some(body);
+        }
+        if node.kind == kernel_api::ImportedNodeKind::Instance
+            && let [child] = node.children.as_slice()
+            && let Some(target) = self.imported_object(*child)
+            && target.kind != kernel_api::ImportedNodeKind::Instance
+        {
+            return target.body_id;
+        }
+        None
+    }
+
     pub fn set_imported_object_visibility(&mut self, id: Uuid, visible: bool) -> bool {
         let changed = self
             .imported_objects

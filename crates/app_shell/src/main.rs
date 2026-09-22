@@ -221,6 +221,8 @@ struct PrintCadApp {
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
+    /// Whether `PRINTCAD_BENCH_SELECT` has fired.
+    bench_select_fired: bool,
     /// Process start, for the `PRINTCAD_EXIT_AFTER_MS` bench hook.
     bench_started: Instant,
     /// Rolling per-phase frame cost, emitted once a second alongside the FPS
@@ -399,6 +401,7 @@ impl PrintCadApp {
             last_sent_presence: None,
             document_load_epoch: 0,
             bench_open_fired: false,
+            bench_select_fired: false,
             bench_started: Instant::now(),
             frame_phase_accum: (0.0, 0.0, 0),
             scene_redraw_accum: 0,

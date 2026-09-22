@@ -443,10 +443,7 @@ impl PrintCadApp {
             }
             TreeItemId::ImportedObject(node_id) => {
                 self.active_document_object = None;
-                self.active_body_id = self
-                    .document
-                    .imported_object(node_id)
-                    .and_then(|n| n.body_id);
+                self.active_body_id = self.document.body_of_imported_object(node_id);
                 self.selected_body = self.active_body_id.map(|id| id.0);
             }
         }

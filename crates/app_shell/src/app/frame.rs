@@ -337,6 +337,31 @@ impl PrintCadApp {
                 self.bench_open_sketch();
             }
         }
+        // Dev/bench hook: `PRINTCAD_BENCH_SELECT=<n or name>` selects the
+        // n-th body, or the first whose name contains the text, once it has
+        // geometry, so a capture can show the selection overlay without a
+        // click.
+        if !self.bench_select_fired
+            && let Ok(which) = std::env::var("PRINTCAD_BENCH_SELECT")
+            && let Some(body) = match which.parse::<usize>() {
+                Ok(n) => self.document.bodies().get(n),
+                Err(_) => self
+                    .document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.name.contains(&which)),
+            }
+            .map(|b| (b.id, b.name.clone()))
+            && self.document.imported_geometry(body.0).is_some()
+        {
+            self.bench_select_fired = true;
+            let row = match self.document.imported_object_for_body(body.0) {
+                Some(node) => crate::ui::TreeItemId::ImportedObject(node),
+                None => crate::ui::TreeItemId::Body(body.0),
+            };
+            self.apply_tree_selection(row);
+            tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
+        }
 
         let mut new_body_requested = false;
         let server_status = self.server.status();
