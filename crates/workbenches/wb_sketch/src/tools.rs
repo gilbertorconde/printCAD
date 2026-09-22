@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 pub use draw::{arc_slot_shape, polygon_vertices, slot_corners};
 pub use modify::trim_preview;
-pub use transform::Similarity;
+pub use transform::{Similarity, array, copy_from};
 
 use crate::sketch::{ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::{self, SnapTarget};
@@ -107,6 +107,11 @@ pub struct ToolParams {
     /// Whether the line tool adds horizontal/vertical constraints to
     /// axis-snapped segments.
     pub auto_constraints: bool,
+    /// The rectangular array: rows and columns, and the step between them.
+    pub array_rows: u32,
+    pub array_cols: u32,
+    pub array_dx: f32,
+    pub array_dy: f32,
 }
 
 impl Default for ToolParams {
@@ -120,6 +125,10 @@ impl Default for ToolParams {
             copies: 0,
             bspline_periodic: false,
             auto_constraints: true,
+            array_rows: 2,
+            array_cols: 2,
+            array_dx: 20.0,
+            array_dy: 20.0,
         }
     }
 }
@@ -257,6 +266,9 @@ pub fn handle_click(
         "sketch.point" => draw::point(sketch, cursor),
         "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params.auto_constraints),
         "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
+        "sketch.rect_rounded" => {
+            draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
+        }
         "sketch.rect_center" => draw::rect_center(state, sketch, cursor),
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
         "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),

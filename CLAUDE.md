@@ -172,7 +172,16 @@ and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
-**Placeholders.** The design shows Part Design and Sketcher elements the app
+**Placeholders.** What remains unbuilt of the design: a local coordinate
+system datum, "refine result" (a kernel capability), a clipping plane,
+document thumbnails, release notes, STL/3MF import, an export
+walkthrough, merging sketches, ellipse by three points and elliptical
+arcs, external geometry, carbon copy and a polyline tool. Everything else
+the design shows is built. The Edit menu's Cut/Copy/Paste go to the
+active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
+geometry clipboard); the toolbar's Measure arms a two-click distance
+readout drawn over the scene (Escape puts it away); the print bed is a
+line box from the Printing preferences. The design shows Part Design and Sketcher elements the app
 does not implement yet. They stay on screen as disabled controls with a
 `// PLANNED: <what it does when built>` comment next to them and a
 `ToolDescriptor::planned(note)` on tools (`tool_button` renders them dim,

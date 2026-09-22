@@ -583,6 +583,11 @@ pub enum BoolKind {
 /// modify or combine the running solid directly.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum SolidOp {
+    /// Start the chain from a snapshot of another solid, in the native
+    /// format `SolidBuildResult::brep_blob` carries. Only ever the first op.
+    Shape {
+        brep: Vec<u8>,
+    },
     Sweep {
         profile: Profile,
         kind: SweepKind,
@@ -656,6 +661,8 @@ impl SolidOp {
             | SolidOp::Loft { op, .. }
             | SolidOp::Pipe { op, .. }
             | SolidOp::Primitive { op, .. } => Some(*op),
+            // A snapshot is a solid in itself: it begins a chain.
+            SolidOp::Shape { .. } => Some(BooleanOp::NewSolid),
             _ => None,
         }
     }

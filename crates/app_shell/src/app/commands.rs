@@ -31,6 +31,8 @@ struct FrameIntents {
     fit_selection: bool,
     set_draw_style: Option<settings::DrawStyle>,
     toggle_print_bed: bool,
+    toggle_measure: bool,
+    edit: Vec<crate::ui::EditCommand>,
     body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
     set_visibility: Vec<(uuid::Uuid, bool)>,
     select_tree_item: Option<TreeItemId>,
@@ -107,6 +109,8 @@ impl PrintCadApp {
                 UiCommand::FitSelection => intents.fit_selection = true,
                 UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
                 UiCommand::TogglePrintBed => intents.toggle_print_bed = true,
+                UiCommand::ToggleMeasure => intents.toggle_measure = true,
+                UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
                     intents.body_display.push((body, display));
                 }
@@ -351,6 +355,19 @@ impl PrintCadApp {
         }
         for (workbench, id, scope) in intents.bench_commands {
             self.run_bench_command(workbench, &id, scope);
+        }
+        for command in intents.edit {
+            let bench = self.session.active_workbench.0.clone();
+            self.run_bench_command(bench, command.id(), core_document::MenuScope::EditMenu);
+        }
+        if intents.toggle_measure {
+            self.session.measure = match self.session.measure {
+                Some(_) => None,
+                None => Some(Vec::new()),
+            };
+            if self.session.measure.is_some() {
+                app_log::info("Measure: click two points on the model");
+            }
         }
 
         if let Some((path, detail)) = step_import_to_run {
@@ -804,9 +821,29 @@ impl PrintCadApp {
         }
         self.session.return_workbench = None;
         self.create_new_body();
-        if let StartKind::Bench { workbench, command } = kind {
-            self.switch_workbench_for_flow(workbench.clone());
-            self.run_bench_command(workbench, &command, core_document::MenuScope::StartPage);
+        match kind {
+            StartKind::Bench { workbench, command } => {
+                self.switch_workbench_for_flow(workbench.clone());
+                self.run_bench_command(workbench, &command, core_document::MenuScope::StartPage);
+            }
+            StartKind::Example(scene) => {
+                match bench_fixtures::open_sketch_scene(
+                    &mut self.session.document,
+                    self.session.active_body_id,
+                    scene,
+                ) {
+                    Ok(handles) => {
+                        if let Some(feature) = handles.activate {
+                            self.apply_tree_activation(TreeItemId::Feature(feature));
+                        }
+                        if let Some(feature) = handles.select {
+                            self.apply_tree_selection(TreeItemId::Feature(feature));
+                        }
+                    }
+                    Err(err) => app_log::error(format!("Example: {err}")),
+                }
+            }
+            StartKind::Landing => {}
         }
     }
 
@@ -827,7 +864,12 @@ impl PrintCadApp {
         };
         self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
         if !known {
-            app_log::warn(format!("{} offers no command `{id}`", workbench.as_str()));
+            app_log::warn(match scope {
+                core_document::MenuScope::EditMenu => {
+                    "Nothing here to cut, copy or paste".to_string()
+                }
+                _ => format!("{} offers no command `{id}`", workbench.as_str()),
+            });
         }
         if self.session.active_document_object != before
             && let Some(feature) = self.session.active_document_object

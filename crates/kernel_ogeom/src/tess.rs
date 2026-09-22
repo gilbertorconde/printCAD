@@ -12,7 +12,7 @@ use ogeom::algo::{shape_bounds, vertex_bounds};
 use ogeom::core::Tolerances;
 use ogeom::core::parallel::map_ordered;
 use ogeom::math::Point;
-use ogeom::mesh::{Deflection, triangulate_face};
+use ogeom::mesh::{Deflection, edge_chords_for, triangulate_face_with};
 use ogeom::topo::Triangulation;
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
 use tracing::warn;
@@ -158,6 +158,11 @@ pub fn mesh_shape_with(
     let deflection = deflection_for(model, root, detail);
     let faces = explore(model, root, Filter::OfType(ShapeType::Face))
         .map_err(|e| KernelError::Other(anyhow::anyhow!("face exploration failed: {e}")))?;
+    // The chords the faces agree to draw their shared edges to: a face
+    // narrower than a few chords draws its edges finer, and the faces across
+    // those edges must draw them the same or the weld finds nothing to join.
+    let chords = edge_chords_for(model, root, deflection, tol)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("edge chords failed: {e}")))?;
 
     // A detail, not a context: this runs once per body, from every worker
     // thread during an import — announced as a context it reset the status
@@ -171,7 +176,7 @@ pub fn mesh_shape_with(
         if let Err(e) = crate::progress::checkpoint() {
             return FaceWork::Cancelled(e);
         }
-        match triangulate_face(model, face, deflection, tol) {
+        match triangulate_face_with(model, face, deflection, &chords, tol) {
             Ok(tri) => FaceWork::Meshed(Box::new(tri)),
             Err(e) => FaceWork::Failed(e.to_string()),
         }

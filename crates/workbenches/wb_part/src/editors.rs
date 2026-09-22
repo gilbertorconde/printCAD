@@ -1421,6 +1421,33 @@ pub fn feature_editor(
                 }
             });
         }
+        PartFeature::Clone { source } => {
+            let bodies: Vec<(BodyId, String)> = ctx
+                .document
+                .bodies()
+                .iter()
+                .filter(|b| b.id != body)
+                .map(|b| (b.id, b.name.clone()))
+                .collect();
+            let current = bodies
+                .iter()
+                .find(|(id, _)| id == source)
+                .map(|(_, n)| n.clone())
+                .unwrap_or_else(|| "(pick body)".into());
+            ui.horizontal(|ui| {
+                label_cell(ui, "Source body");
+                egui::ComboBox::from_id_salt(("clone_body", feature_id))
+                    .selected_text(current)
+                    .show_ui(ui, |ui| {
+                        for (id, name) in &bodies {
+                            if ui.selectable_label(source == id, name).clicked() && source != id {
+                                *source = *id;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+        }
         PartFeature::BodyBoolean { tool_body, kind } => {
             let bodies: Vec<(BodyId, String)> = ctx
                 .document

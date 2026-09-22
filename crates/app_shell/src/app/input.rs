@@ -162,6 +162,18 @@ impl PrintCadApp {
         }
 
         use winit::keyboard::Key;
+        // Escape puts the measure tool away before anything else sees it.
+        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
+            && matches!(ke.state, ElementState::Pressed)
+            && matches!(
+                ke.logical_key,
+                Key::Named(winit::keyboard::NamedKey::Escape)
+            )
+            && self.session.measure.take().is_some()
+        {
+            self.redraw_needed = true;
+            return;
+        }
         if let WindowEvent::KeyboardInput { event: ke, .. } = &event
             && matches!(ke.state, ElementState::Pressed)
             && let Key::Character(ch) = &ke.logical_key
@@ -225,7 +237,11 @@ impl PrintCadApp {
                 .on_viewport_pointer(&event, &self.user_settings.camera, orbit_pick);
         redraw |= cam_res.wants_redraw();
         if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
-            redraw |= self.toggle_body_under_cursor_selection();
+            redraw |= if self.session.measure.is_some() {
+                self.measure_click()
+            } else {
+                self.toggle_body_under_cursor_selection()
+            };
         }
         if matches!(cam_res, CameraPointerResult::RmbReleasedMaybeMenu) {
             redraw |= self.open_viewport_menu();
@@ -445,6 +461,34 @@ impl PrintCadApp {
             }
             _ => None,
         }
+    }
+
+    /// A click with the measure tool armed: the point under the cursor
+    /// joins the measurement; a third click starts over.
+    fn measure_click(&mut self) -> bool {
+        let Some(point) = self.session.hovered_world_pos else {
+            return false;
+        };
+        let unit = self.session.document.display_unit();
+        let Some(points) = self.session.measure.as_mut() else {
+            return false;
+        };
+        if points.len() >= 2 {
+            points.clear();
+        }
+        points.push(point);
+        if let [a, b] = points.as_slice() {
+            let d = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+            let fmt = |v: f32| core_document::format_length_mm(v, unit, 2);
+            app_log::info(format!(
+                "Measured {} (Δx {} Δy {} Δz {})",
+                fmt(d),
+                fmt((b[0] - a[0]).abs()),
+                fmt((b[1] - a[1]).abs()),
+                fmt((b[2] - a[2]).abs()),
+            ));
+        }
+        true
     }
 
     /// A right click that did not pan: over a body, the menu for that body

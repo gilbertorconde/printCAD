@@ -163,6 +163,8 @@ impl Default for SketchOptions {
 pub struct SketchWorkbench {
     /// The panel's and the Preferences page's switches.
     pub options: SketchOptions,
+    /// Geometry cut or copied, as a sketch of its own, until pasted.
+    clipboard: Option<Sketch>,
     /// Currently active sketch feature ID (if any).
     active_sketch_id: Option<FeatureId>,
     /// Waiting for a plane choice before creating a sketch.
@@ -1334,19 +1336,25 @@ impl Workbench for SketchWorkbench {
     }
 
     /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
-    /// open for editing.
+    /// open for editing. The Edit menu's clipboard entries act on the
+    /// selection of the sketch under edit.
     fn on_command(
         &mut self,
         id: &str,
-        _scope: &MenuScope,
+        scope: &MenuScope,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> bool {
-        if id != "sketch.start_blank" {
-            return false;
+        match (scope, id) {
+            (MenuScope::StartPage, "sketch.start_blank") => {
+                let body = ctx.selected_body_id.map(BodyId);
+                self.create_sketch_on_plane(ctx, body, SketchPlane::default());
+                true
+            }
+            (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
+            (MenuScope::EditMenu, "edit.cut") => self.clipboard_copy(ctx, true),
+            (MenuScope::EditMenu, "edit.paste") => self.clipboard_paste(ctx),
+            _ => false,
         }
-        let body = ctx.selected_body_id.map(BodyId);
-        self.create_sketch_on_plane(ctx, body, SketchPlane::default());
-        true
     }
 
     fn passive_geometry(
@@ -1427,28 +1435,18 @@ impl Workbench for SketchWorkbench {
             "Validate sketch",
             "sketch-validate",
         ));
-        // PLANNED: sketch management tools the design shows.
-        for (id, label, icon, note) in [
-            (
-                "sketch.merge",
-                "Merge sketches",
-                "sketch-merge",
-                "joins several sketches into one",
-            ),
-            (
-                "sketch.mirror_sketch",
-                "Mirror sketch",
-                "sketch-mirror",
-                "creates a mirrored copy of a sketch",
-            ),
-        ] {
-            context.register_tool(
-                ToolDescriptor::new_action(id, label, Some("sketch.manage"))
-                    .icon(icon)
-                    .planned(note)
-                    .row(0),
-            );
-        }
+        context.register_tool(manage(
+            "sketch.mirror_sketch",
+            "Mirror sketch",
+            "sketch-mirror",
+        ));
+        // PLANNED: joining several sketches into one.
+        context.register_tool(
+            ToolDescriptor::new_action("sketch.merge", "Merge sketches", Some("sketch.manage"))
+                .icon("sketch-merge")
+                .planned("joins several sketches into one")
+                .row(0),
+        );
         context.register_tool(
             ToolDescriptor::new_action("sketch.finish", "Close sketch", Some("sketch.close"))
                 .icon("sketch-leave")
@@ -1482,9 +1480,7 @@ impl Workbench for SketchWorkbench {
                 "sketch.rect" => vec![
                     ToolVariant::new("corners", "Two corners", "rectangle"),
                     ToolVariant::new("center", "Center and corner", "rectangle-centered"),
-                    // PLANNED: a rectangle with rounded corners.
-                    ToolVariant::new("rounded", "Rounded", "rounded-rectangle")
-                        .planned("draws a rectangle with filleted corners"),
+                    ToolVariant::new("rounded", "Rounded", "rounded-rectangle"),
                 ],
                 "sketch.polygon" => vec![
                     ToolVariant::new("3", "Triangle", "triangle"),
@@ -1573,7 +1569,6 @@ impl Workbench for SketchWorkbench {
             }
             context.register_tool(tool);
         }
-        // PLANNED: a rectangular array of the selection.
         context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.array",
@@ -1581,7 +1576,6 @@ impl Workbench for SketchWorkbench {
                 Some("geometry.transform"),
             )
             .icon("rectangular-array")
-            .planned("repeats the selection in rows and columns")
             .row(1),
         );
         for (id, label, icon) in [
@@ -1837,6 +1831,8 @@ impl Workbench for SketchWorkbench {
                     return self.reorient(ctx, rotate);
                 }
                 "sketch.attach" => return self.attach_to_face(ctx),
+                "sketch.array" => return self.array_selection(ctx),
+                "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
                 "sketch.toggle_driving" => {
                     return self.edit_selected_constraints(ctx, |c| c.driving = !c.driving);
                 }
@@ -2006,6 +2002,7 @@ impl Workbench for SketchWorkbench {
                         .is_some_and(|id| self.is_sketch_feature(ctx, id))
             }
             "sketch.attach" => editing && ctx.selected_face.is_some(),
+            "sketch.array" => editing && !self.selected.is_empty(),
             "sketch.toggle_driving" | "sketch.toggle_active" => {
                 editing && !self.selected_constraints.is_empty()
             }
@@ -2328,6 +2325,7 @@ impl SketchWorkbench {
             ("sketch.arc", Some("3pt")) => "sketch.arc3".to_string(),
             ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
             ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
+            ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
             ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
             ("sketch.fillet", Some("chamfer")) => "sketch.chamfer".to_string(),
             ("sketch.polygon", Some(sides)) => {
@@ -2692,6 +2690,143 @@ impl SketchWorkbench {
                 plane_up: plane.y_axis,
             },
         ));
+    }
+
+    /// The selection repeated in a grid, as the panel's array settings say.
+    fn array_selection(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let p = self.tool_params;
+        let effect = tools::array(
+            &mut feature.sketch,
+            &self.selected,
+            p.array_rows,
+            p.array_cols,
+            p.array_dx,
+            p.array_dy,
+        );
+        if effect.changed {
+            if let Some(log) = effect.log {
+                ctx.log_info(log);
+            }
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        } else {
+            ctx.log_warn("Select geometry and give the array at least two rows or columns");
+        }
+        InputResult::consumed()
+    }
+
+    /// A new sketch on the same plane and body: this one's geometry
+    /// mirrored across the sketch's Y axis.
+    fn mirror_sketch(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let (Some(feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id) else {
+            return InputResult::ignored();
+        };
+        let body = ctx.document.get_feature_meta(id).and_then(|n| n.body);
+        let name = format!("{} mirror", feature.sketch.name);
+        let mut mirrored = Sketch::new(name.clone());
+        mirrored.plane = feature.plane;
+        let all: HashSet<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .collect();
+        let xf = tools::Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+        let count = tools::copy_from(&feature.sketch, &mut mirrored, &all, &xf);
+        let plane = feature.plane;
+        match ctx.document.add_feature_in_body(
+            SketchFeature::new(mirrored, plane),
+            name.clone(),
+            body,
+        ) {
+            Ok(_) => ctx.log_info(format!("Created {name} ({count} elements)")),
+            Err(err) => ctx.log_error(format!("Could not create the mirrored sketch: {err}")),
+        }
+        InputResult::consumed()
+    }
+
+    /// Copy the selection to the clipboard; cut removes it too.
+    fn clipboard_copy(&mut self, ctx: &mut WorkbenchRuntimeContext, cut: bool) -> bool {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return false;
+        };
+        if self.selected.is_empty() {
+            ctx.log_warn("Nothing selected to copy");
+            return true;
+        }
+        let mut clip = Sketch::new("clipboard");
+        let count = tools::copy_from(
+            &feature.sketch,
+            &mut clip,
+            &self.selected,
+            &tools::Similarity::translation(glam::Vec2::ZERO),
+        );
+        self.clipboard = Some(clip);
+        if cut {
+            let ids: Vec<Uuid> = self.selected.iter().copied().collect();
+            feature.sketch.remove_geometry_cascade(&ids);
+            self.selected.clear();
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+            ctx.log_info(format!("Cut {count} element(s)"));
+        } else {
+            ctx.log_info(format!("Copied {count} element(s)"));
+        }
+        true
+    }
+
+    /// Paste the clipboard at the cursor, or a little off where it was
+    /// copied when the cursor is off the plane. The pasted elements
+    /// become the selection.
+    fn clipboard_paste(&mut self, ctx: &mut WorkbenchRuntimeContext) -> bool {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return false;
+        };
+        let Some(clip) = self.clipboard.clone() else {
+            ctx.log_warn("The clipboard is empty");
+            return true;
+        };
+        let all: HashSet<Uuid> = clip.geometry.iter().map(GeometryElement::id).collect();
+        let delta = match self.cursor {
+            Some(cursor) => {
+                let anchor = clip
+                    .geometry
+                    .iter()
+                    .find_map(|g| match g {
+                        GeometryElement::Point(p) => Some(p.position),
+                        _ => None,
+                    })
+                    .unwrap_or(Vec2D::new(0.0, 0.0));
+                glam::Vec2::new(cursor.x - anchor.x, cursor.y - anchor.y)
+            }
+            None => glam::Vec2::new(5.0, 5.0),
+        };
+        let before: HashSet<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .collect();
+        let count = tools::copy_from(
+            &clip,
+            &mut feature.sketch,
+            &all,
+            &tools::Similarity::translation(delta),
+        );
+        self.selected = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .filter(|id| !before.contains(id))
+            .collect();
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        ctx.log_info(format!("Pasted {count} element(s)"));
+        true
     }
 
     fn select_offenders(

@@ -69,6 +69,7 @@ pub fn execute(
         let mut tool_snapshot: Option<ToolSnapshot> = None;
 
         let next = match solid_op {
+            SolidOp::Shape { brep } => absorb_shape(&mut model, brep).map_err(&err)?,
             SolidOp::Sweep { profile, kind, op } => {
                 let tool = ops::sweep::build_tool(&mut model, base.as_ref(), profile, kind)
                     .map_err(&err)?;
@@ -248,20 +249,25 @@ fn combine(
 }
 
 /// Boolean against an external body's serialized snapshot.
+/// A native-format snapshot read into the model: the shape it holds.
+fn absorb_shape(model: &mut Model, brep: &[u8]) -> Result<Shape, String> {
+    let text =
+        std::str::from_utf8(brep).map_err(|_| "solid snapshot is not valid UTF-8".to_string())?;
+    let absorbed = ogeom::io::native::read_into(model, text)
+        .map_err(|e| format!("importing the solid snapshot failed: {e}"))?;
+    absorbed
+        .shapes
+        .first()
+        .cloned()
+        .ok_or_else(|| "solid snapshot holds no shape".to_string())
+}
+
 fn external_boolean(
     model: &mut Model,
     solid: &Shape,
     tool_brep: &[u8],
     kind: BoolKind,
 ) -> Result<Shape, String> {
-    let text = std::str::from_utf8(tool_brep)
-        .map_err(|_| "boolean tool snapshot is not valid UTF-8".to_string())?;
-    let absorbed = ogeom::io::native::read_into(model, text)
-        .map_err(|e| format!("importing the boolean tool solid failed: {e}"))?;
-    let tool = absorbed
-        .shapes
-        .first()
-        .ok_or_else(|| "boolean tool snapshot holds no shape".to_string())?
-        .clone();
+    let tool = absorb_shape(model, tool_brep)?;
     ops::combine_solids(model, solid, &tool, kind)
 }

@@ -85,6 +85,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::Thickness { .. } => "Thickness",
         SolidOp::Transform { .. } => "Pattern",
         SolidOp::Boolean { .. } => "Boolean",
+        SolidOp::Shape { .. } => "Clone",
     }
 }
 

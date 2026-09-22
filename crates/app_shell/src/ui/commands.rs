@@ -9,6 +9,25 @@ use super::ActiveWorkbench;
 use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 use crate::orientation_cube::{CameraSnapView, RotateDelta};
 
+/// The Edit menu's clipboard entries; the active bench answers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditCommand {
+    Cut,
+    Copy,
+    Paste,
+}
+
+impl EditCommand {
+    /// The command id the bench receives, in `MenuScope::EditMenu`.
+    pub fn id(self) -> &'static str {
+        match self {
+            EditCommand::Cut => "edit.cut",
+            EditCommand::Copy => "edit.copy",
+            EditCommand::Paste => "edit.paste",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileCommand {
     New,
@@ -29,6 +48,8 @@ pub enum StartKind {
         workbench: core_document::WorkbenchId,
         command: String,
     },
+    /// A document with one of the bundled example scenes on its body.
+    Example(bench_fixtures::Scene),
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +62,9 @@ pub enum UiCommand {
     SetDrawStyle(settings::DrawStyle),
     /// The print bed drawn around the model, or not.
     TogglePrintBed,
+    /// Arm the measure tool, or put it away.
+    ToggleMeasure,
+    Edit(EditCommand),
     /// A body's own look, or `None` for the one it came with.
     SetBodyDisplay {
         body: core_document::BodyId,

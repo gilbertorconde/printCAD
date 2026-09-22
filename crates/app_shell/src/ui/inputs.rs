@@ -87,6 +87,8 @@ pub struct UiFrameInputs<'a> {
     pub server_label: String,
     /// The strip of open documents, in order.
     pub tabs: Vec<super::TabInfo>,
+    /// The measure tool is armed.
+    pub measuring: bool,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
     /// The context menu a right click asked for, if one is open.

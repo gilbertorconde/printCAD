@@ -126,20 +126,62 @@ pub(super) fn copy_selection(
     selected: &HashSet<Uuid>,
     xf: &Similarity,
 ) -> usize {
-    let pts = selection_point_ids(sketch, selected);
+    let source = sketch.clone();
+    copy_from(&source, sketch, selected, xf)
+}
+
+/// The selection repeated in a grid: `rows` × `cols` copies stepped by
+/// `dx` and `dy`, the original in the corner.
+pub fn array(
+    sketch: &mut Sketch,
+    selected: &HashSet<Uuid>,
+    rows: u32,
+    cols: u32,
+    dx: f32,
+    dy: f32,
+) -> ToolEffect {
+    if selected.is_empty() || rows.max(cols) < 2 {
+        return ToolEffect::none();
+    }
+    let source = sketch.clone();
+    let mut copies = 0;
+    for row in 0..rows.max(1) {
+        for col in 0..cols.max(1) {
+            if row == 0 && col == 0 {
+                continue;
+            }
+            let delta = Vec2::new(col as f32 * dx, row as f32 * dy);
+            copy_from(&source, sketch, selected, &Similarity::translation(delta));
+            copies += 1;
+        }
+    }
+    ToolEffect::changed(format!("Rectangular array: {copies} copies"))
+}
+
+/// Copy `selected` elements of `source` into `target` under `xf`: fresh
+/// point ids, sharing preserved within the copy. `source` and `target`
+/// may be the same sketch cloned, or two sketches (a clipboard, a mirror).
+/// Returns the number of copied elements.
+pub fn copy_from(
+    source: &Sketch,
+    sketch: &mut Sketch,
+    selected: &HashSet<Uuid>,
+    xf: &Similarity,
+) -> usize {
+    let pts = selection_point_ids(source, selected);
     let mut map: HashMap<Uuid, Uuid> = HashMap::new();
     for pid in &pts {
-        let Some(pos) = sketch.point_position(*pid) else {
+        let Some(pos) = source.point_position(*pid) else {
             continue;
         };
         let new_id = sketch.add_geometry(GeometryElement::Point(Point::new(xf.apply(pos))));
-        sketch.set_construction(new_id, sketch.is_construction(*pid));
+        sketch.set_construction(new_id, source.is_construction(*pid));
         map.insert(*pid, new_id);
     }
 
     let scale = xf.scale_factor();
     let flip = xf.flips_orientation();
-    let originals: Vec<GeometryElement> = sketch
+    let originals: Vec<GeometryElement> = source
         .geometry
         .iter()
         .filter(|g| selected.contains(&g.id()) && !matches!(g, GeometryElement::Point(_)))
@@ -181,7 +223,7 @@ pub(super) fn copy_selection(
             )),
             GeometryElement::Point(_) => continue,
         };
-        let flag = sketch.is_construction(geom.id());
+        let flag = source.is_construction(geom.id());
         let new_id = sketch.add_geometry(copy);
         sketch.set_construction(new_id, flag);
         count += 1;

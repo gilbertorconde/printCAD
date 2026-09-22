@@ -105,6 +105,8 @@ pub(crate) struct DocumentSession {
     pub task_open: bool,
     /// Bounds of the last measured body mesh, keyed by body and revision.
     pub dimension_cache: Option<DimensionCache>,
+    /// The measure tool: armed with the points picked so far (up to two).
+    pub measure: Option<Vec<[f32; 3]>>,
     /// Each bench's editing state for this tab while another tab is
     /// active, keyed by bench id; handed back to the benches on switch.
     pub bench_states: HashMap<String, Box<dyn Any + Send>>,
@@ -169,6 +171,7 @@ impl DocumentSession {
             return_workbench: None,
             task_open: false,
             dimension_cache: None,
+            measure: None,
             bench_states: HashMap::new(),
         }
     }

@@ -349,6 +349,9 @@ pub enum MenuScope {
     TreeBody(BodyId),
     /// The start page's New cards: each item is a way to begin a document.
     StartPage,
+    /// The Edit menu's clipboard entries, run on the active bench:
+    /// `edit.cut`, `edit.copy`, `edit.paste`.
+    EditMenu,
 }
 
 /// One entry a bench contributes to a contextual menu. Picking it calls

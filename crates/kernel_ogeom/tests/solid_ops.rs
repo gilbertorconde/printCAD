@@ -925,3 +925,38 @@ fn chain_error_reports_failing_op_index() {
         .expect_err("oversized fillet must fail");
     assert_eq!(err.op_index, 1, "failure attributed to the fillet op");
 }
+
+#[test]
+fn a_chain_can_start_from_another_chains_snapshot_and_only_start_there() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let pad = blind_pad(
+        vec![rect_wire(0.0, 0.0, 10.0, 5.0)],
+        4.0,
+        BooleanOp::NewSolid,
+    );
+    let built = kernel
+        .execute_solid_chain(std::slice::from_ref(&pad), &detail)
+        .expect("the pad builds");
+
+    let cloned = kernel
+        .execute_solid_chain(
+            &[SolidOp::Shape {
+                brep: built.brep_blob.clone(),
+            }],
+            &detail,
+        )
+        .expect("the snapshot builds on its own");
+    assert_eq!(cloned.bounds_mm, built.bounds_mm);
+
+    let later = kernel.execute_solid_chain(
+        &[
+            pad,
+            SolidOp::Shape {
+                brep: built.brep_blob,
+            },
+        ],
+        &detail,
+    );
+    assert!(later.is_err(), "a snapshot can only begin a chain");
+}

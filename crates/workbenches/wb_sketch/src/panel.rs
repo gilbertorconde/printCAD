@@ -172,6 +172,8 @@ impl SketchWorkbench {
                     | "sketch.translate"
                     | "sketch.rotate"
                     | "sketch.bspline"
+                    | "sketch.rect_rounded"
+                    | "sketch.array"
             )
         );
         if !has_settings {
@@ -204,9 +206,33 @@ impl SketchWorkbench {
                         QtyField::mm(&mut params.slot_width).show(ui);
                         ui.end_row();
                     }
-                    Some("sketch.fillet") => {
+                    Some("sketch.fillet" | "sketch.rect_rounded") => {
                         ui_kit::widgets::field_label(ui, "Radius");
                         QtyField::mm(&mut params.fillet_radius).show(ui);
+                        ui.end_row();
+                    }
+                    Some("sketch.array") => {
+                        for (label, value) in [
+                            ("Rows", &mut params.array_rows),
+                            ("Columns", &mut params.array_cols),
+                        ] {
+                            ui_kit::widgets::field_label(ui, label);
+                            let mut n = *value as f32;
+                            if QtyField::new(&mut n)
+                                .decimals(0)
+                                .speed(0.1)
+                                .range(1.0..=64.0)
+                                .show(ui)
+                            {
+                                *value = n.round() as u32;
+                            }
+                            ui.end_row();
+                        }
+                        ui_kit::widgets::field_label(ui, "Column step");
+                        QtyField::mm(&mut params.array_dx).show(ui);
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Row step");
+                        QtyField::mm(&mut params.array_dy).show(ui);
                         ui.end_row();
                     }
                     Some("sketch.chamfer") => {

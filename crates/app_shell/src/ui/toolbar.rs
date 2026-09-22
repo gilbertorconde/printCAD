@@ -42,18 +42,8 @@ fn toggle(icon: &'static str, label: &'static str, on: bool, command: UiCommand)
     }
 }
 
-fn planned(icon: &'static str, label: &'static str, note: &'static str) -> ShellItem {
-    ShellItem {
-        on: false,
-        icon,
-        label,
-        command: None,
-        planned: Some(note),
-    }
-}
-
-fn standard_items(show_print_bed: bool) -> Vec<Option<ShellItem>> {
-    use super::FileCommand;
+fn standard_items(show_print_bed: bool, measuring: bool) -> Vec<Option<ShellItem>> {
+    use super::{EditCommand, FileCommand};
     vec![
         Some(shell("new-file", "New", UiCommand::File(FileCommand::New))),
         Some(shell("open", "Open", UiCommand::File(FileCommand::Open))),
@@ -62,18 +52,17 @@ fn standard_items(show_print_bed: bool) -> Vec<Option<ShellItem>> {
         Some(shell("undo", "Undo", UiCommand::Undo)),
         Some(shell("redo", "Redo", UiCommand::Redo)),
         None,
-        // PLANNED: clipboard operations on features and sketch geometry.
-        Some(planned(
-            "cut",
-            "Cut",
-            "moves the selection to the clipboard",
-        )),
-        Some(planned("copy", "Copy", "copies the selection")),
-        Some(planned("paste", "Paste", "pastes the clipboard")),
+        Some(shell("cut", "Cut", UiCommand::Edit(EditCommand::Cut))),
+        Some(shell("copy", "Copy", UiCommand::Edit(EditCommand::Copy))),
+        Some(shell("paste", "Paste", UiCommand::Edit(EditCommand::Paste))),
         None,
         Some(shell("refresh", "Recompute", UiCommand::RecomputeAll)),
-        // PLANNED: measure distances and angles between picked geometry.
-        Some(planned("measure", "Measure", "measures picked geometry")),
+        Some(toggle(
+            "measure",
+            "Measure",
+            measuring,
+            UiCommand::ToggleMeasure,
+        )),
         Some(toggle(
             "print-bed",
             "Print bed",
@@ -91,6 +80,8 @@ pub struct ToolbarInputs<'a> {
     pub active_document_object: Option<core_document::FeatureId>,
     /// The print-bed button's state.
     pub show_print_bed: bool,
+    /// The measure button's state.
+    pub measuring: bool,
 }
 
 /// The tool a variant dropdown last picked, remembered per tool id.
@@ -321,6 +312,7 @@ pub fn draw_toolbars(
         host,
         active_document_object,
         show_print_bed,
+        measuring,
     } = inputs;
     let tools: Vec<ToolDescriptor> = registry
         .tools_for(&active_workbench.0)
@@ -357,7 +349,7 @@ pub fn draw_toolbars(
             // Row 0: standard tools, the workbench switcher, the bench's
             // row-0 tools, then the tool search at the right.
             row(ui, 0, |ui| {
-                for item in standard_items(show_print_bed) {
+                for item in standard_items(show_print_bed, measuring) {
                     match item {
                         None => separator(ui),
                         Some(item) => {

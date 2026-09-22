@@ -410,6 +410,35 @@ impl PartDesignWorkbench {
                     "MultiTransform",
                 )
             }
+            "part.clone" => {
+                if has_solid {
+                    return Err("A clone can only start an empty body".into());
+                }
+                let other = ctx
+                    .document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.id != body && ctx.document.imported_brep_blob(b.id).is_some())
+                    .map(|b| b.id)
+                    .ok_or("Build another body first; the clone copies its solid")?;
+                (PartFeature::Clone { source: other }, "Clone")
+            }
+            "part.scaled" => {
+                need_material(has_solid)?;
+                let original = Self::selected_part_feature(ctx)
+                    .or_else(|| Self::last_shape_feature(ctx, body));
+                (
+                    PartFeature::MultiTransform {
+                        originals: original.into_iter().collect(),
+                        steps: vec![TransformStep::Scale {
+                            factor: 1.5,
+                            center: [0.0, 0.0, 0.0],
+                            occurrences: 2,
+                        }],
+                    },
+                    "Scaled",
+                )
+            }
             "part.boolean" => {
                 need_material(has_solid)?;
                 let other = ctx
@@ -622,7 +651,7 @@ impl Workbench for PartDesignWorkbench {
             "datum-plane",
             "datum",
         ));
-        // PLANNED: a local coordinate system and a clone of another body.
+        // PLANNED: a local coordinate system to attach features to.
         context.register_tool(
             action(
                 "part.coordinate_system",
@@ -632,10 +661,7 @@ impl Workbench for PartDesignWorkbench {
             )
             .planned("places a named frame to attach features to"),
         );
-        context.register_tool(
-            action("part.clone", "Clone", "clone", "datum")
-                .planned("links a copy of another body's shape into this one"),
-        );
+        context.register_tool(action("part.clone", "Clone", "clone", "datum"));
         // Additive.
         context.register_tool(action("part.pad", "Pad", "pad", "additive"));
         context.register_tool(action(
@@ -722,11 +748,7 @@ impl Workbench for PartDesignWorkbench {
             "multi-transform",
             "transform",
         ));
-        // PLANNED: a scaled copy of earlier features.
-        context.register_tool(
-            action("part.scaled", "Scaled", "scaled", "transform")
-                .planned("repeats features at growing scales"),
-        );
+        context.register_tool(action("part.scaled", "Scaled", "scaled", "transform"));
         // Dress-up.
         context.register_tool(action("part.fillet", "Fillet", "fillet", "dressup"));
         context.register_tool(action("part.chamfer", "Chamfer", "chamfer", "dressup"));
@@ -878,6 +900,8 @@ impl Workbench for PartDesignWorkbench {
             "part.map_sketch" => has_sketch && ctx.selected_face.is_some(),
             "part.new_sketch" | "part.primitive" | "part.datum_plane" | "part.datum_line"
             | "part.datum_point" => has_body,
+            "part.clone" => has_body && !has_solid,
+            "part.scaled" => has_solid,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,
             "part.pocket"
             | "part.groove"

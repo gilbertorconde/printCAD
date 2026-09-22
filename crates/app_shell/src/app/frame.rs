@@ -530,6 +530,7 @@ impl PrintCadApp {
                             (true, n) => format!("{} · {n} peers", self.session.server.name()),
                         },
                         tabs,
+                        measuring: self.session.measure.is_some(),
                         reveal_body: self.session.reveal_body.take(),
                         viewport_menu: self.session.viewport_menu.clone(),
                         nav_device: self.nav_device.device_name(),
@@ -872,6 +873,58 @@ impl PrintCadApp {
             None => ViewportData::default(),
         };
         let screen_space_labels = &mut data.labels;
+
+        // The measurement in progress: its points, the line between them
+        // and the distance, drawn over the scene.
+        if let Some(points) = &self.session.measure {
+            let unit = self.session.document.display_unit();
+            let color = [1.0, 0.75, 0.2];
+            let px: Vec<(f32, f32)> = points
+                .iter()
+                .filter_map(|p| self.session.camera.world_to_screen(Vec3::from_array(*p)))
+                .collect();
+            for (x, y) in &px {
+                data.marks.push(core_document::ScreenSpaceMark::crosshair(
+                    [*x, *y],
+                    8.0,
+                    color,
+                ));
+            }
+            if let ([a, b], [pa, pb]) = (points.as_slice(), px.as_slice()) {
+                data.overlays.push(core_document::ScreenSpaceOverlay::new(
+                    [pa.0, pa.1],
+                    [pb.0, pb.1],
+                    color,
+                    1.5,
+                ));
+                let d =
+                    ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+                screen_space_labels.push(
+                    core_document::ScreenSpaceLabel::new(
+                        [(pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0 - 12.0],
+                        core_document::format_length_mm(d, unit, 2),
+                        color,
+                        12.0,
+                    )
+                    .pill(),
+                );
+            } else if let Some((x, y)) = self.cursor_in_viewport {
+                let prompt = if points.is_empty() {
+                    "Measure: pick the first point"
+                } else {
+                    "Measure: pick the second point"
+                };
+                screen_space_labels.push(
+                    core_document::ScreenSpaceLabel::new(
+                        [x + 14.0, y + 14.0],
+                        prompt.to_string(),
+                        color,
+                        11.0,
+                    )
+                    .pill(),
+                );
+            }
+        }
 
         // Peers' cursors: a named marker where each other editor points.
         // Same projection the overlays use; a cursor behind the camera or

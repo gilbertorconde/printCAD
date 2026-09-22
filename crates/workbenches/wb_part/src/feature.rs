@@ -327,6 +327,9 @@ pub const METRIC_SIZES: [(&str, f32, f32, [f32; 3]); 10] = [
 /// A solid-modeling feature in a body's linear history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PartFeature {
+    /// Start the body from a copy of another body's solid, as that body
+    /// is built now.
+    Clone { source: BodyId },
     /// Extrude the sketch profile, adding material.
     Pad {
         sketch: FeatureId,
@@ -592,6 +595,7 @@ impl PartFeature {
             PartFeature::PolarPattern { .. } => "Polar Pattern",
             PartFeature::MultiTransform { .. } => "Multi Transform",
             PartFeature::BodyBoolean { .. } => "Boolean",
+            PartFeature::Clone { .. } => "Clone",
         }
     }
 
@@ -649,6 +653,7 @@ impl PartFeature {
             PartFeature::PolarPattern { .. } => "polar-pattern",
             PartFeature::MultiTransform { .. } => "multi-transform",
             PartFeature::BodyBoolean { .. } => "boolean",
+            PartFeature::Clone { .. } => "clone",
         }
     }
 

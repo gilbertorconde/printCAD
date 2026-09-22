@@ -163,6 +163,36 @@ pub(super) fn rect(
     }
 }
 
+/// A rectangle whose four corners are filleted with `radius` as it lands.
+pub(super) fn rect_rounded(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+    radius: f32,
+) -> ToolEffect {
+    let corner = match *state {
+        ToolState::RectFrom { corner } => corner.position(sketch),
+        _ => None,
+    };
+    let effect = rect(state, sketch, cursor, snap_tol);
+    let (Some(a), true) = (corner, effect.changed) else {
+        return effect;
+    };
+    let c = cursor;
+    let mut rounded = 0;
+    for corner in [a, Vec2D::new(c.x, a.y), c, Vec2D::new(a.x, c.y)] {
+        if super::modify::fillet(sketch, corner, snap_tol.max(1e-3), radius).changed {
+            rounded += 1;
+        }
+    }
+    ToolEffect::changed(format!(
+        "Rounded rectangle {:.2} × {:.2}, r={radius:.2} ({rounded} corners)",
+        (c.x - a.x).abs(),
+        (c.y - a.y).abs()
+    ))
+}
+
 pub(super) fn rect_center(state: &mut ToolState, sketch: &mut Sketch, cursor: Vec2D) -> ToolEffect {
     match *state {
         ToolState::RectCenterAt { center } => {

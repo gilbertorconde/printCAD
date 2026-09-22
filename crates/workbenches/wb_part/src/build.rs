@@ -540,6 +540,18 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     originals,
                 });
             }
+            PartFeature::Clone { source } => {
+                if !plan.ops.is_empty() {
+                    return Err(fail("a clone can only be a body's first feature".into()));
+                }
+                let brep = document
+                    .imported_brep_blob(*source)
+                    .ok_or_else(|| {
+                        fail("the source body has no built solid yet (build it first)".into())
+                    })?
+                    .to_vec();
+                plan.ops.push(SolidOp::Shape { brep });
+            }
             PartFeature::BodyBoolean { tool_body, kind } => {
                 let tool_brep = document
                     .imported_brep_blob(*tool_body)

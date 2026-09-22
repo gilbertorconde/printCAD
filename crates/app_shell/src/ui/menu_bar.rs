@@ -77,14 +77,6 @@ fn item_needing_document(
     clicked
 }
 
-fn planned_item(ui: &mut egui::Ui, label: &str, note: &str) {
-    ui.add_enabled(
-        false,
-        egui::Button::new(RichText::new(label).font(sans(FONT_SM))),
-    )
-    .on_disabled_hover_text(format!("{label} — planned\n{note}"));
-}
-
 fn menu_title(label: &str) -> RichText {
     RichText::new(label).font(sans(FONT_SM)).color(TEXT2)
 }
@@ -117,6 +109,9 @@ pub fn draw_menu_bar(
     let sc_redo_y = shortcut(Modifiers::COMMAND, Key::Y);
     let sc_palette = shortcut(Modifiers::COMMAND, Key::K);
     let sc_prefs = shortcut(Modifiers::COMMAND, Key::Comma);
+    let sc_cut = shortcut(Modifiers::COMMAND, Key::X);
+    let sc_copy = shortcut(Modifiers::COMMAND, Key::C);
+    let sc_paste = shortcut(Modifiers::COMMAND, Key::V);
     let sc_new_tab = shortcut(Modifiers::COMMAND, Key::T);
     let sc_close_tab = shortcut(Modifiers::COMMAND, Key::W);
     let sc_next_tab = shortcut(Modifiers::COMMAND, Key::Tab);
@@ -175,6 +170,16 @@ pub fn draw_menu_bar(
             }
             if i.consume_shortcut(&sc_fit) && have_document {
                 commands.push(UiCommand::FitView);
+            }
+            // The clipboard keys reach the bench only outside text fields.
+            for (shortcut, command) in [
+                (&sc_cut, super::EditCommand::Cut),
+                (&sc_copy, super::EditCommand::Copy),
+                (&sc_paste, super::EditCommand::Paste),
+            ] {
+                if i.consume_shortcut(shortcut) && have_document {
+                    commands.push(UiCommand::Edit(command));
+                }
             }
         }
     });
@@ -289,11 +294,15 @@ pub fn draw_menu_bar(
                             commands.push(UiCommand::Redo);
                         }
                         ui.separator();
-                        // PLANNED: clipboard operations on features and
-                        // sketch geometry.
-                        planned_item(ui, "Cut", "moves the selection to the clipboard");
-                        planned_item(ui, "Copy", "copies the selection");
-                        planned_item(ui, "Paste", "pastes the clipboard");
+                        for (label, command, shortcut) in [
+                            ("Cut", super::EditCommand::Cut, &sc_cut),
+                            ("Copy", super::EditCommand::Copy, &sc_copy),
+                            ("Paste", super::EditCommand::Paste, &sc_paste),
+                        ] {
+                            if item_needing_document(ui, label, Some(shortcut), have_document) {
+                                commands.push(UiCommand::Edit(command));
+                            }
+                        }
                         ui.separator();
                         if item(ui, "Preferences…", Some(&sc_prefs)) {
                             result.show_preferences = true;

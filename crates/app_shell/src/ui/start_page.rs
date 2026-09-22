@@ -288,10 +288,11 @@ pub fn draw_start_page(
             if nav_item(ui, "Open file", false).clicked() {
                 commands.push(UiCommand::File(FileCommand::Open));
             }
-            // PLANNED: bundled example documents.
-            planned(ui, "opens a bundled example document", |ui| {
-                nav_item(ui, "Examples", false)
-            });
+            if nav_item(ui, "Examples", false).clicked() {
+                commands.push(UiCommand::StartNew(StartKind::Example(
+                    bench_fixtures::Scene::Pocket,
+                )));
+            }
             if nav_item(ui, "Preferences", false).clicked() {
                 result.show_preferences = true;
             }
@@ -433,18 +434,38 @@ pub fn draw_start_page(
 
                     ui.add_space(SPACE_4);
                     overline(ui, "Learn");
-                    // PLANNED: guided walkthroughs opened in a document.
                     let learn_w = (width - 2.0 * CARD_GAP) / 3.0;
                     ui.horizontal(|ui| {
-                        for (title, subtitle) in [
-                            ("Sketcher basics", "Constraints, DoF and the solver"),
-                            ("Part Design workflow", "Sketch → Pad → Pocket → Fillet"),
-                            ("Export for printing", "STL / 3MF and mesh tolerance"),
+                        // Each card opens an example built for it.
+                        for (title, subtitle, scene) in [
+                            (
+                                "Sketcher basics",
+                                "A dimensioned sketch, open for editing",
+                                bench_fixtures::Scene::Sketch,
+                            ),
+                            (
+                                "Part Design workflow",
+                                "Sketch → Pad → Pocket, ready to fillet",
+                                bench_fixtures::Scene::Pocket,
+                            ),
                         ] {
-                            planned(ui, "opens a guided walkthrough", |ui| {
-                                action_card(ui, vec2(learn_w, 62.0), false, None, title, subtitle)
-                            });
+                            if action_card(ui, vec2(learn_w, 62.0), false, None, title, subtitle)
+                                .clicked()
+                            {
+                                commands.push(UiCommand::StartNew(StartKind::Example(scene)));
+                            }
                         }
+                        // PLANNED: a walkthrough of exporting for printing.
+                        planned(ui, "opens a guided walkthrough", |ui| {
+                            action_card(
+                                ui,
+                                vec2(learn_w, 62.0),
+                                false,
+                                None,
+                                "Export for printing",
+                                "STL / 3MF and mesh tolerance",
+                            )
+                        });
                     });
                 });
         });

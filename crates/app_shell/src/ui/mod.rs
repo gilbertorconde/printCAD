@@ -20,7 +20,7 @@ mod task_panel;
 mod toolbar;
 mod view_toolbar;
 
-pub use commands::{FileCommand, StartKind, UiCommand};
+pub use commands::{EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{HoverCard, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
@@ -207,6 +207,7 @@ impl UiLayer {
             kernel_progress,
             server_label,
             tabs,
+            measuring,
             reveal_body,
             viewport_menu,
             nav_device,
@@ -326,6 +327,7 @@ impl UiLayer {
                     host,
                     active_document_object,
                     show_print_bed: settings.printing.show_bed,
+                    measuring,
                 },
                 &mut active_workbench,
                 &mut active_tool,
