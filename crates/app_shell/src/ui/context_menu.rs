@@ -12,6 +12,8 @@ use ui_kit::widgets::Card;
 
 use super::UiCommand;
 
+const MENU_WIDTH: f32 = 150.0;
+
 /// A right click on a body, and where it landed, in points.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewportMenu {
@@ -40,10 +42,14 @@ pub fn draw(
     let response = Area::new(egui::Id::new("viewport_menu"))
         .order(Order::Foreground)
         .fixed_pos(egui::pos2(menu.at[0], menu.at[1]))
+        .constrain(true)
         .interactable(true)
         .show(ctx, |ui| {
             Card::floating().padding(6.0).radius(5.0).show(ui, |ui| {
-                ui.set_min_width(180.0);
+                // An area offers the rest of the screen; the menu takes a
+                // column's worth of it.
+                ui.set_max_width(MENU_WIDTH);
+                ui.set_min_width(MENU_WIDTH);
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.label(RichText::new(&name).font(sans(FONT_XS)).color(TEXT3));
                 ui.separator();
@@ -82,7 +88,7 @@ fn item(ui: &mut egui::Ui, label: &str) -> bool {
     ui.add(
         egui::Button::new(RichText::new(label).font(sans(FONT_SM)))
             .frame(false)
-            .min_size(egui::vec2(ui.available_width(), 22.0)),
+            .min_size(egui::vec2(MENU_WIDTH, 22.0)),
     )
     .clicked()
 }

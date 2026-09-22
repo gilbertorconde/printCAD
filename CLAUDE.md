@@ -340,7 +340,8 @@ body = context menu (`ui/context_menu.rs`: show in tree, select body, hide;
 the host owns the open `ViewportMenu`, the UI draws it and answers with
 commands) · wheel = zoom · LMB = select (click sketch → tree-select; click
 solid → face-first, double click → the whole body the face belongs to, one
-part of an assembly; LMB drag in sketch = box select; ctrl = additive). The
+part of an assembly, and in Part Design the tree opens to its row; LMB drag
+in sketch = box select; ctrl = additive). The
 selected face, or the whole selected body, draws as a translucent overlay
 over itself, never as a tint (`rendering.selection_color` /
 `selection_opacity`, Preferences › Display › Rendering) through the
@@ -349,7 +350,8 @@ after the opaque bodies and their edges, depth-tested, never writing depth.
 While editing a sketch the view is locked planar (orbit + cube rotation
 disabled; pan/zoom/roll allowed). In the tree, bodies and features start
 open and imported assemblies start closed; the filter looks through closed
-branches, and "Show in tree" opens a body's way to itself. The window opens
+branches, and a double click or "Show in tree" opens a body's way to
+itself. The window opens
 on the start page (`Screen::Start`); the recent list lives in
 `settings::recent`.
 
