@@ -18,6 +18,15 @@ use crate::style::{constraint_icon, element_icon, element_kind, element_name};
 use crate::{ElementFilter, SketchWorkbench, overlay};
 
 impl SketchWorkbench {
+    /// The panel's Solve now: the solver runs whatever the auto-update
+    /// switch says.
+    fn solve_from_panel(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(mut feature) = self.get_active_sketch(ctx) {
+            self.solve_now(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        }
+    }
+
     /// Make sure a diagnosis is cached, then read the verdict.
     fn diagnosed_verdict(&mut self, sketch: &Sketch) -> crate::SolverVerdict {
         if self.last_diagnosis.is_none() {
@@ -58,7 +67,7 @@ impl SketchWorkbench {
         let sketch = feature.sketch;
 
         self.tool_section(ui);
-        self.solver_section(ui, &sketch);
+        self.solver_section(ui, ctx, &sketch);
         self.edit_controls_section(ui);
         self.constraints_section(ui, ctx, &sketch);
         self.elements_section(ui, ctx, &sketch);
@@ -233,7 +242,12 @@ impl SketchWorkbench {
             });
     }
 
-    fn solver_section(&mut self, ui: &mut egui::Ui, sketch: &Sketch) {
+    fn solver_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch: &Sketch,
+    ) {
         if !section_header(ui, "sketch_solver", "Solver messages", None, true) {
             return;
         }
@@ -260,16 +274,19 @@ impl SketchWorkbench {
             }
         }
         ui.horizontal(|ui| {
-            // PLANNED: an automatic re-solve toggle and automatic removal of
-            // redundant constraints; the solver runs after every edit today.
-            planned(ui, "re-solves after every edit today", |ui| {
-                let mut on = true;
-                check_row(ui, &mut on, "Auto update");
-            });
-            planned(ui, "drops redundant constraints on detection", |ui| {
-                let mut on = false;
-                check_row(ui, &mut on, "Auto remove redundants");
-            });
+            check_row(ui, &mut self.options.auto_update, "Auto update");
+            check_row(
+                ui,
+                &mut self.options.auto_remove_redundant,
+                "Auto remove redundants",
+            );
+            if !self.options.auto_update
+                && ui
+                    .button(RichText::new("Solve now").font(sans(FONT_XS)))
+                    .clicked()
+            {
+                self.solve_from_panel(ctx);
+            }
         });
     }
 
@@ -277,41 +294,19 @@ impl SketchWorkbench {
         if !section_header(ui, "sketch_edit_controls", "Edit controls", None, false) {
             return;
         }
-        // PLANNED: a world-unit grid on the sketch plane with snapping.
-        planned(ui, "draws a grid on the sketch plane", |ui| {
-            let mut on = false;
-            check_row(ui, &mut on, "Show grid");
-        });
-        planned(ui, "picks the grid step from the zoom level", |ui| {
-            let mut on = false;
-            check_row(ui, &mut on, "Grid auto spacing");
-        });
-        planned(ui, "snaps points to the grid", |ui| {
-            let mut on = false;
-            check_row(ui, &mut on, "Snap to grid");
-        });
+        check_row(ui, &mut self.options.grid_on, "Show grid");
+        check_row(ui, &mut self.options.grid_auto, "Grid auto spacing");
+        check_row(ui, &mut self.options.grid_snap, "Snap to grid");
         let mut snap = !self.snap_off;
         if check_row(ui, &mut snap, "Snap to objects").changed() {
             self.snap_off = !snap;
         }
-        // PLANNED: auto-constraint preferences; endpoints, horizontals and
-        // verticals snap into constraints today.
-        planned(
+        check_row(
             ui,
-            "skips auto constraints the solver would call redundant",
-            |ui| {
-                let mut on = true;
-                check_row(ui, &mut on, "Avoid redundant auto constraints");
-            },
+            &mut self.options.avoid_redundant_auto,
+            "Avoid redundant auto constraints",
         );
-        planned(
-            ui,
-            "adds coincident, horizontal and vertical while drawing",
-            |ui| {
-                let mut on = true;
-                check_row(ui, &mut on, "Auto constraints");
-            },
-        );
+        check_row(ui, &mut self.options.auto_constraints, "Auto constraints");
         egui::Grid::new("sketch_edit_grid")
             .num_columns(2)
             .spacing([SPACE_2, SPACE_1])
@@ -323,9 +318,10 @@ impl SketchWorkbench {
                         .color(TEXT2),
                 );
                 ui.end_row();
-                planned(ui, "sets the grid step", |ui| {
-                    let mut size = 10.0f32;
-                    QtyField::mm(&mut size).width(90.0).show(ui);
+                ui.add_enabled_ui(!self.options.grid_auto, |ui| {
+                    QtyField::mm(&mut self.options.grid_size)
+                        .width(90.0)
+                        .show(ui);
                 });
                 planned(ui, "draws construction or normal geometry on top", |ui| {
                     let mut order = 0u8;

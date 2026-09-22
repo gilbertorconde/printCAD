@@ -40,6 +40,7 @@ pub(super) fn line(
     sketch: &mut Sketch,
     cursor: Vec2D,
     snap_tol: f32,
+    auto_constraints: bool,
 ) -> ToolEffect {
     match *state {
         ToolState::LineFrom { from, .. } => {
@@ -80,7 +81,7 @@ pub(super) fn line(
                 "Line ({:.2}, {:.2}) → ({:.2}, {:.2})",
                 from_pos.x, from_pos.y, end_pos.x, end_pos.y
             );
-            if matches!(end, SnapTarget::New(_)) {
+            if auto_constraints && matches!(end, SnapTarget::New(_)) {
                 match axis {
                     Some(AxisSnap::Horizontal) => {
                         sketch.add_constraint(ConstraintKind::Horizontal { element: line_id });

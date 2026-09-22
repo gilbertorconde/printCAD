@@ -2417,3 +2417,54 @@ fn the_start_card_command_opens_a_blank_sketch_on_the_selected_body() {
     assert_eq!(node.body, Some(body));
     assert_eq!(h.wb.editing_feature(), Some(created));
 }
+
+#[test]
+fn with_grid_snapping_on_a_drawn_line_lands_on_grid_points() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.wb.options.grid_on = true;
+    h.wb.options.grid_snap = true;
+    h.wb.options.grid_auto = false;
+    h.wb.options.grid_size = 5.0;
+    h.click(1.2, 0.8, "sketch.line");
+    h.click(10.9, -0.3, "sketch.line");
+    let sketch = h.sketch();
+    let mut points: Vec<(f32, f32)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some((p.position.x, p.position.y)),
+            _ => None,
+        })
+        .collect();
+    points.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert_eq!(points.len(), 2);
+    assert!(
+        (points[0].0 - 0.0).abs() < 0.05 && points[0].1.abs() < 0.05,
+        "{points:?}"
+    );
+    assert!(
+        (points[1].0 - 10.0).abs() < 0.05 && points[1].1.abs() < 0.05,
+        "{points:?}"
+    );
+}
+
+#[test]
+fn hidden_constraints_leave_no_glyph_on_the_viewport() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    // The axis snap gave the line a horizontal constraint, drawn as a glyph.
+    assert!(!h.marks().is_empty());
+    h.event(
+        WorkbenchInputEvent::ToolActivated,
+        Some("sketch.show_constraints"),
+    );
+    let geometry_marks = h.marks().len();
+    h.event(
+        WorkbenchInputEvent::ToolActivated,
+        Some("sketch.show_constraints"),
+    );
+    assert!(h.marks().len() > geometry_marks, "glyphs come back");
+}

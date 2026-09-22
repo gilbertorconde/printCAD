@@ -119,8 +119,49 @@ struct GlyphHit {
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 
 /// Sketch workbench: 2D drawing with constraints.
+/// The switches on the sketcher's panel and Preferences page.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SketchOptions {
+    /// A grid on the sketch plane.
+    pub grid_on: bool,
+    /// The grid step follows the zoom instead of `grid_size`.
+    pub grid_auto: bool,
+    /// The grid step in sketch units when it does not follow the zoom.
+    pub grid_size: f32,
+    /// Drawing tools land on grid points.
+    pub grid_snap: bool,
+    /// Constraint glyphs stay off the viewport.
+    pub constraints_hidden: bool,
+    /// Axis-snapped lines get horizontal/vertical constraints as drawn.
+    pub auto_constraints: bool,
+    /// An auto constraint the solver reports redundant is dropped again.
+    pub avoid_redundant_auto: bool,
+    /// After every solve, redundant constraints are removed.
+    pub auto_remove_redundant: bool,
+    /// The solver runs after every edit; off, it runs on request.
+    pub auto_update: bool,
+}
+
+impl Default for SketchOptions {
+    fn default() -> Self {
+        Self {
+            grid_on: false,
+            grid_auto: true,
+            grid_size: 10.0,
+            grid_snap: false,
+            constraints_hidden: false,
+            auto_constraints: true,
+            avoid_redundant_auto: true,
+            auto_remove_redundant: false,
+            auto_update: true,
+        }
+    }
+}
+
 #[derive(Default)]
 pub struct SketchWorkbench {
+    /// The panel's and the Preferences page's switches.
+    pub options: SketchOptions,
     /// Currently active sketch feature ID (if any).
     active_sketch_id: Option<FeatureId>,
     /// Waiting for a plane choice before creating a sketch.
@@ -326,6 +367,17 @@ impl SketchWorkbench {
     /// Run the constraint solver on `feature`, record the outcome, and log
     /// failures. Returns the (possibly adjusted) feature.
     fn solve(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
+        if !self.options.auto_update {
+            // The panel's Solve now button runs it.
+            self.last_diagnosis = None;
+            return;
+        }
+        self.solve_now(ctx, feature);
+    }
+
+    /// Run the solver whatever the auto-update switch says, and drop the
+    /// redundant constraints when that switch is on.
+    fn solve_now(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
         let outcome = solver::solve(&mut feature.sketch);
         self.last_solve = Some(outcome);
         self.last_diagnosis = None; // recomputed lazily by the panel
@@ -333,6 +385,21 @@ impl SketchWorkbench {
             ctx.log_warn(format!(
                 "Constraints did not converge (residual {residual:.2e}); check for contradictions"
             ));
+        }
+        if self.options.auto_remove_redundant {
+            let diagnosis = solver::diagnose(&feature.sketch);
+            if !diagnosis.redundant.is_empty() {
+                let before = feature.sketch.constraints.len();
+                feature
+                    .sketch
+                    .constraints
+                    .retain(|c| !diagnosis.redundant.contains(&c.id));
+                let dropped = before - feature.sketch.constraints.len();
+                ctx.log_info(format!("Removed {dropped} redundant constraint(s)"));
+                self.selected_constraints
+                    .retain(|id| !diagnosis.redundant.contains(id));
+            }
+            self.last_diagnosis = Some(solver::diagnose(&feature.sketch));
         }
     }
 
@@ -518,13 +585,19 @@ impl SketchWorkbench {
             Self::snap_tolerance(ctx, &plane)
         };
         // The copy tool is the move tool with at least one copy.
-        let params = if self.copy_mode {
-            ToolParams {
-                copies: self.tool_params.copies.max(1),
-                ..self.tool_params
-            }
+        let params = ToolParams {
+            copies: if self.copy_mode {
+                self.tool_params.copies.max(1)
+            } else {
+                self.tool_params.copies
+            },
+            auto_constraints: self.options.auto_constraints,
+            ..self.tool_params
+        };
+        let cursor = if is_draw_tool(tool) {
+            self.grid_snapped(ctx, &plane, cursor)
         } else {
-            self.tool_params
+            cursor
         };
         self.dim_capture.sync(&self.tool_state);
         let typed = self.dim_capture.typed();
@@ -546,6 +619,8 @@ impl SketchWorkbench {
                 .collect()
         });
         let state_before = self.tool_state.clone();
+        let constraints_before: HashSet<Uuid> =
+            feature.sketch.constraints.iter().map(|c| c.id).collect();
         let effect = tools::handle_click(
             &mut self.tool_state,
             tool,
@@ -555,6 +630,36 @@ impl SketchWorkbench {
             &params,
             &self.selected,
         );
+        // An auto constraint the solver would call redundant adds nothing
+        // the sketch does not already enforce; it goes before it lands.
+        if self.options.avoid_redundant_auto
+            && feature
+                .sketch
+                .constraints
+                .iter()
+                .any(|c| !constraints_before.contains(&c.id))
+        {
+            let diagnosis = solver::diagnose(&feature.sketch);
+            let redundant_new: Vec<Uuid> = feature
+                .sketch
+                .constraints
+                .iter()
+                .filter(|c| {
+                    !constraints_before.contains(&c.id) && diagnosis.redundant.contains(&c.id)
+                })
+                .map(|c| c.id)
+                .collect();
+            if !redundant_new.is_empty() {
+                feature
+                    .sketch
+                    .constraints
+                    .retain(|c| !redundant_new.contains(&c.id));
+                ctx.log_info(format!(
+                    "Skipped {} redundant auto constraint(s)",
+                    redundant_new.len()
+                ));
+            }
+        }
         if let Some(before) = before {
             let new_ids: Vec<Uuid> = feature
                 .sketch
@@ -1286,32 +1391,26 @@ impl Workbench for SketchWorkbench {
                 .icon("sketch-new")
                 .row(0),
         );
+        let manage = |id: &str, label: &str, icon: &'static str| {
+            ToolDescriptor::new_action(id, label, Some("sketch.manage"))
+                .icon(icon)
+                .row(0)
+        };
+        context.register_tool(manage("sketch.edit", "Edit sketch", "sketch-edit"));
+        context.register_tool(manage("sketch.attach", "Attach sketch", "sketch-map"));
+        context.register_tool(
+            manage("sketch.reorient", "Reorient sketch", "sketch-reorient").variants(vec![
+                ToolVariant::new("flip", "Flip normal", "sketch-reorient"),
+                ToolVariant::new("rotate", "Rotate 90°", "sketch-reorient"),
+            ]),
+        );
+        context.register_tool(manage(
+            "sketch.validate",
+            "Validate sketch",
+            "sketch-validate",
+        ));
         // PLANNED: sketch management tools the design shows.
         for (id, label, icon, note) in [
-            (
-                "sketch.edit",
-                "Edit sketch",
-                "sketch-edit",
-                "double-click a sketch in the tree to edit it",
-            ),
-            (
-                "sketch.attach",
-                "Attach sketch",
-                "sketch-map",
-                "moves a sketch to another plane or face",
-            ),
-            (
-                "sketch.reorient",
-                "Reorient sketch",
-                "sketch-reorient",
-                "flips or rotates the sketch plane",
-            ),
-            (
-                "sketch.validate",
-                "Validate sketch",
-                "sketch-validate",
-                "checks for open profiles and stray points",
-            ),
             (
                 "sketch.merge",
                 "Merge sketches",
@@ -1521,17 +1620,14 @@ impl Workbench for SketchWorkbench {
             }
             context.register_tool(tool);
         }
-        // PLANNED: one dimension tool that picks distance, radius or angle
-        // from the selection.
-        context.register_tool(
-            constraint(
-                "dimension",
-                "Dimension",
-                "dimensional-constraint",
-                "constraints.dimensional",
-            )
-            .planned("chooses distance, radius or angle from the selection"),
-        );
+        // One dimension tool: the distance, radius or angle the selection
+        // takes.
+        context.register_tool(constraint(
+            "dimension",
+            "Dimension",
+            "dimensional-constraint",
+            "constraints.dimensional",
+        ));
         for (id, label, icon) in [
             ("lock", "Lock", "constraint-lock"),
             ("distance_x", "Horizontal distance", "constraint-distance-x"),
@@ -1583,35 +1679,29 @@ impl Workbench for SketchWorkbench {
                     .row(2),
             );
         }
-        // PLANNED: further selection helpers from the design.
-        for (id, label, icon, note) in [
+        for (id, label, icon) in [
             (
                 "sketch.select_malformed",
                 "Select malformed",
                 "select-malformed",
-                "selects constraints referencing missing geometry",
             ),
             (
                 "sketch.select_unconstrained",
                 "Select under-constrained",
                 "select-unconstrained",
-                "selects geometry with free degrees",
             ),
             (
                 "sketch.select_dof",
                 "Elements with DoF",
                 "select-elements-with-dof",
-                "highlights every element that can still move",
             ),
         ] {
             context.register_tool(
                 ToolDescriptor::new_action(id, label, Some("constraints.select"))
                     .icon(icon)
-                    .planned(note)
                     .row(2),
             );
         }
-        // PLANNED: constraint visibility and a sketch grid.
         context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.show_constraints",
@@ -1619,13 +1709,11 @@ impl Workbench for SketchWorkbench {
                 Some("constraints.view"),
             )
             .icon("show-hide-constraints")
-            .planned("hides constraint glyphs in the viewport")
             .row(2),
         );
         context.register_tool(
             ToolDescriptor::new_action("sketch.grid", "Grid", Some("constraints.view"))
                 .icon("grid")
-                .planned("draws a grid on the sketch plane")
                 .row(2),
         );
         context.register_tool(
@@ -1690,6 +1778,14 @@ impl Workbench for SketchWorkbench {
             return InputResult::consumed();
         }
 
+        if base == Some("sketch.edit") {
+            // The sync above already adopted a sketch selected in the tree.
+            if self.active_sketch_id.is_none() {
+                ctx.log_warn("Select a sketch in the tree first");
+            }
+            return InputResult::consumed();
+        }
+
         if self.active_sketch_id.is_none() {
             return InputResult::ignored();
         }
@@ -1706,6 +1802,23 @@ impl Workbench for SketchWorkbench {
                     self.snap_off = !self.snap_off;
                     return InputResult::consumed();
                 }
+                "sketch.show_constraints" => {
+                    self.options.constraints_hidden = !self.options.constraints_hidden;
+                    return InputResult::consumed();
+                }
+                "sketch.grid" => {
+                    self.options.grid_on = !self.options.grid_on;
+                    return InputResult::consumed();
+                }
+                "sketch.validate" => return self.validate(ctx),
+                "sketch.select_malformed" => return self.select_malformed(ctx),
+                "sketch.select_unconstrained" => return self.select_free(ctx, true),
+                "sketch.select_dof" => return self.select_free(ctx, false),
+                "sketch.reorient" => {
+                    let rotate = tool_variant(tool) == Some("rotate");
+                    return self.reorient(ctx, rotate);
+                }
+                "sketch.attach" => return self.attach_to_face(ctx),
                 "sketch.toggle_driving" => {
                     return self.edit_selected_constraints(ctx, |c| c.driving = !c.driving);
                 }
@@ -1783,23 +1896,18 @@ impl Workbench for SketchWorkbench {
             ui,
             "Solver & constraints",
             vec![
-                // PLANNED: auto constraints while drawing.
-                PrefRow::planned_toggle(
-                    "Auto constraints",
-                    "adds coincident, horizontal and vertical constraints while drawing",
-                    false,
-                )
-                .hint("Add coincident, horizontal, vertical while drawing"),
-                PrefRow::planned_toggle(
+                PrefRow::toggle("Auto constraints", &mut self.options.auto_constraints)
+                    .hint("Horizontal and vertical on axis-snapped lines while drawing"),
+                PrefRow::toggle(
                     "Avoid redundant auto constraints",
-                    "skips auto constraints the solver would report as redundant",
-                    false,
-                ),
-                PrefRow::planned_toggle(
+                    &mut self.options.avoid_redundant_auto,
+                )
+                .hint("An auto constraint the solver calls redundant is dropped again"),
+                PrefRow::toggle(
                     "Auto remove redundants",
-                    "drops redundant constraints after each solve",
-                    false,
-                ),
+                    &mut self.options.auto_remove_redundant,
+                )
+                .hint("Redundant constraints go after every solve"),
                 PrefRow::toggle("Snap to objects", &mut snap)
                     .hint("Endpoints, midpoints and intersections attract the cursor"),
             ],
@@ -1866,10 +1974,20 @@ impl Workbench for SketchWorkbench {
         let editing = self.active_sketch_id.is_some();
         if let Some(rest) = tool_id.strip_prefix("sketch.constrain.") {
             let which = tool_variant(tool_id).unwrap_or(rest);
+            if which == "dimension" {
+                return editing && dimension_for(&self.selection_shape).is_some();
+            }
             return editing && constrain::fits(which, &self.selection_shape);
         }
         match tool_id {
             "sketch.create" => ctx.selected_body_id.is_some(),
+            "sketch.edit" => {
+                !editing
+                    && ctx
+                        .active_document_object
+                        .is_some_and(|id| self.is_sketch_feature(ctx, id))
+            }
+            "sketch.attach" => editing && ctx.selected_face.is_some(),
             "sketch.toggle_driving" | "sketch.toggle_active" => {
                 editing && !self.selected_constraints.is_empty()
             }
@@ -1895,6 +2013,8 @@ impl Workbench for SketchWorkbench {
         match tool_id {
             "sketch.construction" => self.construction_mode,
             "sketch.snap" => !self.snap_off,
+            "sketch.show_constraints" => self.options.constraints_hidden,
+            "sketch.grid" => self.options.grid_on,
             _ => false,
         }
     }
@@ -2030,9 +2150,12 @@ impl Workbench for SketchWorkbench {
         };
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        let mut out = self.build_overlays(ctx, &feature, &proj, &pal).lines;
-        let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal);
-        out.extend(glyphs::dimension_overlays(&glyphs));
+        let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
+        out.extend(self.build_overlays(ctx, &feature, &proj, &pal).lines);
+        if !self.options.constraints_hidden {
+            let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal);
+            out.extend(glyphs::dimension_overlays(&glyphs));
+        }
         out
     }
 
@@ -2047,11 +2170,13 @@ impl Workbench for SketchWorkbench {
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let mut out = self.build_overlays(ctx, &feature, &proj, &pal).marks;
-        out.extend(
-            glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
-                .iter()
-                .filter_map(glyphs::Glyph::mark),
-        );
+        if !self.options.constraints_hidden {
+            out.extend(
+                glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
+                    .iter()
+                    .filter_map(glyphs::Glyph::mark),
+            );
+        }
         out
     }
 
@@ -2063,6 +2188,9 @@ impl Workbench for SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return Vec::new();
         };
+        if self.options.constraints_hidden {
+            return Vec::new();
+        }
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
@@ -2210,6 +2338,19 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let shape = constrain::SelectionShape::of(&feature.sketch, &self.selected);
+        // "dimension" is whichever dimensional tool the selection takes.
+        let which = if which == "dimension" {
+            match dimension_for(&shape) {
+                Some(tool) => tool,
+                None => {
+                    ctx.log_warn("Select a line, two points, a circle or two lines to dimension");
+                    self.selection_shape = shape;
+                    return InputResult::consumed();
+                }
+            }
+        } else {
+            which
+        };
         match constrain::kinds_for(which, &shape, &feature.sketch) {
             Some(kinds) => {
                 for kind in kinds {
@@ -2249,6 +2390,292 @@ impl SketchWorkbench {
 
     /// Select the geometry referenced by the conflicting (or redundant)
     /// constraints of the last diagnosis.
+    /// The grid step on screen: the size chosen, or, following the zoom, a
+    /// 1-2-5 step that puts lines about forty pixels apart.
+    fn grid_step(&self, units_per_px: f32) -> f32 {
+        if !self.options.grid_auto {
+            return self.options.grid_size.max(1e-3);
+        }
+        let raw = 40.0 * units_per_px;
+        let magnitude = 10f32.powf(raw.log10().floor());
+        let mantissa = raw / magnitude;
+        let nice = if mantissa <= 1.0 {
+            1.0
+        } else if mantissa <= 2.0 {
+            2.0
+        } else if mantissa <= 5.0 {
+            5.0
+        } else {
+            10.0
+        };
+        nice * magnitude
+    }
+
+    /// Where a drawing click lands with the grid snapping on: the nearest
+    /// grid point.
+    fn grid_snapped(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        plane: &SketchPlane,
+        cursor: Vec2D,
+    ) -> Vec2D {
+        if !(self.options.grid_on && self.options.grid_snap) {
+            return cursor;
+        }
+        let step = self.grid_step(SketchProjector::new(ctx, *plane).units_per_px());
+        Vec2D::new(
+            (cursor.x / step).round() * step,
+            (cursor.y / step).round() * step,
+        )
+    }
+
+    /// The grid across the viewport, when it is on: lines at every step
+    /// over the part of the plane the viewport shows.
+    fn grid_lines(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        plane: &SketchPlane,
+        proj: &SketchProjector,
+        pal: &SketchPalette,
+    ) -> Vec<core_document::ScreenSpaceOverlay> {
+        if !self.options.grid_on {
+            return Vec::new();
+        }
+        let units_per_px = proj.units_per_px();
+        let step = self.grid_step(units_per_px);
+        // A step under six pixels would be a wall, not a grid.
+        if step / units_per_px < 6.0 {
+            return Vec::new();
+        }
+        let (_, _, w, h) = ctx.viewport;
+        let corners = [
+            (0.0, 0.0),
+            (w as f32, 0.0),
+            (0.0, h as f32),
+            (w as f32, h as f32),
+        ];
+        let mut lo = Vec2D::new(f32::MAX, f32::MAX);
+        let mut hi = Vec2D::new(f32::MIN, f32::MIN);
+        for corner in corners {
+            let Some(at) = Self::cursor_to_sketch(ctx, plane, corner) else {
+                return Vec::new();
+            };
+            lo = Vec2D::new(lo.x.min(at.x), lo.y.min(at.y));
+            hi = Vec2D::new(hi.x.max(at.x), hi.y.max(at.y));
+        }
+        const MAX_LINES: i64 = 400;
+        let mut out = Vec::new();
+        let color = pal.inactive;
+        let mut line = |a: Vec2D, b: Vec2D| {
+            if let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b)) {
+                out.push(core_document::ScreenSpaceOverlay::new(a, b, color, 1.0).with_alpha(0.35));
+            }
+        };
+        let (x0, x1) = ((lo.x / step).floor() as i64, (hi.x / step).ceil() as i64);
+        let (y0, y1) = ((lo.y / step).floor() as i64, (hi.y / step).ceil() as i64);
+        if x1 - x0 > MAX_LINES || y1 - y0 > MAX_LINES {
+            return Vec::new();
+        }
+        for i in x0..=x1 {
+            let x = i as f32 * step;
+            line(Vec2D::new(x, lo.y), Vec2D::new(x, hi.y));
+        }
+        for j in y0..=y1 {
+            let y = j as f32 * step;
+            line(Vec2D::new(lo.x, y), Vec2D::new(hi.x, y));
+        }
+        out
+    }
+
+    /// Stray points, constraints that reference missing geometry, and
+    /// whether the sketch closes into profiles: reported and selected.
+    fn validate(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let sketch = &feature.sketch;
+        let ids: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
+        let referenced: HashSet<Uuid> = sketch
+            .geometry
+            .iter()
+            .flat_map(|g| match g {
+                GeometryElement::Point(_) => Vec::new(),
+                GeometryElement::Line(l) => vec![l.start, l.end],
+                GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
+                GeometryElement::Circle(c) => vec![c.center],
+                GeometryElement::Ellipse(e) => vec![e.center],
+                GeometryElement::BSpline(b) => b.control_points.clone(),
+            })
+            .collect();
+        self.selected.clear();
+        self.selected_constraints.clear();
+        let mut problems = Vec::new();
+        let stray: Vec<Uuid> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) if !referenced.contains(&p.id) => Some(p.id),
+                _ => None,
+            })
+            .collect();
+        if !stray.is_empty() {
+            problems.push(format!("{} stray point(s)", stray.len()));
+            self.selected.extend(stray);
+        }
+        let malformed: Vec<Uuid> = sketch
+            .constraints
+            .iter()
+            .filter(|c| {
+                sketch::constraint_refs(&c.kind)
+                    .iter()
+                    .any(|r| !ids.contains(r))
+            })
+            .map(|c| c.id)
+            .collect();
+        if !malformed.is_empty() {
+            problems.push(format!(
+                "{} constraint(s) referencing missing geometry",
+                malformed.len()
+            ));
+            self.selected_constraints.extend(malformed);
+        }
+        match profile::extract_wires(sketch) {
+            Ok(wires) => problems.push(format!("{} closed profile(s)", wires.len())),
+            Err(profile::ProfileError::Empty) => problems.push("no closed profile".to_string()),
+            Err(profile::ProfileError::OpenAt(id)) => {
+                problems.push("an open profile".to_string());
+                self.selected.insert(id);
+            }
+            Err(profile::ProfileError::BranchingAt(id)) => {
+                problems.push("a branching profile".to_string());
+                self.selected.insert(id);
+            }
+            Err(profile::ProfileError::MissingPoint(id)) => {
+                problems.push("a curve missing its point".to_string());
+                self.selected.insert(id);
+            }
+        }
+        ctx.log_info(format!("Sketch check: {}", problems.join(", ")));
+        InputResult::consumed()
+    }
+
+    /// Select the constraints whose geometry is gone.
+    fn select_malformed(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let ids: HashSet<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(GeometryElement::id)
+            .collect();
+        self.selected.clear();
+        self.selected_constraints.clear();
+        for c in &feature.sketch.constraints {
+            if sketch::constraint_refs(&c.kind)
+                .iter()
+                .any(|r| !ids.contains(r))
+            {
+                self.selected_constraints.insert(c.id);
+            }
+        }
+        ctx.log_info(format!(
+            "{} malformed constraint(s)",
+            self.selected_constraints.len()
+        ));
+        InputResult::consumed()
+    }
+
+    /// Select what the constraints still let move: the free points, and,
+    /// asked for the under-constrained geometry, the curves they belong to.
+    fn select_free(&mut self, ctx: &mut WorkbenchRuntimeContext, curves_too: bool) -> InputResult {
+        let Some(feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let free = solver::free_points(&feature.sketch);
+        self.selected.clear();
+        self.selected_constraints.clear();
+        self.selected.extend(free.iter().copied());
+        if curves_too {
+            for g in &feature.sketch.geometry {
+                let refs: Vec<Uuid> = match g {
+                    GeometryElement::Point(_) => Vec::new(),
+                    GeometryElement::Line(l) => vec![l.start, l.end],
+                    GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
+                    GeometryElement::Circle(c) => vec![c.center],
+                    GeometryElement::Ellipse(e) => vec![e.center],
+                    GeometryElement::BSpline(b) => b.control_points.clone(),
+                };
+                if refs.iter().any(|r| free.contains(r)) {
+                    self.selected.insert(g.id());
+                }
+            }
+        }
+        ctx.log_info(format!(
+            "{} element(s) with a degree of freedom",
+            self.selected.len()
+        ));
+        InputResult::consumed()
+    }
+
+    /// Turn the sketch plane over, or a quarter turn about its normal.
+    fn reorient(&mut self, ctx: &mut WorkbenchRuntimeContext, rotate: bool) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let plane = feature.plane;
+        let neg = |v: [f32; 3]| [-v[0], -v[1], -v[2]];
+        let new_plane = if rotate {
+            SketchPlane::from_frame(plane.origin, plane.normal, plane.y_axis)
+        } else {
+            SketchPlane::from_frame(plane.origin, neg(plane.normal), plane.x_axis)
+        };
+        self.set_plane(ctx, &mut feature, new_plane);
+        ctx.log_info(if rotate {
+            "Sketch plane rotated a quarter turn"
+        } else {
+            "Sketch plane flipped"
+        });
+        InputResult::consumed()
+    }
+
+    /// Move the sketch onto the face picked in the viewport.
+    fn attach_to_face(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
+        };
+        let Some(face) = ctx.selected_face else {
+            ctx.log_warn("Click a face of a solid first");
+            return InputResult::consumed();
+        };
+        self.set_plane(
+            ctx,
+            &mut feature,
+            SketchPlane::from_face(face.point, face.normal),
+        );
+        ctx.log_info("Sketch attached to the picked face");
+        InputResult::consumed()
+    }
+
+    fn set_plane(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: &mut SketchFeature,
+        plane: SketchPlane,
+    ) {
+        feature.plane = plane;
+        feature.sketch.plane = plane;
+        self.store_sketch(ctx, feature.clone());
+        ctx.request(HostRequest::OrientCamera(
+            core_document::CameraOrientRequest {
+                plane_origin: plane.origin,
+                plane_normal: plane.normal,
+                plane_up: plane.y_axis,
+            },
+        ));
+    }
+
     fn select_offenders(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -2313,6 +2740,14 @@ impl SketchWorkbench {
 
 /// Tools that create geometry from clicks, for which object snapping can
 /// be switched off.
+/// The dimensional constraint tool a selection takes, if any: a radius
+/// for one circle or arc, an angle for two lines, a distance otherwise.
+fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'static str> {
+    ["radius", "angle", "distance", "distance_x", "distance_y"]
+        .into_iter()
+        .find(|tool| constrain::fits(tool, shape))
+}
+
 fn is_draw_tool(tool: &str) -> bool {
     matches!(
         tool,
@@ -2448,5 +2883,41 @@ mod icon_coverage {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod dimension_tool {
+    use super::*;
+    use sketch::{Circle, Line, Point};
+
+    #[test]
+    fn the_dimension_tool_picks_what_the_selection_takes() {
+        let mut sketch = Sketch::new("t");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 5.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let other = sketch.add_geometry(GeometryElement::Line(Line::new(a, c)));
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
+        let shape =
+            |ids: &[Uuid]| constrain::SelectionShape::of(&sketch, &ids.iter().copied().collect());
+        assert_eq!(dimension_for(&shape(&[circle])), Some("radius"));
+        assert_eq!(dimension_for(&shape(&[line, other])), Some("angle"));
+        assert_eq!(dimension_for(&shape(&[a, b])), Some("distance"));
+        assert_eq!(dimension_for(&shape(&[])), None);
+    }
+
+    #[test]
+    fn the_grid_step_follows_the_zoom_in_one_two_five_steps() {
+        let mut wb = SketchWorkbench::default();
+        wb.options.grid_auto = true;
+        // Forty pixels of grid at these zooms.
+        assert_eq!(wb.grid_step(0.1), 5.0);
+        assert_eq!(wb.grid_step(0.02), 1.0);
+        assert_eq!(wb.grid_step(1.0), 50.0);
+        wb.options.grid_auto = false;
+        wb.options.grid_size = 7.5;
+        assert_eq!(wb.grid_step(1.0), 7.5);
     }
 }

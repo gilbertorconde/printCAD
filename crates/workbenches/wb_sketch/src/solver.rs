@@ -2111,3 +2111,70 @@ mod reference_tests {
         assert_eq!(dof_estimate(&sketch), 3);
     }
 }
+
+/// The points the constraints leave free to move: each is nudged in turn
+/// and the sketch re-solved; a point the solver leaves where it was
+/// nudged has a degree of freedom in that direction. A sketch nothing
+/// pins down reports every point free, which is what its three rigid
+/// degrees of freedom mean.
+pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
+    const NUDGE: f32 = 0.25;
+    let mut base = sketch.clone();
+    solve(&mut base);
+    let points: Vec<(Uuid, Vec2D)> = base
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some((p.id, p.position)),
+            _ => None,
+        })
+        .collect();
+    let mut free = std::collections::HashSet::new();
+    for (id, at) in points {
+        for nudge in [Vec2D::new(NUDGE, 0.0), Vec2D::new(0.0, NUDGE)] {
+            let mut probe = base.clone();
+            for g in &mut probe.geometry {
+                if let GeometryElement::Point(p) = g
+                    && p.id == id
+                {
+                    p.position = Vec2D::new(at.x + nudge.x, at.y + nudge.y);
+                }
+            }
+            solve(&mut probe);
+            let Some(after) = probe.point_position(id) else {
+                continue;
+            };
+            let moved = ((after.x - at.x).powi(2) + (after.y - at.y).powi(2)).sqrt();
+            if moved > NUDGE * 0.5 {
+                free.insert(id);
+                break;
+            }
+        }
+    }
+    free
+}
+
+#[cfg(test)]
+mod freedom {
+    use super::*;
+    use crate::sketch::{Line, Point};
+
+    #[test]
+    fn a_pinned_line_frees_its_far_end_until_length_and_direction_hold_it() {
+        let mut sketch = Sketch::new("t");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: a,
+            position: Vec2D::new(0.0, 0.0),
+        });
+        let free = free_points(&sketch);
+        assert!(!free.contains(&a), "the pinned point stays put");
+        assert!(free.contains(&b), "the far end swings");
+
+        sketch.add_constraint(ConstraintKind::Length { line, length: 10.0 });
+        sketch.add_constraint(ConstraintKind::Horizontal { element: line });
+        assert!(free_points(&sketch).is_empty(), "nothing moves any more");
+    }
+}

@@ -26,6 +26,7 @@ use core_document::{
     ToolVariant, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchFeature, WorkbenchId,
     WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
+use wb_sketch::SketchFeature;
 
 /// Part Design workbench: feature-based solid modeling.
 #[derive(Default)]
@@ -569,16 +570,12 @@ impl Workbench for PartDesignWorkbench {
             "sketch-edit",
             "structure",
         ));
-        // PLANNED: re-attach a sketch to another plane or face.
-        context.register_tool(
-            action(
-                "part.map_sketch",
-                "Map sketch to face",
-                "sketch-map",
-                "structure",
-            )
-            .planned("moves a sketch onto a picked face"),
-        );
+        context.register_tool(action(
+            "part.map_sketch",
+            "Map sketch to face",
+            "sketch-map",
+            "structure",
+        ));
         // Datums.
         context.register_tool(action(
             "part.datum_point",
@@ -748,6 +745,36 @@ impl Workbench for PartDesignWorkbench {
             Some(tool @ ("part.datum_plane" | "part.datum_line" | "part.datum_point")) => {
                 self.insert_datum(ctx, tool)
             }
+            Some("part.map_sketch") => {
+                // The selected sketch moves onto the face the last body
+                // click landed on.
+                let (Some(sketch_id), Some(face)) = (Self::selected_sketch(ctx), ctx.selected_face)
+                else {
+                    ctx.log_warn("Select a sketch in the tree, then click a face");
+                    return InputResult::consumed();
+                };
+                let Some(mut feature) = ctx
+                    .document
+                    .get_feature_data(sketch_id)
+                    .and_then(|d| SketchFeature::from_json(d).ok())
+                else {
+                    return InputResult::consumed();
+                };
+                let plane = wb_sketch::sketch::SketchPlane::from_face(face.point, face.normal);
+                feature.plane = plane;
+                feature.sketch.plane = plane;
+                match ctx
+                    .document
+                    .update_feature_data(sketch_id, feature.to_json())
+                {
+                    Ok(()) => {
+                        ctx.document.mark_feature_dirty(sketch_id);
+                        ctx.log_info("Sketch mapped to the picked face");
+                    }
+                    Err(err) => ctx.log_error(format!("Could not move the sketch: {err}")),
+                }
+                InputResult::consumed()
+            }
             Some("part.edit_sketch") => {
                 if Self::selected_sketch(ctx).is_some() {
                     // The sketcher picks the active object up as its edit
@@ -821,6 +848,7 @@ impl Workbench for PartDesignWorkbench {
         match base_tool_id(tool_id) {
             "part.new_body" => true,
             "part.edit_sketch" => has_sketch,
+            "part.map_sketch" => has_sketch && ctx.selected_face.is_some(),
             "part.new_sketch" | "part.primitive" | "part.datum_plane" | "part.datum_line"
             | "part.datum_point" => has_body,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,

@@ -104,6 +104,9 @@ pub struct ToolParams {
     pub copies: u32,
     /// Whether new B-splines close on themselves.
     pub bspline_periodic: bool,
+    /// Whether the line tool adds horizontal/vertical constraints to
+    /// axis-snapped segments.
+    pub auto_constraints: bool,
 }
 
 impl Default for ToolParams {
@@ -116,6 +119,7 @@ impl Default for ToolParams {
             offset_distance: 2.0,
             copies: 0,
             bspline_periodic: false,
+            auto_constraints: true,
         }
     }
 }
@@ -251,7 +255,7 @@ pub fn handle_click(
 ) -> ToolEffect {
     match tool {
         "sketch.point" => draw::point(sketch, cursor),
-        "sketch.line" => draw::line(state, sketch, cursor, snap_tol),
+        "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params.auto_constraints),
         "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
         "sketch.rect_center" => draw::rect_center(state, sketch, cursor),
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
