@@ -48,21 +48,22 @@ impl PrintCadApp {
     /// Context params for activate/deactivate/input hooks: camera-derived
     /// viewport plus the live hover/selection state.
     pub(crate) fn interaction_ctx_params(&self) -> WbCtxParams {
-        let vp = self.camera.viewport_info();
+        let vp = self.session.camera.viewport_info();
         WbCtxParams {
-            cam_pos: self.camera.position(),
-            cam_target: self.camera.target(),
+            cam_pos: self.session.camera.position(),
+            cam_target: self.session.camera.target(),
             viewport: (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
-            view_proj: Some(self.camera.view_projection()),
-            hovered_world_pos: self.hovered_world_pos,
-            hovered_body_id: self.hovered_body,
-            selected_body_id: self.selected_body,
+            view_proj: Some(self.session.camera.view_projection()),
+            hovered_world_pos: self.session.hovered_world_pos,
+            hovered_body_id: self.session.hovered_body,
+            selected_body_id: self.session.selected_body,
             cursor_viewport_pos: self.cursor_in_viewport,
-            active_document_object: self.active_document_object,
-            attach_request: self.pending_sketch_creation,
+            active_document_object: self.session.active_document_object,
+            attach_request: self.session.pending_sketch_creation,
             selected_face: self
+                .session
                 .last_face_hit
-                .filter(|(body, _)| self.selected_body == Some(*body))
+                .filter(|(body, _)| self.session.selected_body == Some(*body))
                 .map(|(_, face)| face),
             ctrl_down: self.modifiers.control_key(),
         }
@@ -79,15 +80,15 @@ impl PrintCadApp {
             (0, 0, 1920, 1080)
         };
         WbCtxParams {
-            cam_pos: self.camera.position(),
-            cam_target: self.camera.target(),
+            cam_pos: self.session.camera.position(),
+            cam_target: self.session.camera.target(),
             viewport,
-            view_proj: Some(self.camera.view_projection()),
+            view_proj: Some(self.session.camera.view_projection()),
             hovered_world_pos: None,
             hovered_body_id: None,
-            selected_body_id: self.active_body_id.map(|id| id.0),
+            selected_body_id: self.session.active_body_id.map(|id| id.0),
             cursor_viewport_pos: None,
-            active_document_object: self.active_document_object,
+            active_document_object: self.session.active_document_object,
             attach_request: None,
             selected_face: None,
             ctrl_down: false,
@@ -109,7 +110,7 @@ impl PrintCadApp {
             return None;
         };
         let mut ctx = WorkbenchRuntimeContext::new(
-            &mut self.document,
+            &mut self.session.document,
             params.cam_pos,
             params.cam_target,
             params.viewport,
@@ -148,13 +149,13 @@ impl PrintCadApp {
     /// changed, the attach inbox as it left it, then its requests in the
     /// host's order.
     pub(crate) fn apply_hook_outcome(&mut self, outcome: HookOutcome, site: HookSite) {
-        if outcome.active_document_object != self.active_document_object {
-            self.active_document_object = outcome.active_document_object;
+        if outcome.active_document_object != self.session.active_document_object {
+            self.session.active_document_object = outcome.active_document_object;
         }
         // The context was seeded with the pending request; the bench it
         // was for takes it (None comes back), any other leaves it.
         if site == HookSite::Interaction {
-            self.pending_sketch_creation = outcome.attach_request;
+            self.session.pending_sketch_creation = outcome.attach_request;
         }
         for request in outcome.requests {
             self.apply_host_request(request, site);
@@ -165,16 +166,16 @@ impl PrintCadApp {
     pub(crate) fn apply_host_request(&mut self, request: HostRequest, site: HookSite) {
         match request {
             HostRequest::ActivateTool(tool) => {
-                self.active_tool.active_ids.clear();
-                self.active_tool.active_ids.insert(tool);
+                self.session.active_tool.active_ids.clear();
+                self.session.active_tool.active_ids.insert(tool);
             }
             HostRequest::SelectBody(body) => {
                 self.apply_tree_selection(TreeItemId::Body(body));
             }
-            HostRequest::JournalLabel(label) => self.journal.label_next(label),
+            HostRequest::JournalLabel(label) => self.session.journal.label_next(label),
             HostRequest::StartOn { workbench, attach } => {
                 if site == HookSite::Interaction {
-                    self.pending_sketch_creation = Some(attach);
+                    self.session.pending_sketch_creation = Some(attach);
                     self.switch_workbench_for_flow(workbench);
                 }
             }
@@ -184,7 +185,7 @@ impl PrintCadApp {
                 }
             }
             HostRequest::OrientCamera(orient) => {
-                self.camera.orient_to_plane(
+                self.session.camera.orient_to_plane(
                     glam::Vec3::from_array(orient.plane_origin),
                     glam::Vec3::from_array(orient.plane_normal),
                     glam::Vec3::from_array(orient.plane_up),

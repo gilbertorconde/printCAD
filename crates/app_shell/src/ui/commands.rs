@@ -44,6 +44,14 @@ pub enum UiCommand {
     CloseViewportMenu,
     /// A workbench panel hook asked the host for something.
     HostRequest(core_document::HostRequest),
+    /// Back to the workspace of the tab on screen, from its start page.
+    ShowWorkspace,
+    /// A blank tab, on the start page.
+    NewTab,
+    CloseTab(uuid::Uuid),
+    SelectTab(uuid::Uuid),
+    /// The next (`1`) or previous (`-1`) tab, wrapping.
+    CycleTab(i32),
     /// One of a bench's own menu entries was picked.
     BenchCommand {
         workbench: core_document::WorkbenchId,

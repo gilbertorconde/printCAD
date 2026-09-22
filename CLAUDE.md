@@ -118,7 +118,18 @@ cargo fmt --all                   # CI enforces --check
   for error attribution).
 - `render_vk` — data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
-- `app_shell` — binary. `app/` modules: `frame.rs` (per-frame loop),
+- `app_shell` — binary. **Tabs:** `app/session.rs` is `DocumentSession`,
+  everything the app keeps per document (document, journal, file, camera,
+  selection, active bench and tool, server connection, in-flight open/save,
+  presence, the STEP modal, the benches' suspended editing state); the active
+  one sits on `PrintCadApp.session`, the rest are parked in `tabs` and
+  `app/tabs.rs` swaps them (`switch_tab`, `open_tab`, `close_tab_interactive`,
+  `ensure_fresh_tab` — New and Open reuse a blank tab). Background tabs get
+  their turn through `with_tab`/`for_each_tab` (drains, rebuilds, outbox);
+  a kernel response routes by body id or by the tab that asked for the
+  import (`import_owner`). **Only a real switch moves bench state**
+  (`Workbench::suspend_session`/`resume_session` through the registry); a
+  `with_tab` turn must not touch it. `app/` modules: `frame.rs` (per-frame loop),
   `input.rs` (events, selection), `commands.rs` (UI command application),
   `recompute.rs` (parametric rebuild driver), `workbench_host.rs` (ctx
   plumbing), `kernel_worker.rs` (kernel thread, keeps the UI responsive),
@@ -273,19 +284,21 @@ hacks, no silently degraded feature). Instead:
   `#[serde(skip)]` and Clone-EMPTIES — snapshots carry state, never pending
   ops. Never add a `&mut` escape hatch to `Document`; capture is only total
   because none exists.
-- **The app is a client of a document server** (`core_document/src/server.rs`
-  trait = the wire protocol; `crates/doc_server` has the `printcad-serverd`
-  daemon — one per session, unix socket under `$XDG_RUNTIME_DIR/printcad`,
-  single client, exits on disconnect — plus the `DirectFiles` fallback). The
-  daemon stores opaque `.prtcad` bytes and op envelopes
-  (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops recorded
-  before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
-  keyed by the socket so two unsaved documents cannot end up sharing — one
-  file for all of them meant the first to save took the other's history. Saves cross as
-  client-serialized bytes with `at_seq`; `mark_clean()` only fires if
-  `at_seq` still equals `mutation_seq` on completion. Undo/redo/new/open send
-  `Rebase`. **Every exit path must call `wait_for_document_saves()`** (which
-  flushes the server) or a write in flight is abandoned mid-file.
+- **The app is a client of a document server, one connection per tab**
+  (`core_document/src/server.rs` trait = the wire protocol; `crates/doc_server`
+  has the `printcad-serverd` daemon — one per document, unix socket under
+  `$XDG_RUNTIME_DIR/printcad`, single client, exits on disconnect — plus the
+  `DirectFiles` fallback). The daemon stores opaque `.prtcad` bytes and op
+  envelopes (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops
+  recorded before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
+  keyed by the socket, and an untitled tab's socket carries the tab's id
+  (`socket_path_for_untitled(tab)`), so two unsaved documents never share
+  a log — one file for all of them meant the first to save took the other's
+  history. Saves cross as client-serialized bytes with `at_seq`;
+  `mark_clean()` only fires if `at_seq` still equals `mutation_seq` on
+  completion. Undo/redo/new/open send `Rebase`. **Every exit path must call
+  `wait_for_all_document_saves()`** (every tab, each flushing its server)
+  or a write in flight is abandoned mid-file.
   `PRINTCAD_SERVERD` overrides the daemon binary for dev.
 - **`FeatureNode.seq` is THE build-history ordering key.** `created_at` has
   millisecond ties that order randomly — never sort history by it.
@@ -336,7 +349,8 @@ thread whose work produces no window event (the 6-DoF reader) must also wake
 the loop itself, through `EventLoopProxy::send_event` and the `AppEvent`
 user event; and
 `fps_cap` now caps the *active* rate rather than implying continuous
-rendering. `PRINTCAD_OPEN_FILE` / `PRINTCAD_OPEN_DOC` /
+rendering. `PRINTCAD_OPEN_FILE` (several paths `;`-separated open a tab
+each) / `PRINTCAD_OPEN_DOC` /
 `PRINTCAD_BENCH_ORBIT` / `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are
 bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
@@ -368,6 +382,11 @@ frame.
 
 ## Interaction model (current bindings)
 
+Tabs: one document per tab (`ui/tab_bar.rs`, under the menu bar), Ctrl+T
+new, Ctrl+W close, Ctrl+Tab / Ctrl+Shift+Tab cycle, middle click closes;
+a fresh tab shows the start page and New/Open take it over, a tab with
+content keeps its edits and the new document opens beside it; closing
+asks about unsaved edits per tab, quitting asks for each dirty tab.
 MMB drag = orbit (MMB click = pivot pick) · RMB drag = pan · RMB click on a
 body = context menu (`ui/context_menu.rs`: show in tree, select body, hide,
 then whatever the benches offer through `menu_items` for

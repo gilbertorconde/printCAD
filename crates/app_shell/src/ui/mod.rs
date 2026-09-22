@@ -15,6 +15,7 @@ mod property_panel;
 mod start_page;
 mod status_bar;
 mod step_import_modal;
+mod tab_bar;
 mod task_panel;
 mod toolbar;
 mod view_toolbar;
@@ -23,6 +24,7 @@ pub use commands::{FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{HoverCard, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
+pub use tab_bar::TabInfo;
 
 use core_document::WorkbenchId;
 use egui::Context;
@@ -204,6 +206,7 @@ impl UiLayer {
             kernel_cancellable,
             kernel_progress,
             server_label,
+            tabs,
             reveal_body,
             viewport_menu,
             nav_device,
@@ -261,11 +264,15 @@ impl UiLayer {
                     projection,
                     recent,
                     screen,
+                    active_tab_blank: tabs.iter().any(|t| t.active && t.blank),
+                    active_tab: tabs.iter().find(|t| t.active).map(|t| t.tab),
                 },
                 &mut active_workbench,
                 &mut active_tool,
                 &mut commands,
             );
+
+            tab_bar::draw_tab_bar(ui, &tabs, &mut commands);
 
             // About lands on its page; Preferences keeps the last group.
             let unit = document.display_unit();

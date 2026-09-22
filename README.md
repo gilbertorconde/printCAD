@@ -110,6 +110,7 @@ are dropped.
 | ------ | ------- |
 | Command palette | **Ctrl+K** |
 | New / Open / Save / Save As | **Ctrl+N** / **Ctrl+O** / **Ctrl+S** / **Ctrl+Shift+S** |
+| New tab / Close tab / Next / Previous tab | **Ctrl+T** / **Ctrl+W** / **Ctrl+Tab** / **Ctrl+Shift+Tab** |
 | Import STEP | **Ctrl+I** |
 | Undo / redo | **Ctrl+Z** / **Ctrl+Shift+Z** or **Ctrl+Y** |
 | Preferences | **Ctrl+,** |

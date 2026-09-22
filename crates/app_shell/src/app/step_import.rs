@@ -37,6 +37,8 @@ impl PrintCadApp {
     /// import is in flight.
     pub(crate) fn import_step_at(&mut self, path: &Path, detail: TessellationSettings) {
         app_log::info(format!("Importing STEP `{}`...", path.display()));
+        self.import_owner
+            .insert(path.to_path_buf(), self.session.tab);
         self.kernel_worker
             .request_step_import(path.to_path_buf(), detail);
     }
@@ -52,6 +54,27 @@ impl PrintCadApp {
 
     pub(crate) fn drain_kernel_responses(&mut self) {
         for response in self.kernel_worker.drain() {
+            // Each answer goes to the tab it belongs to: an import to the
+            // tab that asked, a solid to the tab whose body it is.
+            let target = match &response {
+                KernelResponse::StepImported { path, .. }
+                | KernelResponse::StepFailed { path, .. } => self
+                    .import_owner
+                    .remove(path)
+                    .and_then(|tab| self.tab_index_of(tab)),
+                KernelResponse::SolidBuilt { body_id, .. }
+                | KernelResponse::SolidFailed { body_id, .. } => self.tab_index_of_body(*body_id),
+            };
+            match target {
+                Some(index) => self.with_tab(index, |app| app.apply_kernel_response(response)),
+                // The tab closed, or the body left it, while the job ran.
+                None => continue,
+            }
+        }
+    }
+
+    fn apply_kernel_response(&mut self, response: KernelResponse) {
+        {
             match response {
                 KernelResponse::StepImported {
                     path,
@@ -60,7 +83,7 @@ impl PrintCadApp {
                     detail,
                     elapsed,
                 } => {
-                    if let Some(route) = self.remote_import_routes.remove(&path) {
+                    if let Some(route) = self.session.remote_import_routes.remove(&path) {
                         // A peer's import, re-derived locally: the bodies
                         // already exist (their ImportModel op made them);
                         // only the derived geometry lands here.
@@ -78,7 +101,7 @@ impl PrintCadApp {
                 KernelResponse::StepFailed { path, error } => {
                     if Self::is_cancellation(&error) {
                         app_log::info(format!("STEP import cancelled `{}`", path.display()));
-                        continue;
+                        return;
                     }
                     app_log::error(format!(
                         "STEP import failed `{}`: {}",
@@ -92,14 +115,15 @@ impl PrintCadApp {
                     elapsed,
                 } => {
                     let bid = BodyId(body_id);
-                    if !self.document.bodies().iter().any(|b| b.id == bid) {
+                    if !self.session.document.bodies().iter().any(|b| b.id == bid) {
                         // Body deleted (e.g. undo) while the rebuild ran.
-                        continue;
+                        return;
                     }
                     let bounds_mm = result.bounds_mm;
-                    self.document
+                    self.session
+                        .document
                         .set_imported_brep_data(bid, result.brep_blob, Vec::new());
-                    self.document.set_imported_geometry(
+                    self.session.document.set_imported_geometry(
                         bid,
                         ImportedGeometry {
                             mesh: Arc::new(result.mesh),
@@ -110,14 +134,15 @@ impl PrintCadApp {
                             face_colors_path: None,
                         },
                     );
-                    if self.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
+                    if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
                         // The face sub-mesh belongs to the replaced solid.
-                        self.face_highlight = None;
-                        self.last_face_hit = None;
+                        self.session.face_highlight = None;
+                        self.session.last_face_hit = None;
                     }
                     app_log::info(format!(
                         "Rebuilt `{}` in {:.0}ms",
-                        self.document
+                        self.session
+                            .document
                             .bodies()
                             .iter()
                             .find(|b| b.id == bid)
@@ -132,6 +157,7 @@ impl PrintCadApp {
                     error,
                 } => {
                     let name = self
+                        .session
                         .document
                         .bodies()
                         .iter()
@@ -143,12 +169,12 @@ impl PrintCadApp {
                     // edit marks it dirty and rebuilds.
                     if Self::is_cancellation(&error) {
                         app_log::info(format!("Rebuild of `{name}` cancelled"));
-                        continue;
+                        return;
                     }
                     // Pin the failure on the culprit feature; the panel and
                     // tree surface it. Downstream keeps the last good solid.
                     if let Some(feature) = failed_feature {
-                        self.document.set_feature_error(
+                        self.session.document.set_feature_error(
                             core_document::FeatureId(feature),
                             Some(error.clone()),
                         );
@@ -183,12 +209,12 @@ impl PrintCadApp {
         }
         let count = bodies.len();
         for (body, body_id) in bodies.into_iter().zip(&route.body_ids) {
-            self.document.set_imported_brep_data(
+            self.session.document.set_imported_brep_data(
                 *body_id,
                 body.brep_blob,
                 body.face_colors.clone(),
             );
-            self.document.set_imported_geometry(
+            self.session.document.set_imported_geometry(
                 *body_id,
                 ImportedGeometry {
                     mesh: Arc::new(body.mesh),
@@ -214,9 +240,9 @@ impl PrintCadApp {
         let apply_start = Instant::now();
         // Capture "fresh document" *before* we start mutating it so the
         // auto-unit pick below isn't confused by bodies we're about to add.
-        let was_fresh_document = self.document.bodies().is_empty()
-            && !self.document.assets().any(|_| true)
-            && self.document.imported_geometries().next().is_none();
+        let was_fresh_document = self.session.document.bodies().is_empty()
+            && !self.session.document.assets().any(|_| true)
+            && self.session.document.imported_geometries().next().is_none();
 
         let ImportedModel {
             bodies: imported_bodies,
@@ -300,7 +326,7 @@ impl PrintCadApp {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0);
-        let mut unnamed_index = self.document.bodies().len();
+        let mut unnamed_index = self.session.document.bodies().len();
         let body_inits: Vec<core_document::op::ImportedBodyInit> = imported_bodies
             .iter()
             .map(|body| {
@@ -405,7 +431,7 @@ impl PrintCadApp {
 
         // The whole import is one atomic op: asset + bytes + bodies + graph
         // + unit. Geometry lands separately below — derived, not replicated.
-        self.document.apply_import(
+        self.session.document.apply_import(
             asset,
             raw_bytes,
             detail.clone(),
@@ -416,12 +442,12 @@ impl PrintCadApp {
         );
 
         for (body, body_id) in imported_bodies.into_iter().zip(&body_ids_by_import_index) {
-            self.document.set_imported_brep_data(
+            self.session.document.set_imported_brep_data(
                 *body_id,
                 body.brep_blob,
                 body.face_colors.clone(),
             );
-            self.document.set_imported_geometry(
+            self.session.document.set_imported_geometry(
                 *body_id,
                 ImportedGeometry {
                     mesh: Arc::new(body.mesh),
@@ -438,7 +464,7 @@ impl PrintCadApp {
             let aabb_min = Vec3::new(combined_min[0], combined_min[1], combined_min[2]);
             let aabb_max = Vec3::new(combined_max[0], combined_max[1], combined_max[2]);
             let (center, radius) = aabb_fit_center_radius(aabb_min, aabb_max);
-            self.camera.reset_to_fit(
+            self.session.camera.reset_to_fit(
                 center,
                 radius,
                 Some((aabb_min, aabb_max)),
@@ -447,19 +473,20 @@ impl PrintCadApp {
         }
 
         if let Some(body_id) = first_body {
-            self.active_body_id = Some(body_id);
+            self.session.active_body_id = Some(body_id);
             // The tree draws imported parts as their own rows and hides the
             // body behind them, so point the selection at the row on screen.
-            self.tree_selection = Some(
-                self.document
+            self.session.tree_selection = Some(
+                self.session
+                    .document
                     .imported_object_for_body(body_id)
                     .map(TreeItemId::ImportedObject)
                     .unwrap_or(TreeItemId::Body(body_id)),
             );
             // No viewport selection: the first click on the model picks a
             // face rather than undoing a selection nobody made.
-            self.selected_body = None;
-            self.last_select_click = None;
+            self.session.selected_body = None;
+            self.session.last_select_click = None;
         }
 
         if let Some(unit) = adopt_unit {
@@ -471,7 +498,7 @@ impl PrintCadApp {
         }
 
         self.remember_recent_dir(path);
-        self.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::ui::Screen::Workspace;
         let apply_ms = apply_start.elapsed().as_secs_f64() * 1000.0;
         info!(
             path = %path.display(),
@@ -484,7 +511,8 @@ impl PrintCadApp {
             path.display(),
             elapsed.as_secs_f64() * 1000.0,
             apply_ms,
-            self.document
+            self.session
+                .document
                 .imported_geometries()
                 .filter(|(_, g)| g.source_asset == Some(asset_id))
                 .count(),
@@ -492,7 +520,7 @@ impl PrintCadApp {
         ));
 
         // ImportModel is a history barrier; closing the boundary clears undo.
-        self.journal.note(&mut self.document);
+        self.session.journal.note(&mut self.session.document);
 
         Ok(())
     }

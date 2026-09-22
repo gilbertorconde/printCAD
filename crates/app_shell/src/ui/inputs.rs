@@ -85,6 +85,8 @@ pub struct UiFrameInputs<'a> {
     /// Which document server serves this session, with a degraded marker —
     /// e.g. "local daemon" or "local daemon (disconnected)".
     pub server_label: String,
+    /// The strip of open documents, in order.
+    pub tabs: Vec<super::TabInfo>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
     /// The context menu a right click asked for, if one is open.

@@ -12,15 +12,15 @@ use crate::log_panel as app_log;
 
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {
-        for job in self.registry.rebuild_jobs(&mut self.document) {
+        for job in self.registry.rebuild_jobs(&mut self.session.document) {
             let body_id = job.body;
-            self.document.clear_body_feature_errors(body_id);
+            self.session.document.clear_body_feature_errors(body_id);
             match job.plan {
                 Ok(plan) if plan.ops.is_empty() => {
                     // Only geometry the features produced is cleared; an
                     // imported solid outlives an empty history.
-                    if !self.document.body_solid_is_imported(body_id) {
-                        self.document.remove_imported_geometry(body_id);
+                    if !self.session.document.body_solid_is_imported(body_id) {
+                        self.session.document.remove_imported_geometry(body_id);
                     }
                 }
                 Ok(plan) => {
@@ -33,7 +33,8 @@ impl PrintCadApp {
                 }
                 Err(err) => {
                     if let Some(feature) = err.feature {
-                        self.document
+                        self.session
+                            .document
                             .set_feature_error(feature, Some(err.message.clone()));
                     }
                     app_log::warn(format!("Recompute skipped: {err}"));

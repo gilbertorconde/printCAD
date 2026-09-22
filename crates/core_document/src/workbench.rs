@@ -635,6 +635,18 @@ pub trait Workbench: Send {
     /// Called when the user requests to finish editing (e.g., via UI button).
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}
 
+    /// Hand the host this bench's editing state for the document on
+    /// screen, leaving the bench as if no document were open. The host
+    /// keeps it with the tab and gives it back through `resume_session`
+    /// when that tab returns. A bench with no such state returns `None`.
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        None
+    }
+
+    /// Take back a state `suspend_session` produced, or start from
+    /// nothing when `state` is `None` (a new tab).
+    fn resume_session(&mut self, _state: Option<Box<dyn std::any::Any + Send>>) {}
+
     /// Remove an owned feature and settle what depended on it: features
     /// it hid come back, its body rebuilds. `false` when nothing was
     /// removed.

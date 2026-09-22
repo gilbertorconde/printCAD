@@ -23,6 +23,11 @@ pub struct MenuBarInputs<'a> {
     pub projection: ProjectionMode,
     pub recent: &'a [settings::recent::RecentEntry],
     pub screen: Screen,
+    /// The tab on screen has nothing in it yet: leaving its start page
+    /// means starting a document, not returning to one.
+    pub active_tab_blank: bool,
+    /// The tab on screen, for Close tab.
+    pub active_tab: Option<uuid::Uuid>,
 }
 
 /// Menu-driven requests that are UI-local state rather than app commands.
@@ -111,6 +116,10 @@ pub fn draw_menu_bar(
     let sc_redo_y = shortcut(Modifiers::COMMAND, Key::Y);
     let sc_palette = shortcut(Modifiers::COMMAND, Key::K);
     let sc_prefs = shortcut(Modifiers::COMMAND, Key::Comma);
+    let sc_new_tab = shortcut(Modifiers::COMMAND, Key::T);
+    let sc_close_tab = shortcut(Modifiers::COMMAND, Key::W);
+    let sc_next_tab = shortcut(Modifiers::COMMAND, Key::Tab);
+    let sc_prev_tab = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
 
     // Consume shortcuts up-front so a menu row clicked in the same frame
     // does not double-fire. Shift variants come before their plain form.
@@ -133,6 +142,20 @@ pub fn draw_menu_bar(
         }
         if i.consume_shortcut(&sc_quit) {
             commands.push(UiCommand::Quit);
+        }
+        if i.consume_shortcut(&sc_new_tab) {
+            commands.push(UiCommand::NewTab);
+        }
+        if i.consume_shortcut(&sc_close_tab)
+            && let Some(active) = inputs.active_tab
+        {
+            commands.push(UiCommand::CloseTab(active));
+        }
+        if i.consume_shortcut(&sc_prev_tab) {
+            commands.push(UiCommand::CycleTab(-1));
+        }
+        if i.consume_shortcut(&sc_next_tab) {
+            commands.push(UiCommand::CycleTab(1));
         }
         if i.consume_shortcut(&sc_palette) {
             result.open_palette = true;
@@ -194,6 +217,9 @@ pub fn draw_menu_bar(
                         if item(ui, "Open…", Some(&sc_open)) {
                             commands.push(UiCommand::File(FileCommand::Open));
                         }
+                        if item(ui, "New tab", Some(&sc_new_tab)) {
+                            commands.push(UiCommand::NewTab);
+                        }
                         ui.menu_button(RichText::new("Open recent").font(sans(FONT_SM)), |ui| {
                             if inputs.recent.is_empty() {
                                 ui.add_enabled(
@@ -228,9 +254,19 @@ pub fn draw_menu_bar(
                             commands.push(UiCommand::File(FileCommand::ImportStep));
                         }
                         ui.separator();
+                        if let Some(active) = inputs.active_tab
+                            && item(ui, "Close tab", Some(&sc_close_tab))
+                        {
+                            commands.push(UiCommand::CloseTab(active));
+                        }
+                        ui.separator();
                         if inputs.screen == Screen::Start {
                             if item(ui, "Workspace", None) {
-                                commands.push(UiCommand::StartNew(super::StartKind::Landing));
+                                commands.push(if inputs.active_tab_blank {
+                                    UiCommand::StartNew(super::StartKind::Landing)
+                                } else {
+                                    UiCommand::ShowWorkspace
+                                });
                             }
                         } else if item(ui, "Start page", None) {
                             commands.push(UiCommand::ShowStartPage);

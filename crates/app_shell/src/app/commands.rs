@@ -57,6 +57,11 @@ struct FrameIntents {
     host_requests: Vec<core_document::HostRequest>,
     /// Bench menu entries picked this frame, in order.
     bench_commands: Vec<(core_document::WorkbenchId, String, core_document::MenuScope)>,
+    new_tab: bool,
+    close_tab: Option<uuid::Uuid>,
+    select_tab: Option<uuid::Uuid>,
+    cycle_tab: Option<i32>,
+    show_workspace: bool,
 }
 
 impl PrintCadApp {
@@ -96,17 +101,17 @@ impl PrintCadApp {
                 }
                 UiCommand::FitView => intents.fit_view = true,
                 UiCommand::RevealInTree(body) => {
-                    self.viewport_menu = None;
-                    self.reveal_body = Some(body);
+                    self.session.viewport_menu = None;
+                    self.session.reveal_body = Some(body);
                 }
                 UiCommand::SelectBody(body) => {
-                    self.viewport_menu = None;
-                    self.face_highlight = None;
-                    self.last_face_hit = None;
-                    self.selected_body = Some(body.0);
+                    self.session.viewport_menu = None;
+                    self.session.face_highlight = None;
+                    self.session.last_face_hit = None;
+                    self.session.selected_body = Some(body.0);
                     app_log::info(format!("Selected body: {:?}", body.0));
                 }
-                UiCommand::CloseViewportMenu => self.viewport_menu = None,
+                UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
                 UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
                 UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
                 UiCommand::CommitSettings {
@@ -153,6 +158,11 @@ impl PrintCadApp {
                 UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
                 UiCommand::ReleaseActiveObject => intents.release_active_object = true,
                 UiCommand::ShowStartPage => intents.show_start_page = true,
+                UiCommand::ShowWorkspace => intents.show_workspace = true,
+                UiCommand::NewTab => intents.new_tab = true,
+                UiCommand::CloseTab(tab) => intents.close_tab = Some(tab),
+                UiCommand::SelectTab(tab) => intents.select_tab = Some(tab),
+                UiCommand::CycleTab(delta) => intents.cycle_tab = Some(delta),
                 UiCommand::StartNew(kind) => intents.start_new = Some(kind),
                 UiCommand::OpenRecent(path) => intents.open_recent = Some(path),
                 UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
@@ -177,12 +187,12 @@ impl PrintCadApp {
             intents.apply_camera_settings = true;
         }
         if intents.recompute_all {
-            self.registry.invalidate_all(&mut self.document);
+            self.registry.invalidate_all(&mut self.session.document);
             app_log::info("Recomputing every feature");
         }
         if let Some(outcome) = intents.task_closed {
             // The task's edits form one undo entry; a closed task ends it.
-            self.journal.note(&mut self.document);
+            self.session.journal.note(&mut self.session.document);
             match outcome {
                 core_document::TaskOutcome::Accepted { label } => app_log::info(label),
                 core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
@@ -193,6 +203,7 @@ impl PrintCadApp {
             // The body the task or sketch belonged to stays selected, so the
             // next feature has a target without another trip to the tree.
             let target = self
+                .session
                 .active_body_id
                 .map(TreeItemId::Body)
                 .unwrap_or(TreeItemId::DocumentRoot);
@@ -200,15 +211,15 @@ impl PrintCadApp {
         }
         if let Some((item, name)) = intents.rename {
             match item {
-                TreeItemId::Feature(id) => self.document.rename_feature(id, name),
-                TreeItemId::Body(id) => self.document.rename_body(id, name),
+                TreeItemId::Feature(id) => self.session.document.rename_feature(id, name),
+                TreeItemId::Body(id) => self.session.document.rename_body(id, name),
                 TreeItemId::DocumentRoot | TreeItemId::ImportedObject(_) => {}
             }
         }
         if let Some(wb) = intents.request_workbench
-            && wb != self.active_workbench
+            && wb != self.session.active_workbench
         {
-            intents.workbench_switch = Some((self.active_workbench.clone(), wb));
+            intents.workbench_switch = Some((self.session.active_workbench.clone(), wb));
         }
 
         // ---- Phase 2: apply in legacy frame order ----
@@ -221,12 +232,16 @@ impl PrintCadApp {
             Some(_) if planar_only => {
                 app_log::info("Standard views are locked while a sketch is open")
             }
-            Some(view) => self.camera.snap_to_view(view, &self.user_settings.camera),
+            Some(view) => self
+                .session
+                .camera
+                .snap_to_view(view, &self.user_settings.camera),
             None => {}
         }
         if let Some(ref delta) = intents.camera_rotate {
             if !planar_only || delta.axis.keeps_view_direction() {
-                self.camera
+                self.session
+                    .camera
                     .apply_rotate_delta(delta, &self.user_settings.camera);
             } else {
                 app_log::info("The view only turns in the sketch plane while a sketch is open");
@@ -243,8 +258,8 @@ impl PrintCadApp {
                 self.user_settings = *settings;
                 intents.persist_settings = true;
             }
-            if display_unit != self.document.display_unit() {
-                self.document.set_display_unit(display_unit);
+            if display_unit != self.session.document.display_unit() {
+                self.session.document.set_display_unit(display_unit);
             }
         }
         if intents.persist_settings
@@ -253,15 +268,17 @@ impl PrintCadApp {
             app_log::warn(format!("Failed to save settings: {err}"));
         }
         if intents.apply_camera_settings {
-            self.camera.sync_with_settings(&self.user_settings.camera);
+            self.session
+                .camera
+                .sync_with_settings(&self.user_settings.camera);
         }
 
         let mut step_import_to_run = None;
         if intents.confirm_step_import {
-            step_import_to_run = self.step_import_pending.take();
+            step_import_to_run = self.session.step_import_pending.take();
         }
         if intents.cancel_step_import {
-            self.step_import_pending = None;
+            self.session.step_import_pending = None;
         }
 
         if intents.fit_view {
@@ -269,7 +286,8 @@ impl PrintCadApp {
         }
 
         for (node_id, visible) in intents.set_visibility {
-            self.document
+            self.session
+                .document
                 .set_imported_object_visibility(node_id, visible);
         }
 
@@ -288,7 +306,7 @@ impl PrintCadApp {
         }
 
         if let Some(req) = intents.orient_to_plane {
-            self.camera.orient_to_plane(
+            self.session.camera.orient_to_plane(
                 Vec3::from_array(req.plane_origin),
                 Vec3::from_array(req.plane_normal),
                 Vec3::from_array(req.plane_up),
@@ -311,17 +329,15 @@ impl PrintCadApp {
             self.import_step_at(&path, detail);
         }
 
-        if intents.new_document && self.confirm_discard_or_save() {
+        // New and Open never discard anything: a tab with edits keeps
+        // them and the new document opens beside it.
+        if intents.new_document {
             self.reset_to_new_document();
         }
-        if let Some(kind) = intents.start_new
-            && self.confirm_discard_or_save()
-        {
+        if let Some(kind) = intents.start_new {
             self.start_new_document(kind);
         }
-        if let Some(path) = intents.open_recent
-            && self.confirm_discard_or_save()
-        {
+        if let Some(path) = intents.open_recent {
             if path.exists() {
                 self.open_document_at(path);
             } else {
@@ -333,18 +349,14 @@ impl PrintCadApp {
             self.remove_recent(&path);
         }
         if intents.show_start_page {
-            self.screen = Screen::Start;
+            self.session.screen = Screen::Start;
+        }
+        if intents.show_workspace {
+            self.session.screen = Screen::Workspace;
         }
 
-        match intents.file_dialog {
-            Some(FileDialogKind::Open) => {
-                // Opening replaces the document; give unsaved edits a chance first.
-                if self.confirm_discard_or_save() {
-                    self.start_file_dialog(FileDialogKind::Open);
-                }
-            }
-            Some(kind) => self.start_file_dialog(kind),
-            None => {}
+        if let Some(kind) = intents.file_dialog {
+            self.start_file_dialog(kind);
         }
 
         self.poll_file_dialog();
@@ -353,36 +365,62 @@ impl PrintCadApp {
         // frame's selection updates in its deactivate hook.
         if let Some((old_wb, new_wb)) = intents.workbench_switch {
             // A deliberate user switch cancels any pending return-to-bench.
-            self.return_workbench = None;
-            self.active_workbench = new_wb.clone();
+            self.session.return_workbench = None;
+            self.session.active_workbench = new_wb.clone();
             self.call_workbench_deactivate(&old_wb.0);
             self.call_workbench_activate(&new_wb.0);
         }
 
+        // Tab changes after everything else acted on the tab it was meant
+        // for; a new tab opens on the start page.
+        if intents.new_tab {
+            let session = self.new_session(Screen::Start);
+            self.open_tab(session);
+        }
+        if let Some(tab) = intents.select_tab
+            && let Some(index) = self.tab_index_of(tab)
+        {
+            self.switch_tab(index);
+        }
+        if let Some(delta) = intents.cycle_tab {
+            self.cycle_tab(delta);
+        }
+        if let Some(tab) = intents.close_tab
+            && let Some(index) = self.tab_index_of(tab)
+        {
+            self.close_tab_interactive(index);
+        }
+
         // File > Quit / Ctrl+Q. Applied here so the rest of the frame
         // (rendering, picks, dialogs) finishes cleanly before the loop ends.
-        if intents.quit && self.confirm_discard_or_save() {
+        if intents.quit && self.confirm_close_all() {
             app_log::info("Quit requested via menu / shortcut");
-            // A save started by the dialog above is still being written; the
-            // exit would kill it mid-file.
-            self.wait_for_document_saves();
+            // A save started by the dialogs above is still being written;
+            // the exit would kill it mid-file.
+            self.wait_for_all_document_saves();
             event_loop.exit();
         }
     }
 
     pub(crate) fn create_new_body(&mut self) {
-        let body_id = self.document.create_body(None);
-        if let Some(body) = self.document.bodies().iter().find(|b| b.id == body_id) {
+        let body_id = self.session.document.create_body(None);
+        if let Some(body) = self
+            .session
+            .document
+            .bodies()
+            .iter()
+            .find(|b| b.id == body_id)
+        {
             app_log::info(format!("Created {}", body.name));
         } else {
             app_log::info(format!("Created body {:?}", body_id));
         }
-        self.active_body_id = Some(body_id);
-        self.active_document_object = None;
-        self.tree_selection = Some(TreeItemId::Body(body_id));
-        self.selected_body = Some(body_id.0);
-        self.journal.label_next("Create body");
-        self.journal.note(&mut self.document);
+        self.session.active_body_id = Some(body_id);
+        self.session.active_document_object = None;
+        self.session.tree_selection = Some(TreeItemId::Body(body_id));
+        self.session.selected_body = Some(body_id.0);
+        self.session.journal.label_next("Create body");
+        self.session.journal.note(&mut self.session.document);
     }
 
     /// End the active workbench's editing session (e.g. Exit Sketch Mode)
@@ -391,18 +429,18 @@ impl PrintCadApp {
     /// When the editing flow was started from another workbench (Part
     /// Design's "New Sketch"), jump back to it.
     pub(crate) fn finish_active_workbench_editing(&mut self) {
-        let wb_id = self.active_workbench.0.clone();
+        let wb_id = self.session.active_workbench.0.clone();
         let params = self.interaction_ctx_params();
         if let Some(((), outcome)) =
             self.with_workbench_ctx(&wb_id, params, |wb, ctx| wb.finish_editing(ctx))
         {
             self.apply_hook_outcome(outcome, crate::app::workbench_host::HookSite::Interaction);
         }
-        self.active_document_object = None;
-        self.tree_selection = Some(TreeItemId::DocumentRoot);
+        self.session.active_document_object = None;
+        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
 
-        if let Some(previous) = self.return_workbench.take()
-            && previous != self.active_workbench
+        if let Some(previous) = self.session.return_workbench.take()
+            && previous != self.session.active_workbench
         {
             self.switch_workbench_for_flow(previous.0);
         }
@@ -412,58 +450,64 @@ impl PrintCadApp {
     /// Remembers the outgoing workbench as the return target when jumping
     /// INTO an edit-session bench so finishing can jump back.
     pub(crate) fn switch_workbench_for_flow(&mut self, target: crate::WorkbenchId) {
-        if self.active_workbench.0 == target {
+        if self.session.active_workbench.0 == target {
             return;
         }
         if self.registry.is_modal(&target) {
-            self.return_workbench = Some(self.active_workbench.clone());
+            self.session.return_workbench = Some(self.session.active_workbench.clone());
         }
-        let old = self.active_workbench.0.clone();
+        let old = self.session.active_workbench.0.clone();
         self.call_workbench_deactivate(&old);
-        self.active_workbench = ActiveWorkbench(target.clone());
-        self.active_tool = Default::default();
+        self.session.active_workbench = ActiveWorkbench(target.clone());
+        self.session.active_tool = Default::default();
         self.call_workbench_activate(&target);
     }
 
     /// Frame the camera around the imported geometry (or the default box).
     fn fit_view_to_scene(&mut self) {
         app_log::info("Fit View requested");
-        if let Some(aabb) = document_imported_aabb(&self.document) {
+        if let Some(aabb) = document_imported_aabb(&self.session.document) {
             let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
-            self.camera
-                .reset_to_fit(center, radius, Some(aabb), &self.user_settings.camera);
+            self.session.camera.reset_to_fit(
+                center,
+                radius,
+                Some(aabb),
+                &self.user_settings.camera,
+            );
         } else {
-            self.camera
+            self.session
+                .camera
                 .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
         }
     }
 
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
-        self.tree_selection = Some(selection);
+        self.session.tree_selection = Some(selection);
         // A selection made here is not a viewport click, so the next click
         // on that body picks a face instead of undoing this.
-        self.last_select_click = None;
+        self.session.last_select_click = None;
         match selection {
             TreeItemId::DocumentRoot => {
-                self.active_document_object = None;
-                self.active_body_id = None;
-                self.selected_body = None;
+                self.session.active_document_object = None;
+                self.session.active_body_id = None;
+                self.session.selected_body = None;
             }
             TreeItemId::Body(id) => {
-                self.active_body_id = Some(id);
-                self.active_document_object = None;
-                self.selected_body = Some(id.0);
+                self.session.active_body_id = Some(id);
+                self.session.active_document_object = None;
+                self.session.selected_body = Some(id.0);
             }
             TreeItemId::Feature(id) => {
-                if self.active_document_object != Some(id) {
+                if self.session.active_document_object != Some(id) {
                     app_log::info(format!("Selected feature {:?}", id));
                 }
-                self.active_document_object = Some(id);
+                self.session.active_document_object = Some(id);
             }
             TreeItemId::ImportedObject(node_id) => {
-                self.active_document_object = None;
-                self.active_body_id = self.document.body_of_imported_object(node_id);
-                self.selected_body = self.active_body_id.map(|id| id.0);
+                self.session.active_document_object = None;
+                self.session.active_body_id =
+                    self.session.document.body_of_imported_object(node_id);
+                self.session.selected_body = self.session.active_body_id.map(|id| id.0);
             }
         }
     }
@@ -480,7 +524,7 @@ impl PrintCadApp {
             }
             return;
         };
-        let Some(node) = self.document.get_feature_meta(id) else {
+        let Some(node) = self.session.document.get_feature_meta(id) else {
             return;
         };
         let kind = node.workbench_id.clone();
@@ -491,10 +535,10 @@ impl PrintCadApp {
         let Some(owner) = self.registry.owner_id_of(&kind).cloned() else {
             return;
         };
-        if self.active_workbench.0 != owner {
+        if self.session.active_workbench.0 != owner {
             self.switch_workbench_for_flow(owner);
         }
-        self.active_document_object = Some(id);
+        self.session.active_document_object = Some(id);
     }
 
     /// Apply a history context-menu action from the feature tree.
@@ -514,43 +558,45 @@ impl PrintCadApp {
     /// Remove `body` and forget every reference the app holds to it.
     fn delete_body(&mut self, body: core_document::BodyId) {
         let name = self
+            .session
             .document
             .bodies()
             .iter()
             .find(|b| b.id == body)
             .map(|b| b.name.clone())
             .unwrap_or_else(|| "body".to_string());
-        if !self.document.remove_body(body) {
+        if !self.session.document.remove_body(body) {
             return;
         }
-        if self.active_body_id == Some(body) {
-            self.active_body_id = None;
+        if self.session.active_body_id == Some(body) {
+            self.session.active_body_id = None;
         }
-        if self.selected_body == Some(body.0) {
-            self.selected_body = None;
+        if self.session.selected_body == Some(body.0) {
+            self.session.selected_body = None;
         }
-        if self.hovered_body == Some(body.0) {
-            self.hovered_body = None;
-            self.hovered_world_pos = None;
+        if self.session.hovered_body == Some(body.0) {
+            self.session.hovered_body = None;
+            self.session.hovered_world_pos = None;
         }
-        if self.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
-            self.face_highlight = None;
+        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
+            self.session.face_highlight = None;
         }
-        if self.last_face_hit.map(|(b, _)| b) == Some(body.0) {
-            self.last_face_hit = None;
+        if self.session.last_face_hit.map(|(b, _)| b) == Some(body.0) {
+            self.session.last_face_hit = None;
         }
         // Features of the body went with it; anything pointing at one of
         // them now points at nothing.
         if self
+            .session
             .active_document_object
-            .is_some_and(|id| self.document.get_feature_meta(id).is_none())
+            .is_some_and(|id| self.session.document.get_feature_meta(id).is_none())
         {
-            self.active_document_object = None;
+            self.session.active_document_object = None;
         }
-        self.tree_selection = Some(TreeItemId::DocumentRoot);
+        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
         // Deleting a body has no inverse: the entry closes the history.
-        self.journal.label_next("Delete body");
-        self.journal.note(&mut self.document);
+        self.session.journal.label_next("Delete body");
+        self.session.journal.note(&mut self.session.document);
         app_log::info(format!("Deleted `{name}` and everything on it"));
     }
 
@@ -560,7 +606,7 @@ impl PrintCadApp {
         let mut doomed: Vec<uuid::Uuid> = Vec::new();
         let mut stack = vec![node];
         while let Some(id) = stack.pop() {
-            let Some(entry) = self.document.imported_object(id) else {
+            let Some(entry) = self.session.document.imported_object(id) else {
                 continue;
             };
             stack.extend(entry.children.iter().copied());
@@ -568,12 +614,18 @@ impl PrintCadApp {
         }
         let bodies: Vec<core_document::BodyId> = doomed
             .iter()
-            .filter_map(|id| self.document.imported_object(*id).and_then(|n| n.body_id))
+            .filter_map(|id| {
+                self.session
+                    .document
+                    .imported_object(*id)
+                    .and_then(|n| n.body_id)
+            })
             .collect();
 
         // Rebuild what stays, with the deleted rows dropped from their
         // parents' children.
         let roots: Vec<uuid::Uuid> = self
+            .session
             .document
             .imported_object_roots()
             .iter()
@@ -584,7 +636,7 @@ impl PrintCadApp {
             std::collections::HashMap::new();
         let mut stack: Vec<uuid::Uuid> = roots.clone();
         while let Some(id) = stack.pop() {
-            let Some(entry) = self.document.imported_object(id) else {
+            let Some(entry) = self.session.document.imported_object(id) else {
                 continue;
             };
             let mut entry = entry.clone();
@@ -592,7 +644,7 @@ impl PrintCadApp {
             stack.extend(entry.children.iter().copied());
             kept.insert(id, entry);
         }
-        self.document.set_imported_object_graph(roots, kept);
+        self.session.document.set_imported_object_graph(roots, kept);
         for body in bodies {
             self.delete_body(body);
         }
@@ -603,22 +655,29 @@ impl PrintCadApp {
         feature: core_document::FeatureId,
         command: TreeFeatureCommand,
     ) {
-        let body = self.document.get_feature_meta(feature).and_then(|n| n.body);
+        let body = self
+            .session
+            .document
+            .get_feature_meta(feature)
+            .and_then(|n| n.body);
         match command {
             TreeFeatureCommand::Suppress(suppressed) => {
-                self.document.set_feature_suppressed(feature, suppressed);
-                self.document.mark_feature_dirty(feature);
-                self.journal.label_next("Suppress feature");
-                self.journal.note(&mut self.document);
+                self.session
+                    .document
+                    .set_feature_suppressed(feature, suppressed);
+                self.session.document.mark_feature_dirty(feature);
+                self.session.journal.label_next("Suppress feature");
+                self.session.journal.note(&mut self.session.document);
             }
             TreeFeatureCommand::SetVisible(visible) => {
-                self.document.set_feature_visible(feature, visible);
+                self.session.document.set_feature_visible(feature, visible);
             }
             TreeFeatureCommand::Delete => {
                 // The bench that claimed the feature's kind removes it and
                 // settles what depended on it; a kind no bench claims is
                 // simply removed.
                 let owner = self
+                    .session
                     .document
                     .get_feature_meta(feature)
                     .and_then(|n| self.registry.owner_id_of(&n.workbench_id).cloned());
@@ -638,22 +697,22 @@ impl PrintCadApp {
                             None => false,
                         }
                     }
-                    None => self.document.remove_feature(feature).is_ok(),
+                    None => self.session.document.remove_feature(feature).is_ok(),
                 };
                 if removed {
-                    if self.active_document_object == Some(feature) {
-                        self.active_document_object = None;
+                    if self.session.active_document_object == Some(feature) {
+                        self.session.active_document_object = None;
                     }
-                    self.journal.label_next("Delete feature");
-                    self.journal.note(&mut self.document);
+                    self.session.journal.label_next("Delete feature");
+                    self.session.journal.note(&mut self.session.document);
                     app_log::info("Deleted feature");
                 }
             }
             TreeFeatureCommand::MoveUp | TreeFeatureCommand::MoveDown => {
                 let up = command == TreeFeatureCommand::MoveUp;
-                if self.document.move_feature_in_history(feature, up) {
-                    self.journal.label_next("Reorder history");
-                    self.journal.note(&mut self.document);
+                if self.session.document.move_feature_in_history(feature, up) {
+                    self.session.journal.label_next("Reorder history");
+                    self.session.journal.note(&mut self.session.document);
                     app_log::info("Reordered build history");
                 } else {
                     app_log::warn(
@@ -666,11 +725,12 @@ impl PrintCadApp {
                     return;
                 };
                 let tip = (command == TreeFeatureCommand::SetTip).then_some(feature);
-                self.document.set_body_tip(body, tip);
+                self.session.document.set_body_tip(body, tip);
                 // The chain changes shape: rebuild from the first feature.
-                self.registry.invalidate_body(&mut self.document, body);
-                self.journal.label_next("Move tip");
-                self.journal.note(&mut self.document);
+                self.registry
+                    .invalidate_body(&mut self.session.document, body);
+                self.session.journal.label_next("Move tip");
+                self.session.journal.note(&mut self.session.document);
             }
         }
     }
@@ -680,15 +740,17 @@ impl PrintCadApp {
     /// A fresh document from a start-page card: one body in Part Design,
     /// plus an XY sketch open for editing when asked.
     fn start_new_document(&mut self, kind: StartKind) {
+        // The blank document first: it may be a new tab, and the bench
+        // switch below belongs to that tab.
+        self.reset_to_new_document();
         let part = self.landing_workbench();
-        if self.active_workbench != part {
-            let old = self.active_workbench.0.clone();
+        if self.session.active_workbench != part {
+            let old = self.session.active_workbench.0.clone();
             self.call_workbench_deactivate(&old);
-            self.active_workbench = part.clone();
+            self.session.active_workbench = part.clone();
             self.call_workbench_activate(&part.0);
         }
-        self.return_workbench = None;
-        self.reset_to_new_document();
+        self.session.return_workbench = None;
         self.create_new_body();
         if let StartKind::Bench { workbench, command } = kind {
             self.switch_workbench_for_flow(workbench.clone());
@@ -704,7 +766,7 @@ impl PrintCadApp {
         id: &str,
         scope: core_document::MenuScope,
     ) {
-        let before = self.active_document_object;
+        let before = self.session.active_document_object;
         let params = self.interaction_ctx_params();
         let Some((known, outcome)) =
             self.with_workbench_ctx(&workbench, params, |wb, ctx| wb.on_command(id, &scope, ctx))
@@ -715,10 +777,10 @@ impl PrintCadApp {
         if !known {
             app_log::warn(format!("{} offers no command `{id}`", workbench.as_str()));
         }
-        if self.active_document_object != before
-            && let Some(feature) = self.active_document_object
+        if self.session.active_document_object != before
+            && let Some(feature) = self.session.active_document_object
         {
-            self.tree_selection = Some(TreeItemId::Feature(feature));
+            self.session.tree_selection = Some(TreeItemId::Feature(feature));
         }
     }
 }

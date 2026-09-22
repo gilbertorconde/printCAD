@@ -127,6 +127,30 @@ impl DocumentService {
             .map(|e| e.workbench.as_ref())
     }
 
+    /// Every bench's editing state for the document on screen, keyed by
+    /// bench id; the benches are left as if no document were open.
+    pub fn suspend_sessions(&mut self) -> HashMap<String, Box<dyn std::any::Any + Send>> {
+        let mut states = HashMap::new();
+        for id in &self.order {
+            if let Some(entry) = self.workbenches.get_mut(id.as_str())
+                && let Some(state) = entry.workbench.suspend_session()
+            {
+                states.insert(id.as_str().to_owned(), state);
+            }
+        }
+        states
+    }
+
+    /// Give every bench its state back for the tab coming on screen; a
+    /// bench with nothing stored starts from nothing.
+    pub fn resume_sessions(&mut self, mut states: HashMap<String, Box<dyn std::any::Any + Send>>) {
+        for id in &self.order {
+            if let Some(entry) = self.workbenches.get_mut(id.as_str()) {
+                entry.workbench.resume_session(states.remove(id.as_str()));
+            }
+        }
+    }
+
     /// Every bench's rebuild jobs, in registration order.
     pub fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
         self.benches()

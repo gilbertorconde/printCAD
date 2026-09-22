@@ -37,11 +37,16 @@ pub fn socket_path_for(document: &std::path::Path) -> PathBuf {
     runtime_dir().join(format!("{key:016x}.sock"))
 }
 
-/// A socket for a session that has no file yet (a fresh "Untitled"). Keyed
-/// by process id: private to this app instance until the first save gives
-/// the document a real identity.
-pub fn socket_path_for_untitled() -> PathBuf {
-    runtime_dir().join(format!("untitled-{}.sock", std::process::id()))
+/// A socket for a tab that has no file yet (a fresh "Untitled"). Keyed by
+/// process id and the tab's id: private to that tab until the first save
+/// gives the document a real identity, and never shared by two untitled
+/// tabs of one app.
+pub fn socket_path_for_untitled(tab: uuid::Uuid) -> PathBuf {
+    runtime_dir().join(format!(
+        "untitled-{}-{}.sock",
+        std::process::id(),
+        tab.simple()
+    ))
 }
 
 pub(crate) fn runtime_dir_for_logs() -> PathBuf {

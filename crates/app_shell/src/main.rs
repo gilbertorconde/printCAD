@@ -7,8 +7,7 @@ mod ui;
 
 use anyhow::{Context, Result};
 use app::doc_io::FileDialogResult;
-use camera::CameraController;
-use core_document::{BodyId, Document, DocumentService, WorkbenchId};
+use core_document::{Document, DocumentService, WorkbenchId};
 use kernel_api::TessellationSettings;
 use kernel_worker::KernelWorker;
 use log_panel as app_log;
@@ -19,7 +18,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 use tracing::error;
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
-use ui::{ActiveTool, ActiveWorkbench, Screen, TreeItemId, UiLayer};
+use ui::{ActiveWorkbench, Screen, UiLayer};
 use uuid::Uuid;
 use winit::{
     application::ApplicationHandler,
@@ -74,18 +73,12 @@ fn main() -> Result<()> {
     let _camera_tracing_guard =
         init_tracing_subscriber().context("tracing subscriber init failed")?;
 
-    let document = Document::new("Untitled");
     let mut registry = DocumentService::default();
     register_all_workbenches(&mut registry)?;
 
     app_log::info(format!(
         "Registered {} workbenches",
         registry.workbench_descriptors().count()
-    ));
-    app_log::info(format!(
-        "Loaded document `{}` ({})",
-        document.name(),
-        document.id()
     ));
 
     let settings_store = SettingsStore::new().context("settings store init failed")?;
@@ -109,7 +102,6 @@ fn main() -> Result<()> {
         render_settings,
         settings_store,
         user_settings,
-        document,
         registry,
         event_loop.create_proxy(),
     );
@@ -138,52 +130,35 @@ type DimensionCache = (core_document::BodyId, u64, ([f32; 3], [f32; 3]));
 
 struct PrintCadApp {
     settings: RenderSettings,
+    /// The active tab: the document on screen and everything the app keeps
+    /// about it.
+    session: app::session::DocumentSession,
+    /// Every tab in strip order; the active one's slot is parked `None`
+    /// because its session is `self.session`.
+    tabs: Vec<app::session::TabSlot>,
+    active_tab: usize,
+    /// Which tab asked for each STEP import in flight, by the path the
+    /// kernel worker echoes back.
+    import_owner: std::collections::HashMap<PathBuf, Uuid>,
     frame_submission: FrameSubmission,
     /// Window + renderer + UI layer; teardown order is enforced by the
     /// [`app::Gfx`] struct's field order (renderer before window).
     gfx: Option<app::Gfx>,
     settings_store: SettingsStore,
     user_settings: UserSettings,
-    camera: CameraController,
-    active_tool: ActiveTool,
     last_frame_time: Option<Instant>,
     current_fps: f32,
     gpu_name: Option<String>,
     available_gpus: Vec<String>,
     fps_accum_time: f32,
     fps_frame_count: u32,
-    // Selected body ID (for highlighting/selection)
-    selected_body: Option<Uuid>,
-    // Hovered body ID (for highlighting)
-    hovered_body: Option<Uuid>,
-    // Hovered world position (for status bar display)
-    hovered_world_pos: Option<[f32; 3]>,
     // Current cursor position in viewport
     cursor_in_viewport: Option<(f32, f32)>,
-    // Document and workbench registry
-    document: Document,
     registry: DocumentService,
-    // Currently active workbench (determines which tools are visible)
-    active_workbench: ActiveWorkbench,
-    // Active document object (selected feature in tree - separate from editing mode)
-    active_document_object: Option<core_document::FeatureId>,
-    active_body_id: Option<BodyId>,
-    tree_selection: Option<TreeItemId>,
-    // Current file on disk (if any).
-    current_file: Option<PathBuf>,
     /// Recently opened documents and the last dialog directory.
     recent: settings::recent::RecentStore,
-    /// Start page or workspace.
-    screen: Screen,
     // Pending file dialog result from background thread.
     file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
-    /// The worker packing a `.prtcad` archive, and how far it has got.
-    /// Packing carries every blob in the document, so it happens off the UI
-    /// thread and the window keeps drawing while it runs.
-    document_save_rx: Option<std::sync::mpsc::Receiver<app::doc_io::SaveJob>>,
-    /// The worker parsing an opened document, for the same reason.
-    document_open_rx: Option<std::sync::mpsc::Receiver<app::doc_io::OpenJob>>,
-    save_progress: Option<std::sync::Arc<app::doc_io::SaveProgress>>,
     // Background worker that owns the geometry kernel. STEP imports run there
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
@@ -191,33 +166,6 @@ struct PrintCadApp {
     /// Background reader for a 6-DoF mouse. It holds the puck's current
     /// deflection; the frame loop integrates it.
     nav_device: app::sixdof::SixDofWorker,
-    /// The document server connection — local daemon by default, direct
-    /// files when no daemon can run, a remote plugin someday. Everything
-    /// that crosses it is the wire protocol; `document_load_epoch` rides
-    /// Open requests as the token that invalidates late responses.
-    server: Box<dyn core_document::server::DocumentServer>,
-    /// The socket the server connection is (or should be) on — per-document
-    /// once the document has a file, per-session for Untitled. Reconnects
-    /// and connection switches aim here.
-    server_socket: PathBuf,
-    /// Last reconnect attempt, so a dead daemon is retried at a gentle pace
-    /// instead of every frame.
-    last_server_reconnect: Option<Instant>,
-    /// Remote imports being re-derived: a peer's ImportModel op created the
-    /// bodies; the kernel re-imports the carried bytes (written to a temp
-    /// file) and the resulting meshes are routed to those pre-existing
-    /// bodies by import order — deterministic at any thread count.
-    remote_import_routes: std::collections::HashMap<PathBuf, RemoteImportRoute>,
-    /// What each peer has selected, keyed by actor. Bodies in here render
-    /// with the peer tint; entries die with their peer.
-    peer_presence: std::collections::HashMap<uuid::Uuid, core_document::server::PresenceState>,
-    /// Relayed ops that arrived while an open was in flight. The daemon's
-    /// threads may interleave a relay before the Opened reply; applying it
-    /// to the document the open is about to replace would lose the edit,
-    /// so they wait here and apply right after the new document lands.
-    held_remote_ops: Vec<(uuid::Uuid, Vec<core_document::op::DocumentOp>)>,
-    /// Last presence we told the server, so only changes cross the wire.
-    last_sent_presence: Option<core_document::server::PresenceState>,
     /// Dev/bench hook: `PRINTCAD_OPEN_FILE` triggers one STEP import at
     /// startup, so a benchmark run needs no dialog interaction.
     bench_open_fired: bool,
@@ -262,14 +210,8 @@ struct PrintCadApp {
     smoothed_frame_s: Option<f32>,
     /// egui's repaint request from the last built frame.
     pending_ui_repaint: std::time::Duration,
-    document_load_epoch: u64,
-    /// Picked STEP path and draft tessellation settings until the user confirms import.
-    step_import_pending: Option<(PathBuf, TessellationSettings)>,
     /// Reuse the last confirmed import options when opening the dialog again.
     last_step_import_detail: TessellationSettings,
-    /// Snapshot-based undo/redo. `note()` is called once per frame while no
-    /// mouse button is held, so drags coalesce into single steps.
-    journal: core_document::history::OpJournal,
     /// Pressed-mouse-button count; nonzero suppresses undo boundaries.
     mouse_buttons_down: u32,
     /// Index-stable UUIDs for workbench overlay meshes (slot i -> pool[i]),
@@ -277,40 +219,12 @@ struct PrintCadApp {
     overlay_id_pool: Vec<Uuid>,
     /// Latest keyboard modifiers from `WindowEvent::ModifiersChanged`.
     modifiers: winit::keyboard::ModifiersState,
-    /// A workbench asked to create a sketch on this body; carried between
-    /// hooks until the sketch workbench consumes it (plane picker).
-    pending_sketch_creation: Option<core_document::SketchAttachRequest>,
-    /// Face under the most recent body selection click (surface point +
-    /// normal derived from the picked mesh triangle).
-    last_face_hit: Option<(Uuid, core_document::FaceRef)>,
-    /// Extracted coplanar sub-mesh of the selected face, rendered as a
-    /// highlight overlay. Present only while a face (not the whole body)
-    /// is the selection.
-    face_highlight: Option<app::input::FaceHighlight>,
-    /// Sketch feature under the cursor (CPU hit-test, drives hover tint).
-    hovered_feature: Option<core_document::FeatureId>,
     /// Stable renderer id for the face-highlight overlay slot.
     face_highlight_id: Uuid,
     /// The submission id of the whole-body selection overlay.
     body_highlight_id: Uuid,
-    /// Timestamp + target of the last selection click (double-click detect).
-    last_select_click: Option<(Instant, Uuid)>,
-    /// A body double-clicked in the viewport, for the one frame it takes the
-    /// tree to jump to its row.
-    reveal_body: Option<BodyId>,
-    /// The context menu a right click on a body asked for, until it is used
-    /// or dismissed.
-    viewport_menu: Option<ui::ViewportMenu>,
-    /// Workbench to return to when sketch editing finishes, when the sketch
-    /// flow was started from another workbench (e.g. Part Design).
-    return_workbench: Option<ActiveWorkbench>,
-    /// A workbench task is open in the right panel; its edits form one undo
-    /// entry until it closes.
-    task_open: bool,
     /// The title the window currently shows; rewritten only on change.
     window_title: String,
-    /// Bounds of the last measured body mesh, keyed by body and revision.
-    dimension_cache: Option<DimensionCache>,
 }
 
 /// The bench a new document lands in. A registry with no non-modal bench
@@ -345,70 +259,43 @@ impl PrintCadApp {
         settings: RenderSettings,
         settings_store: SettingsStore,
         user_settings: UserSettings,
-        document: Document,
         registry: DocumentService,
         proxy: winit::event_loop::EventLoopProxy<AppEvent>,
     ) -> Self {
-        let camera = CameraController::new(&user_settings.camera, (1, 1));
         let step_import_defaults = user_settings.import.tessellation.clone();
-        let journal = core_document::history::OpJournal::new(64);
-
-        // The document server: a per-session local daemon by default; plain
-        // in-process file I/O when the daemon cannot start. Same contract
-        // either way — the trait is the seam a remote plugin replaces.
-        let server_socket = doc_server::socket_path_for_untitled();
-        let server: Box<dyn core_document::server::DocumentServer> =
-            match doc_server::DaemonClient::spawn_or_connect(&server_socket) {
-                Ok(client) => Box::new(client),
-                Err(err) => {
-                    tracing::warn!("document daemon unavailable ({err}); using direct file I/O");
-                    Box::new(doc_server::DirectFiles::new())
-                }
-            };
-        tracing::info!(server = server.name(), "document server connected");
-
-        let landing = landing_workbench(&registry);
+        let landing = ActiveWorkbench(landing_workbench(&registry));
+        let session = app::session::DocumentSession::untitled(
+            &user_settings.camera,
+            landing,
+            launch_screen(),
+        );
+        let tabs = vec![app::session::TabSlot {
+            tab: session.tab,
+            parked: None,
+        }];
         Self {
             settings,
+            session,
+            tabs,
+            active_tab: 0,
+            import_owner: std::collections::HashMap::new(),
             frame_submission: FrameSubmission::default(),
             gfx: None,
             settings_store,
             user_settings,
-            camera,
-            active_tool: ActiveTool::default(),
             last_frame_time: None,
             current_fps: 0.0,
             gpu_name: None,
             available_gpus: Vec::new(),
             fps_accum_time: 0.0,
             fps_frame_count: 0,
-            selected_body: None,
-            hovered_body: None,
-            hovered_world_pos: None,
             cursor_in_viewport: None,
-            document,
             registry,
-            active_workbench: ActiveWorkbench(landing),
-            active_document_object: None,
-            active_body_id: None,
-            tree_selection: Some(TreeItemId::DocumentRoot),
-            current_file: None,
             file_dialog_rx: None,
-            document_save_rx: None,
-            document_open_rx: None,
-            save_progress: None,
             kernel_worker: KernelWorker::spawn(),
             nav_device: app::sixdof::SixDofWorker::spawn(move || {
                 let _ = proxy.send_event(AppEvent::DeviceInput);
             }),
-            server,
-            server_socket,
-            last_server_reconnect: None,
-            remote_import_routes: std::collections::HashMap::new(),
-            peer_presence: std::collections::HashMap::new(),
-            held_remote_ops: Vec::new(),
-            last_sent_presence: None,
-            document_load_epoch: 0,
             bench_open_fired: false,
             bench_select_fired: false,
             bench_started: Instant::now(),
@@ -423,27 +310,14 @@ impl PrintCadApp {
             fps_display_idle: false,
             smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,
-            step_import_pending: None,
             last_step_import_detail: step_import_defaults,
-            journal,
             mouse_buttons_down: 0,
             overlay_id_pool: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),
-            pending_sketch_creation: None,
-            last_face_hit: None,
-            face_highlight: None,
-            hovered_feature: None,
             face_highlight_id: Uuid::new_v4(),
             body_highlight_id: Uuid::new_v4(),
-            last_select_click: None,
-            reveal_body: None,
-            viewport_menu: None,
-            return_workbench: None,
-            task_open: false,
             window_title: String::new(),
-            dimension_cache: None,
             recent: app::doc_io::load_recent(),
-            screen: launch_screen(),
         }
     }
 
@@ -454,7 +328,7 @@ impl PrintCadApp {
     }
 
     fn active_workbench_id(&self) -> WorkbenchId {
-        self.active_workbench.0.clone()
+        self.session.active_workbench.0.clone()
     }
 
     /// Call on_deactivate on a workbench. It runs inside a switch, so its
@@ -547,7 +421,8 @@ impl PrintCadApp {
             self.available_gpus = list.to_vec();
         }
         let size = window.inner_size();
-        self.camera
+        self.session
+            .camera
             .update_viewport((0, 0), (size.width.max(1), size.height.max(1)));
         let window_id = window.id();
         self.gfx = Some(app::Gfx {

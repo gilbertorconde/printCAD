@@ -898,6 +898,19 @@ impl Workbench for PartDesignWorkbench {
         build::delete_feature(ctx.document, id)
     }
 
+    /// The open task and the feature a tool just created are the editing
+    /// state; they belong to the tab they were opened in.
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        Some(Box::new(std::mem::take(self)))
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        *self = state
+            .and_then(|s| s.downcast::<Self>().ok())
+            .map(|s| *s)
+            .unwrap_or_default();
+    }
+
     fn property_hints(&self) -> core_document::PropertyHints {
         core_document::PropertyHints {
             length_keys: vec![

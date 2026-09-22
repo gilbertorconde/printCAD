@@ -5,7 +5,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result};
-use glam::Vec3;
 use rfd::{FileDialog, MessageButtons, MessageDialog, MessageDialogResult, MessageLevel};
 
 use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
@@ -87,13 +86,13 @@ pub(crate) struct FileDialogResult {
 
 impl PrintCadApp {
     fn document_has_asset_files(&self) -> bool {
-        self.document.assets().next().is_some()
+        self.session.document.assets().next().is_some()
     }
 
     /// If the document is dirty, prompt Save / Discard / Cancel. Returns false when
     /// the user cancels or save fails.
     pub(crate) fn confirm_discard_or_save(&mut self) -> bool {
-        if !self.document.metadata().dirty() {
+        if !self.session.document.metadata().dirty() {
             return true;
         }
         let res = MessageDialog::new()
@@ -123,7 +122,7 @@ impl PrintCadApp {
 
     /// Save to [`Self::current_file`] or prompt for a path. Returns false if cancelled or save fails.
     fn save_document_interactive(&mut self) -> bool {
-        let path = if let Some(ref p) = self.current_file {
+        let path = if let Some(ref p) = self.session.current_file {
             p.clone()
         } else {
             let mut dialog = FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]);
@@ -144,36 +143,11 @@ impl PrintCadApp {
         }
     }
 
-    /// Replace the document with a blank one and reset navigation/selection.
+    /// A blank document on screen: the active tab when nothing has
+    /// happened in it, a new tab beside it otherwise.
     pub(crate) fn reset_to_new_document(&mut self) {
-        while !self.kernel_worker.drain().is_empty() {}
-
-        self.document_load_epoch = self.document_load_epoch.wrapping_add(1);
-        self.step_import_pending = None;
-
-        let wb_id = self.active_workbench.0.clone();
-        self.call_workbench_deactivate(&wb_id);
-
-        self.document = Document::new("Untitled");
-        self.current_file = None;
-        self.active_document_object = None;
-        self.active_body_id = None;
-        self.tree_selection = Some(TreeItemId::DocumentRoot);
-        self.selected_body = None;
-        self.hovered_body = None;
-
-        let wb_id = self.active_workbench.0.clone();
-        self.call_workbench_activate(&wb_id);
-
-        self.camera
-            .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
-        self.journal.reset(&mut self.document);
-        // The old document's history no longer describes this client.
-        let _ = self.document.take_pending_ops();
-        self.server
-            .send(core_document::server::ClientMessage::Rebase);
-        self.switch_server_to(doc_server::socket_path_for_untitled());
-        self.screen = crate::ui::Screen::Workspace;
+        self.ensure_fresh_tab();
+        self.session.screen = crate::ui::Screen::Workspace;
         app_log::info("New document");
     }
 
@@ -221,40 +195,47 @@ impl PrintCadApp {
 
     /// Replace the in-memory document after a successful load (UI thread).
     fn apply_opened_document(&mut self, path: PathBuf, document: Document) {
-        self.document = document;
-        self.current_file = Some(path.clone());
+        self.session.document = document;
+        self.session.current_file = Some(path.clone());
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("Untitled");
-        self.document
+        self.session
+            .document
             .set_name(document_name_from_file_name(file_name));
-        self.active_document_object = None;
-        self.active_body_id = None;
-        self.tree_selection = Some(TreeItemId::DocumentRoot);
-        self.selected_body = None;
+        self.session.active_document_object = None;
+        self.session.active_body_id = None;
+        self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+        self.session.selected_body = None;
 
-        self.document.mark_clean();
+        self.session.document.mark_clean();
         self.touch_recent(&path);
-        self.screen = crate::ui::Screen::Workspace;
+        self.session.screen = crate::ui::Screen::Workspace;
         // Match STEP import: reframe imported mesh bounds so scene AABB and auto
         // near/far use the same view as STEP apply (opening only updated zoom
         // limits before, which left stale eye/target → marginal clipping until the
         // user toggled projection or hit Fit View).
-        if let Some((mn, mx)) = document_imported_aabb(&self.document) {
+        if let Some((mn, mx)) = document_imported_aabb(&self.session.document) {
             let (center, radius) = aabb_fit_center_radius(mn, mx);
-            self.camera
-                .reset_to_fit(center, radius, Some((mn, mx)), &self.user_settings.camera);
+            self.session.camera.reset_to_fit(
+                center,
+                radius,
+                Some((mn, mx)),
+                &self.user_settings.camera,
+            );
         } else {
-            self.camera.clear_scene_zoom_constraint();
-            self.camera
+            self.session.camera.clear_scene_zoom_constraint();
+            self.session
+                .camera
                 .clamp_focal_to_settings(&self.user_settings.camera);
         }
-        self.journal.reset(&mut self.document);
+        self.session.journal.reset(&mut self.session.document);
         // A fresh baseline: whatever the server logged before no longer
         // describes this client's state. (set_name above records an op into
         // the new document; it flows normally on the next drain.)
-        self.server
+        self.session
+            .server
             .send(core_document::server::ClientMessage::Rebase);
         app_log::info(format!("Opened document from {}", path.display()));
     }
@@ -265,24 +246,24 @@ impl PrintCadApp {
     /// on failure the old connection stays and the move is only logged: a
     /// working degraded connection beats a broken fresh one.
     pub(crate) fn switch_server_to(&mut self, socket: std::path::PathBuf) {
-        if self.server_socket == socket && self.server.status().connected {
+        if self.session.server_socket == socket && self.session.server.status().connected {
             return;
         }
         match doc_server::DaemonClient::spawn_or_connect(&socket) {
             Ok(client) => {
-                self.server.flush();
-                self.server = Box::new(client);
-                self.server_socket = socket;
+                self.session.server.flush();
+                self.session.server = Box::new(client);
+                self.session.server_socket = socket;
                 // New room, new roommates.
-                self.peer_presence.clear();
-                self.last_sent_presence = None;
-                app_log::info(format!("Document server: {}", self.server.name()));
+                self.session.peer_presence.clear();
+                self.session.last_sent_presence = None;
+                app_log::info(format!("Document server: {}", self.session.server.name()));
             }
             Err(err) => {
                 app_log::warn(format!(
                     "Could not reach document daemon at {}: {err}; keeping {}",
                     socket.display(),
-                    self.server.name()
+                    self.session.server.name()
                 ));
             }
         }
@@ -292,21 +273,22 @@ impl PrintCadApp {
     /// expected socket every few seconds. Also upgrades a DirectFiles
     /// fallback to a real daemon once one can be spawned.
     pub(crate) fn maybe_reconnect_server(&mut self) {
-        if self.server.status().connected {
+        if self.session.server.status().connected {
             return;
         }
         // Nobody is on the other end; stale tints would lie.
-        self.peer_presence.clear();
+        self.session.peer_presence.clear();
         let due = self
+            .session
             .last_server_reconnect
             .is_none_or(|t| t.elapsed() > std::time::Duration::from_secs(5));
         if !due {
             return;
         }
-        self.last_server_reconnect = Some(std::time::Instant::now());
-        match doc_server::DaemonClient::spawn_or_connect(&self.server_socket.clone()) {
+        self.session.last_server_reconnect = Some(std::time::Instant::now());
+        match doc_server::DaemonClient::spawn_or_connect(&self.session.server_socket.clone()) {
             Ok(client) => {
-                self.server = Box::new(client);
+                self.session.server = Box::new(client);
                 app_log::info("Document server reconnected");
             }
             Err(err) => {
@@ -319,6 +301,13 @@ impl PrintCadApp {
     /// request token so a response landing after File > New is ignored.
     /// Public face of [`Self::request_document_open`] for startup hooks.
     pub(crate) fn open_document_at(&mut self, path: PathBuf) {
+        // A file already open is that tab; otherwise it gets a blank one.
+        if let Some(index) = self.tab_index_of_file(&path) {
+            self.switch_tab(index);
+            self.session.screen = crate::ui::Screen::Workspace;
+            return;
+        }
+        self.ensure_fresh_tab();
         self.request_document_open(path);
     }
 
@@ -327,10 +316,11 @@ impl PrintCadApp {
         // The document's own daemon owns its file (and, later, its other
         // clients). Ask it, not the session daemon.
         self.switch_server_to(doc_server::socket_path_for(&path));
-        self.server
+        self.session
+            .server
             .send(core_document::server::ClientMessage::OpenDocument {
                 path,
-                token: self.document_load_epoch,
+                token: self.session.document_load_epoch,
             });
     }
 
@@ -341,7 +331,7 @@ impl PrintCadApp {
     pub(crate) fn drain_server_messages(&mut self) {
         use core_document::server::ServerMessage;
         self.maybe_reconnect_server();
-        for message in self.server.poll() {
+        for message in self.session.server.poll() {
             match message {
                 ServerMessage::HelloOk { .. } => {}
                 ServerMessage::Peers { peers } => {
@@ -355,29 +345,29 @@ impl PrintCadApp {
                     });
                 }
                 ServerMessage::Ops { actor, ops } => {
-                    if self.server.status().opens_in_flight > 0 {
+                    if self.session.server.status().opens_in_flight > 0 {
                         // An open will replace the document; these ops
                         // describe the incoming one. Apply them after it.
-                        self.held_remote_ops.push((actor, ops));
+                        self.session.held_remote_ops.push((actor, ops));
                     } else {
                         self.apply_remote_ops(actor, ops);
                     }
                 }
                 ServerMessage::PresencePeer { actor, state } => {
-                    self.peer_presence.insert(actor, state);
+                    self.session.peer_presence.insert(actor, state);
                 }
                 ServerMessage::PresenceGone { actor } => {
-                    self.peer_presence.remove(&actor);
+                    self.session.peer_presence.remove(&actor);
                 }
                 ServerMessage::Opened { token, path, bytes } => {
-                    if token != self.document_load_epoch {
+                    if token != self.session.document_load_epoch {
                         continue;
                     }
                     self.start_document_parse(token, path, bytes);
                 }
                 ServerMessage::OpenFailed { token, path, error } => {
-                    self.held_remote_ops.clear();
-                    if token != self.document_load_epoch {
+                    self.session.held_remote_ops.clear();
+                    if token != self.session.document_load_epoch {
                         continue;
                     }
                     app_log::error(format!(
@@ -389,10 +379,10 @@ impl PrintCadApp {
                     // Only call the document clean if nothing was edited
                     // while the write was in flight; otherwise those edits
                     // would be silently marked as saved.
-                    if at_seq == self.document.mutation_seq() {
-                        self.document.mark_clean();
+                    if at_seq == self.session.document.mutation_seq() {
+                        self.session.document.mark_clean();
                     }
-                    self.current_file = Some(path.clone());
+                    self.session.current_file = Some(path.clone());
                     self.touch_recent(&path);
                     app_log::info(format!("Saved document to {}", path.display()));
                 }
@@ -410,7 +400,8 @@ impl PrintCadApp {
             .and_then(|s| s.to_str())
             .unwrap_or("Untitled");
         let lowered = file_name.to_ascii_lowercase();
-        self.document
+        self.session
+            .document
             .set_name(document_name_from_file_name(file_name));
 
         let ext_lower = path
@@ -442,7 +433,7 @@ impl PrintCadApp {
                 let file = std::fs::File::create(path).with_context(|| {
                     format!("Failed to create document file {}", path.display())
                 })?;
-                serde_json::to_writer_pretty(file, &self.document)
+                serde_json::to_writer_pretty(file, &self.session.document)
                     .with_context(|| "Failed to serialize document")?;
             }
             _ => {
@@ -461,7 +452,7 @@ impl PrintCadApp {
                 // clone is cheap (payloads sit behind Arcs), a worker packs
                 // the archive, and the bytes go to the server when it
                 // finishes; the server owns the write itself.
-                if self.current_file.as_deref() != Some(path) {
+                if self.session.current_file.as_deref() != Some(path) {
                     // Save As gives the document a new identity — and a new
                     // daemon to own it.
                     self.switch_server_to(doc_server::socket_path_for(path));
@@ -471,9 +462,9 @@ impl PrintCadApp {
             }
         }
 
-        self.current_file = Some(path.to_path_buf());
+        self.session.current_file = Some(path.to_path_buf());
         self.touch_recent(path);
-        self.document.mark_clean();
+        self.session.document.mark_clean();
         app_log::info(format!("Saved document to {}", path.display()));
         Ok(())
     }
@@ -489,7 +480,7 @@ impl PrintCadApp {
             return;
         }
         for op in &ops {
-            self.document.apply_remote_op(op);
+            self.session.document.apply_remote_op(op);
             if let Op::ImportModel {
                 asset,
                 bytes,
@@ -506,13 +497,14 @@ impl PrintCadApp {
                     .join(format!("printcad_remote_{}.step", asset.id.simple()));
                 match std::fs::write(&temp, bytes.as_slice()) {
                     Ok(()) => {
-                        self.remote_import_routes.insert(
+                        self.session.remote_import_routes.insert(
                             temp.clone(),
                             crate::RemoteImportRoute {
                                 body_ids: bodies.iter().map(|b| b.id).collect(),
                                 asset_id: asset.id,
                             },
                         );
+                        self.import_owner.insert(temp.clone(), self.session.tab);
                         self.kernel_worker.request_step_import(temp, detail.clone());
                     }
                     Err(err) => {
@@ -531,7 +523,7 @@ impl PrintCadApp {
     pub(crate) fn publish_presence(&mut self) {
         // Centimetre quantization: enough to follow a hand, coarse enough
         // that breathing on the mouse does not broadcast.
-        let cursor_world = self.hovered_world_pos.map(|p| {
+        let cursor_world = self.session.hovered_world_pos.map(|p| {
             [
                 (p[0] * 0.1).round() * 10.0,
                 (p[1] * 0.1).round() * 10.0,
@@ -540,17 +532,18 @@ impl PrintCadApp {
         });
         let state = core_document::server::PresenceState {
             display_name: std::env::var("USER").unwrap_or_else(|_| "editor".to_string()),
-            selected_body: self.selected_body,
+            selected_body: self.session.selected_body,
             cursor_world,
         };
-        if self.last_sent_presence.as_ref() == Some(&state) {
+        if self.session.last_sent_presence.as_ref() == Some(&state) {
             return;
         }
-        self.server
+        self.session
+            .server
             .send(core_document::server::ClientMessage::Presence(
                 state.clone(),
             ));
-        self.last_sent_presence = Some(state);
+        self.session.last_sent_presence = Some(state);
     }
 
     /// Block until the server has durably handled every queued write.
@@ -573,36 +566,36 @@ impl PrintCadApp {
                 });
             });
         match spawned {
-            Ok(_) => self.document_open_rx = Some(rx),
+            Ok(_) => self.session.document_open_rx = Some(rx),
             Err(err) => app_log::error(format!("Failed to start the open: {err}")),
         }
     }
 
     /// Take the parsed document once the worker has it.
     pub(crate) fn drain_document_opens(&mut self) {
-        let Some(rx) = self.document_open_rx.as_ref() else {
+        let Some(rx) = self.session.document_open_rx.as_ref() else {
             return;
         };
         let job = match rx.try_recv() {
             Ok(job) => job,
             Err(std::sync::mpsc::TryRecvError::Empty) => return,
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.document_open_rx = None;
+                self.session.document_open_rx = None;
                 app_log::error("The open worker stopped without parsing the document");
                 return;
             }
         };
-        self.document_open_rx = None;
+        self.session.document_open_rx = None;
 
         // Another open may have started while this one was parsing; the
         // token says whether this document is still the one being waited on.
-        if job.token != self.document_load_epoch {
+        if job.token != self.session.document_load_epoch {
             return;
         }
         match job.result {
             Ok(document) => {
                 self.apply_opened_document(job.path, document);
-                for (actor, ops) in std::mem::take(&mut self.held_remote_ops) {
+                for (actor, ops) in std::mem::take(&mut self.session.held_remote_ops) {
                     self.apply_remote_ops(actor, ops);
                 }
             }
@@ -616,8 +609,8 @@ impl PrintCadApp {
     /// Pack the archive on a worker and hand the bytes to the server when it
     /// is done.
     fn start_document_save(&mut self, path: &Path, compression: core_document::Compression) {
-        let mut document = self.document.clone();
-        let at_seq = self.document.mutation_seq();
+        let mut document = self.session.document.clone();
+        let at_seq = self.session.document.mutation_seq();
         let path = path.to_path_buf();
         let progress = Arc::new(SaveProgress::default());
         let worker_progress = Arc::clone(&progress);
@@ -637,9 +630,9 @@ impl PrintCadApp {
             });
         match spawned {
             Ok(_) => {
-                app_log::info(format!("Saving `{}`…", self.document.name()));
-                self.document_save_rx = Some(rx);
-                self.save_progress = Some(progress);
+                app_log::info(format!("Saving `{}`…", self.session.document.name()));
+                self.session.document_save_rx = Some(rx);
+                self.session.save_progress = Some(progress);
             }
             Err(err) => app_log::error(format!("Failed to start the save: {err}")),
         }
@@ -647,19 +640,19 @@ impl PrintCadApp {
 
     /// Take the packed archive once the worker has it.
     pub(crate) fn drain_document_saves(&mut self) {
-        let Some(rx) = self.document_save_rx.as_ref() else {
+        let Some(rx) = self.session.document_save_rx.as_ref() else {
             return;
         };
         match rx.try_recv() {
             Ok(job) => {
-                self.document_save_rx = None;
-                self.save_progress = None;
+                self.session.document_save_rx = None;
+                self.session.save_progress = None;
                 self.send_packed_document(job);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.document_save_rx = None;
-                self.save_progress = None;
+                self.session.document_save_rx = None;
+                self.session.save_progress = None;
                 app_log::error("The save worker stopped without packing the document");
             }
         }
@@ -667,30 +660,37 @@ impl PrintCadApp {
 
     fn send_packed_document(&mut self, job: SaveJob) {
         match job.result {
-            Ok(bytes) => self
-                .server
-                .send(core_document::server::ClientMessage::SaveDocument {
-                    path: job.path,
-                    bytes,
-                    at_seq: job.at_seq,
-                }),
+            Ok(bytes) => {
+                self.session
+                    .server
+                    .send(core_document::server::ClientMessage::SaveDocument {
+                        path: job.path,
+                        bytes,
+                        at_seq: job.at_seq,
+                    })
+            }
             Err(err) => app_log::error(format!("Failed to serialize document: {err}")),
         }
+    }
+
+    /// Every tab's saves, before the process ends (CLAUDE.md invariant).
+    pub(crate) fn wait_for_all_document_saves(&mut self) {
+        self.for_each_tab(|app| app.wait_for_document_saves());
     }
 
     pub(crate) fn wait_for_document_saves(&mut self) {
         // A packing worker has bytes nobody has sent yet; abandoning it would
         // lose the save outright.
-        if let Some(rx) = self.document_save_rx.take() {
+        if let Some(rx) = self.session.document_save_rx.take() {
             app_log::info("Finishing document save before exit…");
-            self.save_progress = None;
+            self.session.save_progress = None;
             if let Ok(job) = rx.recv() {
                 self.send_packed_document(job);
             }
-        } else if self.server.status().busy() {
+        } else if self.session.server.status().busy() {
             app_log::info("Finishing document save before exit…");
         }
-        self.server.flush();
+        self.session.server.flush();
     }
 
     /// Drain a finished file-dialog thread's result, if any.
@@ -716,7 +716,8 @@ impl PrintCadApp {
             }
             FileDialogKind::ImportStep => {
                 if let Some(path) = result.path {
-                    self.step_import_pending = Some((path, self.last_step_import_detail.clone()));
+                    self.session.step_import_pending =
+                        Some((path, self.last_step_import_detail.clone()));
                 }
             }
         }
@@ -732,7 +733,7 @@ impl PrintCadApp {
         let (tx, rx) = mpsc::channel::<FileDialogResult>();
         self.file_dialog_rx = Some(rx);
 
-        let current_path = self.current_file.clone();
+        let current_path = self.session.current_file.clone();
         let recent_dir = self.recent.last_dir.clone();
 
         std::thread::spawn(move || {

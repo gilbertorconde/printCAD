@@ -1186,6 +1186,19 @@ impl Workbench for SketchWorkbench {
         true
     }
 
+    /// The whole bench is its editing state: the open sketch, the tool in
+    /// hand, the selection, the solver's last word.
+    fn suspend_session(&mut self) -> Option<Box<dyn std::any::Any + Send>> {
+        Some(Box::new(std::mem::take(self)))
+    }
+
+    fn resume_session(&mut self, state: Option<Box<dyn std::any::Any + Send>>) {
+        *self = state
+            .and_then(|s| s.downcast::<Self>().ok())
+            .map(|s| *s)
+            .unwrap_or_default();
+    }
+
     fn menu_items(&self, scope: &MenuScope, _document: &core_document::Document) -> Vec<MenuItem> {
         match scope {
             MenuScope::StartPage => vec![
