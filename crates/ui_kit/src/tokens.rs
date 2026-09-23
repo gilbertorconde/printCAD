@@ -34,6 +34,9 @@ pub const ACCENT_TEXT: Color32 = rgb(0x0B1520);
 pub const SUCCESS: Color32 = rgb(0x4FD08F);
 pub const WARNING: Color32 = rgb(0xE6A44F);
 pub const DANGER: Color32 = rgb(0xE86E6E);
+/// A mesh body in the tree: a hue no other state uses, so a mesh never
+/// reads as a solid body (accent), the tip (success) or an error (danger).
+pub const MESH: Color32 = rgb(0xC77DFF);
 pub const INFO: Color32 = ACCENT;
 
 // Sketch entity colors.

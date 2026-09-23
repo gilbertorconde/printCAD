@@ -84,6 +84,8 @@ struct TreeNode {
     /// Mesh bodies at or below this row not yet sent for conversion: what
     /// the row's "Convert to solid" entry acts on.
     convertible: Vec<BodyId>,
+    /// The row is a mesh body: its icon takes the mesh colour.
+    mesh: bool,
     /// Marks the body-tip feature / features past the tip (excluded from
     /// the build).
     is_tip: bool,
@@ -295,6 +297,7 @@ fn build_feature_node(
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        mesh: false,
         is_tip,
         after_tip,
         feature_menu: Some(node.id),
@@ -328,6 +331,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        mesh: false,
         is_tip: false,
         after_tip: false,
         feature_menu: None,
@@ -414,6 +418,7 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
                 .iter()
                 .any(|b| b.id == body && b.solid_requested);
             node.icon = "workbench-mesh";
+            node.mesh = true;
             node.detail = Some(if requested {
                 "Mesh, converting to a solid".to_string()
             } else {
@@ -498,6 +503,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        mesh: false,
         is_tip: false,
         after_tip: false,
         feature_menu: None,
@@ -870,7 +876,11 @@ fn draw_node(
         TreeItemId::ImportedObject(_) | TreeItemId::Feature(_) => Some(node.visible),
         _ => None,
     };
-    let icon_tint = if editing_here || node.accent_icon {
+    let icon_tint = if editing_here {
+        ACCENT
+    } else if node.mesh {
+        MESH
+    } else if node.accent_icon {
         ACCENT
     } else if node.error.is_some() {
         DANGER
@@ -1337,6 +1347,12 @@ mod tests {
             .find(|n| n.id == TreeItemId::Body(mesh))
             .map(|n| n.icon);
         assert_eq!(icon, Some("workbench-mesh"), "a mesh row has its own icon");
+        assert!(
+            tree.nodes()
+                .iter()
+                .any(|n| n.id == TreeItemId::Body(mesh) && n.mesh),
+            "and its own colour"
+        );
         assert_eq!(convertible, vec![mesh]);
 
         assert!(doc.request_mesh_solid(mesh));
