@@ -125,10 +125,20 @@ struct MeshFramePushConstants {
     ambient: [f32; 4],
     /// x = shininess exponent, y = specular intensity, zw unused (see `mesh.frag`).
     shading: [f32; 4],
+    /// The clipping plane, or [`NO_CLIP`].
+    clip_plane: [f32; 4],
 }
 
+/// A clip plane that keeps everything: its distance is 1 at every point.
+pub(crate) const NO_CLIP: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
 impl MeshFramePushConstants {
-    fn new(view_proj: [[f32; 4]; 4], camera_pos: [f32; 3], lights: &LightingData) -> Self {
+    fn new(
+        view_proj: [[f32; 4]; 4],
+        camera_pos: [f32; 3],
+        lights: &LightingData,
+        clip_plane: [f32; 4],
+    ) -> Self {
         Self {
             view_proj,
             camera_pos: [camera_pos[0], camera_pos[1], camera_pos[2], 1.0],
@@ -147,6 +157,7 @@ impl MeshFramePushConstants {
                 0.0,
                 0.0,
             ],
+            clip_plane,
         }
     }
 }
@@ -811,6 +822,7 @@ impl MeshRenderer {
         camera_pos: [f32; 3],
         lighting: &LightingData,
         draw_edges: bool,
+        clip_plane: Option<[f32; 4]>,
     ) -> Result<DrawStats, RenderError> {
         // Make sure every body has fresh GPU buffers in the cache.
         for body in bodies {
@@ -854,7 +866,12 @@ impl MeshRenderer {
             },
         };
 
-        let frame_pc = MeshFramePushConstants::new(view_proj, camera_pos, lighting);
+        let frame_pc = MeshFramePushConstants::new(
+            view_proj,
+            camera_pos,
+            lighting,
+            clip_plane.unwrap_or(NO_CLIP),
+        );
 
         // Cull whole bodies against the frustum before any pass; every pass
         // below shares the verdict. Conservative: an AABB that straddles a

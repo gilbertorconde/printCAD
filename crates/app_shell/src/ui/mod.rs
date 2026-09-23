@@ -199,6 +199,8 @@ impl UiLayer {
             dimensions,
             physical,
             field_of_view_deg,
+            section,
+            scene_bounds,
             screen_space_overlays,
             screen_space_marks,
             screen_space_labels,
@@ -532,9 +534,13 @@ impl UiLayer {
             view_toolbar::draw_view_toolbar(
                 ui.ctx(),
                 viewport_rect_logical,
-                projection,
-                field_of_view_deg,
-                settings.rendering.draw_style,
+                &view_toolbar::ViewToolbarState {
+                    projection,
+                    field_of_view_deg,
+                    draw_style: settings.rendering.draw_style,
+                    section,
+                    scene_bounds,
+                },
                 &mut commands,
             );
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);

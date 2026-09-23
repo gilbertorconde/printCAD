@@ -21,6 +21,8 @@ pub(crate) struct DocumentSession {
     pub tab: Uuid,
     pub document: Document,
     pub camera: CameraController,
+    /// The view toolbar's clipping plane, when on.
+    pub section: Option<crate::camera::section::SectionPlane>,
     pub active_tool: ActiveTool,
     pub selected_body: Option<Uuid>,
     pub hovered_body: Option<Uuid>,
@@ -155,6 +157,7 @@ impl DocumentSession {
             tab,
             document: Document::new("Untitled"),
             camera: CameraController::new(camera_settings, (1, 1)),
+            section: None,
             active_tool: ActiveTool::default(),
             selected_body: None,
             hovered_body: None,

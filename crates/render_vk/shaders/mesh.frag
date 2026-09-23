@@ -23,6 +23,7 @@ layout(push_constant) uniform PushConstants {
     Light light_fill;
     vec4 ambient;       // rgb = ambient color * intensity
     vec4 shading;       // x = specular exponent, y = specular intensity, zw unused
+    vec4 clip_plane;    // keeps dot(xyz, p) + w >= 0; a zero xyz clips nothing
     vec4 draw_color;    // xyz = final body color (already highlight-mixed); w = opacity
 } pc;
 
@@ -50,6 +51,14 @@ vec3 spec_one(Light light, vec3 normal, vec3 half_vec, float shininess) {
 }
 
 void main() {
+    // Under a clipping plane, the inside of a cut solid shows through the
+    // cut: its back faces draw as a flat, darker section so the cut reads
+    // as material rather than as a hollow shell.
+    if (!gl_FrontFacing && dot(pc.clip_plane.xyz, pc.clip_plane.xyz) > 0.0) {
+        vec3 base = pc.draw_color.w < 1.0 ? pc.draw_color.rgb : v_color * pc.draw_color.rgb;
+        out_color = vec4(base * 0.55, pc.draw_color.w);
+        return;
+    }
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) {
         n = -n;

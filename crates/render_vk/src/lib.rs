@@ -288,6 +288,9 @@ pub struct FrameSubmission {
     pub viewport_rect: Option<ViewportRect>,
     /// Whether face-boundary edges draw over the solids.
     pub draw_edges: bool,
+    /// A plane cutting the scene: `[a, b, c, d]` keeps the points where
+    /// `a·x + b·y + c·z + d >= 0`, in every pass including picking.
+    pub clip_plane: Option<[f32; 4]>,
 }
 
 impl Default for FrameSubmission {
@@ -300,6 +303,7 @@ impl Default for FrameSubmission {
             egui: None,
             viewport_rect: None,
             draw_edges: true,
+            clip_plane: None,
         }
     }
 }

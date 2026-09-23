@@ -71,6 +71,9 @@ pub struct UiFrameInputs<'a> {
     pub physical: Option<Physical>,
     /// The camera's field of view, in degrees, for the view toolbar.
     pub field_of_view_deg: f32,
+    /// The clipping plane, when on, and the scene box it moves across.
+    pub section: Option<crate::camera::section::SectionPlane>,
+    pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],

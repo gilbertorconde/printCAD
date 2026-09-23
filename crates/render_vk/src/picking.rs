@@ -4,8 +4,8 @@ use ash::vk;
 use uuid::Uuid;
 
 use crate::{
-    BodySubmission, MAX_FRAMES_IN_FLIGHT, PICK_FRAG_SPV, PICK_VERT_SPV, PickResult, RenderError,
-    ViewportRect, create_shader_module,
+    MAX_FRAMES_IN_FLIGHT, PICK_FRAG_SPV, PICK_VERT_SPV, PickResult, RenderError, ViewportRect,
+    create_shader_module,
     mesh::{MeshCache, MeshVertex},
     util::{create_buffer, create_image, create_image_view},
 };
@@ -43,6 +43,7 @@ pub(crate) struct PendingPick {
 struct PickPushConstants {
     view_proj: [[f32; 4]; 4],
     object_id: [u32; 4], // UUID encoded as 4 u32s
+    clip_plane: [f32; 4],
 }
 
 /// GPU-based picking renderer that renders object IDs to an offscreen buffer.
@@ -385,10 +386,12 @@ impl PickRenderer {
         device: &ash::Device,
         command_buffer: vk::CommandBuffer,
         cache: &MeshCache,
-        bodies: &[BodySubmission],
-        view_proj: [[f32; 4]; 4],
-        viewport_rect: Option<&ViewportRect>,
+        frame: &crate::FrameSubmission,
     ) -> Result<(), RenderError> {
+        let bodies = &frame.bodies;
+        let view_proj = frame.view_proj;
+        let viewport_rect = frame.viewport_rect.as_ref();
+        let clip_plane = frame.clip_plane;
         // Begin render pass
         let clear_values = [
             vk::ClearValue {
@@ -476,6 +479,7 @@ impl PickRenderer {
                 let push = PickPushConstants {
                     view_proj,
                     object_id: Self::uuid_to_u32s(body.id),
+                    clip_plane: clip_plane.unwrap_or(crate::mesh::NO_CLIP),
                 };
                 let push_bytes = std::slice::from_raw_parts(
                     &push as *const _ as *const u8,

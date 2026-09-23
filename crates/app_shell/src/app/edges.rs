@@ -103,6 +103,15 @@ impl PrintCadApp {
                 .collect();
             shows_among(&neighbours, depth, mm_per_px)
         };
+        // The clipping plane hides an edge as the renderer does: a segment
+        // with an end on its hidden side is not offered.
+        let section = self.session.section;
+        let project_kept = |p: [f32; 3]| {
+            section
+                .is_none_or(|plane| plane.keeps(Vec3::from_array(p)))
+                .then(|| project(p))
+                .flatten()
+        };
         let document = &self.session.document;
         let mut best: Option<(SegmentHit, Uuid, &TriMesh)> = None;
         for (body_id, geometry) in document.imported_geometries() {
@@ -120,9 +129,15 @@ impl PrintCadApp {
             {
                 continue;
             }
-            let Some(hit) =
-                nearest_segment(mesh, project, depth_of, cursor, reach, hidden_beyond, shows)
-            else {
+            let Some(hit) = nearest_segment(
+                mesh,
+                project_kept,
+                depth_of,
+                cursor,
+                reach,
+                hidden_beyond,
+                shows,
+            ) else {
                 continue;
             };
             if best

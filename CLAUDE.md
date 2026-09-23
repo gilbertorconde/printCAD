@@ -187,12 +187,16 @@ and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
-**Placeholders.** What remains unbuilt of the design: a clipping plane,
+**Placeholders.** What remains unbuilt of the design:
 document thumbnails, release notes, an export
 walkthrough and external geometry. Everything else
 the design shows is built. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
-geometry clipboard); the toolbar's Measure arms a two-click distance
+geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
+plane square to X, Y or Z) reaches the renderer as
+`FrameSubmission.clip_plane`: every scene shader and the pick pass write
+a clip distance, the cut's back faces draw as a flat darker section, and
+CPU edge picking skips what it hides; the toolbar's Measure arms a two-click distance
 readout drawn over the scene (Escape puts it away); the print bed is a
 line box from the Printing preferences. The design shows Part Design and Sketcher elements the app
 does not implement yet. They stay on screen as disabled controls with a

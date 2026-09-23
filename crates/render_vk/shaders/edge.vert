@@ -20,8 +20,14 @@ layout(push_constant) uniform PushConstants {
     Light light_fill;
     vec4 ambient;
     vec4 shading;
+    vec4 clip_plane;
     vec4 draw_color;
 } pc;
+
+out gl_PerVertex {
+    vec4 gl_Position;
+    float gl_ClipDistance[1];
+};
 
 void main() {
     vec4 clip = pc.view_proj * vec4(in_pos, 1.0);
@@ -31,4 +37,5 @@ void main() {
     const float EDGE_CLIP_Z_EPS = 4.5e-5;
     clip.z -= EDGE_CLIP_Z_EPS * clip.w;
     gl_Position = clip;
+    gl_ClipDistance[0] = dot(pc.clip_plane.xyz, in_pos) + pc.clip_plane.w;
 }

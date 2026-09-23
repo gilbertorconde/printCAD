@@ -639,6 +639,8 @@ impl PrintCadApp {
                         dimensions,
                         physical,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),
+                        section: self.session.section,
+                        scene_bounds: self.session.camera.scene_bounds(),
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,
@@ -1251,6 +1253,7 @@ impl PrintCadApp {
 
         self.frame_submission.bodies = all_meshes;
         self.frame_submission.draw_edges = draw_style == settings::DrawStyle::ShadedEdges;
+        self.frame_submission.clip_plane = self.session.section.map(|plane| plane.equation());
         self.frame_submission.view_proj = self.session.camera.view_projection();
         self.frame_submission.camera_pos = self.session.camera.position();
         self.frame_submission.lighting = lighting_data_from_settings(&self.user_settings);

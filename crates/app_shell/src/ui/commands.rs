@@ -134,6 +134,8 @@ pub enum UiCommand {
     Redo,
     ToggleLogPanel,
     SetProjection(ProjectionMode),
+    /// Turn the clipping plane on, move it, or (`None`) put it away.
+    SetSection(Option<crate::camera::section::SectionToggle>),
     /// Mark every part feature dirty so the next frame rebuilds them all.
     RecomputeAll,
     /// The task panel closed with this outcome.

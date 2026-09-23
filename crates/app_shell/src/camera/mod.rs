@@ -11,6 +11,7 @@ mod animate;
 mod auto_clip;
 mod math;
 mod ops;
+pub(crate) mod section;
 pub(crate) mod state;
 mod zoom_cursor;
 
@@ -590,6 +591,11 @@ impl CameraController {
             self.scene_aabb = bounds;
             self.state.clip_dirty = true;
         }
+    }
+
+    /// The box last given by [`Self::set_scene_bounds`].
+    pub fn scene_bounds(&self) -> Option<(Vec3, Vec3)> {
+        self.scene_aabb
     }
 
     pub fn clear_scene_zoom_constraint(&mut self) {

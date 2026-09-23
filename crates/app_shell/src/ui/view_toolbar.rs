@@ -1,5 +1,7 @@
 //! The floating view toolbar at the top of the viewport: fit, standard
-//! views, draw style, projection, and in perspective its field of view.
+//! views, draw style, the clipping plane, projection, and in perspective its
+//! field of view. With the clipping plane on, a second pill under it sets
+//! the plane's axis, position and side.
 
 use egui::{Align2, Area, Context, Order, Vec2};
 use settings::{DrawStyle, ProjectionMode};
@@ -8,6 +10,7 @@ use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
 
 use super::UiCommand;
 use crate::camera::FOV_RANGE_DEG;
+use crate::camera::section::{SectionAxis, SectionPlane, SectionToggle};
 use crate::orientation_cube::CameraSnapView;
 
 const BUTTON: f32 = 28.0;
@@ -43,25 +46,30 @@ fn toggled(icon: &'static str, label: &'static str, on: bool, command: UiCommand
     }
 }
 
-fn planned(icon: &'static str, label: &'static str, note: &'static str) -> Item {
-    Item::Button {
-        icon,
-        label,
-        on: false,
-        planned: Some(note),
-        command: None,
-    }
+/// The view state the toolbar shows.
+pub struct ViewToolbarState {
+    pub projection: ProjectionMode,
+    pub field_of_view_deg: f32,
+    pub draw_style: DrawStyle,
+    pub section: Option<SectionPlane>,
+    /// The box around what the scene draws: the clipping plane's range.
+    pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
 }
 
 /// Draws the pill and pushes the commands of any clicked button.
 pub fn draw_view_toolbar(
     ctx: &Context,
     viewport: egui::Rect,
-    projection: ProjectionMode,
-    field_of_view_deg: f32,
-    draw_style: DrawStyle,
+    state: &ViewToolbarState,
     commands: &mut Vec<UiCommand>,
 ) {
+    let ViewToolbarState {
+        projection,
+        field_of_view_deg,
+        draw_style,
+        section,
+        scene_bounds,
+    } = *state;
     let ortho = projection == ProjectionMode::Orthographic;
     let items = [
         button("fit-all", "Fit all", UiCommand::FitView),
@@ -121,11 +129,14 @@ pub fn draw_view_toolbar(
             draw_style == DrawStyle::Wireframe,
             UiCommand::SetDrawStyle(DrawStyle::Wireframe),
         ),
-        // PLANNED: a clipping plane through the scene.
-        planned(
+        toggled(
             "clipping-plane",
             "Clipping plane",
-            "cuts the view with a plane",
+            section.is_some(),
+            UiCommand::SetSection(match section {
+                Some(_) => None,
+                None => Some(SectionToggle::On),
+            }),
         ),
         Item::Sep,
         toggled(
@@ -204,6 +215,75 @@ pub fn draw_view_toolbar(
                                     settled: edit.settled,
                                 });
                             }
+                        }
+                    });
+                });
+        });
+    if let Some(plane) = section {
+        draw_section_bar(ctx, viewport, plane, scene_bounds, commands);
+    }
+}
+
+/// The clipping plane's own pill, under the toolbar: its axis, its
+/// position along it within the scene, and which side it keeps.
+fn draw_section_bar(
+    ctx: &Context,
+    viewport: egui::Rect,
+    plane: SectionPlane,
+    bounds: Option<(glam::Vec3, glam::Vec3)>,
+    commands: &mut Vec<UiCommand>,
+) {
+    let set = |plane| UiCommand::SetSection(Some(SectionToggle::Set(plane)));
+    Area::new(egui::Id::new("view_toolbar_section"))
+        .order(Order::Foreground)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(viewport.center_top() + Vec2::new(0.0, 10.0 + BUTTON + 14.0))
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(OVERLAY_CARD)
+                .stroke(egui::Stroke::new(1.0, BORDER))
+                .corner_radius(7)
+                .inner_margin(egui::Margin::symmetric(8, 3))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(ui_kit::widgets::text("Clip", FONT_SM, TEXT2));
+                        for axis in SectionAxis::ALL {
+                            if ui
+                                .selectable_label(plane.axis == axis, axis.label())
+                                .on_hover_text(format!("Cut square to the {} axis", axis.label()))
+                                .clicked()
+                                && plane.axis != axis
+                            {
+                                commands.push(set(plane.on_axis(axis, bounds)));
+                            }
+                        }
+                        vseparator(ui, 18.0);
+                        let (lo, hi) = plane.range(bounds);
+                        let mut offset = plane.offset;
+                        let edit = QtyField::mm(&mut offset)
+                            .range(f64::from(lo)..=f64::from(hi))
+                            .width(72.0)
+                            .show_settling(ui);
+                        if let Some(response) = &edit.response {
+                            response.clone().on_hover_text(format!(
+                                "Where the plane cuts along {}: drag across the scene",
+                                plane.axis.label()
+                            ));
+                        }
+                        if edit.changed {
+                            commands.push(set(SectionPlane { offset, ..plane }));
+                        }
+                        vseparator(ui, 18.0);
+                        if ui
+                            .button("Flip")
+                            .on_hover_text("Keep the other side of the plane")
+                            .clicked()
+                        {
+                            commands.push(set(SectionPlane {
+                                flipped: !plane.flipped,
+                                ..plane
+                            }));
                         }
                     });
                 });

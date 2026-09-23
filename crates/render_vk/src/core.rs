@@ -1147,14 +1147,7 @@ impl RendererCore {
         if let Some((x, y)) = self.pending_pick.take()
             && let Some(pick_renderer) = self.pick_renderer.as_mut()
         {
-            pick_renderer.record_commands(
-                &self.device,
-                command_buffer,
-                &self.mesh_cache,
-                &frame.bodies,
-                frame.view_proj,
-                frame.viewport_rect.as_ref(),
-            )?;
+            pick_renderer.record_commands(&self.device, command_buffer, &self.mesh_cache, frame)?;
 
             if let Some(window) = pick_renderer.record_readback(
                 &self.device,
@@ -1253,6 +1246,7 @@ impl RendererCore {
                     frame.camera_pos,
                     &frame.lighting,
                     frame.draw_edges,
+                    frame.clip_plane,
                 )?;
             }
 
@@ -1570,6 +1564,10 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
     }
     f32s(&mut h, &frame.camera_pos);
     frame.draw_edges.hash(&mut h);
+    match &frame.clip_plane {
+        Some(plane) => f32s(&mut h, plane),
+        None => 0u8.hash(&mut h),
+    }
     if let Some(r) = &frame.viewport_rect {
         (r.x, r.y, r.width, r.height).hash(&mut h);
     } else {
@@ -1709,9 +1707,18 @@ fn create_logical_device(
     // Without `wideLines`, Vulkan only allows pipeline `lineWidth` == 1.0, so
     // thicker face-edge `LINE_LIST` drawing is impossible. `fillModeNonSolid`
     // gates VK_POLYGON_MODE_LINE for the wireframe pipeline.
+    // `shaderClipDistance` backs the clipping plane: every scene shader
+    // writes a clip distance.
+    if supported.shader_clip_distance == vk::FALSE {
+        tracing::warn!(
+            target: "printcad.vulkan",
+            "the device lacks shaderClipDistance; the clipping plane cannot draw"
+        );
+    }
     let device_features = vk::PhysicalDeviceFeatures {
         wide_lines: supported.wide_lines,
         fill_mode_non_solid: supported.fill_mode_non_solid,
+        shader_clip_distance: supported.shader_clip_distance,
         ..vk::PhysicalDeviceFeatures::default()
     };
     let wide_lines_on = device_features.wide_lines != vk::FALSE;
