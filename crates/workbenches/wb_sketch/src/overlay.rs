@@ -1114,6 +1114,7 @@ pub fn build_overlays(
     selection_box: Option<(Vec2D, Vec2D)>,
     active_tool: Option<&str>,
     snap_tol: f32,
+    construction_on_top: bool,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered);
@@ -1128,9 +1129,13 @@ pub fn build_overlays(
         })
         .collect();
 
-    // Curves first, then points on top so vertices stay visible.
+    // Curves first, then points on top so vertices stay visible; within
+    // each, whichever of construction and normal geometry is on top draws
+    // last.
+    let mut order: Vec<&GeometryElement> = sketch.geometry.iter().collect();
+    order.sort_by_key(|g| sketch.is_construction(g.id()) == construction_on_top);
     for pass_points in [false, true] {
-        for geom in &sketch.geometry {
+        for geom in order.iter().copied() {
             if matches!(geom, GeometryElement::Point(_)) != pass_points {
                 continue;
             }

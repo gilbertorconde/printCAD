@@ -141,6 +141,9 @@ pub struct SketchOptions {
     pub auto_remove_redundant: bool,
     /// The solver runs after every edit; off, it runs on request.
     pub auto_update: bool,
+    /// Construction geometry draws over normal geometry while editing;
+    /// off, normal geometry draws over construction.
+    pub construction_on_top: bool,
 }
 
 impl Default for SketchOptions {
@@ -155,6 +158,7 @@ impl Default for SketchOptions {
             avoid_redundant_auto: true,
             auto_remove_redundant: false,
             auto_update: true,
+            construction_on_top: false,
         }
     }
 }
@@ -1743,7 +1747,6 @@ impl Workbench for SketchWorkbench {
                 Some("constraints.view"),
             )
             .icon("rendering-order")
-            .planned("draws construction or normal geometry on top")
             .row(2),
         );
     }
@@ -1823,6 +1826,15 @@ impl Workbench for SketchWorkbench {
                 }
                 "sketch.grid" => {
                     self.options.grid_on = !self.options.grid_on;
+                    return InputResult::consumed();
+                }
+                "sketch.rendering_order" => {
+                    self.options.construction_on_top = !self.options.construction_on_top;
+                    ctx.log_info(if self.options.construction_on_top {
+                        "Construction geometry draws on top"
+                    } else {
+                        "Normal geometry draws on top"
+                    });
                     return InputResult::consumed();
                 }
                 "sketch.validate" => return self.validate(ctx),
@@ -2033,6 +2045,7 @@ impl Workbench for SketchWorkbench {
             "sketch.snap" => !self.snap_off,
             "sketch.show_constraints" => self.options.constraints_hidden,
             "sketch.grid" => self.options.grid_on,
+            "sketch.rendering_order" => self.options.construction_on_top,
             _ => false,
         }
     }
@@ -2253,6 +2266,7 @@ impl SketchWorkbench {
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),
             self.last_tool.as_deref(),
             snap_tol,
+            self.options.construction_on_top,
         )
     }
 

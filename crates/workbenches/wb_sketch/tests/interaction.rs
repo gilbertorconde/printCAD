@@ -2468,3 +2468,65 @@ fn hidden_constraints_leave_no_glyph_on_the_viewport() {
     );
     assert!(h.marks().len() > geometry_marks, "glyphs come back");
 }
+
+/// Normal geometry draws over construction geometry until the rendering
+/// order switch puts construction on top.
+#[test]
+fn rendering_order_decides_which_geometry_draws_on_top() {
+    let mut h = Harness::new();
+    let id = h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(0.0, 5.0, "sketch.line");
+    h.click(10.0, 5.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    // The line drawn first becomes construction.
+    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+    let first_line = feature
+        .sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .unwrap();
+    feature.sketch.set_construction(first_line, true);
+    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+
+    // Where the dashed (construction) segments and the normal ones fall in
+    // the draw order: the later-drawn is on top.
+    let order = |h: &mut Harness| {
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.active_document_object = h.active_object;
+        let lines = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+        let last_dashed = lines.iter().rposition(|o| o.dash.is_some()).unwrap();
+        let first_dashed = lines.iter().position(|o| o.dash.is_some()).unwrap();
+        let normal: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.dash.is_none() && same_color(o.color, pal().geometry))
+            .map(|(i, _)| i)
+            .collect();
+        (
+            first_dashed,
+            last_dashed,
+            normal[0],
+            *normal.last().unwrap(),
+        )
+    };
+    let (_, last_dashed, first_normal, _) = order(&mut h);
+    assert!(
+        last_dashed < first_normal,
+        "normal geometry draws last, on top"
+    );
+
+    h.key(KeyCode::A, Some("sketch.rendering_order"));
+    let (first_dashed, _, _, last_normal) = order(&mut h);
+    assert!(
+        last_normal < first_dashed,
+        "construction draws last once switched"
+    );
+}
