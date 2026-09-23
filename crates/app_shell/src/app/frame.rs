@@ -521,6 +521,7 @@ impl PrintCadApp {
             app.drive_part_recompute();
             app.drive_shape_repairs();
         });
+        self.drive_measurement();
 
         if self.gfx.is_none() {
             return;
@@ -545,6 +546,7 @@ impl PrintCadApp {
         let planar_view_lock = self.sketch_editing_active();
         let hover_card = self.hover_card();
         let dimensions = self.selection_dimensions();
+        let physical = self.panel_physical();
         let host_params = ui::HostCtxParams {
             camera_position: self.session.camera.position(),
             camera_target: self.session.camera.target(),
@@ -613,6 +615,7 @@ impl PrintCadApp {
                         task,
                         hover_card,
                         dimensions,
+                        physical,
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,

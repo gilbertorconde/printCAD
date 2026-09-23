@@ -39,6 +39,12 @@ pub enum KernelRequest {
         op_features: Vec<Uuid>,
         detail: TessellationSettings,
     },
+    /// Measure a body's snapshot: volume, area, centre of mass.
+    Measure {
+        body_id: Uuid,
+        revision: u64,
+        brep_blob: Arc<Vec<u8>>,
+    },
     /// Run the kernel's repair on an imported body's snapshot.
     RepairShape {
         body_id: Uuid,
@@ -83,6 +89,11 @@ pub enum KernelResponse {
     RepairFailed {
         body_id: Uuid,
         error: String,
+    },
+    Measured {
+        body_id: Uuid,
+        revision: u64,
+        result: Result<kernel_api::PhysicalProperties, String>,
     },
 }
 
@@ -222,6 +233,22 @@ impl KernelWorker {
                 brep_blob,
                 face_colors,
                 detail,
+            })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit a measure of a body's snapshot. One response arrives per
+    /// request, tagged with the geometry revision it measured.
+    pub fn request_measure(&mut self, body_id: Uuid, revision: u64, brep_blob: Arc<Vec<u8>>) {
+        if self
+            .tx
+            .send(KernelRequest::Measure {
+                body_id,
+                revision,
+                brep_blob,
             })
             .is_ok()
         {
@@ -384,6 +411,17 @@ fn worker_loop(
                     },
                 }
             }
+            KernelRequest::Measure {
+                body_id,
+                revision,
+                brep_blob,
+            } => KernelResponse::Measured {
+                body_id,
+                revision,
+                result: kernel
+                    .physical_properties(&brep_blob)
+                    .map_err(|e| e.to_string()),
+            },
             KernelRequest::RepairShape {
                 body_id,
                 brep_blob,

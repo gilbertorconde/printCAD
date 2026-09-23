@@ -102,6 +102,15 @@ impl OgeomKernel {
         health::repair_blob(brep_blob, face_colors, detail)
     }
 
+    /// Volume, surface area and centre of mass of a body's snapshot.
+    pub fn physical_properties(
+        &mut self,
+        brep_blob: &[u8],
+    ) -> KernelResult<kernel_api::PhysicalProperties> {
+        self.initialize()?;
+        health::measure_blob(brep_blob)
+    }
+
     /// Read + tessellate in one synchronous shot (legacy path). Useful for
     /// tests comparing meshes against the deferred pipeline.
     pub fn import_step_full_mesh(

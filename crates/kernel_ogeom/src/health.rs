@@ -1,12 +1,15 @@
-//! The kernel's checker and repair, in the application's terms.
+//! The kernel's checker, repair and measures, in the application's terms.
 //!
 //! Every imported body is checked as it is read (a few milliseconds a
 //! body), so the tree can say which ones the kernel calls broken; a repair
 //! runs only when asked for, on the body's snapshot, and hands back the
 //! mended shape with the checker's verdict on it.
 
-use kernel_api::{KernelError, KernelResult, RepairResult, ShapeHealth, TessellationSettings};
-use ogeom::algo::{Diagnosis, Severity, check};
+use kernel_api::{
+    KernelError, KernelResult, PhysicalProperties, RepairResult, ShapeHealth, TessellationSettings,
+};
+use ogeom::algo::{Diagnosis, Severity, check, surface_properties, volume_properties};
+use ogeom::mesh::Deflection;
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
 
 use crate::tess;
@@ -97,5 +100,23 @@ pub fn repair_blob(
         bounds_mm,
         health: health_of(&report.after, true),
         mended,
+    })
+}
+
+/// Volume, area and centre of mass of a snapshot. A shape that encloses no
+/// volume still has an area and a centre; one the kernel cannot measure at
+/// all is an error.
+pub fn measure_blob(brep_blob: &[u8]) -> KernelResult<PhysicalProperties> {
+    crate::progress::context("Measuring");
+    let (model, root) = tess::read_blob(brep_blob)?;
+    let tol = tess::tolerances();
+    let area = surface_properties(&model, &root, Deflection::default(), tol)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("measuring the area failed: {e}")))?;
+    let volume = volume_properties(&model, &root, Deflection::default(), tol).ok();
+    let centre = volume.as_ref().map_or(area.centre, |v| v.centre);
+    Ok(PhysicalProperties {
+        volume_mm3: volume.map(|v| v.mass),
+        area_mm2: area.mass,
+        centre_mm: [centre.x, centre.y, centre.z],
     })
 }

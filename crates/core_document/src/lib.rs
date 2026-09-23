@@ -40,7 +40,7 @@ pub use runtime::{
     WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
-pub use units::{Unit, format_length_mm};
+pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 pub use workbench::{
     FeatureInfo, MarkKind, MenuItem, MenuScope, OvpRow, OvpWidget, PassiveGeometry, PropertyHints,
     ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome,

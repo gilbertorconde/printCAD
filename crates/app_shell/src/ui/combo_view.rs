@@ -45,6 +45,8 @@ pub struct ComboViewInputs<'a> {
     pub property_tab: &'a mut PropertyTab,
     /// The Label row's in-progress edit.
     pub rename_buffer: &'a mut Option<(TreeItemId, String)>,
+    /// The measure of the body the property panel shows.
+    pub physical: Option<&'a super::Physical>,
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -60,6 +62,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         filter,
         property_tab,
         rename_buffer,
+        physical,
     } = inputs;
     let mut result = ComboViewResult::default();
 
@@ -199,8 +202,11 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 ui,
                 document,
                 registry,
-                selected_id,
-                selected_detail.as_deref(),
+                property_panel::PanelSubject {
+                    selected: selected_id,
+                    detail: selected_detail.as_deref(),
+                    physical,
+                },
                 property_tab,
                 rename_buffer,
             );

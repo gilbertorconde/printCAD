@@ -67,6 +67,8 @@ pub struct UiFrameInputs<'a> {
     pub hover_card: Option<HoverCard>,
     /// "w × h × d" of the selected body, already formatted.
     pub dimensions: Option<String>,
+    /// Volume, area and centre of the body the property panel shows.
+    pub physical: Option<Physical>,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],
@@ -98,4 +100,14 @@ pub struct UiFrameInputs<'a> {
     /// How many buttons it has, so Preferences offers a row per button.
     pub nav_buttons: u32,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
+}
+
+/// A body's measure as the property panel shows it.
+#[derive(Debug, Clone)]
+pub enum Physical {
+    /// The kernel worker is measuring it.
+    Measuring,
+    Ready(kernel_api::PhysicalProperties),
+    /// The kernel could not measure it, and why.
+    Failed(String),
 }

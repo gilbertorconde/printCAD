@@ -241,7 +241,10 @@ shape". The repair is an op (`RequestBodyRepair`, a history barrier like an
 import, since the unrepaired shape would have to be re-derived from the
 file); the repaired geometry is derived from it by `drive_shape_repairs`
 (`recompute.rs`), so a peer's request and a reopened document repair the
-same way. **Announcement discipline:** `progress::
+same way. The property panel's Physical group (volume, surface area,
+centre of mass) is measured by the kernel worker on demand for the body the
+panel shows, once per geometry revision (`drive_measurement`), never during
+an import, where it would cost ~15 ms a body. **Announcement discipline:** `progress::
 context` marks a *phase* and resets the display — call it once per phase,
 never per body or per face. Anything emitted inside a loop is
 `progress::detail` (a kernel-style sub-stage: shown under a sequential

@@ -65,7 +65,8 @@ impl PrintCadApp {
                 KernelResponse::SolidBuilt { body_id, .. }
                 | KernelResponse::SolidFailed { body_id, .. }
                 | KernelResponse::ShapeRepaired { body_id, .. }
-                | KernelResponse::RepairFailed { body_id, .. } => self.tab_index_of_body(*body_id),
+                | KernelResponse::RepairFailed { body_id, .. }
+                | KernelResponse::Measured { body_id, .. } => self.tab_index_of_body(*body_id),
             };
             match target {
                 Some(index) => self.with_tab(index, |app| app.apply_kernel_response(response)),
@@ -159,6 +160,17 @@ impl PrintCadApp {
                     result,
                     elapsed,
                 } => self.apply_shape_repair(BodyId(body_id), result, elapsed),
+                KernelResponse::Measured {
+                    body_id,
+                    revision,
+                    result,
+                } => {
+                    let reading = match result {
+                        Ok(props) => crate::ui::Physical::Ready(props),
+                        Err(error) => crate::ui::Physical::Failed(error),
+                    };
+                    self.session.physical.insert(body_id, (revision, reading));
+                }
                 KernelResponse::RepairFailed { body_id, error } => {
                     self.session.repairs_in_flight.remove(&body_id);
                     let name = self.body_name(BodyId(body_id));

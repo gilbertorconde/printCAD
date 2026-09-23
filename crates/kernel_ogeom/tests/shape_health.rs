@@ -82,3 +82,31 @@ fn a_repair_clears_tolerance_containment_findings() {
         assert_eq!(result.health.broken, 0, "{}", result.health.describe());
     }
 }
+
+/// A box is a measure its own bounds can check.
+#[test]
+fn a_box_measures_its_volume_area_and_centre() {
+    let (mut kernel, model) = import("box_native.step");
+    let body = model.bodies.first().expect("one body");
+    let props = kernel
+        .physical_properties(&body.brep_blob)
+        .expect("a closed box measures");
+    let (lo, hi) = body.bounds_mm.expect("bounds");
+    let size: Vec<f64> = (0..3).map(|i| f64::from(hi[i] - lo[i])).collect();
+    let volume = size[0] * size[1] * size[2];
+    let area = 2.0 * (size[0] * size[1] + size[1] * size[2] + size[0] * size[2]);
+    let got = props.volume_mm3.expect("a closed box has a volume");
+    assert!(
+        (got - volume).abs() < 1e-3 * volume,
+        "volume {got} vs {volume}"
+    );
+    assert!(
+        (props.area_mm2 - area).abs() < 1e-3 * area,
+        "area {} vs {area}",
+        props.area_mm2
+    );
+    for i in 0..3 {
+        let mid = f64::from(lo[i] + hi[i]) / 2.0;
+        assert!((props.centre_mm[i] - mid).abs() < 1e-3, "centre axis {i}");
+    }
+}

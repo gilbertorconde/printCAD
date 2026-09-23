@@ -91,9 +91,38 @@ pub fn format_length_mm(value_mm: f32, unit: Unit, decimals: usize) -> String {
     format!("{:.*} {}", decimals, converted, unit.short_label())
 }
 
+/// Format an area given in square millimetres in `unit`², with its suffix.
+pub fn format_area_mm2(value_mm2: f64, unit: Unit, decimals: usize) -> String {
+    let per = f64::from(unit.mm_per_unit());
+    format!(
+        "{:.*} {}²",
+        decimals,
+        value_mm2 / (per * per),
+        unit.short_label()
+    )
+}
+
+/// Format a volume given in cubic millimetres in `unit`³, with its suffix.
+pub fn format_volume_mm3(value_mm3: f64, unit: Unit, decimals: usize) -> String {
+    let per = f64::from(unit.mm_per_unit());
+    format!(
+        "{:.*} {}³",
+        decimals,
+        value_mm3 / (per * per * per),
+        unit.short_label()
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn areas_and_volumes_scale_by_the_unit_squared_and_cubed() {
+        assert_eq!(format_area_mm2(100.0, Unit::Cm, 2), "1.00 cm²");
+        assert_eq!(format_volume_mm3(1_000.0, Unit::Cm, 3), "1.000 cm³");
+        assert_eq!(format_volume_mm3(4_000.0, Unit::Mm, 1), "4000.0 mm³");
+    }
 
     #[test]
     fn mm_per_unit_matches_known_constants() {

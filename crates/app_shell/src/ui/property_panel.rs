@@ -357,15 +357,27 @@ fn data_groups(
 
 /// Draw the panel body for `selected`. `detail` is the tree's spelled-out
 /// description of the hovered (else selected) item.
+/// What the panel shows: the item, its spelled-out description, and the
+/// measure of its body when it has one.
+pub struct PanelSubject<'a> {
+    pub selected: TreeItemId,
+    pub detail: Option<&'a str>,
+    pub physical: Option<&'a super::Physical>,
+}
+
 pub fn draw_property_panel(
     ui: &mut egui::Ui,
     document: &Document,
     registry: &core_document::DocumentService,
-    selected: TreeItemId,
-    detail: Option<&str>,
+    subject: PanelSubject<'_>,
     tab: &mut PropertyTab,
     rename_buffer: &mut Option<(TreeItemId, String)>,
 ) -> PropertyPanelResult {
+    let PanelSubject {
+        selected,
+        detail,
+        physical,
+    } = subject;
     let mut result = PropertyPanelResult::default();
     let selected_name = match selected {
         TreeItemId::DocumentRoot => document.name().to_string(),
@@ -443,7 +455,11 @@ pub fn draw_property_panel(
         .auto_shrink([false, false])
         .show(ui, |ui| match *tab {
             PropertyTab::Data => {
-                for (group, rows) in data_groups(document, registry, selected) {
+                let mut groups = data_groups(document, registry, selected);
+                if let Some(physical) = physical {
+                    groups.push(physical_group(physical, document.display_unit()));
+                }
+                for (group, rows) in groups {
                     group_header(ui, &group);
                     for row in rows {
                         let editable_label =
@@ -459,6 +475,37 @@ pub fn draw_property_panel(
             PropertyTab::View => view_rows(ui, document, selected, &mut result),
         });
     result
+}
+
+/// Volume, surface area and centre of mass (one row per axis, since a
+/// value column holds one length), in the display unit.
+fn physical_group(physical: &super::Physical, unit: Unit) -> (String, Vec<PropRow>) {
+    let rows = match physical {
+        super::Physical::Measuring => vec![PropRow::text("Measure", "Measuring…").dim(true)],
+        super::Physical::Failed(why) => {
+            vec![PropRow::text("Measure", format!("Could not measure: {why}")).dim(true)]
+        }
+        super::Physical::Ready(props) => {
+            let length = |mm: f64| core_document::format_length_mm(mm as f32, unit, 2);
+            vec![
+                PropRow::mono(
+                    "Volume",
+                    props.volume_mm3.map_or_else(
+                        || "encloses none".to_string(),
+                        |v| core_document::format_volume_mm3(v, unit, 2),
+                    ),
+                ),
+                PropRow::mono(
+                    "Surface area",
+                    core_document::format_area_mm2(props.area_mm2, unit, 2),
+                ),
+                PropRow::mono("Centre X", length(props.centre_mm[0])),
+                PropRow::mono("Centre Y", length(props.centre_mm[1])),
+                PropRow::mono("Centre Z", length(props.centre_mm[2])),
+            ]
+        }
+    };
+    ("Physical".to_string(), rows)
 }
 
 fn group_header(ui: &mut egui::Ui, title: &str) {
@@ -722,6 +769,35 @@ mod tests {
             "keys sort alphabetically"
         );
         assert_eq!(rows[0].value, "Counterbore");
+    }
+
+    #[test]
+    fn a_measure_reads_in_the_display_unit() {
+        let props = kernel_api::PhysicalProperties {
+            volume_mm3: Some(8_000.0),
+            area_mm2: 2_400.0,
+            centre_mm: [10.0, 20.0, 30.0],
+        };
+        let (title, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm);
+        assert_eq!(title, "Physical");
+        let value = |name: &str| {
+            rows.iter()
+                .find(|r| r.name == name)
+                .map(|r| r.value.clone())
+                .expect("row present")
+        };
+        assert_eq!(value("Volume"), "8.00 cm³");
+        assert_eq!(value("Surface area"), "24.00 cm²");
+        assert_eq!(value("Centre X"), "1.00 cm");
+        assert_eq!(value("Centre Y"), "2.00 cm");
+        assert_eq!(value("Centre Z"), "3.00 cm");
+
+        let open = kernel_api::PhysicalProperties {
+            volume_mm3: None,
+            ..props
+        };
+        let (_, rows) = physical_group(&crate::ui::Physical::Ready(open), Unit::Mm);
+        assert_eq!(rows[0].value, "encloses none");
     }
 
     #[test]

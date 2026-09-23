@@ -22,7 +22,7 @@ mod view_toolbar;
 
 pub use commands::{EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
-pub use inputs::{HoverCard, UiFrameInputs};
+pub use inputs::{HoverCard, Physical, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
 pub use tab_bar::TabInfo;
 
@@ -197,6 +197,7 @@ impl UiLayer {
             task,
             hover_card,
             dimensions,
+            physical,
             screen_space_overlays,
             screen_space_marks,
             screen_space_labels,
@@ -419,6 +420,7 @@ impl UiLayer {
                     filter: &mut self.tree_filter,
                     property_tab: &mut self.property_tab,
                     rename_buffer: &mut self.rename_buffer,
+                    physical: physical.as_ref(),
                 },
             );
             apply_writeback(&combo.writeback, &mut commands, &mut tree_selection);

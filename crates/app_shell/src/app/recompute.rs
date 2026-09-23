@@ -137,3 +137,56 @@ impl PrintCadApp {
             .unwrap_or_else(|| "body".to_string())
     }
 }
+
+impl PrintCadApp {
+    /// The body the property panel is showing: a body row, or an imported
+    /// part linked to one.
+    fn panel_body(&self) -> Option<core_document::BodyId> {
+        match self.session.tree_selection? {
+            crate::ui::TreeItemId::Body(body) => Some(body),
+            crate::ui::TreeItemId::ImportedObject(id) => {
+                self.session.document.body_of_imported_object(id)
+            }
+            _ => None,
+        }
+    }
+
+    /// Ask the kernel worker to measure the body the property panel shows,
+    /// once per revision of its geometry.
+    pub(crate) fn drive_measurement(&mut self) {
+        let Some(body) = self.panel_body() else {
+            return;
+        };
+        let Some(revision) = self
+            .session
+            .document
+            .imported_geometry(body)
+            .map(|g| g.revision)
+        else {
+            return;
+        };
+        if self
+            .session
+            .physical
+            .get(&body.0)
+            .is_some_and(|(measured, _)| *measured == revision)
+        {
+            return;
+        }
+        let Some(blob) = self.session.document.imported_brep_blob_arc(body) else {
+            return;
+        };
+        self.session
+            .physical
+            .insert(body.0, (revision, crate::ui::Physical::Measuring));
+        self.kernel_worker.request_measure(body.0, revision, blob);
+    }
+
+    /// The panel body's measure, when it is of the geometry on screen.
+    pub(crate) fn panel_physical(&self) -> Option<crate::ui::Physical> {
+        let body = self.panel_body()?;
+        let revision = self.session.document.imported_geometry(body)?.revision;
+        let (measured, reading) = self.session.physical.get(&body.0)?;
+        (*measured == revision).then(|| reading.clone())
+    }
+}

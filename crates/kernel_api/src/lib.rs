@@ -296,6 +296,20 @@ pub struct RepairResult {
     pub mended: Vec<String>,
 }
 
+/// A body's measure: its volume, surface area and centre of mass, exact
+/// where the kernel has a closed form for its faces.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct PhysicalProperties {
+    /// Enclosed volume in mm³; `None` when the shape encloses none (an open
+    /// shell, a sheet) or its shell is wound inside out.
+    pub volume_mm3: Option<f64>,
+    /// Total surface area in mm².
+    pub area_mm2: f64,
+    /// Centre of mass at uniform density, in mm; the centre of the surface
+    /// when there is no volume.
+    pub centre_mm: [f64; 3],
+}
+
 /// Node type emitted by STEP import hierarchy reconstruction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
