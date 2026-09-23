@@ -146,6 +146,12 @@ pub fn execute(
                 )
                 .map_err(&err)?
             }
+            SolidOp::Refine => {
+                let solid = base.ok_or_else(|| err("refine needs an existing solid".into()))?;
+                ogeom::heal::unify_same_domain(&mut model, &solid, ops::tol())
+                    .map(|(built, _)| built.shape)
+                    .map_err(|e| err(format!("refine failed: {e}")))?
+            }
             SolidOp::Thickness {
                 value,
                 open_faces,

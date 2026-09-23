@@ -238,6 +238,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
         let start_index = plan.ops.len();
         match &feature {
             PartFeature::Pad {
+                refine: _,
                 sketch,
                 length,
                 reversed,
@@ -271,6 +272,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::Pocket {
+                refine: _,
                 sketch,
                 depth,
                 reversed,
@@ -312,6 +314,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::Revolution {
+                refine: _,
                 sketch,
                 angle_deg,
                 axis,
@@ -320,6 +323,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 second_angle_deg,
             }
             | PartFeature::Groove {
+                refine: _,
                 sketch,
                 angle_deg,
                 axis,
@@ -338,6 +342,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 plan.ops.push(SolidOp::Sweep { profile, kind, op });
             }
             PartFeature::Loft {
+                refine: _,
                 sections,
                 ruled,
                 closed,
@@ -358,6 +363,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::Pipe {
+                refine: _,
                 profile,
                 spine,
                 frenet,
@@ -373,6 +379,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::Helix {
+                refine: _,
                 sketch,
                 axis,
                 mode,
@@ -402,6 +409,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::Primitive {
+                refine: _,
                 kind,
                 placement,
                 subtractive,
@@ -498,7 +506,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     inward: *inward,
                 });
             }
-            PartFeature::Mirrored { originals, plane } => {
+            PartFeature::Mirrored {
+                originals,
+                plane,
+                refine: _,
+            } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
                 let (point, normal) = plane.plane();
                 plan.ops.push(SolidOp::Transform {
@@ -507,6 +519,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::LinearPattern {
+                refine: _,
                 originals,
                 axis,
                 length,
@@ -524,6 +537,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 });
             }
             PartFeature::PolarPattern {
+                refine: _,
                 originals,
                 axis,
                 angle_deg,
@@ -538,7 +552,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     originals,
                 });
             }
-            PartFeature::MultiTransform { originals, steps } => {
+            PartFeature::MultiTransform {
+                originals,
+                steps,
+                refine: _,
+            } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
                 let transforms = multi_transforms(steps).map_err(&fail)?;
                 plan.ops.push(SolidOp::Transform {
@@ -558,7 +576,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     .to_vec();
                 plan.ops.push(SolidOp::Shape { brep });
             }
-            PartFeature::BodyBoolean { tool_body, kind } => {
+            PartFeature::BodyBoolean {
+                tool_body,
+                kind,
+                refine: _,
+            } => {
                 let tool_brep = document
                     .imported_brep_blob(*tool_body)
                     .ok_or_else(|| {
@@ -577,6 +599,12 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
             plan.op_features.push(feature_id);
         }
         feature_ops.insert(feature_id, indices);
+        // A refine follows the feature's own ops and is not one of them: a
+        // pattern re-running this feature's tool re-runs the tool alone.
+        if feature.refine() && plan.ops.len() > start_index {
+            plan.ops.push(SolidOp::Refine);
+            plan.op_features.push(feature_id);
+        }
     }
 
     Ok(plan)
@@ -1319,6 +1347,7 @@ mod tests {
 
     fn pad(sketch: FeatureId, length: f32) -> PartFeature {
         PartFeature::Pad {
+            refine: false,
             sketch,
             length,
             reversed: false,
@@ -1333,6 +1362,7 @@ mod tests {
 
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> PartFeature {
         PartFeature::Pocket {
+            refine: false,
             sketch,
             depth,
             reversed,
@@ -1502,6 +1532,53 @@ mod tests {
         assert!(rebuild_jobs(&mut doc).is_empty(), "nothing comes back");
     }
 
+    /// A refined feature is followed by a Refine op that answers to it,
+    /// and a pattern of that feature re-runs its tool, not the refine.
+    #[test]
+    fn a_refined_feature_is_followed_by_a_refine_its_pattern_skips() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let mut padded = pad(sketch_id, 7.0);
+        padded.set_refine(true);
+        let pad_id = doc
+            .add_feature_in_body(padded, "Pad".into(), Some(body))
+            .unwrap();
+        let plain = body_build_ops(&doc, body).unwrap();
+        assert!(matches!(plain.ops.last(), Some(SolidOp::Refine)));
+        assert_eq!(plain.op_features.last(), Some(&pad_id));
+        assert_eq!(plain.ops.len(), plain.op_features.len());
+
+        let pattern = PartFeature::LinearPattern {
+            refine: false,
+            originals: vec![pad_id],
+            axis: PatternAxis::X,
+            length: 30.0,
+            occurrences: 2,
+            spacing_mode: false,
+            reversed: false,
+        };
+        doc.add_feature_in_body(pattern, "Pattern".into(), Some(body))
+            .unwrap();
+        let patterned = body_build_ops(&doc, body).unwrap();
+        match patterned.ops.last() {
+            Some(SolidOp::Transform { originals, .. }) => {
+                assert_eq!(originals, &vec![0], "the pad's own op, not its refine");
+            }
+            other => panic!("the pattern ends the chain, not {other:?}"),
+        }
+
+        let mut unrefined = pad(sketch_id, 7.0);
+        unrefined.set_refine(false);
+        assert!(!unrefined.refine());
+        assert!(unrefined.can_refine());
+        assert!(
+            !PartFeature::Fillet {
+                radius: 1.0,
+                edges: crate::feature::EdgeSel::All
+            }
+            .can_refine()
+        );
+    }
+
     #[test]
     fn picked_edges_reach_the_kernel_as_probe_points() {
         let picks = vec![
@@ -1620,6 +1697,7 @@ mod tests {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         doc.add_feature_in_body(
             PartFeature::Revolution {
+                refine: false,
                 sketch: sketch_id,
                 angle_deg: 270.0,
                 axis: RevolveAxis::SketchY,
@@ -1633,6 +1711,7 @@ mod tests {
         .unwrap();
         doc.add_feature_in_body(
             PartFeature::Groove {
+                refine: false,
                 sketch: sketch_id,
                 angle_deg: 90.0,
                 axis: RevolveAxis::SketchX,
@@ -1710,6 +1789,7 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::Hole {
+                refine: false,
                 sketch: hole_sketch_id,
                 diameter: 3.0,
                 depth: 4.0,
@@ -1744,6 +1824,7 @@ mod tests {
     #[test]
     fn metric_hole_diameter_uses_the_table() {
         let feature = PartFeature::Hole {
+            refine: false,
             sketch: FeatureId::new(),
             diameter: 99.0,
             depth: 4.0,
@@ -1756,6 +1837,7 @@ mod tests {
         };
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
         let clearance = PartFeature::Hole {
+            refine: false,
             sketch: FeatureId::new(),
             diameter: 99.0,
             depth: 4.0,
@@ -1780,6 +1862,7 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::LinearPattern {
+                refine: false,
                 originals: vec![pad_id],
                 axis: PatternAxis::X,
                 length: 30.0,
@@ -1851,6 +1934,7 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             PartFeature::Mirrored {
+                refine: false,
                 originals: vec![ghost],
                 plane: MirrorPlane::YZ,
             },
@@ -1958,6 +2042,7 @@ mod tests {
         let pattern = doc
             .add_feature_in_body(
                 PartFeature::Mirrored {
+                    refine: false,
                     originals: vec![pad_a],
                     plane: MirrorPlane::YZ,
                 },

@@ -63,6 +63,7 @@ fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
 
 fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) -> PartFeature {
     PartFeature::Pad {
+        refine: false,
         sketch,
         length,
         reversed,
@@ -77,6 +78,7 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
 
 fn pocket_feature(sketch: FeatureId, depth: f32) -> PartFeature {
     PartFeature::Pocket {
+        refine: false,
         sketch,
         depth,
         reversed: false,
@@ -248,6 +250,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         wb_part::PartFeature::Revolution {
+            refine: false,
             sketch: sketch_id,
             angle_deg: 360.0,
             axis: wb_part::RevolveAxis::SketchY,
@@ -341,6 +344,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::Hole {
+            refine: false,
             sketch: holes_id,
             diameter: 4.0,
             depth: 3.0,
@@ -397,6 +401,7 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         PartFeature::LinearPattern {
+            refine: false,
             originals: vec![boss_pad],
             axis: wb_part::PatternAxis::X,
             length: 40.0,
@@ -518,4 +523,45 @@ fn a_clockwise_profile_pads_to_an_outward_facing_solid() {
             "clockwise={clockwise}: a face winds into the solid"
         );
     }
+}
+
+/// A second pad stacked flush on the first leaves each side split along
+/// the seam; with Refine on it the block comes out with its six faces.
+#[test]
+fn a_refined_pad_stacked_on_a_pad_leaves_six_faces() {
+    let faces_with = |refine: bool| {
+        let (mut doc, body, sketch_id) = setup(20.0, 20.0);
+        doc.add_feature_in_body(
+            pad_feature(sketch_id, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+        let raised = wb_sketch::sketch::SketchPlane {
+            origin: [0.0, 0.0, 10.0],
+            ..wb_sketch::sketch::SketchPlane::xy()
+        };
+        let upper = doc
+            .add_feature_in_body(
+                rect_sketch_on(raised, 20.0, 20.0),
+                "upper".into(),
+                Some(body),
+            )
+            .unwrap();
+        let mut second = pad_feature(upper, 10.0, false, false);
+        second.set_refine(refine);
+        doc.add_feature_in_body(second, "Pad001".into(), Some(body))
+            .unwrap();
+        let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+        let mesh = OgeomKernel::new()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap()
+            .mesh;
+        mesh.faces
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+    };
+    assert!(faces_with(false) > 6, "unrefined, the sides are split");
+    assert_eq!(faces_with(true), 6, "refined, one face per side");
 }

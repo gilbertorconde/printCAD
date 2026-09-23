@@ -37,6 +37,8 @@ pub struct PartOptions {
     pub update_while_editing: bool,
     /// A sketch a new feature consumes is hidden.
     pub hide_used_sketches: bool,
+    /// A new feature that fuses or cuts merges the coplanar faces it leaves.
+    pub refine_result: bool,
 }
 
 impl Default for PartOptions {
@@ -44,6 +46,7 @@ impl Default for PartOptions {
         Self {
             update_while_editing: true,
             hide_used_sketches: true,
+            refine_result: true,
         }
     }
 }
@@ -172,6 +175,7 @@ impl PartDesignWorkbench {
     ) -> Result<(PartFeature, &'static str), String> {
         let sketch = Self::selected_sketch(ctx);
         let primitive = |subtractive: bool| PartFeature::Primitive {
+            refine: false,
             kind: variant
                 .and_then(primitive_preset)
                 .unwrap_or_else(|| primitive_preset("box").expect("box preset")),
@@ -195,6 +199,7 @@ impl PartDesignWorkbench {
         let feature = match tool {
             "part.pad" => (
                 PartFeature::Pad {
+                    refine: false,
                     sketch: need_sketch(sketch)?,
                     length: 10.0,
                     reversed: false,
@@ -211,6 +216,7 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 (
                     PartFeature::Pocket {
+                        refine: false,
                         sketch: need_sketch(sketch)?,
                         depth: 5.0,
                         reversed: false,
@@ -226,6 +232,7 @@ impl PartDesignWorkbench {
             }
             "part.revolve" => (
                 PartFeature::Revolution {
+                    refine: false,
                     sketch: need_sketch(sketch)?,
                     angle_deg: 360.0,
                     axis: RevolveAxis::default(),
@@ -239,6 +246,7 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 (
                     PartFeature::Groove {
+                        refine: false,
                         sketch: need_sketch(sketch)?,
                         angle_deg: 360.0,
                         axis: RevolveAxis::default(),
@@ -256,6 +264,7 @@ impl PartDesignWorkbench {
                 }
                 (
                     PartFeature::Loft {
+                        refine: false,
                         sections: vec![need_sketch(sketch)?],
                         ruled: false,
                         closed: false,
@@ -271,6 +280,7 @@ impl PartDesignWorkbench {
                 }
                 (
                     PartFeature::Pipe {
+                        refine: false,
                         profile: need_sketch(sketch)?,
                         spine: need_sketch(sketch)?,
                         frenet: false,
@@ -286,6 +296,7 @@ impl PartDesignWorkbench {
                 }
                 (
                     PartFeature::Helix {
+                        refine: false,
                         sketch: need_sketch(sketch)?,
                         axis: RevolveAxis::default(),
                         mode: HelixMode::PitchHeight,
@@ -309,6 +320,7 @@ impl PartDesignWorkbench {
                 need_material(has_solid)?;
                 (
                     PartFeature::Hole {
+                        refine: false,
                         sketch: need_sketch(sketch)?,
                         diameter: 5.0,
                         depth: 10.0,
@@ -375,6 +387,7 @@ impl PartDesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     PartFeature::Mirrored {
+                        refine: false,
                         originals: original.into_iter().collect(),
                         plane: MirrorPlane::YZ,
                     },
@@ -387,6 +400,7 @@ impl PartDesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     PartFeature::LinearPattern {
+                        refine: false,
                         originals: original.into_iter().collect(),
                         axis: PatternAxis::X,
                         length: 30.0,
@@ -403,6 +417,7 @@ impl PartDesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     PartFeature::PolarPattern {
+                        refine: false,
                         originals: original.into_iter().collect(),
                         axis: PatternAxis::Z,
                         angle_deg: 360.0,
@@ -418,6 +433,7 @@ impl PartDesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     PartFeature::MultiTransform {
+                        refine: false,
                         originals: original.into_iter().collect(),
                         steps: Vec::new(),
                     },
@@ -443,6 +459,7 @@ impl PartDesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     PartFeature::MultiTransform {
+                        refine: false,
                         originals: original.into_iter().collect(),
                         steps: vec![TransformStep::Scale {
                             factor: 1.5,
@@ -464,6 +481,7 @@ impl PartDesignWorkbench {
                     .ok_or("Create a second body to combine with first")?;
                 (
                     PartFeature::BodyBoolean {
+                        refine: false,
                         tool_body: other,
                         kind: kernel_api::BoolKind::Fuse,
                     },
@@ -541,7 +559,7 @@ impl PartDesignWorkbench {
         } else {
             body
         };
-        let (feature, base) =
+        let (mut feature, base) =
             match Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body) {
                 Ok(pair) => pair,
                 Err(message) => {
@@ -549,6 +567,7 @@ impl PartDesignWorkbench {
                     return InputResult::consumed();
                 }
             };
+        feature.set_refine(self.options.refine_result);
         let name = Self::next_feature_name(ctx, base);
         let sketches = feature.sketches();
 
@@ -937,7 +956,7 @@ impl Workbench for PartDesignWorkbench {
         }
     }
 
-    /// The Part Design preferences page: every row is planned.
+    /// The Part Design preferences page.
     #[cfg(feature = "egui")]
     fn ui_settings(&mut self, ui: &mut egui::Ui, filter: &str) -> bool {
         use ui_kit::widgets::{PrefRow, pref_group};
@@ -945,14 +964,8 @@ impl Workbench for PartDesignWorkbench {
             ui,
             "Feature defaults",
             vec![
-                // PLANNED: merge coplanar faces after each boolean, once the
-                // kernel offers it.
-                PrefRow::planned_toggle(
-                    "Refine result",
-                    "merges coplanar faces after each boolean",
-                    true,
-                )
-                .hint("Merge coplanar faces after booleans"),
+                PrefRow::toggle("Refine result", &mut self.options.refine_result)
+                    .hint("New features merge the coplanar faces their fuse or cut leaves"),
                 PrefRow::toggle(
                     "Update view while editing",
                     &mut self.options.update_while_editing,
@@ -1192,6 +1205,7 @@ mod icon_coverage {
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),
             &PartFeature::Pad {
+                refine: false,
                 sketch: FeatureId(uuid::Uuid::new_v4()),
                 length: 10.0,
                 reversed: false,

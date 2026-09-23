@@ -859,6 +859,7 @@ pub fn feature_editor(
     let mut changed = false;
     match feature {
         PartFeature::Pad {
+            refine: _,
             sketch,
             length,
             reversed,
@@ -900,6 +901,7 @@ pub fn feature_editor(
             changed |= deg_drag(ui, taper_deg, "Taper:", -85.0..=85.0);
         }
         PartFeature::Pocket {
+            refine: _,
             sketch,
             depth,
             reversed,
@@ -946,6 +948,7 @@ pub fn feature_editor(
             changed |= deg_drag(ui, taper_deg, "Taper:", -85.0..=85.0);
         }
         PartFeature::Revolution {
+            refine: _,
             sketch,
             angle_deg,
             axis,
@@ -954,6 +957,7 @@ pub fn feature_editor(
             second_angle_deg,
         }
         | PartFeature::Groove {
+            refine: _,
             sketch,
             angle_deg,
             axis,
@@ -986,6 +990,7 @@ pub fn feature_editor(
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::Loft {
+            refine: _,
             sections,
             ruled,
             closed,
@@ -1027,6 +1032,7 @@ pub fn feature_editor(
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Pipe {
+            refine: _,
             profile,
             spine,
             frenet,
@@ -1060,6 +1066,7 @@ pub fn feature_editor(
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Helix {
+            refine: _,
             sketch,
             axis,
             mode,
@@ -1130,6 +1137,7 @@ pub fn feature_editor(
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Primitive {
+            refine: _,
             kind,
             placement,
             subtractive,
@@ -1139,6 +1147,7 @@ pub fn feature_editor(
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Hole {
+            refine: _,
             sketch,
             diameter,
             depth,
@@ -1216,6 +1225,7 @@ pub fn feature_editor(
                     format!(
                         "Drill Ø {:.2} mm",
                         crate::build::hole_diameter(&PartFeature::Hole {
+                            refine: false,
                             sketch: *sketch,
                             diameter: *diameter,
                             depth: *depth,
@@ -1350,11 +1360,16 @@ pub fn feature_editor(
             changed |= face_list_editor(ui, ctx, faces, "Faces to open:");
             changed |= check_row(ui, inward, "Inward").changed();
         }
-        PartFeature::Mirrored { originals, plane } => {
+        PartFeature::Mirrored {
+            originals,
+            plane,
+            refine: _,
+        } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= mirror_plane_editor(ui, ctx, plane, ("mirror_plane", feature_id));
         }
         PartFeature::LinearPattern {
+            refine: _,
             originals,
             axis,
             length,
@@ -1372,6 +1387,7 @@ pub fn feature_editor(
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::PolarPattern {
+            refine: _,
             originals,
             axis,
             angle_deg,
@@ -1384,7 +1400,11 @@ pub fn feature_editor(
             changed |= deg_drag(ui, angle_deg, "Angle:", 1.0..=360.0);
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
-        PartFeature::MultiTransform { originals, steps } => {
+        PartFeature::MultiTransform {
+            originals,
+            steps,
+            refine: _,
+        } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             label_cell(ui, "Steps (each applies to all previous results)");
             let mut remove = None;
@@ -1508,7 +1528,11 @@ pub fn feature_editor(
                     });
             });
         }
-        PartFeature::BodyBoolean { tool_body, kind } => {
+        PartFeature::BodyBoolean {
+            tool_body,
+            kind,
+            refine: _,
+        } => {
             let bodies: Vec<(BodyId, String)> = ctx
                 .document
                 .bodies()
@@ -1551,6 +1575,15 @@ pub fn feature_editor(
                     }
                 }
             });
+        }
+    }
+    // Every feature that fuses or cuts can merge the coplanar faces it
+    // leaves; new ones take the preference, this switch changes one.
+    if feature.can_refine() {
+        let mut refine = feature.refine();
+        if check_row(ui, &mut refine, "Refine result").changed() {
+            feature.set_refine(refine);
+            changed = true;
         }
     }
     changed

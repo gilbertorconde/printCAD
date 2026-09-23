@@ -92,6 +92,7 @@ pub fn open_sketch_scene(
     }
 
     let pad = PartFeature::Pad {
+        refine: false,
         sketch: sketch_id,
         length: 20.0,
         reversed: false,
@@ -123,6 +124,7 @@ pub fn open_sketch_scene(
         .add_feature_in_body(SketchFeature::new(top, plane), "sketch_1".into(), body)
         .map_err(|err| format!("face sketch: {err}"))?;
     let pocket = PartFeature::Pocket {
+        refine: false,
         sketch: top_id,
         depth: 5.0,
         reversed: false,

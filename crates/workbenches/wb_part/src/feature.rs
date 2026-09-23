@@ -360,6 +360,9 @@ pub enum PartFeature {
         up_to_face: Option<FacePick>,
         #[serde(default)]
         up_to_offset: f32,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Extrude the sketch profile and subtract it (cuts against the sketch
     /// normal by default: a face sketch's normal points out of the material).
@@ -379,6 +382,9 @@ pub enum PartFeature {
         up_to_face: Option<FacePick>,
         #[serde(default)]
         up_to_offset: f32,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Revolve the sketch profile about an in-plane axis, adding material.
     Revolution {
@@ -392,6 +398,9 @@ pub enum PartFeature {
         midplane: bool,
         #[serde(default)]
         second_angle_deg: Option<f32>,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Revolve the sketch profile and subtract it.
     Groove {
@@ -405,6 +414,9 @@ pub enum PartFeature {
         midplane: bool,
         #[serde(default)]
         second_angle_deg: Option<f32>,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Skin through two or more section sketches.
     Loft {
@@ -412,6 +424,9 @@ pub enum PartFeature {
         ruled: bool,
         closed: bool,
         subtractive: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Sweep a profile sketch along a spine sketch's path.
     Pipe {
@@ -419,6 +434,9 @@ pub enum PartFeature {
         spine: FeatureId,
         frenet: bool,
         subtractive: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Sweep the sketch profile along a helix about an in-plane axis.
     Helix {
@@ -432,12 +450,18 @@ pub enum PartFeature {
         cone_angle_deg: f32,
         reversed: bool,
         subtractive: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Parametric primitive fused into (or cut from) the body.
     Primitive {
         kind: kernel_api::PrimitiveKind,
         placement: kernel_api::Placement,
         subtractive: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Standards-aware cylindrical cuts at every circle center of a sketch.
     Hole {
@@ -457,6 +481,9 @@ pub enum PartFeature {
         fit: HoleFit,
         #[serde(default)]
         reversed: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     Fillet {
         radius: f32,
@@ -492,6 +519,9 @@ pub enum PartFeature {
     Mirrored {
         originals: Vec<FeatureId>,
         plane: MirrorPlane,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     LinearPattern {
         originals: Vec<FeatureId>,
@@ -503,6 +533,9 @@ pub enum PartFeature {
         spacing_mode: bool,
         #[serde(default)]
         reversed: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     PolarPattern {
         originals: Vec<FeatureId>,
@@ -511,15 +544,24 @@ pub enum PartFeature {
         occurrences: u32,
         #[serde(default)]
         reversed: bool,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     MultiTransform {
         originals: Vec<FeatureId>,
         steps: Vec<TransformStep>,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
     /// Boolean against another body's built solid.
     BodyBoolean {
         tool_body: BodyId,
         kind: kernel_api::BoolKind,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
     },
 }
 
@@ -666,6 +708,57 @@ impl PartFeature {
             PartFeature::BodyBoolean { .. } => "boolean",
             PartFeature::Clone { .. } => "clone",
         }
+    }
+
+    /// Whether the feature merges the coplanar faces its fuse or cut
+    /// leaves behind.
+    pub fn refine(&self) -> bool {
+        match self {
+            PartFeature::Pad { refine, .. }
+            | PartFeature::Pocket { refine, .. }
+            | PartFeature::Revolution { refine, .. }
+            | PartFeature::Groove { refine, .. }
+            | PartFeature::Loft { refine, .. }
+            | PartFeature::Pipe { refine, .. }
+            | PartFeature::Helix { refine, .. }
+            | PartFeature::Primitive { refine, .. }
+            | PartFeature::Hole { refine, .. }
+            | PartFeature::Mirrored { refine, .. }
+            | PartFeature::LinearPattern { refine, .. }
+            | PartFeature::PolarPattern { refine, .. }
+            | PartFeature::MultiTransform { refine, .. }
+            | PartFeature::BodyBoolean { refine, .. } => *refine,
+            _ => false,
+        }
+    }
+
+    /// Set whether the feature refines its result. A feature that neither
+    /// fuses nor cuts has nothing to refine and is left as it is.
+    pub fn set_refine(&mut self, on: bool) {
+        match self {
+            PartFeature::Pad { refine, .. }
+            | PartFeature::Pocket { refine, .. }
+            | PartFeature::Revolution { refine, .. }
+            | PartFeature::Groove { refine, .. }
+            | PartFeature::Loft { refine, .. }
+            | PartFeature::Pipe { refine, .. }
+            | PartFeature::Helix { refine, .. }
+            | PartFeature::Primitive { refine, .. }
+            | PartFeature::Hole { refine, .. }
+            | PartFeature::Mirrored { refine, .. }
+            | PartFeature::LinearPattern { refine, .. }
+            | PartFeature::PolarPattern { refine, .. }
+            | PartFeature::MultiTransform { refine, .. }
+            | PartFeature::BodyBoolean { refine, .. } => *refine = on,
+            _ => {}
+        }
+    }
+
+    /// Whether the feature has a refine switch at all.
+    pub fn can_refine(&self) -> bool {
+        let mut probe = self.clone();
+        probe.set_refine(true);
+        probe.refine()
     }
 
     /// True when this feature removes material (must not be a body's first).
@@ -877,6 +970,7 @@ mod tests {
         let a = FeatureId::new();
         let b = FeatureId::new();
         let pipe = PartFeature::Pipe {
+            refine: false,
             profile: a,
             spine: b,
             frenet: false,
@@ -885,6 +979,7 @@ mod tests {
         assert_eq!(pipe.dependencies(), vec![a, b]);
 
         let pattern = PartFeature::LinearPattern {
+            refine: false,
             originals: vec![a],
             axis: PatternAxis::X,
             length: 10.0,

@@ -111,7 +111,10 @@ cargo fmt --all                   # CI enforces --check
   greps for the same.
 - `workbenches/wb_part` — Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
-  (`feature.rs`), per-feature panel editors (`editors.rs`), the task
+  (`feature.rs`; every one that fuses or cuts carries `refine`, which the
+  build follows with a `SolidOp::Refine` merging coplanar faces; the
+  Preferences switch is only the default for new features, so geometry
+  never depends on who rebuilds it), per-feature panel editors (`editors.rs`), the task
   lifecycle (`task.rs`: snapshot on open, live edits, Cancel restores or
   deletes a tool-created feature); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
@@ -173,7 +176,7 @@ walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
 **Placeholders.** What remains unbuilt of the design: a local coordinate
-system datum, "refine result" (a kernel capability), a clipping plane,
+system datum, a clipping plane,
 document thumbnails, release notes, STL/3MF import, an export
 walkthrough, merging sketches, ellipse by three points and elliptical
 arcs, external geometry, carbon copy and a polyline tool. Everything else

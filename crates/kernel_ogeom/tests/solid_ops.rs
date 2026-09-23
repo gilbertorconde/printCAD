@@ -1144,3 +1144,42 @@ fn fillets_of_three_edges_round_their_corner() {
         );
     }
 }
+
+/// A pad on a pad of the same footprint fuses into one block whose sides
+/// are each split along the seam; refining merges every split side back
+/// into one face, leaving the six a block has.
+#[test]
+fn refining_merges_the_faces_a_flush_fuse_splits() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let stacked = || {
+        let mut upper = blind_pad(vec![rect_wire(0.0, 0.0, 20.0, 20.0)], 10.0, BooleanOp::Fuse);
+        if let SolidOp::Sweep { profile, .. } = &mut upper {
+            profile.plane.origin = [0.0, 0.0, 10.0];
+        }
+        vec![
+            blind_pad(
+                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                10.0,
+                BooleanOp::NewSolid,
+            ),
+            upper,
+        ]
+    };
+    let split = kernel
+        .execute_solid_chain(&stacked(), &detail)
+        .expect("stacked pads fuse");
+    assert!(
+        face_count(&split.mesh) > 6,
+        "the fuse leaves each side in two pieces"
+    );
+
+    let mut refined_ops = stacked();
+    refined_ops.push(SolidOp::Refine);
+    let refined = kernel
+        .execute_solid_chain(&refined_ops, &detail)
+        .expect("refine runs");
+    assert_eq!(face_count(&refined.mesh), 6, "one face per side");
+    let (min, max) = refined.bounds_mm.expect("bounds");
+    assert_close(max[2] - min[2], 20.0, 1e-3, "the block keeps its height");
+}

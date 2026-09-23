@@ -729,6 +729,9 @@ pub enum SolidOp {
         pull_dir: Option<[f64; 3]>,
         faces: Vec<[f64; 3]>,
     },
+    /// Merge adjacent faces of the solid that lie on one plane — the split
+    /// a fuse or cut leaves where two pieces meet flush.
+    Refine,
     /// Hollow the solid, removing the faces sampled by `open_faces`.
     Thickness {
         value: f64,
