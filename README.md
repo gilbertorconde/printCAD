@@ -15,6 +15,8 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
   more, with geometric and dimensional constraints solved live.
 - **Part Design:** pad, pocket, revolve, loft, pipe, helix, holes, fillets,
   chamfers, patterns and booleans, all editable in a feature tree.
+- **Assembly:** place bodies against each other with joints: mate two flat
+  faces, or line up two round ones on one axis.
 - **Import:** STEP and IGES as solids; STL, OBJ and 3MF as meshes that can
   be converted to solids.
 - **Export:** STEP, STL and 3MF.
@@ -111,6 +113,7 @@ Preferences (Ctrl+,).
 | `axes` | Axis presets, so no code assumes which way is up |
 | `workbenches/wb_sketch` | Sketcher |
 | `workbenches/wb_part` | Part Design |
+| `workbenches/wb_assembly` | Assembly: joints between bodies |
 
 More detail in [docs](docs/):
 
@@ -123,8 +126,8 @@ More detail in [docs](docs/):
 
 ## Roadmap
 
-- Assembly constraints between bodies
 - Sending a part straight to a slicer
+- More joint kinds: angles, gears, limits
 
 ## License
 

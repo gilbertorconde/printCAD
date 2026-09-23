@@ -48,9 +48,16 @@ What is built, by area. The plan for what comes next is in
 - Datum points, lines, planes and local coordinate systems.
 - Volume, surface area and centre of mass of a body.
 
+## Assembly
+
+- Bodies have a placement; their own geometry stays in their own frame.
+- Joints between bodies: mate two flat faces (with a gap, or facing the same
+  way) and align two round faces on one axis, solved into placements.
+- Move a body by numbers.
+
 ## Not built yet
 
 - Sketch external geometry, waiting on the kernel
   ([ogeom-rs#52](https://github.com/gilbertorconde/ogeom-rs/issues/52)).
-- Assembly constraints.
+- More joint kinds: angles, gears, limits.
 - Sending a part straight to a slicer.

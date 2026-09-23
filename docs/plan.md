@@ -9,7 +9,7 @@ written in Rust.
 | --- | --- | --- |
 | Application | `app_shell` | Window, frame loop, input, UI, tabs |
 | Design system | `ui_kit` | Colours, sizes, widgets, icons, fonts |
-| Workbenches | `wb_sketch`, `wb_part` | Tools and features, behind the `Workbench` trait |
+| Workbenches | `wb_sketch`, `wb_part`, `wb_assembly` | Tools and features, behind the `Workbench` trait |
 | Document | `core_document` | Feature tree, bodies, undo, `.prtcad` files |
 | Document server | `doc_server` | Owns the file on disk, one process per document |
 | Geometry interface | `kernel_api` | Meshes, profiles and solid operations as plain data |
@@ -49,14 +49,15 @@ written in Rust.
 
 ## Roadmap
 
-Built: the sketcher, Part Design, STEP, IGES and mesh import, STEP, STL and
-3MF export, tabs, the document server, undo, and 6-DoF navigation.
+Built: the sketcher, Part Design, assembly joints between bodies, STEP,
+IGES and mesh import, STEP, STL and 3MF export, tabs, the document server,
+undo, configurable keyboard shortcuts, and 6-DoF navigation.
 
 Next:
 
 - Sketch external geometry, which waits on the kernel's projection of an
   edge onto a plane
-- Assembly constraints between bodies
+- More joint kinds: an angle between faces, gears, limits on a slide
 - Sending a part straight to a slicer
 - Stable face and edge identity across rebuilds, so references do not have
   to be matched by geometry

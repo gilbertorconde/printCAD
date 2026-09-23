@@ -1,0 +1,20 @@
+[package]
+name = "wb_assembly"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[features]
+default = ["egui"]
+egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
+
+[dependencies]
+core_document = { path = "../../core_document" }
+kernel_api = { path = "../../kernel_api" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+glam.workspace = true
+uuid = { workspace = true }
+egui = { workspace = true, optional = true }
+ui_kit = { path = "../../ui_kit", optional = true }

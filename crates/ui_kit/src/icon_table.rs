@@ -229,6 +229,8 @@ pub const ICONS: &[(&str, &str)] = &[
     ("hexagon", include_str!("../icons/hexagon.svg")),
     ("hole", include_str!("../icons/hole.svg")),
     ("info", include_str!("../icons/info.svg")),
+    ("joint-align", include_str!("../icons/joint-align.svg")),
+    ("joint-mate", include_str!("../icons/joint-mate.svg")),
     ("line", include_str!("../icons/line.svg")),
     (
         "linear-pattern",
@@ -478,6 +480,10 @@ pub const ICONS: &[(&str, &str)] = &[
     ("view-right", include_str!("../icons/view-right.svg")),
     ("view-top", include_str!("../icons/view-top.svg")),
     ("warning", include_str!("../icons/warning.svg")),
+    (
+        "workbench-assembly",
+        include_str!("../icons/workbench-assembly.svg"),
+    ),
     (
         "workbench-mesh",
         include_str!("../icons/workbench-mesh.svg"),

@@ -130,6 +130,15 @@ cargo fmt --all                   # CI enforces --check
   deletes a tool-created feature); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution).
+- `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
+  planar anchors with offset/flip, Align of two axes; anchors kept in each
+  body's own frame), the solver (`solve.rs`: bodies in dependency order,
+  each by damped least squares in double precision from where it sits,
+  after turning its first joint's directions into agreement; rings and
+  conflicting joints are reported), and task panels for picking,
+  joint settings and moving a body by numbers. Solves run inside the
+  gesture that made or edited a joint and record ordinary
+  `SetBodyPlacement` ops.
 - `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,

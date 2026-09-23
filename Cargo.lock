@@ -3703,6 +3703,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "wb_assembly"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "egui",
+ "glam 0.33.7",
+ "kernel_api",
+ "serde",
+ "serde_json",
+ "ui_kit",
+ "uuid",
+]
+
+[[package]]
 name = "wb_part"
 version = "0.1.0"
 dependencies = [
@@ -4034,6 +4048,7 @@ name = "workbenches"
 version = "0.1.0"
 dependencies = [
  "core_document",
+ "wb_assembly",
  "wb_part",
  "wb_sketch",
 ]

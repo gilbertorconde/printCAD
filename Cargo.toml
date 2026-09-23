@@ -8,6 +8,7 @@ members = [
   "crates/render_vk",
   "crates/workbenches",
   "crates/workbenches/fixtures",
+  "crates/workbenches/wb_assembly",
 "crates/settings",
 "crates/axes",
   "crates/ui_kit",

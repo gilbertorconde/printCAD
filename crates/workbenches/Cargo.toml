@@ -9,5 +9,6 @@ rust-version.workspace = true
 core_document = { path = "../core_document" }
 wb_sketch = { path = "wb_sketch" }
 wb_part = { path = "wb_part" }
+wb_assembly = { path = "wb_assembly" }
 
 

@@ -32,7 +32,13 @@ const SKIP = new Set([
 ]);
 // Icons authored in this repo (not part of the source set) that the table
 // must keep.
-const LOCAL = new Set(["select", "expression"]);
+const LOCAL = new Set([
+  "select",
+  "expression",
+  "workbench-assembly",
+  "joint-mate",
+  "joint-align",
+]);
 
 // The source set also carries a handful of 200x200 illustrations of the
 // movements a 6-DoF mouse makes. They are drawings rather than icons: they

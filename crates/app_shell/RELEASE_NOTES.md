@@ -25,6 +25,12 @@ version first.
 - Datum points, lines and planes, and local coordinate systems whose planes carry sketches.
 - A body's volume, surface area and centre of mass.
 
+### Assembly
+- Bodies can be moved and turned, and keep their own geometry as it was made.
+- Joints place one body against another: mate two flat faces, with a gap or facing the same way, or line up a pin with a hole on one axis.
+- Joints solve when made or edited and when a body moves, and undo as one step with the moves they cause.
+- Export writes each body where it sits.
+
 ### Import
 - STEP and IGES import as bodies, assemblies placed as their files say.
 - STL, OBJ and 3MF import as meshes, and a mesh converts to a solid on request.
