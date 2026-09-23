@@ -284,7 +284,10 @@ impl PickRenderer {
             .rasterizer_discard_enable(false)
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.0)
-            .cull_mode(vk::CullModeFlags::BACK)
+            // Both sides rasterize, as in the scene pass: a face wound
+            // inward is drawn all the same, so it must pick all the same.
+            // The depth test keeps the nearest surface either way.
+            .cull_mode(vk::CullModeFlags::NONE)
             .front_face(vk::FrontFace::COUNTER_CLOCKWISE)
             .depth_bias_enable(false);
 
