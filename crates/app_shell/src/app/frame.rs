@@ -164,10 +164,17 @@ fn device_button_command(
     }
 }
 
+/// The paint of whatever the cursor is over: the hovered edge or face, and
+/// the measure tool's marks.
+const HOVER_PAINT: [f32; 3] = [1.0, 0.75, 0.2];
+
 /// Frames after geometry arrives at which the bench click hook requests its
-/// pick (the camera has settled by then) and then clicks.
+/// pick (the camera has settled by then), clicks, activates the bench tool
+/// named by `PRINTCAD_BENCH_TOOL`, and reports what the rebuild made of it.
 const BENCH_CLICK_PICK_FRAME: u32 = 180;
 const BENCH_CLICK_FRAME: u32 = 191;
+const BENCH_TOOL_FRAME: u32 = 192;
+const BENCH_REPORT_FRAME: u32 = 300;
 
 impl PrintCadApp {
     /// Body of `about_to_wait`: pace the frame, drain worker channels,
@@ -402,9 +409,12 @@ impl PrintCadApp {
         // click at that fraction of the viewport once the first body has
         // geometry, and logs what the click saw and what it selected. The
         // camera snaps to a corner view first and settles before the pick is
-        // requested, then the readback gets a few frames to land.
+        // requested, then the readback gets a few frames to land. With
+        // `PRINTCAD_BENCH_TOOL=<tool id>` the tool then runs on that
+        // selection, as a toolbar click would, and every feature's error is
+        // logged once the rebuild has had its turn.
         if let Ok(spec) = std::env::var("PRINTCAD_BENCH_CLICK")
-            && self.bench_click_frames <= BENCH_CLICK_FRAME
+            && self.bench_click_frames <= BENCH_REPORT_FRAME
             && self
                 .session
                 .document
@@ -436,11 +446,12 @@ impl PrintCadApp {
                 BENCH_CLICK_FRAME => {
                     tracing::info!(
                         target: "printcad.frame",
-                        "bench click at ({cx}, {cy}) of {:?}: body {:?} at {:?}, edge {:?}",
+                        "bench click at ({cx}, {cy}) of {:?}: body {:?} at {:?}, edge {:?}, face {:?}",
                         (vp.2, vp.3),
                         self.session.hovered_body,
                         self.session.hovered_world_pos,
                         self.session.hovered_edge,
+                        self.session.hovered_face.as_ref().map(|f| f.face),
                     );
                     self.toggle_body_under_cursor_selection();
                     tracing::info!(
@@ -451,6 +462,24 @@ impl PrintCadApp {
                         self.session.face_highlight.is_some(),
                         self.session.selected_edges.len(),
                     );
+                }
+                BENCH_TOOL_FRAME => {
+                    if let Ok(tool) = std::env::var("PRINTCAD_BENCH_TOOL") {
+                        tracing::info!(target: "printcad.frame", "bench tool {tool}");
+                        self.session.active_tool.active_ids.insert(tool);
+                    }
+                }
+                BENCH_REPORT_FRAME => {
+                    for (id, node) in self.session.document.feature_tree().all_nodes() {
+                        tracing::info!(
+                            target: "printcad.frame",
+                            "bench feature {:?} `{}` dirty {} error {:?}",
+                            id,
+                            node.name,
+                            node.dirty,
+                            node.error,
+                        );
+                    }
                 }
                 _ => {}
             }
@@ -714,6 +743,9 @@ impl PrintCadApp {
             self.session.hovered_edge = hovered_edge;
             self.redraw_needed = true;
         }
+        if self.refresh_hovered_face() {
+            self.redraw_needed = true;
+        }
 
         // Apply this frame's UI actions now that the renderer borrow is over.
         let mut commands = commands;
@@ -805,7 +837,7 @@ impl PrintCadApp {
                 let color = if is_selected {
                     [0.35, 0.95, 0.45]
                 } else if is_hovered {
-                    [1.0, 0.75, 0.2]
+                    HOVER_PAINT
                 } else {
                     [0.85, 0.85, 0.85]
                 };
@@ -950,7 +982,7 @@ impl PrintCadApp {
         // and the distance, drawn over the scene.
         if let Some(points) = &self.session.measure {
             let unit = self.session.document.display_unit();
-            let color = [1.0, 0.75, 0.2];
+            let color = HOVER_PAINT;
             let px: Vec<(f32, f32)> = points
                 .iter()
                 .filter_map(|p| self.session.camera.world_to_viewport(Vec3::from_array(*p)))
@@ -1075,6 +1107,29 @@ impl PrintCadApp {
             });
         }
 
+        // The hovered face, translucent in the hover paint, unless it is the
+        // selected face already.
+        if let Some(hover) = &self.session.hovered_face
+            && self.session.hovered_edge.is_none()
+            && !self
+                .session
+                .face_highlight
+                .as_ref()
+                .is_some_and(|f| f.body == hover.body && f.face == Some(hover.face))
+        {
+            let (hi, lo) = hover.body.as_u64_pair();
+            all_meshes.push(BodySubmission {
+                id: self.face_hover_id,
+                revision: hover.revision ^ hi ^ lo ^ (u64::from(hover.face) << 32),
+                mesh: Arc::clone(&hover.mesh),
+                color: HOVER_PAINT,
+                opacity: opacity * 0.5,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                pickable: false,
+            });
+        }
+
         // The hovered edge and the picked edges, drawn as line bodies over
         // the outline in the hover and selection paints.
         if let Some(hit) = &self.session.hovered_edge
@@ -1088,7 +1143,7 @@ impl PrintCadApp {
                 self.edge_hover_id,
                 hit.body,
                 &[hit.edge],
-                [1.0, 0.75, 0.2],
+                HOVER_PAINT,
             )
         {
             all_meshes.push(submission);
@@ -1194,6 +1249,64 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
+    /// Resolve the face under the cursor from the pick, keeping the copy
+    /// already made when the picked point has not moved. Returns whether the
+    /// hover changed.
+    fn refresh_hovered_face(&mut self) -> bool {
+        let probe = self
+            .session
+            .hovered_body
+            .zip(self.session.hovered_world_pos)
+            .filter(|_| !self.sketch_editing_active() && self.mouse_buttons_down == 0);
+        let Some((body, point)) = probe else {
+            return self.session.hovered_face.take().is_some();
+        };
+        if self
+            .session
+            .hovered_face
+            .as_ref()
+            .is_some_and(|h| h.body == body && h.probe == point)
+        {
+            return false;
+        }
+        let resolved = self
+            .session
+            .document
+            .imported_geometry(core_document::BodyId(body))
+            .and_then(|geometry| {
+                let face = crate::app::input::face_id_at(&geometry.mesh, point)?;
+                if let Some(h) = &self.session.hovered_face
+                    && h.body == body
+                    && h.face == face
+                    && h.revision == geometry.revision
+                {
+                    // The same face at a new point: keep the copy.
+                    return Some(crate::app::input::FaceHover {
+                        body,
+                        face,
+                        revision: h.revision,
+                        mesh: Arc::clone(&h.mesh),
+                        probe: point,
+                    });
+                }
+                let mesh = crate::app::input::face_submesh_by_id(&geometry.mesh, face)?;
+                Some(crate::app::input::FaceHover {
+                    body,
+                    face,
+                    revision: geometry.revision,
+                    mesh: Arc::new(mesh),
+                    probe: point,
+                })
+            });
+        let changed = match (&self.session.hovered_face, &resolved) {
+            (Some(a), Some(b)) => a.body != b.body || a.face != b.face,
+            (None, None) => false,
+            _ => true,
+        };
+        self.session.hovered_face = resolved;
+        changed
+    }
+
     /// The body under the cursor, named with its last feature, and the
     /// point hit on it. Hidden while a button is down or a sketch is being
     /// edited, when the card would only get in the way.

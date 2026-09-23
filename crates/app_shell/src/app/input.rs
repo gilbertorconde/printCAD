@@ -621,6 +621,7 @@ impl PrintCadApp {
                             .document
                             .imported_geometry(core_document::BodyId(body))?;
                         let submesh = face_submesh(&geometry.mesh, face.point, face.normal)?;
+                        let face_id = face_id_at(&geometry.mesh, face.point);
                         let revision = self
                             .session
                             .face_highlight
@@ -629,6 +630,7 @@ impl PrintCadApp {
                             .unwrap_or(0);
                         Some(FaceHighlight {
                             body,
+                            face: face_id,
                             mesh: std::sync::Arc::new(submesh),
                             revision,
                         })
@@ -744,13 +746,32 @@ pub(crate) fn face_submesh(
     point: [f32; 3],
     normal: [f32; 3],
 ) -> Option<kernel_api::TriMesh> {
-    if mesh.faces.len() == mesh.indices.len() / 3 && !mesh.faces.is_empty() {
-        let hit = glam::Vec3::from_array(point);
-        if let Some((tri, _, _, _)) = nearest_triangle(mesh, hit) {
-            return face_submesh_by_id(mesh, mesh.faces[tri]);
-        }
+    if let Some(face) = face_id_at(mesh, point) {
+        return face_submesh_by_id(mesh, face);
     }
     coplanar_face_submesh(mesh, point, normal)
+}
+
+/// The kernel face the triangle nearest `point` was cut from, when the mesh
+/// records faces.
+pub(crate) fn face_id_at(mesh: &kernel_api::TriMesh, point: [f32; 3]) -> Option<u32> {
+    if mesh.faces.len() != mesh.indices.len() / 3 || mesh.faces.is_empty() {
+        return None;
+    }
+    let (tri, _, _, _) = nearest_triangle(mesh, glam::Vec3::from_array(point))?;
+    Some(mesh.faces[tri])
+}
+
+/// The face under the cursor, drawn translucent in the hover paint: the
+/// body the pick found, the kernel face at the picked point, and the copy
+/// of that face. Rebuilt only when the picked point moves.
+pub(crate) struct FaceHover {
+    pub body: Uuid,
+    pub face: u32,
+    pub revision: u64,
+    pub mesh: std::sync::Arc<kernel_api::TriMesh>,
+    /// The picked point this hover was resolved for.
+    pub probe: [f32; 3],
 }
 
 /// Every triangle cut from kernel face `face`, copied exactly: the
@@ -787,6 +808,8 @@ pub(crate) fn face_submesh_by_id(
 /// Sub-mesh rendered as the single-face selection highlight.
 pub(crate) struct FaceHighlight {
     pub body: Uuid,
+    /// The kernel face, when the mesh records faces.
+    pub face: Option<u32>,
     pub mesh: std::sync::Arc<kernel_api::TriMesh>,
     /// Bumped whenever the sub-mesh is re-extracted.
     pub revision: u64,

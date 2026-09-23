@@ -367,7 +367,9 @@ constrained sketch for editing and `=pad` pads it and opens the Pad task;
 the way a click on its tree row would, so a capture shows the selection
 overlay; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
-pick and the edge test saw and what got selected (frame.rs). Any of these skips the start page. The 1 s `printcad.frame` log reports
+pick, the edge test and the face hover saw and what got selected, and with
+`PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
+toolbar click would and logs every feature's rebuild error (frame.rs). Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
 Face-boundary edges draw on every frame, moving or still. They are cheap
@@ -408,6 +410,9 @@ cards take bench entries the same way, and a pick runs the bench's
 solid → face-first, double click → the whole body the face belongs to, one
 part of an assembly, and in Part Design the tree opens to its row; LMB drag
 in sketch = box select; ctrl = additive). The
+face under the cursor draws translucent in the hover paint (an edge within
+reach takes the hover instead, as a line), resolved from the pick's point
+and kept while that point stays on the same face; the
 selected face, or the whole selected body, draws as a translucent overlay
 over itself, never as a tint (`rendering.selection_color` /
 `selection_opacity`, Preferences › Display › Rendering) through the
