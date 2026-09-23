@@ -8,6 +8,7 @@
 mod chain;
 mod health;
 mod import;
+pub use import::is_iges;
 mod ops;
 mod profile;
 pub mod progress;

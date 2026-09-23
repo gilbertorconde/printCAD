@@ -68,7 +68,7 @@ impl PrefGroup {
             PrefGroup::Input => &["Mouse", "6-DoF mouse"],
             PrefGroup::Workbench(_) => &["General"],
             PrefGroup::Units => &["Units"],
-            PrefGroup::ImportExport => &["STEP"],
+            PrefGroup::ImportExport => &["STEP", "IGES"],
             PrefGroup::Printing => &["Printer"],
             PrefGroup::Updates => &["Updates"],
         }
@@ -633,7 +633,7 @@ fn general_page(
                 "Diagnostics",
                 vec![
                     PrefRow::toggle(
-                        "Write a report for every STEP import",
+                        "Write a report for every STEP or IGES import",
                         &mut draft.diagnostics.import_report,
                     )
                     .hint(
@@ -1099,7 +1099,7 @@ fn import_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         PrefRow::toggle("Boundary edges", &mut t.generate_boundary_edges)
             .hint("Face boundaries as edge lines"),
     );
-    pref_group(ui, "STEP import defaults", rows, filter);
+    pref_group(ui, "STEP and IGES import defaults", rows, filter);
     if filter.is_empty() {
         ui.label(
             RichText::new("The import dialog opens with these values.")

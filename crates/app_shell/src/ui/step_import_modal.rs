@@ -55,7 +55,7 @@ pub fn draw_step_import_modal(
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = SPACE_2;
                         ui_kit::icon::draw(ui, "open", 18.0, ACCENT);
-                        ui.label(RichText::new("Import STEP").font(sans_semibold(FONT_LG)).color(TEXT1));
+                        ui.label(RichText::new("Import").font(sans_semibold(FONT_LG)).color(TEXT1));
                     });
                     ui.label(RichText::new(&file_name).font(mono(FONT_XS)).color(TEXT3))
                         .on_hover_text(path.display().to_string());

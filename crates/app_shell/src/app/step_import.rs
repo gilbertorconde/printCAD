@@ -36,7 +36,11 @@ impl PrintCadApp {
     /// done. Logging the start/finish here keeps the user oriented while the
     /// import is in flight.
     pub(crate) fn import_step_at(&mut self, path: &Path, detail: TessellationSettings) {
-        app_log::info(format!("Importing STEP `{}`...", path.display()));
+        app_log::info(format!(
+            "Importing {} `{}`...",
+            format_of(path),
+            path.display()
+        ));
         self.import_owner
             .insert(path.to_path_buf(), self.session.tab);
         self.kernel_worker
@@ -96,18 +100,24 @@ impl PrintCadApp {
                         self.apply_step_import(&path, model, raw_bytes, detail, elapsed)
                     {
                         app_log::error(format!(
-                            "Failed to apply STEP import {}: {err}",
+                            "Failed to apply {} import {}: {err}",
+                            format_of(&path),
                             path.display()
                         ));
                     }
                 }
                 KernelResponse::StepFailed { path, error } => {
                     if Self::is_cancellation(&error) {
-                        app_log::info(format!("STEP import cancelled `{}`", path.display()));
+                        app_log::info(format!(
+                            "{} import cancelled `{}`",
+                            format_of(&path),
+                            path.display()
+                        ));
                         return;
                     }
                     app_log::error(format!(
-                        "STEP import failed `{}`: {}",
+                        "{} import failed `{}`: {}",
+                        format_of(&path),
                         path.display(),
                         error
                     ));
@@ -287,8 +297,9 @@ impl PrintCadApp {
         // line says how many there were and where the switch is.
         if !report.is_clean() && !self.user_settings.diagnostics.import_report {
             app_log::warn(format!(
-                "STEP import read with {} warnings and {} untrimmed faces \
+                "{} import read with {} warnings and {} untrimmed faces \
                  (Preferences › General › Diagnostics writes them to a file)",
+                format_of(path),
                 report.warnings.len(),
                 report.untrimmed_faces.len()
             ));
@@ -300,13 +311,15 @@ impl PrintCadApp {
                 &report,
             ) {
                 Ok(written) => app_log::warn(format!(
-                    "STEP import read with {} warnings and {} untrimmed faces; report at {}",
+                    "{} import read with {} warnings and {} untrimmed faces; report at {}",
+                    format_of(path),
                     report.warnings.len(),
                     report.untrimmed_faces.len(),
                     written.display()
                 )),
                 Err(err) => app_log::warn(format!(
-                    "STEP import read with {} warnings; the report could not be written: {err}",
+                    "{} import read with {} warnings; the report could not be written: {err}",
+                    format_of(path),
                     report.warnings.len()
                 )),
             }
@@ -314,7 +327,8 @@ impl PrintCadApp {
 
         if imported_bodies.is_empty() {
             app_log::warn(format!(
-                "STEP import produced no geometry: {}",
+                "{} import produced no geometry: {}",
+                format_of(path),
                 path.display()
             ));
             return Ok(());
@@ -328,7 +342,11 @@ impl PrintCadApp {
             .unwrap_or_else(|| "step".to_string());
         let asset = core_document::AssetReference::new(
             format!("assets/{}.{}", uuid::Uuid::new_v4(), extension),
-            core_document::AssetType::Step,
+            if kernel_ogeom::is_iges(path) {
+                core_document::AssetType::Iges
+            } else {
+                core_document::AssetType::Step
+            },
             serde_json::json!({
                 "source_path": path.display().to_string(),
                 "body_count": imported_bodies.len(),
@@ -535,8 +553,9 @@ impl PrintCadApp {
 
         if let Some(unit) = adopt_unit {
             app_log::info(format!(
-                "Display unit set to {} from imported STEP `{}`",
+                "Display unit set to {} from imported {} `{}`",
                 unit.short_label(),
+                format_of(path),
                 path.display()
             ));
         }
@@ -551,7 +570,8 @@ impl PrintCadApp {
             "STEP import timing (UI thread apply)"
         );
         app_log::info(format!(
-            "Imported STEP `{}` in {:.0}ms worker + {:.1}ms apply: {} bodies ({} triangles; {pending_note})",
+            "Imported {} `{}` in {:.0}ms worker + {:.1}ms apply: {} bodies ({} triangles; {pending_note})",
+            format_of(path),
             path.display(),
             elapsed.as_secs_f64() * 1000.0,
             apply_ms,
@@ -567,5 +587,14 @@ impl PrintCadApp {
         self.session.journal.note(&mut self.session.document);
 
         Ok(())
+    }
+}
+
+/// The exchange format a path names, for log lines.
+fn format_of(path: &Path) -> &'static str {
+    if kernel_ogeom::is_iges(path) {
+        "IGES"
+    } else {
+        "STEP"
     }
 }

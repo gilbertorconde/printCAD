@@ -412,7 +412,7 @@ impl PrintCadApp {
             let _ = MessageDialog::new()
                 .set_title("Cannot save as JSON")
                 .set_description(
-                    "This document has embedded assets (e.g. imported STEP). JSON export does not include those bytes. Save as .prtcad instead.",
+                    "This document has embedded assets (e.g. an imported STEP or IGES file). JSON export does not include those bytes. Save as .prtcad instead.",
                 )
                 .set_level(MessageLevel::Warning)
                 .set_buttons(MessageButtons::Ok)
@@ -493,8 +493,15 @@ impl PrintCadApp {
                 // we re-compute from the carried bytes. The kernel import
                 // is deterministic, so meshes land on the peer's
                 // pre-allocated body ids by import order.
+                // The kernel picks its reader by extension: stage the bytes
+                // under the one the asset was imported with.
+                let extension = std::path::Path::new(&asset.path)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("step")
+                    .to_ascii_lowercase();
                 let temp = std::env::temp_dir()
-                    .join(format!("printcad_remote_{}.step", asset.id.simple()));
+                    .join(format!("printcad_remote_{}.{extension}", asset.id.simple()));
                 match std::fs::write(&temp, bytes.as_slice()) {
                     Ok(()) => {
                         self.session.remote_import_routes.insert(
@@ -738,9 +745,10 @@ impl PrintCadApp {
 
         std::thread::spawn(move || {
             let mut dialog = match kind {
-                FileDialogKind::ImportStep => {
-                    rfd::FileDialog::new().add_filter("STEP file", &["step", "stp"])
-                }
+                FileDialogKind::ImportStep => rfd::FileDialog::new()
+                    .add_filter("STEP or IGES file", &["step", "stp", "iges", "igs"])
+                    .add_filter("STEP file", &["step", "stp"])
+                    .add_filter("IGES file", &["iges", "igs"]),
                 _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
             };
 

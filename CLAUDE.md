@@ -55,7 +55,10 @@ cargo fmt --all                   # CI enforces --check
 - `kernel_api` — pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
-- `kernel_ogeom` — pure-Rust kernel adapter. STEP import builds bodies from
+- `kernel_ogeom` — pure-Rust kernel adapter. STEP and IGES import share one
+  path after the read (`import.rs`, reader chosen by extension, `is_iges`);
+  IGES solids and closed surface groups become bodies, open sheets are left
+  out with a log line. STEP import builds bodies from
   the document's **placed occurrences** (`Document::occurrences_of`), never
   from `import.solids` — the latter are part-local, so an assembly built from
   them puts every part at its own origin. The node walk mirrors the kernel's

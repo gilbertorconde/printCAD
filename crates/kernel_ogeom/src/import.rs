@@ -1,4 +1,6 @@
-//! STEP import via `ogeom::io::step` → `kernel_api::ImportedModel`.
+//! STEP and IGES import via `ogeom::io` → `kernel_api::ImportedModel`: the
+//! reader is chosen by the file's extension, and everything after the read is
+//! shared.
 //!
 //! Bodies come back one per solid in file order. With
 //! `persist_brep_snapshot` set (the default), each body carries a native
@@ -37,10 +39,128 @@ pub fn import_step(
     let text = String::from_utf8_lossy(&bytes);
 
     let parse_start = Instant::now();
-    progress::context("Reading STEP");
-    let mut import = ogeom::io::step::read_step(&text, tess::tolerances())
-        .map_err(|e| KernelError::Import(format!("STEP read failed: {e}")))?;
+    let read = if is_iges(path) {
+        read_iges_file(&text)?
+    } else {
+        read_step_file(&text)?
+    };
     let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
+    let Read {
+        document,
+        solids,
+        report,
+        scale_mm,
+    } = read;
+    let source_unit = unit_from_scale(scale_mm);
+    let document = &document;
+    let model = document.model();
+
+    // Mesh here, from the model already in memory. Deferring it would mean
+    // parsing every snapshot back afterwards, and re-parsing costs several
+    // times what the meshing itself does — the round trip through text was
+    // the dominant cost of a large import.
+    let want_mesh = true;
+    let want_blob = detail.persist_brep_snapshot && !force_inline_mesh;
+
+    let sources = body_sources(document, &solids);
+
+    // Each body's work only reads the model — colours, the snapshot blob and
+    // bounds — so the bodies go wide. Serializing the snapshot dominates by
+    // two orders of magnitude, which is what makes this worth threading.
+    let loop_start = Instant::now();
+    progress::context(format_args!("Preparing {} bodies", sources.len()));
+    // Workers finish out of order; a shared counter keeps the announced
+    // progress monotone regardless of which body lands when.
+    let done = std::sync::atomic::AtomicU64::new(0);
+    let body_count = sources.len() as u64;
+    let computed = map_ordered(&sources, |i, source| -> KernelResult<ImportedBody> {
+        progress::checkpoint().map_err(KernelError::Import)?;
+        progress::stage_at(
+            "bodies",
+            done.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            body_count,
+        );
+        let shape = &source.shape;
+        let face_colors = face_color_table(document, model, source.part, shape);
+
+        let brep_blob = if want_blob {
+            tess::write_blob(model, shape)?
+        } else {
+            Vec::new()
+        };
+        let mesh = if want_mesh {
+            tess::mesh_shape_with(model, shape, &face_colors, detail, tess::Faces::Inline)
+                .unwrap_or_else(|e| {
+                    warn!(target: "printcad.kernel", body = i, "inline mesh failed: {e}");
+                    TriMesh::default()
+                })
+        } else {
+            TriMesh::default()
+        };
+
+        let bounds_mm = tess::robust_bounds(model, shape).map(|(lo, hi)| {
+            (
+                [lo.x as f32, lo.y as f32, lo.z as f32],
+                [hi.x as f32, hi.y as f32, hi.z as f32],
+            )
+        });
+
+        Ok(ImportedBody {
+            name: source.name.clone(),
+            mesh,
+            brep_blob,
+            face_colors,
+            bounds_mm,
+            health: Some(crate::health::diagnose(model, shape)),
+        })
+    });
+    let bodies = computed.into_iter().collect::<KernelResult<Vec<_>>>()?;
+    let loop_ms = loop_start.elapsed().as_secs_f64() * 1000.0;
+
+    let nodes = nodes_from_document(document, bodies.len());
+
+    info!(
+        "Imported {} `{}`: {} bodies, source unit {:?}, parse {:.1} ms, \
+         bodies {:.1} ms, total {:.1} ms",
+        if is_iges(path) { "IGES" } else { "STEP" },
+        path.display(),
+        bodies.len(),
+        source_unit,
+        parse_ms,
+        loop_ms,
+        total.elapsed().as_secs_f64() * 1000.0,
+    );
+
+    Ok(ImportedModel {
+        bodies,
+        report,
+        nodes,
+        source_unit,
+    })
+}
+
+/// What a reader hands the shared import path: the document it built, the
+/// solids to make bodies of, what it had to say, and the file's scale.
+struct Read {
+    document: Document,
+    solids: Vec<Shape>,
+    report: kernel_api::ImportReport,
+    scale_mm: f64,
+}
+
+/// Whether a path names an IGES file, by its extension.
+pub fn is_iges(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("iges") || e.eq_ignore_ascii_case("igs"))
+}
+
+/// Read a STEP file, healing the faces it could not trim where the fit
+/// stays within the import cap.
+fn read_step_file(text: &str) -> KernelResult<Read> {
+    progress::context("Reading STEP");
+    let mut import = ogeom::io::step::read_step(text, tess::tolerances())
+        .map_err(|e| KernelError::Import(format!("STEP read failed: {e}")))?;
 
     // A thousand true lines nobody can act on one by one: they go into the
     // report the app writes out, and reach the terminal only when asked.
@@ -114,90 +234,48 @@ pub fn import_step(
         }
     }
 
-    let source_unit = unit_from_scale(import.report.scale_mm);
-    let document = &import.document;
-    let model = document.model();
-
-    // Mesh here, from the model already in memory. Deferring it would mean
-    // parsing every snapshot back afterwards, and re-parsing costs several
-    // times what the meshing itself does — the round trip through text was
-    // the dominant cost of a large import.
-    let want_mesh = true;
-    let want_blob = detail.persist_brep_snapshot && !force_inline_mesh;
-
-    let sources = body_sources(document, &import.solids);
-
-    // Each body's work only reads the model — colours, the snapshot blob and
-    // bounds — so the bodies go wide. Serializing the snapshot dominates by
-    // two orders of magnitude, which is what makes this worth threading.
-    let loop_start = Instant::now();
-    progress::context(format_args!("Preparing {} bodies", sources.len()));
-    // Workers finish out of order; a shared counter keeps the announced
-    // progress monotone regardless of which body lands when.
-    let done = std::sync::atomic::AtomicU64::new(0);
-    let body_count = sources.len() as u64;
-    let computed = map_ordered(&sources, |i, source| -> KernelResult<ImportedBody> {
-        progress::checkpoint().map_err(KernelError::Import)?;
-        progress::stage_at(
-            "bodies",
-            done.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-            body_count,
-        );
-        let shape = &source.shape;
-        let face_colors = face_color_table(document, model, source.part, shape);
-
-        let brep_blob = if want_blob {
-            tess::write_blob(model, shape)?
-        } else {
-            Vec::new()
-        };
-        let mesh = if want_mesh {
-            tess::mesh_shape_with(model, shape, &face_colors, detail, tess::Faces::Inline)
-                .unwrap_or_else(|e| {
-                    warn!(target: "printcad.kernel", body = i, "inline mesh failed: {e}");
-                    TriMesh::default()
-                })
-        } else {
-            TriMesh::default()
-        };
-
-        let bounds_mm = tess::robust_bounds(model, shape).map(|(lo, hi)| {
-            (
-                [lo.x as f32, lo.y as f32, lo.z as f32],
-                [hi.x as f32, hi.y as f32, hi.z as f32],
-            )
-        });
-
-        Ok(ImportedBody {
-            name: source.name.clone(),
-            mesh,
-            brep_blob,
-            face_colors,
-            bounds_mm,
-            health: Some(crate::health::diagnose(model, shape)),
-        })
-    });
-    let bodies = computed.into_iter().collect::<KernelResult<Vec<_>>>()?;
-    let loop_ms = loop_start.elapsed().as_secs_f64() * 1000.0;
-
-    let nodes = nodes_from_document(document, bodies.len());
-
-    info!(
-        "Imported STEP `{}`: {} bodies, source unit {:?}, parse {:.1} ms, \
-         bodies {:.1} ms, total {:.1} ms",
-        path.display(),
-        bodies.len(),
-        source_unit,
-        parse_ms,
-        loop_ms,
-        total.elapsed().as_secs_f64() * 1000.0,
-    );
-
-    Ok(ImportedModel {
-        bodies,
+    Ok(Read {
+        scale_mm: import.report.scale_mm,
+        document: import.document,
+        solids: import.solids,
         report,
-        nodes,
-        source_unit,
+    })
+}
+
+/// Read an IGES file. Its solids, and every surface group that sewed
+/// closed, become bodies; surfaces that enclose no volume are left out,
+/// and the log says how many.
+fn read_iges_file(text: &str) -> KernelResult<Read> {
+    progress::context("Reading IGES");
+    let import = ogeom::io::read_iges(text, tess::tolerances())
+        .map_err(|e| KernelError::Import(format!("IGES read failed: {e}")))?;
+    for warning in &import.report.warnings {
+        debug!(target: "printcad.kernel", "IGES import warning: {warning}");
+    }
+    if !import.sheets.is_empty() {
+        warn!(
+            target: "printcad.kernel",
+            sheets = import.sheets.len(),
+            "IGES surfaces that enclose no volume were left out; only solids become bodies"
+        );
+    }
+    let report = kernel_api::ImportReport {
+        kernel: format!("ogeom {}", ogeom::VERSION),
+        summary: Vec::new(),
+        warnings: import.report.warnings.clone(),
+        untrimmed_faces: Vec::new(),
+        skipped: import
+            .report
+            .skipped
+            .iter()
+            .map(|(keyword, count)| (keyword.clone(), *count))
+            .collect(),
+    };
+    Ok(Read {
+        scale_mm: import.report.scale_mm,
+        document: import.document,
+        solids: import.solids,
+        report,
     })
 }
 

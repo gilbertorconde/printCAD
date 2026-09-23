@@ -48,7 +48,7 @@ pub(crate) fn render(
     report: &ImportReport,
 ) -> String {
     let mut out = String::new();
-    out.push_str("printCAD STEP import report\n");
+    out.push_str("printCAD import report\n");
     out.push_str("===========================\n");
     out.push_str(&format!("source           {}\n", source.display()));
     out.push_str(&format!(

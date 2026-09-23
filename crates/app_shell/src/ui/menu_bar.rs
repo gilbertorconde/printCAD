@@ -253,7 +253,7 @@ pub fn draw_menu_bar(
                         ui.separator();
                         if item_needing_document(
                             ui,
-                            "Import STEP…",
+                            "Import STEP or IGES…",
                             Some(&sc_import),
                             have_document,
                         ) {
