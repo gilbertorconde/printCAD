@@ -92,6 +92,17 @@ pub enum ToolState {
         ratio: f32,
         start: Vec2D,
     },
+    /// Polyline: waiting for the next segment's end. `first` is the chain's
+    /// first point (a click back on it closes the shape), `heading` the
+    /// direction the last segment left `from` in, `prev` that segment, and
+    /// `arc` whether the next segments are tangent arcs (M switches).
+    PolylineFrom {
+        from: SnapTarget,
+        first: Option<Uuid>,
+        heading: Option<Vec2D>,
+        prev: Option<Uuid>,
+        arc: bool,
+    },
     /// B-spline tool: control points accumulated so far.
     BSplineDraw { points: Vec<SnapTarget> },
     /// Translate tool: base point picked.
@@ -201,6 +212,12 @@ impl ToolState {
             ToolState::EllipseArcStart { .. } => {
                 Some("Arc of ellipse: click the arc's end (counter-clockwise)")
             }
+            ToolState::PolylineFrom { arc: false, .. } => {
+                Some("Polyline: click the next point; M for arcs, right-click or Esc to finish")
+            }
+            ToolState::PolylineFrom { arc: true, .. } => {
+                Some("Polyline: click where the tangent arc ends; M for lines")
+            }
             ToolState::BSplineDraw { .. } => Some(
                 "Spline: click control points; Enter/right-click finishes (periodic: tool settings)",
             ),
@@ -297,6 +314,9 @@ pub fn handle_click(
     match tool {
         "sketch.point" => draw::point(sketch, cursor),
         "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params.auto_constraints),
+        "sketch.polyline" => {
+            draw::polyline(state, sketch, cursor, snap_tol, params.auto_constraints)
+        }
         "sketch.rect" => draw::rect(state, sketch, cursor, snap_tol),
         "sketch.rect_rounded" => {
             draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
@@ -328,6 +348,20 @@ pub fn handle_click(
         "sketch.scale" => transform::scale(state, sketch, cursor, snap_tol, selected),
         "sketch.mirror" => transform::mirror(state, sketch, cursor, snap_tol, selected),
         _ => ToolEffect::none(),
+    }
+}
+
+/// Switch a polyline in progress between straight segments and tangent
+/// arcs. Returns whether there was a polyline to switch.
+pub fn toggle_polyline_arc(state: &mut ToolState) -> bool {
+    match state {
+        ToolState::PolylineFrom { arc, heading, .. } => {
+            // An arc needs a direction to be tangent to: the first segment
+            // is straight.
+            *arc = !*arc && heading.is_some();
+            true
+        }
+        _ => false,
     }
 }
 

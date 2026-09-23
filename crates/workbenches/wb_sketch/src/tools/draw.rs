@@ -110,6 +110,125 @@ pub(super) fn line(
     }
 }
 
+/// Polyline: lines and arcs chained in one gesture. A straight segment
+/// snaps as the line tool's do; an arc leaves its start tangent to the
+/// segment before it, held there by a tangency constraint. A click back on
+/// the chain's first point closes the shape and ends the tool's run.
+pub(super) fn polyline(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+    auto_constraints: bool,
+) -> ToolEffect {
+    let ToolState::PolylineFrom {
+        from,
+        first,
+        heading,
+        prev,
+        arc,
+    } = *state
+    else {
+        let from = snap_point_or_curve(sketch, cursor, snap_tol);
+        *state = ToolState::PolylineFrom {
+            from,
+            first: None,
+            heading: None,
+            prev: None,
+            arc: false,
+        };
+        return ToolEffect::none();
+    };
+    let Some(from_pos) = from.position(sketch) else {
+        *state = ToolState::Idle;
+        return ToolEffect::none();
+    };
+    let exclude = match from {
+        SnapTarget::Existing(id) => vec![id],
+        SnapTarget::New(_) => vec![],
+    };
+    let (axis_pos, mut axis) = if arc {
+        (cursor, None)
+    } else {
+        snap::snap_axis(from_pos, cursor, snap_tol)
+    };
+    let end = match snap::snap_to_point(sketch, cursor, snap_tol, &exclude) {
+        SnapTarget::Existing(id) => SnapTarget::Existing(id),
+        SnapTarget::New(_) => match snap::snap_to_curve(sketch, cursor, snap_tol, &[]) {
+            Some((_, proj)) => {
+                axis = None;
+                SnapTarget::New(proj)
+            }
+            None => SnapTarget::New(axis_pos),
+        },
+    };
+    let end_pos = end.position(sketch).unwrap_or(axis_pos);
+    if (end_pos - from_pos).to_glam().length() < 1e-6 {
+        return ToolEffect::none();
+    }
+    let tangent = heading
+        .filter(|_| arc)
+        .and_then(|h| geom2d::tangent_arc(from_pos, h, end_pos));
+
+    let start_id = materialize_on_curve(sketch, from, snap_tol);
+    let end_id = materialize_on_curve(sketch, end, snap_tol);
+    let first = first.unwrap_or(start_id);
+    let (segment, next_heading, log) = match tangent {
+        Some((center, radius, ccw)) => {
+            let center_id = sketch.add_geometry(GeometryElement::Point(Point::new(center)));
+            // An arc is stored counter-clockwise: a right turn runs end to
+            // start.
+            let (s, e) = if ccw {
+                (start_id, end_id)
+            } else {
+                (end_id, start_id)
+            };
+            let id = sketch.add_geometry(GeometryElement::Arc(Arc::new(center_id, s, e, radius)));
+            if let Some(prev) = prev {
+                sketch.add_constraint(ConstraintKind::Tangent {
+                    line_or_circle1: prev,
+                    item2: id,
+                });
+            }
+            let radial = (end_pos - center).to_glam().perp().normalize_or_zero();
+            let out = if ccw { radial } else { -radial };
+            (
+                id,
+                Vec2D::from_glam(out),
+                format!("Polyline arc r={radius:.2}"),
+            )
+        }
+        None => {
+            let id = sketch.add_geometry(GeometryElement::Line(Line::new(start_id, end_id)));
+            if auto_constraints && matches!(end, SnapTarget::New(_)) {
+                match axis {
+                    Some(AxisSnap::Horizontal) => {
+                        sketch.add_constraint(ConstraintKind::Horizontal { element: id });
+                    }
+                    Some(AxisSnap::Vertical) => {
+                        sketch.add_constraint(ConstraintKind::Vertical { element: id });
+                    }
+                    None => {}
+                }
+            }
+            let out = (end_pos - from_pos).to_glam().normalize_or_zero();
+            (id, Vec2D::from_glam(out), "Polyline segment".to_string())
+        }
+    };
+    if end_id == first {
+        *state = ToolState::Idle;
+        return ToolEffect::changed(format!("{log}; polyline closed"));
+    }
+    *state = ToolState::PolylineFrom {
+        from: SnapTarget::Existing(end_id),
+        first: Some(first),
+        heading: Some(next_heading),
+        prev: Some(segment),
+        arc,
+    };
+    ToolEffect::changed(log)
+}
+
 /// Four counter-clockwise corner positions → 4 shared-vertex lines plus the
 /// H/V constraints that make the shape stay a rectangle under later edits.
 fn close_rectangle(sketch: &mut Sketch, pa: Uuid, pb: Uuid, pc: Uuid, pd: Uuid) {

@@ -128,6 +128,29 @@ pub fn ellipse_points(center: Vec2D, major: Vec2D, ratio: f32, segments: usize) 
         .collect()
 }
 
+/// The circular arc that leaves `start` along the unit `heading` and ends at
+/// `end`: its center, radius, and whether it turns counter-clockwise (to the
+/// left of the heading). `None` when `end` lies on the heading's line, where
+/// only a straight segment continues smoothly.
+pub fn tangent_arc(start: Vec2D, heading: Vec2D, end: Vec2D) -> Option<(Vec2D, f32, bool)> {
+    let t = heading.to_glam().normalize_or_zero();
+    if t.length_squared() < 0.5 {
+        return None;
+    }
+    let n = t.perp();
+    let d = (end - start).to_glam();
+    let across = d.dot(n);
+    if across.abs() <= 1e-6 * d.length().max(1.0) {
+        return None;
+    }
+    let signed = d.length_squared() / (2.0 * across);
+    Some((
+        Vec2D::from_glam(start.to_glam() + n * signed),
+        signed.abs(),
+        signed > 0.0,
+    ))
+}
+
 /// The ellipse centred at `center` with a vertex at `major_pos` that passes
 /// through `rim`: its major vector and minor-to-major ratio. When the rim
 /// point makes the other axis the longer one, the axes swap so the ratio

@@ -1937,3 +1937,52 @@ fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
             .any(|s| matches!(s, kernel_api::ProfileSegment::EllipseArc { .. }))
     );
 }
+
+/// A polyline of lines and a tangent arc, drawn in one chain: the arc
+/// leaves tangent to the line before it, and a click back on the start
+/// closes the shape into one profile.
+#[test]
+fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    let click = |state: &mut ToolState, sketch: &mut Sketch, x: f32, y: f32| {
+        handle_click(state, "sketch.polyline", sketch, Vec2D::new(x, y), 0.2).changed
+    };
+    click(&mut state, &mut sketch, 0.0, 0.0);
+    assert!(click(&mut state, &mut sketch, 10.0, 0.0));
+    assert!(toggle_polyline_arc(&mut state), "arcs from here");
+    // Leaving (10, 0) heading +x and ending at (10, 10): a left half turn
+    // about (10, 5).
+    assert!(click(&mut state, &mut sketch, 10.0, 10.0));
+    assert!(toggle_polyline_arc(&mut state), "lines again");
+    assert!(click(&mut state, &mut sketch, 0.0, 10.0));
+    assert!(click(&mut state, &mut sketch, 0.0, 0.0));
+    assert!(state.is_idle(), "a click on the start closes the polyline");
+
+    let arcs: Vec<Arc> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 1);
+    let center = sketch.point_position(arcs[0].center).expect("center");
+    assert!((center.x - 10.0).abs() < 1e-4 && (center.y - 5.0).abs() < 1e-4);
+    assert!((arcs[0].radius - 5.0).abs() < 1e-4);
+    assert_eq!(
+        count_kind(&sketch, |g| matches!(g, GeometryElement::Line(_))),
+        3
+    );
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::Tangent { .. })),
+        "the arc is held tangent to the line before it"
+    );
+    let wires = crate::profile::extract_wires(&sketch).expect("a closed profile");
+    assert_eq!(wires.len(), 1);
+    assert_eq!(wires[0].segments.len(), 4);
+}

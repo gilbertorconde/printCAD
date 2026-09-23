@@ -190,7 +190,7 @@ walkthrough. Colors reach the workbenches through
 **Placeholders.** What remains unbuilt of the design: a local coordinate
 system datum, a clipping plane,
 document thumbnails, release notes, an export
-walkthrough, merging sketches, external geometry, carbon copy and a polyline tool. Everything else
+walkthrough, merging sketches, external geometry, carbon copy. Everything else
 the design shows is built. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
 geometry clipboard); the toolbar's Measure arms a two-click distance

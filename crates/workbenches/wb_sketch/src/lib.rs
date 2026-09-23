@@ -303,6 +303,7 @@ fn tool_icon(tool: &str) -> &'static str {
         "sketch.arc3" => "arc-3pt",
         "sketch.circle3" => "circle-3pt",
         "sketch.ellipse3" => "ellipse-3pt",
+        "sketch.polyline" => "polyline",
         "sketch.ellipse_arc" => "arc-of-ellipse",
         "sketch.rect_center" => "rectangle-centered",
         "sketch.arc_slot" => "arc-slot",
@@ -320,6 +321,7 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
     match tool {
         "sketch.point" => ("Point", "Click to place a point"),
         "sketch.line" => ("Line", "Click the start point"),
+        "sketch.polyline" => ("Polyline", "Click the start point"),
         "sketch.arc" => ("Arc", "Click the center"),
         "sketch.arc3" => ("Arc", "Click the first endpoint"),
         "sketch.circle" => ("Circle", "Click the center"),
@@ -1176,6 +1178,9 @@ impl SketchWorkbench {
             }
         }
         match key {
+            KeyCode::M if tools::toggle_polyline_arc(&mut self.tool_state) => {
+                InputResult::consumed()
+            }
             KeyCode::Escape => self.handle_escape(ctx),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
             KeyCode::Delete | KeyCode::Backspace => {
@@ -1558,12 +1563,9 @@ impl Workbench for SketchWorkbench {
             }
             if *id == "sketch.point" {
                 context.register_tool(tool);
-                // PLANNED: a chained polyline tool; the line tool chains
-                // segments today.
                 context.register_tool(
                     ToolDescriptor::new("sketch.polyline", "Polyline", Some("geometry.basic"))
                         .icon("polyline")
-                        .planned("draws connected lines and arcs in one gesture")
                         .row(1),
                 );
                 continue;
@@ -2070,6 +2072,11 @@ impl Workbench for SketchWorkbench {
             self.tool_state,
             ToolState::LineFrom { chain: true, .. } | ToolState::BSplineDraw { .. }
         ) {
+            keys.push(("Enter", "finish"));
+        } else if let ToolState::PolylineFrom { arc, heading, .. } = self.tool_state {
+            if heading.is_some() {
+                keys.push(("M", if arc { "lines" } else { "tangent arcs" }));
+            }
             keys.push(("Enter", "finish"));
         }
         if tool == "sketch.select" {
@@ -2909,6 +2916,7 @@ fn is_draw_tool(tool: &str) -> bool {
         tool,
         "sketch.point"
             | "sketch.line"
+            | "sketch.polyline"
             | "sketch.arc"
             | "sketch.arc3"
             | "sketch.circle"

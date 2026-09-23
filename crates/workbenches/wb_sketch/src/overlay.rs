@@ -491,6 +491,43 @@ fn push_preview(
                 );
             }
         }
+        ToolState::PolylineFrom {
+            from, heading, arc, ..
+        } => {
+            if let Some(a) = pos(from) {
+                let arc_points = heading
+                    .filter(|_| *arc)
+                    .and_then(|h| geom2d::tangent_arc(a, h, cursor))
+                    .map(|(c, r, ccw)| {
+                        let angle = |p: Vec2D| (p.y - c.y).atan2(p.x - c.x);
+                        let (t0, mut t1) = (angle(a), angle(cursor));
+                        if ccw {
+                            while t1 <= t0 {
+                                t1 += std::f32::consts::TAU;
+                            }
+                        } else {
+                            while t1 >= t0 {
+                                t1 -= std::f32::consts::TAU;
+                            }
+                        }
+                        (0..=CIRCLE_SEGMENTS)
+                            .map(|i| {
+                                let t = t0 + (t1 - t0) * i as f32 / CIRCLE_SEGMENTS as f32;
+                                Vec2D::new(c.x + r * t.cos(), c.y + r * t.sin())
+                            })
+                            .collect::<Vec<_>>()
+                    });
+                let points = arc_points.unwrap_or_else(|| vec![a, cursor]);
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    points.into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
+        }
         ToolState::RectFrom { corner } => {
             if let Some(a) = pos(corner) {
                 let b = Vec2D::new(cursor.x, a.y);
