@@ -104,6 +104,11 @@ pub enum DocumentOp {
     RequestBodyRepair {
         id: BodyId,
     },
+    /// Show or hide a body in the scene.
+    SetBodyVisible {
+        id: BodyId,
+        visible: bool,
+    },
     /// Ask for a mesh body to become a B-rep solid. The solid is derived,
     /// as an import's geometry is.
     RequestMeshSolid {

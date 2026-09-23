@@ -21,6 +21,8 @@ pub enum PropertyTab {
 pub struct PropertyPanelResult {
     pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
     pub imported_visibility: Option<(Uuid, bool)>,
+    /// The Visible row of a body was toggled.
+    pub body_visibility: Option<(BodyId, bool)>,
     pub rename: Option<(TreeItemId, String)>,
     /// The body's look changed: a colour and opacity of its own, or back
     /// to the one it came with.
@@ -645,6 +647,19 @@ fn view_rows(
                 let mut suppressed = node.suppressed;
                 if check_row(ui, &mut suppressed, "Suppressed").changed() {
                     result.feature_command = Some((id, TreeFeatureCommand::Suppress(suppressed)));
+                }
+            });
+        }
+        TreeItemId::Body(id) => {
+            let Some(body) = document.bodies().iter().find(|b| b.id == id) else {
+                return;
+            };
+            ui.add_space(SPACE_1);
+            ui.horizontal(|ui| {
+                ui.add_space(8.0);
+                let mut visible = !body.hidden;
+                if check_row(ui, &mut visible, "Visible").changed() {
+                    result.body_visibility = Some((id, visible));
                 }
             });
         }

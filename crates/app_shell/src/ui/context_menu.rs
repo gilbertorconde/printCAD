@@ -81,12 +81,18 @@ pub fn draw(
                     commands.push(UiCommand::ConvertToSolid(vec![menu.body]));
                     commands.push(UiCommand::CloseViewportMenu);
                 }
-                if let Some(node) = imported
-                    && item(ui, "Hide")
-                {
-                    commands.push(UiCommand::SetImportedVisibility {
-                        node,
-                        visible: false,
+                if item(ui, "Hide") {
+                    // An imported part hides as its row does; any other
+                    // body hides itself.
+                    commands.push(match imported {
+                        Some(node) => UiCommand::SetImportedVisibility {
+                            node,
+                            visible: false,
+                        },
+                        None => UiCommand::SetBodyVisible {
+                            body: menu.body,
+                            visible: false,
+                        },
                     });
                     commands.push(UiCommand::CloseViewportMenu);
                 }

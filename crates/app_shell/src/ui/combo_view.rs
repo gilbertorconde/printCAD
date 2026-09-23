@@ -17,6 +17,8 @@ pub struct ComboViewResult {
     pub tree_selection: Option<TreeItemId>,
     pub tree_activation: Option<TreeItemId>,
     pub imported_visibility_change: Option<(uuid::Uuid, bool)>,
+    /// A body shown or hidden, from its tree row or the property panel.
+    pub body_visibility_change: Option<(core_document::BodyId, bool)>,
     pub tree_feature_command: Option<(core_document::FeatureId, feature_tree::TreeFeatureCommand)>,
     /// The property panel's Label row committed a new name.
     pub rename: Option<(TreeItemId, String)>,
@@ -175,6 +177,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.tree_selection = tree_ui.selection;
                     result.tree_activation = tree_ui.activation;
                     result.imported_visibility_change = tree_ui.imported_visibility_change;
+                    result.body_visibility_change = tree_ui.body_visibility_change;
                     result.tree_feature_command = tree_ui.feature_command;
                     result.delete_item = tree_ui.delete_item;
                     result.repair = tree_ui.repair;
@@ -218,6 +221,9 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             }
             if props.imported_visibility.is_some() {
                 result.imported_visibility_change = props.imported_visibility;
+            }
+            if props.body_visibility.is_some() {
+                result.body_visibility_change = props.body_visibility;
             }
             if props.body_display.is_some() {
                 result.body_display = props.body_display;

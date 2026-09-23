@@ -112,6 +112,12 @@ pub enum UiCommand {
         node: uuid::Uuid,
         visible: bool,
     },
+    /// Show or hide a body, from its tree row, the property panel or the
+    /// viewport's menu.
+    SetBodyVisible {
+        body: core_document::BodyId,
+        visible: bool,
+    },
     ConfirmStepImport,
     CancelStepImport,
     SwitchWorkbench {

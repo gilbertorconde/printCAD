@@ -453,7 +453,11 @@ While editing a sketch the view is locked planar (orbit + cube rotation
 disabled; pan/zoom/roll allowed). In the tree, bodies and features start
 open and imported assemblies start closed; the filter looks through closed
 branches, a double click or "Show in tree" opens a body's way to itself,
-and a body row's double click or "Select body" selects the whole body. An
+and a body row's double click or "Select body" selects the whole body.
+Every row that stands for something drawn has an eye: features, imported
+parts and bodies (`Body.hidden`, `SetBodyVisible`, undoable), and the
+viewport's Hide hides whatever body was clicked; a hidden body is out of
+drawing, picking and the clip bounds (`imported_body_effective_visible`). An
 instance row that wraps a single part is one row with the instance's id and
 the part's body: resolve it through `Document::body_of_imported_object`,
 never through the node's own `body_id`, which an instance lacks. The window

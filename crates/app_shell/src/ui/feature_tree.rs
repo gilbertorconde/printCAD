@@ -44,6 +44,8 @@ pub struct TreeUiResult {
     /// a glance tells what something is without committing a click.
     pub hovered: Option<TreeItemId>,
     pub imported_visibility_change: Option<(Uuid, bool)>,
+    /// A body row's eye was clicked: the body, and whether it is to show.
+    pub body_visibility_change: Option<(BodyId, bool)>,
     pub feature_command: Option<(FeatureId, TreeFeatureCommand)>,
     /// The row the user asked to delete (menu or the Delete key).
     pub delete_item: Option<TreeItemId>,
@@ -325,7 +327,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         detail: Some("Body".to_string()),
         tooltip: None,
         dirty: false,
-        visible: true,
+        visible: !body.hidden,
         suppressed: false,
         error: None,
         defect: false,
@@ -760,6 +762,9 @@ fn draw_row(
                 TreeItemId::Feature(id) => {
                     result.feature_command = Some((id, TreeFeatureCommand::SetVisible(!visible)));
                 }
+                TreeItemId::Body(id) => {
+                    result.body_visibility_change = Some((id, !visible));
+                }
                 _ => {}
             }
         }
@@ -873,7 +878,9 @@ fn draw_node(
     }
     let dimmed_by_edit = options.editing.is_some() && !editing_here;
     let eye = match node.id {
-        TreeItemId::ImportedObject(_) | TreeItemId::Feature(_) => Some(node.visible),
+        TreeItemId::ImportedObject(_) | TreeItemId::Feature(_) | TreeItemId::Body(_) => {
+            Some(node.visible)
+        }
         _ => None,
     };
     let icon_tint = if editing_here {
@@ -1359,6 +1366,26 @@ mod tests {
         let (detail, convertible) = row(&doc);
         assert!(detail.contains("converting"), "{detail}");
         assert!(convertible.is_empty(), "not offered twice");
+    }
+
+    #[test]
+    fn a_hidden_body_row_reads_as_hidden() {
+        let mut doc = Document::new("tree");
+        let body = doc.create_body(Some("Body".into()));
+        let visible = |doc: &Document| {
+            DocumentTree::build(doc, &DocumentService::default())
+                .nodes()
+                .iter()
+                .find(|n| n.id == TreeItemId::Body(body))
+                .map(|n| n.visible)
+        };
+        assert_eq!(visible(&doc), Some(true));
+        doc.set_body_visible(body, false);
+        assert_eq!(
+            visible(&doc),
+            Some(false),
+            "its eye is shut and its row muted"
+        );
     }
 
     #[test]

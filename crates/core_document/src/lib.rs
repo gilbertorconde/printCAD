@@ -153,6 +153,9 @@ pub struct Body {
     /// solid is derived from it, like the rest of an import's geometry.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub solid_requested: bool,
+    /// Kept out of the scene: not drawn, picked or framed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hidden: bool,
 }
 
 /// A user-chosen look for a body: its colour and how much of it shows.
@@ -334,6 +337,10 @@ impl Document {
                 id: *id,
                 display: self.bodies.iter().find(|b| b.id == *id)?.display,
             },
+            Op::SetBodyVisible { id, .. } => Op::SetBodyVisible {
+                id: *id,
+                visible: !self.bodies.iter().find(|b| b.id == *id)?.hidden,
+            },
             Op::SetBodyTip { id, .. } => Op::SetBodyTip {
                 id: *id,
                 tip: self.bodies.iter().find(|b| b.id == *id)?.tip,
@@ -439,6 +446,7 @@ impl Document {
                     display: None,
                     repair_requested: false,
                     solid_requested: false,
+                    hidden: false,
                 });
             }
             Op::RenameBody { id, name } => {
@@ -454,6 +462,11 @@ impl Document {
             Op::RequestBodyRepair { id } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.repair_requested = true;
+                }
+            }
+            Op::SetBodyVisible { id, visible } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.hidden = !visible;
                 }
             }
             Op::RequestMeshSolid { id } => {
@@ -583,6 +596,7 @@ impl Document {
                         display: None,
                         repair_requested: false,
                         solid_requested: false,
+                        hidden: false,
                     });
                 }
                 self.imported_object_roots.extend(roots.iter().copied());
@@ -871,6 +885,15 @@ impl Document {
             })
             .map(|b| b.id)
             .collect()
+    }
+
+    /// Show or hide a body in the scene.
+    pub fn set_body_visible(&mut self, body: BodyId, visible: bool) {
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+            && entry.hidden == visible
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyVisible { id: body, visible });
+        }
     }
 
     /// Suppress/unsuppress a feature (excluded from builds while suppressed).
@@ -1272,6 +1295,9 @@ impl Document {
     }
 
     pub fn imported_body_effective_visible(&self, body: BodyId) -> bool {
+        if self.bodies.iter().any(|b| b.id == body && b.hidden) {
+            return false;
+        }
         match self.imported_body_to_object.get(&body).copied() {
             Some(id) => self.imported_object_effective_visible(id),
             None => true,

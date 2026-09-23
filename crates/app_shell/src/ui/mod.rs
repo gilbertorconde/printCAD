@@ -434,6 +434,9 @@ impl UiLayer {
             if let Some((node, visible)) = combo.imported_visibility_change {
                 commands.push(UiCommand::SetImportedVisibility { node, visible });
             }
+            if let Some((body, visible)) = combo.body_visibility_change {
+                commands.push(UiCommand::SetBodyVisible { body, visible });
+            }
             if let Some((feature, command)) = combo.tree_feature_command {
                 commands.push(UiCommand::TreeFeature { feature, command });
             }

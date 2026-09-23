@@ -140,6 +140,22 @@ impl PrintCadApp {
                 UiCommand::SetImportedVisibility { node, visible } => {
                     intents.set_visibility.push((node, visible));
                 }
+                UiCommand::SetBodyVisible { body, visible } => {
+                    self.session.viewport_menu = None;
+                    self.session.document.set_body_visible(body, visible);
+                    if !visible && self.session.selected_body == Some(body.0) {
+                        // A hidden body is not what the next click acts on.
+                        self.session.selected_body = None;
+                        self.session.face_highlight = None;
+                        self.session.selected_edges.retain(|e| e.body != body.0);
+                    }
+                    self.session.journal.label_next(if visible {
+                        "Show body"
+                    } else {
+                        "Hide body"
+                    });
+                    self.session.journal.note(&mut self.session.document);
+                }
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
                 // A panel's requests take the same paths the UI's own

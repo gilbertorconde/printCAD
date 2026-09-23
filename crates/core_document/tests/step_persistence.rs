@@ -492,3 +492,41 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
     assert!(!doc.is_mesh_body(mesh_body));
     assert!(doc.bodies_awaiting_solid().is_empty());
 }
+
+/// Any body hides, whatever made it: one undoable op, out of the scene,
+/// and still hidden after a save.
+#[test]
+fn a_body_hides_and_shows_as_one_undoable_edit() {
+    use core_document::history::OpJournal;
+
+    let mut doc = Document::new("Hide");
+    let body = doc.create_body(Some("Body".into()));
+    let mut journal = OpJournal::new(16);
+    journal.note(&mut doc);
+    let _ = doc.take_pending_ops();
+
+    doc.set_body_visible(body, false);
+    doc.set_body_visible(body, false);
+    journal.note(&mut doc);
+    assert_eq!(
+        doc.take_pending_ops().len(),
+        1,
+        "one op, and none when unchanged"
+    );
+    assert!(!doc.imported_body_effective_visible(body));
+
+    let tmp = std::env::temp_dir().join(format!("printcad_hide_{}.prtcad", std::process::id()));
+    doc.save_to_file(&tmp, Compression::None).expect("save");
+    let loaded = Document::load_from_file(&tmp).expect("load");
+    let _ = std::fs::remove_file(&tmp);
+    assert!(
+        !loaded.imported_body_effective_visible(body),
+        "hidden after a save"
+    );
+
+    journal.undo(&mut doc);
+    assert!(
+        doc.imported_body_effective_visible(body),
+        "undo shows it again"
+    );
+}
