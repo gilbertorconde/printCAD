@@ -493,3 +493,160 @@ fn a_short_focal_distance_keeps_the_whole_scene_inside_the_far_plane() {
         "the near plane {near} stays clear of the picked point"
     );
 }
+
+/// Pivot picks on parts across a scene of several imports, each followed
+/// by an orbit about the picked point, as a user turns a scene over: after
+/// every step the far plane holds the whole scene, and the near plane is
+/// never past a part the eye is not inside.
+#[test]
+fn picking_pivots_and_orbiting_never_clip_the_scene() {
+    use super::CameraController;
+    use glam::{Vec2, Vec3};
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (1300, 800));
+    cam.update_viewport((0, 0), (1300, 800));
+    // The box three imports made together: a pin, a 3MF shell, an assembly.
+    let scene = (
+        Vec3::new(-40.5, -128.9, -10.0),
+        Vec3::new(154.3, 63.95, 131.9),
+    );
+    let (c, r) = crate::app::frame::aabb_fit_center_radius(scene.0, scene.1);
+    cam.reset_to_fit(c, r, Some(scene), &settings);
+
+    // A fixed sequence of points on the scene, spread through the box.
+    let mut seed = 0x2545_f491_4f6c_dd1du64;
+    let mut next = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 7;
+        seed ^= seed << 17;
+        (seed >> 11) as f32 / (1u64 << 53) as f32
+    };
+    for step in 0..400 {
+        cam.set_scene_bounds(Some(scene));
+        if step % 3 == 0 {
+            let hit = scene.0 + (scene.1 - scene.0) * Vec3::new(next(), next(), next());
+            cam.on_mmb_pivot_pick(Some(hit), &settings);
+        } else {
+            let pivot = Vec3::from_array(cam.target());
+            super::ops::orbit_pixels_around_world_anchor(
+                &mut cam.state,
+                &cam.axes,
+                glam::DVec3::new(pivot.x as f64, pivot.y as f64, pivot.z as f64),
+                Vec2::new((next() - 0.5) * 400.0, (next() - 0.5) * 300.0),
+                &settings,
+            );
+        }
+        cam.apply_auto_clip_planes(&settings);
+
+        let eye = Vec3::from_array(cam.position());
+        let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+        let depths: Vec<f32> = (0..8)
+            .map(|k| {
+                Vec3::new(
+                    if k & 1 == 0 { scene.0.x } else { scene.1.x },
+                    if k & 2 == 0 { scene.0.y } else { scene.1.y },
+                    if k & 4 == 0 { scene.0.z } else { scene.1.z },
+                )
+            })
+            .map(|p| (p - eye).dot(forward))
+            .collect();
+        let (near, far) = (cam.state.near_plane as f32, cam.state.far_plane as f32);
+        let deepest = depths.iter().copied().fold(f32::MIN, f32::max);
+        let nearest = depths.iter().copied().fold(f32::MAX, f32::min);
+        assert!(far >= deepest, "step {step}: far {far} short of {deepest}");
+        if nearest > 0.0 {
+            assert!(
+                near <= nearest,
+                "step {step}: near {near} past the scene at {nearest}"
+            );
+        } else {
+            // The eye is inside the scene's box: parts may be anywhere in
+            // front of it, so only a hair's breadth may be cut.
+            assert!(
+                near < 0.5,
+                "step {step}: near {near} with the eye inside the scene"
+            );
+        }
+    }
+}
+
+/// An orthographic view shows everything in its box, what lies behind the
+/// eye as much as what lies ahead: with the eye in the middle of the scene
+/// (a focal distance shortened before switching to orthographic, or an
+/// orbit about a picked point that swings it in), the clip planes still
+/// take in every part, in front of the eye and behind it.
+#[test]
+fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (1300, 800));
+    cam.update_viewport((0, 0), (1300, 800));
+    let scene = (
+        Vec3::new(-40.5, -128.9, -10.0),
+        Vec3::new(154.3, 63.95, 131.9),
+    );
+    let (c, r) = crate::app::frame::aabb_fit_center_radius(scene.0, scene.1);
+    cam.reset_to_fit(c, r, Some(scene), &settings);
+    cam.state.projection = ProjectionMode::Orthographic;
+    // The eye 20 mm off a point in the middle of the scene.
+    cam.state.focal_distance = 20.0;
+    cam.state.rederive_eye_from_focal(
+        glam::DVec3::new(c.x as f64, c.y as f64, c.z as f64),
+        &cam.axes,
+    );
+    cam.set_scene_bounds(Some(scene));
+    cam.apply_auto_clip_planes(&settings);
+
+    let eye = Vec3::from_array(cam.position());
+    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+    let depths: Vec<f32> = (0..8)
+        .map(|k| {
+            Vec3::new(
+                if k & 1 == 0 { scene.0.x } else { scene.1.x },
+                if k & 2 == 0 { scene.0.y } else { scene.1.y },
+                if k & 4 == 0 { scene.0.z } else { scene.1.z },
+            )
+        })
+        .map(|p| (p - eye).dot(forward))
+        .collect();
+    let nearest = depths.iter().copied().fold(f32::MAX, f32::min);
+    let deepest = depths.iter().copied().fold(f32::MIN, f32::max);
+    let (near, far) = (cam.state.near_plane as f32, cam.state.far_plane as f32);
+    assert!(
+        nearest < 0.0,
+        "the pick puts the eye inside the scene: {nearest}"
+    );
+    assert!(near <= nearest, "near {near} cuts parts from {nearest} on");
+    assert!(far >= deepest, "far {far} short of {deepest}");
+}
+
+/// In an orthographic view a part behind the eye is on screen, so a pivot
+/// picked on it is taken, and the eye comes round in front of it.
+#[test]
+fn an_orthographic_pivot_pick_behind_the_eye_is_taken() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    cam.reset_to_fit(Vec3::ZERO, 50.0, None, &settings);
+    cam.state.projection = ProjectionMode::Orthographic;
+    let eye = Vec3::from_array(cam.position());
+    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+    let behind = eye - forward * 30.0;
+
+    cam.on_mmb_pivot_pick(Some(behind), &settings);
+    assert!(
+        (Vec3::from_array(cam.target()) - behind).length() < 1e-3,
+        "the picked point is the pivot"
+    );
+    let eye = Vec3::from_array(cam.position());
+    assert!(
+        (behind - eye).dot(forward) > 0.0,
+        "and it lies ahead of the eye"
+    );
+}

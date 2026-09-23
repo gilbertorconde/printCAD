@@ -3,7 +3,7 @@
 //! See `camera_system.md` §5 — handles empty/degenerate bounds and caps `far/near` ratio.
 
 use glam::Vec3;
-use settings::CameraSettings;
+use settings::{CameraSettings, ProjectionMode};
 
 use crate::camera::state::CadCameraState;
 
@@ -51,6 +51,19 @@ pub fn update_auto_clip(
 
     let diag = (mx - mn).length();
     let min_range = (diag * 1e-6).max(1e-3);
+
+    // An orthographic view shows its whole box, what lies behind the eye
+    // as much as what lies ahead, and its depth is linear: the planes take
+    // in the scene from end to end, the near one behind the eye where the
+    // scene reaches back there.
+    if state.projection == ProjectionMode::Orthographic {
+        let margin = settings.near_far_margin;
+        let near = min_depth - margin;
+        let far = (max_depth + margin).max(near + min_range);
+        state.near_plane = near as f64;
+        state.far_plane = far as f64;
+        return;
+    }
 
     let fd = state.focal_distance as f32;
     let near_from_focal = (fd * settings.near_far_near_ratio).max(1e-4);

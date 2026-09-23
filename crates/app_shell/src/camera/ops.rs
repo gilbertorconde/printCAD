@@ -148,11 +148,19 @@ pub fn set_pivot_world_hit(
     }
     let forward = forward.normalize();
     let to_hit = hit - eye;
-    if to_hit.dot(forward) <= 1e-4 {
+    let depth = to_hit.dot(forward);
+    // An orthographic view shows what lies behind the eye too, and how far
+    // back the eye stands changes nothing it shows: a pick there keeps the
+    // focal distance and brings the eye round in front of the point.
+    let focal_distance = if depth > 1e-4 {
+        depth as f64
+    } else if state.projection == ProjectionMode::Orthographic {
+        state.focal_distance
+    } else {
         return false;
-    }
+    };
     let focal = hit;
-    state.focal_distance = to_hit.dot(forward) as f64;
+    state.focal_distance = focal_distance;
     state.clamp_focal_distance(settings);
     state.rederive_eye_from_focal(
         DVec3::new(focal.x as f64, focal.y as f64, focal.z as f64),
