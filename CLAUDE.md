@@ -153,7 +153,8 @@ cargo fmt --all                   # CI enforces --check
   `ToolDescriptor.row`, variant dropdowns), `combo_view` (tree +
   `property_panel`), `feature_tree`, `task_panel` (host of the workbench
   task; OK/Cancel/Enter/Esc), `status_bar`, `view_toolbar` (floating
-  pill), `hud` (workbench HUD corners, OVP card, hover card), `overlays`
+  pill; in perspective it carries the field of view, dragged or typed,
+  which `CameraController::set_field_of_view` changes keeping the framing), `hud` (workbench HUD corners, OVP card, hover card), `overlays`
   (line/mark/label painters), `start_page`, `preferences` (modal on a
   draft `UserSettings`, committed by `CommitSettings`), `command_palette`
   (Ctrl+K), `step_import_modal`, `log_view`, `host_ctx`.

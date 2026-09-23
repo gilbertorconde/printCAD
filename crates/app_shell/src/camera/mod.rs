@@ -18,7 +18,7 @@ use crate::orientation_cube::{CameraSnapView, RotateAxis, RotateDelta};
 use animate::CameraTween;
 use axes::{AxisPreset, AxisSystem};
 use glam::{DVec3, Mat3, Quat, Vec2, Vec3};
-use settings::{CameraSettings, SixDofMotion, SixDofSettings};
+use settings::{CameraSettings, ProjectionMode, SixDofMotion, SixDofSettings};
 use state::{CadCameraState, canonical_quat_to_world};
 use tracing::{debug, trace};
 use winit::event::{MouseButton, MouseScrollDelta, WindowEvent};
@@ -56,6 +56,9 @@ fn device_axes(readings: [f32; 6], device: &SixDofSettings) -> Option<[f32; 6]> 
 
     axes.iter().any(|value| *value != 0.0).then_some(axes)
 }
+
+/// The field of view a perspective takes, in degrees: from nearly flat to wide.
+pub const FOV_RANGE_DEG: (f32, f32) = (10.0, 120.0);
 
 pub struct CameraController {
     pub(crate) state: CadCameraState,
@@ -615,6 +618,30 @@ impl CameraController {
 
     fn after_scene_or_settings_touch(&mut self, settings: &CameraSettings) {
         self.state.clamp_focal_distance(settings);
+        self.state.clip_dirty = true;
+    }
+
+    /// The perspective's vertical field of view, in degrees.
+    pub fn field_of_view_deg(&self) -> f32 {
+        self.state.height_angle_rad.to_degrees() as f32
+    }
+
+    /// Change the perspective's field of view and keep the framing: the eye
+    /// moves along the view so what stands at the focal point keeps its size
+    /// on screen, and only the perspective's strength changes. Nothing
+    /// happens in an orthographic view, which has no field of view.
+    pub fn set_field_of_view(&mut self, degrees: f32, settings: &CameraSettings) {
+        if self.state.projection != ProjectionMode::Perspective {
+            return;
+        }
+        let new = f64::from(degrees.clamp(FOV_RANGE_DEG.0, FOV_RANGE_DEG.1)).to_radians();
+        let old = self.state.height_angle_rad;
+        let focal = self.state.focal_point_dvec(&self.axes);
+        self.cancel_animation();
+        self.state.focal_distance *= (old * 0.5).tan() / (new * 0.5).tan();
+        self.state.clamp_focal_distance(settings);
+        self.state.height_angle_rad = new;
+        self.state.rederive_eye_from_focal(focal, &self.axes);
         self.state.clip_dirty = true;
     }
 

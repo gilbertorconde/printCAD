@@ -69,6 +69,8 @@ pub struct UiFrameInputs<'a> {
     pub dimensions: Option<String>,
     /// Volume, area and centre of the body the property panel shows.
     pub physical: Option<Physical>,
+    /// The camera's field of view, in degrees, for the view toolbar.
+    pub field_of_view_deg: f32,
     pub screen_space_overlays: &'a [core_document::ScreenSpaceOverlay],
     pub screen_space_marks: &'a [core_document::ScreenSpaceMark],
     pub screen_space_labels: &'a [core_document::ScreenSpaceLabel],

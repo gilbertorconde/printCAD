@@ -112,6 +112,12 @@ pub enum UiCommand {
         node: uuid::Uuid,
         visible: bool,
     },
+    /// Set the perspective's field of view, keeping the framing; `settled`
+    /// when the edit is done and the setting is to be saved.
+    SetFieldOfView {
+        degrees: f32,
+        settled: bool,
+    },
     /// Show or hide a body, from its tree row, the property panel or the
     /// viewport's menu.
     SetBodyVisible {

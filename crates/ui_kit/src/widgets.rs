@@ -598,6 +598,13 @@ impl<'a> QtyField<'a> {
 
     /// Draws the field; returns whether the value changed.
     pub fn show(self, ui: &mut Ui) -> bool {
+        self.show_settling(ui).changed
+    }
+
+    /// Draws the field and says whether the value changed and whether an
+    /// edit settled this frame: a drag let go, or typing finished. A caller
+    /// that applies every change live saves on the settle.
+    pub fn show_settling(self, ui: &mut Ui) -> QtyEdit {
         let border = if self.error.is_some() { DANGER } else { BORDER };
         let text = if self.dim {
             TEXT3
@@ -607,6 +614,8 @@ impl<'a> QtyField<'a> {
             TEXT1
         };
         let mut changed = false;
+        let mut settled = false;
+        let mut hover: Option<Response> = None;
         Frame::new()
             .fill(BG2)
             .stroke(Stroke::new(1.0, border))
@@ -646,13 +655,28 @@ impl<'a> QtyField<'a> {
                         *self.value = v as f32;
                         changed = true;
                     }
+                    settled = resp.drag_stopped() || resp.lost_focus();
+                    hover = Some(resp);
                     if let Some(err) = self.error {
                         ui.label(RichText::new(err).font(sans(FONT_XS)).color(DANGER));
                     }
                 });
             });
-        changed
+        QtyEdit {
+            changed,
+            settled,
+            response: hover,
+        }
     }
+}
+
+/// What [`QtyField::show_settling`] saw this frame.
+pub struct QtyEdit {
+    pub changed: bool,
+    /// A drag was let go or typing finished.
+    pub settled: bool,
+    /// The value's own response, for a tooltip.
+    pub response: Option<Response>,
 }
 
 /// A dropdown of labelled options; returns whether the selection changed.

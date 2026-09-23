@@ -198,6 +198,7 @@ impl UiLayer {
             hover_card,
             dimensions,
             physical,
+            field_of_view_deg,
             screen_space_overlays,
             screen_space_marks,
             screen_space_labels,
@@ -532,6 +533,7 @@ impl UiLayer {
                 ui.ctx(),
                 viewport_rect_logical,
                 projection,
+                field_of_view_deg,
                 settings.rendering.draw_style,
                 &mut commands,
             );

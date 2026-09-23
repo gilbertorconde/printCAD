@@ -638,6 +638,7 @@ impl PrintCadApp {
                         hover_card,
                         dimensions,
                         physical,
+                        field_of_view_deg: self.session.camera.field_of_view_deg(),
                         screen_space_overlays: &screen_space_overlays,
                         screen_space_marks: &screen_space_marks,
                         screen_space_labels: &screen_space_labels,

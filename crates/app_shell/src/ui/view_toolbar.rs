@@ -1,12 +1,13 @@
 //! The floating view toolbar at the top of the viewport: fit, standard
-//! views, draw style and projection.
+//! views, draw style, projection, and in perspective its field of view.
 
 use egui::{Align2, Area, Context, Order, Vec2};
 use settings::{DrawStyle, ProjectionMode};
 use ui_kit::tokens::*;
-use ui_kit::widgets::{ToolButtonState, tool_button, vseparator};
+use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
 
 use super::UiCommand;
+use crate::camera::FOV_RANGE_DEG;
 use crate::orientation_cube::CameraSnapView;
 
 const BUTTON: f32 = 28.0;
@@ -57,6 +58,7 @@ pub fn draw_view_toolbar(
     ctx: &Context,
     viewport: egui::Rect,
     projection: ProjectionMode,
+    field_of_view_deg: f32,
     draw_style: DrawStyle,
     commands: &mut Vec<UiCommand>,
 ) {
@@ -179,6 +181,28 @@ pub fn draw_view_toolbar(
                                         commands.push(command);
                                     }
                                 }
+                            }
+                        }
+                        // The perspective's strength, dragged or typed: the
+                        // object keeps its size, only the distortion changes.
+                        if !ortho {
+                            let mut fov = field_of_view_deg;
+                            let edit = QtyField::degrees(&mut fov)
+                                .range(f64::from(FOV_RANGE_DEG.0)..=f64::from(FOV_RANGE_DEG.1))
+                                .decimals(0)
+                                .width(58.0)
+                                .show_settling(ui);
+                            if let Some(response) = &edit.response {
+                                response.clone().on_hover_text(
+                                    "Field of view: drag to change the perspective; \
+                                     the object keeps its size",
+                                );
+                            }
+                            if edit.changed || edit.settled {
+                                commands.push(UiCommand::SetFieldOfView {
+                                    degrees: fov,
+                                    settled: edit.settled,
+                                });
                             }
                         }
                     });

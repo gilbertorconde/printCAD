@@ -140,6 +140,17 @@ impl PrintCadApp {
                 UiCommand::SetImportedVisibility { node, visible } => {
                     intents.set_visibility.push((node, visible));
                 }
+                UiCommand::SetFieldOfView { degrees, settled } => {
+                    self.session
+                        .camera
+                        .set_field_of_view(degrees, &self.user_settings.camera);
+                    // A later fit frames with the setting, so it follows
+                    // the edit at once; the file waits for the edit to end.
+                    self.user_settings.camera.fov_degrees = self.session.camera.field_of_view_deg();
+                    if settled {
+                        intents.persist_settings = true;
+                    }
+                }
                 UiCommand::SetBodyVisible { body, visible } => {
                     self.session.viewport_menu = None;
                     self.session.document.set_body_visible(body, visible);
