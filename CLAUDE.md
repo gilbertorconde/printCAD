@@ -1,11 +1,11 @@
-# printCAD — agent notes
+# printCAD: agent notes
 
 Linux-native parametric CAD app aimed at FDM/SLA printing.
 Rust workspace + Vulkan (ash) + egui + the pure-Rust ogeom B-rep kernel
 (crates.io, `Cargo.lock` holds the exact version).
 
-**Never name the tools or systems this project draws on** — FreeCAD, X11,
-or any other reference point — anywhere in the project: no code, comments,
+**Never name the tools or systems this project draws on** (FreeCAD, X11,
+or any other reference point) anywhere in the project: no code, comments,
 identifiers, file or folder names, docs, UI strings, or commit messages.
 Describe conventions and architectures on their own terms, not by
 attribution. Naming an actual platform requirement (e.g. the display systems
@@ -16,7 +16,7 @@ the single sanctioned mention.)
 
 ```bash
 cargo run -p app_shell            # launch the app (needs Vulkan + Wayland/X11)
-cargo run --release -p app_shell  # for real STEP files — see the profile note
+cargo run --release -p app_shell  # for real STEP files; see the profile note
 cargo test --workspace            # full suite (~390 tests)
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
@@ -24,9 +24,9 @@ cargo fmt --all                   # CI enforces --check
 
 - The document server is a separate binary the app spawns from its own
   directory, so a release run needs `cargo build --release` for the whole
-  workspace — `-p app_shell` alone leaves `target/release/printcad-serverd`
+  workspace: `-p app_shell` alone leaves `target/release/printcad-serverd`
   missing and the app falls back to direct file I/O with a warning.
-- No system CAD libraries needed — the ogeom kernel is pure Rust, released to
+- No system CAD libraries needed: the ogeom kernel is pure Rust, released to
   crates.io. Bump it with `cargo update -p ogeom`; a commented
   `[patch.crates-io]` in the workspace `Cargo.toml` points at a local checkout
   for kernel dev.
@@ -44,7 +44,7 @@ cargo fmt --all                   # CI enforces --check
   load-bearing, not tidiness: the kernel is numeric code and runs ~26x slower
   unoptimized, which made a large STEP import look like a hang. Our own crates
   stay unoptimized (fast rebuilds, readable backtraces), so a debug build is
-  still ~1.4x slower than release — use `--release` when timing anything.
+  still ~1.4x slower than release, so use `--release` when timing anything.
 - `crates/kernel_ogeom/examples/import_bench.rs` prints the phase breakdown of
   an import; reference timings live in the import-performance memory.
 - Vulkan validation layers, when installed, are routed into `tracing`
@@ -52,10 +52,10 @@ cargo fmt --all                   # CI enforces --check
 
 ## Crate map / dataflow
 
-- `kernel_api` — pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
+- `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
-- `kernel_ogeom` — pure-Rust kernel adapter. STEP and IGES import share one
+- `kernel_ogeom`: pure-Rust kernel adapter. STEP and IGES import share one
   path after the read (`import.rs`, reader chosen by extension, `is_iges`);
   IGES solids and closed surface groups become bodies, open sheets are left
   out with a log line. STL, OBJ and 3MF (`mesh.rs`) import as **mesh
@@ -68,7 +68,7 @@ cargo fmt --all                   # CI enforces --check
   an open shell, said in the log), after which the body is an ordinary
   imported solid. STEP import builds bodies from
   the document's **placed occurrences** (`Document::occurrences_of`), never
-  from `import.solids` — the latter are part-local, so an assembly built from
+  from `import.solids`; the latter are part-local, so an assembly built from
   them puts every part at its own origin. The node walk mirrors the kernel's
   preorder flatten so the n-th part leaf is the n-th body. (`import.rs`) +
   `execute_solid_chain` (`chain.rs`): one in-memory ogeom `Model` per chain,
@@ -78,19 +78,19 @@ cargo fmt --all                   # CI enforces --check
   failing op index (`ChainError`). Profile wires group by containment:
   nested = holes, disjoint = separate solids (compounded when regions stay
   disjoint). Patterns re-run the tool op under the transform rather than
-  instancing. Tests marked `#[ignore]` document kernel-side gaps — grep for
+  instancing. Tests marked `#[ignore]` document kernel-side gaps; grep for
   `kernel:` in `tests/` before assuming a feature is wired wrong.
-- `core_document` — Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
+- `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context, snapshot undo
   (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
   plane/line/point/coordinate system + attachment + offset, shared across workbenches).
-- `doc_server` — the document server: `printcad-serverd` binary +
+- `doc_server`: the document server: `printcad-serverd` binary +
   `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
   length-prefixed JSON frames with the container bytes beside them, never
-  inside (`framing.rs`, `server::Payload`) — a document as JSON numbers is
+  inside (`framing.rs`, `server::Payload`), since a document as JSON numbers is
   four times its size and overran the frame cap outright, integration-tested against the
   real spawned daemon (`tests/daemon.rs`).
-- `ui_kit` — the design system, below the workbenches so their panel code
+- `ui_kit`: the design system, below the workbenches so their panel code
   can use it (behind their `egui` feature): `tokens` (the palette and
   size constants, named after the design's variables), `theme`
   (`apply_theme`, bundled IBM Plex Sans/Mono under `fonts/`, fetched by
@@ -100,13 +100,13 @@ cargo fmt --all                   # CI enforces --check
   `select_field`, `PrefRow` + `pref_group`, `planned`), `icon` (the SVG
   set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a
   generated `icon_table.rs`; `icon::texture/draw` rasterize with a
-  font-free usvg — the system-font scan is far too slow for 200 icons;
+  font-free usvg, since the system-font scan is far too slow for 200 icons;
   `select.svg` and `expression.svg` are hand-authored locals). The same
-  table carries the `motion-*` drawings — 200×200, their own colours, one
-  per movement of a 6-DoF mouse — drawn through `icon::drawing`, which
+  table carries the `motion-*` drawings (200×200, their own colours, one
+  per movement of a 6-DoF mouse), drawn through `icon::drawing`, which
   rasterizes for the size it is shown at rather than the icon size. A test
   fails when the table and the directory disagree.
-- `workbenches/wb_sketch` — sketcher: `tools.rs` + `tools/{draw,modify,
+- `workbenches/wb_sketch`: sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
   `profile.rs` (closed-wire extraction), `overlay.rs` (screen-space rendering
@@ -114,13 +114,13 @@ cargo fmt --all                   # CI enforces --check
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
-- `workbenches/fixtures` (`bench_fixtures`) — ready-made scenes built from
+- `workbenches/fixtures` (`bench_fixtures`): ready-made scenes built from
   the benches' feature types (a dimensioned sketch, padded, pocketed) for
   the app's `PRINTCAD_BENCH_SKETCH` hook and tests; the host composes
   benches only through it, never by naming them. `app/seam_lint.rs` fails
   when a bench crate, id or feature type appears in `app_shell/src`, and CI
   greps for the same.
-- `workbenches/wb_part` — Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
+- `workbenches/wb_part`: Pad/Pocket/Revolution/Groove/Loft/Pipe/Helix/
   Primitive/Hole/Fillet/Chamfer/Draft/Thickness/patterns/Boolean features
   (`feature.rs`; every one that fuses or cuts carries `refine`, which the
   build follows with a `SolidOp::Refine` merging coplanar faces; the
@@ -130,15 +130,15 @@ cargo fmt --all                   # CI enforces --check
   deletes a tool-created feature); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution).
-- `render_vk` — data-only renderer (`FrameSubmission` in, pixels out). GPU
+- `render_vk`: data-only renderer (`FrameSubmission` in, pixels out). GPU
   picking with async readback; per-body mesh cache keyed by (id, revision).
-- `app_shell` — binary. **Tabs:** `app/session.rs` is `DocumentSession`,
+- `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,
   presence, the STEP modal, the benches' suspended editing state); the active
   one sits on `PrintCadApp.session`, the rest are parked in `tabs` and
   `app/tabs.rs` swaps them (`switch_tab`, `open_tab`, `close_tab_interactive`,
-  `ensure_fresh_tab` — New and Open reuse a blank tab). Background tabs get
+  `ensure_fresh_tab`: New and Open reuse a blank tab). Background tabs get
   their turn through `with_tab`/`for_each_tab` (drains, rebuilds, outbox);
   a kernel response routes by body id or by the tab that asked for the
   import (`import_owner`). **Only a real switch moves bench state**
@@ -165,7 +165,7 @@ host never names a bench: `app/seam_lint.rs` and a CI grep over
 line that does. `descriptor()` says
 what a bench is: `icon`, the `feature_kinds` it claims (the
 `FeatureNode::workbench_id` values it presents, edits, renders, picks and
-deletes — Part Design claims `core.datum` too; a kind claimed twice fails
+deletes; Part Design claims `core.datum` too; a kind claimed twice fails
 registration), and `modal` for an edit-session bench (entering it remembers
 the bench to return to; the first non-modal registration is where a new
 document lands, `DocumentService::landing_workbench`). The registry answers
@@ -229,12 +229,12 @@ rendered/picked like any body. A history that changed shape goes through
 
 Import performance: the per-solid work and each mesh's face pass go through
 `ogeom_core::parallel::map_ordered` (order-preserving, so output is identical
-at any thread count — `tests/step_import.rs` asserts that). Never nest two
+at any thread count, which `tests/step_import.rs` asserts). Never nest two
 `map_ordered` passes: `tess::Faces::{Wide, Inline}` says which level owns the
 threads. Import meshes inline from the model already in memory; a deferred
 pass would have to parse every snapshot back, which cost more than the
 meshing. `crates/kernel_ogeom/examples/import_bench.rs` reports the phase
-breakdown — measure with it before optimizing. STEP text is decoded lossily
+breakdown; measure with it before optimizing. STEP text is decoded lossily
 (exporters emit Latin-1 in string literals).
 
 Progress/cancel: the worker installs one `Watch` per job
@@ -242,19 +242,19 @@ Progress/cancel: the worker installs one `Watch` per job
 depends on `ogeom` directly). `kernel_ogeom::progress::context` announces our
 own labels prefixed with `CONTEXT_PREFIX`; ogeom announces its own stages on
 the same thread-local channel. The worker's sink files them into a shared
-`Activity` slot (not a channel — `mpsc::Sender` is `Send` but not `Sync`), the
+`Activity` slot (not a channel: `mpsc::Sender` is `Send` but not `Sync`), the
 status bar reads it each frame, and `Canceller` backs the Cancel button. Our
 op/face/solid loops call `progress::checkpoint()` themselves, since
 `triangulate_face` has no checkpoints of its own. Stages announcing
-`(done, total)` — kernel-side, or ours via `progress::stage_at` fed by a
-shared monotone counter in the parallel import loop — draw as a determinate
+`(done, total)` (kernel-side, or ours via `progress::stage_at` fed by a
+shared monotone counter in the parallel import loop) draw as a determinate
 bar instead of the spinner; a new context resets counts to unknown.
 The reader's warnings never reach the terminal one by one: `ImportedModel.report`
 carries them (by kind with counts, the full prose, untrimmed face ids, skipped
 keywords). With `diagnostics.import_report` on (Preferences › General, off by
 default) `app/import_report.rs` writes them to
-`$TMPDIR/printcad/import-reports/<stem>-<stamp>.txt` — temp, so the system
-clears them — and logs the path; off, one line gives the counts and names the
+`$TMPDIR/printcad/import-reports/<stem>-<stamp>.txt` (temp, so the system
+clears them) and logs the path; off, one line gives the counts and names the
 switch. That file is what goes to the kernel's maintainer.
 **Shape health.** Every imported body is run through the kernel's checker as
 it is read (`kernel_ogeom/src/health.rs`, a few ms a body) and carries a
@@ -270,11 +270,11 @@ same way. The property panel's Physical group (volume, surface area,
 centre of mass) is measured by the kernel worker on demand for the body the
 panel shows, once per geometry revision (`drive_measurement`), never during
 an import, where it would cost ~15 ms a body. **Announcement discipline:** `progress::
-context` marks a *phase* and resets the display — call it once per phase,
+context` marks a *phase* and resets the display: call it once per phase,
 never per body or per face. Anything emitted inside a loop is
 `progress::detail` (a kernel-style sub-stage: shown under a sequential
 phase, ignored while our counted `stage_at` loop owns the display) or
-`stage_at`. Our counted stage speaks alone — the kernel's per-body stages
+`stage_at`. Our counted stage speaks alone; the kernel's per-body stages
 from twenty threads are noise, not information; the 1 s frame log's
 `status_changes` counts status-text changes per second (a readable bar
 changes ~1/s; a slot overwritten by threads changes every frame).
@@ -282,8 +282,8 @@ changes ~1/s; a slot overwritten by threads changes every frame).
 ## Kernel gap protocol
 
 The geometry kernel (ogeom) is developed by the project owner in its own
-repo. When a feature needs a kernel capability that ogeom lacks — missing
-API, refusal, wrong result — do NOT paper over it app-side (no mesh-level
+repo. When a feature needs a kernel capability that ogeom lacks (missing
+API, refusal, wrong result), do NOT paper over it app-side (no mesh-level
 hacks, no silently degraded feature). Instead:
 
 1. Wire the op anyway; let the kernel's refusal surface as a clean
@@ -294,18 +294,18 @@ hacks, no silently degraded feature). Instead:
 3. **File an issue on the kernel repo**
    (`gh issue create -R gilbertorconde/ogeom-rs`) with the desired
    API/signature, its semantics, a minimal repro in ogeom API terms, and an
-   acceptance test — and reference the issue number in the test's ignore
+   acceptance test, and reference the issue number in the test's ignore
    reason (`kernel: ... (ogeom-rs#N)`).
 4. When the fix lands: bump the ogeom rev pin in the workspace `Cargo.toml`,
    un-ignore the matching tests, rerun the full suite.
 
-## Invariants — violate these and things break subtly
+## Invariants: violate these and things break subtly
 
 - **`app/gfx.rs` field order IS the teardown contract** (struct fields drop in
   *declaration* order): renderer before window. Do not reorder. Inside the
   renderer the same rule bites: anything that frees device objects in its own
   `Drop` (the egui renderer) must be `take()`n and dropped in
-  `RendererCore::drop` BEFORE `destroy_device`, or it runs on a dead device —
+  `RendererCore::drop` BEFORE `destroy_device`, or it runs on a dead device:
   a hang or segfault at exit plus a wall of "leaked objects".
 - **Vulkan validation layers default to debug builds only**
   (`RenderSettings::default`); `PRINTCAD_VULKAN_VALIDATION=1` enables them for
@@ -329,19 +329,19 @@ hacks, no silently degraded feature). Instead:
   live edits ran (`core_document/src/op.rs`, tests in `tests/op_replay.rs`).
   Dirty flags, recompute errors and imported-geometry sidecars are per-replica
   consequences, excluded from the replicated projection. The outbox is
-  `#[serde(skip)]` and Clone-EMPTIES — snapshots carry state, never pending
+  `#[serde(skip)]` and Clone-EMPTIES: snapshots carry state, never pending
   ops. Never add a `&mut` escape hatch to `Document`; capture is only total
   because none exists.
 - **The app is a client of a document server, one connection per tab**
   (`core_document/src/server.rs` trait = the wire protocol; `crates/doc_server`
-  has the `printcad-serverd` daemon — one per document, unix socket under
-  `$XDG_RUNTIME_DIR/printcad`, single client, exits on disconnect — plus the
+  has the `printcad-serverd` daemon (one per document, unix socket under
+  `$XDG_RUNTIME_DIR/printcad`, single client, exits on disconnect) plus the
   `DirectFiles` fallback). The daemon stores opaque `.prtcad` bytes and op
   envelopes (`<file>.oplog.jsonl`), never deserializing a `Document`. Ops
   recorded before a document has a file go to `unhomed-<socket hash>.oplog.jsonl`,
   keyed by the socket, and an untitled tab's socket carries the tab's id
   (`socket_path_for_untitled(tab)`), so two unsaved documents never share
-  a log — one file for all of them meant the first to save took the other's
+  a log; one file for all of them meant the first to save took the other's
   history. Saves cross as client-serialized bytes with `at_seq`;
   `mark_clean()` only fires if `at_seq` still equals `mutation_seq` on
   completion. Undo/redo/new/open send `Rebase`. **Every exit path must call
@@ -349,11 +349,11 @@ hacks, no silently degraded feature). Instead:
   or a write in flight is abandoned mid-file.
   `PRINTCAD_SERVERD` overrides the daemon binary for dev.
 - **`FeatureNode.seq` is THE build-history ordering key.** `created_at` has
-  millisecond ties that order randomly — never sort history by it.
+  millisecond ties that order randomly; never sort history by it.
 - **Undo is per-user inverse ops, not snapshots** (`core_document/src/
   history.rs`). Each mutator computes its inverse from pre-apply state;
   gestures close at journal boundaries (mouse-up frames, labeled commands).
-  Undo/redo apply ordinary forward ops — they flow to the server and peers,
+  Undo/redo apply ordinary forward ops: they flow to the server and peers,
   never send `Rebase`, and never replace the document. Non-invertible ops
   (imports, asset adds) are barriers that clear history. Coalescing keeps
   the LAST op with the FIRST inverse. `Document::clone` still preserves the
@@ -363,14 +363,14 @@ hacks, no silently degraded feature). Instead:
 - Kernel shapes are plain `Send + Sync` data; tests run in parallel with no
   serialization mutex. The kernel-worker thread exists for UI responsiveness,
   not safety.
-- **Sketch endpoint snapping REUSES point ids** — that shared-vertex topology
+- **Sketch endpoint snapping REUSES point ids**: that shared-vertex topology
   is what makes profiles closed for `profile::extract_wires`. Don't create
   coincident duplicate points.
 - **Pocket/Groove cut AGAINST the sketch normal by default** (a face
   sketch's normal points out of the material, so the default digs in).
 - **NDC is Y-down**: the camera bakes the Vulkan Y flip into `view_proj`.
   Transform helpers live in `core_document::runtime` (ctx methods + free
-  functions) — mirror them, never re-derive with a different convention.
+  functions); mirror them, never re-derive with a different convention.
 - **Camera orientation is preset-relative** (`q·(−depth)=forward`,
   `q·vertical=up` in the active axis preset, default Z-up). Never build
   orientation quats against a hardcoded XYZ basis.
@@ -426,8 +426,8 @@ persistent scene image and runs only when `scene_fingerprint(frame)`
 (`render_vk/src/core.rs`) changes; every frame copies that image under the
 UI pass. UI-only frames (hover, panels, typing) therefore cost ~2 ms on any
 model. **Completeness of the fingerprint is the contract**: anything the
-scene pass reads — camera, viewport, lighting, per-body id/revision/mesh
-pointer/color/highlight/wireframe — must be hashed there,
+scene pass reads (camera, viewport, lighting, per-body id/revision/mesh
+pointer/color/highlight/wireframe) must be hashed there,
 or a change shows stale. The status bar shows both numbers because they are
 two things: `FPS` (UI frames presented) and `scene: N/s` (scene redraws;
 "cached" when zero). `PRINTCAD_BENCH_SPIN` keeps the loop awake with no
@@ -459,7 +459,7 @@ over itself, never as a tint (`rendering.selection_color` /
 `selection_opacity`, Preferences › Display › Rendering) through the
 renderer's blended pass: any `BodySubmission` with `opacity < 1` draws
 after the opaque bodies and their edges, depth-tested, never writing depth,
-and the pick pass skips it — an overlay is never what the cursor is over.
+and the pick pass skips it: an overlay is never what the cursor is over.
 While editing a sketch the view is locked planar (orbit + cube rotation
 disabled; pan/zoom/roll allowed). In the tree, bodies and features start
 open and imported assemblies start closed; the filter looks through closed
@@ -507,7 +507,7 @@ on the start page (`Screen::Start`); the recent list lives in
   `node scripts/lint-comment-rot.mjs --all` gates this in CI (default mode
   lints only lines added against `origin/master`; `--pedantic` adds an
   advisory tier). No "used to", "no longer", "since X landed", and no issue,
-  PR or commit references in comments — the one sanctioned place for a
+  PR or commit references in comments; the one sanctioned place for a
   kernel issue number is the `#[ignore = "kernel: … (ogeom-rs#N)"]` string.
   `lint-comment-rot: ignore` on a line opts it out when a reference is
   load-bearing. The tracked pre-commit hook runs it in `--staged` mode over
@@ -517,7 +517,7 @@ on the start page (`Screen::Start`); the recent list lives in
 ## Known approximations / roadmap
 
 - `TriMesh.faces` names the kernel face each triangle was cut from, so a click
-  selects a whole face — a bore or a fillet as much as a flat side
+  selects a whole face, a bore or a fillet as much as a flat side
   (`app/input.rs::face_submesh`). A mesh without faces (a sketch, a datum, a
   document saved before they were recorded) falls back to the plane through
   the hit. Persisted references are still geometric: dress-up edge selection

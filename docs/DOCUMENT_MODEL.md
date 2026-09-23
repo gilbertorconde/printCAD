@@ -1,419 +1,101 @@
-# Document Model Design
+# Document model
 
-## Overview
+A `Document` (`crates/core_document`) holds everything a `.prtcad` file
+stores. It knows no workbench: features are stored as JSON, and each
+workbench reads and writes its own.
 
-The `Document` is the central in-memory data structure that represents the complete state of a printCAD project. It provides a **generic, extensible API** that allows workbenches to define their own feature types and data structures.
+## What a document holds
 
-## Core Principles
+| Part | Type | Notes |
+| --- | --- | --- |
+| Metadata | `DocumentMetadata` | Id, name, revision |
+| Features | `FeatureTree` | Every feature, with its dependencies |
+| Bodies | `Vec<Body>` | Id, name, tip, display colour, hidden flag |
+| Workbench storage | `WorkbenchId -> JSON` | Data a workbench keeps outside features |
+| Assets | `AssetReference` | Files an import came from, kept verbatim |
+| Geometry | `ImportedGeometry` per body | The mesh, and for solids the kernel shape |
 
-1. **Extensibility**: Workbenches define their own feature types and data structures
-2. **Type Safety**: Use type-erased storage with workbench-specific deserialization
-3. **Dependency Tracking**: Generic dependency graph independent of feature types
-4. **Serialization**: All data must be serializable for persistence
+## Features
 
-## Core Structure
+A feature is a `FeatureNode`:
 
-```rust
-pub struct Document {
-    metadata: DocumentMetadata,
-    feature_tree: FeatureTree,
-    bodies: HashMap<BodyId, Body>,
-    /// Workbench-specific data storage (type-erased)
-    workbench_storage: HashMap<WorkbenchId, WorkbenchStorage>,
-    /// References to external files stored in the .prtcad archive
-    assets: HashMap<Uuid, AssetReference>,
-    history: Vec<DocumentRevision>,
-}
-```
+- `id`, `name`, and the `body` it belongs to
+- `workbench_id`: the kind, which says which workbench owns it
+- `visible`, `suppressed`, `dirty`, and the last rebuild `error`
+- `seq`: its place in the build history. Always order history by `seq`,
+  never by `created_at`.
+- `data`: the feature itself, as JSON
 
-## Feature Tree (Generic)
-
-The feature tree is a **generic** directed acyclic graph (DAG) that doesn't know about specific feature types:
+A workbench defines a feature type by implementing `WorkbenchFeature`:
 
 ```rust
-pub struct FeatureTree {
-    /// Root features (no dependencies)
-    roots: Vec<FeatureId>,
-    /// All features indexed by ID (type-erased)
-    features: HashMap<FeatureId, FeatureNode>,
-    /// Dependency graph: feature -> list of dependencies
-    dependencies: HashMap<FeatureId, Vec<FeatureId>>,
-    /// Reverse dependencies: feature -> list of dependents
-    dependents: HashMap<FeatureId, Vec<FeatureId>>,
-}
-
-/// A feature node in the tree (type-erased).
-pub struct FeatureNode {
-    pub id: FeatureId,
-    pub workbench_id: WorkbenchId,
-    pub name: String,
-    pub visible: bool,
-    pub suppressed: bool,
-    pub dirty: bool,
-    pub created_at: i64,
-    /// Type-erased feature data (serialized JSON)
-    pub data: serde_json::Value,
-}
-```
-
-## Workbench Feature API
-
-Workbenches define their own feature types and register them:
-
-```rust
-/// Trait for workbench-specific feature types.
-pub trait WorkbenchFeature: Send + Sync {
-    /// The workbench this feature belongs to.
+pub trait WorkbenchFeature {
     fn workbench_id() -> WorkbenchId;
-
-    /// Serialize this feature to JSON.
     fn to_json(&self) -> serde_json::Value;
-
-    /// Deserialize from JSON.
-    fn from_json(value: &serde_json::Value) -> Result<Self, FeatureError>;
-
-    /// Get dependencies (other feature IDs this feature depends on).
+    fn from_json(value: &serde_json::Value) -> DocumentResult<Self>;
     fn dependencies(&self) -> Vec<FeatureId>;
-
-    /// Get the feature name.
     fn name(&self) -> &str;
 }
 ```
 
-## Example: Sketch Workbench Feature
+It adds one with `add_feature_in_body`, and changes it with
+`update_feature_data`. The dependencies it declares decide what is marked
+dirty when a feature changes.
 
-```rust
-// In wb_sketch crate
-pub struct SketchFeature {
-    pub sketch: Sketch, // from wb_sketch::sketch
-    pub plane: SketchPlane,
-}
+## Bodies and geometry
 
-impl WorkbenchFeature for SketchFeature {
-    fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.sketch")
-    }
+A body is a name and a place in the tree. Its solid is not stored in the
+feature tree. It is derived:
 
-    fn to_json(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap()
-    }
+- A Part Design body is rebuilt from its features by the kernel.
+- An imported body keeps the kernel shape it was read with.
+- A mesh body (from STL, OBJ or 3MF) has triangles only, until it is
+  converted to a solid.
 
-    fn from_json(value: &serde_json::Value) -> Result<Self, FeatureError> {
-        serde_json::from_value(value.clone())
-            .map_err(|e| FeatureError::Deserialization(e.to_string()))
-    }
+The result lands in `ImportedGeometry`: an `Arc<TriMesh>` for drawing, a
+`revision` the renderer uses to know when to upload again, the bounds, and
+the shape's health check. The kernel shape itself is kept beside it as
+ogeom native text.
 
-    fn dependencies(&self) -> Vec<FeatureId> {
-        Vec::new() // Sketches have no dependencies
-    }
+## Edits, undo and replay
 
-    fn name(&self) -> &str {
-        &self.sketch.name
-    }
-}
-```
+- **Every edit records exactly one operation.** Each method that changes the
+  document builds a `DocumentOp`, applies it and records it. Replaying the
+  operations rebuilds the same document.
+- **Derived state records nothing.** Dirty flags, rebuild errors, meshes and
+  the preview image are consequences of the operations, not history.
+- **Undo applies inverse operations.** Each edit computes its inverse before
+  it applies. One gesture, such as a drag or one task in the task panel, is
+  one undo step.
+- **Some operations cannot be undone.** An import or a new asset clears the
+  undo history.
 
-## Example: Part Design Feature
+## The file
 
-```rust
-// In wb_part crate
-pub struct PadFeature {
-    pub sketch: FeatureId, // reference to sketch feature
-    pub distance: f32,
-}
-
-impl WorkbenchFeature for PadFeature {
-    fn workbench_id() -> WorkbenchId {
-        WorkbenchId::from("wb.part")
-    }
-
-    fn dependencies(&self) -> Vec<FeatureId> {
-        vec![self.sketch] // Depends on sketch
-    }
-
-    // ... other methods
-}
-```
-
-## Workbench Storage
-
-Workbenches can store additional data outside the feature tree:
-
-```rust
-/// Type-erased storage for workbench-specific data.
-pub struct WorkbenchStorage {
-    /// Workbench ID this storage belongs to
-    pub workbench_id: WorkbenchId,
-    /// Arbitrary JSON data (workbench-specific)
-    pub data: serde_json::Value,
-}
-```
-
-## Bodies
-
-Bodies are lightweight identity records; geometry lives in sidecar maps on
-the `Document`:
-
-```rust
-pub struct Body {
-    pub id: BodyId,
-    pub name: String,
-    pub created_at: i64,
-}
-```
-
-Tessellated geometry for a body is stored in `Document::imported_meshes`
-(`BodyId -> ImportedGeometry`, an `Arc<TriMesh>` plus a `revision` counter
-the renderer uses for cache invalidation). Imported STEP bodies additionally
-carry a frozen B-Rep snapshot (`imported_brep_blobs`) and per-face colours
-(`imported_brep_face_colors`) used for deferred re-tessellation. A future
-parametric rebuild will link bodies to kernel handles; that linkage does not
-exist yet.
-
-## Workbench Data
-
-Workbench-specific data stored separately:
-
-```rust
-pub enum WorkbenchData {
-    Sketch(Vec<Sketch>), // sketches not yet in feature tree
-    PartDesign(PartDesignData),
-    // Future workbenches...
-}
-```
-
-## Dependency Management
-
-Features can depend on other features:
-
-```rust
-impl FeatureTree {
-    /// Add a dependency: `dependent` depends on `dependency`
-    pub fn add_dependency(&mut self, dependent: FeatureId, dependency: FeatureId);
-
-    /// Get all dependencies of a feature
-    pub fn dependencies(&self, feature: FeatureId) -> Vec<FeatureId>;
-
-    /// Get all features that depend on this one
-    pub fn dependents(&self, feature: FeatureId) -> Vec<FeatureId>;
-
-    /// Mark feature and all dependents as dirty
-    pub fn mark_dirty(&mut self, feature: FeatureId);
-
-    /// Get recomputation order (topological sort)
-    pub fn recompute_order(&self, dirty_features: &[FeatureId]) -> Vec<FeatureId>;
-}
-```
-
-## Document API (Generic)
-
-```rust
-impl Document {
-    /// Create a new document
-    pub fn new(name: impl Into<String>) -> Self;
-
-    /// Add a feature to the tree (generic, works with any WorkbenchFeature)
-    pub fn add_feature<F: WorkbenchFeature>(
-        &mut self,
-        feature: F,
-        name: String,
-    ) -> DocumentResult<FeatureId>;
-
-    /// Get feature data (returns JSON, workbench must deserialize)
-    pub fn get_feature_data(&self, id: FeatureId) -> Option<&serde_json::Value>;
-
-    /// Get feature metadata (id, name, dirty, etc.)
-    pub fn get_feature_meta(&self, id: FeatureId) -> Option<&FeatureNode>;
-
-    /// Update feature data (workbench provides serialized JSON)
-    pub fn update_feature_data(
-        &mut self,
-        id: FeatureId,
-        data: serde_json::Value,
-    ) -> DocumentResult<()>;
-
-    /// Mark feature dirty (triggers recomputation)
-    pub fn mark_feature_dirty(&mut self, feature_id: FeatureId);
-
-    /// Get all dirty features
-    pub fn dirty_features(&self) -> Vec<FeatureId>;
-
-    /// Get recomputation order for dirty features
-    pub fn recompute_order(&self) -> Vec<FeatureId>;
-
-    /// Get workbench storage
-    pub fn get_workbench_storage(&self, wb_id: &WorkbenchId) -> Option<&WorkbenchStorage>;
-
-    /// Get mutable workbench storage
-    pub fn get_workbench_storage_mut(
-        &mut self,
-        wb_id: &WorkbenchId,
-    ) -> Option<&mut WorkbenchStorage>;
-
-    /// Set workbench storage
-    pub fn set_workbench_storage(
-        &mut self,
-        wb_id: WorkbenchId,
-        data: serde_json::Value,
-    );
-}
-```
-
-## Workbench Helper Methods
-
-Workbenches provide convenience methods that wrap the generic API:
-
-```rust
-// In wb_sketch crate
-impl Document {
-    /// Add a sketch feature (convenience method)
-    pub fn add_sketch_feature(
-        &mut self,
-        sketch: Sketch,
-        name: String,
-    ) -> DocumentResult<FeatureId> {
-        let feature = SketchFeature { sketch, plane: SketchPlane::default() };
-        self.add_feature(feature, name)
-    }
-
-    /// Get a sketch feature (convenience method)
-    pub fn get_sketch_feature(&self, id: FeatureId) -> Option<SketchFeature> {
-        self.get_feature_data(id)
-            .and_then(|data| SketchFeature::from_json(data).ok())
-    }
-}
-```
-
-## Document File Format
-
-The document is stored as a **`.prtcad` file**, which is a tar archive (optionally compressed with gzip or zstd) containing:
+A `.prtcad` file is a tar archive. It can be compressed with gzip
+(`.prtcad.gz`) or zstd (`.prtcad.zst`).
 
 ```
-document.prtcad/
-├── document.json             # Features, bodies, metadata, meshes
-├── assets/                   # The files an import came from, kept verbatim
-│   └── <uuid>.step
-└── brep/                     # Per-body B-rep snapshots, ogeom native text
-    ├── <uuid>.bin
-    └── <uuid>.colors         # That body's per-face colours
+thumbnail.png        Preview of the model, first so it reads quickly
+document.json        Metadata, features, bodies, meshes
+assets/<id>.<ext>    The files imports came from
+brep/<id>.bin        Each body's kernel shape, ogeom native text
+brep/<id>.colors     Each body's face colours
 ```
 
-The archive carries the source file and every snapshot, so a document with an
-import runs to hundreds of megabytes. Packing and unpacking therefore happen
-on a worker rather than the UI thread, and the status bar counts the megabytes
-as they go.
+A document with an import can be hundreds of megabytes, so saving and
+opening run on a background thread.
 
-### Document Structure
+New fields on saved types take `#[serde(default)]`, so older files keep
+opening.
 
-The `document.json` file contains:
+## The document server
 
-```json
-{
-  "metadata": {
-    "id": "...",
-    "name": "My Project",
-    "revision": 42,
-    "dirty": false
-  },
-  "feature_tree": { ... },
-  "workbench_storage": { ... },
-  "assets": [
-    {
-      "id": "asset_001",
-      "path": "assets/imported_base.step",
-      "type": "step",
-      "imported_at": 1234567890
-    }
-  ],
-  "bodies": { ... }
-}
-```
+The application does not write the file itself. Each document has a server
+process, `printcad-serverd`, reached over a Unix socket. The application
+sends it the saved bytes and every operation. The server stores them without
+reading them: the file, and the operation log beside it
+(`<file>.oplog.jsonl`).
 
-### Asset References
-
-When importing external files (STEP, STL, etc.), they are:
-
-1. Copied into the `assets/` directory within the `.prtcad` archive
-2. Referenced in the document JSON with metadata
-3. Available for workbenches to reference
-
-```rust
-pub struct AssetReference {
-    pub id: Uuid,
-    pub path: String, // Path within the .prtcad archive
-    pub asset_type: AssetType,
-    pub imported_at: i64,
-    pub metadata: serde_json::Value, // Additional metadata
-}
-
-pub enum AssetType {
-    Step,
-    Stl,
-    Iges,
-    Obj,
-    // Future formats...
-}
-```
-
-### Implementation
-
-The document save/load API handles the tar container:
-
-```rust
-impl Document {
-    /// Save document to a .prtcad file (tar archive, optionally compressed)
-    /// Compression: None, Gzip, or Zstd
-    pub fn save_to_file(&self, path: &Path, compression: Compression) -> DocumentResult<()>;
-
-    /// Load document from a .prtcad file (auto-detects compression)
-    pub fn load_from_file(path: &Path) -> DocumentResult<Self>;
-
-    /// Add an external file as an asset (copies into archive)
-    pub fn add_asset(&mut self, source_path: &Path, asset_type: AssetType) -> DocumentResult<Uuid>;
-
-    /// Get asset path within the archive
-    pub fn get_asset_path(&self, asset_id: Uuid) -> Option<&str>;
-}
-
-pub enum Compression {
-    None,      // Plain tar
-    Gzip,      // .tar.gz or .prtcad.gz
-    Zstd,      // .tar.zst or .prtcad.zst
-}
-```
-
-### File Extensions
-
-- `.prtcad` - Plain tar archive (uncompressed)
-- `.prtcad.gz` - Tar archive compressed with gzip
-- `.prtcad.zst` - Tar archive compressed with zstd (recommended for better compression)
-
-## How an edit reaches the file
-
-The Document is not saved by whoever edited it. Three rules hold the model
-together:
-
-1. **Every user-edit mutator records exactly one operation.** Mutators
-   validate, resolve ids and timestamps, build a `DocumentOp`, apply it and
-   record it. Replay runs the same code the live edit ran, so a document
-   rebuilt from its operations is the document that was edited. Derived state
-   — dirty flags, recompute errors, the imported-geometry sidecars — records
-   nothing: it is a consequence, not history.
-
-2. **Undo is the inverse of those operations, not a snapshot.** Each mutator
-   computes its inverse from the state before it applied. Gestures close at
-   journal boundaries, so a drag is one step. A few operations cannot be
-   inverted — an import, an asset add — and those are barriers that clear the
-   history behind them.
-
-3. **The app is a client of a document server.** `core_document::server`
-   is the wire protocol; `printcad-serverd` implements it, one daemon per
-   document over a UNIX socket, storing opaque `.prtcad` bytes and an
-   operation log beside them (`<file>.oplog.jsonl`). The daemon never
-   deserializes a Document: the client serializes, the server stores. When no
-   daemon can start, the same trait is satisfied by direct file I/O and the
-   status bar says so.
-
-The point of the three together is that a second editor is a transport
-change, not a rewrite: operations already describe every edit, already carry
-their author, and already replay identically.
+If the server cannot start, the application writes the file directly and
+says so in the status bar.
