@@ -163,8 +163,29 @@ impl Default for SketchOptions {
     }
 }
 
+/// Which sketch-list action the panel's picker serves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SketchPickerMode {
+    /// Copy one sketch's geometry into the one being edited.
+    CarbonCopy,
+    /// Make a new sketch of the edited one and the ticked others.
+    Merge,
+}
+
+/// The panel's list of the document's other sketches, open for carbon copy
+/// or merge.
+#[derive(Debug, Clone)]
+pub(crate) struct SketchPicker {
+    pub mode: SketchPickerMode,
+    /// The sketches ticked for a merge.
+    pub checked: HashSet<FeatureId>,
+}
+
 #[derive(Default)]
 pub struct SketchWorkbench {
+    /// The panel's list of other sketches, when carbon copy or merge is
+    /// picking.
+    sketch_picker: Option<SketchPicker>,
     /// The panel's and the Preferences page's switches.
     pub options: SketchOptions,
     /// Geometry cut or copied, as a sketch of its own, until pasted.
@@ -1453,11 +1474,9 @@ impl Workbench for SketchWorkbench {
             "Mirror sketch",
             "sketch-mirror",
         ));
-        // PLANNED: joining several sketches into one.
         context.register_tool(
             ToolDescriptor::new_action("sketch.merge", "Merge sketches", Some("sketch.manage"))
                 .icon("sketch-merge")
-                .planned("joins several sketches into one")
                 .row(0),
         );
         context.register_tool(
@@ -1532,28 +1551,27 @@ impl Workbench for SketchWorkbench {
             if *id == "sketch.split" {
                 // The row's planned entries sit after split.
                 context.register_tool(tool);
-                // PLANNED: geometry the design shows and the sketcher lacks.
-                for (pid, plabel, picon, note) in [
-                    (
+                // PLANNED: projecting the solid's edges into the sketch, once
+                // the kernel projects an edge onto a plane exactly.
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.external",
                         "External geometry",
-                        "external-geometry",
-                        "projects edges of the solid into the sketch",
-                    ),
-                    (
+                        Some("geometry.external"),
+                    )
+                    .icon("external-geometry")
+                    .planned("projects edges of the solid into the sketch")
+                    .row(1),
+                );
+                context.register_tool(
+                    ToolDescriptor::new_action(
                         "sketch.carbon_copy",
                         "Carbon copy",
-                        "carbon-copy",
-                        "copies another sketch's geometry into this one",
-                    ),
-                ] {
-                    context.register_tool(
-                        ToolDescriptor::new_action(pid, plabel, Some("geometry.external"))
-                            .icon(picon)
-                            .planned(note)
-                            .row(1),
-                    );
-                }
+                        Some("geometry.external"),
+                    )
+                    .icon("carbon-copy")
+                    .row(1),
+                );
                 context.register_tool(
                     ToolDescriptor::new_action(
                         "sketch.construction",
@@ -1848,6 +1866,10 @@ impl Workbench for SketchWorkbench {
                 "sketch.attach" => return self.attach_to_face(ctx),
                 "sketch.array" => return self.array_selection(ctx),
                 "sketch.mirror_sketch" => return self.mirror_sketch(ctx),
+                "sketch.carbon_copy" => {
+                    return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
+                }
+                "sketch.merge" => return self.open_sketch_picker(SketchPickerMode::Merge),
                 "sketch.toggle_driving" => {
                     return self.edit_selected_constraints(ctx, |c| c.driving = !c.driving);
                 }
@@ -2046,6 +2068,9 @@ impl Workbench for SketchWorkbench {
             "sketch.show_constraints" => self.options.constraints_hidden,
             "sketch.grid" => self.options.grid_on,
             "sketch.rendering_order" => self.options.construction_on_top,
+            "sketch.carbon_copy" | "sketch.merge" => self.sketch_picker.as_ref().is_some_and(|p| {
+                (p.mode == SketchPickerMode::Merge) == (tool_id == "sketch.merge")
+            }),
             _ => false,
         }
     }
@@ -2057,6 +2082,7 @@ impl Workbench for SketchWorkbench {
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         if self.active_sketch_id.is_some() {
             self.active_sketch_id = None;
+            self.sketch_picker = None;
             self.clear_interaction_state();
             // Deselect the feature: with it still active the next input
             // event would immediately re-enter editing via
@@ -2742,6 +2768,120 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// Open the panel's list of other sketches for carbon copy or merge; the
+    /// same action again closes it.
+    fn open_sketch_picker(&mut self, mode: SketchPickerMode) -> InputResult {
+        self.sketch_picker = match &self.sketch_picker {
+            Some(picker) if picker.mode == mode => None,
+            _ => Some(SketchPicker {
+                mode,
+                checked: HashSet::new(),
+            }),
+        };
+        InputResult::consumed()
+    }
+
+    /// Every sketch in the document but the one being edited, in history
+    /// order: its id, name, and content.
+    pub(crate) fn other_sketches(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+    ) -> Vec<(FeatureId, String, SketchFeature)> {
+        let mut out: Vec<(u64, FeatureId, String, SketchFeature)> = ctx
+            .document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(id, node)| {
+                node.workbench_id.as_str() == "wb.sketch" && Some(**id) != self.active_sketch_id
+            })
+            .filter_map(|(id, node)| {
+                let feature = SketchFeature::from_json(&node.data).ok()?;
+                Some((node.seq, *id, node.name.clone(), feature))
+            })
+            .collect();
+        out.sort_by_key(|(seq, id, _, _)| (*seq, *id));
+        out.into_iter()
+            .map(|(_, id, name, feature)| (id, name, feature))
+            .collect()
+    }
+
+    /// Copy `source`'s geometry into the edited sketch, mapped from its plane
+    /// onto this one; its constraints come along where the planes share
+    /// their axes.
+    pub(crate) fn carbon_copy(&mut self, ctx: &mut WorkbenchRuntimeContext, source: FeatureId) {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some((_, name, from)) = self
+            .other_sketches(ctx)
+            .into_iter()
+            .find(|(id, _, _)| *id == source)
+        else {
+            return;
+        };
+        let xf = match plane_map(&from.plane, &feature.plane) {
+            Ok(xf) => xf,
+            Err(why) => {
+                ctx.log_warn(format!("Carbon copy of {name}: {why}"));
+                return;
+            }
+        };
+        let (count, constraints) = copy_sketch_into(&from.sketch, &mut feature.sketch, &xf);
+        self.sketch_picker = None;
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
+        ctx.log_info(carbon_copy_log(&name, count, constraints, &xf));
+    }
+
+    /// A new sketch on the edited one's plane holding its geometry and the
+    /// ticked sketches', each mapped onto the plane; the originals stay.
+    pub(crate) fn merge_sketches(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(picker) = self.sketch_picker.take() else {
+            return;
+        };
+        let (Some(feature), Some(active)) = (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
+            return;
+        };
+        let mut merged = Sketch::new(format!("{} merged", feature.sketch.name));
+        merged.plane = feature.plane;
+        let (mut count, mut constraints) = copy_sketch_into(
+            &feature.sketch,
+            &mut merged,
+            &tools::Similarity::translation(glam::Vec2::ZERO),
+        );
+        let mut skipped = Vec::new();
+        for (id, name, from) in self.other_sketches(ctx) {
+            if !picker.checked.contains(&id) {
+                continue;
+            }
+            match plane_map(&from.plane, &feature.plane) {
+                Ok(xf) => {
+                    let (n, c) = copy_sketch_into(&from.sketch, &mut merged, &xf);
+                    count += n;
+                    constraints += c;
+                }
+                Err(why) => skipped.push(format!("{name} ({why})")),
+            }
+        }
+        let body = ctx.document.get_feature_meta(active).and_then(|n| n.body);
+        let name = merged.name.clone();
+        let plane = feature.plane;
+        match ctx.document.add_feature_in_body(
+            SketchFeature::new(merged, plane),
+            name.clone(),
+            body,
+        ) {
+            Ok(_) => ctx.log_info(format!(
+                "Created {name}: {count} elements, {constraints} constraints"
+            )),
+            Err(err) => ctx.log_error(format!("Could not create the merged sketch: {err}")),
+        }
+        if !skipped.is_empty() {
+            ctx.log_warn(format!("Left out of the merge: {}", skipped.join(", ")));
+        }
+    }
+
     /// A new sketch on the same plane and body: this one's geometry
     /// mirrored across the sketch's Y axis.
     fn mirror_sketch(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
@@ -3021,6 +3161,61 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     }
 }
 
+/// The map from one sketch plane's coordinates onto another's, for planes
+/// that face the same line: rotation, translation, and a mirror when their
+/// normals oppose. A plane at an angle to the other has no such map (its
+/// geometry would come out foreshortened), and is refused.
+pub(crate) fn plane_map(
+    from: &SketchPlane,
+    onto: &SketchPlane,
+) -> Result<tools::Similarity, &'static str> {
+    use glam::Vec3;
+    let v = |a: [f32; 3]| Vec3::from_array(a);
+    if v(from.normal).cross(v(onto.normal)).length() > 1e-4 {
+        return Err("its plane is not parallel to this one");
+    }
+    let (ox, oy) = (v(onto.x_axis), v(onto.y_axis));
+    let m = glam::Mat2::from_cols(
+        glam::Vec2::new(v(from.x_axis).dot(ox), v(from.x_axis).dot(oy)),
+        glam::Vec2::new(v(from.y_axis).dot(ox), v(from.y_axis).dot(oy)),
+    );
+    let d = v(from.origin) - v(onto.origin);
+    Ok(tools::Similarity::linear(
+        m,
+        glam::Vec2::new(d.dot(ox), d.dot(oy)),
+    ))
+}
+
+/// Copy all of `source` into `target` under `xf`, and its constraints when
+/// `xf` only moves (under a turn or a mirror, a constraint stated against
+/// the sketch axes would no longer hold). Returns the elements and the
+/// constraints copied.
+fn copy_sketch_into(
+    source: &Sketch,
+    target: &mut Sketch,
+    xf: &tools::Similarity,
+) -> (usize, usize) {
+    let all: HashSet<Uuid> = source.geometry.iter().map(GeometryElement::id).collect();
+    let map = tools::copy_mapped(source, target, &all, xf);
+    let constraints = if xf.is_translation() {
+        tools::copy_constraints(source, target, &map, xf)
+    } else {
+        0
+    };
+    (map.len(), constraints)
+}
+
+fn carbon_copy_log(name: &str, count: usize, constraints: usize, xf: &tools::Similarity) -> String {
+    if xf.is_translation() {
+        format!("Carbon copy of {name}: {count} elements, {constraints} constraints")
+    } else {
+        format!(
+            "Carbon copy of {name}: {count} elements; its constraints stay behind, as its \
+             axes are turned against this sketch's"
+        )
+    }
+}
+
 #[cfg(all(test, feature = "egui"))]
 mod icon_coverage {
     use super::*;
@@ -3096,5 +3291,137 @@ mod dimension_tool {
         wb.options.grid_auto = false;
         wb.options.grid_size = 7.5;
         assert_eq!(wb.grid_step(1.0), 7.5);
+    }
+}
+
+#[cfg(test)]
+mod sketch_picker {
+    use super::*;
+    use core_document::Document;
+    use sketch::{Line, Point};
+
+    /// A document with the edited sketch on `onto` and one other sketch on
+    /// `from`: a 10 mm line along its X axis, horizontal and dimensioned.
+    fn scene(from: SketchPlane, onto: SketchPlane) -> (Document, SketchWorkbench, FeatureId) {
+        let mut doc = Document::new("t");
+        let mut other = Sketch::new("other");
+        let a = other.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = other.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
+        let line = other.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        other.add_constraint(ConstraintKind::Horizontal { element: line });
+        other.add_constraint(ConstraintKind::Length { line, length: 10.0 });
+        let other_id = doc
+            .add_feature_in_body(SketchFeature::new(other, from), "other".into(), None)
+            .unwrap();
+        let edited = doc
+            .add_feature_in_body(
+                SketchFeature::new(Sketch::new("edited"), onto),
+                "edited".into(),
+                None,
+            )
+            .unwrap();
+        let wb = SketchWorkbench {
+            active_sketch_id: Some(edited),
+            ..SketchWorkbench::default()
+        };
+        (doc, wb, other_id)
+    }
+
+    fn ctx(doc: &mut Document) -> WorkbenchRuntimeContext<'_> {
+        WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600))
+    }
+
+    fn points(sketch: &Sketch) -> Vec<Vec2D> {
+        sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) => Some(p.position),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn shifted(dx: f32, dy: f32, dz: f32) -> SketchPlane {
+        SketchPlane {
+            origin: [dx, dy, dz],
+            ..SketchPlane::xy()
+        }
+    }
+
+    #[test]
+    fn a_carbon_copy_from_a_shifted_plane_keeps_its_place_and_constraints() {
+        let (mut doc, mut wb, other) = scene(shifted(5.0, 0.0, 20.0), SketchPlane::xy());
+        let mut ctx = ctx(&mut doc);
+        wb.carbon_copy(&mut ctx, other);
+        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
+        assert_eq!(copy.geometry.len(), 3);
+        assert_eq!(copy.constraints.len(), 2);
+        let pts = points(&copy);
+        assert!(
+            pts.iter()
+                .any(|p| (p.x - 5.0).abs() < 1e-4 && p.y.abs() < 1e-4)
+        );
+        assert!(
+            pts.iter()
+                .any(|p| (p.x - 15.0).abs() < 1e-4 && p.y.abs() < 1e-4)
+        );
+    }
+
+    #[test]
+    fn a_carbon_copy_from_a_facing_plane_is_mirrored_and_leaves_its_constraints() {
+        let facing = SketchPlane {
+            normal: [0.0, 0.0, -1.0],
+            x_axis: [-1.0, 0.0, 0.0],
+            ..SketchPlane::xy()
+        };
+        let (mut doc, mut wb, other) = scene(facing, SketchPlane::xy());
+        let mut ctx = ctx(&mut doc);
+        wb.carbon_copy(&mut ctx, other);
+        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
+        assert_eq!(copy.geometry.len(), 3);
+        assert!(copy.constraints.is_empty());
+        assert!(points(&copy).iter().any(|p| (p.x + 10.0).abs() < 1e-4));
+    }
+
+    #[test]
+    fn a_plane_at_an_angle_is_refused() {
+        assert!(plane_map(&SketchPlane::xz(), &SketchPlane::xy()).is_err());
+        let (mut doc, mut wb, other) = scene(SketchPlane::xz(), SketchPlane::xy());
+        let mut ctx = ctx(&mut doc);
+        wb.carbon_copy(&mut ctx, other);
+        assert!(
+            wb.get_active_sketch(&ctx)
+                .unwrap()
+                .sketch
+                .geometry
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn merging_makes_a_new_sketch_and_keeps_the_originals() {
+        let (mut doc, mut wb, other) = scene(shifted(0.0, 3.0, 0.0), SketchPlane::xy());
+        let before = doc.feature_tree().all_nodes().count();
+        let mut ctx = ctx(&mut doc);
+        wb.open_sketch_picker(SketchPickerMode::Merge);
+        wb.sketch_picker.as_mut().unwrap().checked.insert(other);
+        wb.merge_sketches(&mut ctx);
+        assert!(wb.sketch_picker.is_none());
+        let merged: Vec<SketchFeature> = doc
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.name == "edited merged")
+            .map(|(_, n)| SketchFeature::from_json(&n.data).unwrap())
+            .collect();
+        assert_eq!(doc.feature_tree().all_nodes().count(), before + 1);
+        assert_eq!(merged.len(), 1);
+        assert_eq!(merged[0].sketch.geometry.len(), 3);
+        assert_eq!(merged[0].sketch.constraints.len(), 2);
+        assert!(
+            points(&merged[0].sketch)
+                .iter()
+                .all(|p| (p.y - 3.0).abs() < 1e-4)
+        );
     }
 }

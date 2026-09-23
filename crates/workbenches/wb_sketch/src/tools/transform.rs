@@ -8,7 +8,9 @@ use glam::{Mat2, Vec2};
 use uuid::Uuid;
 
 use super::{ToolEffect, ToolState};
-use crate::sketch::{Arc, BSpline, Circle, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D};
+use crate::sketch::{
+    Arc, BSpline, Circle, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch, Vec2D,
+};
 use crate::snap;
 
 /// A 2D similarity transform `p' = m·p + t` (rotation/scale/mirror plus
@@ -52,6 +54,23 @@ impl Similarity {
             Vec2::new(2.0 * u.x * u.y, 2.0 * u.y * u.y - 1.0),
         );
         Self { m, t: a - m * a }
+    }
+
+    /// The transform `p' = m·p + t`, for a map worked out elsewhere (one
+    /// sketch plane's coordinates onto another's).
+    pub fn linear(m: Mat2, t: Vec2) -> Self {
+        Self { m, t }
+    }
+
+    /// Whether the transform only moves: no turn, scale or mirror, so
+    /// anything stated against the sketch axes (horizontal, a distance in
+    /// x) still holds after it.
+    pub fn is_translation(&self) -> bool {
+        (self.m - Mat2::IDENTITY)
+            .abs()
+            .to_cols_array()
+            .iter()
+            .all(|v| *v < 1e-5)
     }
 
     pub fn apply(&self, p: Vec2D) -> Vec2D {
@@ -168,6 +187,17 @@ pub fn copy_from(
     selected: &HashSet<Uuid>,
     xf: &Similarity,
 ) -> usize {
+    copy_mapped(source, sketch, selected, xf).len()
+}
+
+/// Copy as [`copy_from`] does, and return the old → new id of every copied
+/// point and curve.
+pub fn copy_mapped(
+    source: &Sketch,
+    sketch: &mut Sketch,
+    selected: &HashSet<Uuid>,
+    xf: &Similarity,
+) -> HashMap<Uuid, Uuid> {
     let pts = selection_point_ids(source, selected);
     let mut map: HashMap<Uuid, Uuid> = HashMap::new();
     for pid in &pts {
@@ -187,7 +217,6 @@ pub fn copy_from(
         .filter(|g| selected.contains(&g.id()) && !matches!(g, GeometryElement::Point(_)))
         .cloned()
         .collect();
-    let mut count = map.len();
     for geom in originals {
         // Skip curves with dangling references rather than panic.
         if !Sketch::curve_point_ids(&geom)
@@ -238,6 +267,50 @@ pub fn copy_from(
         let flag = source.is_construction(geom.id());
         let new_id = sketch.add_geometry(copy);
         sketch.set_construction(new_id, flag);
+        map.insert(geom.id(), new_id);
+    }
+    map
+}
+
+/// Copy the constraints of `source` among the elements `map` copied into
+/// `sketch`, their references renamed through `map`; a constraint that
+/// names anything not copied stays behind. A fixed point's position goes
+/// through `xf` as its point did. Returns how many were copied.
+pub fn copy_constraints(
+    source: &Sketch,
+    sketch: &mut Sketch,
+    map: &HashMap<Uuid, Uuid>,
+    xf: &Similarity,
+) -> usize {
+    fn rename(value: &mut serde_json::Value, map: &HashMap<Uuid, Uuid>) {
+        match value {
+            serde_json::Value::String(text) => {
+                if let Some(new) = text.parse::<Uuid>().ok().and_then(|old| map.get(&old)) {
+                    *text = new.to_string();
+                }
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(|v| rename(v, map)),
+            serde_json::Value::Object(fields) => fields.values_mut().for_each(|v| rename(v, map)),
+            _ => {}
+        }
+    }
+    let mut count = 0;
+    for constraint in &source.constraints {
+        let refs = crate::sketch::constraint_refs(&constraint.kind);
+        if refs.is_empty() || !refs.iter().all(|r| map.contains_key(r)) {
+            continue;
+        }
+        let Ok(mut value) = serde_json::to_value(&constraint.kind) else {
+            continue;
+        };
+        rename(&mut value, map);
+        let Ok(mut kind) = serde_json::from_value::<ConstraintKind>(value) else {
+            continue;
+        };
+        if let ConstraintKind::FixedPoint { position, .. } = &mut kind {
+            *position = xf.apply(*position);
+        }
+        sketch.add_constraint(kind);
         count += 1;
     }
     count

@@ -64,8 +64,12 @@ impl SketchWorkbench {
                 label: format!("Edit {}", feature.sketch.name),
             };
         }
+        let plane = feature.plane;
         let sketch = feature.sketch;
 
+        if self.sketch_picker.is_some() {
+            self.sketch_picker_section(ui, ctx, &plane);
+        }
         self.tool_section(ui);
         self.solver_section(ui, ctx, &sketch);
         self.edit_controls_section(ui);
@@ -79,6 +83,88 @@ impl SketchWorkbench {
                 .color(TEXT3),
         );
         TaskOutcome::Open
+    }
+
+    /// The document's other sketches, for carbon copy (a click copies one in)
+    /// or merge (tick some, then merge). A sketch whose plane is at an angle
+    /// to this one is listed but not offered.
+    fn sketch_picker_section(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        plane: &SketchPlane,
+    ) {
+        let Some(mode) = self.sketch_picker.as_ref().map(|p| p.mode) else {
+            return;
+        };
+        let merging = mode == crate::SketchPickerMode::Merge;
+        let title = if merging {
+            "Merge sketches"
+        } else {
+            "Carbon copy"
+        };
+        if !section_header(ui, "sketch_picker", title, None, true) {
+            return;
+        }
+        let others = self.other_sketches(ctx);
+        if others.is_empty() {
+            note_card(
+                ui,
+                Note::Info,
+                None,
+                "There is no other sketch in the document.",
+            );
+        }
+        let mut copy_from = None;
+        for (id, name, other) in &others {
+            let parallel = crate::plane_map(&other.plane, plane).is_ok();
+            let why = "Its plane is at an angle to this one";
+            if merging {
+                let picker = self.sketch_picker.as_mut().expect("open");
+                let mut on = picker.checked.contains(id);
+                let response = ui.add_enabled_ui(parallel, |ui| check_row(ui, &mut on, name));
+                if response.inner.changed() {
+                    if on {
+                        picker.checked.insert(*id);
+                    } else {
+                        picker.checked.remove(id);
+                    }
+                }
+                if !parallel {
+                    response.response.on_hover_text(why);
+                }
+            } else {
+                let response = ui.add_enabled(parallel, egui::Button::new(name.as_str()));
+                if response.clicked() {
+                    copy_from = Some(*id);
+                }
+                if !parallel {
+                    response.on_disabled_hover_text(why);
+                }
+            }
+        }
+        if let Some(id) = copy_from {
+            self.carbon_copy(ctx, id);
+        }
+        if merging {
+            let ticked = self
+                .sketch_picker
+                .as_ref()
+                .is_some_and(|p| !p.checked.is_empty());
+            if ui
+                .add_enabled(ticked, egui::Button::new("Merge into a new sketch"))
+                .on_hover_text(
+                    "A new sketch of this one and the ticked ones; they stay as they are",
+                )
+                .clicked()
+            {
+                self.merge_sketches(ctx);
+            }
+        }
+        if secondary_button(ui, "Close").clicked() {
+            self.sketch_picker = None;
+        }
+        ui.add_space(SPACE_2);
     }
 
     /// Plane picker for a pending sketch creation.

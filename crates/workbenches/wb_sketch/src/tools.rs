@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 pub use draw::{arc_slot_shape, polygon_vertices, slot_corners};
 pub use modify::trim_preview;
-pub use transform::{Similarity, array, copy_from};
+pub use transform::{Similarity, array, copy_constraints, copy_from, copy_mapped};
 
 use crate::sketch::{ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::{self, SnapTarget};
