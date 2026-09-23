@@ -7,7 +7,7 @@ use core_document::{Document, FeatureId, WorkbenchRuntimeContext};
 use crate::log_panel;
 
 /// Camera and viewport facts the app hands the UI each frame.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct HostCtxParams {
     pub camera_position: [f32; 3],
     pub camera_target: [f32; 3],
@@ -16,6 +16,7 @@ pub struct HostCtxParams {
     pub view_proj: Option<[[f32; 4]; 4]>,
     pub selected_body_id: Option<uuid::Uuid>,
     pub selected_face: Option<core_document::FaceRef>,
+    pub selected_edges: Vec<core_document::EdgeRef>,
 }
 
 impl Default for HostCtxParams {
@@ -27,6 +28,7 @@ impl Default for HostCtxParams {
             view_proj: None,
             selected_body_id: None,
             selected_face: None,
+            selected_edges: Vec::new(),
         }
     }
 }
@@ -34,7 +36,7 @@ impl Default for HostCtxParams {
 /// A context for a panel hook.
 pub fn panel_ctx<'a>(
     document: &'a mut Document,
-    params: HostCtxParams,
+    params: &HostCtxParams,
     active_document_object: Option<FeatureId>,
 ) -> WorkbenchRuntimeContext<'a> {
     let mut ctx = WorkbenchRuntimeContext::new(
@@ -47,6 +49,7 @@ pub fn panel_ctx<'a>(
     ctx.active_document_object = active_document_object;
     ctx.selected_body_id = params.selected_body_id;
     ctx.selected_face = params.selected_face;
+    ctx.selected_edges = params.selected_edges.clone();
     ctx
 }
 

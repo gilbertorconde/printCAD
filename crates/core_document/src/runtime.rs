@@ -84,6 +84,20 @@ pub struct WorkbenchRuntimeContext<'a> {
 
     /// Host → workbench: the colors sketch overlays draw in.
     pub sketch_palette: crate::palette::SketchPalette,
+
+    /// Host → workbench: the edges picked in the viewport, each as a point
+    /// on it and its direction there, in world space (millimetres). A
+    /// fillet or chamfer takes them by the point.
+    pub selected_edges: Vec<EdgeRef>,
+}
+
+/// A picked edge on a solid body: a point on the edge, the edge's
+/// direction there and its length, all in world space (millimetres).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeRef {
+    pub point: [f32; 3],
+    pub direction: [f32; 3],
+    pub length_mm: f32,
 }
 
 /// A picked face on a solid body: a point on the surface and its outward
@@ -202,6 +216,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             requests: Vec::new(),
             attach_request: None,
             selected_face: None,
+            selected_edges: Vec::new(),
             ctrl_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
         }

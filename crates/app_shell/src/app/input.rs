@@ -118,6 +118,7 @@ impl PrintCadApp {
                 // hover state instead of letting the highlight linger.
                 self.session.hovered_body = None;
                 self.session.hovered_world_pos = None;
+                self.session.hovered_edge = None;
             }
         }
 
@@ -466,7 +467,13 @@ impl PrintCadApp {
     /// A click with the measure tool armed: the point under the cursor
     /// joins the measurement; a third click starts over.
     fn measure_click(&mut self) -> bool {
-        let Some(point) = self.session.hovered_world_pos else {
+        // An edge under the cursor snaps the pick onto it.
+        let Some(point) = self
+            .session
+            .hovered_edge
+            .map(|e| e.point)
+            .or(self.session.hovered_world_pos)
+        else {
             return false;
         };
         let unit = self.session.document.display_unit();
@@ -529,6 +536,33 @@ impl PrintCadApp {
             return true;
         }
 
+        // An edge under the cursor takes the click before the face it
+        // borders; Ctrl adds it to the picked edges, a plain click replaces
+        // them.
+        if let Some(hit) = self.session.hovered_edge {
+            let ctrl = self.modifiers.control_key();
+            let already = self
+                .session
+                .selected_edges
+                .iter()
+                .position(|s| s.body == hit.body && s.edge == hit.edge);
+            match (ctrl, already) {
+                (true, Some(i)) => {
+                    self.session.selected_edges.remove(i);
+                }
+                (true, None) => self.session.selected_edges.push(hit),
+                (false, _) => self.session.selected_edges = vec![hit],
+            }
+            self.session.face_highlight = None;
+            self.session.last_face_hit = None;
+            self.session.selected_body = Some(hit.body);
+            app_log::info(format!(
+                "Selected {} edge(s)",
+                self.session.selected_edges.len()
+            ));
+            return true;
+        }
+
         if let Some(hovered) = self.session.hovered_body {
             // A feature's own geometry is occasionally GPU-picked too (e.g.
             // clicking exactly on a sketch line): same selection path.
@@ -572,6 +606,10 @@ impl PrintCadApp {
                 self.session.last_face_hit = None;
                 app_log::info("Deselected body");
             } else {
+                // A face pick without Ctrl lets the edges go.
+                if !self.modifiers.control_key() {
+                    self.session.selected_edges.clear();
+                }
                 self.session.selected_body = Some(hovered);
                 self.session.last_face_hit = self
                     .face_hit_under_cursor(hovered)
@@ -597,10 +635,11 @@ impl PrintCadApp {
                     });
                 app_log::info("Selected face (double-click for the whole body)");
             }
-        } else if self.session.selected_body.is_some() {
+        } else if self.session.selected_body.is_some() || !self.session.selected_edges.is_empty() {
             self.session.selected_body = None;
             self.session.last_face_hit = None;
             self.session.face_highlight = None;
+            self.session.selected_edges.clear();
             self.session.last_select_click = None;
             app_log::info("Deselected (clicked empty space)");
         }
@@ -801,6 +840,7 @@ pub(crate) fn coplanar_face_submesh(
         edges: Vec::new(),
         colors: Vec::new(),
         faces: Vec::new(),
+        edge_ids: Vec::new(),
     })
 }
 
@@ -875,6 +915,7 @@ mod tests {
             edges: Vec::new(),
             colors: Vec::new(),
             faces: Vec::new(),
+            edge_ids: Vec::new(),
         }
     }
 

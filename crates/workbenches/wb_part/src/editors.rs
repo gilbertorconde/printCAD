@@ -16,8 +16,8 @@ use ui_kit::widgets::{
 
 use crate::build::{part_features_of_body, sketches_of_body};
 use crate::feature::{
-    ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
+    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
+    METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
 };
 
 /// The label column of a parameter row.
@@ -246,6 +246,7 @@ fn edge_sel_editor(
             .selected_text(match edges {
                 EdgeSel::All => "All edges".to_string(),
                 EdgeSel::Faces(f) => format!("{} face(s)", f.len()),
+                EdgeSel::Edges(e) => format!("{} edge(s)", e.len()),
             })
             .show_ui(ui, |ui| {
                 if ui
@@ -264,10 +265,69 @@ fn edge_sel_editor(
                     *edges = EdgeSel::Faces(Vec::new());
                     changed = true;
                 }
+                if ui
+                    .selectable_label(matches!(edges, EdgeSel::Edges(_)), "Picked edges")
+                    .clicked()
+                    && !matches!(edges, EdgeSel::Edges(_))
+                {
+                    *edges = EdgeSel::Edges(Vec::new());
+                    changed = true;
+                }
             });
     });
-    if let EdgeSel::Faces(faces) = edges {
-        changed |= face_list_editor(ui, ctx, faces, "Faces:");
+    match edges {
+        EdgeSel::Faces(faces) => changed |= face_list_editor(ui, ctx, faces, "Faces:"),
+        EdgeSel::Edges(picks) => changed |= edge_list_editor(ui, ctx, picks),
+        EdgeSel::All => {}
+    }
+    changed
+}
+
+/// The picked edges, each removable, and a button that adds whatever is
+/// picked in the viewport.
+fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<EdgePick>) -> bool {
+    let mut changed = false;
+    label_cell(ui, "Edges:");
+    let mut remove = None;
+    for (i, pick) in picks.iter().enumerate() {
+        ui.horizontal(|ui| {
+            mono_label(
+                ui,
+                format!(
+                    "Edge @ ({:.1}, {:.1}, {:.1})",
+                    pick.point[0], pick.point[1], pick.point[2]
+                ),
+                FONT_XS,
+                TEXT1,
+            );
+            if small_secondary_button(ui, "✕").clicked() {
+                remove = Some(i);
+            }
+        });
+    }
+    if let Some(i) = remove {
+        picks.remove(i);
+        changed = true;
+    }
+    let has_selection = !ctx.selected_edges.is_empty();
+    if ui
+        .add_enabled_ui(has_selection, |ui| {
+            accent_outline_button(ui, "Add selected edges")
+        })
+        .inner
+        .on_hover_text("Click edges in the viewport first (Ctrl adds), then press this")
+        .clicked()
+    {
+        for edge in &ctx.selected_edges {
+            let pick = EdgePick {
+                point: edge.point,
+                direction: edge.direction,
+            };
+            if !picks.contains(&pick) {
+                picks.push(pick);
+                changed = true;
+            }
+        }
     }
     changed
 }

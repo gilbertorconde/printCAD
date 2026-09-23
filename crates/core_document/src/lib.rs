@@ -35,8 +35,9 @@ pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
-    CameraOrientRequest, FaceRef, HookOutcome, HostRequest, InputResult, KeyCode, LogEntry,
-    LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    CameraOrientRequest, EdgeRef, FaceRef, HookOutcome, HostRequest, InputResult, KeyCode,
+    LogEntry, LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent,
+    WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
 pub use units::{Unit, format_length_mm};

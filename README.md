@@ -91,6 +91,7 @@ the display server. Nothing is required to build or run without one.
 | **Pan** | Right drag |
 | **Zoom** | Wheel (optionally toward the cursor) |
 | **Select a face** | Left click |
+| **Select an edge** | Left click within a few pixels of an outline; Ctrl adds edges; fillet and chamfer take them |
 | **Select a whole body** | Left double click on one of its faces (one part of an assembly, not the assembly); in Part Design the tree jumps to its row |
 | **Body menu** | Right click on a body: show it in the tree, select it, hide it |
 | **Box select** | Left drag, in a sketch |

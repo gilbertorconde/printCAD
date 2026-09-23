@@ -149,6 +149,17 @@ pub enum EdgeSel {
     All,
     /// The edges bordering the picked faces.
     Faces(Vec<FacePick>),
+    /// Edges picked one by one in the viewport.
+    Edges(Vec<EdgePick>),
+}
+
+/// A picked edge, by a point on it and its direction there, re-resolved
+/// against the current solid each rebuild: a rebuilt solid numbers its
+/// edges afresh, but the edge nearest the point is the one picked.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EdgePick {
+    pub point: [f32; 3],
+    pub direction: [f32; 3],
 }
 
 /// A mirror/pattern reference plane.

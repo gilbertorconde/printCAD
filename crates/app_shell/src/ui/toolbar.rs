@@ -323,7 +323,7 @@ pub fn draw_toolbars(
     let (enabled, toggled): (Vec<bool>, Vec<bool>) =
         match registry.workbench_mut(&active_workbench.0) {
             Ok(wb) => {
-                let ctx = panel_ctx(document, host, active_document_object);
+                let ctx = panel_ctx(document, &host, active_document_object);
                 tools
                     .iter()
                     .map(|t| (wb.is_tool_enabled(&t.id, &ctx), wb.tool_toggled(&t.id)))

@@ -324,7 +324,7 @@ impl UiLayer {
                 toolbar::ToolbarInputs {
                     registry,
                     document,
-                    host,
+                    host: host.clone(),
                     active_document_object,
                     show_print_bed: settings.printing.show_bed,
                     measuring,
@@ -348,7 +348,7 @@ impl UiLayer {
                 let enabled: Vec<(String, bool)> = match registry.workbench_mut(&active_workbench.0)
                 {
                     Ok(wb) => {
-                        let ctx = host_ctx::panel_ctx(document, host, active_document_object);
+                        let ctx = host_ctx::panel_ctx(document, &host, active_document_object);
                         ids.into_iter()
                             .map(|id| {
                                 let on = wb.is_tool_enabled(&id, &ctx);
@@ -412,7 +412,7 @@ impl UiLayer {
                     active_workbench: active_workbench.clone(),
                     document,
                     registry,
-                    host,
+                    host: host.clone(),
                     active_tree_selection,
                     active_document_object,
                     editing_feature,
@@ -458,7 +458,7 @@ impl UiLayer {
                     active_workbench: active_workbench.clone(),
                     document,
                     registry,
-                    host,
+                    host: host.clone(),
                     active_document_object,
                     task: task.as_ref(),
                 },

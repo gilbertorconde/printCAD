@@ -146,6 +146,12 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
     match edges {
         crate::feature::EdgeSel::All => EdgeSelection::All,
         crate::feature::EdgeSel::Faces(picks) => EdgeSelection::OfFaces(face_points(picks)),
+        crate::feature::EdgeSel::Edges(picks) => EdgeSelection::Near(
+            picks
+                .iter()
+                .map(|p| [p.point[0] as f64, p.point[1] as f64, p.point[2] as f64])
+                .collect(),
+        ),
     }
 }
 
@@ -1492,6 +1498,26 @@ mod tests {
         assert!(!doc.get_feature_meta(sketch_id).unwrap().dirty);
         assert!(doc.get_feature_meta(other_sketch).unwrap().dirty);
         assert!(rebuild_jobs(&mut doc).is_empty(), "nothing comes back");
+    }
+
+    #[test]
+    fn picked_edges_reach_the_kernel_as_probe_points() {
+        let picks = vec![
+            crate::feature::EdgePick {
+                point: [1.0, 2.0, 3.0],
+                direction: [1.0, 0.0, 0.0],
+            },
+            crate::feature::EdgePick {
+                point: [4.0, 5.0, 6.0],
+                direction: [0.0, 1.0, 0.0],
+            },
+        ];
+        match edge_selection(&crate::feature::EdgeSel::Edges(picks)) {
+            EdgeSelection::Near(points) => {
+                assert_eq!(points, vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+            }
+            other => panic!("picked edges map to probe points, not {other:?}"),
+        }
     }
 
     #[test]

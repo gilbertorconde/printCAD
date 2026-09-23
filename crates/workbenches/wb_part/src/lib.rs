@@ -16,9 +16,9 @@ pub use build::{
     rebuild_jobs, retarget_feature_sketch, sketch_plane_description, sketches_of_body,
 };
 pub use feature::{
-    ChamferMode, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit, METRIC_SIZES,
-    MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep, primitive_icon,
-    primitive_preset,
+    ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
+    METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
+    primitive_icon, primitive_preset,
 };
 
 use core_document::{
@@ -140,6 +140,26 @@ impl PartDesignWorkbench {
             point: face.point,
             normal: face.normal,
         })
+    }
+
+    /// What a dress-up takes from the viewport selection: the picked edges
+    /// first, else the edges of the picked face, else every edge.
+    fn selected_edges(ctx: &WorkbenchRuntimeContext) -> EdgeSel {
+        if !ctx.selected_edges.is_empty() {
+            return EdgeSel::Edges(
+                ctx.selected_edges
+                    .iter()
+                    .map(|e| EdgePick {
+                        point: e.point,
+                        direction: e.direction,
+                    })
+                    .collect(),
+            );
+        }
+        match Self::selected_face_pick(ctx) {
+            Some(pick) => EdgeSel::Faces(vec![pick]),
+            None => EdgeSel::All,
+        }
     }
 
     /// Build the default feature payload for a toolbar action, or explain why
@@ -304,18 +324,12 @@ impl PartDesignWorkbench {
             }
             "part.fillet" => {
                 need_material(has_solid)?;
-                let edges = match Self::selected_face_pick(ctx) {
-                    Some(pick) => EdgeSel::Faces(vec![pick]),
-                    None => EdgeSel::All,
-                };
+                let edges = Self::selected_edges(ctx);
                 (PartFeature::Fillet { radius: 1.0, edges }, "Fillet")
             }
             "part.chamfer" => {
                 need_material(has_solid)?;
-                let edges = match Self::selected_face_pick(ctx) {
-                    Some(pick) => EdgeSel::Faces(vec![pick]),
-                    None => EdgeSel::All,
-                };
+                let edges = Self::selected_edges(ctx);
                 (
                     PartFeature::Chamfer {
                         size: 1.0,

@@ -150,6 +150,13 @@ pub struct TriMesh {
     /// before faces were recorded — and a consumer falls back to geometry.
     #[serde(default)]
     pub faces: Vec<u32>,
+    /// Which kernel edge each outline segment belongs to: one entry per
+    /// pair in [`Self::edges`], an index into the body's edges in the
+    /// kernel's own order. A curved edge is many segments, and this is what
+    /// lets a click on one of them select the whole edge. Empty when the
+    /// outline came from triangle boundaries rather than kernel edges.
+    #[serde(default)]
+    pub edge_ids: Vec<u32>,
 }
 
 impl TriMesh {

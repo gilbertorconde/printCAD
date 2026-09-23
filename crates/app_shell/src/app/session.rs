@@ -107,6 +107,11 @@ pub(crate) struct DocumentSession {
     pub dimension_cache: Option<DimensionCache>,
     /// The measure tool: armed with the points picked so far (up to two).
     pub measure: Option<Vec<[f32; 3]>>,
+    /// The edge under the cursor, found on the CPU against the hovered
+    /// body's outline segments.
+    pub hovered_edge: Option<crate::app::edges::EdgeHit>,
+    /// The edges picked in the viewport; Ctrl adds to them.
+    pub selected_edges: Vec<crate::app::edges::EdgeHit>,
     /// Each bench's editing state for this tab while another tab is
     /// active, keyed by bench id; handed back to the benches on switch.
     pub bench_states: HashMap<String, Box<dyn Any + Send>>,
@@ -172,6 +177,8 @@ impl DocumentSession {
             task_open: false,
             dimension_cache: None,
             measure: None,
+            hovered_edge: None,
+            selected_edges: Vec::new(),
             bench_states: HashMap::new(),
         }
     }

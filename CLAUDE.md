@@ -471,8 +471,15 @@ on the start page (`Screen::Start`); the recent list lives in
   the hit. Persisted references are still geometric: dress-up edge selection
   and up-to-face terminations carry a sample point + normal (`FacePick`),
   re-resolved against the current solid each rebuild, because a rebuilt solid
-  numbers its faces afresh. Edge ids through the mesh (per-edge picking) are
-  the next unlock.
+  numbers its faces afresh. `TriMesh.edge_ids` names the kernel edge of every
+  outline segment (the tessellator draws the outline from the kernel's own
+  edges, each to the chord the faces agreed on; triangle boundaries are only
+  the fallback), so a click within a few pixels of an outline picks the
+  whole edge (`app/edges.rs`: hover, Ctrl-additive selection, highlight line
+  bodies, the hover card's edge length, the measure tool's snap). Benches
+  see picked edges as `ctx.selected_edges` (point, direction, length);
+  Part Design's fillet and chamfer store them as `EdgeSel::Edges` probe
+  points the kernel resolves through `EdgeSelection::Near`.
 - "Through all" derives its length from the base solid's bounding box; up-to-
   face trims with a half-space, so only PLANAR target faces terminate exactly
   (curved to-first/to-last faces stop at the profile-centroid hit distance).

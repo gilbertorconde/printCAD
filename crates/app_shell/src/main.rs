@@ -226,6 +226,9 @@ struct PrintCadApp {
     face_highlight_id: Uuid,
     /// The submission id of the whole-body selection overlay.
     body_highlight_id: Uuid,
+    /// The submission ids of the hovered-edge and selected-edges outlines.
+    edge_hover_id: Uuid,
+    edge_select_id: Uuid,
     /// The print bed's submission id, and its line mesh keyed by the
     /// settings it was built from.
     print_bed_id: Uuid,
@@ -323,6 +326,8 @@ impl PrintCadApp {
             modifiers: winit::keyboard::ModifiersState::default(),
             face_highlight_id: Uuid::new_v4(),
             body_highlight_id: Uuid::new_v4(),
+            edge_hover_id: Uuid::new_v4(),
+            edge_select_id: Uuid::new_v4(),
             print_bed_id: Uuid::new_v4(),
             print_bed: None,
             window_title: String::new(),

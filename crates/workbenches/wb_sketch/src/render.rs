@@ -135,6 +135,7 @@ pub fn sketch_to_mesh(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
         edges: Vec::new(),
         colors: Vec::new(),
         faces: Vec::new(),
+        edge_ids: Vec::new(),
     }
 }
 
@@ -160,6 +161,7 @@ pub fn sketch_to_lines(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
         edges,
         colors: Vec::new(),
         faces: Vec::new(),
+        edge_ids: Vec::new(),
     }
 }
 

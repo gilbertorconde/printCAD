@@ -172,7 +172,7 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
                         .inner_margin(egui::Margin::same(12))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
-                            let mut ctx = panel_ctx(document, host, active_document_object);
+                            let mut ctx = panel_ctx(document, &host, active_document_object);
                             match wb.ui_task_panel(ui, &mut ctx, request) {
                                 TaskOutcome::Open => {}
                                 outcome => {

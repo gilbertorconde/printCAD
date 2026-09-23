@@ -128,7 +128,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
 
             // The active workbench's own panel content.
             if let Ok(wb) = registry.workbench_mut(&active_workbench.0) {
-                let mut ctx = panel_ctx(document, host, active_document_object);
+                let mut ctx = panel_ctx(document, &host, active_document_object);
                 let inner = egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(10, 6))
                     .show(ui, |ui| {

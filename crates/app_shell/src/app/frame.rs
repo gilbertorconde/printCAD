@@ -73,6 +73,7 @@ fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh 
         edges,
         colors: Vec::new(),
         faces: Vec::new(),
+        edge_ids: Vec::new(),
     }
 }
 
@@ -445,6 +446,7 @@ impl PrintCadApp {
             view_proj: Some(self.session.camera.view_projection()),
             selected_body_id: self.session.active_body_id.map(|id| id.0),
             selected_face: self.session.last_face_hit.as_ref().map(|(_, f)| *f),
+            selected_edges: self.selected_edge_refs(),
         };
 
         let commands;
@@ -641,6 +643,13 @@ impl PrintCadApp {
             let pick_result = renderer.latest_pick_result();
             self.session.hovered_body = pick_result.body_id;
             self.session.hovered_world_pos = pick_result.world_position;
+        }
+        // The edge under the cursor, on the body the pick found; an edge
+        // takes the hover from the face it borders.
+        let hovered_edge = self.edge_under_cursor();
+        if hovered_edge != self.session.hovered_edge {
+            self.session.hovered_edge = hovered_edge;
+            self.redraw_needed = true;
         }
 
         // Apply this frame's UI actions now that the renderer borrow is over.
@@ -997,6 +1006,41 @@ impl PrintCadApp {
             });
         }
 
+        // The hovered edge and the picked edges, drawn as line bodies over
+        // the outline in the hover and selection paints.
+        if let Some(hit) = &self.session.hovered_edge
+            && !self
+                .session
+                .selected_edges
+                .iter()
+                .any(|s| s.body == hit.body && s.edge == hit.edge)
+            && let Some(submission) = crate::app::edges::highlight_submission(
+                self,
+                self.edge_hover_id,
+                hit.body,
+                &[hit.edge],
+                [1.0, 0.75, 0.2],
+            )
+        {
+            all_meshes.push(submission);
+        }
+        let mut by_body: std::collections::BTreeMap<uuid::Uuid, Vec<u32>> = Default::default();
+        for hit in &self.session.selected_edges {
+            by_body.entry(hit.body).or_default().push(hit.edge);
+        }
+        for (i, (body, edges)) in by_body.iter().enumerate() {
+            // One slot per body: its id folded into the submission id.
+            let id = uuid::Uuid::from_u64_pair(
+                self.edge_select_id.as_u64_pair().0 ^ body.as_u64_pair().0,
+                self.edge_select_id.as_u64_pair().1.wrapping_add(i as u64),
+            );
+            if let Some(submission) =
+                crate::app::edges::highlight_submission(self, id, *body, edges, paint)
+            {
+                all_meshes.push(submission);
+            }
+        }
+
         // The printer's build volume, as twelve lines around the model.
         if self.user_settings.printing.show_bed {
             let printing = &self.user_settings.printing;
@@ -1113,9 +1157,17 @@ impl PrintCadApp {
             })
             .max_by_key(|(seq, id, _)| (*seq, *id))
             .map(|(_, _, kind)| kind);
-        let title = match feature {
-            Some(kind) => format!("{body_name} · {kind}"),
-            None => body_name,
+        let title = match (&self.session.hovered_edge, feature) {
+            (Some(edge), _) => format!(
+                "{body_name} · edge {}",
+                core_document::format_length_mm(
+                    edge.length_mm,
+                    self.session.document.display_unit(),
+                    2
+                )
+            ),
+            (None, Some(kind)) => format!("{body_name} · {kind}"),
+            (None, None) => body_name,
         };
         Some(ui::HoverCard { title, point_mm })
     }

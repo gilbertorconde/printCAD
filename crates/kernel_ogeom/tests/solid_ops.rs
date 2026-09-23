@@ -960,3 +960,31 @@ fn a_chain_can_start_from_another_chains_snapshot_and_only_start_there() {
     );
     assert!(later.is_err(), "a snapshot can only begin a chain");
 }
+
+#[test]
+fn a_box_outline_names_its_twelve_edges() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let pad = blind_pad(
+        vec![rect_wire(0.0, 0.0, 10.0, 5.0)],
+        4.0,
+        BooleanOp::NewSolid,
+    );
+    let built = kernel
+        .execute_solid_chain(std::slice::from_ref(&pad), &detail)
+        .expect("the pad builds");
+    let mesh = &built.mesh;
+    assert_eq!(
+        mesh.edges.len() / 2,
+        mesh.edge_ids.len(),
+        "one id per segment"
+    );
+    let distinct: std::collections::HashSet<u32> = mesh.edge_ids.iter().copied().collect();
+    assert_eq!(distinct.len(), 12, "a box has twelve edges");
+    for pair in mesh.edges.chunks(2) {
+        let a = mesh.positions[pair[0] as usize];
+        let b = mesh.positions[pair[1] as usize];
+        let len = ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2) + (a[2] - b[2]).powi(2)).sqrt();
+        assert!(len > 1e-3, "a straight edge is one segment, never a dot");
+    }
+}

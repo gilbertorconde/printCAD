@@ -12,9 +12,9 @@ use ogeom::algo::{shape_bounds, vertex_bounds};
 use ogeom::core::Tolerances;
 use ogeom::core::parallel::map_ordered;
 use ogeom::math::Point;
-use ogeom::mesh::{Deflection, edge_chords_for, triangulate_face_with};
+use ogeom::mesh::{Deflection, edge_chords_for, polyline_of_edge, triangulate_face_with};
 use ogeom::topo::Triangulation;
-use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
+use ogeom::topo::{Filter, Model, Shape, ShapeType, explore, explore_unique};
 use tracing::warn;
 
 pub const WHITE: [f32; 3] = [1.0, 1.0, 1.0];
@@ -277,31 +277,99 @@ pub fn mesh_shape_with(
         );
     }
 
-    let mut edges = if detail.generate_boundary_edges {
-        extract_boundary_edges(&mesh.indices)
-    } else {
-        Vec::new()
-    };
-
     if detail.weld_cross_face && !mesh.indices.is_empty() {
         let threshold = f64::from(detail.weld_angle_threshold_deg.max(0.0))
             .to_radians()
             .cos() as f32;
-        let remap = weld_vertices(&mut mesh, &vertex_face, &face_normals, threshold);
-        for v in &mut edges {
-            *v = remap[*v as usize];
-        }
-        let mut filtered = Vec::with_capacity(edges.len());
-        for pair in edges.as_chunks::<2>().0 {
-            if pair[0] != pair[1] {
-                filtered.extend_from_slice(pair);
-            }
-        }
-        edges = filtered;
+        weld_vertices(&mut mesh, &vertex_face, &face_normals, threshold);
     }
 
-    mesh.edges = edges;
+    // The outline is the kernel's own edges, each drawn to the chord the
+    // faces agreed on, and each segment names its edge so a click on one
+    // segment can mean the whole edge. Only when the kernel cannot walk
+    // the edges does the outline fall back to the triangle boundaries,
+    // which name nothing.
+    if detail.generate_boundary_edges {
+        match kernel_edge_outline(model, root, &chords, deflection, tol) {
+            Ok(outline) if !outline.positions.is_empty() => {
+                let base = mesh.positions.len() as u32;
+                let count = outline.positions.len();
+                mesh.positions.extend(outline.positions);
+                mesh.normals
+                    .extend(std::iter::repeat_n([0.0, 0.0, 1.0], count));
+                if !mesh.colors.is_empty() {
+                    mesh.colors.extend(std::iter::repeat_n(WHITE, count));
+                }
+                mesh.edges = outline.segments.iter().map(|i| base + i).collect();
+                mesh.edge_ids = outline.edge_ids;
+            }
+            Ok(_) => mesh.edges = extract_boundary_edges(&mesh.indices),
+            Err(e) => {
+                warn!(target: "printcad.kernel", "edge outline failed ({e}); drawing triangle boundaries");
+                mesh.edges = extract_boundary_edges(&mesh.indices);
+            }
+        }
+    }
     Ok(mesh)
+}
+
+/// The kernel's edges as polylines: their points, the segments over them
+/// (index pairs into those points) and the edge each segment belongs to,
+/// numbered in the kernel's own exploration order.
+struct EdgeOutline {
+    positions: Vec<[f32; 3]>,
+    segments: Vec<u32>,
+    edge_ids: Vec<u32>,
+}
+
+fn kernel_edge_outline(
+    model: &Model,
+    root: &Shape,
+    chords: &ogeom::mesh::EdgeChords,
+    deflection: Deflection,
+    tol: Tolerances,
+) -> KernelResult<EdgeOutline> {
+    let edges = explore_unique(model, root, ShapeType::Edge)
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("edge exploration failed: {e}")))?;
+    let mut outline = EdgeOutline {
+        positions: Vec::new(),
+        segments: Vec::new(),
+        edge_ids: Vec::new(),
+    };
+    for (edge_id, edge) in edges.iter().enumerate() {
+        let chord = chords
+            .get(&edge.node().index())
+            .copied()
+            .unwrap_or(deflection.chord);
+        let points = match polyline_of_edge(
+            model,
+            edge,
+            Deflection {
+                chord: chord.min(deflection.chord),
+                ..deflection
+            },
+            tol,
+        ) {
+            Ok(points) => points,
+            Err(e) => {
+                warn!(target: "printcad.kernel", edge = edge_id, "edge polyline failed: {e}");
+                continue;
+            }
+        };
+        if points.len() < 2 {
+            continue;
+        }
+        let base = outline.positions.len() as u32;
+        outline
+            .positions
+            .extend(points.iter().map(|p| [p.x as f32, p.y as f32, p.z as f32]));
+        for i in 1..points.len() as u32 {
+            outline.segments.push(base + i - 1);
+            outline.segments.push(base + i);
+            outline.edge_ids.push(edge_id as u32);
+        }
+    }
+    Ok(outline)
 }
 
 /// Edges used by exactly one triangle, as flat index pairs (the mesh outline).
@@ -510,6 +578,7 @@ mod tests {
                 [1.0, 0.0, 0.0],
             ],
             faces: Vec::new(),
+            edge_ids: Vec::new(),
             indices: vec![0, 1, 2, 0, 2, 3],
             edges: Vec::new(),
             colors: vec![WHITE; 4],
