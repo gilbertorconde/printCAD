@@ -986,11 +986,17 @@ impl PrintCadApp {
                 is_wireframe: false,
                 pickable: false,
             });
-        } else if let Some(geometry) = self.session.selected_body.and_then(|id| {
-            self.session
-                .document
-                .imported_geometry(core_document::BodyId(id))
-        }) {
+        } else if let Some(geometry) = self
+            .session
+            .selected_body
+            // Picked edges are the selection then, drawn as lines below.
+            .filter(|_| self.session.selected_edges.is_empty())
+            .and_then(|id| {
+                self.session
+                    .document
+                    .imported_geometry(core_document::BodyId(id))
+            })
+        {
             // One slot serves every body; the body's id in the revision
             // keeps two bodies at the same revision from sharing buffers.
             let (hi, lo) = self.session.selected_body.unwrap_or_default().as_u64_pair();
@@ -1135,8 +1141,15 @@ impl PrintCadApp {
         {
             return None;
         }
-        let body = core_document::BodyId(self.session.hovered_body?);
-        let point_mm = self.session.hovered_world_pos?;
+        // An edge hovered from just outside a silhouette has no surface
+        // under the cursor; the card then speaks for the edge's body.
+        let (body, point_mm) = match self.session.hovered_edge {
+            Some(edge) => (core_document::BodyId(edge.body), edge.point),
+            None => (
+                core_document::BodyId(self.session.hovered_body?),
+                self.session.hovered_world_pos?,
+            ),
+        };
         let body_name = self
             .session
             .document
