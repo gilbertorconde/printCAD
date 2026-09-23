@@ -74,9 +74,16 @@ pub fn update_auto_clip(
     }
     far = far.max(near + min_range);
 
+    // Depth precision allows only so wide a far/near ratio. The far plane
+    // encloses the whole scene, always; past the cap, the near plane moves
+    // out instead. Pulling the far plane in would cut away parts across
+    // the scene whenever the focal distance is short (zoomed right in, or
+    // orbiting a point picked on a near surface), where moving the near
+    // plane out costs only what lies within a hair of the eye.
     let ratio_cap = settings.near_far_depth_ratio_cap;
+    let mut near = near;
     if far / near > ratio_cap {
-        far = near * ratio_cap;
+        near = far / ratio_cap;
     }
 
     state.near_plane = near as f64;

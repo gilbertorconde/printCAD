@@ -387,7 +387,7 @@ the loop itself, through `EventLoopProxy::send_event` and the `AppEvent`
 user event; and
 `fps_cap` now caps the *active* rate rather than implying continuous
 rendering. `PRINTCAD_OPEN_FILE` (several paths `;`-separated open a tab
-each) / `PRINTCAD_OPEN_DOC` /
+each, or all into one scene with `PRINTCAD_OPEN_SAME_TAB`) / `PRINTCAD_OPEN_DOC` /
 `PRINTCAD_BENCH_ORBIT` / `PRINTCAD_EDGE_MIN_PX` / `PRINTCAD_NO_EDGES` are
 bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;

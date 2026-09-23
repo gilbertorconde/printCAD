@@ -364,10 +364,14 @@ impl PrintCadApp {
             self.bench_open_fired = true;
             if let Ok(path) = std::env::var("PRINTCAD_OPEN_FILE") {
                 // Several paths, `;`-separated, each import into a tab of
-                // its own, so a capture can show the strip.
+                // its own, so a capture can show the strip; with
+                // `PRINTCAD_OPEN_SAME_TAB` they all land in one scene.
                 let detail = self.last_step_import_detail.clone();
+                let same_tab = std::env::var_os("PRINTCAD_OPEN_SAME_TAB").is_some();
                 for path in path.split(';').filter(|p| !p.is_empty()) {
-                    self.ensure_fresh_tab();
+                    if !same_tab {
+                        self.ensure_fresh_tab();
+                    }
                     self.import_step_at(std::path::Path::new(path), detail.clone());
                 }
             }

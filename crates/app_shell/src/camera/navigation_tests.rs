@@ -445,3 +445,51 @@ fn clipping_encloses_the_whole_scene_after_framing_one_part() {
         }
     }
 }
+
+/// Orbiting about a point picked on a near surface, or zoomed right in,
+/// leaves a focal distance of a few millimetres; the far plane must still
+/// reach the parts across the scene, however far they sit from it.
+#[test]
+fn a_short_focal_distance_keeps_the_whole_scene_inside_the_far_plane() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    // Framed on a small part, then drawn in to 2 mm from a picked point.
+    cam.reset_to_fit(Vec3::ZERO, 10.0, None, &settings);
+    let focal = cam.state.focal_point_vec3(&cam.axes);
+    cam.state.focal_distance = 2.0;
+    cam.state.rederive_eye_from_focal(
+        glam::DVec3::new(focal.x as f64, focal.y as f64, focal.z as f64),
+        &cam.axes,
+    );
+    // Other imports sit up to half a metre away, around the camera.
+    let scene = (Vec3::splat(-500.0), Vec3::splat(500.0));
+    cam.set_scene_bounds(Some(scene));
+    cam.apply_auto_clip_planes(&settings);
+
+    let eye = Vec3::from_array(cam.position());
+    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+    let deepest = (0..8)
+        .map(|c| {
+            Vec3::new(
+                if c & 1 == 0 { scene.0.x } else { scene.1.x },
+                if c & 2 == 0 { scene.0.y } else { scene.1.y },
+                if c & 4 == 0 { scene.0.z } else { scene.1.z },
+            )
+        })
+        .map(|p| (p - eye).dot(forward))
+        .fold(f32::MIN, f32::max);
+    let far = cam.state.far_plane as f32;
+    assert!(
+        far >= deepest,
+        "far plane {far} stops short of a part {deepest} away"
+    );
+    let near = cam.state.near_plane as f32;
+    assert!(
+        near < 1.0,
+        "the near plane {near} stays clear of the picked point"
+    );
+}
