@@ -988,3 +988,161 @@ fn a_box_outline_names_its_twelve_edges() {
         assert!(len > 1e-3, "a straight edge is one segment, never a dot");
     }
 }
+
+/// The distinct kernel faces a mesh was cut from.
+fn face_count(mesh: &kernel_api::TriMesh) -> usize {
+    mesh.faces
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+}
+
+/// The volume a closed, outward-wound mesh encloses.
+fn mesh_volume(mesh: &kernel_api::TriMesh) -> f64 {
+    let mut six_v = 0.0f64;
+    for tri in mesh.indices.chunks(3) {
+        let p = |i: u32| {
+            let q = mesh.positions[i as usize];
+            [f64::from(q[0]), f64::from(q[1]), f64::from(q[2])]
+        };
+        let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+        six_v += a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0]);
+    }
+    six_v / 6.0
+}
+
+/// A fine triangulation, so a chord lies close to its curve.
+fn fine_detail() -> TessellationSettings {
+    TessellationSettings {
+        linear_deflection_mode: kernel_api::LinearDeflectionMode::AbsoluteMm,
+        chord_tolerance: 0.01,
+        ..TessellationSettings::default()
+    }
+}
+
+/// Four rounds meeting pairwise at the corners of a face mitre: the solid
+/// keeps its six faces, trimmed, plus one band per edge and nothing else.
+#[test]
+fn fillets_of_one_face_meet_mitred_at_its_corners() {
+    let mut kernel = new_kernel();
+    let result = kernel
+        .execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                    10.0,
+                    BooleanOp::NewSolid,
+                ),
+                SolidOp::Fillet {
+                    radius: 2.0,
+                    edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+                },
+            ],
+            &TessellationSettings::default(),
+        )
+        .expect("fillet top face edges");
+    assert_eq!(
+        face_count(&result.mesh),
+        10,
+        "six trimmed faces and four bands, no caps at the corners"
+    );
+}
+
+/// Four bevels meeting pairwise at the corners of a face mitre the same
+/// way: ten faces, and the volume of the box less four wedges, each corner
+/// overlap counted once.
+#[test]
+#[ignore = "kernel: chamfers go one edge per call, so two bevels meeting at a corner leave a step and two extra faces; a chain form is asked for (ogeom-rs#43)"]
+fn chamfers_of_one_face_meet_mitred_at_its_corners() {
+    let mut kernel = new_kernel();
+    let result = kernel
+        .execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                    10.0,
+                    BooleanOp::NewSolid,
+                ),
+                SolidOp::Chamfer {
+                    spec: ChamferSpec::EqualDistance { distance: 1.0 },
+                    flip: false,
+                    edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+                },
+            ],
+            &TessellationSettings::default(),
+        )
+        .expect("chamfer top face edges");
+    assert_eq!(
+        face_count(&result.mesh),
+        10,
+        "six trimmed faces and four bevels"
+    );
+    let expected = 4000.0 - 4.0 * (0.5 * 20.0) + 4.0 / 3.0;
+    let volume = mesh_volume(&result.mesh);
+    assert!(
+        (volume - expected).abs() < 1e-2,
+        "the box less four wedges, corners counted once: {volume} vs {expected}"
+    );
+}
+
+/// Three rounds meeting at a box corner close it with the octant of the
+/// sphere tangent to all three bands: a tenth face, on which every point
+/// of the shell inside the corner cube lies.
+#[test]
+#[ignore = "kernel: fillet_edges leaves the three bands' flat caps standing at a convex corner instead of the spherical patch tangent to them (ogeom-rs#44)"]
+fn fillets_of_three_edges_round_their_corner() {
+    let mut kernel = new_kernel();
+    let radius = 2.0;
+    let result = kernel
+        .execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                    10.0,
+                    BooleanOp::NewSolid,
+                ),
+                SolidOp::Fillet {
+                    radius,
+                    edges: EdgeSelection::Near(vec![
+                        [10.0, 20.0, 10.0],
+                        [20.0, 10.0, 10.0],
+                        [20.0, 20.0, 5.0],
+                    ]),
+                },
+            ],
+            &fine_detail(),
+        )
+        .expect("fillet the three edges at a corner");
+    assert_eq!(
+        face_count(&result.mesh),
+        10,
+        "six trimmed faces, three bands and the corner patch"
+    );
+    let centre = [20.0 - radius, 20.0 - radius, 10.0 - radius];
+    let mesh = &result.mesh;
+    for tri in mesh.indices.chunks(3) {
+        let p = |i: u32| {
+            let q = mesh.positions[i as usize];
+            [f64::from(q[0]), f64::from(q[1]), f64::from(q[2])]
+        };
+        let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+        let at = [
+            (a[0] + b[0] + c[0]) / 3.0,
+            (a[1] + b[1] + c[1]) / 3.0,
+            (a[2] + b[2] + c[2]) / 3.0,
+        ];
+        let inside_corner = (0..3).all(|i| at[i] > centre[i] + 1e-3);
+        if !inside_corner {
+            continue;
+        }
+        let d = (0..3)
+            .map(|i| (at[i] - centre[i]).powi(2))
+            .sum::<f64>()
+            .sqrt();
+        assert!(
+            (d - radius).abs() < 0.05,
+            "a triangle at {at:?} lies {d:.3} from the corner sphere's centre, not {radius}"
+        );
+    }
+}

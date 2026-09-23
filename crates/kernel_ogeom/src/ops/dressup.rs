@@ -1,14 +1,16 @@
 //! Fillet / chamfer / draft / thickness on the running solid, with geometric
 //! (point-based) edge and face selection.
 //!
-//! ogeom blends one edge per call and each call rebuilds the solid, so
-//! multi-edge selections loop: every step re-resolves its probe point against
-//! the current solid, the same way picks re-resolve across parametric
-//! rebuilds.
+//! A fillet goes to the kernel as one chain, every selected edge at once, so
+//! blends that meet at a vertex trim each other. The kernel bevels one edge
+//! per call, so a chamfer of several edges loops: every step re-resolves its
+//! probe point against the current solid, the same way picks re-resolve
+//! across parametric rebuilds, and two bevels meeting at a corner are left
+//! as the second cut leaves them.
 
 use kernel_api::{ChamferSpec, EdgeSelection};
 use ogeom::algo::distance_between_shapes;
-use ogeom::fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_distances, fillet_edge};
+use ogeom::fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_distances, fillet_edges};
 use ogeom::math::{Direction, Plane, Point, Vector};
 use ogeom::offset::{apply_draft, make_thick_solid};
 use ogeom::topo::{Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
@@ -112,14 +114,18 @@ pub fn fillet(
     if probes.is_empty() {
         return Err("fillet selection matches no edges".into());
     }
-    let mut current = solid.clone();
+    // Every probe names an edge of the solid as it stands; two probes on
+    // one edge name it once.
+    let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());
     for probe in probes {
-        let edge = nearest_of(model, &current, ShapeType::Edge, probe)?;
-        current = fillet_edge(model, &current, &edge, radius, tol())
-            .map_err(|e| format!("fillet failed: {e}"))?
-            .shape;
+        let edge = nearest_of(model, solid, ShapeType::Edge, probe)?;
+        if !chain.iter().any(|e| e.is_same(&edge)) {
+            chain.push(edge);
+        }
     }
-    Ok(current)
+    fillet_edges(model, solid, &chain, radius, tol())
+        .map(|b| b.shape)
+        .map_err(|e| format!("fillet failed: {e}"))
 }
 
 pub fn chamfer(
