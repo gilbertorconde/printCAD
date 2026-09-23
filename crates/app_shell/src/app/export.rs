@@ -54,6 +54,9 @@ struct OwnedBody {
 pub(crate) struct ExportOutcome {
     path: PathBuf,
     result: Result<kernel_ogeom::export::Exported, String>,
+    /// The slicer command to open the file with once written, when the
+    /// export was a send to the slicer.
+    open_with: Option<String>,
 }
 
 /// `path` with the format's extension, unless it already names one the
@@ -110,11 +113,51 @@ impl PrintCadApp {
 
     /// Write the confirmed export to `path` on a thread of its own.
     pub(crate) fn start_export(&mut self, path: PathBuf) {
+        let draft = self.last_export.clone();
+        self.write_export(path, draft, None);
+    }
+
+    /// Hand every visible body to the slicer: written to a file of the
+    /// slicer's format in the temporary folder, then opened with the
+    /// slicer command from Preferences.
+    pub(crate) fn send_to_slicer(&mut self) {
+        let printing = &self.user_settings.printing;
+        let draft = ExportDraft {
+            format: match printing.slicer_format {
+                settings::SlicerFormat::ThreeMf => ExportFormat::ThreeMf,
+                settings::SlicerFormat::Stl => ExportFormat::Stl,
+            },
+            selected_only: false,
+            detail: self.last_export.detail.clone(),
+        };
+        if self.export_bodies(&draft).is_empty() {
+            app_log::warn("Nothing to send: no visible body has geometry");
+            return;
+        }
+        let folder = std::env::temp_dir().join("printcad").join("slicer");
+        if let Err(err) = std::fs::create_dir_all(&folder) {
+            app_log::error(format!("Could not make {}: {err}", folder.display()));
+            return;
+        }
+        let stem = self
+            .session
+            .current_file
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| file_stem_of(self.session.document.name()));
+        let path = folder.join(format!("{stem}.{}", draft.format.extension()));
+        let command = printing.slicer_command.clone();
+        self.write_export(path, draft, Some(command));
+    }
+
+    /// Write `draft` to `path` on a thread of its own, then open it with
+    /// `open_with` when given.
+    fn write_export(&mut self, path: PathBuf, draft: ExportDraft, open_with: Option<String>) {
         if self.export_rx.is_some() {
             app_log::warn("An export is still being written");
             return;
         }
-        let draft = self.last_export.clone();
         let path = with_extension(&path, draft.format);
         let bodies = self.export_bodies(&draft);
         let (tx, rx) = channel();
@@ -142,7 +185,11 @@ impl PrintCadApp {
                         .map(|()| exported)
                         .map_err(|e| format!("could not write the file: {e}"))
                 });
-            let _ = tx.send(ExportOutcome { path, result });
+            let _ = tx.send(ExportOutcome {
+                path,
+                result,
+                open_with,
+            });
         });
     }
 
@@ -156,7 +203,11 @@ impl PrintCadApp {
             return;
         };
         self.export_rx = None;
-        let ExportOutcome { path, result } = outcome;
+        let ExportOutcome {
+            path,
+            result,
+            open_with,
+        } = outcome;
         match result {
             Ok(exported) => {
                 let mut line = format!(
@@ -176,6 +227,15 @@ impl PrintCadApp {
                         "Left out, as meshes have no exact shape to write: {}",
                         exported.skipped.join(", ")
                     ));
+                }
+                if let Some(command) = open_with {
+                    match open_in_slicer(&command, &path) {
+                        Ok(program) => app_log::info(format!("Opened it with {program}")),
+                        Err(err) => app_log::error(format!(
+                            "Could not open it in the slicer: {err}. Set the slicer \
+                             in Preferences › 3D printing."
+                        )),
+                    }
                 }
             }
             Err(err) => app_log::error(format!("Export to {} failed: {err}", path.display())),
@@ -227,9 +287,117 @@ impl PrintCadApp {
     }
 }
 
+/// A document name as a file name: letters, digits and a few marks kept,
+/// anything else a dash.
+fn file_stem_of(name: &str) -> String {
+    let stem: String = name
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if stem.trim_matches('-').is_empty() {
+        "model".to_string()
+    } else {
+        stem
+    }
+}
+
+/// A command line split into words: spaces separate, double quotes hold a
+/// word with spaces together.
+fn command_words(command: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut quoted = false;
+    let mut started = false;
+    for c in command.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                started = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if started {
+                    words.push(std::mem::take(&mut word));
+                    started = false;
+                }
+            }
+            c => {
+                word.push(c);
+                started = true;
+            }
+        }
+    }
+    if started {
+        words.push(word);
+    }
+    words
+}
+
+/// The program and arguments that open `file` with `command`: `{file}`
+/// stands for the path, which otherwise goes last; an empty command hands
+/// the file to the system's application for its type.
+fn slicer_invocation(command: &str, file: &Path) -> (String, Vec<String>) {
+    let mut words = command_words(command);
+    if words.is_empty() {
+        words.push("xdg-open".to_string());
+    }
+    let file = file.display().to_string();
+    let program = words.remove(0);
+    let named = words.iter().any(|w| w.contains("{file}"));
+    let mut args: Vec<String> = words
+        .into_iter()
+        .map(|w| w.replace("{file}", &file))
+        .collect();
+    if !named {
+        args.push(file);
+    }
+    (program, args)
+}
+
+/// Start the slicer on `file` beside the app, and say which program ran.
+fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
+    let (program, args) = slicer_invocation(command, file);
+    let mut child = std::process::Command::new(&program)
+        .args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()?;
+    // Collected when it exits, so it never lingers as a finished process.
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(program)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_slicer_command_takes_the_file_where_it_says_or_last() {
+        let file = Path::new("/tmp/printcad/slicer/part.3mf");
+        let (program, args) = slicer_invocation("", file);
+        assert_eq!(program, "xdg-open");
+        assert_eq!(args, ["/tmp/printcad/slicer/part.3mf"]);
+        let (program, args) = slicer_invocation("\"/opt/My Slicer/run\" --single", file);
+        assert_eq!(program, "/opt/My Slicer/run");
+        assert_eq!(args, ["--single", "/tmp/printcad/slicer/part.3mf"]);
+        let (_, args) = slicer_invocation("slice --load={file} --go", file);
+        assert_eq!(args, ["--load=/tmp/printcad/slicer/part.3mf", "--go"]);
+    }
+
+    #[test]
+    fn a_document_name_becomes_a_safe_file_name() {
+        assert_eq!(file_stem_of("Bracket v2"), "Bracket-v2");
+        assert_eq!(file_stem_of("a/b"), "a-b");
+        assert_eq!(file_stem_of("   "), "model");
+    }
 
     #[test]
     fn a_file_name_takes_the_format_s_extension_unless_it_has_it() {

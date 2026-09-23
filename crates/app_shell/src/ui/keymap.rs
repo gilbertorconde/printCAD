@@ -22,6 +22,7 @@ pub enum HostAction {
     SaveAs,
     Import,
     Export,
+    SendToSlicer,
     Quit,
     NewTab,
     CloseTab,
@@ -103,6 +104,13 @@ const HOST: &[HostSpec] = {
         spec(SaveAs, "file.save_as", "Save as", "File", &["Ctrl+Shift+S"]),
         spec(Import, "file.import", "Import", "File", &["Ctrl+I"]),
         spec(Export, "file.export", "Export", "File", &["Ctrl+E"]),
+        spec(
+            SendToSlicer,
+            "file.send_to_slicer",
+            "Send to slicer",
+            "File",
+            &["Ctrl+P"],
+        ),
         anywhere(spec(Quit, "app.quit", "Quit", "File", &["Ctrl+Q"])),
         text_owned(spec(Undo, "edit.undo", "Undo", "Edit", &["Ctrl+Z"])),
         text_owned(spec(
@@ -569,6 +577,7 @@ pub fn host_outcome(
         SaveAs => C(UiCommand::File(FileCommand::SaveAs)),
         Import => C(UiCommand::File(FileCommand::ImportStep)),
         Export => C(UiCommand::File(FileCommand::Export)),
+        SendToSlicer => C(UiCommand::File(FileCommand::SendToSlicer)),
         Quit => C(UiCommand::Quit),
         NewTab => C(UiCommand::NewTab),
         CloseTab => match active_tab {

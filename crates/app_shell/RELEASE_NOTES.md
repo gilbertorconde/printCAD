@@ -10,6 +10,7 @@ version first.
 - Several documents open at once, one per tab, each with its own undo history and camera.
 - A document is served by its own local document server; saving never holds the window.
 - Export the solids to STEP, STL or 3MF from the File menu; the mesh formats use the tessellation tolerance you choose.
+- Send to slicer (Ctrl+P) opens every visible body in your slicer, set in Preferences › 3D printing.
 - Recent documents show a rendered preview, saved with the document.
 
 ### Sketcher

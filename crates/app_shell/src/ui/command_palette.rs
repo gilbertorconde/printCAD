@@ -98,6 +98,12 @@ const SHELL: &[ShellEntry] = &[
         action: ShellAction::File(FileCommand::Export),
     },
     ShellEntry {
+        label: "Send to slicer",
+        icon: "workbench-print",
+        binding: Some("file.send_to_slicer"),
+        action: ShellAction::File(FileCommand::SendToSlicer),
+    },
+    ShellEntry {
         label: "Start page",
         icon: "tree-document",
         binding: None,

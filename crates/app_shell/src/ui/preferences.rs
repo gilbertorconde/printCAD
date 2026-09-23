@@ -8,7 +8,9 @@ use egui::{
     Vec2, pos2, vec2,
 };
 use kernel_api::LinearDeflectionMode;
-use settings::{NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, UserSettings};
+use settings::{
+    NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, SlicerFormat, UserSettings,
+};
 use ui_kit::tokens::*;
 use ui_kit::widgets::{PrefRow, QtyField, overline, pref_group, primary_button, secondary_button};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
@@ -1178,6 +1180,33 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
                 .hint("Off, the origin is the bed's front-left corner"),
             PrefRow::toggle("Show the print bed", &mut printing.show_bed)
                 .hint("Draw the build volume around the model; the toolbar toggles it too"),
+        ],
+        filter,
+    );
+    let command = &mut printing.slicer_command;
+    pref_group(
+        ui,
+        "Slicer",
+        vec![
+            PrefRow::new("Slicer command", |ui| {
+                ui.add(
+                    egui::TextEdit::singleline(command)
+                        .hint_text("the system's app for the file")
+                        .desired_width(260.0)
+                        .font(mono(FONT_SM)),
+                )
+                .changed()
+            })
+            .hint("Send to slicer (Ctrl+P) runs this with the model's file; {file} places it"),
+            PrefRow::select(
+                "Format",
+                "prefs_slicer_format",
+                &mut printing.slicer_format,
+                &[
+                    (SlicerFormat::ThreeMf, "3MF: one named object per body"),
+                    (SlicerFormat::Stl, "STL: triangles only"),
+                ],
+            ),
         ],
         filter,
     );

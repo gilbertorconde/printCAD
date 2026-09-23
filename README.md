@@ -19,7 +19,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
   faces, or line up two round ones on one axis.
 - **Import:** STEP and IGES as solids; STL, OBJ and 3MF as meshes that can
   be converted to solids.
-- **Export:** STEP, STL and 3MF.
+- **Export:** STEP, STL and 3MF, or straight to your slicer.
 - **Documents:** `.prtcad` files, one tab each, with undo and redo.
 - **View:** GPU picking of faces and edges, a clipping plane, and 6-DoF mouse
   support.
@@ -74,6 +74,7 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | Command palette | Ctrl+K |
 | New, Open, Save, Save As | Ctrl+N, Ctrl+O, Ctrl+S, Ctrl+Shift+S |
 | Import, Export | Ctrl+I, Ctrl+E |
+| Send to slicer | Ctrl+P |
 | Undo, Redo | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y |
 | New tab, Close tab | Ctrl+T, Ctrl+W |
 | Next, Previous tab | Ctrl+Tab, Ctrl+Shift+Tab |
@@ -126,8 +127,8 @@ More detail in [docs](docs/):
 
 ## Roadmap
 
-- Sending a part straight to a slicer
 - More joint kinds: angles, gears, limits
+- Sketch external geometry, once the kernel projects edges onto planes
 
 ## License
 

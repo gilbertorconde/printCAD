@@ -202,7 +202,11 @@ a plane. Everything else the design shows is built. File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own; the start page's
-Export for printing walks it on the pocketed example. A save carries a
+Export for printing walks it on the pocketed example. File › Send to
+slicer writes the visible bodies to `$TMPDIR/printcad/slicer/` in the
+format of `PrintingSettings::slicer_format` and runs
+`slicer_command` on it (`{file}` places the path, else it goes last;
+empty uses `xdg-open`). A save carries a
 CPU-rendered preview (`thumbnail.rs`, in the save worker) as the
 container's first entry, `thumbnail.png`, which
 `Document::read_thumbnail` reads without unpacking the rest; the recent

@@ -578,6 +578,39 @@ pub fn draw_start_page(
     result
 }
 
+/// The export walkthrough: each step's title and what it says.
+const EXPORT_STEPS: [(&str, &str); 5] = [
+    (
+        "Show what you want to print",
+        "Export writes every visible body, or only the selected one. Hide the \
+         rest in the tree first, or tick Selected body only.",
+    ),
+    (
+        "Open File › Export (Ctrl+E)",
+        "Pick the format. 3MF keeps each body as its own named, closed mesh \
+         and is what current slicers prefer; STL is the one every slicer reads. \
+         STEP carries the exact shapes, for other CAD rather than for printing.",
+    ),
+    (
+        "Choose the mesh tolerance",
+        "The chord tolerance is how far a facet may stray from the true surface, \
+         the angular one how far a curve may turn across one facet. A tenth of \
+         your nozzle width is plenty: finer only makes the file larger.",
+    ),
+    (
+        "Name the file",
+        "The export runs beside the window and the log says when it is written, \
+         with the triangle count.",
+    ),
+    (
+        "Or send it straight to the slicer",
+        "File › Send to slicer (Ctrl+P) writes every visible body to a temporary \
+         file and opens it in your slicer. Choose the slicer and the format in \
+         Preferences › 3D printing; left empty, the system's app for the file \
+         opens it.",
+    ),
+];
+
 /// The steps of exporting a part for a slicer, and a button that walks
 /// them on the pocketed example.
 fn export_guide(ui: &mut Ui, view: &mut StartView, commands: &mut Vec<UiCommand>) {
@@ -587,24 +620,7 @@ fn export_guide(ui: &mut Ui, view: &mut StartView, commands: &mut Vec<UiCommand>
             .font(sans_semibold(FONT_LG))
             .color(TEXT1),
     );
-    let steps = [
-        (
-            "Show what you want to print",
-            "Export writes every visible body, or only the selected one. Hide the              rest in the tree first, or tick Selected body only.",
-        ),
-        (
-            "Open File › Export (Ctrl+E)",
-            "Pick the format. 3MF keeps each body as its own named, closed mesh              and is what current slicers prefer; STL is the one every slicer reads.              STEP carries the exact shapes, for other CAD rather than for printing.",
-        ),
-        (
-            "Choose the mesh tolerance",
-            "The chord tolerance is how far a facet may stray from the true surface,              the angular one how far a curve may turn across one facet. A tenth of              your nozzle width is plenty: finer only makes the file larger.",
-        ),
-        (
-            "Name the file",
-            "The export runs beside the window and the log says when it is written,              with the triangle count.",
-        ),
-    ];
+    let steps = EXPORT_STEPS;
     for (n, (title, body)) in steps.iter().enumerate() {
         Card::new().padding(SPACE_4).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -641,6 +657,14 @@ fn export_guide(ui: &mut Ui, view: &mut StartView, commands: &mut Vec<UiCommand>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_export_walkthrough_reads_as_plain_sentences() {
+        for (title, body) in EXPORT_STEPS {
+            assert!(!body.contains("  "), "{title}: a run of spaces in {body:?}");
+            assert!(body.ends_with('.'), "{title}");
+        }
+    }
 
     #[test]
     fn ages_read_the_way_people_say_them() {

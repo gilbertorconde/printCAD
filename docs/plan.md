@@ -51,13 +51,13 @@ written in Rust.
 
 Built: the sketcher, Part Design, assembly joints between bodies, STEP,
 IGES and mesh import, STEP, STL and 3MF export, tabs, the document server,
-undo, configurable keyboard shortcuts, and 6-DoF navigation.
+undo, configurable keyboard shortcuts, sending a part to the slicer, and
+6-DoF navigation.
 
 Next:
 
 - Sketch external geometry, which waits on the kernel's projection of an
   edge onto a plane
 - More joint kinds: an angle between faces, gears, limits on a slide
-- Sending a part straight to a slicer
 - Stable face and edge identity across rebuilds, so references do not have
   to be matched by geometry

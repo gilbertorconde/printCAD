@@ -76,6 +76,22 @@ pub struct PrintingSettings {
     pub origin_center: bool,
     /// The build volume is drawn in the scene.
     pub show_bed: bool,
+    /// The command that opens a model in the slicer. `{file}` stands for
+    /// the model's path; without it the path goes last. Empty hands the
+    /// file to the system's application for its type.
+    pub slicer_command: String,
+    /// The format a model goes to the slicer in.
+    pub slicer_format: SlicerFormat,
+}
+
+/// A mesh format a slicer reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SlicerFormat {
+    /// Named, closed meshes, one object per body.
+    #[default]
+    ThreeMf,
+    /// Triangles only, read by every slicer.
+    Stl,
 }
 
 impl Default for PrintingSettings {
@@ -84,6 +100,8 @@ impl Default for PrintingSettings {
             bed_mm: [220.0, 220.0, 250.0],
             origin_center: false,
             show_bed: false,
+            slicer_command: String::new(),
+            slicer_format: SlicerFormat::default(),
         }
     }
 }

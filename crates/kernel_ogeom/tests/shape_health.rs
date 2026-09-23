@@ -140,14 +140,18 @@ fn an_iges_file_imports_like_a_step_file() {
     assert!(a.health.is_some(), "the IGES body is checked");
 }
 
-/// The fixture written as IGES by the kernel, staged to a temp file.
+/// The fixture written as IGES by the kernel, staged to a temp file of its
+/// own: tests run side by side, and each removes its file when done.
 fn fixture_as_iges(name: &str) -> PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static STAGED: AtomicUsize = AtomicUsize::new(0);
+    let n = STAGED.fetch_add(1, Ordering::Relaxed);
     let tol = ogeom::core::Tolerances::millimetres();
     let text = std::fs::read_to_string(fixture(name)).expect("fixture");
     let read = ogeom::io::step::read_step(&text, tol).expect("fixture reads");
     let iges = ogeom::io::write_iges(&read.document, tol).expect("fixture writes as IGES");
     let path = std::env::temp_dir().join(format!(
-        "printcad_{}_{}.igs",
+        "printcad_{}_{}_{n}.igs",
         name.replace('.', "_"),
         std::process::id()
     ));

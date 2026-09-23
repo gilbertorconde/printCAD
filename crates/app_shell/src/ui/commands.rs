@@ -37,6 +37,8 @@ pub enum FileCommand {
     ImportStep,
     /// The export dialog: the bodies written as STEP, STL or 3MF.
     Export,
+    /// Every visible body written for the slicer and opened in it.
+    SendToSlicer,
 }
 
 /// What a start-page NEW card creates.

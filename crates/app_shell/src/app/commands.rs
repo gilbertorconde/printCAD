@@ -82,6 +82,7 @@ impl PrintCadApp {
             match command {
                 UiCommand::File(FileCommand::New) => intents.new_document = true,
                 UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
+                UiCommand::File(FileCommand::SendToSlicer) => self.send_to_slicer(),
                 UiCommand::ConfirmExport => self.confirm_export(),
                 UiCommand::CancelExport => self.session.export_pending = None,
                 // Dialog-kind priority (import > open > save-as > save)

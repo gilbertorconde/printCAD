@@ -30,7 +30,9 @@ What is built, by area. The plan for what comes next is in
 - STEP and IGES import, STL, OBJ and 3MF import as meshes, and conversion of
   a mesh to a solid.
 - Shape health checks and repair for imported bodies.
-- Export to STEP, STL and 3MF.
+- Export to STEP, STL and 3MF, and Send to slicer: every visible body
+  written to a temporary 3MF or STL and opened with the slicer command from
+  Preferences › 3D printing.
 
 ## Sketcher
 
@@ -60,4 +62,3 @@ What is built, by area. The plan for what comes next is in
 - Sketch external geometry, waiting on the kernel
   ([ogeom-rs#52](https://github.com/gilbertorconde/ogeom-rs/issues/52)).
 - More joint kinds: angles, gears, limits.
-- Sending a part straight to a slicer.

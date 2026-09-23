@@ -170,6 +170,14 @@ pub fn draw_menu_bar(
                         {
                             commands.push(UiCommand::File(FileCommand::Export));
                         }
+                        if item_needing_document(
+                            ui,
+                            "Send to slicer",
+                            key("file.send_to_slicer"),
+                            have_document,
+                        ) {
+                            commands.push(UiCommand::File(FileCommand::SendToSlicer));
+                        }
                         ui.separator();
                         if let Some(active) = inputs.active_tab
                             && item(ui, "Close tab", key("tab.close"))
