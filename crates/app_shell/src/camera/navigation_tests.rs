@@ -350,3 +350,98 @@ fn world_to_viewport_is_the_screen_position_less_the_viewport_origin() {
     assert!((screen.0 - 320.0 - local.0).abs() < 1e-3);
     assert!((screen.1 - 48.0 - local.1).abs() < 1e-3);
 }
+
+/// A scene box far larger than the part being looked at, with the camera
+/// inside it — one stray face metres off — must not push the near plane
+/// past the part: geometry can sit anywhere in the box, however close.
+#[test]
+fn a_camera_inside_the_scene_box_keeps_the_near_plane_close() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    // Framed on a 40 mm part at the origin.
+    cam.reset_to_fit(Vec3::ZERO, 20.0, None, &settings);
+    let eye = Vec3::from_array(cam.position());
+    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+    // The part's nearest point, seen from here.
+    let part_depth = (Vec3::splat(-20.0) - eye)
+        .dot(forward)
+        .min((Vec3::splat(20.0) - eye).dot(forward));
+
+    // The scene box runs metres out in every direction, so the eye is
+    // inside it and its nearest corner ahead is far beyond the part.
+    cam.set_scene_bounds(Some((Vec3::splat(-5000.0), Vec3::splat(12000.0))));
+    cam.apply_auto_clip_planes(&settings);
+    let near = cam.state.near_plane as f32;
+    assert!(
+        near < part_depth * 0.5,
+        "near plane {near} cuts into a part {part_depth} away"
+    );
+}
+
+/// Framing one small part must not narrow the clip range to it: the planes
+/// enclose everything the scene draws, however the camera turns after.
+#[test]
+fn clipping_encloses_the_whole_scene_after_framing_one_part() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    // Fit selection frames one part and passes no box of its own.
+    cam.reset_to_fit(Vec3::new(5.0, 5.0, 5.0), 5.0, None, &settings);
+    let scene = (
+        Vec3::new(-200.0, -150.0, -80.0),
+        Vec3::new(220.0, 160.0, 90.0),
+    );
+
+    for step in 0..24 {
+        cam.set_scene_bounds(Some(scene));
+        cam.apply_auto_clip_planes(&settings);
+        let eye = Vec3::from_array(cam.position());
+        let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+        let (near, far) = (cam.state.near_plane as f32, cam.state.far_plane as f32);
+        for corner in 0..8 {
+            let p = Vec3::new(
+                if corner & 1 == 0 {
+                    scene.0.x
+                } else {
+                    scene.1.x
+                },
+                if corner & 2 == 0 {
+                    scene.0.y
+                } else {
+                    scene.1.y
+                },
+                if corner & 4 == 0 {
+                    scene.0.z
+                } else {
+                    scene.1.z
+                },
+            );
+            let depth = (p - eye).dot(forward);
+            if depth > 0.0 {
+                assert!(
+                    depth >= near,
+                    "step {step}: corner {p} at {depth} is before near {near}"
+                );
+            }
+            assert!(
+                depth <= far,
+                "step {step}: corner {p} at {depth} is past far {far}"
+            );
+        }
+        // Turn a little, as a drag would.
+        cam.snap_to_view(
+            crate::orientation_cube::CameraSnapView::FrontTopRight,
+            &settings,
+        );
+        for _ in 0..(step % 5 + 1) {
+            cam.update(0.05, &settings);
+        }
+    }
+}

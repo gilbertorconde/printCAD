@@ -41,14 +41,12 @@ pub fn update_auto_clip(
         Vec3::new(mx.x, mx.y, mx.z),
     ];
 
-    let mut min_positive = f32::INFINITY;
+    let mut min_depth = f32::INFINITY;
     let mut max_depth = f32::NEG_INFINITY;
     for p in corners {
         let d = (p - eye).dot(forward);
         max_depth = max_depth.max(d);
-        if d > 0.0 {
-            min_positive = min_positive.min(d);
-        }
+        min_depth = min_depth.min(d);
     }
 
     let diag = (mx - mn).length();
@@ -57,11 +55,15 @@ pub fn update_auto_clip(
     let fd = state.focal_distance as f32;
     let near_from_focal = (fd * settings.near_far_near_ratio).max(1e-4);
 
-    let near = if min_positive.is_finite() {
-        // Stay in front of the closest visible point; still respect focal-based floor.
+    // With the whole box ahead, nothing is nearer than its nearest corner and
+    // the near plane may move up towards it. A box that reaches the eye's
+    // own plane holds geometry at any depth down to zero — the eye is inside
+    // it or beside it — so only the focal floor is safe; the nearest corner
+    // ahead can be metres beyond what is in front of the camera.
+    let near = if min_depth > 0.0 {
         near_from_focal
-            .max(min_positive * 0.02)
-            .min((min_positive * 0.9).max(near_from_focal))
+            .max(min_depth * 0.02)
+            .min((min_depth * 0.9).max(near_from_focal))
     } else {
         near_from_focal
     };

@@ -569,7 +569,6 @@ impl CameraController {
         settings: &CameraSettings,
     ) {
         self.cancel_animation();
-        self.scene_aabb = zoom_limit_aabb;
         ops::fit_sphere(
             &mut self.state,
             &self.axes,
@@ -579,6 +578,15 @@ impl CameraController {
             settings,
         );
         self.after_scene_or_settings_touch(settings);
+    }
+
+    /// The box around what the scene draws, which the clip planes enclose.
+    /// The host sets it every frame; a change re-derives the planes.
+    pub fn set_scene_bounds(&mut self, bounds: Option<(Vec3, Vec3)>) {
+        if self.scene_aabb != bounds {
+            self.scene_aabb = bounds;
+            self.state.clip_dirty = true;
+        }
     }
 
     pub fn clear_scene_zoom_constraint(&mut self) {

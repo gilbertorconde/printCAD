@@ -828,12 +828,6 @@ impl PrintCadApp {
             &self.user_settings.camera,
             &self.user_settings.sixdof,
         );
-        self.session
-            .camera
-            .apply_auto_clip_planes(&self.user_settings.camera);
-        self.session
-            .camera
-            .update(dt_secs, &self.user_settings.camera);
 
         // Every visible feature not under edit draws what its bench says it
         // looks like. The feature under edit is drawn as crisp screen-space
@@ -877,6 +871,18 @@ impl PrintCadApp {
                 }
             })
             .collect();
+
+        // The camera clips to what is drawn now: every visible body, the
+        // features drawn beside them and the print bed, never a box kept
+        // from the last fit, which a later import or a longer pad outgrows.
+        let scene = self.scene_bounds(&sketch_meshes);
+        self.session.camera.set_scene_bounds(scene);
+        self.session
+            .camera
+            .apply_auto_clip_planes(&self.user_settings.camera);
+        self.session
+            .camera
+            .update(dt_secs, &self.user_settings.camera);
 
         // Imported geometry (e.g. STEP files) becomes regular renderable bodies.
         // The body id from the document is reused so picking/selection stays
@@ -1270,6 +1276,42 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
+    /// The box around everything the scene pass draws: visible bodies,
+    /// the features drawn beside them, and the print bed when it shows.
+    /// `None` for an empty scene.
+    fn scene_bounds(&self, features: &[BodySubmission]) -> Option<(Vec3, Vec3)> {
+        let mut lo = Vec3::splat(f32::INFINITY);
+        let mut hi = Vec3::splat(f32::NEG_INFINITY);
+        let mut add = |(a, b): ([f32; 3], [f32; 3])| {
+            lo = lo.min(Vec3::from_array(a));
+            hi = hi.max(Vec3::from_array(b));
+        };
+        let document = &self.session.document;
+        for (body, geometry) in document.imported_geometries() {
+            if document.imported_body_effective_visible(*body)
+                && let Some(bounds) = geometry.bounds_mm.or_else(|| geometry.mesh.bounds())
+            {
+                add(bounds);
+            }
+        }
+        for feature in features {
+            if let Some(bounds) = feature.mesh.bounds() {
+                add(bounds);
+            }
+        }
+        let printing = &self.user_settings.printing;
+        if printing.show_bed {
+            let [w, d, h] = printing.bed_mm;
+            let (x0, y0) = if printing.origin_center {
+                (-w / 2.0, -d / 2.0)
+            } else {
+                (0.0, 0.0)
+            };
+            add(([x0, y0, 0.0], [x0 + w, y0 + d, h]));
+        }
+        (lo.x <= hi.x).then_some((lo, hi))
+    }
+
     /// Resolve the face under the cursor from the pick, keeping the copy
     /// already made when the picked point has not moved. Returns whether the
     /// hover changed.
