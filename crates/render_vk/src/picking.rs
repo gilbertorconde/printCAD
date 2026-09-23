@@ -10,10 +10,20 @@ use crate::{
     util::{create_buffer, create_image, create_image_view},
 };
 
+/// Texels the depth window reaches either side of the cursor: the edge
+/// pick's widest reach at twice the display scale, and a pixel over for
+/// its neighbourhood.
+const PICK_WINDOW_RADIUS: u32 = 13;
+const PICK_WINDOW_SIDE: u32 = 2 * PICK_WINDOW_RADIUS + 1;
+
 /// Bytes reserved per in-flight-frame staging slot: the 16-byte pixel ID at
-/// offset 0 and the depth float at offset 32 (kept apart for alignment).
-const PICK_SLOT_STRIDE: u64 = 64;
+/// offset 0, the cursor's depth float at offset 32 (kept apart for
+/// alignment), and the depth window from offset 64.
 const PICK_SLOT_DEPTH_OFFSET: u64 = 32;
+const PICK_SLOT_WINDOW_OFFSET: u64 = 64;
+const PICK_SLOT_STRIDE: u64 = (PICK_SLOT_WINDOW_OFFSET
+    + (PICK_WINDOW_SIDE * PICK_WINDOW_SIDE * 4) as u64)
+    .next_multiple_of(64);
 
 /// A pick readback that has been recorded into a frame's command buffer and
 /// resolves once that frame's fence is waited on.
@@ -23,6 +33,8 @@ pub(crate) struct PendingPick {
     pub y: u32,
     pub view_proj: [[f32; 4]; 4],
     pub viewport: ViewportRect,
+    /// The depth window copied beside the pixel: `(x, y, width, height)`.
+    pub window: (u32, u32, u32, u32),
 }
 
 /// Push constants for the picking shader
@@ -115,7 +127,7 @@ impl PickRenderer {
             .map_err(RenderError::from)?;
 
         // Staging buffer for readback, one slot per in-flight frame so two
-        // frames' copies never alias (ID at slot+0, depth at slot+32).
+        // frames' copies never alias (ID, cursor depth, depth window).
         let staging_size = PICK_SLOT_STRIDE * MAX_FRAMES_IN_FLIGHT as u64;
         let (staging_buffer, staging_memory) = create_buffer(
             device,
@@ -497,8 +509,9 @@ impl PickRenderer {
     /// Must be recorded after [`Self::record_commands`]: the barriers order
     /// the copies against the pick pass's attachment writes.
     ///
-    /// Returns `false` (recording nothing) when the pixel lies outside the
-    /// pick attachments.
+    /// Returns the depth window it copies, `(x, y, width, height)`, or
+    /// `None` (recording nothing) when the pixel lies outside the pick
+    /// attachments.
     pub(crate) fn record_readback(
         &self,
         device: &ash::Device,
@@ -506,10 +519,14 @@ impl PickRenderer {
         x: u32,
         y: u32,
         slot: usize,
-    ) -> bool {
+    ) -> Option<(u32, u32, u32, u32)> {
         if x >= self.extent.width || y >= self.extent.height {
-            return false;
+            return None;
         }
+        let wx = x.saturating_sub(PICK_WINDOW_RADIUS);
+        let wy = y.saturating_sub(PICK_WINDOW_RADIUS);
+        let ww = (x + PICK_WINDOW_RADIUS + 1).min(self.extent.width) - wx;
+        let wh = (y + PICK_WINDOW_RADIUS + 1).min(self.extent.height) - wy;
         let slot_offset = slot as u64 * PICK_SLOT_STRIDE;
 
         // The render pass leaves both attachments in TRANSFER_SRC_OPTIMAL,
@@ -595,10 +612,33 @@ impl PickRenderer {
                 self.depth_image,
                 vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                 self.staging_buffer,
-                &[pixel(
-                    vk::ImageAspectFlags::DEPTH,
-                    slot_offset + PICK_SLOT_DEPTH_OFFSET,
-                )],
+                &[
+                    pixel(
+                        vk::ImageAspectFlags::DEPTH,
+                        slot_offset + PICK_SLOT_DEPTH_OFFSET,
+                    ),
+                    // The window, packed tightly: `width` texels a row.
+                    vk::BufferImageCopy::default()
+                        .buffer_offset(slot_offset + PICK_SLOT_WINDOW_OFFSET)
+                        .buffer_row_length(0)
+                        .buffer_image_height(0)
+                        .image_subresource(vk::ImageSubresourceLayers {
+                            aspect_mask: vk::ImageAspectFlags::DEPTH,
+                            mip_level: 0,
+                            base_array_layer: 0,
+                            layer_count: 1,
+                        })
+                        .image_offset(vk::Offset3D {
+                            x: wx as i32,
+                            y: wy as i32,
+                            z: 0,
+                        })
+                        .image_extent(vk::Extent3D {
+                            width: ww,
+                            height: wh,
+                            depth: 1,
+                        }),
+                ],
             );
 
             // Make the transfer writes visible to the host read that happens
@@ -621,7 +661,7 @@ impl PickRenderer {
                 &[],
             );
         }
-        true
+        Some((wx, wy, ww, wh))
     }
 
     /// Decode a staging slot after the frame that recorded it has been
@@ -650,12 +690,28 @@ impl PickRenderer {
                 *data_ptr.add(3),
             ];
             let depth = *((data_ptr.add((PICK_SLOT_DEPTH_OFFSET / 4) as usize)) as *const f32);
+            let (wx, wy, ww, wh) = pending.window;
+            let window_ptr = data_ptr.add((PICK_SLOT_WINDOW_OFFSET / 4) as usize) as *const f32;
+            let depths = std::slice::from_raw_parts(window_ptr, (ww * wh) as usize).to_vec();
 
             device.unmap_memory(self.staging_memory);
 
+            let depth_window = Some(crate::DepthWindow {
+                x: wx,
+                y: wy,
+                width: ww,
+                height: wh,
+                depths,
+                view_proj: pending.view_proj,
+                viewport: pending.viewport,
+            });
+
             // All zeros = cleared pixel = no object under the cursor.
             if id_values == [0, 0, 0, 0] {
-                return Ok(PickResult::default());
+                return Ok(PickResult {
+                    depth_window,
+                    ..PickResult::default()
+                });
             }
 
             let uuid = Self::u32s_to_uuid(id_values);
@@ -671,6 +727,7 @@ impl PickRenderer {
                 body_id: Some(uuid),
                 world_position: Some(world_pos),
                 depth,
+                depth_window,
             })
         }
     }
@@ -679,7 +736,7 @@ impl PickRenderer {
     ///
     /// screen_x and screen_y are in window coordinates (full window, not viewport-relative).
     /// The viewport defines where the 3D view is rendered within the window.
-    fn unproject(
+    pub(crate) fn unproject(
         screen_x: f32,
         screen_y: f32,
         depth: f32,

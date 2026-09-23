@@ -1156,11 +1156,17 @@ impl RendererCore {
                 frame.viewport_rect.as_ref(),
             )?;
 
-            if pick_renderer.record_readback(&self.device, command_buffer, x, y, self.current_frame)
-            {
+            if let Some(window) = pick_renderer.record_readback(
+                &self.device,
+                command_buffer,
+                x,
+                y,
+                self.current_frame,
+            ) {
                 self.pick_in_flight[self.current_frame] = Some(PendingPick {
                     x,
                     y,
+                    window,
                     view_proj: frame.view_proj,
                     viewport: frame.viewport_rect.unwrap_or(ViewportRect {
                         x: 0,

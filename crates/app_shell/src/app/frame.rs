@@ -756,6 +756,7 @@ impl PrintCadApp {
             let pick_result = renderer.latest_pick_result();
             self.session.hovered_body = pick_result.body_id;
             self.session.hovered_world_pos = pick_result.world_position;
+            self.session.pick_depths = pick_result.depth_window;
         }
         // The edge under the cursor, on the body the pick found; an edge
         // takes the hover from the face it borders.

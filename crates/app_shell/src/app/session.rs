@@ -115,6 +115,9 @@ pub(crate) struct DocumentSession {
     pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,
     /// Bodies whose repair the kernel worker is running.
     pub repairs_in_flight: std::collections::HashSet<Uuid>,
+    /// The depths the pick pass drew around the cursor, and the camera it
+    /// drew them with: which edges near the cursor are in view.
+    pub pick_depths: Option<render_vk::DepthWindow>,
     /// The face under the cursor, when no edge takes the hover.
     pub hovered_face: Option<crate::app::input::FaceHover>,
     /// The edges picked in the viewport; Ctrl adds to them.
@@ -186,6 +189,7 @@ impl DocumentSession {
             measure: None,
             hovered_edge: None,
             hovered_face: None,
+            pick_depths: None,
             repairs_in_flight: Default::default(),
             physical: Default::default(),
             selected_edges: Vec::new(),

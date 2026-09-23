@@ -121,6 +121,53 @@ fn get_max_usable_sample_count(
     }
 }
 
+/// The depths the pick pass drew in a small window around the cursor, and
+/// the camera it drew them with: enough to ask whether something near the
+/// cursor, an edge a few pixels off, is in front or hidden.
+#[derive(Debug, Clone, Default)]
+pub struct DepthWindow {
+    /// Top-left texel, in window pixels.
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+    /// Row-major depth per texel; 1.0 where nothing was drawn.
+    pub depths: Vec<f32>,
+    /// The camera the pick pass drew with.
+    pub view_proj: [[f32; 4]; 4],
+    pub viewport: ViewportRect,
+}
+
+impl DepthWindow {
+    /// The world point drawn at window pixel `(x, y)`, at the pixel's
+    /// centre; `None` outside the window or where nothing was drawn.
+    pub fn world_at(&self, x: i64, y: i64) -> Option<[f32; 3]> {
+        let (col, row) = (x - i64::from(self.x), y - i64::from(self.y));
+        if col < 0 || row < 0 || col >= i64::from(self.width) || row >= i64::from(self.height) {
+            return None;
+        }
+        let depth = *self
+            .depths
+            .get(row as usize * self.width as usize + col as usize)?;
+        if depth >= 1.0 {
+            return None;
+        }
+        Some(picking::PickRenderer::unproject(
+            x as f32 + 0.5,
+            y as f32 + 0.5,
+            depth,
+            &self.viewport,
+            self.view_proj,
+        ))
+    }
+
+    /// Whether window pixel `(x, y)` lies in the window at all.
+    pub fn covers(&self, x: i64, y: i64) -> bool {
+        let (col, row) = (x - i64::from(self.x), y - i64::from(self.y));
+        col >= 0 && row >= 0 && col < i64::from(self.width) && row < i64::from(self.height)
+    }
+}
+
 /// Result of a picking query at a screen position
 #[derive(Debug, Clone, Default)]
 pub struct PickResult {
@@ -130,6 +177,8 @@ pub struct PickResult {
     pub world_position: Option<[f32; 3]>,
     /// Depth value (0.0 = near, 1.0 = far)
     pub depth: f32,
+    /// The depths around the cursor, whether or not anything is under it.
+    pub depth_window: Option<DepthWindow>,
 }
 
 /// Trait used by the app shell to talk to any renderer implementation.
