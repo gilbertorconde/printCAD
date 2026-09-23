@@ -455,6 +455,127 @@ pub(super) fn ellipse(
     }
 }
 
+/// Ellipse from the two ends of its major axis and a point on its rim.
+pub(super) fn ellipse3(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+) -> ToolEffect {
+    let pos = snapped_pos(sketch, cursor, snap_tol);
+    match *state {
+        ToolState::Ellipse3A { a } => {
+            if (pos - a).to_glam().length() < 1e-6 {
+                return ToolEffect::none();
+            }
+            *state = ToolState::Ellipse3B { a, b: pos };
+            ToolEffect::none()
+        }
+        ToolState::Ellipse3B { a, b } => {
+            let center = Vec2D::from_glam((a.to_glam() + b.to_glam()) * 0.5);
+            let Some((major, ratio)) = geom2d::ellipse_through(center, b, pos) else {
+                return ToolEffect::none(); // the rim point is on the axis line
+            };
+            let center_id = sketch.add_geometry(GeometryElement::Point(Point::new(center)));
+            sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
+                center_id, major, ratio,
+            )));
+            *state = ToolState::Idle;
+            let len = major.to_glam().length();
+            ToolEffect::changed(format!(
+                "Ellipse {len:.2} × {:.2} through three points",
+                len * ratio
+            ))
+        }
+        _ => {
+            *state = ToolState::Ellipse3A { a: pos };
+            ToolEffect::none()
+        }
+    }
+}
+
+/// Arc of an ellipse: its center, a major-axis vertex, the start on the rim
+/// (which sets the minor radius), then the end, counter-clockwise. The
+/// arc's endpoints are points held on the ellipse, so it closes profiles
+/// with the curves it meets there.
+pub(super) fn ellipse_arc(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+) -> ToolEffect {
+    match *state {
+        ToolState::EllipseArcCenter { center } => {
+            let Some(c) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            if (cursor - c).to_glam().length() < 1e-6 {
+                return ToolEffect::none();
+            }
+            *state = ToolState::EllipseArcMajor {
+                center,
+                major_pos: cursor,
+            };
+            ToolEffect::none()
+        }
+        ToolState::EllipseArcMajor { center, major_pos } => {
+            let Some(c) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let Some((major, ratio)) = geom2d::ellipse_through(c, major_pos, cursor) else {
+                return ToolEffect::none();
+            };
+            *state = ToolState::EllipseArcStart {
+                center,
+                major,
+                ratio,
+                start: cursor,
+            };
+            ToolEffect::none()
+        }
+        ToolState::EllipseArcStart {
+            center,
+            major,
+            ratio,
+            start,
+        } => {
+            let Some(c) = center.position(sketch) else {
+                *state = ToolState::Idle;
+                return ToolEffect::none();
+            };
+            let probe = Ellipse::new(Uuid::nil(), major, ratio);
+            let end_t = probe.param_at(c, cursor);
+            let start_t = probe.param_at(c, start);
+            if (end_t - start_t).abs() < 1e-4 {
+                return ToolEffect::none();
+            }
+            let on_rim = |t: f32| {
+                let (sin, cos) = t.sin_cos();
+                let a = major.to_glam();
+                Vec2D::from_glam(c.to_glam() + a * cos + a.perp() * ratio * sin)
+            };
+            let center_id = materialize(sketch, center);
+            let start_id = sketch.add_geometry(GeometryElement::Point(Point::new(on_rim(start_t))));
+            let end_id = sketch.add_geometry(GeometryElement::Point(Point::new(on_rim(end_t))));
+            let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new_arc(
+                center_id, major, ratio, start_id, end_id,
+            )));
+            for point in [start_id, end_id] {
+                sketch.add_constraint(ConstraintKind::PointOnEllipse { point, ellipse });
+            }
+            *state = ToolState::Idle;
+            ToolEffect::changed("Arc of ellipse")
+        }
+        _ => {
+            let center = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
+            *state = ToolState::EllipseArcCenter { center };
+            ToolEffect::none()
+        }
+    }
+}
+
 pub(super) fn bspline(
     state: &mut ToolState,
     sketch: &mut Sketch,

@@ -389,7 +389,24 @@ pub fn build_wire_edges(
         })
         .collect::<Result<_, _>>()?;
 
-    let close = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]) < 1e-6;
+    // Consecutive segments meet where one ends and the next starts. A
+    // sketch keeps single-precision coordinates, and a segment whose ends
+    // follow from its parameters (an elliptical arc) lands within that
+    // precision of the point its neighbour names exactly, so ends this close
+    // are one vertex, widened to hold both.
+    const JOIN_MM: f64 = 1e-3;
+    let miss = |a: [f64; 2], b: [f64; 2]| (a[0] - b[0]).hypot(a[1] - b[1]);
+    let close = |a: [f64; 2], b: [f64; 2]| miss(a, b) < JOIN_MM;
+    let vertex_at = |model: &mut Model, uv: [f64; 2], miss: f64| {
+        let point = world_point(plane, uv[0], uv[1]);
+        let data = if miss > tol.confusion() {
+            VertexData::with_tolerance(point, miss * 1.01)
+                .unwrap_or_else(|_| VertexData::new(point))
+        } else {
+            VertexData::new(point)
+        };
+        model.add_vertex(data)
+    };
     let n = wire.segments.len();
     let first_start = endpoints[0].0;
     let loops_back = close(endpoints[n - 1].1, first_start);
@@ -397,11 +414,12 @@ pub fn build_wire_edges(
         return Err("profile wire is not closed".into());
     }
 
-    let first_vertex = model.add_vertex(VertexData::new(world_point(
-        plane,
-        first_start[0],
-        first_start[1],
-    )));
+    let closing_miss = if loops_back {
+        miss(endpoints[n - 1].1, first_start)
+    } else {
+        0.0
+    };
+    let first_vertex = vertex_at(model, first_start, closing_miss);
     let mut edges = Vec::with_capacity(n);
     let mut start_vertex = first_vertex.clone();
     for (i, seg) in wire.segments.iter().enumerate() {
@@ -412,7 +430,10 @@ pub fn build_wire_edges(
         let end_vertex = if i == n - 1 && loops_back {
             first_vertex.clone()
         } else {
-            model.add_vertex(VertexData::new(world_point(plane, end_uv[0], end_uv[1])))
+            let next_miss = endpoints
+                .get(i + 1)
+                .map_or(0.0, |next| miss(end_uv, next.0));
+            vertex_at(model, end_uv, next_miss)
         };
         let (curve, range) = segment_curve(plane, normal, x_axis, seg)?;
         let edge = make_edge_between(model, curve, range, &start_vertex, &end_vertex, tol)

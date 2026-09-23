@@ -565,3 +565,65 @@ fn a_refined_pad_stacked_on_a_pad_leaves_six_faces() {
     assert!(faces_with(false) > 6, "unrefined, the sides are split");
     assert_eq!(faces_with(true), 6, "refined, one face per side");
 }
+
+/// Half an ellipse closed by its major axis pads to the half-elliptic
+/// prism: the arc's endpoints and the line's meet exactly in the profile.
+#[test]
+fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
+    use wb_sketch::sketch::Ellipse;
+    let (a, b, height) = (10.0f32, 5.0f32, 4.0f32);
+    let mut sketch = Sketch::new("half ellipse");
+    let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let right = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(a, 0.0))));
+    let left = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-a, 0.0))));
+    sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new_arc(
+        center,
+        Vec2D::new(a, 0.0),
+        b / a,
+        right,
+        left,
+    )));
+    sketch.add_geometry(GeometryElement::Line(Line::new(left, right)));
+    let plane = sketch.plane;
+
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(sketch_id, height, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the half ellipse pads");
+    let (lo, hi) = result.bounds_mm.expect("bounds");
+    for (got, want) in [
+        (lo[0], -a),
+        (hi[0], a),
+        (lo[1], 0.0),
+        (hi[1], b),
+        (hi[2] - lo[2], height),
+    ] {
+        assert!((got - want).abs() < 1e-3, "bounds {lo:?}..{hi:?}");
+    }
+    // The elliptic wall is measured over a tessellation, so the volume is
+    // close rather than exact, and says so.
+    let props = kernel.physical_properties(&result.brep_blob).unwrap();
+    let volume = props.volume_mm3.expect("a closed solid");
+    let expected = f64::from(std::f32::consts::PI * a * b / 2.0 * height);
+    assert!(props.approximate);
+    assert!(
+        (volume - expected).abs() < 2e-2 * expected,
+        "volume {volume} vs {expected}"
+    );
+}

@@ -128,6 +128,55 @@ pub fn ellipse_points(center: Vec2D, major: Vec2D, ratio: f32, segments: usize) 
         .collect()
 }
 
+/// The ellipse centred at `center` with a vertex at `major_pos` that passes
+/// through `rim`: its major vector and minor-to-major ratio. When the rim
+/// point makes the other axis the longer one, the axes swap so the ratio
+/// stays within `(0, 1]`. `None` when the rim point lies on the axis line
+/// at or beyond the vertex, where no such ellipse exists.
+pub fn ellipse_through(center: Vec2D, major_pos: Vec2D, rim: Vec2D) -> Option<(Vec2D, f32)> {
+    let axis = (major_pos - center).to_glam();
+    let a = axis.length();
+    if a <= 1e-6 {
+        return None;
+    }
+    let u = axis / a;
+    let d = (rim - center).to_glam();
+    let (x, y) = (d.dot(u), d.dot(u.perp()));
+    let s = 1.0 - (x / a).powi(2);
+    if s <= 1e-9 || y.abs() <= 1e-6 {
+        return None;
+    }
+    let b = y.abs() / s.sqrt();
+    if b <= a {
+        Some((Vec2D::from_glam(axis), b / a))
+    } else {
+        Some((Vec2D::from_glam(u.perp() * b), a / b))
+    }
+}
+
+/// Samples of an ellipse between parameters `t0` and `t1` (see
+/// [`crate::sketch::Ellipse::param_at`]), both ends included.
+pub fn ellipse_arc_points(
+    center: Vec2D,
+    major: Vec2D,
+    ratio: f32,
+    t0: f32,
+    t1: f32,
+    segments: usize,
+) -> Vec<Vec2D> {
+    let c = center.to_glam();
+    let a = major.to_glam();
+    let b = a.perp() * ratio;
+    let n = segments.max(1);
+    (0..=n)
+        .map(|i| {
+            let t = t0 + (t1 - t0) * (i as f32) / (n as f32);
+            let (sin, cos) = t.sin_cos();
+            Vec2D::from_glam(c + a * cos + b * sin)
+        })
+        .collect()
+}
+
 /// Polyline sampling of a cubic B-spline over `ctrl`. Open splines are
 /// clamped (they pass through the first and last control point); periodic
 /// splines close smoothly (first == last sample). Fewer than 2 control

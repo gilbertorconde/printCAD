@@ -488,18 +488,28 @@ fn physical_group(physical: &super::Physical, unit: Unit) -> (String, Vec<PropRo
             vec![PropRow::text("Measure", format!("Could not measure: {why}")).dim(true)]
         }
         super::Physical::Ready(props) => {
-            let length = |mm: f64| core_document::format_length_mm(mm as f32, unit, 2);
+            // A figure integrated over a tessellation reads as approximate.
+            let about = if props.approximate { "≈ " } else { "" };
+            let length = |mm: f64| {
+                format!(
+                    "{about}{}",
+                    core_document::format_length_mm(mm as f32, unit, 2)
+                )
+            };
             vec![
                 PropRow::mono(
                     "Volume",
                     props.volume_mm3.map_or_else(
                         || "encloses none".to_string(),
-                        |v| core_document::format_volume_mm3(v, unit, 2),
+                        |v| format!("{about}{}", core_document::format_volume_mm3(v, unit, 2)),
                     ),
                 ),
                 PropRow::mono(
                     "Surface area",
-                    core_document::format_area_mm2(props.area_mm2, unit, 2),
+                    format!(
+                        "{about}{}",
+                        core_document::format_area_mm2(props.area_mm2, unit, 2)
+                    ),
                 ),
                 PropRow::mono("Centre X", length(props.centre_mm[0])),
                 PropRow::mono("Centre Y", length(props.centre_mm[1])),
@@ -792,6 +802,7 @@ mod tests {
             volume_mm3: Some(8_000.0),
             area_mm2: 2_400.0,
             centre_mm: [10.0, 20.0, 30.0],
+            approximate: false,
         };
         let (title, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm);
         assert_eq!(title, "Physical");

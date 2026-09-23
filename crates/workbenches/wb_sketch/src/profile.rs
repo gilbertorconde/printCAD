@@ -132,18 +132,38 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
                     },
                 });
             }
-            // A full ellipse is a closed wire by itself, like a circle.
+            // A full ellipse is a closed wire by itself, like a circle; an
+            // arc of one joins the curves at its endpoints, as a circular
+            // arc does.
             GeometryElement::Ellipse(e) => {
                 let center = sketch
                     .point_position(e.center)
                     .ok_or(ProfileError::MissingPoint(e.center))?;
-                wires.push(ProfileWire {
-                    segments: vec![ProfileSegment::Ellipse {
-                        center: v2(center),
-                        major: [f64::from(e.major.x), f64::from(e.major.y)],
-                        ratio: f64::from(e.ratio),
-                    }],
-                });
+                let major = [f64::from(e.major.x), f64::from(e.major.y)];
+                match e.arc {
+                    None => wires.push(ProfileWire {
+                        segments: vec![ProfileSegment::Ellipse {
+                            center: v2(center),
+                            major,
+                            ratio: f64::from(e.ratio),
+                        }],
+                    }),
+                    Some(arc) => {
+                        // The span in double precision, so the arc's ends
+                        // land as close as can be to the points it names.
+                        let (t0, t1) = ellipse_arc_span(sketch, e, center)?;
+                        edges.push(EdgeCurve {
+                            ends: (arc.start, arc.end),
+                            segment: ProfileSegment::EllipseArc {
+                                center: v2(center),
+                                major,
+                                ratio: f64::from(e.ratio),
+                                start_param: t0,
+                                end_param: t1,
+                            },
+                        });
+                    }
+                }
             }
             // Periodic B-splines close on themselves; open ones connect via
             // their first/last control point like any other curve.
@@ -237,6 +257,38 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     }
 
     Ok(wires)
+}
+
+/// An arc of an ellipse's parameter span, `(t0, t1)` with `t1 > t0`, worked
+/// in double precision from its endpoints.
+fn ellipse_arc_span(
+    sketch: &Sketch,
+    e: &crate::sketch::Ellipse,
+    center: Vec2D,
+) -> Result<(f64, f64), ProfileError> {
+    let arc = e.arc.ok_or(ProfileError::MissingPoint(e.id))?;
+    let at = |id: Uuid| {
+        sketch
+            .point_position(id)
+            .ok_or(ProfileError::MissingPoint(id))
+    };
+    let (major_x, major_y) = (f64::from(e.major.x), f64::from(e.major.y));
+    let a = major_x.hypot(major_y);
+    let b = a * f64::from(e.ratio);
+    let (ux, uy) = (major_x / a, major_y / a);
+    let param = |p: Vec2D| {
+        let (dx, dy) = (
+            f64::from(p.x) - f64::from(center.x),
+            f64::from(p.y) - f64::from(center.y),
+        );
+        ((dx * -uy + dy * ux) / b).atan2((dx * ux + dy * uy) / a)
+    };
+    let t0 = param(at(arc.start)?);
+    let mut t1 = param(at(arc.end)?);
+    while t1 <= t0 + 1e-12 {
+        t1 += std::f64::consts::TAU;
+    }
+    Ok((t0, t1))
 }
 
 #[cfg(test)]

@@ -144,7 +144,10 @@ impl Sketch {
             GeometryElement::Line(l) => vec![l.start, l.end],
             GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
             GeometryElement::Circle(c) => vec![c.center],
-            GeometryElement::Ellipse(e) => vec![e.center],
+            GeometryElement::Ellipse(e) => match e.arc {
+                Some(arc) => vec![e.center, arc.start, arc.end],
+                None => vec![e.center],
+            },
             GeometryElement::BSpline(b) => b.control_points.clone(),
         }
     }
@@ -675,6 +678,19 @@ pub struct Ellipse {
     pub major: Vec2D,
     /// Minor radius as a fraction of the major radius.
     pub ratio: f32,
+    /// When set, only the arc between these two points is drawn:
+    /// counter-clockwise in the ellipse's own frame, `start` to `end`.
+    /// Both points sit on the ellipse, held there by point-on-ellipse
+    /// constraints, so the arc is wherever they are.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arc: Option<EllipseArcEnds>,
+}
+
+/// The endpoints of an arc of an ellipse.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EllipseArcEnds {
+    pub start: Uuid,
+    pub end: Uuid,
 }
 
 impl Ellipse {
@@ -684,7 +700,57 @@ impl Ellipse {
             center,
             major,
             ratio,
+            arc: None,
         }
+    }
+
+    /// An arc of an ellipse, from `start` to `end` counter-clockwise.
+    pub fn new_arc(center: Uuid, major: Vec2D, ratio: f32, start: Uuid, end: Uuid) -> Self {
+        Self {
+            arc: Some(EllipseArcEnds { start, end }),
+            ..Self::new(center, major, ratio)
+        }
+    }
+
+    /// The ellipse's parameter at a point: the angle, in the ellipse's own
+    /// frame, of where the point would sit on the circle the ellipse is
+    /// squashed from. A point on the ellipse is `center + major·cos t +
+    /// minor·sin t` at its parameter `t`.
+    pub fn param_at(&self, center: Vec2D, point: Vec2D) -> f32 {
+        let major = self.major.to_glam();
+        let a = major.length();
+        if a <= 1e-12 {
+            return 0.0;
+        }
+        let u = major / a;
+        let d = (point - center).to_glam();
+        let b = (a * self.ratio).max(1e-12);
+        (d.dot(u.perp()) / b).atan2(d.dot(u) / a)
+    }
+
+    /// The span of parameters the curve covers, `(t0, t1)` with `t1 > t0`:
+    /// the whole turn for an ellipse, from start to end for an arc.
+    pub fn param_span(&self, sketch: &Sketch) -> Option<(f32, f32)> {
+        let Some(arc) = self.arc else {
+            return Some((0.0, std::f32::consts::TAU));
+        };
+        let center = sketch.point_position(self.center)?;
+        let t0 = self.param_at(center, sketch.point_position(arc.start)?);
+        let mut t1 = self.param_at(center, sketch.point_position(arc.end)?);
+        while t1 <= t0 + 1e-6 {
+            t1 += std::f32::consts::TAU;
+        }
+        Some((t0, t1))
+    }
+
+    /// The curve sampled at `segments` intervals: the whole ellipse, or its
+    /// arc end to end.
+    pub fn points(&self, sketch: &Sketch, segments: usize) -> Option<Vec<Vec2D>> {
+        let center = sketch.point_position(self.center)?;
+        let (t0, t1) = self.param_span(sketch)?;
+        Some(crate::geom2d::ellipse_arc_points(
+            center, self.major, self.ratio, t0, t1, segments,
+        ))
     }
 }
 

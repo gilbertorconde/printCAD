@@ -212,11 +212,23 @@ pub fn copy_from(
             GeometryElement::Circle(c) => {
                 GeometryElement::Circle(Circle::new(map[&c.center], c.radius * scale))
             }
-            GeometryElement::Ellipse(e) => GeometryElement::Ellipse(Ellipse::new(
-                map[&e.center],
-                xf.apply_vec(e.major),
-                e.ratio,
-            )),
+            GeometryElement::Ellipse(e) => {
+                let mut copy = Ellipse::new(map[&e.center], xf.apply_vec(e.major), e.ratio);
+                // A mirror turns the arc's direction: swap its ends to keep
+                // it counter-clockwise, as for a circular arc.
+                copy.arc = e.arc.map(|arc| {
+                    let (s, end) = if flip {
+                        (arc.end, arc.start)
+                    } else {
+                        (arc.start, arc.end)
+                    };
+                    crate::sketch::EllipseArcEnds {
+                        start: map[&s],
+                        end: map[&end],
+                    }
+                });
+                GeometryElement::Ellipse(copy)
+            }
             GeometryElement::BSpline(b) => GeometryElement::BSpline(BSpline::new(
                 b.control_points.iter().map(|pid| map[pid]).collect(),
                 b.periodic,

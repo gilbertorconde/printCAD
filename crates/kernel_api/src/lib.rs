@@ -331,6 +331,11 @@ pub struct PhysicalProperties {
     /// Centre of mass at uniform density, in mm; the centre of the surface
     /// when there is no volume.
     pub centre_mm: [f64; 3],
+    /// Some face had no closed form, so the figures were integrated over a
+    /// tessellation and are close rather than exact (within a fraction of a
+    /// percent on curved walls).
+    #[serde(default)]
+    pub approximate: bool,
 }
 
 /// Node type emitted by STEP import hierarchy reconstruction.

@@ -71,6 +71,27 @@ pub enum ToolState {
         center: SnapTarget,
         major_pos: Vec2D,
     },
+    /// Three-point ellipse: one end of the major axis picked.
+    Ellipse3A { a: Vec2D },
+    /// Three-point ellipse: both ends of the major axis picked, waiting
+    /// for a point on the rim.
+    Ellipse3B { a: Vec2D, b: Vec2D },
+    /// Arc of ellipse: center picked.
+    EllipseArcCenter { center: SnapTarget },
+    /// Arc of ellipse: center and major vertex picked, waiting for the rim
+    /// point that sets the minor radius and starts the arc.
+    EllipseArcMajor {
+        center: SnapTarget,
+        major_pos: Vec2D,
+    },
+    /// Arc of ellipse: the ellipse and the arc's start are set, waiting
+    /// for its end (counter-clockwise).
+    EllipseArcStart {
+        center: SnapTarget,
+        major: Vec2D,
+        ratio: f32,
+        start: Vec2D,
+    },
     /// B-spline tool: control points accumulated so far.
     BSplineDraw { points: Vec<SnapTarget> },
     /// Translate tool: base point picked.
@@ -169,6 +190,17 @@ impl ToolState {
             }
             ToolState::EllipseCenter { .. } => Some("Ellipse: click the major-axis vertex"),
             ToolState::EllipseMajor { .. } => Some("Ellipse: click to set the minor radius"),
+            ToolState::Ellipse3A { .. } => Some("Ellipse: click the other end of the major axis"),
+            ToolState::Ellipse3B { .. } => Some("Ellipse: click a point on the rim"),
+            ToolState::EllipseArcCenter { .. } => {
+                Some("Arc of ellipse: click the major-axis vertex")
+            }
+            ToolState::EllipseArcMajor { .. } => {
+                Some("Arc of ellipse: click the arc's start on the rim (sets the minor radius)")
+            }
+            ToolState::EllipseArcStart { .. } => {
+                Some("Arc of ellipse: click the arc's end (counter-clockwise)")
+            }
             ToolState::BSplineDraw { .. } => Some(
                 "Spline: click control points; Enter/right-click finishes (periodic: tool settings)",
             ),
@@ -275,6 +307,8 @@ pub fn handle_click(
         "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),
         "sketch.arc3" => draw::arc3(state, sketch, cursor, snap_tol),
         "sketch.ellipse" => draw::ellipse(state, sketch, cursor, snap_tol),
+        "sketch.ellipse3" => draw::ellipse3(state, sketch, cursor, snap_tol),
+        "sketch.ellipse_arc" => draw::ellipse_arc(state, sketch, cursor, snap_tol),
         "sketch.bspline" => draw::bspline(state, sketch, cursor, snap_tol),
         "sketch.polygon" => draw::polygon(state, sketch, cursor, snap_tol, params.polygon_sides),
         "sketch.slot" => draw::slot(state, sketch, cursor, snap_tol, params.slot_width),

@@ -93,6 +93,7 @@ fn a_box_measures_its_volume_area_and_centre() {
     let size: Vec<f64> = (0..3).map(|i| f64::from(hi[i] - lo[i])).collect();
     let volume = size[0] * size[1] * size[2];
     let area = 2.0 * (size[0] * size[1] + size[1] * size[2] + size[0] * size[2]);
+    assert!(!props.approximate, "flat faces have a closed form");
     let got = props.volume_mm3.expect("a closed box has a volume");
     assert!(
         (got - volume).abs() < 1e-3 * volume,

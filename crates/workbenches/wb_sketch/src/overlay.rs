@@ -279,11 +279,11 @@ fn push_element(
             }
         }
         GeometryElement::Ellipse(e) => {
-            if let Some(c) = sketch.point_position(e.center) {
+            if let Some(points) = e.points(sketch, CIRCLE_SEGMENTS) {
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    geom2d::ellipse_points(c, e.major, e.ratio, CIRCLE_SEGMENTS).into_iter(),
+                    points.into_iter(),
                     color,
                     thickness,
                     dashed,
@@ -433,13 +433,14 @@ fn push_ghost(
                     );
                 }
             }
+            // The curve's own samples carried by the transform: exact for an
+            // arc too, and for a mirror, which turns an arc's direction.
             GeometryElement::Ellipse(e) => {
-                if let Some(c) = pt(e.center) {
+                if let Some(points) = e.points(sketch, CIRCLE_SEGMENTS) {
                     push_polyline(
                         &mut out.lines,
                         proj,
-                        geom2d::ellipse_points(c, xf.apply_vec(e.major), e.ratio, CIRCLE_SEGMENTS)
-                            .into_iter(),
+                        points.into_iter().map(|p| xf.apply(p)),
                         pal.preview,
                         1.5,
                         false,
@@ -807,6 +808,111 @@ fn push_preview(
                     true,
                 );
                 push_point_marker(out, proj, c, pal.preview);
+            }
+        }
+        ToolState::Ellipse3A { a } => {
+            push_point_marker(out, proj, *a, pal.preview);
+            push_polyline(
+                &mut out.lines,
+                proj,
+                [*a, cursor].into_iter(),
+                pal.preview,
+                1.0,
+                true,
+            );
+        }
+        ToolState::Ellipse3B { a, b } => {
+            let center = Vec2D::from_glam((a.to_glam() + b.to_glam()) * 0.5);
+            if let Some((major, ratio)) = geom2d::ellipse_through(center, *b, cursor) {
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    geom2d::ellipse_points(center, major, ratio, CIRCLE_SEGMENTS).into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+            }
+            push_polyline(
+                &mut out.lines,
+                proj,
+                [*a, *b].into_iter(),
+                pal.preview,
+                1.0,
+                true,
+            );
+            push_point_marker(out, proj, *a, pal.preview);
+            push_point_marker(out, proj, *b, pal.preview);
+        }
+        ToolState::EllipseArcCenter { center } => {
+            if let Some(c) = pos(center) {
+                push_point_marker(out, proj, c, pal.preview);
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [c, cursor].into_iter(),
+                    pal.preview,
+                    1.0,
+                    false,
+                );
+            }
+        }
+        ToolState::EllipseArcMajor { center, major_pos } => {
+            if let Some(c) = pos(center) {
+                if let Some((major, ratio)) = geom2d::ellipse_through(c, *major_pos, cursor) {
+                    push_polyline(
+                        &mut out.lines,
+                        proj,
+                        geom2d::ellipse_points(c, major, ratio, CIRCLE_SEGMENTS).into_iter(),
+                        pal.preview,
+                        1.0,
+                        true,
+                    );
+                    push_point_marker(out, proj, cursor, pal.preview);
+                }
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    [c, *major_pos].into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+                push_point_marker(out, proj, c, pal.preview);
+            }
+        }
+        ToolState::EllipseArcStart {
+            center,
+            major,
+            ratio,
+            start,
+        } => {
+            if let Some(c) = pos(center) {
+                // The whole ellipse faintly, the arc it will keep firmly.
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    geom2d::ellipse_points(c, *major, *ratio, CIRCLE_SEGMENTS).into_iter(),
+                    pal.preview,
+                    1.0,
+                    true,
+                );
+                let probe = crate::sketch::Ellipse::new(uuid::Uuid::nil(), *major, *ratio);
+                let t0 = probe.param_at(c, *start);
+                let mut t1 = probe.param_at(c, cursor);
+                while t1 <= t0 {
+                    t1 += std::f32::consts::TAU;
+                }
+                push_polyline(
+                    &mut out.lines,
+                    proj,
+                    geom2d::ellipse_arc_points(c, *major, *ratio, t0, t1, CIRCLE_SEGMENTS)
+                        .into_iter(),
+                    pal.preview,
+                    1.5,
+                    false,
+                );
+                push_point_marker(out, proj, *start, pal.preview);
             }
         }
         ToolState::BSplineDraw { points } => {

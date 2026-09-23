@@ -1838,3 +1838,102 @@ fn point_tool_places_point() {
     assert_eq!(points(&sketch), 1);
     assert!(state.is_idle());
 }
+
+/// Two ends of the major axis, then a rim point: the ellipse is centred
+/// between the ends and passes through the rim point.
+#[test]
+fn a_three_point_ellipse_passes_through_its_rim_point() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for p in [Vec2D::new(-4.0, 0.0), Vec2D::new(4.0, 0.0)] {
+        handle_click(&mut state, "sketch.ellipse3", &mut sketch, p, 0.01);
+    }
+    assert!(sketch.geometry.is_empty(), "nothing before the rim point");
+    let rim = Vec2D::new(2.0, 3.0_f32.sqrt());
+    assert!(handle_click(&mut state, "sketch.ellipse3", &mut sketch, rim, 0.01).changed);
+    let ellipse = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .expect("an ellipse");
+    let center = sketch.point_position(ellipse.center).expect("its center");
+    assert!(center.to_glam().length() < 1e-5, "centred between the ends");
+    assert!((ellipse.major.to_glam().length() - 4.0).abs() < 1e-4);
+    // x²/16 + y²/b² = 1 through (2, √3) gives b = 2.
+    assert!(
+        (ellipse.ratio - 0.5).abs() < 1e-4,
+        "ratio {}",
+        ellipse.ratio
+    );
+}
+
+/// Center, major vertex, start on the rim, end: an arc of the ellipse
+/// whose endpoints are points held on it, and whose profile segment is an
+/// elliptical arc from start to end.
+#[test]
+fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::default();
+    for p in [
+        Vec2D::new(0.0, 0.0),
+        Vec2D::new(4.0, 0.0),
+        Vec2D::new(4.0 * (0.5f32).sqrt(), 2.0 * (0.5f32).sqrt()),
+    ] {
+        handle_click(&mut state, "sketch.ellipse_arc", &mut sketch, p, 0.01);
+    }
+    assert!(
+        !sketch
+            .geometry
+            .iter()
+            .any(|g| matches!(g, GeometryElement::Ellipse(_)))
+    );
+    assert!(
+        handle_click(
+            &mut state,
+            "sketch.ellipse_arc",
+            &mut sketch,
+            Vec2D::new(-3.0, 0.5),
+            0.01
+        )
+        .changed
+    );
+    let ellipse = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Ellipse(e) => Some(e.clone()),
+            _ => None,
+        })
+        .expect("an arc of ellipse");
+    let arc = ellipse.arc.expect("it is an arc");
+    assert!((ellipse.ratio - 0.5).abs() < 1e-4);
+    let (t0, t1) = ellipse.param_span(&sketch).expect("a span");
+    assert!(
+        (t0 - std::f32::consts::FRAC_PI_4).abs() < 1e-3,
+        "starts at 45°: {t0}"
+    );
+    assert!(
+        t1 > t0 && t1 < std::f32::consts::PI + 1e-3,
+        "ends before the far vertex: {t1}"
+    );
+    for end in [arc.start, arc.end] {
+        assert!(sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::PointOnEllipse { point, ellipse: e } if point == end && e == ellipse.id
+        )));
+    }
+    // Closed with a line from end back to start, it is one wire of an
+    // elliptical arc and a line.
+    sketch.add_geometry(GeometryElement::Line(Line::new(arc.end, arc.start)));
+    let wires = crate::profile::extract_wires(&sketch).expect("a closed profile");
+    assert_eq!(wires.len(), 1);
+    assert!(
+        wires[0]
+            .segments
+            .iter()
+            .any(|s| matches!(s, kernel_api::ProfileSegment::EllipseArc { .. }))
+    );
+}

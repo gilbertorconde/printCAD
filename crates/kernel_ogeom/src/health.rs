@@ -110,13 +110,20 @@ pub fn measure_blob(brep_blob: &[u8]) -> KernelResult<PhysicalProperties> {
     crate::progress::context("Measuring");
     let (model, root) = tess::read_blob(brep_blob)?;
     let tol = tess::tolerances();
-    let area = surface_properties(&model, &root, Deflection::default(), tol)
+    // Where a face has no closed form, the kernel integrates over a
+    // tessellation at the deflection given and says so. A finer one than the
+    // default costs seconds on a real part for a fraction of a percent, so
+    // the default stands and the result carries whether it is exact.
+    let deflection = Deflection::default();
+    let area = surface_properties(&model, &root, deflection, tol)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("measuring the area failed: {e}")))?;
-    let volume = volume_properties(&model, &root, Deflection::default(), tol).ok();
+    let volume = volume_properties(&model, &root, deflection, tol).ok();
     let centre = volume.as_ref().map_or(area.centre, |v| v.centre);
+    let approximate = area.deflection > 0.0 || volume.as_ref().is_some_and(|v| v.deflection > 0.0);
     Ok(PhysicalProperties {
         volume_mm3: volume.map(|v| v.mass),
         area_mm2: area.mass,
         centre_mm: [centre.x, centre.y, centre.z],
+        approximate,
     })
 }

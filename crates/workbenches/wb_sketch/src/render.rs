@@ -85,9 +85,7 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
                 }
             }
             GeometryElement::Ellipse(ellipse) => {
-                if let Some(center) = sketch.point_position(ellipse.center) {
-                    let pts =
-                        crate::geom2d::ellipse_points(center, ellipse.major, ellipse.ratio, 48);
+                if let Some(pts) = ellipse.points(sketch, 48) {
                     out.push(pts.iter().map(|p| to_world(*p)).collect());
                 }
             }

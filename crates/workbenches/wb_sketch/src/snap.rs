@@ -114,13 +114,7 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
         }
         // Sampled curves: distance to the tessellated polyline is accurate
         // to well under any click tolerance.
-        GeometryElement::Ellipse(e) => {
-            let center = sketch.point_position(e.center)?;
-            polyline_distance(
-                &crate::geom2d::ellipse_points(center, e.major, e.ratio, 48),
-                p,
-            )
-        }
+        GeometryElement::Ellipse(e) => polyline_distance(&e.points(sketch, 48)?, p),
         GeometryElement::BSpline(b) => {
             let ctrl: Option<Vec<Vec2D>> = b
                 .control_points

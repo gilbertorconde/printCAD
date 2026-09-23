@@ -302,6 +302,8 @@ fn tool_icon(tool: &str) -> &'static str {
     match tool {
         "sketch.arc3" => "arc-3pt",
         "sketch.circle3" => "circle-3pt",
+        "sketch.ellipse3" => "ellipse-3pt",
+        "sketch.ellipse_arc" => "arc-of-ellipse",
         "sketch.rect_center" => "rectangle-centered",
         "sketch.arc_slot" => "arc-slot",
         "sketch.chamfer" => "sketch-chamfer",
@@ -323,6 +325,8 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.circle" => ("Circle", "Click the center"),
         "sketch.circle3" => ("Circle", "Click a first rim point"),
         "sketch.ellipse" => ("Ellipse", "Click the center"),
+        "sketch.ellipse3" => ("Ellipse", "Click one end of the major axis"),
+        "sketch.ellipse_arc" => ("Arc of ellipse", "Click the center"),
         "sketch.bspline" => ("B-spline", "Click the first control point"),
         "sketch.rect" => ("Rectangle", "Click the first corner"),
         "sketch.rect_center" => ("Rectangle", "Click the center"),
@@ -1467,11 +1471,8 @@ impl Workbench for SketchWorkbench {
                 ],
                 "sketch.ellipse" => vec![
                     ToolVariant::new("center", "Center and axes", "ellipse"),
-                    // PLANNED: further ellipse constructions.
-                    ToolVariant::new("3pt", "Three points", "ellipse-3pt")
-                        .planned("builds an ellipse from three rim points"),
-                    ToolVariant::new("arc", "Arc of ellipse", "arc-of-ellipse")
-                        .planned("draws an elliptical arc"),
+                    ToolVariant::new("3pt", "Three points", "ellipse-3pt"),
+                    ToolVariant::new("arc", "Arc of ellipse", "arc-of-ellipse"),
                 ],
                 "sketch.bspline" => vec![
                     ToolVariant::new("open", "Open", "bspline"),
@@ -2324,6 +2325,8 @@ impl SketchWorkbench {
         Some(match (base, tool_variant(tool)) {
             ("sketch.arc", Some("3pt")) => "sketch.arc3".to_string(),
             ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
+            ("sketch.ellipse", Some("3pt")) => "sketch.ellipse3".to_string(),
+            ("sketch.ellipse", Some("arc")) => "sketch.ellipse_arc".to_string(),
             ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
             ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
             ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
@@ -2519,7 +2522,7 @@ impl SketchWorkbench {
                 GeometryElement::Line(l) => vec![l.start, l.end],
                 GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                 GeometryElement::Circle(c) => vec![c.center],
-                GeometryElement::Ellipse(e) => vec![e.center],
+                ellipse @ GeometryElement::Ellipse(_) => Sketch::curve_point_ids(ellipse),
                 GeometryElement::BSpline(b) => b.control_points.clone(),
             })
             .collect();
@@ -2620,7 +2623,7 @@ impl SketchWorkbench {
                     GeometryElement::Line(l) => vec![l.start, l.end],
                     GeometryElement::Arc(a) => vec![a.center, a.start, a.end],
                     GeometryElement::Circle(c) => vec![c.center],
-                    GeometryElement::Ellipse(e) => vec![e.center],
+                    ellipse @ GeometryElement::Ellipse(_) => Sketch::curve_point_ids(ellipse),
                     GeometryElement::BSpline(b) => b.control_points.clone(),
                 };
                 if refs.iter().any(|r| free.contains(r)) {
@@ -2911,6 +2914,8 @@ fn is_draw_tool(tool: &str) -> bool {
             | "sketch.circle"
             | "sketch.circle3"
             | "sketch.ellipse"
+            | "sketch.ellipse3"
+            | "sketch.ellipse_arc"
             | "sketch.bspline"
             | "sketch.rect"
             | "sketch.rect_center"
@@ -2965,12 +2970,9 @@ fn element_fully_inside(sketch: &Sketch, geom: &GeometryElement, min: Vec2D, max
             None => false,
         },
         // Sampled boundary points all inside is exact enough for selection.
-        GeometryElement::Ellipse(e) => match sketch.point_position(e.center) {
-            Some(c) => geom2d::ellipse_points(c, e.major, e.ratio, 32)
-                .into_iter()
-                .all(inside),
-            None => false,
-        },
+        GeometryElement::Ellipse(e) => e
+            .points(sketch, 32)
+            .is_some_and(|points| points.into_iter().all(inside)),
         // The spline lies in its control polygon's convex hull, so all
         // control points inside implies the curve is inside.
         GeometryElement::BSpline(b) => b
