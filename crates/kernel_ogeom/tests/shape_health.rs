@@ -58,7 +58,6 @@ fn a_repair_hands_back_a_mesh_and_the_checker_s_verdict() {
 }
 
 #[test]
-#[ignore = "kernel: the STEP reader widens edge tolerances past their vertices', breaking the containment rule it documents, so the checker calls well-formed exports broken (ogeom-rs#45)"]
 fn a_well_formed_export_checks_clean() {
     let (_, model) = import("drive_frame_upper.step");
     for body in &model.bodies {
@@ -68,7 +67,6 @@ fn a_well_formed_export_checks_clean() {
 }
 
 #[test]
-#[ignore = "kernel: fix_shape only tightens tolerances and never widens a vertex to cover its edges, so the containment findings survive the repair (ogeom-rs#45)"]
 fn a_repair_clears_tolerance_containment_findings() {
     let (mut kernel, model) = import("drive_frame_upper.step");
     for body in &model.bodies {
@@ -157,7 +155,6 @@ fn fixture_as_iges(name: &str) -> PathBuf {
 }
 
 #[test]
-#[ignore = "kernel: write_iges prints a tiny real in positional notation past the 80-column record, and read_iges refuses the file (ogeom-rs#46)"]
 fn a_real_part_written_as_iges_keeps_the_record_width() {
     let path = fixture_as_iges("drive_frame_upper.step");
     let text = std::fs::read_to_string(&path).expect("staged file");
@@ -167,7 +164,6 @@ fn a_real_part_written_as_iges_keeps_the_record_width() {
 }
 
 #[test]
-#[ignore = "kernel: the written IGES overflows its records (ogeom-rs#46), and read_iges refuses solids whose curves miss their vertices by nanometres (ogeom-rs#47)"]
 fn a_real_part_imports_back_from_iges() {
     let path = fixture_as_iges("drive_frame_upper.step");
     let mut kernel = OgeomKernel::new();
