@@ -49,10 +49,14 @@ impl PrintCadApp {
         let eye = Vec3::from_array(camera.position());
         let forward = (Vec3::from_array(camera.target()) - eye).normalize_or_zero();
         let depth_of = |p: Vec3| (p - eye).dot(forward);
-        let surface_depth = self
-            .session
-            .hovered_world_pos
-            .map(|p| depth_of(Vec3::from_array(p)));
+        // The surface under the cursor hides every edge deeper than it by
+        // more than the surface itself can fall away across the pick
+        // radius; the allowance scales with what a pixel spans there.
+        let hidden_beyond = self.session.hovered_world_pos.map(|p| {
+            let p = Vec3::from_array(p);
+            let mm_per_px = mm_per_px_at(project, p, forward);
+            depth_of(p) + occlusion_slack(mm_per_px)
+        });
         let document = &self.session.document;
         let mut best: Option<(SegmentHit, Uuid, &TriMesh)> = None;
         for (body_id, geometry) in document.imported_geometries() {
@@ -70,7 +74,7 @@ impl PrintCadApp {
             {
                 continue;
             }
-            let Some(hit) = nearest_segment(mesh, project, depth_of, cursor, surface_depth) else {
+            let Some(hit) = nearest_segment(mesh, project, depth_of, cursor, hidden_beyond) else {
                 continue;
             };
             if best
@@ -201,11 +205,33 @@ impl SegmentHit {
 }
 
 /// How far behind the picked surface an edge may lie and still count as
-/// visible: an edge bounding an oblique face is a little deeper than the
-/// surface a few pixels away from it, a back edge is a body's thickness
-/// deeper.
-fn occlusion_slack(surface_depth: f32) -> f32 {
-    1.0 + 0.05 * surface_depth.abs()
+/// visible, given what one pixel spans there. An edge bounding the face
+/// under the cursor is at most the pick radius away on screen, and the face
+/// falls away across that distance by at most its slope: twice the radius,
+/// for a face tilted up to about 63° from the screen. A back edge, a wall's
+/// thickness deeper, is past it.
+fn occlusion_slack(mm_per_px: f32) -> f32 {
+    const FLOOR_MM: f32 = 0.05;
+    FLOOR_MM + 2.0 * EDGE_PICK_PX * mm_per_px
+}
+
+/// Millimetres one viewport pixel spans at `point`, across the view.
+fn mm_per_px_at(
+    project: impl Fn([f32; 3]) -> Option<(f32, f32)>,
+    point: Vec3,
+    forward: Vec3,
+) -> f32 {
+    let across = forward.any_orthonormal_vector();
+    match (
+        project(point.to_array()),
+        project((point + across).to_array()),
+    ) {
+        (Some(a), Some(b)) => {
+            let px = Vec2::new(a.0, a.1).distance(Vec2::new(b.0, b.1));
+            if px > 1e-6 { 1.0 / px } else { 1.0 }
+        }
+        _ => 1.0,
+    }
 }
 
 /// Whether the projection of a box comes within `reach` pixels of the
@@ -238,15 +264,15 @@ fn bounds_reach(
 }
 
 /// The outline segment of `mesh` nearest the cursor within reach, skipping
-/// those hidden behind the surface at `surface_depth`.
+/// those deeper than `hidden_beyond`, where the surface under the cursor
+/// hides them.
 fn nearest_segment(
     mesh: &TriMesh,
     project: impl Fn([f32; 3]) -> Option<(f32, f32)>,
     depth_of: impl Fn(Vec3) -> f32,
     cursor: Vec2,
-    surface_depth: Option<f32>,
+    hidden_beyond: Option<f32>,
 ) -> Option<SegmentHit> {
-    let hidden_beyond = surface_depth.map(|s| s + occlusion_slack(s));
     let mut best: Option<SegmentHit> = None;
     for (segment, pair) in mesh.edges.chunks(2).enumerate() {
         let a = mesh.positions[pair[0] as usize];
@@ -339,14 +365,43 @@ mod tests {
         let mesh = cube();
         // The cursor is over the top face (depth 10) near the x = 0 edge;
         // the bottom face's edge lies 10 mm deeper and is hidden.
-        let hit = nearest_segment(&mesh, project, depth_of, Vec2::new(3.0, 50.0), Some(10.0))
+        // Ten pixels a millimetre: the allowance is 1.25 mm.
+        let limit = |surface: f32| Some(surface + occlusion_slack(0.1));
+        let hit = nearest_segment(&mesh, project, depth_of, Vec2::new(3.0, 50.0), limit(10.0))
             .expect("edge within reach");
         assert_eq!(mesh.edge_ids[hit.segment], 6);
         // Seen from below, the top face's edges are the hidden ones.
         let from_below = |p: Vec3| p.z;
-        let hit = nearest_segment(&mesh, project, from_below, Vec2::new(3.0, 50.0), Some(0.0))
+        let hit = nearest_segment(&mesh, project, from_below, Vec2::new(3.0, 50.0), limit(0.0))
             .expect("edge within reach");
         assert_eq!(mesh.edge_ids[hit.segment], 4);
+    }
+
+    /// A 3 mm plate seen face-on from 200 mm, a pixel spanning 0.15 mm:
+    /// the edge on its back, a few pixels from the cursor over the middle
+    /// of the front face, stays hidden behind it.
+    #[test]
+    fn a_back_edge_near_the_cursor_stays_behind_a_thin_plate() {
+        // One back edge, 3 mm behind the front face at depth 200.
+        let mut mesh = TriMesh {
+            positions: vec![[0.0, 0.0, 203.0], [10.0, 0.0, 203.0]],
+            edges: vec![0, 1],
+            edge_ids: vec![0],
+            ..TriMesh::default()
+        };
+        let project = |p: [f32; 3]| Some((p[0] / 0.15, p[1] / 0.15));
+        let depth_of = |p: Vec3| p.z;
+        // The cursor sits 3 px from the back edge's image.
+        let cursor = Vec2::new(30.0, 3.0);
+        let limit = Some(200.0 + occlusion_slack(0.15));
+        assert!(
+            nearest_segment(&mesh, project, depth_of, cursor, limit).is_none(),
+            "the back edge takes the hover from the plate's face"
+        );
+        // Over the plate's own rim, where the edge is at the surface's
+        // depth, it is found.
+        mesh.positions = vec![[0.0, 0.0, 200.4], [10.0, 0.0, 200.4]];
+        assert!(nearest_segment(&mesh, project, depth_of, cursor, limit).is_some());
     }
 
     #[test]
