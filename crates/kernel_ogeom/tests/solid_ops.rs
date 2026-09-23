@@ -867,6 +867,7 @@ fn body_boolean_combines_external_solid() {
                 SolidOp::Boolean {
                     tool_brep: tool.brep_blob.clone(),
                     kind: BoolKind::Cut,
+                    tool_transform: None,
                 },
             ],
             &detail,
@@ -887,6 +888,7 @@ fn body_boolean_combines_external_solid() {
                 SolidOp::Boolean {
                     tool_brep: tool.brep_blob,
                     kind: BoolKind::Common,
+                    tool_transform: None,
                 },
             ],
             &detail,
@@ -1182,4 +1184,54 @@ fn refining_merges_the_faces_a_flush_fuse_splits() {
     assert_eq!(face_count(&refined.mesh), 6, "one face per side");
     let (min, max) = refined.bounds_mm.expect("bounds");
     assert_close(max[2] - min[2], 20.0, 1e-3, "the block keeps its height");
+}
+
+/// Each face of a mesh says what surface it was cut from: a cylinder's side
+/// knows its axis and radius, its caps are planes facing out.
+#[test]
+fn a_mesh_names_the_exact_surface_of_each_face() {
+    use kernel_api::FaceSurface;
+    let mut kernel = new_kernel();
+    let ops = [SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 12.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("a cylinder builds");
+    let mesh = &result.mesh;
+    let faces = mesh.faces.iter().copied().max().unwrap() as usize + 1;
+    assert_eq!(mesh.face_surfaces.len(), faces, "one surface per face");
+    let side = mesh
+        .face_surfaces
+        .iter()
+        .find_map(|s| match s {
+            FaceSurface::Cylinder { axis, radius, .. } => Some((*axis, *radius)),
+            _ => None,
+        })
+        .expect("the side is a cylinder");
+    assert!((side.1 - 5.0).abs() < 1e-4);
+    assert!(
+        (side.0[2].abs() - 1.0).abs() < 1e-5,
+        "about Z: {:?}",
+        side.0
+    );
+    let cap_normals: Vec<f32> = mesh
+        .face_surfaces
+        .iter()
+        .filter_map(|s| match s {
+            FaceSurface::Plane { normal, origin } => Some(normal[2] * (origin[2] - 6.0).signum()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(cap_normals.len(), 2);
+    assert!(
+        cap_normals.iter().all(|n| (*n - 1.0).abs() < 1e-5),
+        "each cap faces away from the middle: {cap_normals:?}"
+    );
 }

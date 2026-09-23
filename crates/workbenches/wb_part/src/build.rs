@@ -587,9 +587,16 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                         fail("the tool body has no built solid yet (build it first)".into())
                     })?
                     .to_vec();
+                // The tool's shape is in its own body's frame; it meets this
+                // body's where the two bodies sit.
+                let relative = document
+                    .body_placement(body)
+                    .inverse()
+                    .after(&document.body_placement(*tool_body));
                 plan.ops.push(SolidOp::Boolean {
                     tool_brep,
                     kind: *kind,
+                    tool_transform: (!relative.is_identity()).then(|| relative.rows()),
                 });
             }
         }

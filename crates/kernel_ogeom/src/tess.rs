@@ -7,12 +7,16 @@
 
 use std::collections::HashMap;
 
-use kernel_api::{KernelError, KernelResult, LinearDeflectionMode, TessellationSettings, TriMesh};
+use kernel_api::{
+    FaceSurface, KernelError, KernelResult, LinearDeflectionMode, TessellationSettings, TriMesh,
+};
 use ogeom::algo::{shape_bounds, vertex_bounds};
 use ogeom::core::Tolerances;
 use ogeom::core::parallel::map_ordered;
+use ogeom::geom::SurfaceGeometry;
 use ogeom::math::Point;
 use ogeom::mesh::{Deflection, edge_chords_for, polyline_of_edge, triangulate_face_with};
+use ogeom::topo::NodeData;
 use ogeom::topo::Triangulation;
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore, explore_unique};
 use tracing::warn;
@@ -197,6 +201,7 @@ pub fn mesh_shape_with(
     let mut skipped = 0usize;
 
     for (i, work) in computed.into_iter().enumerate() {
+        let face_shape = &faces[i];
         let tri = match work {
             FaceWork::Meshed(tri) => *tri,
             FaceWork::Failed(e) => {
@@ -240,7 +245,7 @@ pub fn mesh_shape_with(
             acc[2] += n.z;
         }
         let len = (acc[0] * acc[0] + acc[1] * acc[1] + acc[2] * acc[2]).sqrt();
-        face_normals.push(if len > 1e-12 {
+        let average = if len > 1e-12 {
             [
                 (acc[0] / len) as f32,
                 (acc[1] / len) as f32,
@@ -248,7 +253,10 @@ pub fn mesh_shape_with(
             ]
         } else {
             [0.0, 0.0, 1.0]
-        });
+        };
+        face_normals.push(average);
+        mesh.face_surfaces
+            .push(face_surface(model, face_shape, average));
 
         for t in &tri.triangles {
             mesh.indices.push(base + t[0]);
@@ -423,6 +431,77 @@ fn pack_rgb_key(rgb: &[f32; 3]) -> u32 {
     (ch(rgb[0]) << 16) | (ch(rgb[1]) << 8) | ch(rgb[2])
 }
 
+/// What a face's surface is, placed as the face is. A plane's normal is
+/// the one the face's triangles face, whichever way the surface's own frame
+/// points.
+fn face_surface(model: &Model, face: &Shape, facing: [f32; 3]) -> FaceSurface {
+    let Some(node) = model.node(face) else {
+        return FaceSurface::Other;
+    };
+    let NodeData::Face(data) = node.data() else {
+        return FaceSurface::Other;
+    };
+    let (Some(surface), Ok(placement)) = (
+        model.geometry().surface(data.surface),
+        face.transform(model.datums()),
+    ) else {
+        return FaceSurface::Other;
+    };
+    let point = |p: Point| {
+        let p = placement.apply(p);
+        [p.x as f32, p.y as f32, p.z as f32]
+    };
+    let direction = |d: ogeom::math::Direction| {
+        let v = placement.apply_vector(d.vector());
+        let len = (v.x * v.x + v.y * v.y + v.z * v.z).sqrt().max(1e-12);
+        [(v.x / len) as f32, (v.y / len) as f32, (v.z / len) as f32]
+    };
+    match surface {
+        SurfaceGeometry::Plane(plane) => {
+            let frame = plane.plane().frame();
+            let mut normal = direction(frame.z());
+            let dot: f32 = (0..3).map(|k| normal[k] * facing[k]).sum();
+            if dot < 0.0 {
+                normal = normal.map(|c| -c);
+            }
+            FaceSurface::Plane {
+                origin: point(frame.origin()),
+                normal,
+            }
+        }
+        SurfaceGeometry::Cylinder(cylinder) => {
+            let c = cylinder.cylinder();
+            FaceSurface::Cylinder {
+                origin: point(c.frame().origin()),
+                axis: direction(c.frame().z()),
+                radius: c.radius() as f32,
+            }
+        }
+        SurfaceGeometry::Cone(cone) => {
+            let c = cone.cone();
+            FaceSurface::Cone {
+                apex: point(c.apex()),
+                axis: direction(c.frame().z()),
+            }
+        }
+        SurfaceGeometry::Sphere(sphere) => {
+            let s = sphere.sphere();
+            FaceSurface::Sphere {
+                center: point(s.centre()),
+                radius: s.radius() as f32,
+            }
+        }
+        SurfaceGeometry::Torus(torus) => {
+            let t = torus.torus();
+            FaceSurface::Torus {
+                center: point(t.centre()),
+                axis: direction(t.frame().z()),
+            }
+        }
+        _ => FaceSurface::Other,
+    }
+}
+
 /// Merge coincident vertices whose colors match exactly and whose owning
 /// faces' normals agree within the angle threshold; vertex normals average
 /// across the merged set so smooth surfaces shade smoothly while hard CAD
@@ -577,11 +656,9 @@ mod tests {
                 [0.0, 0.0, 1.0],
                 [1.0, 0.0, 0.0],
             ],
-            faces: Vec::new(),
-            edge_ids: Vec::new(),
             indices: vec![0, 1, 2, 0, 2, 3],
-            edges: Vec::new(),
             colors: vec![WHITE; 4],
+            ..TriMesh::default()
         };
         let vertex_face = [0u32, 0, 0, 1];
         let face_normals = [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]];

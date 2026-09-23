@@ -137,20 +137,23 @@ impl PartDesignWorkbench {
             .map(|(id, _)| id)
     }
 
-    /// The current face pick, when the user has one selected in the viewport.
-    fn selected_face_pick(ctx: &WorkbenchRuntimeContext) -> Option<FacePick> {
-        ctx.selected_face.map(|face| FacePick {
+    /// The current face pick, in `body`'s frame, when the user has one
+    /// selected in the viewport.
+    fn selected_face_pick(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<FacePick> {
+        ctx.selected_face_in(body).map(|face| FacePick {
             point: face.point,
             normal: face.normal,
         })
     }
 
-    /// What a dress-up takes from the viewport selection: the picked edges
-    /// first, else the edges of the picked face, else every edge.
-    fn selected_edges(ctx: &WorkbenchRuntimeContext) -> EdgeSel {
-        if !ctx.selected_edges.is_empty() {
+    /// What a dress-up takes from the viewport selection, in `body`'s
+    /// frame: the picked edges first, else the edges of the picked face,
+    /// else every edge.
+    fn selected_edges(ctx: &WorkbenchRuntimeContext, body: BodyId) -> EdgeSel {
+        let edges = ctx.selected_edges_in(body);
+        if !edges.is_empty() {
             return EdgeSel::Edges(
-                ctx.selected_edges
+                edges
                     .iter()
                     .map(|e| EdgePick {
                         point: e.point,
@@ -159,7 +162,7 @@ impl PartDesignWorkbench {
                     .collect(),
             );
         }
-        match Self::selected_face_pick(ctx) {
+        match Self::selected_face_pick(ctx, body) {
             Some(pick) => EdgeSel::Faces(vec![pick]),
             None => EdgeSel::All,
         }
@@ -336,12 +339,12 @@ impl PartDesignWorkbench {
             }
             "part.fillet" => {
                 need_material(has_solid)?;
-                let edges = Self::selected_edges(ctx);
+                let edges = Self::selected_edges(ctx, body);
                 (PartFeature::Fillet { radius: 1.0, edges }, "Fillet")
             }
             "part.chamfer" => {
                 need_material(has_solid)?;
-                let edges = Self::selected_edges(ctx);
+                let edges = Self::selected_edges(ctx, body);
                 (
                     PartFeature::Chamfer {
                         size: 1.0,
@@ -356,7 +359,7 @@ impl PartDesignWorkbench {
             }
             "part.draft" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx)
+                let pick = Self::selected_face_pick(ctx, body)
                     .ok_or("Click a face in the viewport first (the neutral plane)")?;
                 (
                     PartFeature::Draft {
@@ -370,7 +373,7 @@ impl PartDesignWorkbench {
             }
             "part.thickness" => {
                 need_material(has_solid)?;
-                let pick = Self::selected_face_pick(ctx)
+                let pick = Self::selected_face_pick(ctx, body)
                     .ok_or("Click the face to open in the viewport first")?;
                 (
                     PartFeature::Thickness {
@@ -507,7 +510,7 @@ impl PartDesignWorkbench {
             "part.coordinate_system" => DatumShape::CoordinateSystem { size: 20.0 },
             _ => DatumShape::Point,
         };
-        let attachment = match ctx.selected_face {
+        let attachment = match ctx.selected_face_in(body) {
             Some(face) => DatumAttachment::FlatFace {
                 point: face.point,
                 normal: face.normal,
@@ -842,6 +845,15 @@ impl Workbench for PartDesignWorkbench {
                 else {
                     return InputResult::consumed();
                 };
+                // The sketch keeps its plane in its body's frame.
+                let face = match ctx
+                    .document
+                    .get_feature_meta(sketch_id)
+                    .and_then(|n| n.body)
+                {
+                    Some(body) => face.moved(&ctx.document.body_placement(body).inverse()),
+                    None => face,
+                };
                 let plane = wb_sketch::sketch::SketchPlane::from_face(face.point, face.normal);
                 feature.plane = plane;
                 feature.sketch.plane = plane;
@@ -1080,6 +1092,8 @@ impl Workbench for PartDesignWorkbench {
             return Vec::new();
         };
         let mut meshes = Vec::new();
+        // Datums live in their body's frame and draw where the body sits.
+        let placement = ctx.document.body_placement(body);
         for (id, _, datum) in core_document::datums_of_body(ctx.document, body) {
             let visible = ctx
                 .document
@@ -1094,7 +1108,7 @@ impl Workbench for PartDesignWorkbench {
             } else {
                 [0.55, 0.55, 0.95]
             };
-            meshes.push((datum_mesh(&datum), color, true));
+            meshes.push((placement.mesh(&datum_mesh(&datum)), color, true));
         }
         meshes
     }

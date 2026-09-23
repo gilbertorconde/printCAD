@@ -106,6 +106,33 @@ pub struct EdgeRef {
 pub struct FaceRef {
     pub point: [f32; 3],
     pub normal: [f32; 3],
+    /// The face's exact surface, in world space, when the mesh records
+    /// it: a picked bore brings its axis, a flat face its plane.
+    pub surface: Option<kernel_api::FaceSurface>,
+}
+
+impl EdgeRef {
+    /// The same edge seen from a frame `placement` moves points into.
+    pub fn moved(&self, placement: &crate::BodyPlacement) -> Self {
+        Self {
+            point: placement.point(self.point),
+            direction: placement.direction(self.direction),
+            length_mm: self.length_mm,
+        }
+    }
+}
+
+impl FaceRef {
+    /// The same face seen from a frame `placement` moves points into.
+    pub fn moved(&self, placement: &crate::BodyPlacement) -> Self {
+        Self {
+            point: placement.point(self.point),
+            normal: placement.direction(self.normal),
+            surface: self
+                .surface
+                .map(|s| s.moved(|p| placement.point(p), |d| placement.direction(d))),
+        }
+    }
 }
 
 /// Request to create a sketch attached to a body, optionally referenced on
@@ -220,6 +247,22 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             ctrl_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
         }
+    }
+
+    /// The picked face in `body`'s own frame, where its features keep their
+    /// references.
+    pub fn selected_face_in(&self, body: crate::BodyId) -> Option<FaceRef> {
+        let into_body = self.document.body_placement(body).inverse();
+        self.selected_face.map(|face| face.moved(&into_body))
+    }
+
+    /// The picked edges in `body`'s own frame.
+    pub fn selected_edges_in(&self, body: crate::BodyId) -> Vec<EdgeRef> {
+        let into_body = self.document.body_placement(body).inverse();
+        self.selected_edges
+            .iter()
+            .map(|edge| edge.moved(&into_body))
+            .collect()
     }
 
     /// Log an info message to the application log panel.

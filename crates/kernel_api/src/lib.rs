@@ -157,6 +157,83 @@ pub struct TriMesh {
     /// outline came from triangle boundaries rather than kernel edges.
     #[serde(default)]
     pub edge_ids: Vec<u32>,
+    /// The exact surface of each kernel face, indexed like [`Self::faces`]:
+    /// what a picked face is, beyond the triangles drawn for it. Empty when
+    /// the source has no faces.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub face_surfaces: Vec<FaceSurface>,
+}
+
+/// The kind and placement of a kernel face's surface, in the mesh's frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub enum FaceSurface {
+    /// A plane through `origin`, with the face's outward `normal`.
+    Plane { origin: [f32; 3], normal: [f32; 3] },
+    /// A circular cylinder about the line through `origin` along `axis`.
+    Cylinder {
+        origin: [f32; 3],
+        axis: [f32; 3],
+        radius: f32,
+    },
+    /// A circular cone about the line through `apex` along `axis`.
+    Cone { apex: [f32; 3], axis: [f32; 3] },
+    /// A sphere.
+    Sphere { center: [f32; 3], radius: f32 },
+    /// A torus about the line through `center` along `axis`.
+    Torus { center: [f32; 3], axis: [f32; 3] },
+    /// Any other surface: a spline, a sweep.
+    #[default]
+    Other,
+}
+
+impl FaceSurface {
+    /// The axis a turned face turns about, as a point on it and its
+    /// direction: a cylinder's, a cone's or a torus's.
+    pub fn axis(&self) -> Option<([f32; 3], [f32; 3])> {
+        match *self {
+            FaceSurface::Cylinder { origin, axis, .. } => Some((origin, axis)),
+            FaceSurface::Cone { apex, axis } => Some((apex, axis)),
+            FaceSurface::Torus { center, axis } => Some((center, axis)),
+            _ => None,
+        }
+    }
+
+    /// The same surface moved: `point` maps points, `direction` maps
+    /// directions (a rigid motion, so lengths stay).
+    pub fn moved(
+        &self,
+        point: impl Fn([f32; 3]) -> [f32; 3],
+        direction: impl Fn([f32; 3]) -> [f32; 3],
+    ) -> Self {
+        match *self {
+            FaceSurface::Plane { origin, normal } => FaceSurface::Plane {
+                origin: point(origin),
+                normal: direction(normal),
+            },
+            FaceSurface::Cylinder {
+                origin,
+                axis,
+                radius,
+            } => FaceSurface::Cylinder {
+                origin: point(origin),
+                axis: direction(axis),
+                radius,
+            },
+            FaceSurface::Cone { apex, axis } => FaceSurface::Cone {
+                apex: point(apex),
+                axis: direction(axis),
+            },
+            FaceSurface::Sphere { center, radius } => FaceSurface::Sphere {
+                center: point(center),
+                radius,
+            },
+            FaceSurface::Torus { center, axis } => FaceSurface::Torus {
+                center: point(center),
+                axis: direction(axis),
+            },
+            FaceSurface::Other => FaceSurface::Other,
+        }
+    }
 }
 
 impl TriMesh {
@@ -779,6 +856,10 @@ pub enum SolidOp {
     Boolean {
         tool_brep: Vec<u8>,
         kind: BoolKind,
+        /// Where the tool sits in this chain's frame, when the two bodies
+        /// are placed differently: a rigid row-major 4×4 matrix.
+        #[serde(default)]
+        tool_transform: Option<[[f64; 4]; 4]>,
     },
 }
 

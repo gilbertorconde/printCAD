@@ -213,6 +213,23 @@ does not implement yet. They stay on screen as disabled controls with a
 the host never dispatches a planned id). Nothing outside those two
 workbenches gets a placeholder.
 
+**Body placement.** A body has a `BodyPlacement` (`core_document/src/
+placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,
+datums and kernel shape stay in the body's own frame; the document keeps
+the mesh the scene draws and picks placed (`imported_geometry`) and the
+body's own beside it (`local_geometry`), so rendering, picking, edges,
+bounds and previews need nothing. What crosses into the kernel is the
+body's own frame: mesh-to-solid reads `local_geometry`, export passes the
+placement (`ExportBody::transform`), a body boolean's tool carries its
+placement relative to the target (`SolidOp::Boolean::tool_transform`).
+Picks reach benches in world space; a bench storing a reference converts
+it (`ctx.selected_face_in(body)`, `selected_edges_in`). The registry
+places passive geometry and pick views by the feature's body; the
+sketcher edits a sketch where its body sits and stores the plane back in
+the body's frame. Every mesh face records its exact surface
+(`TriMesh::face_surfaces`, `FaceSurface`), and a picked face carries it
+(`FaceRef::surface`), so a picked bore brings its axis.
+
 **Keyboard shortcuts.** One keymap (`ui/keymap.rs`) holds the
 application's commands (`HOST`, ids like `file.save`) and every bench's
 tools and registered actions, each with default keys

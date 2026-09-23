@@ -109,6 +109,11 @@ pub enum DocumentOp {
         id: BodyId,
         visible: bool,
     },
+    /// Move a body: where its own geometry sits in the document.
+    SetBodyPlacement {
+        id: BodyId,
+        placement: crate::BodyPlacement,
+    },
     /// Ask for a mesh body to become a B-rep solid. The solid is derived,
     /// as an import's geometry is.
     RequestMeshSolid {

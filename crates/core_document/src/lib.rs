@@ -4,6 +4,7 @@ pub mod feature;
 pub mod history;
 pub mod op;
 pub mod palette;
+pub mod placement;
 pub mod rebuild;
 pub mod registration;
 pub mod runtime;
@@ -18,6 +19,7 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tar::{Archive, Builder, Header};
@@ -34,6 +36,7 @@ pub use feature::{
 };
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
+pub use placement::BodyPlacement;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
     CameraOrientRequest, EdgeRef, FaceRef, HookOutcome, HostRequest, InputResult, KeyCode,
@@ -111,6 +114,11 @@ pub struct Document {
     /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
     #[serde(skip)]
     imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
+    /// The meshes of placed bodies in their own frame, beside the placed
+    /// copies in `imported_meshes`, with their bounds. Derived: rebuilt from
+    /// the placed copy on load.
+    #[serde(skip)]
+    local_meshes: HashMap<BodyId, LocalGeometry>,
     /// A PNG preview of the model, written as the container's first entry
     /// (`thumbnail.png`) so a file browser reads it without unpacking the
     /// rest. Derived state: set by the saving client, never an op.
@@ -164,6 +172,11 @@ pub struct Body {
     /// Kept out of the scene: not drawn, picked or framed.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hidden: bool,
+    /// Where the body's own geometry sits in the document. Its features,
+    /// sketches and kernel shape stay in the body's frame; the mesh the
+    /// scene draws and picks is placed.
+    #[serde(default, skip_serializing_if = "BodyPlacement::is_identity")]
+    pub placement: BodyPlacement,
 }
 
 /// A user-chosen look for a body: its colour and how much of it shows.
@@ -176,6 +189,9 @@ pub struct BodyDisplay {
 
 /// The archive entry holding a document's PNG preview.
 const THUMBNAIL_ENTRY: &str = "thumbnail.png";
+
+/// A body's mesh in its own frame, and that mesh's bounds.
+pub type LocalGeometry = (Arc<TriMesh>, Option<([f32; 3], [f32; 3])>);
 
 impl Default for BodyDisplay {
     fn default() -> Self {
@@ -259,6 +275,7 @@ impl Document {
             imported_brep_blobs: HashMap::new(),
             imported_brep_face_colors: HashMap::new(),
             thumbnail: None,
+            local_meshes: HashMap::new(),
             imported_body_to_object: HashMap::new(),
             mutation_seq: 0,
             pending_ops: op::OpBuffer::default(),
@@ -363,6 +380,10 @@ impl Document {
             Op::SetBodyVisible { id, .. } => Op::SetBodyVisible {
                 id: *id,
                 visible: !self.bodies.iter().find(|b| b.id == *id)?.hidden,
+            },
+            Op::SetBodyPlacement { id, .. } => Op::SetBodyPlacement {
+                id: *id,
+                placement: self.bodies.iter().find(|b| b.id == *id)?.placement,
             },
             Op::SetBodyTip { id, .. } => Op::SetBodyTip {
                 id: *id,
@@ -470,6 +491,7 @@ impl Document {
                     repair_requested: false,
                     solid_requested: false,
                     hidden: false,
+                    placement: BodyPlacement::IDENTITY,
                 });
             }
             Op::RenameBody { id, name } => {
@@ -491,6 +513,12 @@ impl Document {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.hidden = !visible;
                 }
+            }
+            Op::SetBodyPlacement { id, placement } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.placement = *placement;
+                }
+                self.place_geometry(*id);
             }
             Op::RequestMeshSolid { id } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -620,6 +648,7 @@ impl Document {
                         repair_requested: false,
                         solid_requested: false,
                         hidden: false,
+                        placement: BodyPlacement::IDENTITY,
                     });
                 }
                 self.imported_object_roots.extend(roots.iter().copied());
@@ -919,6 +948,79 @@ impl Document {
         }
     }
 
+    /// Move a body to `placement`.
+    pub fn set_body_placement(&mut self, body: BodyId, placement: BodyPlacement) {
+        if let Some(entry) = self.bodies.iter().find(|b| b.id == body)
+            && entry.placement != placement
+        {
+            self.record_and_apply(op::DocumentOp::SetBodyPlacement {
+                id: body,
+                placement,
+            });
+        }
+    }
+
+    /// Where a body sits; the identity for a body that does not exist.
+    pub fn body_placement(&self, body: BodyId) -> BodyPlacement {
+        self.bodies
+            .iter()
+            .find(|b| b.id == body)
+            .map(|b| b.placement)
+            .unwrap_or_default()
+    }
+
+    /// A body's geometry as its kernel shape has it, in the body's own
+    /// frame: the mesh and its bounds before the body's placement. The
+    /// scene's copy (`imported_geometry`) is placed.
+    pub fn local_geometry(&self, body: BodyId) -> Option<LocalGeometry> {
+        if let Some(local) = self.local_meshes.get(&body) {
+            return Some(local.clone());
+        }
+        self.imported_meshes
+            .get(&body)
+            .map(|g| (Arc::clone(&g.mesh), g.bounds_mm))
+    }
+
+    /// After a load: the placed bodies' own meshes, from the placed copies
+    /// the file holds.
+    fn recover_local_meshes(&mut self) {
+        let placed: Vec<(BodyId, BodyPlacement)> = self
+            .bodies
+            .iter()
+            .filter(|b| !b.placement.is_identity())
+            .map(|b| (b.id, b.placement))
+            .collect();
+        for (body, placement) in placed {
+            if let Some(geometry) = self.imported_meshes.get(&body) {
+                let local = placement.inverse().mesh(&geometry.mesh);
+                let bounds = local.bounds();
+                self.local_meshes.insert(body, (Arc::new(local), bounds));
+            }
+        }
+    }
+
+    /// Re-derive a body's placed mesh from its own after its placement
+    /// changed: the local copy is kept beside it while the body is placed.
+    fn place_geometry(&mut self, body: BodyId) {
+        let placement = self.body_placement(body);
+        let Some((local, local_bounds)) = self.local_geometry(body) else {
+            return;
+        };
+        let Some(geometry) = self.imported_meshes.get_mut(&body) else {
+            return;
+        };
+        if placement.is_identity() {
+            geometry.mesh = local;
+            geometry.bounds_mm = local_bounds;
+            self.local_meshes.remove(&body);
+        } else {
+            geometry.mesh = Arc::new(placement.mesh(&local));
+            geometry.bounds_mm = local_bounds.map(|b| placement.bounds(b));
+            self.local_meshes.insert(body, (local, local_bounds));
+        }
+        geometry.revision = geometry.revision.saturating_add(1);
+    }
+
     /// Suppress/unsuppress a feature (excluded from builds while suppressed).
     pub fn set_feature_suppressed(&mut self, feature_id: FeatureId, suppressed: bool) {
         if let Some(node) = self.feature_tree.get_node(feature_id)
@@ -1154,6 +1256,8 @@ impl Document {
     /// with the next monotonic value for this body so renderers can
     /// distinguish "this is the same mesh as last frame" from "this body's
     /// mesh has been replaced" with a cheap u64 comparison.
+    /// Store a body's geometry, given in the body's own frame; the scene's
+    /// copy is placed where the body sits.
     pub fn set_imported_geometry(&mut self, body: BodyId, mut geometry: ImportedGeometry) {
         let next_revision = self
             .imported_meshes
@@ -1161,7 +1265,11 @@ impl Document {
             .map(|prev| prev.revision.saturating_add(1))
             .unwrap_or(0);
         geometry.revision = next_revision;
+        self.local_meshes.remove(&body);
         self.imported_meshes.insert(body, geometry);
+        if !self.body_placement(body).is_identity() {
+            self.place_geometry(body);
+        }
         self.mark_dirty();
     }
 
@@ -1169,6 +1277,7 @@ impl Document {
     /// face colours). Used when a body's last solid feature is deleted.
     pub fn remove_imported_geometry(&mut self, body: BodyId) {
         let removed = self.imported_meshes.remove(&body).is_some();
+        self.local_meshes.remove(&body);
         self.imported_brep_blobs.remove(&body);
         self.imported_brep_face_colors.remove(&body);
         if removed {
@@ -1541,6 +1650,7 @@ impl Document {
         })?;
         let mut doc: Document = serde_json::from_slice(&json)?;
         doc.thumbnail = thumbnail.map(std::sync::Arc::new);
+        doc.recover_local_meshes();
 
         // Resolve any asset blobs that match an `AssetReference::path`.
         for (asset_id, asset) in &doc.assets {

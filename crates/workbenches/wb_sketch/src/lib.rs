@@ -397,21 +397,32 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
 }
 
 impl SketchWorkbench {
-    /// Get the active sketch from the document.
+    /// The active sketch, with its plane where the scene has it: a sketch
+    /// keeps its plane in its body's frame, and editing works where the
+    /// body sits.
     fn get_active_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
-        self.active_sketch_id.and_then(|id| {
-            ctx.document
-                .get_feature_data(id)
-                .and_then(|data| SketchFeature::from_json(data).ok())
-        })
+        let id = self.active_sketch_id?;
+        let mut feature = stored_sketch(ctx.document, id)?;
+        let placement = sketch_placement(ctx.document, id);
+        feature.plane = placed_plane(&feature.plane, &placement);
+        feature.sketch.plane = placed_plane(&feature.sketch.plane, &placement);
+        Some(feature)
     }
 
     /// Persist a modified sketch feature back into the document and mark it
-    /// dirty for recompute.
-    fn store_sketch(&self, ctx: &mut WorkbenchRuntimeContext, feature: SketchFeature) -> bool {
+    /// dirty for recompute. Its plane goes back into the body's frame; a
+    /// plane the edit did not move keeps its stored value exactly, so
+    /// repeated edits never drift it.
+    fn store_sketch(&self, ctx: &mut WorkbenchRuntimeContext, mut feature: SketchFeature) -> bool {
         let Some(id) = self.active_sketch_id else {
             return false;
         };
+        let placement = sketch_placement(ctx.document, id);
+        if let Some(stored) = stored_sketch(ctx.document, id) {
+            feature.plane = local_plane(&feature.plane, &stored.plane, &placement);
+            feature.sketch.plane =
+                local_plane(&feature.sketch.plane, &stored.sketch.plane, &placement);
+        }
         if let Err(e) = ctx.document.update_feature_data(id, feature.to_json()) {
             ctx.log_error(format!("Failed to update sketch: {e}"));
             return false;
@@ -601,6 +612,8 @@ impl SketchWorkbench {
                 self.active_sketch_id = Some(feature_id);
                 self.clear_interaction_state();
                 ctx.active_document_object = Some(feature_id);
+                // The view turns to the plane where the body has it.
+                let plane = placed_plane(&plane, &sketch_placement(ctx.document, feature_id));
                 ctx.request(HostRequest::OrientCamera(
                     core_document::CameraOrientRequest {
                         plane_origin: plane.origin,
@@ -1843,16 +1856,19 @@ impl Workbench for SketchWorkbench {
         if let Some(request) = ctx.attach_request.take() {
             let face_plane = request
                 .face
+                .map(|f| f.moved(&ctx.document.body_placement(BodyId(request.body)).inverse()))
                 .map(|f| SketchPlane::from_face(f.point, f.normal));
             self.begin_sketch_creation(Some(BodyId(request.body)), face_plane);
         }
 
         if base == Some("sketch.create") {
             if self.pending_creation.is_none() && self.active_sketch_id.is_none() {
-                let face_plane = ctx
-                    .selected_face
+                let body = ctx.selected_body_id.map(BodyId);
+                let face_plane = body
+                    .and_then(|b| ctx.selected_face_in(b))
+                    .or(ctx.selected_face)
                     .map(|f| SketchPlane::from_face(f.point, f.normal));
-                self.begin_sketch_creation(ctx.selected_body_id.map(BodyId), face_plane);
+                self.begin_sketch_creation(body, face_plane);
             }
             return InputResult::consumed();
         }
@@ -2849,7 +2865,10 @@ impl SketchWorkbench {
                 node.workbench_id.as_str() == "wb.sketch" && Some(**id) != self.active_sketch_id
             })
             .filter_map(|(id, node)| {
-                let feature = SketchFeature::from_json(&node.data).ok()?;
+                // Seen where its body sits, as the edited sketch is.
+                let mut feature = SketchFeature::from_json(&node.data).ok()?;
+                let placement = sketch_placement(ctx.document, *id);
+                feature.plane = placed_plane(&feature.plane, &placement);
                 Some((node.seq, *id, node.name.clone(), feature))
             })
             .collect();
@@ -2920,7 +2939,9 @@ impl SketchWorkbench {
         }
         let body = ctx.document.get_feature_meta(active).and_then(|n| n.body);
         let name = merged.name.clone();
-        let plane = feature.plane;
+        // The new sketch shares this one's body, so its stored plane too.
+        let plane = stored_sketch(ctx.document, active).map_or(feature.plane, |s| s.plane);
+        merged.plane = plane;
         match ctx.document.add_feature_in_body(
             SketchFeature::new(merged, plane),
             name.clone(),
@@ -2954,7 +2975,8 @@ impl SketchWorkbench {
             .collect();
         let xf = tools::Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
         let count = tools::copy_from(&feature.sketch, &mut mirrored, &all, &xf);
-        let plane = feature.plane;
+        let plane = stored_sketch(ctx.document, id).map_or(feature.plane, |s| s.plane);
+        mirrored.plane = plane;
         match ctx.document.add_feature_in_body(
             SketchFeature::new(mirrored, plane),
             name.clone(),
@@ -3212,6 +3234,54 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
         Some(0)
     } else {
         trimmed.parse().ok()
+    }
+}
+
+/// A sketch as the document stores it, its plane in its body's frame.
+fn stored_sketch(document: &core_document::Document, id: FeatureId) -> Option<SketchFeature> {
+    document
+        .get_feature_data(id)
+        .and_then(|data| SketchFeature::from_json(data).ok())
+}
+
+/// Where the body a sketch belongs to sits.
+fn sketch_placement(
+    document: &core_document::Document,
+    id: FeatureId,
+) -> core_document::BodyPlacement {
+    document
+        .get_feature_meta(id)
+        .and_then(|node| node.body)
+        .map(|body| document.body_placement(body))
+        .unwrap_or_default()
+}
+
+/// A plane moved by a body's placement.
+fn placed_plane(plane: &SketchPlane, placement: &core_document::BodyPlacement) -> SketchPlane {
+    SketchPlane {
+        origin: placement.point(plane.origin),
+        normal: placement.direction(plane.normal),
+        x_axis: placement.direction(plane.x_axis),
+        y_axis: placement.direction(plane.y_axis),
+    }
+}
+
+/// A plane seen where the body sits, back in the body's frame: `stored`
+/// when it is where `stored` is seen, else moved back.
+fn local_plane(
+    seen: &SketchPlane,
+    stored: &SketchPlane,
+    placement: &core_document::BodyPlacement,
+) -> SketchPlane {
+    let same = |a: [f32; 3], b: [f32; 3], tol: f32| (0..3).all(|k| (a[k] - b[k]).abs() <= tol);
+    let placed = placed_plane(stored, placement);
+    if same(placed.origin, seen.origin, 1e-4)
+        && same(placed.normal, seen.normal, 1e-6)
+        && same(placed.x_axis, seen.x_axis, 1e-6)
+    {
+        *stored
+    } else {
+        placed_plane(seen, &placement.inverse())
     }
 }
 
@@ -3477,5 +3547,65 @@ mod sketch_picker {
                 .iter()
                 .all(|p| (p.y - 3.0).abs() < 1e-4)
         );
+    }
+}
+
+#[cfg(test)]
+mod placed_body {
+    use super::*;
+    use core_document::{BodyPlacement, Document};
+
+    fn close(a: [f32; 3], b: [f32; 3]) -> bool {
+        (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4)
+    }
+
+    #[test]
+    fn a_sketch_on_a_moved_body_is_edited_where_it_sits_and_stored_in_its_frame() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
+                "s".into(),
+                Some(body),
+            )
+            .unwrap();
+        let placement = BodyPlacement::new(
+            glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+            glam::Vec3::new(0.0, 0.0, 20.0),
+        );
+        doc.set_body_placement(body, placement);
+        let wb = SketchWorkbench {
+            active_sketch_id: Some(sketch),
+            ..SketchWorkbench::default()
+        };
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+
+        let seen = wb.get_active_sketch(&ctx).unwrap();
+        assert!(close(seen.plane.origin, [0.0, 0.0, 20.0]));
+        assert!(
+            close(seen.plane.normal, [0.0, -1.0, 0.0]),
+            "{:?}",
+            seen.plane.normal
+        );
+
+        // An edit that does not move the plane leaves it exactly as stored.
+        assert!(wb.store_sketch(&mut ctx, seen.clone()));
+        let kept = stored_sketch(ctx.document, sketch).unwrap().plane;
+        let xy = SketchPlane::xy();
+        assert_eq!(
+            (kept.origin, kept.normal, kept.x_axis, kept.y_axis),
+            (xy.origin, xy.normal, xy.x_axis, xy.y_axis),
+            "bit for bit"
+        );
+
+        // A plane set where the body sits is kept in the body's frame.
+        let mut moved = seen;
+        moved.plane.origin = [0.0, 0.0, 25.0];
+        assert!(wb.store_sketch(&mut ctx, moved));
+        let stored = stored_sketch(ctx.document, sketch).unwrap().plane;
+        assert!(close(stored.origin, [0.0, 5.0, 0.0]), "{:?}", stored.origin);
+        assert!(close(stored.normal, [0.0, 0.0, 1.0]));
     }
 }

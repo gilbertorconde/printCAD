@@ -187,7 +187,21 @@ impl PrintCadApp {
         let body = self.panel_body()?;
         let revision = self.session.document.imported_geometry(body)?.revision;
         let (measured, reading) = self.session.physical.get(&body.0)?;
-        (*measured == revision).then(|| reading.clone())
+        if *measured != revision {
+            return None;
+        }
+        // The kernel measures the body's own shape; the centre is shown
+        // where the body sits.
+        Some(match reading {
+            crate::ui::Physical::Ready(props) => {
+                let mut props = *props;
+                let placement = self.session.document.body_placement(body);
+                let c = props.centre_mm.map(|v| v as f32);
+                props.centre_mm = placement.point(c).map(f64::from);
+                crate::ui::Physical::Ready(props)
+            }
+            other => other.clone(),
+        })
     }
 }
 
@@ -200,12 +214,9 @@ impl PrintCadApp {
             if self.session.solids_in_flight.contains(&body.0) {
                 continue;
             }
-            let Some(mesh) = self
-                .session
-                .document
-                .imported_geometry(body)
-                .map(|g| std::sync::Arc::clone(&g.mesh))
-            else {
+            // The solid is built in the body's own frame, as every kernel
+            // shape is; the scene's copy is placed.
+            let Some((mesh, _)) = self.session.document.local_geometry(body) else {
                 continue;
             };
             self.session.solids_in_flight.insert(body.0);

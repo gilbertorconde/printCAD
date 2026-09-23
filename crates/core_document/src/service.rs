@@ -206,9 +206,19 @@ impl DocumentService {
             .all_nodes()
             .filter(|(id, node)| node.visible && Some(**id) != editing)
             .filter_map(|(id, node)| {
-                let geometry = self
+                let mut geometry = self
                     .owner_of(&node.workbench_id)?
                     .passive_geometry(document, *id, node)?;
+                // A bench draws in its body's frame; the scene has it where
+                // the body sits.
+                let placement = node
+                    .body
+                    .map(|body| document.body_placement(body))
+                    .unwrap_or_default();
+                if !placement.is_identity() {
+                    geometry.mesh = placement.mesh(&geometry.mesh);
+                    geometry.revision = mix_placement(geometry.revision, &placement);
+                }
                 Some((*id, geometry))
             })
             .collect()
@@ -227,6 +237,24 @@ impl DocumentService {
             .all_nodes()
             .filter(|(_, node)| node.visible)
             .filter_map(|(id, node)| {
+                // The bench measures in its body's frame: the view it is
+                // given places that frame where the body sits.
+                let placement = node
+                    .body
+                    .map(|body| document.body_placement(body))
+                    .unwrap_or_default();
+                let placed_pick;
+                let pick = if placement.is_identity() {
+                    pick
+                } else {
+                    let view_proj = glam::Mat4::from_cols_array_2d(&pick.view_proj)
+                        * glam::Mat4::from_cols_array_2d(&placement.matrix());
+                    placed_pick = ViewportPick {
+                        view_proj: view_proj.to_cols_array_2d(),
+                        ..*pick
+                    };
+                    &placed_pick
+                };
                 let distance = self
                     .owner_of(&node.workbench_id)?
                     .pick_feature(document, *id, node, pick)?;
@@ -310,4 +338,15 @@ impl DocumentService {
             .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
         Ok(&mut entry.workbench)
     }
+}
+
+/// A passive geometry revision that also changes when its body moves.
+fn mix_placement(revision: u64, placement: &crate::BodyPlacement) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    revision.hash(&mut h);
+    for v in placement.translation.iter().chain(&placement.rotation) {
+        v.to_bits().hash(&mut h);
+    }
+    h.finish()
 }

@@ -69,11 +69,8 @@ fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh 
     kernel_api::TriMesh {
         normals: vec![[0.0, 0.0, 1.0]; positions.len()],
         positions,
-        indices: Vec::new(),
         edges,
-        colors: Vec::new(),
-        faces: Vec::new(),
-        edge_ids: Vec::new(),
+        ..kernel_api::TriMesh::default()
     }
 }
 

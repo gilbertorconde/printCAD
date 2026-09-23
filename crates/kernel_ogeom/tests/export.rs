@@ -55,6 +55,7 @@ fn round_trip(format: ExportFormat) -> (ImportedModel, ImportedModel) {
         .map(|b| ExportBody {
             name: "box".into(),
             brep: Some(&b.brep_blob),
+            transform: None,
             mesh: &b.mesh,
         })
         .collect();
@@ -98,6 +99,7 @@ fn a_mesh_body_is_left_out_of_step_and_written_to_the_mesh_formats() {
     let bodies = [ExportBody {
         name: "scan".into(),
         brep: None,
+        transform: None,
         mesh,
     }];
     assert!(
@@ -131,6 +133,7 @@ fn a_real_part_written_as_3mf_is_closed() {
         .map(|b| ExportBody {
             name: "part".into(),
             brep: Some(&b.brep_blob),
+            transform: None,
             mesh: &b.mesh,
         })
         .collect();
@@ -147,5 +150,47 @@ fn a_real_part_written_as_3mf_is_closed() {
     let _ = std::fs::remove_file(&path);
     for body in &back.bodies {
         assert!(closed(&body.mesh), "an exported body comes back open");
+    }
+}
+
+/// A placed body is written where it sits, shape and mesh alike.
+#[test]
+fn a_placed_body_is_written_where_it_sits() {
+    let source = import(&fixture("box_native.step"));
+    let body = &source.bodies[0];
+    let mut shift = [[0.0; 4]; 4];
+    for (i, row) in shift.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    shift[0][3] = 100.0;
+    let bodies = [ExportBody {
+        name: "box".into(),
+        brep: Some(&body.brep_blob),
+        transform: Some(shift),
+        mesh: &body.mesh,
+    }];
+    let (lo, hi) = body.bounds_mm.unwrap();
+    for format in [ExportFormat::Step, ExportFormat::ThreeMf] {
+        let out = export(&bodies, format, &TessellationSettings::default()).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "printcad-export-placed-{}.{}",
+            std::process::id(),
+            format.extension()
+        ));
+        std::fs::write(&path, &out.bytes).unwrap();
+        let back = import(&path);
+        let _ = std::fs::remove_file(&path);
+        let (blo, bhi) = bounds(&back.bodies[0].mesh);
+        assert!(
+            (blo[0] - (lo[0] + 100.0)).abs() < 1e-2,
+            "{}",
+            format.label()
+        );
+        assert!(
+            (bhi[0] - (hi[0] + 100.0)).abs() < 1e-2,
+            "{}",
+            format.label()
+        );
+        assert!((blo[1] - lo[1]).abs() < 1e-2, "{}", format.label());
     }
 }

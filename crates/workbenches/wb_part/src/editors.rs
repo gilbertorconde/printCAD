@@ -173,7 +173,7 @@ fn face_pick_row(
             .inner
             .on_hover_text("Click a face in the viewport first, then press this")
             .clicked()
-            && let Some(face) = ctx.selected_face
+            && let Some(face) = picked_face(ctx)
         {
             *pick = Some(FacePick {
                 point: face.point,
@@ -222,7 +222,7 @@ fn face_list_editor(
         .inner
         .on_hover_text("Click a face in the viewport first, then press this")
         .clicked()
-        && let Some(face) = ctx.selected_face
+        && let Some(face) = picked_face(ctx)
     {
         faces.push(FacePick {
             point: face.point,
@@ -318,7 +318,7 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
         .on_hover_text("Click edges in the viewport first (Ctrl adds), then press this")
         .clicked()
     {
-        for edge in &ctx.selected_edges {
+        for edge in &picked_edges(ctx) {
             let pick = EdgePick {
                 point: edge.point,
                 direction: edge.direction,
@@ -444,7 +444,7 @@ fn mirror_plane_editor(
                 let is_face = matches!(plane, MirrorPlane::Face(_));
                 if ui.selectable_label(is_face, "Picked face").clicked()
                     && !is_face
-                    && let Some(face) = ctx.selected_face
+                    && let Some(face) = picked_face(ctx)
                 {
                     *plane = MirrorPlane::Face(FacePick {
                         point: face.point,
@@ -804,7 +804,7 @@ pub fn datum_editor(
                     )
                     .on_hover_text("Click a face in the viewport first")
                     .clicked()
-                    && let Some(face) = ctx.selected_face
+                    && let Some(face) = picked_face(ctx)
                 {
                     datum.attachment = DatumAttachment::FlatFace {
                         point: face.point,
@@ -820,7 +820,7 @@ pub fn datum_editor(
             .button("Re-pick from selected face")
             .on_hover_text("Move the attachment to the currently selected face")
             .clicked()
-        && let Some(face) = ctx.selected_face
+        && let Some(face) = picked_face(ctx)
     {
         datum.attachment = DatumAttachment::FlatFace {
             point: face.point,
@@ -1588,4 +1588,28 @@ pub fn feature_editor(
         }
     }
     changed
+}
+
+/// The body of the feature the task panel edits.
+fn edited_body(ctx: &WorkbenchRuntimeContext) -> Option<core_document::BodyId> {
+    ctx.active_document_object
+        .and_then(|id| ctx.document.get_feature_meta(id))
+        .and_then(|node| node.body)
+}
+
+/// The picked face in the edited feature's body frame, where the feature
+/// keeps its references.
+fn picked_face(ctx: &WorkbenchRuntimeContext) -> Option<core_document::FaceRef> {
+    match edited_body(ctx) {
+        Some(body) => ctx.selected_face_in(body),
+        None => ctx.selected_face,
+    }
+}
+
+/// The picked edges in the edited feature's body frame.
+fn picked_edges(ctx: &WorkbenchRuntimeContext) -> Vec<core_document::EdgeRef> {
+    match edited_body(ctx) {
+        Some(body) => ctx.selected_edges_in(body),
+        None => ctx.selected_edges.clone(),
+    }
 }

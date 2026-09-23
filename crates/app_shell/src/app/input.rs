@@ -686,7 +686,7 @@ pub(crate) fn face_ref_from_mesh(
     mesh: &kernel_api::TriMesh,
     point: glam::Vec3,
 ) -> Option<core_document::FaceRef> {
-    let (_, dist_sq, anchor, normal) = nearest_triangle(mesh, point)?;
+    let (triangle, dist_sq, anchor, normal) = nearest_triangle(mesh, point)?;
 
     // Sanity bound relative to the model size: the pick already identified
     // this body, so the nearest triangle is the right face unless the
@@ -701,9 +701,15 @@ pub(crate) fn face_ref_from_mesh(
     // Project the noisy picked point onto the triangle's exact plane so the
     // face plane (and any sketch placed on it) is depth-error free.
     let projected = point - normal * (point - anchor).dot(normal);
+    let surface = mesh
+        .faces
+        .get(triangle)
+        .and_then(|face| mesh.face_surfaces.get(*face as usize))
+        .copied();
     Some(core_document::FaceRef {
         point: projected.to_array(),
         normal: normal.to_array(),
+        surface,
     })
 }
 
@@ -856,10 +862,7 @@ pub(crate) fn coplanar_face_submesh(
         positions,
         normals,
         indices,
-        edges: Vec::new(),
-        colors: Vec::new(),
-        faces: Vec::new(),
-        edge_ids: Vec::new(),
+        ..kernel_api::TriMesh::default()
     })
 }
 
@@ -931,10 +934,7 @@ mod tests {
             positions,
             normals: Vec::new(),
             indices,
-            edges: Vec::new(),
-            colors: Vec::new(),
-            faces: Vec::new(),
-            edge_ids: Vec::new(),
+            ..TriMesh::default()
         }
     }
 

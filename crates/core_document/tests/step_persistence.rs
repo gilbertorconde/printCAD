@@ -16,6 +16,7 @@ fn fake_mesh() -> Arc<TriMesh> {
         colors: vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         faces: Vec::new(),
         edge_ids: Vec::new(),
+        face_surfaces: Vec::new(),
     })
 }
 
@@ -94,6 +95,7 @@ fn brep_sidecars_roundtrip_through_prtcad() {
         colors: Vec::new(),
         faces: Vec::new(),
         edge_ids: Vec::new(),
+        face_surfaces: Vec::new(),
     });
     doc.set_imported_geometry(
         body_id,
@@ -233,6 +235,7 @@ fn a_cloned_document_saves_independently_from_another_thread() {
                 colors: Vec::new(),
                 faces: Vec::new(),
                 edge_ids: Vec::new(),
+                face_surfaces: Vec::new(),
             }),
             source_asset: None,
             revision: 0,

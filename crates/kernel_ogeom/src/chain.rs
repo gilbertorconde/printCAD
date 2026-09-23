@@ -191,9 +191,20 @@ pub fn execute(
                 };
                 pattern::apply(&mut model, solid, &instances, transforms).map_err(&err)?
             }
-            SolidOp::Boolean { tool_brep, kind } => {
+            SolidOp::Boolean {
+                tool_brep,
+                kind,
+                tool_transform,
+            } => {
                 let solid = base.ok_or_else(|| err("boolean needs an existing solid".into()))?;
-                external_boolean(&mut model, &solid, tool_brep, *kind).map_err(&err)?
+                external_boolean(
+                    &mut model,
+                    &solid,
+                    tool_brep,
+                    *kind,
+                    tool_transform.as_ref(),
+                )
+                .map_err(&err)?
             }
         };
 
@@ -273,7 +284,11 @@ fn external_boolean(
     solid: &Shape,
     tool_brep: &[u8],
     kind: BoolKind,
+    tool_transform: Option<&[[f64; 4]; 4]>,
 ) -> Result<Shape, String> {
-    let tool = absorb_shape(model, tool_brep)?;
+    let mut tool = absorb_shape(model, tool_brep)?;
+    if let Some(matrix) = tool_transform {
+        tool = pattern::moved(model, &tool, matrix)?;
+    }
     ops::combine_solids(model, solid, &tool, kind)
 }

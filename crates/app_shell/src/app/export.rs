@@ -44,6 +44,9 @@ impl Default for ExportDraft {
 struct OwnedBody {
     name: String,
     brep: Option<Arc<Vec<u8>>>,
+    /// Where the body sits, for its kernel shape; `None` when it has not
+    /// moved.
+    transform: Option<[[f64; 4]; 4]>,
     mesh: Arc<TriMesh>,
 }
 
@@ -128,6 +131,7 @@ impl PrintCadApp {
                 .map(|b| ExportBody {
                     name: b.name.clone(),
                     brep: b.brep.as_deref().map(Vec::as_slice),
+                    transform: b.transform,
                     mesh: &b.mesh,
                 })
                 .collect();
@@ -209,6 +213,10 @@ impl PrintCadApp {
                     OwnedBody {
                         name,
                         brep: document.imported_brep_blob_arc(*id),
+                        transform: {
+                            let placement = document.body_placement(*id);
+                            (!placement.is_identity()).then(|| placement.rows())
+                        },
                         mesh: Arc::clone(&geometry.mesh),
                     },
                 )

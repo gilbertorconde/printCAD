@@ -232,6 +232,18 @@ fn is_isometry(m: &[[f64; 4]; 4]) -> bool {
     unit && ortho
 }
 
+/// `shape` moved by a rigid row-major matrix, as a shape of its own.
+pub(crate) fn moved(
+    model: &mut Model,
+    shape: &Shape,
+    matrix: &[[f64; 4]; 4],
+) -> Result<Shape, String> {
+    let t = rigid_of(matrix).ok_or("a placement must be a rigid motion")?;
+    Ok(transformed(model, shape, t)
+        .map_err(|e| format!("moving the shape failed: {e}"))?
+        .shape)
+}
+
 /// The similarity transform when the matrix is rigid (orthonormal, unit
 /// scale, right-handed); `None` for reflections and the general path.
 fn rigid_of(m: &[[f64; 4]; 4]) -> Option<Transform> {

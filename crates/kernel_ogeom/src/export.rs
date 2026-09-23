@@ -66,6 +66,10 @@ impl ExportFormat {
 pub struct ExportBody<'a> {
     pub name: String,
     pub brep: Option<&'a [u8]>,
+    /// Where the snapshot's shape sits in the document, when the body is
+    /// placed: a rigid row-major 4×4 matrix. The viewport's mesh is placed
+    /// already.
+    pub transform: Option<[[f64; 4]; 4]>,
     pub mesh: &'a TriMesh,
 }
 
@@ -112,6 +116,11 @@ fn export_step(bodies: &[ExportBody<'_>]) -> KernelResult<Exported> {
             KernelError::InvalidInput(format!("{}: snapshot failed to parse: {e}", body.name))
         })?;
         for shape in absorbed.shapes {
+            let shape = match &body.transform {
+                Some(matrix) => crate::ops::pattern::moved(&mut model, &shape, matrix)
+                    .map_err(|e| KernelError::Other(anyhow::anyhow!("{}: {e}", body.name)))?,
+                None => shape,
+            };
             parts.push((body.name.clone(), shape));
         }
     }
@@ -149,7 +158,13 @@ fn export_mesh(
         progress::checkpoint()
             .map_err(|e| KernelError::Other(anyhow::anyhow!("export stopped: {e}")))?;
         let mesh = match body.brep {
-            Some(blob) => tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?,
+            Some(blob) => {
+                let mut mesh = tess::tessellate_blob(blob, &[], detail, tess::Faces::Wide)?;
+                if let Some(m) = &body.transform {
+                    moved_mesh(&mut mesh, m);
+                }
+                mesh
+            }
             None => body.mesh.clone(),
         };
         if !mesh.indices.is_empty() {
@@ -193,6 +208,22 @@ fn export_mesh(
         skipped: Vec::new(),
         triangles,
     })
+}
+
+/// Move a mesh's points and normals by a rigid row-major matrix.
+fn moved_mesh(mesh: &mut TriMesh, m: &[[f64; 4]; 4]) {
+    let apply = |v: [f32; 3], w: f64| -> [f32; 3] {
+        let v = v.map(f64::from);
+        std::array::from_fn(|r| {
+            (m[r][0] * v[0] + m[r][1] * v[1] + m[r][2] * v[2] + m[r][3] * w) as f32
+        })
+    };
+    for p in &mut mesh.positions {
+        *p = apply(*p, 1.0);
+    }
+    for n in &mut mesh.normals {
+        *n = apply(*n, 0.0);
+    }
 }
 
 /// The mesh with coincident vertices merged, whatever face they came from:
