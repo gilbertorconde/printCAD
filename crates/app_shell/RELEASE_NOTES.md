@@ -35,3 +35,8 @@ version first.
 - Shaded, shaded with edges, and wireframe; orthographic or perspective with a field of view to taste.
 - A clipping plane cuts the view across X, Y or Z.
 - A 6-DoF mouse steers the view.
+
+### Keyboard
+- Every shortcut can be changed in Preferences › Keyboard, which also warns when two commands share a key.
+- Sketch tools have keys of their own: L, P, A, C, R and T, and M switches a polyline between lines and arcs.
+- Menus, tooltips and the command palette show the keys in effect.

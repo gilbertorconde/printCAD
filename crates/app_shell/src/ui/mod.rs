@@ -8,6 +8,7 @@ mod feature_tree;
 mod host_ctx;
 mod hud;
 mod inputs;
+pub(crate) mod keymap;
 mod log_view;
 mod menu_bar;
 mod overlays;
@@ -93,6 +94,8 @@ pub struct UiLayer {
     /// The start page's recent-files filter; UI-local.
     recent_search: String,
     start_view: start_page::StartView,
+    /// The workbench keys last sent to the workbenches.
+    workbench_keys: Option<std::collections::HashMap<String, Vec<core_document::Chord>>>,
     recent_thumbnails: start_page::ThumbnailCache,
     /// Keys the workbench consumed that egui also queued; egui must not
     /// act on them (Tab would move focus, Enter would accept the task).
@@ -125,6 +128,7 @@ impl UiLayer {
             rename_buffer: None,
             recent_search: String::new(),
             start_view: Default::default(),
+            workbench_keys: None,
             recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
         }
@@ -265,10 +269,61 @@ impl UiLayer {
             .and_then(|id| document.get_feature_meta(id))
             .map(|node| node.name.clone());
 
+        let keymap = keymap::Keymap::build(registry, &settings.keyboard);
+        // The workbenches hear of their keys at the start and after every
+        // change, not every frame.
+        let workbench_keys = keymap.workbench_keys();
+        if self.workbench_keys.as_ref() != Some(&workbench_keys) {
+            registry.notify_shortcuts(&workbench_keys);
+            self.workbench_keys = Some(workbench_keys);
+        }
+
         let full_output = self.ctx.run_ui(raw_input, |ui| {
+            // Shortcuts first, so their keys never reach a widget. They hold
+            // their fire while a dialog of their own has the keyboard.
+            let mut key_tools: Vec<String> = Vec::new();
+            if !self.preferences.open && !self.palette.open {
+                let typing = ui.ctx().egui_wants_keyboard_input();
+                let have_document = screen == Screen::Workspace;
+                let active_tab = tabs.iter().find(|t| t.active).map(|t| t.tab);
+                for hit in keymap::take_pressed(
+                    ui.ctx(),
+                    &keymap,
+                    &active_workbench.0,
+                    typing,
+                    have_document,
+                ) {
+                    match hit.target {
+                        keymap::Target::Host(action) => {
+                            match keymap::host_outcome(action, active_tab, section.is_some()) {
+                                keymap::HostOutcome::Command(command) => commands.push(command),
+                                keymap::HostOutcome::OpenPalette => self.palette.open(),
+                                keymap::HostOutcome::OpenPreferences => {
+                                    let (group, tab) =
+                                        (self.preferences.group, self.preferences.tab);
+                                    self.preferences.open_at(
+                                        settings,
+                                        document.display_unit(),
+                                        group,
+                                        tab,
+                                    );
+                                }
+                                keymap::HostOutcome::Nothing => {}
+                            }
+                        }
+                        keymap::Target::Tool => key_tools.push(hit.id),
+                        keymap::Target::Action => commands.push(UiCommand::BenchAction {
+                            workbench: active_workbench.0.clone(),
+                            id: hit.id,
+                        }),
+                    }
+                }
+            }
+
             let menu = menu_bar::draw_menu_bar(
                 ui,
                 menu_bar::MenuBarInputs {
+                    keymap: &keymap,
                     registry,
                     document_name: &document_name,
                     document_dirty,
@@ -342,6 +397,7 @@ impl UiLayer {
                     active_document_object,
                     show_print_bed: settings.printing.show_bed,
                     measuring,
+                    keymap: &keymap,
                 },
                 &mut active_workbench,
                 &mut active_tool,
@@ -373,10 +429,18 @@ impl UiLayer {
                     Err(_) => Vec::new(),
                 };
                 let enabled_active = |id: &str| enabled.iter().any(|(i, on)| i == id && *on);
+                // A tool's key acts as a click on its button, when the
+                // button would take one.
+                for id in key_tools.drain(..) {
+                    if enabled_active(&id) {
+                        palette_activate = Some((active_workbench.clone(), id));
+                    }
+                }
                 let palette = command_palette::draw_command_palette(
                     ui.ctx(),
                     &mut self.palette,
                     registry,
+                    &keymap,
                     &active_workbench,
                     &enabled_active,
                     &mut commands,

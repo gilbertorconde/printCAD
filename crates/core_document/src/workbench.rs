@@ -183,7 +183,7 @@ pub struct ToolHint {
     pub name: String,
     pub prompt: String,
     /// `(key, meaning)` chips, e.g. `("Esc", "cancel")`.
-    pub keys: Vec<(&'static str, &'static str)>,
+    pub keys: Vec<(String, &'static str)>,
 }
 
 /// One row of the on-view parameter widget beside the cursor.
@@ -598,6 +598,16 @@ pub trait Workbench: Send {
     }
 
     /// Widgets to draw over the viewport this frame.
+    /// The keys in effect for this workbench's tools and actions, by id,
+    /// after the user's changes; an id with no key is absent. Called once
+    /// the workbenches are registered and whenever the keys change, so a
+    /// workbench that names its keys in hints can name the right ones.
+    fn shortcuts_changed(
+        &mut self,
+        _keys: &std::collections::HashMap<String, Vec<crate::shortcut::Chord>>,
+    ) {
+    }
+
     fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
         None
     }
@@ -734,6 +744,7 @@ pub trait Workbench: Send {
 #[derive(Debug, Default)]
 pub struct WorkbenchContext {
     tools: Vec<ToolDescriptor>,
+    actions: Vec<crate::shortcut::ActionDescriptor>,
 }
 
 impl WorkbenchContext {
@@ -743,6 +754,16 @@ impl WorkbenchContext {
 
     pub fn tools(&self) -> &[ToolDescriptor] {
         &self.tools
+    }
+
+    /// Offer a keyboard action that is not a tool. Its shortcut, while the
+    /// workbench is active, sends `WorkbenchInputEvent::Action`.
+    pub fn register_action(&mut self, action: crate::shortcut::ActionDescriptor) {
+        self.actions.push(action);
+    }
+
+    pub fn actions(&self) -> &[crate::shortcut::ActionDescriptor] {
+        &self.actions
     }
 }
 
@@ -789,6 +810,9 @@ pub struct ToolDescriptor {
     pub row: u8,
     /// Push the button to the far right of its row.
     pub align_end: bool,
+    /// Default keys that activate the tool while its workbench is active,
+    /// as a click on its button would. The user can rebind them.
+    pub shortcuts: Vec<crate::shortcut::Chord>,
 }
 
 /// One entry of a tool's variant dropdown.
@@ -846,6 +870,7 @@ impl ToolDescriptor {
             variants: Vec::new(),
             row: 1,
             align_end: false,
+            shortcuts: Vec::new(),
         }
     }
 
@@ -868,6 +893,7 @@ impl ToolDescriptor {
             variants: Vec::new(),
             row: 1,
             align_end: false,
+            shortcuts: Vec::new(),
         }
     }
 
@@ -889,6 +915,7 @@ impl ToolDescriptor {
             variants: Vec::new(),
             row: 1,
             align_end: false,
+            shortcuts: Vec::new(),
         }
     }
 
@@ -909,6 +936,7 @@ impl ToolDescriptor {
             variants: Vec::new(),
             row: 1,
             align_end: false,
+            shortcuts: Vec::new(),
         }
     }
 
@@ -929,6 +957,17 @@ impl ToolDescriptor {
 
     pub fn row(mut self, row: u8) -> Self {
         self.row = row;
+        self
+    }
+
+    /// Add a default key, such as `"L"` or `"Ctrl+Shift+R"`.
+    ///
+    /// # Panics
+    ///
+    /// When `chord` does not parse: a default key is written in the code,
+    /// and a typo there is a bug to catch at registration.
+    pub fn shortcut(mut self, chord: &str) -> Self {
+        self.shortcuts.push(crate::shortcut::parse_default(chord));
         self
     }
 

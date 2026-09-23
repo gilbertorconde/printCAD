@@ -63,6 +63,7 @@ struct FrameIntents {
     host_requests: Vec<core_document::HostRequest>,
     /// Bench menu entries picked this frame, in order.
     bench_commands: Vec<(core_document::WorkbenchId, String, core_document::MenuScope)>,
+    bench_actions: Vec<(core_document::WorkbenchId, String)>,
     new_tab: bool,
     close_tab: Option<uuid::Uuid>,
     select_tab: Option<uuid::Uuid>,
@@ -193,6 +194,19 @@ impl PrintCadApp {
                     intents.workbench_switch = Some((from, to));
                 }
                 UiCommand::Undo => intents.undo = true,
+                UiCommand::PivotAtCursor => {
+                    if self.cursor_in_viewport.is_some()
+                        && self
+                            .session
+                            .camera
+                            .pivot_from_key_h(&self.user_settings.camera)
+                    {
+                        self.redraw_needed = true;
+                    }
+                }
+                UiCommand::BenchAction { workbench, id } => {
+                    intents.bench_actions.push((workbench, id));
+                }
                 UiCommand::Redo => intents.redo = true,
                 UiCommand::ToggleLogPanel => intents.toggle_log_panel = true,
                 UiCommand::SetProjection(mode) => intents.set_projection = Some(mode),
@@ -428,6 +442,9 @@ impl PrintCadApp {
         }
         for (workbench, id, scope) in intents.bench_commands {
             self.run_bench_command(workbench, &id, scope);
+        }
+        for (workbench, id) in intents.bench_actions {
+            self.run_bench_action(&workbench, &id);
         }
         for command in intents.edit {
             let bench = self.session.active_workbench.0.clone();

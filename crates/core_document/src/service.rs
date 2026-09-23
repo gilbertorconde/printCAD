@@ -273,6 +273,28 @@ impl DocumentService {
         Ok(entry.context.tools())
     }
 
+    /// Tell every workbench the keys in effect, by tool or action id.
+    pub fn notify_shortcuts(
+        &mut self,
+        keys: &std::collections::HashMap<String, Vec<crate::shortcut::Chord>>,
+    ) {
+        for entry in self.workbenches.values_mut() {
+            entry.workbench.shortcuts_changed(keys);
+        }
+    }
+
+    /// The keyboard actions a workbench registered beside its tools.
+    pub fn actions_for(
+        &self,
+        id: &WorkbenchId,
+    ) -> DocumentResult<&[crate::shortcut::ActionDescriptor]> {
+        let entry = self
+            .workbenches
+            .get(id.as_str())
+            .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
+        Ok(entry.context.actions())
+    }
+
     pub fn workbench(&self, id: &WorkbenchId) -> DocumentResult<&dyn Workbench> {
         let entry = self
             .workbenches

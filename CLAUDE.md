@@ -213,6 +213,22 @@ does not implement yet. They stay on screen as disabled controls with a
 the host never dispatches a planned id). Nothing outside those two
 workbenches gets a placeholder.
 
+**Keyboard shortcuts.** One keymap (`ui/keymap.rs`) holds the
+application's commands (`HOST`, ids like `file.save`) and every bench's
+tools and registered actions, each with default keys
+(`ToolDescriptor::shortcut`, `WorkbenchContext::register_action`,
+`core_document::Chord`). The user's changes live in
+`UserSettings.keyboard` by id and are edited in Preferences › Keyboard.
+`take_pressed` runs at the start of each UI frame and removes the keys it
+uses from egui's input: the active bench's keys win over the
+application's, keys without Ctrl or Alt stay with a focused text field,
+and nothing fires while Preferences or the palette is open. A tool key
+activates the tool as a click would; an action key reaches the bench as
+`WorkbenchInputEvent::Action`. Benches learn their keys in effect through
+`Workbench::shortcuts_changed`. Contextual keys (Escape, Enter, Delete in
+the sketcher, Escape for the measure tool) stay in the bench or host that
+owns the moment.
+
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the
 feature the tool just created). `frame.rs` skips the per-frame

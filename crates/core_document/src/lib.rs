@@ -9,6 +9,7 @@ pub mod registration;
 pub mod runtime;
 pub mod server;
 pub mod service;
+pub mod shortcut;
 pub mod undo;
 pub mod units;
 pub mod workbench;
@@ -40,6 +41,7 @@ pub use runtime::{
     WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;
+pub use shortcut::{ActionDescriptor, Chord};
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 pub use workbench::{
     FeatureInfo, MarkKind, MenuItem, MenuScope, OvpRow, OvpWidget, PassiveGeometry, PropertyHints,

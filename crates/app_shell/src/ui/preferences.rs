@@ -19,6 +19,7 @@ pub enum PrefGroup {
     General,
     Display,
     Input,
+    Keyboard,
     /// A registered workbench's own page, by its place in registration
     /// order.
     Workbench(usize),
@@ -30,9 +31,14 @@ pub enum PrefGroup {
 
 impl PrefGroup {
     /// The rail, top to bottom: the app's groups with one page per
-    /// registered workbench between Input and Units.
+    /// registered workbench between Keyboard and Units.
     pub fn all(registry: &DocumentService) -> Vec<PrefGroup> {
-        let mut groups = vec![PrefGroup::General, PrefGroup::Display, PrefGroup::Input];
+        let mut groups = vec![
+            PrefGroup::General,
+            PrefGroup::Display,
+            PrefGroup::Input,
+            PrefGroup::Keyboard,
+        ];
         groups.extend((0..registry.ids().len()).map(PrefGroup::Workbench));
         groups.extend([
             PrefGroup::Units,
@@ -48,6 +54,7 @@ impl PrefGroup {
             PrefGroup::General => "General".to_string(),
             PrefGroup::Display => "Display".to_string(),
             PrefGroup::Input => "Input".to_string(),
+            PrefGroup::Keyboard => "Keyboard".to_string(),
             PrefGroup::Workbench(i) => registry
                 .ids()
                 .get(i)
@@ -66,6 +73,7 @@ impl PrefGroup {
             PrefGroup::General => &["Interface", "About"],
             PrefGroup::Display => &["Camera", "Lighting", "Rendering"],
             PrefGroup::Input => &["Mouse", "6-DoF mouse"],
+            PrefGroup::Keyboard => &["Shortcuts"],
             PrefGroup::Workbench(_) => &["General"],
             PrefGroup::Units => &["Units"],
             PrefGroup::ImportExport => &["STEP", "IGES"],
@@ -94,6 +102,9 @@ pub struct PreferencesState {
     size: Vec2,
     /// The frame the dialog opened on: the search field takes focus once.
     just_opened: bool,
+    /// The shortcut waiting for a key press: its id, and whether the key
+    /// is added to its keys rather than replacing them.
+    recording: Option<(String, bool)>,
 }
 
 impl Default for PreferencesState {
@@ -108,6 +119,7 @@ impl Default for PreferencesState {
             pos: None,
             size: DIALOG,
             just_opened: false,
+            recording: None,
         }
     }
 }
@@ -228,6 +240,28 @@ pub fn draw_preferences(
 ) -> Option<Commit> {
     if !state.open {
         return None;
+    }
+    // A shortcut being recorded takes the next key before any widget can
+    // act on it; Escape gives up.
+    if let Some((id, add)) = state.recording.clone()
+        && let Some(chord) = super::keymap::take_any_chord(ctx)
+    {
+        state.recording = None;
+        let escape = core_document::Chord::key(core_document::KeyCode::Escape);
+        let keymap = super::keymap::Keymap::build(inputs.registry, &state.draft.keyboard);
+        if chord != escape
+            && let Some(binding) = keymap.get(&id)
+        {
+            let mut keys = if add {
+                binding.keys.clone()
+            } else {
+                Vec::new()
+            };
+            if !keys.contains(&chord) {
+                keys.push(chord);
+            }
+            super::keymap::set_keys(&mut state.draft.keyboard, binding, keys);
+        }
     }
     let mut commit = None;
     let mut close = false;
@@ -492,6 +526,7 @@ fn draw_content(
                         PrefGroup::General => general_page(ui, state, inputs, &filter),
                         PrefGroup::Display => display_page(ui, state, inputs, &filter),
                         PrefGroup::Input => input_page(ui, state, inputs, &filter),
+                        PrefGroup::Keyboard => keyboard_page(ui, state, inputs.registry, &filter),
                         PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, &filter),
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
@@ -594,10 +629,161 @@ fn reset_group(state: &mut PreferencesState) {
             camera.click_drag_threshold_px = defaults.camera.click_drag_threshold_px;
             state.draft.sixdof = defaults.sixdof;
         }
+        PrefGroup::Keyboard => state.draft.keyboard = defaults.keyboard,
         PrefGroup::Units => state.draft_unit = Unit::Mm,
         PrefGroup::ImportExport => state.draft.import = defaults.import,
         PrefGroup::Printing => state.draft.printing = defaults.printing,
         PrefGroup::Workbench(_) | PrefGroup::Updates => {}
+    }
+}
+
+/// Every shortcut, grouped by menu and then by workbench: its keys, and
+/// buttons to record a new key, add one, clear them or go back to the
+/// default. A key another command also answers to is called out under the
+/// row.
+fn keyboard_page(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    registry: &DocumentService,
+    filter: &str,
+) {
+    use super::keymap::{Keymap, set_keys};
+    let keymap = Keymap::build(registry, &state.draft.keyboard);
+    let key_text = |keys: &[core_document::Chord]| {
+        keys.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    if filter.is_empty() {
+        ui.label(
+            RichText::new(
+                "A workbench's keys work while it is active, and win over the \
+                 application's there. Keys without Ctrl or Alt are left to text fields.",
+            )
+            .font(sans(FONT_SM))
+            .color(TEXT3),
+        );
+        ui.add_space(SPACE_2);
+    }
+    let mut groups: Vec<&str> = Vec::new();
+    for binding in keymap.bindings() {
+        if !groups.contains(&binding.group.as_str()) {
+            groups.push(&binding.group);
+        }
+    }
+    let mut change: Option<(super::keymap::Binding, Vec<core_document::Chord>)> = None;
+    for group in groups {
+        let rows: Vec<_> = keymap
+            .bindings()
+            .iter()
+            .filter(|b| b.group == group)
+            .filter(|b| {
+                filter.is_empty()
+                    || b.label.to_lowercase().contains(filter)
+                    || group.to_lowercase().contains(filter)
+                    || key_text(&b.keys).to_lowercase().contains(filter)
+            })
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        overline(ui, group);
+        for binding in rows {
+            let recording = state
+                .recording
+                .as_ref()
+                .is_some_and(|(id, _)| *id == binding.id);
+            ui.horizontal(|ui| {
+                ui.add_sized(
+                    [240.0, INPUT],
+                    egui::Label::new(
+                        RichText::new(&binding.label)
+                            .font(sans(FONT_SM))
+                            .color(TEXT1),
+                    )
+                    .truncate(),
+                );
+                if recording {
+                    ui.label(
+                        RichText::new("Press a key (Escape cancels)")
+                            .font(sans(FONT_SM))
+                            .color(ACCENT),
+                    );
+                } else if binding.keys.is_empty() {
+                    ui.label(RichText::new("No key").font(sans(FONT_SM)).color(TEXT3));
+                } else {
+                    for key in &binding.keys {
+                        ui_kit::widgets::key_chip(ui, &key.to_string());
+                    }
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if binding.is_changed()
+                        && ui_kit::widgets::small_secondary_button(ui, "Reset")
+                            .on_hover_text(if binding.defaults.is_empty() {
+                                "Back to no key".to_string()
+                            } else {
+                                format!("Back to {}", key_text(&binding.defaults))
+                            })
+                            .clicked()
+                    {
+                        change = Some((binding.clone(), binding.defaults.clone()));
+                    }
+                    if !binding.keys.is_empty()
+                        && ui_kit::widgets::small_secondary_button(ui, "Clear")
+                            .on_hover_text("Leave it without a key")
+                            .clicked()
+                    {
+                        change = Some((binding.clone(), Vec::new()));
+                    }
+                    if !binding.keys.is_empty()
+                        && ui_kit::widgets::small_secondary_button(ui, "Add")
+                            .on_hover_text("Give it another key as well")
+                            .clicked()
+                    {
+                        state.recording = Some((binding.id.clone(), true));
+                    }
+                    if ui_kit::widgets::small_secondary_button(ui, "Set")
+                        .on_hover_text("Press the new key next")
+                        .clicked()
+                    {
+                        state.recording = Some((binding.id.clone(), false));
+                    }
+                });
+            });
+            for clash in keymap.clashes(&binding.id) {
+                let (text, color) = if !clash.shadowed {
+                    (
+                        format!(
+                            "{} also runs {} ({})",
+                            clash.key, clash.other, clash.other_group
+                        ),
+                        WARNING,
+                    )
+                } else if binding.scope.is_some() {
+                    (
+                        format!("{} runs this instead of {} here", clash.key, clash.other),
+                        TEXT3,
+                    )
+                } else {
+                    (
+                        format!(
+                            "In {}, {} runs {} instead",
+                            clash.other_group, clash.key, clash.other
+                        ),
+                        TEXT3,
+                    )
+                };
+                ui.horizontal(|ui| {
+                    ui.add_space(12.0);
+                    ui.label(RichText::new(text).font(sans(FONT_XS)).color(color));
+                });
+            }
+        }
+        ui.add_space(SPACE_3);
+    }
+    if let Some((binding, keys)) = change {
+        set_keys(&mut state.draft.keyboard, &binding, keys);
     }
 }
 
@@ -948,6 +1134,7 @@ fn search_results(
                 PrefGroup::General => general_page(ui, state, inputs, filter),
                 PrefGroup::Display => display_page(ui, state, inputs, filter),
                 PrefGroup::Input => input_page(ui, state, inputs, filter),
+                PrefGroup::Keyboard => keyboard_page(ui, state, inputs.registry, filter),
                 PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, filter),
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),
@@ -1374,12 +1561,15 @@ mod rail {
         );
         assert_eq!(PrefGroup::Workbench(0).label(&registry), "Second");
         assert_eq!(PrefGroup::Workbench(1).label(&registry), "First");
-        let input = groups.iter().position(|g| *g == PrefGroup::Input).unwrap();
+        let keyboard = groups
+            .iter()
+            .position(|g| *g == PrefGroup::Keyboard)
+            .unwrap();
         let units = groups.iter().position(|g| *g == PrefGroup::Units).unwrap();
         assert_eq!(
-            units - input,
+            units - keyboard,
             3,
-            "the bench pages sit between Input and Units"
+            "the bench pages sit between Keyboard and Units"
         );
     }
 }

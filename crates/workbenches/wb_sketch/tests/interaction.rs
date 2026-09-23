@@ -2530,3 +2530,55 @@ fn rendering_order_decides_which_geometry_draws_on_top() {
         "construction draws last once switched"
     );
 }
+
+/// The polyline's line/arc switch is a keyboard action the workbench
+/// registers with a default key: the action switches it, and the hint names
+/// whatever key the application says is bound.
+#[test]
+fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
+    let mut context = core_document::WorkbenchContext::default();
+    let mut h = Harness::new();
+    h.wb.configure(&mut context);
+    let action = context
+        .actions()
+        .iter()
+        .find(|a| a.id == "sketch.polyline_arc")
+        .expect("the switch is registered");
+    assert_eq!(
+        action.shortcuts,
+        vec![core_document::Chord::parse("M").unwrap()]
+    );
+    let line = context
+        .tools()
+        .iter()
+        .find(|t| t.id == "sketch.line")
+        .unwrap();
+    assert_eq!(line.shortcuts[0].to_string(), "L");
+
+    let keys = std::collections::HashMap::from([(
+        "sketch.polyline_arc".to_string(),
+        vec![core_document::Chord::parse("Shift+A").unwrap()],
+    )]);
+    h.wb.shortcuts_changed(&keys);
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.polyline");
+    h.click(10.0, 0.0, "sketch.polyline");
+    let names = |h: &mut Harness| -> Vec<(String, &'static str)> {
+        h.hud()
+            .and_then(|hud| hud.tool)
+            .map(|t| t.keys)
+            .unwrap_or_default()
+    };
+    assert!(
+        names(&mut h).contains(&("Shift+A".to_string(), "tangent arcs")),
+        "{:?}",
+        names(&mut h)
+    );
+    h.event(
+        WorkbenchInputEvent::Action {
+            id: "sketch.polyline_arc".into(),
+        },
+        Some("sketch.polyline"),
+    );
+    assert!(names(&mut h).contains(&("Shift+A".to_string(), "lines")));
+}

@@ -18,54 +18,114 @@ struct ShellItem {
     on: bool,
     icon: &'static str,
     label: &'static str,
+    /// The keymap command whose key the tooltip names.
+    binding: &'static str,
     command: Option<UiCommand>,
     planned: Option<&'static str>,
 }
 
-fn shell(icon: &'static str, label: &'static str, command: UiCommand) -> ShellItem {
+fn shell(
+    icon: &'static str,
+    label: &'static str,
+    binding: &'static str,
+    command: UiCommand,
+) -> ShellItem {
     ShellItem {
         on: false,
         icon,
         label,
+        binding,
         command: Some(command),
         planned: None,
     }
 }
 
-fn toggle(icon: &'static str, label: &'static str, on: bool, command: UiCommand) -> ShellItem {
+fn toggle(
+    icon: &'static str,
+    label: &'static str,
+    binding: &'static str,
+    on: bool,
+    command: UiCommand,
+) -> ShellItem {
     ShellItem {
         on,
         icon,
         label,
+        binding,
         command: Some(command),
         planned: None,
+    }
+}
+
+/// A button's tooltip: its name, and its key when it has one.
+fn with_key(label: &str, key: Option<&core_document::Chord>) -> String {
+    match key {
+        Some(key) => format!("{label} ({key})"),
+        None => label.to_string(),
     }
 }
 
 fn standard_items(show_print_bed: bool, measuring: bool) -> Vec<Option<ShellItem>> {
     use super::{EditCommand, FileCommand};
     vec![
-        Some(shell("new-file", "New", UiCommand::File(FileCommand::New))),
-        Some(shell("open", "Open", UiCommand::File(FileCommand::Open))),
-        Some(shell("save", "Save", UiCommand::File(FileCommand::Save))),
+        Some(shell(
+            "new-file",
+            "New",
+            "file.new",
+            UiCommand::File(FileCommand::New),
+        )),
+        Some(shell(
+            "open",
+            "Open",
+            "file.open",
+            UiCommand::File(FileCommand::Open),
+        )),
+        Some(shell(
+            "save",
+            "Save",
+            "file.save",
+            UiCommand::File(FileCommand::Save),
+        )),
         None,
-        Some(shell("undo", "Undo", UiCommand::Undo)),
-        Some(shell("redo", "Redo", UiCommand::Redo)),
+        Some(shell("undo", "Undo", "edit.undo", UiCommand::Undo)),
+        Some(shell("redo", "Redo", "edit.redo", UiCommand::Redo)),
         None,
-        Some(shell("cut", "Cut", UiCommand::Edit(EditCommand::Cut))),
-        Some(shell("copy", "Copy", UiCommand::Edit(EditCommand::Copy))),
-        Some(shell("paste", "Paste", UiCommand::Edit(EditCommand::Paste))),
+        Some(shell(
+            "cut",
+            "Cut",
+            "edit.cut",
+            UiCommand::Edit(EditCommand::Cut),
+        )),
+        Some(shell(
+            "copy",
+            "Copy",
+            "edit.copy",
+            UiCommand::Edit(EditCommand::Copy),
+        )),
+        Some(shell(
+            "paste",
+            "Paste",
+            "edit.paste",
+            UiCommand::Edit(EditCommand::Paste),
+        )),
         None,
-        Some(shell("refresh", "Recompute", UiCommand::RecomputeAll)),
+        Some(shell(
+            "refresh",
+            "Recompute",
+            "edit.recompute",
+            UiCommand::RecomputeAll,
+        )),
         Some(toggle(
             "measure",
             "Measure",
+            "view.measure",
             measuring,
             UiCommand::ToggleMeasure,
         )),
         Some(toggle(
             "print-bed",
             "Print bed",
+            "view.print_bed",
             show_print_bed,
             UiCommand::TogglePrintBed,
         )),
@@ -82,6 +142,8 @@ pub struct ToolbarInputs<'a> {
     pub show_print_bed: bool,
     /// The measure button's state.
     pub measuring: bool,
+    /// The keys buttons name in their tooltips.
+    pub keymap: &'a super::keymap::Keymap,
 }
 
 /// The tool a variant dropdown last picked, remembered per tool id.
@@ -173,6 +235,7 @@ fn draw_tool(
         planned,
         menu: !tool.variants.is_empty(),
     };
+    let label = with_key(&label, tool.shortcuts.first());
     let response = tool_button(ui, icon, &label, TOOLBAR_BUTTON, state);
 
     let activate_id = match variant_index {
@@ -313,11 +376,19 @@ pub fn draw_toolbars(
         active_document_object,
         show_print_bed,
         measuring,
+        keymap,
     } = inputs;
-    let tools: Vec<ToolDescriptor> = registry
+    // This copy carries the keys in effect, which the tooltips name.
+    let mut tools: Vec<ToolDescriptor> = registry
         .tools_for(&active_workbench.0)
         .map(|t| t.to_vec())
         .unwrap_or_default();
+    for tool in &mut tools {
+        tool.shortcuts = keymap
+            .get(&tool.id)
+            .map(|b| b.keys.clone())
+            .unwrap_or_default();
+    }
     // Enablement and toggle state come from the workbench, evaluated once
     // per frame against a context with the real camera and viewport.
     let (enabled, toggled): (Vec<bool>, Vec<bool>) =
@@ -359,8 +430,9 @@ pub fn draw_toolbars(
                                 planned: item.planned,
                                 menu: false,
                             };
-                            if tool_button(ui, item.icon, item.label, TOOLBAR_BUTTON, state)
-                                .clicked()
+                            let key = keymap.get(item.binding).and_then(|b| b.keys.first());
+                            let label = with_key(item.label, key);
+                            if tool_button(ui, item.icon, &label, TOOLBAR_BUTTON, state).clicked()
                                 && let Some(command) = item.command
                             {
                                 commands.push(command);
@@ -373,7 +445,7 @@ pub fn draw_toolbars(
                 separator(ui);
                 draw_tools_of_row(ui, &tools, 0, &enabled, &toggled, active_tool, false);
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if search_box(ui).clicked() {
+                    if search_box(ui, keymap.text("app.palette")).clicked() {
                         *open_palette = true;
                     }
                     draw_tools_of_row(ui, &tools, 0, &enabled, &toggled, active_tool, true);
@@ -449,7 +521,7 @@ fn draw_tools_of_row(
     }
 }
 
-fn search_box(ui: &mut egui::Ui) -> egui::Response {
+fn search_box(ui: &mut egui::Ui, key: Option<String>) -> egui::Response {
     // Allocate the exact footprint first: a frame grown inside a
     // right-to-left layout reports its size after placement and overflows
     // the row.
@@ -475,7 +547,9 @@ fn search_box(ui: &mut egui::Ui) -> egui::Response {
             .color(TEXT3),
     );
     inner.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        ui_kit::widgets::key_chip(ui, "Ctrl K");
+        if let Some(key) = &key {
+            ui_kit::widgets::key_chip(ui, key);
+        }
     });
     response.on_hover_text("Search tools and commands")
 }

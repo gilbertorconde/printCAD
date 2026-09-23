@@ -18,7 +18,7 @@ mod solver;
 pub mod style;
 mod tools;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use core_document::{
@@ -185,6 +185,9 @@ pub(crate) struct SketchPicker {
 pub struct SketchWorkbench {
     /// The panel's list of other sketches, when carbon copy or merge is
     /// picking.
+    /// The first key of each of the workbench's tools and actions, as the
+    /// user set them, for the hints that name a key.
+    action_keys: HashMap<String, String>,
     sketch_picker: Option<SketchPicker>,
     /// The panel's and the Preferences page's switches.
     pub options: SketchOptions,
@@ -310,6 +313,25 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
     ("sketch.offset", "Offset", "offset-geometry"),
     ("sketch.mirror", "Symmetry", "symmetry-geometry"),
 ];
+
+/// The polyline's switch between a straight and a tangent-arc segment.
+const POLYLINE_ARC_ACTION: &str = "sketch.polyline_arc";
+
+/// Default keys of the drawing tools; the user can rebind them in
+/// Preferences.
+const TOOL_KEYS: &[(&str, &str)] = &[
+    ("sketch.line", "L"),
+    ("sketch.polyline", "P"),
+    ("sketch.arc", "A"),
+    ("sketch.circle", "C"),
+    ("sketch.rect", "R"),
+    ("sketch.trim", "T"),
+];
+
+/// The default key of a tool, if it has one.
+fn tool_key(id: &str) -> Option<&'static str> {
+    TOOL_KEYS.iter().find(|(t, _)| *t == id).map(|(_, k)| *k)
+}
 
 /// The points a drag of `id` moves: the point itself, or every point the
 /// curve is pinned to. Moving them all translates the element, and
@@ -1177,6 +1199,16 @@ impl SketchWorkbench {
         self.apply_tool_click(ctx, tool, cursor, true)
     }
 
+    /// A keyboard action registered in `configure`, by its key.
+    fn handle_action(&mut self, id: &str) -> InputResult {
+        match id {
+            POLYLINE_ARC_ACTION if tools::toggle_polyline_arc(&mut self.tool_state) => {
+                InputResult::consumed()
+            }
+            _ => InputResult::ignored(),
+        }
+    }
+
     /// Consolidated key handling: on-view parameter capture first (typing
     /// digits into the focused dimension field), then the global keys.
     fn handle_key_press(
@@ -1203,9 +1235,6 @@ impl SketchWorkbench {
             }
         }
         match key {
-            KeyCode::M if tools::toggle_polyline_arc(&mut self.tool_state) => {
-                InputResult::consumed()
-            }
             KeyCode::Escape => self.handle_escape(ctx),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
             KeyCode::Delete | KeyCode::Backspace => {
@@ -1445,6 +1474,14 @@ impl Workbench for SketchWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        context.register_action(
+            core_document::ActionDescriptor::new(
+                POLYLINE_ARC_ACTION,
+                "Polyline: switch between line and arc",
+            )
+            .category("geometry.basic")
+            .shortcut("M"),
+        );
         // Row 0: sketch management, beside the standard tools.
         context.register_tool(
             ToolDescriptor::new_action("sketch.create", "Create sketch", Some("sketch.manage"))
@@ -1547,6 +1584,9 @@ impl Workbench for SketchWorkbench {
             let mut tool = ToolDescriptor::new(*id, *label, Some(category(id)))
                 .icon(icon)
                 .variants(variants(id));
+            if let Some(key) = tool_key(id) {
+                tool = tool.shortcut(key);
+            }
             tool.row = 1;
             if *id == "sketch.split" {
                 // The row's planned entries sit after split.
@@ -1585,11 +1625,14 @@ impl Workbench for SketchWorkbench {
             }
             if *id == "sketch.point" {
                 context.register_tool(tool);
-                context.register_tool(
+                let mut polyline =
                     ToolDescriptor::new("sketch.polyline", "Polyline", Some("geometry.basic"))
                         .icon("polyline")
-                        .row(1),
-                );
+                        .row(1);
+                if let Some(key) = tool_key("sketch.polyline") {
+                    polyline = polyline.shortcut(key);
+                }
+                context.register_tool(polyline);
                 continue;
             }
             context.register_tool(tool);
@@ -1926,6 +1969,7 @@ impl Workbench for SketchWorkbench {
                 self.handle_mouse_move(ctx, tool, *viewport_pos)
             }
             WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
+            WorkbenchInputEvent::Action { id } => self.handle_action(id),
             _ => InputResult::ignored(),
         }
     }
@@ -2094,6 +2138,13 @@ impl Workbench for SketchWorkbench {
         }
     }
 
+    fn shortcuts_changed(&mut self, keys: &HashMap<String, Vec<core_document::Chord>>) {
+        self.action_keys = keys
+            .iter()
+            .filter_map(|(id, chords)| Some((id.clone(), chords.first()?.to_string())))
+            .collect();
+    }
+
     fn viewport_hud(&self, ctx: &WorkbenchRuntimeContext) -> Option<ViewportHud> {
         let feature = self.get_active_sketch(ctx)?;
         let proj = SketchProjector::new(ctx, feature.plane);
@@ -2103,26 +2154,29 @@ impl Workbench for SketchWorkbench {
             Some((name, prompt)) => (name, prompt),
             None => idle_hint(tool),
         };
-        let mut keys: Vec<(&'static str, &'static str)> = Vec::new();
+        let mut keys: Vec<(String, &'static str)> = Vec::new();
+        let mut key = |key: &str, meaning: &'static str| keys.push((key.to_string(), meaning));
         if self.dim_capture.is_active() {
-            keys.push(("Tab", "next field"));
-            keys.push(("Enter", "lock value"));
+            key("Tab", "next field");
+            key("Enter", "lock value");
         } else if matches!(
             self.tool_state,
             ToolState::LineFrom { chain: true, .. } | ToolState::BSplineDraw { .. }
         ) {
-            keys.push(("Enter", "finish"));
+            key("Enter", "finish");
         } else if let ToolState::PolylineFrom { arc, heading, .. } = self.tool_state {
-            if heading.is_some() {
-                keys.push(("M", if arc { "lines" } else { "tangent arcs" }));
+            if heading.is_some()
+                && let Some(switch) = self.action_keys.get(POLYLINE_ARC_ACTION)
+            {
+                key(switch, if arc { "lines" } else { "tangent arcs" });
             }
-            keys.push(("Enter", "finish"));
+            key("Enter", "finish");
         }
         if tool == "sketch.select" {
-            keys.push(("Ctrl", "add to selection"));
-            keys.push(("Del", "delete"));
+            key("Ctrl", "add to selection");
+            key("Del", "delete");
         } else {
-            keys.push(("Esc", "cancel"));
+            key("Esc", "cancel");
         }
         let verdict = self.solver_verdict(&feature.sketch);
         let zoom = 1.0 / proj.units_per_px().max(1e-6);

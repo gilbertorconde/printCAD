@@ -81,7 +81,35 @@ fn configure(&self, context: &mut WorkbenchContext) {
   `WorkbenchInputEvent::ToolActivated`. Return `InputResult::consumed()`
   when handled.
 
-## 4. Store features
+## 4. Add keyboard shortcuts
+
+A tool gets a default key with `.shortcut`. Pressing it while the
+workbench is active works like clicking the tool's button:
+
+```rust
+ToolDescriptor::new("mine.line", "Line", Some("draw")).shortcut("L")
+```
+
+For a key that is not a tool, register an action. Its key sends
+`WorkbenchInputEvent::Action { id }` to `on_input`:
+
+```rust
+context.register_action(
+    ActionDescriptor::new("mine.flip", "Flip direction").shortcut("Shift+F"),
+);
+```
+
+- Keys are written like `L`, `Shift+F`, `Ctrl+Alt+K` or `F5`. A key that
+  does not parse panics at registration, so a typo shows up in tests.
+- Users can change every key in Preferences › Keyboard. Ids are saved as
+  they are, so keep them stable.
+- A workbench's keys work only while it is active, and win over the
+  application's keys there.
+- Keys without Ctrl or Alt are left to text fields while one has focus.
+- To name a key in a hint, implement `shortcuts_changed`. It receives the
+  keys in effect by id at start and after every change.
+
+## 5. Store features
 
 Define a type implementing `WorkbenchFeature` (see
 [Document model](DOCUMENT_MODEL.md)) and add it with
@@ -115,7 +143,7 @@ Double clicking a feature in the tree switches to its owner and makes the
 feature the active document object. `locks_view_to_plane` keeps the camera
 square to the plane while editing.
 
-## 5. Build solids
+## 6. Build solids
 
 A workbench whose features make a body's solid implements:
 
@@ -136,7 +164,7 @@ A `BuildPlan` is a list of `kernel_api::SolidOp`s with the feature that
 made each one. The application runs it on the kernel thread. A failure is
 shown on the feature named in `BuildError::feature`.
 
-## 6. Add menu entries
+## 7. Add menu entries
 
 ```rust
 fn menu_items(&self, scope: &MenuScope, doc: &Document) -> Vec<MenuItem>;
@@ -148,7 +176,7 @@ a body row in the tree, the Edit menu, and the start page. A start page
 item becomes a New card. Its command runs in a fresh document with one
 body.
 
-## 7. Ask the host for things
+## 8. Ask the host for things
 
 Every method gets a `WorkbenchRuntimeContext`: the document, the camera
 and viewport, hover and selection, the active document object, projection
@@ -171,7 +199,7 @@ The host applies requests after the method returns. Requests from
 those run during a switch. `StartOn` switches workbench and passes `attach`
 to the new one as `ctx.attach_request`.
 
-## 8. Draw panels
+## 9. Draw panels
 
 - `task()` opens the task panel on the right; `ui_task_panel` draws it and
   handles OK and Cancel. One task is one undo step.
@@ -186,8 +214,8 @@ to the new one as `ctx.attach_request`.
 
 1. `descriptor` with `icon` and `feature_kinds`, and a test that the icons
    exist.
-2. `configure` with the tools, and `is_tool_enabled` where tools have
-   preconditions.
+2. `configure` with the tools and their default keys, and
+   `is_tool_enabled` where tools have preconditions.
 3. `feature_info`, plus `passive_geometry`, `pick_feature`,
    `delete_feature` and `property_hints` as needed.
 4. `rebuild_jobs`, `invalidate_body` and `invalidate_all` if it builds

@@ -51,6 +51,19 @@ pub struct UserSettings {
     /// them; the app stores and returns them without reading them.
     #[serde(default)]
     pub workbenches: std::collections::HashMap<String, serde_json::Value>,
+    /// Keyboard shortcuts the user changed.
+    #[serde(default)]
+    pub keyboard: KeyboardSettings,
+}
+
+/// The user's keyboard shortcuts, as changes to the defaults: an action
+/// listed here takes these keys instead of its own, and an empty list
+/// leaves it without a key. Keys are chords as text (`Ctrl+Shift+S`), by
+/// action id (`file.save`, `sketch.line`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct KeyboardSettings {
+    pub bindings: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// The printer's build volume, drawn around the model on request.
@@ -88,6 +101,7 @@ impl Default for UserSettings {
             diagnostics: DiagnosticsSettings::default(),
             printing: PrintingSettings::default(),
             workbenches: std::collections::HashMap::new(),
+            keyboard: KeyboardSettings::default(),
         }
     }
 }

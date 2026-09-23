@@ -65,6 +65,8 @@ its own.
 
 ### Keyboard
 
+Every shortcut can be changed in Preferences › Keyboard. The defaults:
+
 | Action | Keys |
 | --- | --- |
 | Command palette | Ctrl+K |
@@ -76,6 +78,8 @@ its own.
 | Cut, Copy, Paste in a sketch | Ctrl+X, Ctrl+C, Ctrl+V |
 | Preferences | Ctrl+, |
 | Delete the selected tree row | Delete |
+| Sketch line, polyline, arc, circle, rectangle, trim | L, P, A, C, R, T |
+| Switch a polyline between lines and arcs | M |
 
 ## Settings
 

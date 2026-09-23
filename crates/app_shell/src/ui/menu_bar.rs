@@ -1,7 +1,7 @@
 //! The menu bar: app mark, the menus, and the document name at the right.
 
 use core_document::{DocumentService, WorkbenchId};
-use egui::{Key, KeyboardShortcut, Modifiers, RichText};
+use egui::RichText;
 use settings::ProjectionMode;
 use ui_kit::tokens::*;
 use ui_kit::widgets::mono_label;
@@ -14,6 +14,8 @@ use crate::orientation_cube::CameraSnapView;
 
 /// What the menu bar reads this frame.
 pub struct MenuBarInputs<'a> {
+    /// The keys each command answers to, shown beside its row.
+    pub keymap: &'a super::keymap::Keymap,
     pub registry: &'a DocumentService,
     pub document_name: &'a str,
     pub document_dirty: bool,
@@ -39,14 +41,10 @@ pub struct MenuBarResult {
     pub open_palette: bool,
 }
 
-fn shortcut(modifiers: Modifiers, key: Key) -> KeyboardShortcut {
-    KeyboardShortcut::new(modifiers, key)
-}
-
-fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<&KeyboardShortcut>) -> bool {
+fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> bool {
     let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
     if let Some(sc) = shortcut {
-        button = button.shortcut_text(ui.ctx().format_shortcut(sc));
+        button = button.shortcut_text(sc);
     }
     let clicked = ui.add(button).clicked();
     if clicked {
@@ -60,12 +58,12 @@ fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<&KeyboardShortcut>) -> 
 fn item_needing_document(
     ui: &mut egui::Ui,
     label: &str,
-    shortcut: Option<&KeyboardShortcut>,
+    shortcut: Option<String>,
     have_document: bool,
 ) -> bool {
     let mut button = egui::Button::new(RichText::new(label).font(sans(FONT_SM)));
     if let Some(sc) = shortcut {
-        button = button.shortcut_text(ui.ctx().format_shortcut(sc));
+        button = button.shortcut_text(sc);
     }
     let response = ui
         .add_enabled(have_document, button)
@@ -95,98 +93,7 @@ pub fn draw_menu_bar(
     // fire.
     let have_document = inputs.screen == Screen::Workspace;
 
-    // `Modifiers::COMMAND` maps to Ctrl on Linux and Windows and Cmd on
-    // macOS.
-    let sc_new = shortcut(Modifiers::COMMAND, Key::N);
-    let sc_open = shortcut(Modifiers::COMMAND, Key::O);
-    let sc_save = shortcut(Modifiers::COMMAND, Key::S);
-    let sc_save_as = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
-    let sc_import = shortcut(Modifiers::COMMAND, Key::I);
-    let sc_export = shortcut(Modifiers::COMMAND, Key::E);
-    let sc_quit = shortcut(Modifiers::COMMAND, Key::Q);
-    let sc_fit = shortcut(Modifiers::NONE, Key::F);
-    let sc_undo = shortcut(Modifiers::COMMAND, Key::Z);
-    let sc_redo = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
-    let sc_redo_y = shortcut(Modifiers::COMMAND, Key::Y);
-    let sc_palette = shortcut(Modifiers::COMMAND, Key::K);
-    let sc_prefs = shortcut(Modifiers::COMMAND, Key::Comma);
-    let sc_cut = shortcut(Modifiers::COMMAND, Key::X);
-    let sc_copy = shortcut(Modifiers::COMMAND, Key::C);
-    let sc_paste = shortcut(Modifiers::COMMAND, Key::V);
-    let sc_new_tab = shortcut(Modifiers::COMMAND, Key::T);
-    let sc_close_tab = shortcut(Modifiers::COMMAND, Key::W);
-    let sc_next_tab = shortcut(Modifiers::COMMAND, Key::Tab);
-    let sc_prev_tab = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
-
-    // Consume shortcuts up-front so a menu row clicked in the same frame
-    // does not double-fire. Shift variants come before their plain form.
-    let typing = ui.ctx().egui_wants_keyboard_input();
-    ui.ctx().input_mut(|i| {
-        if i.consume_shortcut(&sc_new) {
-            commands.push(UiCommand::File(FileCommand::New));
-        }
-        if i.consume_shortcut(&sc_open) {
-            commands.push(UiCommand::File(FileCommand::Open));
-        }
-        if i.consume_shortcut(&sc_save_as) && have_document {
-            commands.push(UiCommand::File(FileCommand::SaveAs));
-        }
-        if i.consume_shortcut(&sc_save) && have_document {
-            commands.push(UiCommand::File(FileCommand::Save));
-        }
-        if i.consume_shortcut(&sc_import) && have_document {
-            commands.push(UiCommand::File(FileCommand::ImportStep));
-        }
-        if i.consume_shortcut(&sc_export) && have_document {
-            commands.push(UiCommand::File(FileCommand::Export));
-        }
-        if i.consume_shortcut(&sc_quit) {
-            commands.push(UiCommand::Quit);
-        }
-        if i.consume_shortcut(&sc_new_tab) {
-            commands.push(UiCommand::NewTab);
-        }
-        if i.consume_shortcut(&sc_close_tab)
-            && let Some(active) = inputs.active_tab
-        {
-            commands.push(UiCommand::CloseTab(active));
-        }
-        if i.consume_shortcut(&sc_prev_tab) {
-            commands.push(UiCommand::CycleTab(-1));
-        }
-        if i.consume_shortcut(&sc_next_tab) {
-            commands.push(UiCommand::CycleTab(1));
-        }
-        if i.consume_shortcut(&sc_palette) {
-            result.open_palette = true;
-        }
-        if i.consume_shortcut(&sc_prefs) {
-            result.show_preferences = true;
-        }
-        // Text fields own their own undo and the letter F.
-        if !typing {
-            let redo = i.consume_shortcut(&sc_redo) || i.consume_shortcut(&sc_redo_y);
-            if redo && have_document {
-                commands.push(UiCommand::Redo);
-            }
-            if i.consume_shortcut(&sc_undo) && have_document {
-                commands.push(UiCommand::Undo);
-            }
-            if i.consume_shortcut(&sc_fit) && have_document {
-                commands.push(UiCommand::FitView);
-            }
-            // The clipboard keys reach the bench only outside text fields.
-            for (shortcut, command) in [
-                (&sc_cut, super::EditCommand::Cut),
-                (&sc_copy, super::EditCommand::Copy),
-                (&sc_paste, super::EditCommand::Paste),
-            ] {
-                if i.consume_shortcut(shortcut) && have_document {
-                    commands.push(UiCommand::Edit(command));
-                }
-            }
-        }
-    });
+    let key = |id: &str| inputs.keymap.text(id);
 
     egui::Panel::top("menu_bar")
         .exact_size(MENU_BAR)
@@ -221,13 +128,13 @@ pub fn draw_menu_bar(
                     ui.spacing_mut().item_spacing.x = SPACE_2;
                     ui.spacing_mut().button_padding = egui::vec2(SPACE_2, 4.0);
                     ui.menu_button(menu_title("File"), |ui| {
-                        if item(ui, "New", Some(&sc_new)) {
+                        if item(ui, "New", key("file.new")) {
                             commands.push(UiCommand::File(FileCommand::New));
                         }
-                        if item(ui, "Open…", Some(&sc_open)) {
+                        if item(ui, "Open…", key("file.open")) {
                             commands.push(UiCommand::File(FileCommand::Open));
                         }
-                        if item(ui, "New tab", Some(&sc_new_tab)) {
+                        if item(ui, "New tab", key("tab.new")) {
                             commands.push(UiCommand::NewTab);
                         }
                         ui.menu_button(RichText::new("Open recent").font(sans(FONT_SM)), |ui| {
@@ -247,23 +154,25 @@ pub fn draw_menu_bar(
                             }
                         });
                         ui.separator();
-                        if item_needing_document(ui, "Save", Some(&sc_save), have_document) {
+                        if item_needing_document(ui, "Save", key("file.save"), have_document) {
                             commands.push(UiCommand::File(FileCommand::Save));
                         }
-                        if item_needing_document(ui, "Save As…", Some(&sc_save_as), have_document)
+                        if item_needing_document(ui, "Save As…", key("file.save_as"), have_document)
                         {
                             commands.push(UiCommand::File(FileCommand::SaveAs));
                         }
                         ui.separator();
-                        if item_needing_document(ui, "Import…", Some(&sc_import), have_document) {
+                        if item_needing_document(ui, "Import…", key("file.import"), have_document)
+                        {
                             commands.push(UiCommand::File(FileCommand::ImportStep));
                         }
-                        if item_needing_document(ui, "Export…", Some(&sc_export), have_document) {
+                        if item_needing_document(ui, "Export…", key("file.export"), have_document)
+                        {
                             commands.push(UiCommand::File(FileCommand::Export));
                         }
                         ui.separator();
                         if let Some(active) = inputs.active_tab
-                            && item(ui, "Close tab", Some(&sc_close_tab))
+                            && item(ui, "Close tab", key("tab.close"))
                         {
                             commands.push(UiCommand::CloseTab(active));
                         }
@@ -280,55 +189,60 @@ pub fn draw_menu_bar(
                             commands.push(UiCommand::ShowStartPage);
                         }
                         ui.separator();
-                        if item(ui, "Preferences…", Some(&sc_prefs)) {
+                        if item(ui, "Preferences…", key("app.preferences")) {
                             result.show_preferences = true;
                         }
                         ui.separator();
-                        if item(ui, "Quit", Some(&sc_quit)) {
+                        if item(ui, "Quit", key("app.quit")) {
                             commands.push(UiCommand::Quit);
                         }
                     });
                     ui.menu_button(menu_title("Edit"), |ui| {
-                        if item_needing_document(ui, "Undo", Some(&sc_undo), have_document) {
+                        if item_needing_document(ui, "Undo", key("edit.undo"), have_document) {
                             commands.push(UiCommand::Undo);
                         }
-                        if item_needing_document(ui, "Redo", Some(&sc_redo), have_document) {
+                        if item_needing_document(ui, "Redo", key("edit.redo"), have_document) {
                             commands.push(UiCommand::Redo);
                         }
                         ui.separator();
-                        for (label, command, shortcut) in [
-                            ("Cut", super::EditCommand::Cut, &sc_cut),
-                            ("Copy", super::EditCommand::Copy, &sc_copy),
-                            ("Paste", super::EditCommand::Paste, &sc_paste),
+                        for (label, command, id) in [
+                            ("Cut", super::EditCommand::Cut, "edit.cut"),
+                            ("Copy", super::EditCommand::Copy, "edit.copy"),
+                            ("Paste", super::EditCommand::Paste, "edit.paste"),
                         ] {
-                            if item_needing_document(ui, label, Some(shortcut), have_document) {
+                            if item_needing_document(ui, label, key(id), have_document) {
                                 commands.push(UiCommand::Edit(command));
                             }
                         }
                         ui.separator();
-                        if item(ui, "Preferences…", Some(&sc_prefs)) {
+                        if item(ui, "Preferences…", key("app.preferences")) {
                             result.show_preferences = true;
                         }
                     });
                     ui.menu_button(menu_title("View"), |ui| {
-                        if item(ui, "Fit view", Some(&sc_fit)) {
+                        if item(ui, "Fit view", key("view.fit_all")) {
                             commands.push(UiCommand::FitView);
                         }
-                        if item_needing_document(ui, "Fit selection", None, have_document) {
+                        if item_needing_document(
+                            ui,
+                            "Fit selection",
+                            key("view.fit_selection"),
+                            have_document,
+                        ) {
                             commands.push(UiCommand::FitSelection);
                         }
                         ui.separator();
                         ui.menu_button(RichText::new("Standard views").font(sans(FONT_SM)), |ui| {
-                            for (label, view) in [
-                                ("Isometric", CameraSnapView::FrontTopRight),
-                                ("Front", CameraSnapView::Front),
-                                ("Top", CameraSnapView::Top),
-                                ("Right", CameraSnapView::Right),
-                                ("Rear", CameraSnapView::Rear),
-                                ("Bottom", CameraSnapView::Bottom),
-                                ("Left", CameraSnapView::Left),
+                            for (label, view, id) in [
+                                ("Isometric", CameraSnapView::FrontTopRight, "view.isometric"),
+                                ("Front", CameraSnapView::Front, "view.front"),
+                                ("Top", CameraSnapView::Top, "view.top"),
+                                ("Right", CameraSnapView::Right, "view.right"),
+                                ("Rear", CameraSnapView::Rear, "view.rear"),
+                                ("Bottom", CameraSnapView::Bottom, "view.bottom"),
+                                ("Left", CameraSnapView::Left, "view.left"),
                             ] {
-                                if item(ui, label, None) {
+                                if item(ui, label, key(id)) {
                                     commands.push(UiCommand::CameraSnap(view));
                                 }
                             }
@@ -435,6 +349,10 @@ pub fn draw_menu_bar(
                                     } else {
                                         text.color(TEXT1)
                                     });
+                                    if let Some(keys) = key(&tool.id) {
+                                        ui.add_space(SPACE_3);
+                                        mono_label(ui, keys, FONT_XS, TEXT3);
+                                    }
                                 });
                                 let r = ui.interact(
                                     row.response.rect,

@@ -175,33 +175,6 @@ impl PrintCadApp {
             self.redraw_needed = true;
             return;
         }
-        if let WindowEvent::KeyboardInput { event: ke, .. } = &event
-            && matches!(ke.state, ElementState::Pressed)
-            && let Key::Character(ch) = &ke.logical_key
-        {
-            let s = ch.as_str();
-            if matches!(s, "h" | "H")
-                && self.cursor_in_viewport.is_some()
-                && self
-                    .session
-                    .camera
-                    .pivot_from_key_h(&self.user_settings.camera)
-                && let Some(gfx) = self.gfx.as_ref()
-            {
-                gfx.window.request_redraw();
-            }
-            // Undo/redo. egui gets the event first, so typing in a
-            // text field never reaches here.
-            if self.modifiers.control_key() {
-                match s {
-                    "z" | "Z" if self.modifiers.shift_key() => self.perform_redo(),
-                    "z" => self.perform_undo(),
-                    "y" | "Y" => self.perform_redo(),
-                    _ => {}
-                }
-            }
-        }
-
         let wb = self.dispatch_workbench_input_without_select(&event);
         let mut redraw = wb.redraw;
         // A key the workbench consumed must not also reach egui's widgets
@@ -350,6 +323,20 @@ impl PrintCadApp {
                 })
             })
             .unwrap_or(false)
+    }
+
+    /// Run a workbench's keyboard action, bound to a key, with its active
+    /// tool, when that workbench is still the active one.
+    pub(crate) fn run_bench_action(&mut self, workbench: &WorkbenchId, id: &str) {
+        if *workbench != self.active_workbench_id() {
+            return;
+        }
+        let active_tool = self.session.active_tool.active_ids.iter().next().cloned();
+        let event = WorkbenchInputEvent::Action { id: id.to_string() };
+        let result = self.call_workbench_input(workbench, &event, active_tool.as_deref());
+        if result.redraw || result.consumed {
+            self.redraw_needed = true;
+        }
     }
 
     /// Call on_input on a workbench.

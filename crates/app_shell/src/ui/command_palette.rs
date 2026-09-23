@@ -55,7 +55,8 @@ enum ShellAction {
 struct ShellEntry {
     label: &'static str,
     icon: &'static str,
-    keys: Option<&'static str>,
+    /// The keymap command whose keys the row shows.
+    binding: Option<&'static str>,
     action: ShellAction,
 }
 
@@ -63,97 +64,97 @@ const SHELL: &[ShellEntry] = &[
     ShellEntry {
         label: "New document",
         icon: "new-file",
-        keys: Some("Ctrl N"),
+        binding: Some("file.new"),
         action: ShellAction::File(FileCommand::New),
     },
     ShellEntry {
         label: "Open…",
         icon: "open",
-        keys: Some("Ctrl O"),
+        binding: Some("file.open"),
         action: ShellAction::File(FileCommand::Open),
     },
     ShellEntry {
         label: "Save",
         icon: "save",
-        keys: Some("Ctrl S"),
+        binding: Some("file.save"),
         action: ShellAction::File(FileCommand::Save),
     },
     ShellEntry {
         label: "Save as…",
         icon: "save",
-        keys: Some("Ctrl Shift S"),
+        binding: Some("file.save_as"),
         action: ShellAction::File(FileCommand::SaveAs),
     },
     ShellEntry {
         label: "Import STEP, IGES or mesh…",
         icon: "file-document",
-        keys: Some("Ctrl I"),
+        binding: Some("file.import"),
         action: ShellAction::File(FileCommand::ImportStep),
     },
     ShellEntry {
         label: "Export as STEP, STL or 3MF…",
         icon: "export-stl",
-        keys: Some("Ctrl E"),
+        binding: Some("file.export"),
         action: ShellAction::File(FileCommand::Export),
     },
     ShellEntry {
         label: "Start page",
         icon: "tree-document",
-        keys: None,
+        binding: None,
         action: ShellAction::StartPage,
     },
     ShellEntry {
         label: "Preferences…",
         icon: "settings",
-        keys: Some("Ctrl ,"),
+        binding: Some("app.preferences"),
         action: ShellAction::Preferences,
     },
     ShellEntry {
         label: "Fit view",
         icon: "fit-all",
-        keys: Some("F"),
+        binding: Some("view.fit_all"),
         action: ShellAction::FitView,
     },
     ShellEntry {
         label: "Undo",
         icon: "undo",
-        keys: Some("Ctrl Z"),
+        binding: Some("edit.undo"),
         action: ShellAction::Undo,
     },
     ShellEntry {
         label: "Redo",
         icon: "redo",
-        keys: Some("Ctrl Shift Z"),
+        binding: Some("edit.redo"),
         action: ShellAction::Redo,
     },
     ShellEntry {
         label: "Toggle log panel",
         icon: "tree-document",
-        keys: None,
+        binding: Some("app.log"),
         action: ShellAction::ToggleLog,
     },
     ShellEntry {
         label: "Recompute all",
         icon: "refresh",
-        keys: None,
+        binding: Some("edit.recompute"),
         action: ShellAction::RecomputeAll,
     },
     ShellEntry {
         label: "Orthographic view",
         icon: "view-orthographic",
-        keys: None,
+        binding: Some("view.orthographic"),
         action: ShellAction::Projection(ProjectionMode::Orthographic),
     },
     ShellEntry {
         label: "Perspective view",
         icon: "view-perspective",
-        keys: None,
+        binding: Some("view.perspective"),
         action: ShellAction::Projection(ProjectionMode::Perspective),
     },
     ShellEntry {
         label: "Quit",
         icon: "close",
-        keys: Some("Ctrl Q"),
+        binding: Some("app.quit"),
         action: ShellAction::Quit,
     },
 ];
@@ -164,7 +165,7 @@ struct Entry {
     /// "Sketcher", "Part Design" or "printCAD".
     scope: String,
     icon: &'static str,
-    keys: Option<&'static str>,
+    keys: Option<String>,
     /// Disabled in the current state, or planned.
     inert: bool,
     planned: Option<&'static str>,
@@ -196,6 +197,7 @@ fn match_rank(haystack: &str, needle: &str) -> Option<u8> {
 
 fn entries(
     registry: &mut DocumentService,
+    keymap: &super::keymap::Keymap,
     active: &ActiveWorkbench,
     enabled_active: &dyn Fn(&str) -> bool,
 ) -> Vec<Entry> {
@@ -221,7 +223,7 @@ fn entries(
                 label: tool.label.clone(),
                 scope: bench_label.clone(),
                 icon: tool.icon.unwrap_or("tree-feature"),
-                keys: None,
+                keys: keymap.text(&tool.id),
                 inert: !enabled || tool.planned.is_some(),
                 planned: tool.planned,
                 kind: EntryKind::Tool {
@@ -236,7 +238,7 @@ fn entries(
             label: shell.label.to_string(),
             scope: "printCAD".to_string(),
             icon: shell.icon,
-            keys: shell.keys,
+            keys: shell.binding.and_then(|id| keymap.text(id)),
             inert: false,
             planned: None,
             kind: EntryKind::Shell(shell.action),
@@ -273,6 +275,7 @@ pub fn draw_command_palette(
     ctx: &egui::Context,
     state: &mut PaletteState,
     registry: &mut DocumentService,
+    keymap: &super::keymap::Keymap,
     active: &ActiveWorkbench,
     enabled_active: &dyn Fn(&str) -> bool,
     commands: &mut Vec<UiCommand>,
@@ -281,7 +284,7 @@ pub fn draw_command_palette(
     if !state.open {
         return result;
     }
-    let all = entries(registry, active, enabled_active);
+    let all = entries(registry, keymap, active, enabled_active);
     let needle = state.query.trim().to_lowercase();
     let mut shown: Vec<(u8, usize)> = all
         .iter()
@@ -410,7 +413,7 @@ pub fn draw_command_palette(
                                 .layout(egui::Layout::right_to_left(egui::Align::Center)),
                         );
                         right.spacing_mut().item_spacing.x = SPACE_2;
-                        if let Some(keys) = entry.keys {
+                        if let Some(keys) = &entry.keys {
                             key_chip(&mut right, keys);
                         }
                         let scope = match entry.planned {

@@ -529,6 +529,9 @@ pub enum WorkbenchInputEvent {
     /// A tool was activated from the toolbar, a menu or the palette. Action
     /// tools run on this, in the frame the click happened.
     ToolActivated,
+    /// A keyboard action the workbench registered
+    /// (`WorkbenchContext::register_action`) was triggered by its shortcut.
+    Action { id: String },
 }
 
 /// Mouse button identifier.
@@ -541,7 +544,7 @@ pub enum MouseButton {
 }
 
 /// Simplified key code (extend as needed).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum KeyCode {
     Escape,
     Enter,
@@ -604,6 +607,18 @@ pub enum KeyCode {
     F10,
     F11,
     F12,
+    // Navigation and editing
+    ArrowUp,
+    ArrowDown,
+    ArrowLeft,
+    ArrowRight,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    Insert,
+    Equals,
+    Slash,
     // Modifiers (for reference; actual modifier state tracked separately)
     Shift,
     Control,

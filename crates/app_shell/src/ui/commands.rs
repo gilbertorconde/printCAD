@@ -140,6 +140,13 @@ pub enum UiCommand {
     Undo,
     Redo,
     ToggleLogPanel,
+    /// Orbit around the point on the focal plane under the cursor.
+    PivotAtCursor,
+    /// Run a workbench's keyboard action, bound to a key.
+    BenchAction {
+        workbench: core_document::WorkbenchId,
+        id: String,
+    },
     SetProjection(ProjectionMode),
     /// Turn the clipping plane on, move it, or (`None`) put it away.
     SetSection(Option<crate::camera::section::SectionToggle>),
