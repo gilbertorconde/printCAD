@@ -83,7 +83,6 @@ fn a_prism_from_a_counter_clockwise_square_faces_out_everywhere() {
 /// The same square walked the other way is the same region of the plane,
 /// so the same box must come out of the sweep.
 #[test]
-#[ignore = "kernel: make_prism from a clockwise-walked planar face builds an inside-out shell, which volume_properties refuses as wound inward (ogeom-rs#42)"]
 fn a_prism_from_a_clockwise_square_faces_out_everywhere() {
     let (volume, outward, faces) =
         prism_from_square(true).expect("the same box, whichever way its profile was walked");

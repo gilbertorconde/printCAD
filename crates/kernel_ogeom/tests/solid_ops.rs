@@ -1053,7 +1053,6 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
 /// way: ten faces, and the volume of the box less four wedges, each corner
 /// overlap counted once.
 #[test]
-#[ignore = "kernel: chamfers go one edge per call, so two bevels meeting at a corner leave a step and two extra faces; a chain form is asked for (ogeom-rs#43)"]
 fn chamfers_of_one_face_meet_mitred_at_its_corners() {
     let mut kernel = new_kernel();
     let result = kernel
@@ -1090,7 +1089,6 @@ fn chamfers_of_one_face_meet_mitred_at_its_corners() {
 /// sphere tangent to all three bands: a tenth face, on which every point
 /// of the shell inside the corner cube lies.
 #[test]
-#[ignore = "kernel: fillet_edges leaves the three bands' flat caps standing at a convex corner instead of the spherical patch tangent to them (ogeom-rs#44)"]
 fn fillets_of_three_edges_round_their_corner() {
     let mut kernel = new_kernel();
     let radius = 2.0;

@@ -524,9 +524,10 @@ pub fn build_profile(model: &mut Model, profile: &Profile) -> Result<BuiltProfil
         }
     }
 
-    // A face takes its sense from its outer ring: counter-clockwise about
-    // the plane normal, or the solid swept from it turns inside out, its
-    // walls facing in while its caps face out. Holes run the other way.
+    // A face takes its sense from its outer ring. Every profile face is
+    // built counter-clockwise about the plane normal, holes the other way,
+    // so every sweep, revolve and loft starts from the same sense whichever
+    // way the sketch was drawn.
     let mut faces = Vec::with_capacity(groups.len());
     for group in &groups {
         let mut rings: Vec<Vec<Shape>> = Vec::with_capacity(1 + group.holes.len());

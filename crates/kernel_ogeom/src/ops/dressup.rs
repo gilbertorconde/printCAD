@@ -1,16 +1,13 @@
 //! Fillet / chamfer / draft / thickness on the running solid, with geometric
 //! (point-based) edge and face selection.
 //!
-//! A fillet goes to the kernel as one chain, every selected edge at once, so
-//! blends that meet at a vertex trim each other. The kernel bevels one edge
-//! per call, so a chamfer of several edges loops: every step re-resolves its
-//! probe point against the current solid, the same way picks re-resolve
-//! across parametric rebuilds, and two bevels meeting at a corner are left
-//! as the second cut leaves them.
+//! A fillet or a chamfer goes to the kernel as one chain, every selected
+//! edge at once, resolved on the solid as it stands, so blends and bevels
+//! that meet at a vertex close their corner between them.
 
 use kernel_api::{ChamferSpec, EdgeSelection};
 use ogeom::algo::distance_between_shapes;
-use ogeom::fillet::{chamfer_edge, chamfer_edge_angle, chamfer_edge_distances, fillet_edges};
+use ogeom::fillet::{Chamfer, chamfer_edges_with, fillet_edges};
 use ogeom::math::{Direction, Plane, Point, Vector};
 use ogeom::offset::{apply_draft, make_thick_solid};
 use ogeom::topo::{Model, NodeData, Shape, ShapeType, ancestors_of, explore_unique};
@@ -114,8 +111,14 @@ pub fn fillet(
     if probes.is_empty() {
         return Err("fillet selection matches no edges".into());
     }
-    // Every probe names an edge of the solid as it stands; two probes on
-    // one edge name it once.
+    let chain = chain_of(model, solid, probes)?;
+    fillet_edges(model, solid, &chain, radius, tol())
+        .map(|b| b.shape)
+        .map_err(|e| format!("fillet failed: {e}"))
+}
+
+/// The edges of `solid` the probes name, each once.
+fn chain_of(model: &mut Model, solid: &Shape, probes: Vec<Point>) -> Result<Vec<Shape>, String> {
     let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());
     for probe in probes {
         let edge = nearest_of(model, solid, ShapeType::Edge, probe)?;
@@ -123,9 +126,7 @@ pub fn fillet(
             chain.push(edge);
         }
     }
-    fillet_edges(model, solid, &chain, radius, tol())
-        .map(|b| b.shape)
-        .map_err(|e| format!("fillet failed: {e}"))
+    Ok(chain)
 }
 
 pub fn chamfer(
@@ -139,44 +140,33 @@ pub fn chamfer(
     if probes.is_empty() {
         return Err("chamfer selection matches no edges".into());
     }
-    let mut current = solid.clone();
-    for probe in probes {
-        let edge = nearest_of(model, &current, ShapeType::Edge, probe)?;
-        current = match spec {
-            ChamferSpec::EqualDistance { distance } => {
-                chamfer_edge(model, &current, &edge, *distance, tol())
-                    .map_err(|e| format!("chamfer failed: {e}"))?
-                    .shape
-            }
+    let chain = chain_of(model, solid, probes)?;
+    let mut specs = Vec::with_capacity(chain.len());
+    for edge in chain {
+        let spec = match spec {
+            ChamferSpec::EqualDistance { distance } => Chamfer::Symmetric(*distance),
             ChamferSpec::TwoDistances {
                 distance1,
                 distance2,
-            } => {
-                let face = adjacent_face(model, &current, &edge, flip)?;
-                chamfer_edge_distances(model, &current, &edge, &face, *distance1, *distance2, tol())
-                    .map_err(|e| format!("chamfer failed: {e}"))?
-                    .shape
-            }
+            } => Chamfer::Distances {
+                face: adjacent_face(model, solid, &edge, flip)?,
+                on_face: *distance1,
+                on_other: *distance2,
+            },
             ChamferSpec::DistanceAngle {
                 distance,
                 angle_deg,
-            } => {
-                let face = adjacent_face(model, &current, &edge, flip)?;
-                chamfer_edge_angle(
-                    model,
-                    &current,
-                    &edge,
-                    &face,
-                    *distance,
-                    angle_deg.to_radians(),
-                    tol(),
-                )
-                .map_err(|e| format!("chamfer failed: {e}"))?
-                .shape
-            }
+            } => Chamfer::Angle {
+                face: adjacent_face(model, solid, &edge, flip)?,
+                distance: *distance,
+                angle: angle_deg.to_radians(),
+            },
         };
+        specs.push((edge, spec));
     }
-    Ok(current)
+    chamfer_edges_with(model, solid, &specs, tol())
+        .map(|b| b.shape)
+        .map_err(|e| format!("chamfer failed: {e}"))
 }
 
 /// One of the two faces sharing the edge; `flip` selects the other.
