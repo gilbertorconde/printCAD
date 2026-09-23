@@ -213,19 +213,33 @@ impl SketchWorkbench {
             // resolved frame (toponaming-safe anchor).
             if let Some(body) = body {
                 for (_, name, datum) in core_document::datums_of_body(ctx.document, body) {
-                    if !matches!(datum.shape, core_document::DatumShape::Plane { .. }) {
-                        continue;
-                    }
-                    if secondary_button(ui, &name)
-                        .on_hover_text("Sketch on this datum plane")
-                        .clicked()
-                    {
-                        let frame = datum.frame();
-                        chosen = Some(SketchPlane::from_frame(
-                            frame.origin,
-                            frame.normal,
-                            frame.x_axis,
-                        ));
+                    let frame = datum.frame();
+                    match datum.shape {
+                        core_document::DatumShape::Plane { .. } => {
+                            if secondary_button(ui, &name)
+                                .on_hover_text("Sketch on this datum plane")
+                                .clicked()
+                            {
+                                chosen = Some(SketchPlane::from_frame(
+                                    frame.origin,
+                                    frame.normal,
+                                    frame.x_axis,
+                                ));
+                            }
+                        }
+                        core_document::DatumShape::CoordinateSystem { .. } => {
+                            for (plane, at) in frame.planes() {
+                                if secondary_button(ui, &format!("{name} {plane}"))
+                                    .on_hover_text("Sketch on this plane of the coordinate system")
+                                    .clicked()
+                                {
+                                    chosen = Some(SketchPlane::from_frame(
+                                        at.origin, at.normal, at.x_axis,
+                                    ));
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }

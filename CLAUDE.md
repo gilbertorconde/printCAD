@@ -83,7 +83,7 @@ cargo fmt --all                   # CI enforces --check
 - `core_document` — Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context, snapshot undo
   (`undo.rs`), workbench registry (`service.rs`), core datums (`datum.rs`:
-  plane/line/point + attachment + offset, shared across workbenches).
+  plane/line/point/coordinate system + attachment + offset, shared across workbenches).
 - `doc_server` — the document server: `printcad-serverd` binary +
   `DaemonClient`/`DirectFiles` implementations of the `DocumentServer` trait;
   length-prefixed JSON frames with the container bytes beside them, never
@@ -187,8 +187,7 @@ and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
-**Placeholders.** What remains unbuilt of the design: a local coordinate
-system datum, a clipping plane,
+**Placeholders.** What remains unbuilt of the design: a clipping plane,
 document thumbnails, release notes, an export
 walkthrough and external geometry. Everything else
 the design shows is built. The Edit menu's Cut/Copy/Paste go to the

@@ -17,6 +17,10 @@ pub enum DatumShape {
     Line { length: f32 },
     /// Reference point at the attachment origin.
     Point,
+    /// A local coordinate system: the frame's origin and its three axes
+    /// (x, y and the normal as z), drawn `size` long. Its XY, XZ and YZ
+    /// planes carry sketches the way the base planes do.
+    CoordinateSystem { size: f32 },
 }
 
 impl DatumShape {
@@ -25,6 +29,7 @@ impl DatumShape {
             DatumShape::Plane { .. } => "Datum Plane",
             DatumShape::Line { .. } => "Datum Line",
             DatumShape::Point => "Datum Point",
+            DatumShape::CoordinateSystem { .. } => "Local Coordinate System",
         }
     }
 }
@@ -150,6 +155,22 @@ pub struct DatumFrame {
 impl DatumFrame {
     pub fn y_axis(&self) -> [f32; 3] {
         cross(self.normal, self.x_axis)
+    }
+
+    /// The frame's own XY, XZ and YZ planes, labelled, laid out as the
+    /// document's base planes are on the world axes.
+    pub fn planes(&self) -> [(&'static str, DatumFrame); 3] {
+        let (x, y, z) = (self.x_axis, self.y_axis(), self.normal);
+        let plane = |normal, x_axis| DatumFrame {
+            origin: self.origin,
+            normal,
+            x_axis,
+        };
+        [
+            ("XY", plane(z, x)),
+            ("XZ", plane([-y[0], -y[1], -y[2]], x)),
+            ("YZ", plane(x, y)),
+        ]
     }
 }
 
@@ -311,6 +332,26 @@ mod tests {
             },
         };
         assert!(close(datum.frame().x_axis, [0.0, 1.0, 0.0]));
+    }
+
+    #[test]
+    fn a_coordinate_system_lays_out_its_planes_as_the_base_planes_are() {
+        let datum = DatumFeature {
+            shape: DatumShape::CoordinateSystem { size: 20.0 },
+            attachment: DatumAttachment::BasePlane(BasePlane::XY),
+            offset: AttachmentOffset {
+                translation: [1.0, 2.0, 3.0],
+                rotation_deg: 0.0,
+                flip: false,
+            },
+        };
+        let frame = datum.frame();
+        for ((label, plane), base) in frame.planes().into_iter().zip(BasePlane::ALL) {
+            let (_, base_normal, base_x) = base.frame();
+            assert!(close(plane.origin, [1.0, 2.0, 3.0]), "{label}");
+            assert!(close(plane.normal, base_normal), "{label}");
+            assert!(close(plane.x_axis, base_x), "{label}");
+        }
     }
 
     #[test]

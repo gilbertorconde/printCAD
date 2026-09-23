@@ -504,6 +504,7 @@ impl PartDesignWorkbench {
         let shape = match tool {
             "part.datum_plane" => DatumShape::Plane { size: 30.0 },
             "part.datum_line" => DatumShape::Line { length: 40.0 },
+            "part.coordinate_system" => DatumShape::CoordinateSystem { size: 20.0 },
             _ => DatumShape::Point,
         };
         let attachment = match ctx.selected_face {
@@ -684,16 +685,12 @@ impl Workbench for PartDesignWorkbench {
             "datum-plane",
             "datum",
         ));
-        // PLANNED: a local coordinate system to attach features to.
-        context.register_tool(
-            action(
-                "part.coordinate_system",
-                "Local coordinate system",
-                "coordinate-system",
-                "datum",
-            )
-            .planned("places a named frame to attach features to"),
-        );
+        context.register_tool(action(
+            "part.coordinate_system",
+            "Local coordinate system",
+            "coordinate-system",
+            "datum",
+        ));
         context.register_tool(action("part.clone", "Clone", "clone", "datum"));
         // Additive.
         context.register_tool(action("part.pad", "Pad", "pad", "additive"));
@@ -824,9 +821,12 @@ impl Workbench for PartDesignWorkbench {
                 ctx.request(HostRequest::JournalLabel("Create body".to_string()));
                 InputResult::consumed()
             }
-            Some(tool @ ("part.datum_plane" | "part.datum_line" | "part.datum_point")) => {
-                self.insert_datum(ctx, tool)
-            }
+            Some(
+                tool @ ("part.datum_plane"
+                | "part.datum_line"
+                | "part.datum_point"
+                | "part.coordinate_system"),
+            ) => self.insert_datum(ctx, tool),
             Some("part.map_sketch") => {
                 // The selected sketch moves onto the face the last body
                 // click landed on.
@@ -931,8 +931,12 @@ impl Workbench for PartDesignWorkbench {
             "part.new_body" => true,
             "part.edit_sketch" => has_sketch,
             "part.map_sketch" => has_sketch && ctx.selected_face.is_some(),
-            "part.new_sketch" | "part.primitive" | "part.datum_plane" | "part.datum_line"
-            | "part.datum_point" => has_body,
+            "part.new_sketch"
+            | "part.primitive"
+            | "part.datum_plane"
+            | "part.datum_line"
+            | "part.datum_point"
+            | "part.coordinate_system" => has_body,
             "part.clone" => has_body && !has_solid,
             "part.scaled" => has_solid,
             "part.pad" | "part.revolve" | "part.loft" | "part.pipe" | "part.helix" => has_sketch,
@@ -1148,6 +1152,33 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
             mesh.indices = vec![0, 1, 2, 3, 4, 5];
             mesh.edges = vec![0, 1, 2, 3, 4, 5];
         }
+        core_document::DatumShape::CoordinateSystem { size } => {
+            // Three axes from the origin, each with an arrowhead, and a
+            // corner square between x and y marking the frame's XY plane.
+            let s = size;
+            let h = size * 0.12;
+            let c = size * 0.3;
+            mesh.positions = vec![
+                at(0.0, 0.0, 0.0),
+                at(s, 0.0, 0.0),
+                at(0.0, s, 0.0),
+                at(0.0, 0.0, s),
+                at(s - h, h * 0.5, 0.0),
+                at(s - h, -h * 0.5, 0.0),
+                at(h * 0.5, s - h, 0.0),
+                at(-h * 0.5, s - h, 0.0),
+                at(h * 0.5, 0.0, s - h),
+                at(-h * 0.5, 0.0, s - h),
+                at(c, 0.0, 0.0),
+                at(c, c, 0.0),
+                at(0.0, c, 0.0),
+            ];
+            mesh.normals = vec![n; mesh.positions.len()];
+            mesh.indices = vec![0, 1, 2, 0, 2, 3];
+            mesh.edges = vec![
+                0, 1, 0, 2, 0, 3, 1, 4, 1, 5, 2, 6, 2, 7, 3, 8, 3, 9, 10, 11, 11, 12,
+            ];
+        }
     }
     mesh
 }
@@ -1179,6 +1210,27 @@ mod body_tool {
             ]
         );
     }
+    #[test]
+    fn the_coordinate_system_tool_places_a_frame_on_the_body() {
+        let mut wb = PartDesignWorkbench::default();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.selected_body_id = Some(body.0);
+        assert!(wb.is_tool_enabled("part.coordinate_system", &ctx));
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("part.coordinate_system"),
+            &mut ctx,
+        );
+        let datums = core_document::datums_of_body(&doc, body);
+        assert_eq!(datums.len(), 1);
+        assert!(matches!(
+            datums[0].2.shape,
+            core_document::DatumShape::CoordinateSystem { .. }
+        ));
+        assert!(!datum_mesh(&datums[0].2).edges.is_empty());
+    }
 }
 
 /// The design set's icon for a datum's shape.
@@ -1187,6 +1239,7 @@ pub(crate) fn datum_icon(datum: &core_document::DatumFeature) -> &'static str {
         core_document::DatumShape::Plane { .. } => "datum-plane",
         core_document::DatumShape::Line { .. } => "datum-line",
         core_document::DatumShape::Point => "datum-point",
+        core_document::DatumShape::CoordinateSystem { .. } => "coordinate-system",
     }
 }
 
@@ -1199,8 +1252,20 @@ mod icon_coverage {
     fn the_bench_and_every_feature_family_name_an_icon_in_the_set() {
         let wb = PartDesignWorkbench::default();
         assert!(ui_kit::icon::exists(wb.descriptor().icon));
-        for shape in ["datum-plane", "datum-line", "datum-point"] {
-            assert!(ui_kit::icon::exists(shape), "unknown icon {shape}");
+        use core_document::{DatumAttachment, DatumFeature, DatumShape};
+        for shape in [
+            DatumShape::Plane { size: 1.0 },
+            DatumShape::Line { length: 1.0 },
+            DatumShape::Point,
+            DatumShape::CoordinateSystem { size: 1.0 },
+        ] {
+            let datum = DatumFeature {
+                shape,
+                attachment: DatumAttachment::BasePlane(core_document::BasePlane::XY),
+                offset: Default::default(),
+            };
+            let icon = datum_icon(&datum);
+            assert!(ui_kit::icon::exists(icon), "unknown icon {icon}");
         }
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),

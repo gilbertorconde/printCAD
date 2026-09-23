@@ -338,11 +338,7 @@ impl PartDesignWorkbench {
             );
             return;
         };
-        let icon = match datum.shape {
-            core_document::DatumShape::Plane { .. } => "datum-plane",
-            core_document::DatumShape::Line { .. } => "datum-line",
-            core_document::DatumShape::Point => "datum-point",
-        };
+        let icon = crate::datum_icon(&datum);
         Self::card_header(ui, icon, &format!("{} parameters", datum.shape.label()));
         Self::name_row(ui, ctx, datum_id, &node.name);
         if editors::datum_editor(ui, ctx, datum_id, &mut datum) {

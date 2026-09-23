@@ -775,6 +775,7 @@ pub fn datum_editor(
     match &mut datum.shape {
         DatumShape::Plane { size } => changed |= mm_drag(ui, size, "Display size:"),
         DatumShape::Line { length } => changed |= mm_drag(ui, length, "Display length:"),
+        DatumShape::CoordinateSystem { size } => changed |= mm_drag(ui, size, "Display size:"),
         DatumShape::Point => {}
     }
 
