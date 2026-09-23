@@ -6,6 +6,7 @@
 //! native-format text bytes (`ogeom::io::native`).
 
 mod chain;
+pub mod export;
 mod health;
 mod import;
 pub use import::is_iges;

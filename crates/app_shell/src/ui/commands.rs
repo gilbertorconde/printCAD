@@ -35,6 +35,8 @@ pub enum FileCommand {
     Save,
     SaveAs,
     ImportStep,
+    /// The export dialog: the bodies written as STEP, STL or 3MF.
+    Export,
 }
 
 /// What a start-page NEW card creates.
@@ -50,6 +52,9 @@ pub enum StartKind {
     },
     /// A document with one of the bundled example scenes on its body.
     Example(bench_fixtures::Scene),
+    /// The exporting walkthrough: the pocketed example, and the export
+    /// dialog once its solid is built.
+    ExportWalkthrough,
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +131,8 @@ pub enum UiCommand {
     },
     ConfirmStepImport,
     CancelStepImport,
+    ConfirmExport,
+    CancelExport,
     SwitchWorkbench {
         from: ActiveWorkbench,
         to: ActiveWorkbench,

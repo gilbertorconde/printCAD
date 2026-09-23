@@ -105,6 +105,7 @@ pub struct UiFrameInputs<'a> {
     /// How many buttons it has, so Preferences offers a row per button.
     pub nav_buttons: u32,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
+    pub export_pending: Option<&'a mut crate::app::export::ExportDraft>,
 }
 
 /// A body's measure as the property panel shows it.

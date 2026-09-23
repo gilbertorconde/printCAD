@@ -91,6 +91,12 @@ const SHELL: &[ShellEntry] = &[
         action: ShellAction::File(FileCommand::ImportStep),
     },
     ShellEntry {
+        label: "Export as STEP, STL or 3MF…",
+        icon: "export-stl",
+        keys: Some("Ctrl E"),
+        action: ShellAction::File(FileCommand::Export),
+    },
+    ShellEntry {
         label: "Start page",
         icon: "tree-document",
         keys: None,

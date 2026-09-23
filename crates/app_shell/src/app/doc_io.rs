@@ -77,6 +77,7 @@ pub(crate) enum FileDialogKind {
     Save,
     SaveAs,
     ImportStep,
+    Export(kernel_ogeom::export::ExportFormat),
 }
 
 pub(crate) struct FileDialogResult {
@@ -619,6 +620,8 @@ impl PrintCadApp {
         let mut document = self.session.document.clone();
         let at_seq = self.session.document.mutation_seq();
         let path = path.to_path_buf();
+        let preview = self.thumbnail_shapes();
+        let (forward, up) = self.session.camera.view_basis();
         let progress = Arc::new(SaveProgress::default());
         let worker_progress = Arc::clone(&progress);
         let (tx, rx) = std::sync::mpsc::channel();
@@ -626,6 +629,7 @@ impl PrintCadApp {
         let spawned = std::thread::Builder::new()
             .name("printcad-document-save".to_string())
             .spawn(move || {
+                document.set_thumbnail(crate::thumbnail::render(&preview, forward, up));
                 let packed = document.save_to_bytes_watched(compression, &move |done, total| {
                     worker_progress.set(done, total);
                 });
@@ -643,6 +647,37 @@ impl PrintCadApp {
             }
             Err(err) => app_log::error(format!("Failed to start the save: {err}")),
         }
+    }
+
+    /// The visible bodies in the colours they show in, for the preview a
+    /// save carries.
+    fn thumbnail_shapes(&self) -> Vec<crate::thumbnail::Shape> {
+        let document = &self.session.document;
+        document
+            .imported_geometries()
+            .filter(|(id, _)| document.imported_body_effective_visible(**id))
+            .map(|(id, geometry)| {
+                let display = document
+                    .bodies()
+                    .iter()
+                    .find(|b| b.id == *id)
+                    .and_then(|b| b.display);
+                let mesh = &geometry.mesh;
+                let vertex_colours = display.is_none()
+                    && mesh.colors.len() == mesh.positions.len()
+                    && !mesh.colors.is_empty();
+                let color = match display {
+                    Some(display) => display.color,
+                    None if vertex_colours => [1.0; 3],
+                    None => core_document::BodyDisplay::default().color,
+                };
+                crate::thumbnail::Shape {
+                    mesh: Arc::clone(mesh),
+                    color,
+                    vertex_colours,
+                }
+            })
+            .collect()
     }
 
     /// Take the packed archive once the worker has it.
@@ -733,6 +768,11 @@ impl PrintCadApp {
                     }
                 }
             }
+            FileDialogKind::Export(_) => {
+                if let Some(path) = result.path {
+                    self.start_export(path);
+                }
+            }
         }
         self.file_dialog_rx = None;
     }
@@ -747,6 +787,11 @@ impl PrintCadApp {
         self.file_dialog_rx = Some(rx);
 
         let current_path = self.session.current_file.clone();
+        let stem = current_path
+            .as_ref()
+            .and_then(|p| p.file_stem())
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "untitled".to_string());
         let recent_dir = self.recent.last_dir.clone();
 
         std::thread::spawn(move || {
@@ -759,6 +804,9 @@ impl PrintCadApp {
                     .add_filter("STEP file", &["step", "stp"])
                     .add_filter("IGES file", &["iges", "igs"])
                     .add_filter("Mesh (STL, OBJ, 3MF)", &["stl", "obj", "3mf"]),
+                FileDialogKind::Export(format) => rfd::FileDialog::new()
+                    .add_filter(format!("{} file", format.label()), &[format.extension()])
+                    .set_file_name(format!("{stem}.{}", format.extension())),
                 _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
             };
 
@@ -777,6 +825,7 @@ impl PrintCadApp {
                     }
                 }
                 FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
+                FileDialogKind::Export(_) => dialog.save_file(),
             };
 
             let _ = tx.send(FileDialogResult { kind, path });

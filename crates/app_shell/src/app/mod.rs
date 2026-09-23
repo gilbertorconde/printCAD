@@ -3,6 +3,7 @@
 pub(crate) mod commands;
 pub(crate) mod doc_io;
 pub(crate) mod edges;
+pub(crate) mod export;
 pub(crate) mod frame;
 pub(crate) mod gfx;
 pub(crate) mod import_report;

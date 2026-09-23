@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use egui::{Align, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2, pos2, vec2};
 use settings::recent::RecentEntry;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Card, overline, planned};
+use ui_kit::widgets::{Card, overline};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
 use super::{FileCommand, StartKind, UiCommand};
@@ -18,6 +18,65 @@ pub struct StartPageInputs<'a> {
     /// they are.
     pub document: &'a core_document::Document,
     pub registry: &'a core_document::DocumentService,
+    /// What the main area shows; UI-local.
+    pub view: &'a mut StartView,
+    /// The recent documents' previews, loaded once per file version.
+    pub thumbnails: &'a mut ThumbnailCache,
+}
+
+/// Previews read from the recent documents, keyed by path and the file's
+/// modification time, so a save shows its new preview and nothing is read
+/// twice.
+#[derive(Default)]
+pub struct ThumbnailCache {
+    loaded: std::collections::HashMap<
+        std::path::PathBuf,
+        (Option<SystemTime>, Option<egui::TextureHandle>),
+    >,
+}
+
+impl ThumbnailCache {
+    /// The preview of the document at `path`, reading it when the file is
+    /// new to the cache or has changed since.
+    fn get(&mut self, ctx: &egui::Context, path: &std::path::Path) -> Option<egui::TextureHandle> {
+        let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok();
+        if let Some((seen, texture)) = self.loaded.get(path)
+            && *seen == modified
+        {
+            return texture.clone();
+        }
+        let texture = core_document::Document::read_thumbnail(path)
+            .and_then(|png| tiny_skia::Pixmap::decode_png(&png).ok())
+            .map(|pixmap| {
+                let size = [pixmap.width() as usize, pixmap.height() as usize];
+                let rgba: Vec<u8> = pixmap
+                    .pixels()
+                    .iter()
+                    .flat_map(|p| {
+                        let c = p.demultiply();
+                        [c.red(), c.green(), c.blue(), c.alpha()]
+                    })
+                    .collect();
+                ctx.load_texture(
+                    format!("recent-thumbnail:{}", path.display()),
+                    egui::ColorImage::from_rgba_unmultiplied(size, &rgba),
+                    egui::TextureOptions::LINEAR,
+                )
+            });
+        self.loaded
+            .insert(path.to_path_buf(), (modified, texture.clone()));
+        texture
+    }
+}
+
+/// The start page's main area: the cards, or the release notes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum StartView {
+    #[default]
+    Start,
+    WhatsNew,
+    /// The exporting walkthrough's steps.
+    ExportGuide,
 }
 
 #[derive(Default)]
@@ -134,8 +193,15 @@ fn action_card(
     response
 }
 
-/// A recent-file card: hatched thumbnail area, name, age and size.
-fn recent_card(ui: &mut Ui, size: Vec2, entry: &RecentEntry, now: u64) -> egui::Response {
+/// A recent-file card: the document's preview (hatched when it has none),
+/// name, age and size.
+fn recent_card(
+    ui: &mut Ui,
+    size: Vec2,
+    entry: &RecentEntry,
+    now: u64,
+    preview: Option<&egui::TextureHandle>,
+) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let hovered = response.hovered();
     let painter = ui.painter();
@@ -146,32 +212,24 @@ fn recent_card(ui: &mut Ui, size: Vec2, entry: &RecentEntry, now: u64) -> egui::
         Stroke::new(1.0, if hovered { BORDER_STRONG } else { BORDER }),
         egui::StrokeKind::Inside,
     );
-    // The thumbnail area: hatched until documents carry a preview.
-    // PLANNED: a rendered preview saved with the document.
     let thumb = Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - 56.0));
     painter.rect_filled(thumb, RADIUS_MD, BG0);
-    let step = 10.0;
-    let mut x = thumb.left() - thumb.height();
-    let hatch = Stroke::new(1.0, with_alpha(BORDER, 0.6));
-    let clip = painter.with_clip_rect(thumb);
-    while x < thumb.right() {
-        clip.line_segment(
-            [
-                pos2(x, thumb.bottom()),
-                pos2(x + thumb.height(), thumb.top()),
-            ],
-            hatch,
-        );
-        x += step;
-    }
     let name = entry.name();
-    painter.text(
-        thumb.center(),
-        egui::Align2::CENTER_CENTER,
-        format!("thumbnail · {name}"),
-        mono(FONT_XS),
-        TEXT3,
-    );
+    if let Some(texture) = preview {
+        // Fitted inside the area, keeping the preview's proportions.
+        let [w, h] = texture.size().map(|v| v as f32);
+        let area = thumb.shrink(6.0);
+        let scale = (area.width() / w).min(area.height() / h);
+        let shown = Rect::from_center_size(area.center(), vec2(w * scale, h * scale));
+        painter.image(
+            texture.id(),
+            shown,
+            Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    } else {
+        hatch(painter, thumb, &name);
+    }
     let x = rect.left() + 12.0;
     painter.text(
         pos2(rect.center().x, thumb.bottom() + 10.0),
@@ -195,6 +253,32 @@ fn recent_card(ui: &mut Ui, size: Vec2, entry: &RecentEntry, now: u64) -> egui::
         TEXT3,
     );
     response.on_hover_text(entry.path.display().to_string())
+}
+
+/// The preview area of a document saved without one: hatched, with the
+/// document's name across it.
+fn hatch(painter: &egui::Painter, thumb: Rect, name: &str) {
+    let step = 10.0;
+    let mut x = thumb.left() - thumb.height();
+    let stroke = Stroke::new(1.0, with_alpha(BORDER, 0.6));
+    let clip = painter.with_clip_rect(thumb);
+    while x < thumb.right() {
+        clip.line_segment(
+            [
+                pos2(x, thumb.bottom()),
+                pos2(x + thumb.height(), thumb.top()),
+            ],
+            stroke,
+        );
+        x += step;
+    }
+    painter.text(
+        thumb.center(),
+        egui::Align2::CENTER_CENTER,
+        format!("no preview · {name}"),
+        mono(FONT_XS),
+        TEXT3,
+    );
 }
 
 fn nav_item(ui: &mut Ui, label: &str, active: bool) -> egui::Response {
@@ -284,7 +368,9 @@ pub fn draw_start_page(
                     .color(TEXT3),
             );
             ui.add_space(SPACE_4);
-            nav_item(ui, "Start", true);
+            if nav_item(ui, "Start", *inputs.view == StartView::Start).clicked() {
+                *inputs.view = StartView::Start;
+            }
             if nav_item(ui, "Open file", false).clicked() {
                 commands.push(UiCommand::File(FileCommand::Open));
             }
@@ -296,10 +382,9 @@ pub fn draw_start_page(
             if nav_item(ui, "Preferences", false).clicked() {
                 result.show_preferences = true;
             }
-            // PLANNED: release notes for the running version.
-            planned(ui, "shows what changed in this version", |ui| {
-                nav_item(ui, "What's new", false)
-            });
+            if nav_item(ui, "What's new", *inputs.view == StartView::WhatsNew).clicked() {
+                *inputs.view = StartView::WhatsNew;
+            }
 
             ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
                 Card::new().fill(BG2).padding(SPACE_3).show(ui, |ui| {
@@ -336,6 +421,18 @@ pub fn draw_start_page(
                     let card_w = ((width - 3.0 * CARD_GAP) / 4.0).max(160.0);
                     ui.set_width(width);
                     ui.spacing_mut().item_spacing = vec2(CARD_GAP, CARD_GAP);
+                    match *inputs.view {
+                        StartView::WhatsNew => {
+                            overline(ui, "What's new");
+                            super::release_notes::draw(ui);
+                            return;
+                        }
+                        StartView::ExportGuide => {
+                            export_guide(ui, inputs.view, commands);
+                            return;
+                        }
+                        StartView::Start => {}
+                    }
 
                     overline(ui, "New");
                     ui.horizontal(|ui| {
@@ -419,7 +516,14 @@ pub fn draw_start_page(
                     for row in shown.chunks(4) {
                         ui.horizontal(|ui| {
                             for entry in row {
-                                let response = recent_card(ui, vec2(card_w, 176.0), entry, now);
+                                let preview = inputs.thumbnails.get(ui.ctx(), &entry.path);
+                                let response = recent_card(
+                                    ui,
+                                    vec2(card_w, 176.0),
+                                    entry,
+                                    now,
+                                    preview.as_ref(),
+                                );
                                 if response.clicked() {
                                     commands.push(UiCommand::OpenRecent(entry.path.clone()));
                                 }
@@ -456,21 +560,82 @@ pub fn draw_start_page(
                                 commands.push(UiCommand::StartNew(StartKind::Example(scene)));
                             }
                         }
-                        // PLANNED: a walkthrough of exporting for printing.
-                        planned(ui, "opens a guided walkthrough", |ui| {
-                            action_card(
-                                ui,
-                                vec2(learn_w, 62.0),
-                                false,
-                                None,
-                                "Export for printing",
-                                "STL / 3MF and mesh tolerance",
-                            )
-                        });
+                        if action_card(
+                            ui,
+                            vec2(learn_w, 62.0),
+                            false,
+                            None,
+                            "Export for printing",
+                            "STL / 3MF and mesh tolerance",
+                        )
+                        .clicked()
+                        {
+                            *inputs.view = StartView::ExportGuide;
+                        }
                     });
                 });
         });
     result
+}
+
+/// The steps of exporting a part for a slicer, and a button that walks
+/// them on the pocketed example.
+fn export_guide(ui: &mut Ui, view: &mut StartView, commands: &mut Vec<UiCommand>) {
+    overline(ui, "Export for printing");
+    ui.label(
+        RichText::new("From a solid to a file a slicer reads")
+            .font(sans_semibold(FONT_LG))
+            .color(TEXT1),
+    );
+    let steps = [
+        (
+            "Show what you want to print",
+            "Export writes every visible body, or only the selected one. Hide the              rest in the tree first, or tick Selected body only.",
+        ),
+        (
+            "Open File › Export (Ctrl+E)",
+            "Pick the format. 3MF keeps each body as its own named, closed mesh              and is what current slicers prefer; STL is the one every slicer reads.              STEP carries the exact shapes, for other CAD rather than for printing.",
+        ),
+        (
+            "Choose the mesh tolerance",
+            "The chord tolerance is how far a facet may stray from the true surface,              the angular one how far a curve may turn across one facet. A tenth of              your nozzle width is plenty: finer only makes the file larger.",
+        ),
+        (
+            "Name the file",
+            "The export runs beside the window and the log says when it is written,              with the triangle count.",
+        ),
+    ];
+    for (n, (title, body)) in steps.iter().enumerate() {
+        Card::new().padding(SPACE_4).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(format!("{}", n + 1))
+                        .font(sans_semibold(FONT_XL))
+                        .color(ACCENT),
+                );
+                ui.add_space(SPACE_2);
+                ui.vertical(|ui| {
+                    ui.label(
+                        RichText::new(*title)
+                            .font(sans_semibold(FONT_MD))
+                            .color(TEXT1),
+                    );
+                    ui.label(RichText::new(*body).font(sans(FONT_SM)).color(TEXT2));
+                });
+            });
+        });
+    }
+    ui.add_space(SPACE_2);
+    ui.horizontal(|ui| {
+        if ui_kit::widgets::primary_button(ui, "Try it on the example part").clicked() {
+            commands.push(UiCommand::StartNew(StartKind::ExportWalkthrough));
+            *view = StartView::Start;
+        }
+        if ui_kit::widgets::secondary_button(ui, "Back").clicked() {
+            *view = StartView::Start;
+        }
+    });
 }
 
 #[cfg(test)]

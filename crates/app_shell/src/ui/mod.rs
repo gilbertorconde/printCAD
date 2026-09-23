@@ -3,6 +3,7 @@ mod command_palette;
 mod context_menu;
 pub use context_menu::ViewportMenu;
 mod commands;
+mod export_modal;
 mod feature_tree;
 mod host_ctx;
 mod hud;
@@ -12,6 +13,7 @@ mod menu_bar;
 mod overlays;
 mod preferences;
 mod property_panel;
+mod release_notes;
 mod start_page;
 mod status_bar;
 mod step_import_modal;
@@ -90,6 +92,8 @@ pub struct UiLayer {
     rename_buffer: Option<(TreeItemId, String)>,
     /// The start page's recent-files filter; UI-local.
     recent_search: String,
+    start_view: start_page::StartView,
+    recent_thumbnails: start_page::ThumbnailCache,
     /// Keys the workbench consumed that egui also queued; egui must not
     /// act on them (Tab would move focus, Enter would accept the task).
     swallowed_keys: Vec<egui::Key>,
@@ -120,6 +124,8 @@ impl UiLayer {
             property_tab: property_panel::PropertyTab::default(),
             rename_buffer: None,
             recent_search: String::new(),
+            start_view: Default::default(),
+            recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
         }
     }
@@ -219,6 +225,7 @@ impl UiLayer {
             document_saving,
             save_progress,
             mut step_import_pending,
+            mut export_pending,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -245,6 +252,7 @@ impl UiLayer {
         let mut task_open = false;
         let mut tree_selection = None;
         let mut step_import_dialog = StepImportDialogAction::default();
+        let mut export_dialog = StepImportDialogAction::default();
 
         let projection = settings.camera.projection;
         let nav_style = match settings.camera.navigation_style {
@@ -301,6 +309,8 @@ impl UiLayer {
                     start_page::StartPageInputs {
                         recent,
                         search: &mut self.recent_search,
+                        view: &mut self.start_view,
+                        thumbnails: &mut self.recent_thumbnails,
                         document,
                         registry,
                     },
@@ -554,6 +564,9 @@ impl UiLayer {
                 step_import_dialog =
                     step_import_modal::draw_step_import_modal(ui.ctx(), path, draft);
             }
+            if let Some(draft) = export_pending.as_mut() {
+                export_dialog = export_modal::draw_export_modal(ui.ctx(), draft);
+            }
 
             if let Some((px, py)) = pivot_screen_pos {
                 overlays::draw_pivot_indicator(ui.ctx(), px, py);
@@ -614,6 +627,11 @@ impl UiLayer {
         match step_import_dialog {
             StepImportDialogAction::Confirmed => commands.push(UiCommand::ConfirmStepImport),
             StepImportDialogAction::Cancelled => commands.push(UiCommand::CancelStepImport),
+            StepImportDialogAction::None => {}
+        }
+        match export_dialog {
+            StepImportDialogAction::Confirmed => commands.push(UiCommand::ConfirmExport),
+            StepImportDialogAction::Cancelled => commands.push(UiCommand::CancelExport),
             StepImportDialogAction::None => {}
         }
         if workbench_changed {

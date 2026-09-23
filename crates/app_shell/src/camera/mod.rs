@@ -787,6 +787,16 @@ impl CameraController {
         self.state.orientation.normalize().to_array()
     }
 
+    /// The view's forward and up directions in world space, as the
+    /// orientation maps the axis preset's depth and vertical.
+    pub fn view_basis(&self) -> (Vec3, Vec3) {
+        let q = self.state.orientation.normalize();
+        (
+            q * -self.axes.depth().vector(),
+            q * self.axes.vertical().vector(),
+        )
+    }
+
     pub fn axis_system(&self) -> AxisSystem {
         self.axes
     }

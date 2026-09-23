@@ -188,6 +188,7 @@ impl PrintCadApp {
         self.kernel_worker.in_flight() > 0
             || self.any_tab_busy()
             || self.file_dialog_rx.is_some()
+            || self.export_rx.is_some()
             || !self.nav_device.motion().is_idle()
     }
 
@@ -676,6 +677,7 @@ impl PrintCadApp {
                         nav_device: self.nav_device.device_name(),
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.session.step_import_pending.as_mut(),
+                        export_pending: self.session.export_pending.as_mut(),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
@@ -744,6 +746,7 @@ impl PrintCadApp {
             let work_pending = self.kernel_worker.in_flight() > 0
                 || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
                 || self.file_dialog_rx.is_some()
+                || self.export_rx.is_some()
                 || !self.nav_device.motion().is_idle();
             let animating = self.session.camera.is_animating()
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()

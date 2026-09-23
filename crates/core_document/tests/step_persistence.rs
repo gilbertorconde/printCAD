@@ -530,3 +530,36 @@ fn a_body_hides_and_shows_as_one_undoable_edit() {
         "undo shows it again"
     );
 }
+
+/// The preview rides in front of the document: it survives a save and a
+/// load, it reads back without unpacking the rest, compressed or not, and a
+/// document saved without one reads as none.
+#[test]
+fn the_thumbnail_is_the_first_entry_and_reads_on_its_own() {
+    let png = b"\x89PNG\r\n\x1a\nnot really".to_vec();
+    for (compression, ext) in [
+        (Compression::None, "prtcad"),
+        (Compression::Gzip, "prtcad.gz"),
+        (Compression::Zstd, "prtcad.zst"),
+    ] {
+        let mut doc = Document::new("Preview");
+        doc.create_body(Some("Body".into()));
+        doc.set_thumbnail(Some(png.clone()));
+        let tmp =
+            std::env::temp_dir().join(format!("printcad_thumbnail_{}.{ext}", std::process::id()));
+        doc.save_to_file(&tmp, compression).expect("save");
+        assert_eq!(
+            Document::read_thumbnail(&tmp).as_deref(),
+            Some(&png[..]),
+            "{ext}"
+        );
+        let loaded = Document::load_from_file(&tmp).expect("load");
+        assert_eq!(loaded.thumbnail(), Some(&png[..]), "{ext}");
+        assert_eq!(loaded.bodies().len(), 1);
+
+        doc.set_thumbnail(None);
+        doc.save_to_file(&tmp, compression).expect("save");
+        assert_eq!(Document::read_thumbnail(&tmp), None, "{ext}");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}

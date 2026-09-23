@@ -102,6 +102,7 @@ pub fn draw_menu_bar(
     let sc_save = shortcut(Modifiers::COMMAND, Key::S);
     let sc_save_as = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
     let sc_import = shortcut(Modifiers::COMMAND, Key::I);
+    let sc_export = shortcut(Modifiers::COMMAND, Key::E);
     let sc_quit = shortcut(Modifiers::COMMAND, Key::Q);
     let sc_fit = shortcut(Modifiers::NONE, Key::F);
     let sc_undo = shortcut(Modifiers::COMMAND, Key::Z);
@@ -135,6 +136,9 @@ pub fn draw_menu_bar(
         }
         if i.consume_shortcut(&sc_import) && have_document {
             commands.push(UiCommand::File(FileCommand::ImportStep));
+        }
+        if i.consume_shortcut(&sc_export) && have_document {
+            commands.push(UiCommand::File(FileCommand::Export));
         }
         if i.consume_shortcut(&sc_quit) {
             commands.push(UiCommand::Quit);
@@ -253,6 +257,9 @@ pub fn draw_menu_bar(
                         ui.separator();
                         if item_needing_document(ui, "Import…", Some(&sc_import), have_document) {
                             commands.push(UiCommand::File(FileCommand::ImportStep));
+                        }
+                        if item_needing_document(ui, "Export…", Some(&sc_export), have_document) {
+                            commands.push(UiCommand::File(FileCommand::Export));
                         }
                         ui.separator();
                         if let Some(active) = inputs.active_tab

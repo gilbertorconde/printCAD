@@ -187,10 +187,18 @@ and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
-**Placeholders.** What remains unbuilt of the design:
-document thumbnails, release notes, an export
-walkthrough and external geometry. Everything else
-the design shows is built. The Edit menu's Cut/Copy/Paste go to the
+**Placeholders.** What remains unbuilt of the design is the sketcher's
+external geometry, which waits on the kernel's projection of an edge onto
+a plane. Everything else the design shows is built. File › Export
+(`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
+selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
+tolerance and welded closed, on a thread of its own; the start page's
+Export for printing walks it on the pocketed example. A save carries a
+CPU-rendered preview (`thumbnail.rs`, in the save worker) as the
+container's first entry, `thumbnail.png`, which
+`Document::read_thumbnail` reads without unpacking the rest; the recent
+cards show it. What's new reads `crates/app_shell/RELEASE_NOTES.md`, and
+a test fails when the running version has no entry there. The Edit menu's Cut/Copy/Paste go to the
 active bench as `MenuScope::EditMenu` commands (the sketcher keeps a
 geometry clipboard); the view toolbar's clipping plane (`camera/section.rs`, per tab, a
 plane square to X, Y or Z) reaches the renderer as

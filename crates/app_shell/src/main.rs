@@ -3,6 +3,7 @@ mod camera;
 mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
+mod thumbnail;
 mod ui;
 
 use anyhow::{Context, Result};
@@ -162,6 +163,10 @@ struct PrintCadApp {
     recent: settings::recent::RecentStore,
     // Pending file dialog result from background thread.
     file_dialog_rx: Option<std::sync::mpsc::Receiver<FileDialogResult>>,
+    /// An export being written on its own thread.
+    export_rx: Option<std::sync::mpsc::Receiver<crate::app::export::ExportOutcome>>,
+    /// The export options last confirmed, which the dialog opens on.
+    last_export: crate::app::export::ExportDraft,
     // Background worker that owns the geometry kernel. STEP imports run there
     // so the viewport stays interactive while a multi-million-tri model is
     // tessellated; responses are drained once per frame in `about_to_wait`.
@@ -308,6 +313,8 @@ impl PrintCadApp {
             cursor_in_viewport: None,
             registry,
             file_dialog_rx: None,
+            export_rx: None,
+            last_export: Default::default(),
             kernel_worker: KernelWorker::spawn(),
             nav_device: app::sixdof::SixDofWorker::spawn(move || {
                 let _ = proxy.send_event(AppEvent::DeviceInput);

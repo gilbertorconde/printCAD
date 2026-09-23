@@ -21,6 +21,11 @@ pub(crate) struct DocumentSession {
     pub tab: Uuid,
     pub document: Document,
     pub camera: CameraController,
+    /// The export dialog's draft, while it is open.
+    pub export_pending: Option<crate::app::export::ExportDraft>,
+    /// The exporting walkthrough is waiting on a solid to open the export
+    /// dialog over.
+    pub export_when_ready: bool,
     /// The view toolbar's clipping plane, when on.
     pub section: Option<crate::camera::section::SectionPlane>,
     pub active_tool: ActiveTool,
@@ -158,6 +163,8 @@ impl DocumentSession {
             document: Document::new("Untitled"),
             camera: CameraController::new(camera_settings, (1, 1)),
             section: None,
+            export_pending: None,
+            export_when_ready: false,
             active_tool: ActiveTool::default(),
             selected_body: None,
             hovered_body: None,

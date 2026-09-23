@@ -70,6 +70,7 @@ impl WorkbenchStorage {
 ///
 /// The document is saved as a `.prtcad` file, which is a tar archive
 /// (optionally gzip- or zstd-compressed) containing:
+/// - `thumbnail.png` - A preview of the model, first when present
 /// - `document.json` - This document structure (serialized)
 /// - `assets/` - External files (STEP, STL, etc.) referenced by the document
 /// - `brep/` - Per-body shape snapshots (ogeom native text) and face-color sidecars
@@ -108,6 +109,11 @@ pub struct Document {
     /// Per-face RGB snapshot parallel to [`Self::imported_brep_blobs`] face order.
     #[serde(skip)]
     imported_brep_face_colors: HashMap<BodyId, Vec<[f32; 3]>>,
+    /// A PNG preview of the model, written as the container's first entry
+    /// (`thumbnail.png`) so a file browser reads it without unpacking the
+    /// rest. Derived state: set by the saving client, never an op.
+    #[serde(skip)]
+    thumbnail: Option<std::sync::Arc<Vec<u8>>>,
     /// Reverse index for fast body->imported-object visibility checks.
     #[serde(skip)]
     imported_body_to_object: HashMap<BodyId, Uuid>,
@@ -165,6 +171,9 @@ pub struct BodyDisplay {
     /// 1 is solid; less lets what is behind show through.
     pub opacity: f32,
 }
+
+/// The archive entry holding a document's PNG preview.
+const THUMBNAIL_ENTRY: &str = "thumbnail.png";
 
 impl Default for BodyDisplay {
     fn default() -> Self {
@@ -247,12 +256,24 @@ impl Document {
             asset_blobs: HashMap::new(),
             imported_brep_blobs: HashMap::new(),
             imported_brep_face_colors: HashMap::new(),
+            thumbnail: None,
             imported_body_to_object: HashMap::new(),
             mutation_seq: 0,
             pending_ops: op::OpBuffer::default(),
             journal_pending: op::JournalBuffer::default(),
             history_suppressed: false,
         }
+    }
+
+    /// The PNG preview saved with the document, if it has one.
+    pub fn thumbnail(&self) -> Option<&[u8]> {
+        self.thumbnail.as_deref().map(Vec::as_slice)
+    }
+
+    /// Set the preview the next save writes. Derived state: no op, and the
+    /// document keeps its clean or dirty state.
+    pub fn set_thumbnail(&mut self, png: Option<Vec<u8>>) {
+        self.thumbnail = png.map(std::sync::Arc::new);
     }
 
     /// Currently selected display unit for this document (mm by default).
@@ -1398,6 +1419,35 @@ impl Document {
 
     /// Load document from a .prtcad file (auto-detects compression).
     pub fn load_from_file(path: &Path) -> DocumentResult<Self> {
+        let (file, compression) = Self::open_container(path)?;
+        Self::load_from_reader(file, compression)
+    }
+
+    /// The PNG preview a `.prtcad` file carries, read from the front of the
+    /// container without unpacking the document: `None` for a file saved
+    /// without one, or one that is not a container.
+    pub fn read_thumbnail(path: &Path) -> Option<Vec<u8>> {
+        let (file, compression) = Self::open_container(path).ok()?;
+        let reader: Box<dyn Read> = match compression {
+            Compression::None => Box::new(file),
+            Compression::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
+            Compression::Zstd => Box::new(zstd::Decoder::new(std::io::BufReader::new(file)).ok()?),
+        };
+        let mut archive = Archive::new(reader);
+        // The preview is written first; the document after it means there
+        // is none, and the rest of the file is not worth reading to be sure.
+        let mut entry = archive.entries().ok()?.next()?.ok()?;
+        if entry.path().ok()?.as_ref() != Path::new(THUMBNAIL_ENTRY) {
+            return None;
+        }
+        let mut png = Vec::new();
+        entry.read_to_end(&mut png).ok()?;
+        Some(png)
+    }
+
+    /// A container file, opened, with the compression its name or its
+    /// first bytes say.
+    fn open_container(path: &Path) -> DocumentResult<(File, Compression)> {
         let mut file = File::open(path)?;
 
         // Detect compression via extension and magic bytes.
@@ -1422,8 +1472,7 @@ impl Document {
         } else {
             Compression::None
         };
-
-        Self::load_from_reader(file, compression)
+        Ok((file, compression))
     }
 
     /// Parse a `.prtcad` container from memory — the client side of a
@@ -1461,6 +1510,7 @@ impl Document {
         // path. We can't seek inside a streaming archive, so this happens in a
         // single traversal.
         let mut doc_json: Option<Vec<u8>> = None;
+        let mut thumbnail: Option<Vec<u8>> = None;
         let mut blobs_by_path: HashMap<String, Vec<u8>> = HashMap::new();
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -1470,6 +1520,10 @@ impl Document {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 doc_json = Some(buf);
+            } else if entry_path == Path::new(THUMBNAIL_ENTRY) {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf)?;
+                thumbnail = Some(buf);
             } else if entry_path_str.starts_with("assets/") || entry_path_str.starts_with("brep/") {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
@@ -1484,6 +1538,7 @@ impl Document {
             ))
         })?;
         let mut doc: Document = serde_json::from_slice(&json)?;
+        doc.thumbnail = thumbnail.map(std::sync::Arc::new);
 
         // Resolve any asset blobs that match an `AssetReference::path`.
         for (asset_id, asset) in &doc.assets {
@@ -1540,6 +1595,16 @@ impl Document {
                 progress(packed.min(total), total);
             }
         };
+        // The preview goes first: a reader after it alone stops at the
+        // first entry.
+        if let Some(png) = &doc.thumbnail {
+            let mut header = Header::new_gnu();
+            header.set_path(THUMBNAIL_ENTRY)?;
+            header.set_size(png.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, png.as_slice())?;
+        }
         let mut header = Header::new_gnu();
         header.set_path("document.json")?;
         header.set_size(json.len() as u64);

@@ -80,6 +80,9 @@ impl PrintCadApp {
         for command in commands {
             match command {
                 UiCommand::File(FileCommand::New) => intents.new_document = true,
+                UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
+                UiCommand::ConfirmExport => self.confirm_export(),
+                UiCommand::CancelExport => self.session.export_pending = None,
                 // Dialog-kind priority (import > open > save-as > save)
                 // mirrors the old boolean-cascade in `start_file_dialog`.
                 UiCommand::File(FileCommand::ImportStep) => {
@@ -476,6 +479,8 @@ impl PrintCadApp {
         }
 
         self.poll_file_dialog();
+        self.poll_export();
+        self.open_export_when_ready();
 
         // Workbench change last-but-one so the outgoing workbench sees the
         // frame's selection updates in its deactivate hook.
@@ -879,9 +884,16 @@ impl PrintCadApp {
     /// A fresh document from a start-page card: one body in Part Design,
     /// plus an XY sketch open for editing when asked.
     fn start_new_document(&mut self, kind: StartKind) {
+        let walkthrough = kind == StartKind::ExportWalkthrough;
+        let kind = if walkthrough {
+            StartKind::Example(bench_fixtures::Scene::Pocket)
+        } else {
+            kind
+        };
         // The blank document first: it may be a new tab, and the bench
         // switch below belongs to that tab.
         self.reset_to_new_document();
+        self.session.export_when_ready = walkthrough;
         let part = self.landing_workbench();
         if self.session.active_workbench != part {
             let old = self.session.active_workbench.0.clone();
@@ -913,7 +925,7 @@ impl PrintCadApp {
                     Err(err) => app_log::error(format!("Example: {err}")),
                 }
             }
-            StartKind::Landing => {}
+            StartKind::Landing | StartKind::ExportWalkthrough => {}
         }
     }
 
