@@ -664,25 +664,39 @@ fn a_field_of_view_change_keeps_the_object_its_size() {
     cam.update_viewport((0, 0), (800, 600));
     cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
     let focal = Vec3::from_array(cam.target());
-    let visible_height =
-        |c: &CameraController| 2.0 * c.state.focal_distance * (c.state.height_angle_rad * 0.5).tan();
+    let visible_height = |c: &CameraController| {
+        2.0 * c.state.focal_distance * (c.state.height_angle_rad * 0.5).tan()
+    };
     let height = visible_height(&cam);
     let eye = Vec3::from_array(cam.position());
 
     cam.set_field_of_view(20.0, &settings);
     assert!((cam.field_of_view_deg() - 20.0).abs() < 1e-3);
-    assert!((Vec3::from_array(cam.target()) - focal).length() < 1e-3, "the focal point stays");
-    assert!((visible_height(&cam) - height).abs() < 1e-6 * height, "and so does the framing");
+    assert!(
+        (Vec3::from_array(cam.target()) - focal).length() < 1e-3,
+        "the focal point stays"
+    );
+    assert!(
+        (visible_height(&cam) - height).abs() < 1e-6 * height,
+        "and so does the framing"
+    );
     assert!(
         (Vec3::from_array(cam.position()) - focal).length() > (eye - focal).length(),
         "a narrower view stands the eye further off"
     );
 
     cam.set_field_of_view(500.0, &settings);
-    assert!((cam.field_of_view_deg() - FOV_RANGE_DEG.1).abs() < 1e-3, "clamped to the range");
+    assert!(
+        (cam.field_of_view_deg() - FOV_RANGE_DEG.1).abs() < 1e-3,
+        "clamped to the range"
+    );
 
     cam.state.projection = ProjectionMode::Orthographic;
     let before = cam.field_of_view_deg();
     cam.set_field_of_view(30.0, &settings);
-    assert_eq!(cam.field_of_view_deg(), before, "an orthographic view has none to change");
+    assert_eq!(
+        cam.field_of_view_deg(),
+        before,
+        "an orthographic view has none to change"
+    );
 }
