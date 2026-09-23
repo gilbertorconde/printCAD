@@ -890,7 +890,7 @@ impl PrintCadApp {
             let color = [1.0, 0.75, 0.2];
             let px: Vec<(f32, f32)> = points
                 .iter()
-                .filter_map(|p| self.session.camera.world_to_screen(Vec3::from_array(*p)))
+                .filter_map(|p| self.session.camera.world_to_viewport(Vec3::from_array(*p)))
                 .collect();
             for (x, y) in &px {
                 data.marks.push(core_document::ScreenSpaceMark::crosshair(
@@ -945,7 +945,7 @@ impl PrintCadApp {
             let Some((x, y)) = self
                 .session
                 .camera
-                .world_to_screen(Vec3::new(world[0], world[1], world[2]))
+                .world_to_viewport(Vec3::new(world[0], world[1], world[2]))
             else {
                 continue;
             };

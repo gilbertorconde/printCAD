@@ -332,3 +332,21 @@ fn a_long_frame_does_not_throw_the_view_across_the_scene() {
 
     assert!((long_frame - capped).abs() < 1e-3);
 }
+
+/// The viewport-local projection is the window-absolute one minus the
+/// viewport origin: what the cursor and the overlay painters use.
+#[test]
+fn world_to_viewport_is_the_screen_position_less_the_viewport_origin() {
+    use super::CameraController;
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((320, 48), (800, 600));
+
+    let p = Vec3::new(3.0, -2.0, 1.0);
+    let screen = cam.world_to_screen(p).expect("visible");
+    let local = cam.world_to_viewport(p).expect("visible");
+    assert!((screen.0 - 320.0 - local.0).abs() < 1e-3);
+    assert!((screen.1 - 48.0 - local.1).abs() < 1e-3);
+}

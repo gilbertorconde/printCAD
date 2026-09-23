@@ -46,15 +46,16 @@ impl PrintCadApp {
         if mesh.edge_ids.len() != mesh.edges.len() / 2 {
             return None;
         }
+        // The cursor is viewport-local, so the endpoints project into the
+        // same space: the viewport's own pixels, not the window's.
+        let camera = &self.session.camera;
+        let project = |p: [f32; 3]| camera.world_to_viewport(Vec3::from_array(p));
         let cursor = glam::Vec2::new(cx, cy);
         let mut best: Option<(f32, usize)> = None;
         for (segment, pair) in mesh.edges.chunks(2).enumerate() {
             let a = mesh.positions[pair[0] as usize];
             let b = mesh.positions[pair[1] as usize];
-            let (Some(pa), Some(pb)) = (
-                self.session.camera.world_to_screen(Vec3::from_array(a)),
-                self.session.camera.world_to_screen(Vec3::from_array(b)),
-            ) else {
+            let (Some(pa), Some(pb)) = (project(a), project(b)) else {
                 continue;
             };
             let (pa, pb) = (glam::Vec2::new(pa.0, pa.1), glam::Vec2::new(pb.0, pb.1));

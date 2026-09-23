@@ -490,6 +490,19 @@ impl CameraController {
         self.state.view_projection(&self.axes).to_cols_array_2d()
     }
 
+    /// Viewport-local pixel position of a world point: the space of
+    /// `cursor_in_viewport` and of the screen-space overlays, which the
+    /// painters offset by the viewport origin themselves. `None` when the
+    /// point is behind the camera or the viewport has no size.
+    pub fn world_to_viewport(&self, world_pos: Vec3) -> Option<(f32, f32)> {
+        let vp = self.viewport_info();
+        core_document::runtime::world_to_viewport(
+            self.view_projection(),
+            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            world_pos.to_array(),
+        )
+    }
+
     pub fn viewport_info(&self) -> (f32, f32, u32, u32) {
         (
             self.state.viewport_origin.0,
