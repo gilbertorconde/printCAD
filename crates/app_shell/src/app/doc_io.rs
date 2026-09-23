@@ -722,9 +722,15 @@ impl PrintCadApp {
                 }
             }
             FileDialogKind::ImportStep => {
+                // A mesh file has no shapes to mesh, so the meshing options
+                // the import dialog asks for mean nothing to it.
                 if let Some(path) = result.path {
-                    self.session.step_import_pending =
-                        Some((path, self.last_step_import_detail.clone()));
+                    if kernel_ogeom::is_mesh_file(&path) {
+                        self.import_step_at(&path, self.last_step_import_detail.clone());
+                    } else {
+                        self.session.step_import_pending =
+                            Some((path, self.last_step_import_detail.clone()));
+                    }
                 }
             }
         }
@@ -746,9 +752,13 @@ impl PrintCadApp {
         std::thread::spawn(move || {
             let mut dialog = match kind {
                 FileDialogKind::ImportStep => rfd::FileDialog::new()
-                    .add_filter("STEP or IGES file", &["step", "stp", "iges", "igs"])
+                    .add_filter(
+                        "CAD or mesh file",
+                        &["step", "stp", "iges", "igs", "stl", "obj", "3mf"],
+                    )
                     .add_filter("STEP file", &["step", "stp"])
-                    .add_filter("IGES file", &["iges", "igs"]),
+                    .add_filter("IGES file", &["iges", "igs"])
+                    .add_filter("Mesh (STL, OBJ, 3MF)", &["stl", "obj", "3mf"]),
                 _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
             };
 

@@ -51,6 +51,8 @@ pub struct TreeUiResult {
     pub bench_command: Option<(WorkbenchId, String, MenuScope)>,
     /// "Repair shape" was picked: the broken bodies at or below the row.
     pub repair: Option<Vec<BodyId>>,
+    /// "Convert to solid" was picked: the mesh bodies at or below the row.
+    pub convert: Option<Vec<BodyId>>,
 }
 
 /// View model describing the current document tree.
@@ -79,6 +81,9 @@ struct TreeNode {
     /// Bodies at or below this row whose shape is broken and not yet sent
     /// for repair: what the row's "Repair" entry acts on.
     repairable: Vec<BodyId>,
+    /// Mesh bodies at or below this row not yet sent for conversion: what
+    /// the row's "Convert to solid" entry acts on.
+    convertible: Vec<BodyId>,
     /// Marks the body-tip feature / features past the tip (excluded from
     /// the build).
     is_tip: bool,
@@ -190,6 +195,7 @@ impl DocumentTree {
         }
 
         mark_shape_health(&mut body_nodes, document);
+        mark_meshes(&mut body_nodes, document);
 
         Self {
             document_label: document.name().to_string(),
@@ -288,6 +294,7 @@ fn build_feature_node(
         error: node.error.clone(),
         defect: false,
         repairable: Vec::new(),
+        convertible: Vec::new(),
         is_tip,
         after_tip,
         feature_menu: Some(node.id),
@@ -320,6 +327,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         error: None,
         defect: false,
         repairable: Vec::new(),
+        convertible: Vec::new(),
         is_tip: false,
         after_tip: false,
         feature_menu: None,
@@ -386,6 +394,38 @@ fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
         node.repairable = repairable;
     }
     total
+}
+
+/// Say which rows are meshes, and gather the ones a row's "Convert to solid"
+/// acts on: its own body and every mesh body below it not yet sent.
+fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
+    for node in nodes {
+        mark_meshes(&mut node.children, document);
+        let mut convertible: Vec<BodyId> = node
+            .children
+            .iter()
+            .flat_map(|c| c.convertible.iter().copied())
+            .collect();
+        if let Some(body) = node.body
+            && document.is_mesh_body(body)
+        {
+            let requested = document
+                .bodies()
+                .iter()
+                .any(|b| b.id == body && b.solid_requested);
+            node.detail = Some(if requested {
+                "Mesh, converting to a solid".to_string()
+            } else {
+                "Mesh: draws and measures, takes features once converted to a solid".to_string()
+            });
+            if !requested {
+                convertible.push(body);
+            }
+        }
+        convertible.sort();
+        convertible.dedup();
+        node.convertible = convertible;
+    }
 }
 
 fn kind_word(kind: kernel_api::ImportedNodeKind) -> &'static str {
@@ -456,6 +496,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         error: None,
         defect: false,
         repairable: Vec::new(),
+        convertible: Vec::new(),
         is_tip: false,
         after_tip: false,
         feature_menu: None,
@@ -990,8 +1031,28 @@ fn attach_body_menu(
     let mut select = false;
     let mut delete = false;
     let mut repair = false;
+    let mut convert = false;
     let mut bench_command = None;
     response.context_menu(|ui| {
+        if !node.convertible.is_empty() {
+            let label = match node.convertible.len() {
+                1 => "Convert to solid".to_string(),
+                n => format!("Convert {n} meshes to solids"),
+            };
+            if ui
+                .button(label)
+                .on_hover_text(
+                    "Build a B-rep solid from the mesh's triangles, flat regions merged \
+                     into faces, so it can be measured, checked and cloned into a body \
+                     for features. This clears the undo history.",
+                )
+                .clicked()
+            {
+                convert = true;
+                ui.close();
+            }
+            ui.separator();
+        }
         if !node.repairable.is_empty() {
             let label = match node.repairable.len() {
                 1 => "Repair shape".to_string(),
@@ -1041,6 +1102,9 @@ fn attach_body_menu(
     }
     if repair {
         result.repair = Some(node.repairable.clone());
+    }
+    if convert {
+        result.convert = Some(node.convertible.clone());
     }
     if bench_command.is_some() {
         result.bench_command = bench_command;
@@ -1223,6 +1287,54 @@ mod tests {
             "still red until the repair lands, and not offered twice"
         );
         assert_eq!(find(&tree, root), (true, vec![]));
+    }
+
+    /// A body from a mesh file says it is a mesh and offers its conversion,
+    /// once; a body from a STEP file offers none.
+    #[test]
+    fn a_mesh_body_row_offers_its_conversion_once() {
+        let mut doc = Document::new("tree");
+        let mesh = doc.create_body(Some("Part".into()));
+        let asset = doc.add_asset_with_data(
+            core_document::AssetReference::new(
+                "assets/part.stl".to_string(),
+                core_document::AssetType::Stl,
+                serde_json::json!({}),
+            ),
+            b"solid".to_vec(),
+        );
+        doc.set_imported_geometry(
+            mesh,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        let row = |doc: &Document| {
+            let tree = DocumentTree::build(doc, &DocumentService::default());
+            let node = tree
+                .nodes()
+                .iter()
+                .find(|n| n.id == TreeItemId::Body(mesh))
+                .expect("the body's row");
+            (
+                node.detail.clone().unwrap_or_default(),
+                node.convertible.clone(),
+            )
+        };
+        let (detail, convertible) = row(&doc);
+        assert!(detail.starts_with("Mesh"), "{detail}");
+        assert_eq!(convertible, vec![mesh]);
+
+        assert!(doc.request_mesh_solid(mesh));
+        let (detail, convertible) = row(&doc);
+        assert!(detail.contains("converting"), "{detail}");
+        assert!(convertible.is_empty(), "not offered twice");
     }
 
     #[test]

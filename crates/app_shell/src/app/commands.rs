@@ -169,6 +169,20 @@ impl PrintCadApp {
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
                 UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),
+                UiCommand::ConvertToSolid(bodies) => {
+                    self.session.viewport_menu = None;
+                    let asked = bodies
+                        .into_iter()
+                        .filter(|body| self.session.document.request_mesh_solid(*body))
+                        .count();
+                    if asked > 0 {
+                        self.session.journal.label_next("Convert to solid");
+                        self.session.journal.note(&mut self.session.document);
+                        app_log::info(format!(
+                            "Conversion to a solid asked for {asked} mesh(es); undo history cleared"
+                        ));
+                    }
+                }
                 UiCommand::RepairShapes(bodies) => {
                     self.session.viewport_menu = None;
                     let asked = bodies

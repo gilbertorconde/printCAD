@@ -70,7 +70,11 @@ impl PrintCadApp {
                 | KernelResponse::SolidFailed { body_id, .. }
                 | KernelResponse::ShapeRepaired { body_id, .. }
                 | KernelResponse::RepairFailed { body_id, .. }
-                | KernelResponse::Measured { body_id, .. } => self.tab_index_of_body(*body_id),
+                | KernelResponse::Measured { body_id, .. }
+                | KernelResponse::MeshSolidBuilt { body_id, .. }
+                | KernelResponse::MeshSolidFailed { body_id, .. } => {
+                    self.tab_index_of_body(*body_id)
+                }
             };
             match target {
                 Some(index) => self.with_tab(index, |app| app.apply_kernel_response(response)),
@@ -170,6 +174,20 @@ impl PrintCadApp {
                     result,
                     elapsed,
                 } => self.apply_shape_repair(BodyId(body_id), result, elapsed),
+                KernelResponse::MeshSolidBuilt {
+                    body_id,
+                    result,
+                    elapsed,
+                } => self.apply_mesh_solid(BodyId(body_id), result, elapsed),
+                KernelResponse::MeshSolidFailed { body_id, error } => {
+                    self.session.solids_in_flight.remove(&body_id);
+                    let name = self.body_name(BodyId(body_id));
+                    if Self::is_cancellation(&error) {
+                        app_log::info(format!("Conversion of `{name}` cancelled"));
+                    } else {
+                        app_log::error(format!("`{name}` did not convert to a solid: {error}"));
+                    }
+                }
                 KernelResponse::Measured {
                     body_id,
                     revision,
@@ -342,11 +360,7 @@ impl PrintCadApp {
             .unwrap_or_else(|| "step".to_string());
         let asset = core_document::AssetReference::new(
             format!("assets/{}.{}", uuid::Uuid::new_v4(), extension),
-            if kernel_ogeom::is_iges(path) {
-                core_document::AssetType::Iges
-            } else {
-                core_document::AssetType::Step
-            },
+            core_document::AssetType::from_extension(&extension),
             serde_json::json!({
                 "source_path": path.display().to_string(),
                 "body_count": imported_bodies.len(),
@@ -590,11 +604,17 @@ impl PrintCadApp {
     }
 }
 
-/// The exchange format a path names, for log lines.
+/// The format a path names, for log lines.
 fn format_of(path: &Path) -> &'static str {
-    if kernel_ogeom::is_iges(path) {
-        "IGES"
-    } else {
-        "STEP"
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase);
+    match extension.as_deref() {
+        Some("iges" | "igs") => "IGES",
+        Some("stl") => "STL",
+        Some("obj") => "OBJ",
+        Some("3mf") => "3MF",
+        _ => "STEP",
     }
 }

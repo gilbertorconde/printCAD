@@ -58,7 +58,15 @@ cargo fmt --all                   # CI enforces --check
 - `kernel_ogeom` — pure-Rust kernel adapter. STEP and IGES import share one
   path after the read (`import.rs`, reader chosen by extension, `is_iges`);
   IGES solids and closed surface groups become bodies, open sheets are left
-  out with a log line. STEP import builds bodies from
+  out with a log line. STL, OBJ and 3MF (`mesh.rs`) import as **mesh
+  bodies**: triangles and no shape snapshot (`Document::is_mesh_body`),
+  welded where normals agree within 30° and outlined at creases and holes;
+  they draw, hide and pick and take no features. "Convert to solid" (tree
+  and viewport menus) records `RequestMeshSolid`, a history barrier, and
+  `drive_mesh_solids` derives the B-rep with the kernel's `solid_from_mesh`
+  (coplanar triangles merged into faces; a mesh that does not close becomes
+  an open shell, said in the log), after which the body is an ordinary
+  imported solid. STEP import builds bodies from
   the document's **placed occurrences** (`Document::occurrences_of`), never
   from `import.solids` — the latter are part-local, so an assembly built from
   them puts every part at its own origin. The node walk mirrors the kernel's
@@ -180,7 +188,7 @@ walkthrough. Colors reach the workbenches through
 
 **Placeholders.** What remains unbuilt of the design: a local coordinate
 system datum, a clipping plane,
-document thumbnails, release notes, STL/3MF import, an export
+document thumbnails, release notes, an export
 walkthrough, merging sketches, ellipse by three points and elliptical
 arcs, external geometry, carbon copy and a polyline tool. Everything else
 the design shows is built. The Edit menu's Cut/Copy/Paste go to the
@@ -390,7 +398,8 @@ one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
 toolbar click would and logs every feature's rebuild error (frame.rs);
-`PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once. Any of these skips the start page. The 1 s `printcad.frame` log reports
+`PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once,
+`PRINTCAD_BENCH_CONVERT=1` the conversion of every mesh body. Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
 Face-boundary edges draw on every frame, moving or still. They are cheap

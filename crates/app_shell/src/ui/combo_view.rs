@@ -24,6 +24,8 @@ pub struct ComboViewResult {
     pub delete_item: Option<TreeItemId>,
     /// Bodies whose shape the user asked the kernel to repair.
     pub repair: Option<Vec<core_document::BodyId>>,
+    /// Mesh bodies the user asked the kernel to turn into solids.
+    pub convert: Option<Vec<core_document::BodyId>>,
     /// A bench's own row-menu entry was picked.
     pub bench_command: Option<(core_document::WorkbenchId, String, core_document::MenuScope)>,
     /// The property panel changed a body's look.
@@ -176,6 +178,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.tree_feature_command = tree_ui.feature_command;
                     result.delete_item = tree_ui.delete_item;
                     result.repair = tree_ui.repair;
+                    result.convert = tree_ui.convert;
                     // Hover wins; the selection stands in when the pointer
                     // is elsewhere, so the line never goes blank mid-glance.
                     selected_detail = tree_ui

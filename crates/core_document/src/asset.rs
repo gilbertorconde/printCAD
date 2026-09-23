@@ -48,6 +48,8 @@ pub enum AssetType {
     Iges,
     /// OBJ file
     Obj,
+    /// 3MF package
+    ThreeMf,
     /// Other/unknown format
     Other,
 }
@@ -60,6 +62,7 @@ impl AssetType {
             AssetType::Stl => "stl",
             AssetType::Iges => "iges",
             AssetType::Obj => "obj",
+            AssetType::ThreeMf => "3mf",
             AssetType::Other => "bin",
         }
     }
@@ -71,7 +74,14 @@ impl AssetType {
             "stl" => AssetType::Stl,
             "iges" | "igs" => AssetType::Iges,
             "obj" => AssetType::Obj,
+            "3mf" => AssetType::ThreeMf,
             _ => AssetType::Other,
         }
+    }
+
+    /// A format of triangles only: its bodies draw and pick, and take
+    /// features once converted to a solid.
+    pub fn is_mesh(&self) -> bool {
+        matches!(self, AssetType::Stl | AssetType::Obj | AssetType::ThreeMf)
     }
 }

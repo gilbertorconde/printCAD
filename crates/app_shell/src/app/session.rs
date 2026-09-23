@@ -113,6 +113,8 @@ pub(crate) struct DocumentSession {
     /// Each measured body's volume, area and centre, with the geometry
     /// revision it was measured at.
     pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,
+    /// Mesh bodies the kernel worker is turning into solids.
+    pub solids_in_flight: std::collections::HashSet<Uuid>,
     /// Bodies whose repair the kernel worker is running.
     pub repairs_in_flight: std::collections::HashSet<Uuid>,
     /// The depths the pick pass drew around the cursor, and the camera it
@@ -191,6 +193,7 @@ impl DocumentSession {
             hovered_face: None,
             pick_depths: None,
             repairs_in_flight: Default::default(),
+            solids_in_flight: Default::default(),
             physical: Default::default(),
             selected_edges: Vec::new(),
             bench_states: HashMap::new(),

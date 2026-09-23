@@ -373,17 +373,18 @@ pub fn draw_start_page(
                                 }));
                             }
                         }
-                        // PLANNED: import STL / 3MF meshes as bodies.
-                        planned(ui, "imports an STL or 3MF mesh as a body", |ui| {
-                            action_card(
-                                ui,
-                                size,
-                                false,
-                                Some("workbench-mesh"),
-                                "From mesh",
-                                "Import STL / 3MF",
-                            )
-                        });
+                        if action_card(
+                            ui,
+                            size,
+                            false,
+                            Some("workbench-mesh"),
+                            "From mesh",
+                            "Import STL / OBJ / 3MF",
+                        )
+                        .clicked()
+                        {
+                            commands.push(UiCommand::File(FileCommand::ImportStep));
+                        }
                         if action_card(ui, size, false, Some("open"), "Open…", "Browse files")
                             .clicked()
                         {

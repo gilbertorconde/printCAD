@@ -130,6 +130,8 @@ pub enum UiCommand {
     DeleteTreeItem(TreeItemId),
     /// Ask the kernel to repair these imported bodies' shapes.
     RepairShapes(Vec<core_document::BodyId>),
+    /// Ask the kernel to turn these mesh bodies into solids.
+    ConvertToSolid(Vec<core_document::BodyId>),
     /// The property panel's Label row renamed a tree item.
     RenameTreeItem {
         item: TreeItemId,

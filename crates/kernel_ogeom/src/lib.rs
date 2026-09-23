@@ -9,6 +9,8 @@ mod chain;
 mod health;
 mod import;
 pub use import::is_iges;
+mod mesh;
+pub use mesh::is_mesh_file;
 mod ops;
 mod profile;
 pub mod progress;
@@ -101,6 +103,17 @@ impl OgeomKernel {
     ) -> KernelResult<kernel_api::RepairResult> {
         self.initialize()?;
         health::repair_blob(brep_blob, face_colors, detail)
+    }
+
+    /// Build a B-rep from a mesh body's render mesh: coplanar triangles
+    /// merged into planar faces, open shells where the mesh does not close.
+    pub fn mesh_to_solid(
+        &mut self,
+        mesh: &TriMesh,
+        detail: &TessellationSettings,
+    ) -> KernelResult<kernel_api::MeshSolidResult> {
+        self.initialize()?;
+        mesh::solid_of_mesh(mesh, detail)
     }
 
     /// Volume, surface area and centre of mass of a body's snapshot.

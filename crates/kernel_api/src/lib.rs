@@ -296,6 +296,29 @@ pub struct RepairResult {
     pub mended: Vec<String>,
 }
 
+/// A mesh body turned into a B-rep by the kernel: the shape, its mesh, the
+/// checker's verdict, and what the conversion found.
+#[derive(Debug, Clone, Default)]
+pub struct MeshSolidResult {
+    /// Native-format snapshot of the shape.
+    pub brep_blob: Vec<u8>,
+    /// Per-face colours in the shape's face order: the mesh's colour on
+    /// every face when it had one colour, else empty.
+    pub face_colors: Vec<[f32; 3]>,
+    /// Render mesh of the shape, with its kernel faces and edges.
+    pub mesh: TriMesh,
+    /// Axis-aligned bounds in millimetres.
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+    /// The checker's findings on the shape.
+    pub health: ShapeHealth,
+    /// Every piece of the mesh closed and became a solid; otherwise the
+    /// shape is the open shell(s) the mesh makes.
+    pub closed: bool,
+    /// What the conversion did and where the mesh does not close, a phrase
+    /// each ("12 triangles into 6 faces", "3 hole edges").
+    pub summary: Vec<String>,
+}
+
 /// A body's measure: its volume, surface area and centre of mass, exact
 /// where the kernel has a closed form for its faces.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]

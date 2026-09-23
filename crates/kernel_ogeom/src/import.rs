@@ -29,6 +29,9 @@ pub fn import_step(
     detail: &TessellationSettings,
     force_inline_mesh: bool,
 ) -> KernelResult<ImportedModel> {
+    if crate::mesh::is_mesh_file(path) {
+        return crate::mesh::import_mesh(path);
+    }
     let total = Instant::now();
     let bytes = std::fs::read(path)
         .map_err(|e| KernelError::Import(format!("failed to read {}: {e}", path.display())))?;

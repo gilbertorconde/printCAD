@@ -422,6 +422,23 @@ impl PrintCadApp {
             }
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_CONVERT=1` asks for every mesh
+        // body to become a solid, once, as the tree's menu would.
+        if !self.bench_convert_fired && std::env::var_os("PRINTCAD_BENCH_CONVERT").is_some() {
+            let meshes: Vec<_> = self
+                .session
+                .document
+                .bodies()
+                .iter()
+                .map(|b| b.id)
+                .filter(|b| self.session.document.is_mesh_body(*b))
+                .collect();
+            if !meshes.is_empty() {
+                self.bench_convert_fired = true;
+                self.apply_ui_commands(vec![ui::UiCommand::ConvertToSolid(meshes)], event_loop);
+            }
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_CLICK=<fx>,<fy>` makes one selection
         // click at that fraction of the viewport once the first body has
         // geometry, and logs what the click saw and what it selected. The
@@ -520,6 +537,7 @@ impl PrintCadApp {
             app.drain_document_opens();
             app.drive_part_recompute();
             app.drive_shape_repairs();
+            app.drive_mesh_solids();
         });
         self.drive_measurement();
 

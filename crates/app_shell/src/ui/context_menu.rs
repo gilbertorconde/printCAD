@@ -72,6 +72,15 @@ pub fn draw(
                     commands.push(UiCommand::RepairShapes(vec![menu.body]));
                     commands.push(UiCommand::CloseViewportMenu);
                 }
+                let convertible = document.is_mesh_body(menu.body)
+                    && document
+                        .bodies()
+                        .iter()
+                        .any(|b| b.id == menu.body && !b.solid_requested);
+                if convertible && item(ui, "Convert to solid") {
+                    commands.push(UiCommand::ConvertToSolid(vec![menu.body]));
+                    commands.push(UiCommand::CloseViewportMenu);
+                }
                 if let Some(node) = imported
                     && item(ui, "Hide")
                 {

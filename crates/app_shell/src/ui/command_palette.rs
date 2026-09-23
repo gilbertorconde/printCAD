@@ -85,7 +85,7 @@ const SHELL: &[ShellEntry] = &[
         action: ShellAction::File(FileCommand::SaveAs),
     },
     ShellEntry {
-        label: "Import STEP or IGES…",
+        label: "Import STEP, IGES or mesh…",
         icon: "file-document",
         keys: Some("Ctrl I"),
         action: ShellAction::File(FileCommand::ImportStep),

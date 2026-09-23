@@ -190,3 +190,76 @@ impl PrintCadApp {
         (*measured == revision).then(|| reading.clone())
     }
 }
+
+impl PrintCadApp {
+    /// Hand every mesh body whose conversion was asked for, and has not
+    /// landed, to the kernel worker. The request is an op: a peer's and a
+    /// reopened document's convert the same way.
+    pub(crate) fn drive_mesh_solids(&mut self) {
+        for body in self.session.document.bodies_awaiting_solid() {
+            if self.session.solids_in_flight.contains(&body.0) {
+                continue;
+            }
+            let Some(mesh) = self
+                .session
+                .document
+                .imported_geometry(body)
+                .map(|g| std::sync::Arc::clone(&g.mesh))
+            else {
+                continue;
+            };
+            self.session.solids_in_flight.insert(body.0);
+            app_log::info(format!(
+                "Converting `{}` to a solid ({} triangles)…",
+                self.body_name(body),
+                mesh.indices.len() / 3
+            ));
+            self.kernel_worker
+                .request_mesh_solid(body.0, mesh, TessellationSettings::default());
+        }
+    }
+
+    /// Land a mesh body's solid: its snapshot, its mesh with kernel faces
+    /// and edges, the checker's verdict, and a line on what it became.
+    pub(crate) fn apply_mesh_solid(
+        &mut self,
+        body: core_document::BodyId,
+        result: kernel_api::MeshSolidResult,
+        elapsed: std::time::Duration,
+    ) {
+        self.session.solids_in_flight.remove(&body.0);
+        let Some(previous) = self.session.document.imported_geometry(body).cloned() else {
+            return;
+        };
+        let name = self.body_name(body);
+        self.session
+            .document
+            .set_imported_brep_data(body, result.brep_blob, result.face_colors);
+        self.session.document.set_imported_geometry(
+            body,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(result.mesh),
+                bounds_mm: result.bounds_mm.or(previous.bounds_mm),
+                health: Some(result.health),
+                ..previous
+            },
+        );
+        if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
+            self.session.face_highlight = None;
+            self.session.last_face_hit = None;
+        }
+        self.session.hovered_face = None;
+        let summary = result.summary.join(", ");
+        let ms = elapsed.as_secs_f64() * 1000.0;
+        if result.closed {
+            app_log::info(format!(
+                "Converted `{name}` to a solid in {ms:.0}ms: {summary}"
+            ));
+        } else {
+            app_log::warn(format!(
+                "`{name}` does not close, so it became an open shell, not a solid \
+                 ({ms:.0}ms): {summary}"
+            ));
+        }
+    }
+}

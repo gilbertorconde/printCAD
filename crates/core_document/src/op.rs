@@ -104,6 +104,11 @@ pub enum DocumentOp {
     RequestBodyRepair {
         id: BodyId,
     },
+    /// Ask for a mesh body to become a B-rep solid. The solid is derived,
+    /// as an import's geometry is.
+    RequestMeshSolid {
+        id: BodyId,
+    },
     /// Delete a body: the inverse of `CreateBody`, and what the tree's
     /// Delete does. Any features still attached go with it, along with the
     /// body's geometry.

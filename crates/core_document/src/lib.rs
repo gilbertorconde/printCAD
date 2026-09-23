@@ -149,6 +149,10 @@ pub struct Body {
     /// import's geometry.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub repair_requested: bool,
+    /// The user asked for this mesh body to become a B-rep solid. The
+    /// solid is derived from it, like the rest of an import's geometry.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub solid_requested: bool,
 }
 
 /// A user-chosen look for a body: its colour and how much of it shows.
@@ -377,6 +381,7 @@ impl Document {
             // lying about — clearing undo beats a wrong inverse.
             Op::AddAsset { .. }
             | Op::RequestBodyRepair { .. }
+            | Op::RequestMeshSolid { .. }
             | Op::ImportModel { .. }
             | Op::AppendImportedObjectGraph { .. }
             | Op::ClearImportedObjectGraph => return None,
@@ -433,6 +438,7 @@ impl Document {
                     tip: None,
                     display: None,
                     repair_requested: false,
+                    solid_requested: false,
                 });
             }
             Op::RenameBody { id, name } => {
@@ -448,6 +454,11 @@ impl Document {
             Op::RequestBodyRepair { id } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.repair_requested = true;
+                }
+            }
+            Op::RequestMeshSolid { id } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.solid_requested = true;
                 }
             }
             Op::RemoveBody { id } => {
@@ -571,6 +582,7 @@ impl Document {
                         tip: None,
                         display: None,
                         repair_requested: false,
+                        solid_requested: false,
                     });
                 }
                 self.imported_object_roots.extend(roots.iter().copied());
@@ -808,6 +820,42 @@ impl Document {
         }
         self.record_and_apply(op::DocumentOp::RequestBodyRepair { id: body });
         true
+    }
+
+    /// Whether a body is a mesh from a mesh file, not yet a solid: it has
+    /// triangles and no shape snapshot.
+    pub fn is_mesh_body(&self, body: BodyId) -> bool {
+        self.imported_geometry(body)
+            .and_then(|g| g.source_asset)
+            .and_then(|asset| self.get_asset(asset))
+            .is_some_and(|asset| asset.asset_type.is_mesh())
+            && self.imported_brep_blob(body).is_none()
+    }
+
+    /// Ask for a mesh body to become a B-rep solid; once, and only for a
+    /// mesh body. Returns whether the request was recorded. Not undoable:
+    /// the mesh it was would have to be derived from the file again.
+    pub fn request_mesh_solid(&mut self, body: BodyId) -> bool {
+        let pending = self
+            .bodies
+            .iter()
+            .find(|b| b.id == body)
+            .is_some_and(|b| !b.solid_requested);
+        if !pending || !self.is_mesh_body(body) {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::RequestMeshSolid { id: body });
+        true
+    }
+
+    /// Mesh bodies whose conversion was asked for and has not landed: the
+    /// host derives each one.
+    pub fn bodies_awaiting_solid(&self) -> Vec<BodyId> {
+        self.bodies
+            .iter()
+            .filter(|b| b.solid_requested && self.is_mesh_body(b.id))
+            .map(|b| b.id)
+            .collect()
     }
 
     /// Bodies whose repair was asked for and whose geometry is not yet the
@@ -1083,15 +1131,22 @@ impl Document {
     }
 
     /// Store BRep binary + face colour snapshot for a body (in-memory until save).
+    /// An empty snapshot is no shape, as a mesh body has none: it clears the
+    /// body's snapshot rather than storing one that describes nothing.
     pub fn set_imported_brep_data(
         &mut self,
         body: BodyId,
         brep_blob: Vec<u8>,
         face_colors: Vec<[f32; 3]>,
     ) {
-        self.imported_brep_blobs
-            .insert(body, std::sync::Arc::new(brep_blob));
-        self.imported_brep_face_colors.insert(body, face_colors);
+        if brep_blob.is_empty() {
+            self.imported_brep_blobs.remove(&body);
+            self.imported_brep_face_colors.remove(&body);
+        } else {
+            self.imported_brep_blobs
+                .insert(body, std::sync::Arc::new(brep_blob));
+            self.imported_brep_face_colors.insert(body, face_colors);
+        }
         self.mark_dirty();
     }
 

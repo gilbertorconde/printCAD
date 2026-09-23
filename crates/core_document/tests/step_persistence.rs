@@ -436,3 +436,59 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     assert!(health.repaired);
     assert!(loaded.bodies_awaiting_repair().is_empty());
 }
+
+/// A body imported from a mesh file is a mesh body until its solid lands;
+/// asking for the solid is one op, clears undo, and a STEP body cannot ask.
+#[test]
+fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
+    use core_document::history::OpJournal;
+
+    let mut doc = Document::new("Mesh");
+    let mesh_body = doc.create_body(Some("Printed part".into()));
+    let step_body = doc.create_body(Some("Bracket".into()));
+    for (body, path, kind) in [
+        (mesh_body, "assets/part.stl", AssetType::Stl),
+        (step_body, "assets/bracket.step", AssetType::Step),
+    ] {
+        let asset = doc.add_asset_with_data(
+            AssetReference::new(path.to_string(), kind, json!({})),
+            b"bytes".to_vec(),
+        );
+        doc.set_imported_geometry(
+            body,
+            ImportedGeometry {
+                mesh: fake_mesh(),
+                source_asset: Some(asset),
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+    }
+    doc.set_imported_brep_data(step_body, b"ogeom".to_vec(), Vec::new());
+
+    assert!(doc.is_mesh_body(mesh_body));
+    assert!(!doc.is_mesh_body(step_body));
+    assert!(
+        !doc.request_mesh_solid(step_body),
+        "a STEP body is a solid already"
+    );
+
+    let mut journal = OpJournal::new(16);
+    doc.rename_body(step_body, "Bracket 2");
+    journal.note(&mut doc);
+    let _ = doc.take_pending_ops();
+    assert!(doc.request_mesh_solid(mesh_body));
+    assert!(!doc.request_mesh_solid(mesh_body), "asked once");
+    journal.note(&mut doc);
+    assert!(!journal.can_undo(), "a conversion clears undo history");
+    assert_eq!(doc.take_pending_ops().len(), 1);
+    assert_eq!(doc.bodies_awaiting_solid(), vec![mesh_body]);
+
+    // The solid lands: a snapshot, and the body is a solid now.
+    doc.set_imported_brep_data(mesh_body, b"ogeom".to_vec(), Vec::new());
+    assert!(!doc.is_mesh_body(mesh_body));
+    assert!(doc.bodies_awaiting_solid().is_empty());
+}

@@ -45,6 +45,12 @@ pub enum KernelRequest {
         revision: u64,
         brep_blob: Arc<Vec<u8>>,
     },
+    /// Build a B-rep solid from a mesh body's triangles.
+    MeshToSolid {
+        body_id: Uuid,
+        mesh: Arc<kernel_api::TriMesh>,
+        detail: TessellationSettings,
+    },
     /// Run the kernel's repair on an imported body's snapshot.
     RepairShape {
         body_id: Uuid,
@@ -94,6 +100,15 @@ pub enum KernelResponse {
         body_id: Uuid,
         revision: u64,
         result: Result<kernel_api::PhysicalProperties, String>,
+    },
+    MeshSolidBuilt {
+        body_id: Uuid,
+        result: kernel_api::MeshSolidResult,
+        elapsed: Duration,
+    },
+    MeshSolidFailed {
+        body_id: Uuid,
+        error: String,
     },
 }
 
@@ -232,6 +247,27 @@ impl KernelWorker {
                 body_id,
                 brep_blob,
                 face_colors,
+                detail,
+            })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit the conversion of a mesh body to a solid. One response
+    /// arrives per request.
+    pub fn request_mesh_solid(
+        &mut self,
+        body_id: Uuid,
+        mesh: Arc<kernel_api::TriMesh>,
+        detail: TessellationSettings,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::MeshToSolid {
+                body_id,
+                mesh,
                 detail,
             })
             .is_ok()
@@ -408,6 +444,24 @@ fn worker_loop(
                         body_id,
                         failed_feature: op_features.get(err.op_index).copied(),
                         error: err.message,
+                    },
+                }
+            }
+            KernelRequest::MeshToSolid {
+                body_id,
+                mesh,
+                detail,
+            } => {
+                let started = Instant::now();
+                match kernel.mesh_to_solid(&mesh, &detail) {
+                    Ok(result) => KernelResponse::MeshSolidBuilt {
+                        body_id,
+                        result,
+                        elapsed: started.elapsed(),
+                    },
+                    Err(err) => KernelResponse::MeshSolidFailed {
+                        body_id,
+                        error: err.to_string(),
                     },
                 }
             }
