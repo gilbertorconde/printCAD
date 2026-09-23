@@ -441,3 +441,81 @@ fn symmetric_pad_straddles_the_sketch_plane() {
         "±4 about the plane"
     );
 }
+
+/// Whether every face of `mesh` winds outward: its triangles' normals point
+/// away from the mesh centroid, as a solid's skin must whichever way the
+/// profile it came from was drawn.
+fn every_face_winds_outward(mesh: &kernel_api::TriMesh) -> bool {
+    let (min, max) = mesh_bounds(mesh);
+    let centre = [
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+        (min[2] + max[2]) / 2.0,
+    ];
+    mesh.indices.chunks(3).all(|tri| {
+        let p = |i: u32| mesh.positions[i as usize];
+        let (a, b, c) = (p(tri[0]), p(tri[1]), p(tri[2]));
+        let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let n = [
+            u[1] * v[2] - u[2] * v[1],
+            u[2] * v[0] - u[0] * v[2],
+            u[0] * v[1] - u[1] * v[0],
+        ];
+        let out = [
+            (a[0] + b[0] + c[0]) / 3.0 - centre[0],
+            (a[1] + b[1] + c[1]) / 3.0 - centre[1],
+            (a[2] + b[2] + c[2]) / 3.0 - centre[2],
+        ];
+        n[0] * out[0] + n[1] * out[1] + n[2] * out[2] > 0.0
+    })
+}
+
+/// A square drawn clockwise pads to the same solid as one drawn
+/// counter-clockwise: every face of its skin faces out.
+#[test]
+fn a_clockwise_profile_pads_to_an_outward_facing_solid() {
+    for clockwise in [false, true] {
+        let mut sketch = Sketch::new("s");
+        let mut corners = [(0.0, 0.0), (20.0, 0.0), (20.0, 20.0), (0.0, 20.0)];
+        if clockwise {
+            corners.reverse();
+        }
+        let ids: Vec<_> = corners
+            .iter()
+            .map(|(x, y)| {
+                sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(*x, *y))))
+            })
+            .collect();
+        for i in 0..4 {
+            sketch.add_geometry(GeometryElement::Line(Line::new(ids[i], ids[(i + 1) % 4])));
+        }
+        let plane = sketch.plane;
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let sketch_id = doc
+            .add_feature_in_body(
+                SketchFeature::new(sketch, plane),
+                "sketch".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.add_feature_in_body(
+            pad_feature(sketch_id, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+
+        let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+        let mesh = OgeomKernel::new()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap()
+            .mesh;
+        assert_eq!(mesh.indices.len() / 3, 12, "clockwise={clockwise}: a box");
+        assert!(
+            every_face_winds_outward(&mesh),
+            "clockwise={clockwise}: a face winds into the solid"
+        );
+    }
+}

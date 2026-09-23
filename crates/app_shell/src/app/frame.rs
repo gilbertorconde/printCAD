@@ -164,6 +164,11 @@ fn device_button_command(
     }
 }
 
+/// Frames after geometry arrives at which the bench click hook requests its
+/// pick (the camera has settled by then) and then clicks.
+const BENCH_CLICK_PICK_FRAME: u32 = 180;
+const BENCH_CLICK_FRAME: u32 = 191;
+
 impl PrintCadApp {
     /// Body of `about_to_wait`: pace the frame, drain worker channels,
     /// assemble the scene, run the UI, render, read back the pick, and
@@ -391,6 +396,64 @@ impl PrintCadApp {
             };
             self.apply_tree_selection(row);
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
+        }
+
+        // Dev/bench hook: `PRINTCAD_BENCH_CLICK=<fx>,<fy>` makes one selection
+        // click at that fraction of the viewport once the first body has
+        // geometry, and logs what the click saw and what it selected. The
+        // camera snaps to a corner view first and settles before the pick is
+        // requested, then the readback gets a few frames to land.
+        if let Ok(spec) = std::env::var("PRINTCAD_BENCH_CLICK")
+            && self.bench_click_frames <= BENCH_CLICK_FRAME
+            && self
+                .session
+                .document
+                .bodies()
+                .first()
+                .is_some_and(|b| self.session.document.imported_geometry(b.id).is_some())
+        {
+            self.bench_click_frames += 1;
+            self.redraw_needed = true;
+            let (fx, fy) = spec
+                .split_once(',')
+                .and_then(|(a, b)| Some((a.parse::<f32>().ok()?, b.parse::<f32>().ok()?)))
+                .unwrap_or((0.5, 0.5));
+            let vp = self.session.camera.viewport_info();
+            let cx = fx * vp.2 as f32;
+            let cy = fy * vp.3 as f32;
+            match self.bench_click_frames {
+                1 => self.session.camera.snap_to_view(
+                    crate::orientation_cube::CameraSnapView::FrontTopRight,
+                    &self.user_settings.camera,
+                ),
+                BENCH_CLICK_PICK_FRAME..BENCH_CLICK_FRAME => {
+                    self.cursor_in_viewport = Some((cx, cy));
+                    if let Some(gfx) = self.gfx.as_mut() {
+                        gfx.renderer
+                            .request_pick((vp.0 + cx) as u32, (vp.1 + cy) as u32);
+                    }
+                }
+                BENCH_CLICK_FRAME => {
+                    tracing::info!(
+                        target: "printcad.frame",
+                        "bench click at ({cx}, {cy}) of {:?}: body {:?} at {:?}, edge {:?}",
+                        (vp.2, vp.3),
+                        self.session.hovered_body,
+                        self.session.hovered_world_pos,
+                        self.session.hovered_edge,
+                    );
+                    self.toggle_body_under_cursor_selection();
+                    tracing::info!(
+                        target: "printcad.frame",
+                        "bench click selected: body {:?}, face {:?}, face highlight {}, edges {}",
+                        self.session.selected_body,
+                        self.session.last_face_hit,
+                        self.session.face_highlight.is_some(),
+                        self.session.selected_edges.len(),
+                    );
+                }
+                _ => {}
+            }
         }
 
         let server_status = self.session.server.status();

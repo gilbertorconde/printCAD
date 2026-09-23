@@ -365,7 +365,9 @@ bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
-overlay. Any of these skips the start page. The 1 s `printcad.frame` log reports
+overlay; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
+one selection click at that fraction of the viewport, logging what the
+pick and the edge test saw and what got selected (frame.rs). Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
 Face-boundary edges draw on every frame, moving or still. They are cheap

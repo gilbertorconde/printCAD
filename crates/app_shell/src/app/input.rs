@@ -524,7 +524,7 @@ impl PrintCadApp {
         true
     }
 
-    fn toggle_body_under_cursor_selection(&mut self) -> bool {
+    pub(crate) fn toggle_body_under_cursor_selection(&mut self) -> bool {
         // Sketch curves first: their tessellated lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
         // against sketch geometry on the CPU with a proper pixel tolerance.
@@ -753,13 +753,14 @@ pub(crate) fn face_submesh(
     coplanar_face_submesh(mesh, point, normal)
 }
 
-/// Every triangle cut from kernel face `face`, each lifted along its own
-/// normal so the highlight never z-fights the surface it covers.
+/// Every triangle cut from kernel face `face`, copied exactly: the
+/// translucent pass passes equal depth, so the copy sits on its surface
+/// whichever way the face is wound. A copy lifted along the winding normal
+/// would sink into the solid on a face wound inward and never show.
 pub(crate) fn face_submesh_by_id(
     mesh: &kernel_api::TriMesh,
     face: u32,
 ) -> Option<kernel_api::TriMesh> {
-    const LIFT: f32 = 0.05;
     let mut out = kernel_api::TriMesh::default();
     for (tri, id) in mesh.indices.as_chunks::<3>().0.iter().zip(&mesh.faces) {
         if *id != face {
@@ -775,7 +776,7 @@ pub(crate) fn face_submesh_by_id(
         let n = n.normalize();
         let base = out.positions.len() as u32;
         for v in [a, b, c] {
-            out.positions.push((v + n * LIFT).to_array());
+            out.positions.push(v.to_array());
             out.normals.push(n.to_array());
         }
         out.indices.extend_from_slice(&[base, base + 1, base + 2]);
@@ -791,9 +792,9 @@ pub(crate) struct FaceHighlight {
     pub revision: u64,
 }
 
-/// Every triangle of `mesh` lying on the plane (point, normal), lifted
-/// slightly along it. The face as geometry sees it: exact for a flat face,
-/// one strip of a curved one, and two flat faces on one plane together.
+/// Every triangle of `mesh` lying on the plane (point, normal), copied
+/// exactly. The face as geometry sees it: exact for a flat face, one strip
+/// of a curved one, and two flat faces on one plane together.
 pub(crate) fn coplanar_face_submesh(
     mesh: &kernel_api::TriMesh,
     point: [f32; 3],
@@ -801,7 +802,6 @@ pub(crate) fn coplanar_face_submesh(
 ) -> Option<kernel_api::TriMesh> {
     const NORMAL_ALIGN: f32 = 0.999;
     const PLANE_TOL: f32 = 0.05;
-    const LIFT: f32 = 0.05;
     let n = glam::Vec3::from_array(normal).normalize();
     let p0 = glam::Vec3::from_array(point);
 
@@ -825,7 +825,7 @@ pub(crate) fn coplanar_face_submesh(
         }
         let base = positions.len() as u32;
         for v in [a, b, c] {
-            positions.push((v + n * LIFT).to_array());
+            positions.push(v.to_array());
             normals.push(n.to_array());
         }
         indices.extend_from_slice(&[base, base + 1, base + 2]);
@@ -920,13 +920,13 @@ mod tests {
     }
 
     #[test]
-    fn extracts_only_the_hit_plane_and_lifts_it() {
+    fn extracts_only_the_hit_plane_exactly_where_it_lies() {
         let mesh = two_face_mesh();
         let sub = coplanar_face_submesh(&mesh, [0.5, 0.5, 1.0], [0.0, 0.0, 1.0]).unwrap();
         assert_eq!(sub.indices.len(), 6, "only the top quad's two triangles");
         assert!(
-            sub.positions.iter().all(|p| (p[2] - 1.05).abs() < 1e-4),
-            "lifted 0.05 along the normal"
+            sub.positions.iter().all(|p| (p[2] - 1.0).abs() < 1e-6),
+            "the copy sits on the face, not above it"
         );
     }
 

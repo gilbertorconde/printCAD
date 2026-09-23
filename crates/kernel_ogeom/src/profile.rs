@@ -5,6 +5,8 @@
 //! boundary, odd = hole of its immediate container), and each group becomes
 //! one planar face — a multi-region sketch yields several faces.
 
+use std::f64::consts::PI;
+
 use kernel_api::{Profile, ProfilePlane, ProfileSegment, ProfileWire};
 use ogeom::algo::{
     classify_on_face, make_edge, make_edge_between, make_face_with_pcurves, make_wire,
@@ -522,11 +524,27 @@ pub fn build_profile(model: &mut Model, profile: &Profile) -> Result<BuiltProfil
         }
     }
 
+    // A face takes its sense from its outer ring: counter-clockwise about
+    // the plane normal, or the solid swept from it turns inside out, its
+    // walls facing in while its caps face out. Holes run the other way.
     let mut faces = Vec::with_capacity(groups.len());
     for group in &groups {
         let mut rings: Vec<Vec<Shape>> = Vec::with_capacity(1 + group.holes.len());
-        rings.push(group.outer.edges.clone());
-        rings.extend(group.holes.iter().map(|h| h.edges.clone()));
+        let (outer_index, hole_indices) = group
+            .wire_indices
+            .split_first()
+            .expect("a group has its outer wire first");
+        rings.push(oriented_ring(
+            &group.outer.edges,
+            signed_area(&profile.wires[*outer_index]) >= 0.0,
+        ));
+        rings.extend(
+            group
+                .holes
+                .iter()
+                .zip(hole_indices)
+                .map(|(h, &i)| oriented_ring(&h.edges, signed_area(&profile.wires[i]) < 0.0)),
+        );
         let group_wires: Vec<ProfileWire> = group
             .wire_indices
             .iter()
@@ -541,6 +559,106 @@ pub fn build_profile(model: &mut Model, profile: &Profile) -> Result<BuiltProfil
     }
 
     Ok(BuiltProfile { faces, groups })
+}
+
+/// The ring as given when `keep` holds, else the same edges walked the other
+/// way: reversed in order and each reversed in sense.
+fn oriented_ring(edges: &[Shape], keep: bool) -> Vec<Shape> {
+    if keep {
+        edges.to_vec()
+    } else {
+        edges.iter().rev().map(Shape::reversed).collect()
+    }
+}
+
+/// The area a wire encloses in its plane, signed by the direction it is
+/// walked: positive counter-clockwise about the plane normal. Segments are
+/// sampled into a polygon; the sign is what matters, so a spline's control
+/// polygon stands in for the curve.
+pub fn signed_area(wire: &ProfileWire) -> f64 {
+    const ARC_STEPS: usize = 16;
+    let mut polygon: Vec<[f64; 2]> = Vec::new();
+    for seg in &wire.segments {
+        match seg {
+            ProfileSegment::Line { start, end } => {
+                polygon.push(*start);
+                polygon.push(*end);
+            }
+            ProfileSegment::Arc { start, mid, end } => {
+                if let Some((center, radius)) = circumcircle(*start, *mid, *end) {
+                    let angle = |p: [f64; 2]| (p[1] - center[1]).atan2(p[0] - center[0]);
+                    let (a0, am, a1) = (angle(*start), angle(*mid), angle(*end));
+                    let ccw = (a1 - a0).rem_euclid(TAU);
+                    let sweep = if (am - a0).rem_euclid(TAU) <= ccw {
+                        ccw
+                    } else {
+                        ccw - TAU
+                    };
+                    for i in 0..=ARC_STEPS {
+                        let a = a0 + sweep * i as f64 / ARC_STEPS as f64;
+                        polygon.push([center[0] + radius * a.cos(), center[1] + radius * a.sin()]);
+                    }
+                } else {
+                    polygon.push(*start);
+                    polygon.push(*mid);
+                    polygon.push(*end);
+                }
+            }
+            // The closed curves are built counter-clockwise about the normal.
+            ProfileSegment::Circle { radius, .. } => return PI * radius * radius,
+            ProfileSegment::Ellipse { major, ratio, .. } => {
+                let a = major[0].hypot(major[1]);
+                return PI * a * a * ratio;
+            }
+            ProfileSegment::EllipseArc {
+                center,
+                major,
+                ratio,
+                start_param,
+                end_param,
+            } => {
+                let minor = [-major[1] * ratio, major[0] * ratio];
+                let mut end = *end_param;
+                if end <= *start_param {
+                    end += TAU;
+                }
+                for i in 0..=ARC_STEPS {
+                    let t = start_param + (end - start_param) * i as f64 / ARC_STEPS as f64;
+                    polygon.push([
+                        center[0] + major[0] * t.cos() + minor[0] * t.sin(),
+                        center[1] + major[1] * t.cos() + minor[1] * t.sin(),
+                    ]);
+                }
+            }
+            ProfileSegment::BSpline { control_points, .. } => {
+                polygon.extend(control_points.iter().copied());
+            }
+        }
+    }
+    let n = polygon.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut twice = 0.0;
+    for i in 0..n {
+        let a = polygon[i];
+        let b = polygon[(i + 1) % n];
+        twice += a[0] * b[1] - b[0] * a[1];
+    }
+    twice / 2.0
+}
+
+/// Centre and radius of the circle through three points, if they are not
+/// collinear.
+fn circumcircle(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Option<([f64; 2], f64)> {
+    let d = 2.0 * (a[0] * (b[1] - c[1]) + b[0] * (c[1] - a[1]) + c[0] * (a[1] - b[1]));
+    if d.abs() < 1e-12 {
+        return None;
+    }
+    let sq = |p: [f64; 2]| p[0] * p[0] + p[1] * p[1];
+    let ux = (sq(a) * (b[1] - c[1]) + sq(b) * (c[1] - a[1]) + sq(c) * (a[1] - b[1])) / d;
+    let uy = (sq(a) * (c[0] - b[0]) + sq(b) * (a[0] - c[0]) + sq(c) * (b[0] - a[0])) / d;
+    Some(([ux, uy], (a[0] - ux).hypot(a[1] - uy)))
 }
 
 /// The first on-curve point a wire mentions, in world space.
