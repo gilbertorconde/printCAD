@@ -98,6 +98,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axes",
+ "bench_fixtures",
  "core_document",
  "doc_server",
  "egui",
@@ -118,8 +119,6 @@ dependencies = [
  "ui_kit",
  "usvg",
  "uuid",
- "wb_part",
- "wb_sketch",
  "winit",
  "workbenches",
 ]
@@ -202,6 +201,15 @@ name = "base64"
 version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ac07cdecf99051d9a5238b80f35af32cdeba5b336e55d957b318b50137e18da5"
+
+[[package]]
+name = "bench_fixtures"
+version = "0.1.0"
+dependencies = [
+ "core_document",
+ "wb_part",
+ "wb_sketch",
+]
 
 [[package]]
 name = "bitflags"
@@ -1961,9 +1969,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2662f3a95367910c86e8ccc89e0703600e3e1fc0c53621e7725b119e8dee3ed7"
+checksum = "ab3f2125fc7b7bdf365cd81692e16f5605a7ab4f10a733ed22a8279bc08b20bd"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -1983,9 +1991,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-algo"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72d63f88e129289ebb4f88d7565a9043c1a7979e21634c1935441669647f89b8"
+checksum = "f30215ddd7cbfccba17d8eea18aba9b90d5a5a57ac5d51f9cf674d4a90c779de"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -1999,9 +2007,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-bool"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfa9d01faeed76e8972c1345501217a47d8dd5591ad0fb2c49287d8943928f0f"
+checksum = "525248979bb4ff5843f1f50f602db98b06c58c3fb42d349b12070d5c37ef7e09"
 dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
@@ -2017,9 +2025,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-core"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de3918697bae71b4e40d6d7442ea39a01b7b1111b15ff6b82f038df0cf060fce"
+checksum = "63a5dfe7301ae9834f31c4e2ef8325ed3bf31fbeb78cb34289a12a0cd0522cdd"
 dependencies = [
  "robust",
  "smallvec",
@@ -2028,9 +2036,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-doc"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6ae66f81cf7c13879d34b06c7a1a5392e4a12fbd6dfc1fa900b4bd9870b506f"
+checksum = "104b420e08fe3bc16e819785d6cbf21f1f70dd4f63b0efade5820d6811e5928e"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -2040,9 +2048,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-fillet"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "47b2500437c1b1ff874df944dd411fddb90fd5de0f7afba650ff96d8d09cd357"
+checksum = "da17b097cf9d11b7e443bfe8648feb9bf4c849a129e2bd569e83888daac551b2"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2056,9 +2064,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-geom"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "907a9f0e89fd83f8d2a9bb480167ff80a1ae516bd43d9f7ea6feb73ce2dfeb44"
+checksum = "d58abb2b06fb312f73bb33e00b35d85293af1e122db54f9935609c08678eac8d"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2067,9 +2075,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-heal"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b60dc0f5a5732e0bf11998b44ce12f298d794d737c1c7c645ac44c59273eb1f3"
+checksum = "1d87cfaed8bc86b63ac4c56901a617a864205aef2d54893a809c693614129d16"
 dependencies = [
  "nalgebra",
  "ogeom-algo",
@@ -2077,14 +2085,15 @@ dependencies = [
  "ogeom-geom",
  "ogeom-intersect",
  "ogeom-math",
+ "ogeom-mesh",
  "ogeom-topo",
 ]
 
 [[package]]
 name = "ogeom-hlr"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25e0ba4dc2f5611a2f27a6954044d3deb0af3dda4cc6e83305f7a301f8fc35ca"
+checksum = "4874a6aa30a207c2f69c13326f4c2dd2813f283fa38838c6c1bb0155ce794091"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2098,9 +2107,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-intersect"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d6ad73b2e4ee1bc8bf95762af36c555208252d0ebb50525f48f0a954537dcad"
+checksum = "54328e74969b0367c2168c164f06cd2ded16f069684c75762b8c116a23371bbb"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2110,9 +2119,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-io"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f50410197221030c6e8fdc73cc322b91abc37d00de9ee0b14f984301cfdb743"
+checksum = "5b79ed479200947b99f46c1a54a349d0ad1e783857b647ab13f799b5c15823d0"
 dependencies = [
  "ogeom-algo",
  "ogeom-core",
@@ -2125,9 +2134,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-math"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78316a1cc99b6ae2df68865e41f65d486c16ad0610f98a342b752f042f499a35"
+checksum = "deaa35fc1bd7bd4926af96268c32eb63388a818e6126914692f7ab12217da8c0"
 dependencies = [
  "nalgebra",
  "ogeom-core",
@@ -2136,9 +2145,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-mesh"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7da7d8e1dac7d34b5a1cb1f1015a20a045170eab7f9b01aa7519dbd8d0b29c1"
+checksum = "cf4964e18057b947ce51f4f6a4c2f5481ab8fdcbc2e88505f977662d9e6c2b76"
 dependencies = [
  "ogeom-core",
  "ogeom-geom",
@@ -2149,9 +2158,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-offset"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1afb1a66e9e23b148d112e40d7746f21bfc08aa198632e316b593e39e5a6c9eb"
+checksum = "51690a09c2ab90fae0156fcfc439b0a720a53b1181ab3701503102ea4da60f2c"
 dependencies = [
  "ogeom-algo",
  "ogeom-bool",
@@ -2165,9 +2174,9 @@ dependencies = [
 
 [[package]]
 name = "ogeom-topo"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4e8f35e81ceaaf68b6b9af767e6596ad2fd7cc93931a8dab1d2ad05a1af051f"
+checksum = "b32c65ad9d7cf29734832448e3fe618c8ba01a7bb7506feb53a1192d7ab1db9e"
 dependencies = [
  "hashbrown 0.16.1",
  "indexmap",
