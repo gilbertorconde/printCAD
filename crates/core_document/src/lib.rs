@@ -144,6 +144,11 @@ pub struct Body {
     /// colour it came with.
     #[serde(default)]
     pub display: Option<BodyDisplay>,
+    /// The user asked for the kernel's repair on this body's imported
+    /// shape. The repaired shape is derived from it, like the rest of an
+    /// import's geometry.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub repair_requested: bool,
 }
 
 /// A user-chosen look for a body: its colour and how much of it shows.
@@ -191,6 +196,10 @@ pub struct ImportedGeometry {
     /// Archive path to packed per-face colours (`brep/<uuid>.colors`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub face_colors_path: Option<String>,
+    /// What the kernel's checker found in the shape this geometry was
+    /// drawn from; `None` for a shape that was never checked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<kernel_api::ShapeHealth>,
 }
 
 /// Persistent imported object node (assembly/part/instance) shown in the model tree.
@@ -367,6 +376,7 @@ impl Document {
             // History barriers: an import (or raw graph write) is not worth
             // lying about — clearing undo beats a wrong inverse.
             Op::AddAsset { .. }
+            | Op::RequestBodyRepair { .. }
             | Op::ImportModel { .. }
             | Op::AppendImportedObjectGraph { .. }
             | Op::ClearImportedObjectGraph => return None,
@@ -422,6 +432,7 @@ impl Document {
                     created_at: *created_at,
                     tip: None,
                     display: None,
+                    repair_requested: false,
                 });
             }
             Op::RenameBody { id, name } => {
@@ -432,6 +443,11 @@ impl Document {
             Op::SetBodyDisplay { id, display } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.display = *display;
+                }
+            }
+            Op::RequestBodyRepair { id } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.repair_requested = true;
                 }
             }
             Op::RemoveBody { id } => {
@@ -554,6 +570,7 @@ impl Document {
                         created_at: init.created_at,
                         tip: None,
                         display: None,
+                        repair_requested: false,
                     });
                 }
                 self.imported_object_roots.extend(roots.iter().copied());
@@ -774,6 +791,38 @@ impl Document {
         {
             self.record_and_apply(op::DocumentOp::SetBodyDisplay { id: body, display });
         }
+    }
+
+    /// Ask for the kernel's repair on an imported body's shape. Only a body
+    /// whose shape came from an import has one to repair, and only once;
+    /// returns whether the request was recorded. Not undoable: the shape
+    /// before the repair would have to be derived from the file again.
+    pub fn request_body_repair(&mut self, body: BodyId) -> bool {
+        let pending = self
+            .bodies
+            .iter()
+            .find(|b| b.id == body)
+            .is_some_and(|b| !b.repair_requested);
+        if !pending || !self.body_solid_is_imported(body) {
+            return false;
+        }
+        self.record_and_apply(op::DocumentOp::RequestBodyRepair { id: body });
+        true
+    }
+
+    /// Bodies whose repair was asked for and whose geometry is not yet the
+    /// repaired shape: the host derives each one.
+    pub fn bodies_awaiting_repair(&self) -> Vec<BodyId> {
+        self.bodies
+            .iter()
+            .filter(|b| b.repair_requested)
+            .filter(|b| {
+                self.imported_geometry(b.id).is_some_and(|g| {
+                    g.source_asset.is_some() && !g.health.as_ref().is_some_and(|h| h.repaired)
+                })
+            })
+            .map(|b| b.id)
+            .collect()
     }
 
     /// Suppress/unsuppress a feature (excluded from builds while suppressed).

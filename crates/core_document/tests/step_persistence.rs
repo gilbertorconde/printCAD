@@ -41,6 +41,7 @@ fn imported_geometry_roundtrips_through_prtcad() {
             bounds_mm: None,
             brep_blob_path: None,
             face_colors_path: None,
+            health: None,
         },
     );
 
@@ -103,6 +104,7 @@ fn brep_sidecars_roundtrip_through_prtcad() {
             bounds_mm: Some(([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])),
             brep_blob_path: None,
             face_colors_path: None,
+            health: None,
         },
     );
 
@@ -148,6 +150,7 @@ fn imported_object_graph_and_visibility_roundtrip() {
             bounds_mm: None,
             brep_blob_path: None,
             face_colors_path: None,
+            health: None,
         },
     );
 
@@ -236,6 +239,7 @@ fn a_cloned_document_saves_independently_from_another_thread() {
             bounds_mm: Some(([0.0; 3], [1.0, 2.0, 3.0])),
             brep_blob_path: None,
             face_colors_path: None,
+            health: None,
         },
     );
 
@@ -290,6 +294,7 @@ fn packing_an_archive_reports_what_it_has_packed() {
             bounds_mm: None,
             brep_blob_path: None,
             face_colors_path: None,
+            health: None,
         },
     );
 
@@ -315,4 +320,119 @@ fn packing_an_archive_reports_what_it_has_packed() {
         assert_eq!(pair[1].1, total, "the total moved: {seen:?}");
     }
     assert_eq!(seen.last().unwrap(), &(total, total));
+}
+
+/// An imported body with a shape the checker calls broken, asked to be
+/// repaired: the request is one op, replays on a peer, clears undo, and
+/// both the request and the checker's verdict survive a save.
+#[test]
+fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
+    use core_document::history::OpJournal;
+    use kernel_api::ShapeHealth;
+
+    let mut doc = Document::new("Repair");
+    let imported = doc.create_body(Some("Imported".into()));
+    let modelled = doc.create_body(Some("Modelled".into()));
+    let asset = AssetReference::new("assets/repair.step".to_string(), AssetType::Step, json!({}));
+    let asset_id = doc.add_asset_with_data(asset, b"ISO-10303-21;".to_vec());
+    let broken = ShapeHealth {
+        broken: 3,
+        suspect: 0,
+        findings: vec!["[broken] Vertex: tolerance too tight".into()],
+        repaired: false,
+    };
+    doc.set_imported_geometry(
+        imported,
+        ImportedGeometry {
+            mesh: fake_mesh(),
+            source_asset: Some(asset_id),
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: Some(broken.clone()),
+        },
+    );
+    doc.set_imported_geometry(
+        modelled,
+        ImportedGeometry {
+            mesh: fake_mesh(),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    let mut journal = OpJournal::new(16);
+    doc.rename_body(modelled, "Renamed");
+    journal.note(&mut doc);
+    let _ = doc.take_pending_ops();
+
+    assert!(
+        !doc.request_body_repair(modelled),
+        "a modelled body's shape comes from its features, not a file"
+    );
+    assert!(doc.request_body_repair(imported));
+    assert!(!doc.request_body_repair(imported), "asked once");
+    journal.note(&mut doc);
+    assert!(!journal.can_undo(), "a repair request clears undo history");
+
+    let ops = doc.take_pending_ops();
+    assert_eq!(ops.len(), 1, "one op for one request");
+    assert_eq!(doc.bodies_awaiting_repair(), vec![imported]);
+
+    let mut peer = Document::new("Peer");
+    peer.apply_remote_op(&core_document::op::DocumentOp::CreateBody {
+        id: imported,
+        name: "Imported".into(),
+        created_at: 0,
+    });
+    peer.apply_remote_op(&ops[0]);
+    assert!(
+        peer.bodies()
+            .iter()
+            .any(|b| b.id == imported && b.repair_requested)
+    );
+
+    // The repaired geometry lands: nothing waits any more.
+    doc.set_imported_geometry(
+        imported,
+        ImportedGeometry {
+            mesh: fake_mesh(),
+            source_asset: Some(asset_id),
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: Some(ShapeHealth {
+                repaired: true,
+                ..broken.clone()
+            }),
+        },
+    );
+    assert!(doc.bodies_awaiting_repair().is_empty());
+
+    let tmp = std::env::temp_dir().join(format!(
+        "printcad_repair_request_{}.prtcad",
+        std::process::id()
+    ));
+    doc.save_to_file(&tmp, Compression::None)
+        .expect("save .prtcad");
+    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let _ = std::fs::remove_file(&tmp);
+    assert!(
+        loaded
+            .bodies()
+            .iter()
+            .any(|b| b.id == imported && b.repair_requested)
+    );
+    let health = loaded
+        .imported_geometry(imported)
+        .and_then(|g| g.health.clone())
+        .expect("the checker's verdict survives a save");
+    assert_eq!(health.broken, 3);
+    assert!(health.repaired);
+    assert!(loaded.bodies_awaiting_repair().is_empty());
 }

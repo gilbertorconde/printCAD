@@ -441,6 +441,9 @@ impl UiLayer {
             if let Some(item) = combo.delete_item {
                 commands.push(UiCommand::DeleteTreeItem(item));
             }
+            if let Some(bodies) = combo.repair {
+                commands.push(UiCommand::RepairShapes(bodies));
+            }
             if let Some((body, display)) = combo.body_display {
                 commands.push(UiCommand::SetBodyDisplay { body, display });
             }

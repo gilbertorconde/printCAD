@@ -230,7 +230,18 @@ keywords). With `diagnostics.import_report` on (Preferences › General, off by
 default) `app/import_report.rs` writes them to
 `$TMPDIR/printcad/import-reports/<stem>-<stamp>.txt` — temp, so the system
 clears them — and logs the path; off, one line gives the counts and names the
-switch. That file is what goes to the kernel's maintainer. **Announcement discipline:** `progress::
+switch. That file is what goes to the kernel's maintainer.
+**Shape health.** Every imported body is run through the kernel's checker as
+it is read (`kernel_ogeom/src/health.rs`, a few ms a body) and carries a
+`ShapeHealth` on its `ImportedGeometry`: broken findings (an algorithm
+reading the shape answers wrongly) versus suspect (harmless). A broken body's
+tree row, and every row above it, draws in the danger colour with the
+findings as its tooltip, and the tree and viewport menus offer "Repair
+shape". The repair is an op (`RequestBodyRepair`, a history barrier like an
+import, since the unrepaired shape would have to be re-derived from the
+file); the repaired geometry is derived from it by `drive_shape_repairs`
+(`recompute.rs`), so a peer's request and a reopened document repair the
+same way. **Announcement discipline:** `progress::
 context` marks a *phase* and resets the display — call it once per phase,
 never per body or per face. Anything emitted inside a loop is
 `progress::detail` (a kernel-style sub-stage: shown under a sequential
@@ -369,7 +380,8 @@ overlay; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the
 pick, the edge test and the face hover saw and what got selected, and with
 `PRINTCAD_BENCH_TOOL=<tool id>` then runs that tool on the selection as a
-toolbar click would and logs every feature's rebuild error (frame.rs). Any of these skips the start page. The 1 s `printcad.frame` log reports
+toolbar click would and logs every feature's rebuild error (frame.rs);
+`PRINTCAD_BENCH_REPAIR=1` asks for the repair of every broken body once. Any of these skips the start page. The 1 s `printcad.frame` log reports
 fps + phase costs while frames are being produced.
 
 Face-boundary edges draw on every frame, moving or still. They are cheap

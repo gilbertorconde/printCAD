@@ -1383,6 +1383,7 @@ mod tests {
                 bounds_mm: None,
                 brep_blob_path: None,
                 face_colors_path: None,
+                health: None,
             },
         );
     }
@@ -1415,6 +1416,7 @@ mod tests {
                 bounds_mm: None,
                 brep_blob_path: None,
                 face_colors_path: None,
+                health: None,
             },
         );
         assert!(!doc.body_solid_is_imported(body));
@@ -1567,6 +1569,7 @@ mod tests {
                 bounds_mm: None,
                 brep_blob_path: None,
                 face_colors_path: None,
+                health: None,
             },
         );
         invalidate_body(&mut doc, body);

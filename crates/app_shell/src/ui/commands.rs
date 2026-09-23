@@ -128,6 +128,8 @@ pub enum UiCommand {
     TaskClosed(TaskOutcome),
     /// Delete a tree item: a feature, or a body with everything on it.
     DeleteTreeItem(TreeItemId),
+    /// Ask the kernel to repair these imported bodies' shapes.
+    RepairShapes(Vec<core_document::BodyId>),
     /// The property panel's Label row renamed a tree item.
     RenameTreeItem {
         item: TreeItemId,

@@ -217,6 +217,83 @@ pub struct ImportedBody {
     /// Axis-aligned bounds in millimetres from the raw BRep (before tessellation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+    /// What the kernel's checker found in the body's shape as read.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub health: Option<ShapeHealth>,
+}
+
+/// What the kernel's checker found in a shape.
+///
+/// The checker sorts its findings in two: *broken*, where an algorithm
+/// reading the shape gets a wrong answer rather than an error, and
+/// *suspect*, out of order but harmless to every operation. Only broken
+/// findings ask for a repair.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ShapeHealth {
+    /// Findings that make an algorithm reading the shape answer wrongly.
+    pub broken: usize,
+    /// Findings that are out of order but harmless.
+    pub suspect: usize,
+    /// The first findings, a sentence each, broken first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<String>,
+    /// The kernel's repair has run on the shape these findings describe.
+    #[serde(default)]
+    pub repaired: bool,
+}
+
+impl ShapeHealth {
+    /// How many findings a health record keeps as sentences.
+    pub const KEPT_FINDINGS: usize = 8;
+
+    /// Whether the shape has anything a repair is for.
+    pub fn is_broken(&self) -> bool {
+        self.broken > 0
+    }
+
+    /// One line for a tooltip: the counts, then the findings kept.
+    pub fn describe(&self) -> String {
+        let mut lines = Vec::new();
+        let counts = match (self.broken, self.suspect) {
+            (0, 0) => "The shape checks clean".to_string(),
+            (b, 0) => format!("{b} shape defect(s) that make operations answer wrongly"),
+            (0, s) => format!("{s} shape irregularity(ies), harmless to operations"),
+            (b, s) => format!(
+                "{b} shape defect(s) that make operations answer wrongly, \
+                 and {s} harmless irregularity(ies)"
+            ),
+        };
+        lines.push(counts);
+        if self.repaired && self.is_broken() {
+            lines.push("Repaired; these remain, beyond what the repair mends".to_string());
+        }
+        lines.extend(self.findings.iter().cloned());
+        let shown = self.findings.len();
+        let total = self.broken + self.suspect;
+        if total > shown {
+            lines.push(format!("… and {} more", total - shown));
+        }
+        lines.join("\n")
+    }
+}
+
+/// A shape run through the kernel's repair: the mended snapshot, its mesh,
+/// what the repair did, and what the checker finds afterwards.
+#[derive(Debug, Clone, Default)]
+pub struct RepairResult {
+    /// Native-format snapshot of the mended shape.
+    pub brep_blob: Vec<u8>,
+    /// Per-face colours for the mended shape, in its face order; empty when
+    /// the repair changed the faces too much to carry them over.
+    pub face_colors: Vec<[f32; 3]>,
+    /// Render mesh of the mended shape.
+    pub mesh: TriMesh,
+    /// Axis-aligned bounds in millimetres.
+    pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+    /// The checker's findings on the mended shape, marked repaired.
+    pub health: ShapeHealth,
+    /// What was mended, a phrase each ("12 tolerances tightened").
+    pub mended: Vec<String>,
 }
 
 /// Node type emitted by STEP import hierarchy reconstruction.

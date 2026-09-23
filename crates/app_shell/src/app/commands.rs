@@ -169,6 +169,20 @@ impl PrintCadApp {
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
                 UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),
+                UiCommand::RepairShapes(bodies) => {
+                    self.session.viewport_menu = None;
+                    let asked = bodies
+                        .into_iter()
+                        .filter(|body| self.session.document.request_body_repair(*body))
+                        .count();
+                    if asked > 0 {
+                        self.session.journal.label_next("Repair shape");
+                        self.session.journal.note(&mut self.session.document);
+                        app_log::info(format!(
+                            "Repair asked for {asked} shape(s); undo history cleared"
+                        ));
+                    }
+                }
                 UiCommand::RenameTreeItem { item, name } => intents.rename = Some((item, name)),
                 UiCommand::ReleaseActiveObject => intents.release_active_object = true,
                 UiCommand::ShowStartPage => intents.show_start_page = true,

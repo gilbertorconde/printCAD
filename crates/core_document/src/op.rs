@@ -99,6 +99,11 @@ pub enum DocumentOp {
         id: BodyId,
         display: Option<crate::BodyDisplay>,
     },
+    /// Ask for the kernel's repair on an imported body's shape. The
+    /// repaired geometry is derived, as an import's is.
+    RequestBodyRepair {
+        id: BodyId,
+    },
     /// Delete a body: the inverse of `CreateBody`, and what the tree's
     /// Delete does. Any features still attached go with it, along with the
     /// body's geometry.

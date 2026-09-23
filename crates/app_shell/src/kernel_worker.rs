@@ -39,6 +39,13 @@ pub enum KernelRequest {
         op_features: Vec<Uuid>,
         detail: TessellationSettings,
     },
+    /// Run the kernel's repair on an imported body's snapshot.
+    RepairShape {
+        body_id: Uuid,
+        brep_blob: Arc<Vec<u8>>,
+        face_colors: Vec<[f32; 3]>,
+        detail: TessellationSettings,
+    },
 }
 
 /// Result delivered from the worker back to the UI thread.
@@ -66,6 +73,15 @@ pub enum KernelResponse {
     SolidFailed {
         body_id: Uuid,
         failed_feature: Option<Uuid>,
+        error: String,
+    },
+    ShapeRepaired {
+        body_id: Uuid,
+        result: kernel_api::RepairResult,
+        elapsed: Duration,
+    },
+    RepairFailed {
+        body_id: Uuid,
         error: String,
     },
 }
@@ -182,6 +198,29 @@ impl KernelWorker {
                 body_id,
                 ops,
                 op_features,
+                detail,
+            })
+            .is_ok()
+        {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit a repair of an imported body's shape. One response arrives
+    /// per request.
+    pub fn request_repair(
+        &mut self,
+        body_id: Uuid,
+        brep_blob: Arc<Vec<u8>>,
+        face_colors: Vec<[f32; 3]>,
+        detail: TessellationSettings,
+    ) {
+        if self
+            .tx
+            .send(KernelRequest::RepairShape {
+                body_id,
+                brep_blob,
+                face_colors,
                 detail,
             })
             .is_ok()
@@ -342,6 +381,25 @@ fn worker_loop(
                         body_id,
                         failed_feature: op_features.get(err.op_index).copied(),
                         error: err.message,
+                    },
+                }
+            }
+            KernelRequest::RepairShape {
+                body_id,
+                brep_blob,
+                face_colors,
+                detail,
+            } => {
+                let started = Instant::now();
+                match kernel.repair_brep(&brep_blob, &face_colors, &detail) {
+                    Ok(result) => KernelResponse::ShapeRepaired {
+                        body_id,
+                        result,
+                        elapsed: started.elapsed(),
+                    },
+                    Err(err) => KernelResponse::RepairFailed {
+                        body_id,
+                        error: err.to_string(),
                     },
                 }
             }

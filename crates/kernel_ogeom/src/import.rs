@@ -174,6 +174,7 @@ pub fn import_step(
             brep_blob,
             face_colors,
             bounds_mm,
+            health: Some(crate::health::diagnose(model, shape)),
         })
     });
     let bodies = computed.into_iter().collect::<KernelResult<Vec<_>>>()?;

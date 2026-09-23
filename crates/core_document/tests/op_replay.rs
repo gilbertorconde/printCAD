@@ -223,6 +223,7 @@ fn removing_a_body_takes_its_features_and_its_geometry() {
             bounds_mm: None,
             brep_blob_path: None,
             face_colors_path: None,
+            health: None,
         },
     );
 

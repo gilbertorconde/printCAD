@@ -110,6 +110,8 @@ pub(crate) struct DocumentSession {
     /// The edge under the cursor, found on the CPU against the hovered
     /// body's outline segments.
     pub hovered_edge: Option<crate::app::edges::EdgeHit>,
+    /// Bodies whose repair the kernel worker is running.
+    pub repairs_in_flight: std::collections::HashSet<Uuid>,
     /// The face under the cursor, when no edge takes the hover.
     pub hovered_face: Option<crate::app::input::FaceHover>,
     /// The edges picked in the viewport; Ctrl adds to them.
@@ -181,6 +183,7 @@ impl DocumentSession {
             measure: None,
             hovered_edge: None,
             hovered_face: None,
+            repairs_in_flight: Default::default(),
             selected_edges: Vec::new(),
             bench_states: HashMap::new(),
         }

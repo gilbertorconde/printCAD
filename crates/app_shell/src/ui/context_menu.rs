@@ -60,6 +60,18 @@ pub fn draw(
                 if item(ui, "Select body") {
                     commands.push(UiCommand::SelectBody(menu.body));
                 }
+                let repairable = document
+                    .imported_geometry(menu.body)
+                    .and_then(|g| g.health.as_ref())
+                    .is_some_and(|h| h.is_broken())
+                    && document
+                        .bodies()
+                        .iter()
+                        .any(|b| b.id == menu.body && !b.repair_requested);
+                if repairable && item(ui, "Repair shape") {
+                    commands.push(UiCommand::RepairShapes(vec![menu.body]));
+                    commands.push(UiCommand::CloseViewportMenu);
+                }
                 if let Some(node) = imported
                     && item(ui, "Hide")
                 {

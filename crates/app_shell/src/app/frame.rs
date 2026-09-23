@@ -405,6 +405,23 @@ impl PrintCadApp {
             tracing::info!(target: "printcad.frame", "bench selected body {:?} `{}`", body.0, body.1);
         }
 
+        // Dev/bench hook: `PRINTCAD_BENCH_REPAIR=1` asks for the repair of
+        // every body the checker calls broken, once, as the tree's menu
+        // would, so a run shows the repair land.
+        if !self.bench_repair_fired && std::env::var_os("PRINTCAD_BENCH_REPAIR").is_some() {
+            let broken: Vec<_> = self
+                .session
+                .document
+                .imported_geometries()
+                .filter(|(_, g)| g.health.as_ref().is_some_and(|h| h.is_broken()))
+                .map(|(body, _)| *body)
+                .collect();
+            if !broken.is_empty() {
+                self.bench_repair_fired = true;
+                self.apply_ui_commands(vec![ui::UiCommand::RepairShapes(broken)], event_loop);
+            }
+        }
+
         // Dev/bench hook: `PRINTCAD_BENCH_CLICK=<fx>,<fy>` makes one selection
         // click at that fraction of the viewport once the first body has
         // geometry, and logs what the click saw and what it selected. The
@@ -502,6 +519,7 @@ impl PrintCadApp {
             app.drain_server_messages();
             app.drain_document_opens();
             app.drive_part_recompute();
+            app.drive_shape_repairs();
         });
 
         if self.gfx.is_none() {

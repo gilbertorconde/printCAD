@@ -6,6 +6,7 @@
 //! native-format text bytes (`ogeom::io::native`).
 
 mod chain;
+mod health;
 mod import;
 mod ops;
 mod profile;
@@ -87,6 +88,18 @@ impl OgeomKernel {
                 tess::tessellate_blob(blob, face_colors, detail, tess::Faces::Inline)
             },
         ))
+    }
+
+    /// Run the kernel's repair on a body's snapshot: the mended snapshot,
+    /// its mesh, and the checker's verdict on it.
+    pub fn repair_brep(
+        &mut self,
+        brep_blob: &[u8],
+        face_colors: &[[f32; 3]],
+        detail: &TessellationSettings,
+    ) -> KernelResult<kernel_api::RepairResult> {
+        self.initialize()?;
+        health::repair_blob(brep_blob, face_colors, detail)
     }
 
     /// Read + tessellate in one synchronous shot (legacy path). Useful for

@@ -63,7 +63,9 @@ impl PrintCadApp {
                     .remove(path)
                     .and_then(|tab| self.tab_index_of(tab)),
                 KernelResponse::SolidBuilt { body_id, .. }
-                | KernelResponse::SolidFailed { body_id, .. } => self.tab_index_of_body(*body_id),
+                | KernelResponse::SolidFailed { body_id, .. }
+                | KernelResponse::ShapeRepaired { body_id, .. }
+                | KernelResponse::RepairFailed { body_id, .. } => self.tab_index_of_body(*body_id),
             };
             match target {
                 Some(index) => self.with_tab(index, |app| app.apply_kernel_response(response)),
@@ -132,6 +134,7 @@ impl PrintCadApp {
                             bounds_mm,
                             brep_blob_path: None,
                             face_colors_path: None,
+                            health: None,
                         },
                     );
                     if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
@@ -150,6 +153,20 @@ impl PrintCadApp {
                             .unwrap_or("body"),
                         elapsed.as_secs_f64() * 1000.0
                     ));
+                }
+                KernelResponse::ShapeRepaired {
+                    body_id,
+                    result,
+                    elapsed,
+                } => self.apply_shape_repair(BodyId(body_id), result, elapsed),
+                KernelResponse::RepairFailed { body_id, error } => {
+                    self.session.repairs_in_flight.remove(&body_id);
+                    let name = self.body_name(BodyId(body_id));
+                    if Self::is_cancellation(&error) {
+                        app_log::info(format!("Repair of `{name}` cancelled"));
+                    } else {
+                        app_log::error(format!("Repair of `{name}` failed: {error}"));
+                    }
                 }
                 KernelResponse::SolidFailed {
                     body_id,
@@ -223,6 +240,7 @@ impl PrintCadApp {
                     bounds_mm: body.bounds_mm,
                     brep_blob_path: None,
                     face_colors_path: None,
+                    health: body.health,
                 },
             );
         }
@@ -441,6 +459,19 @@ impl PrintCadApp {
             adopt_unit,
         );
 
+        // The checker's verdict reaches the user as a count here and as red
+        // rows in the tree, where each broken body offers its repair.
+        let broken = imported_bodies
+            .iter()
+            .filter(|b| b.health.as_ref().is_some_and(|h| h.is_broken()))
+            .count();
+        if broken > 0 {
+            app_log::warn(format!(
+                "{broken} of {} bodies have shape defects the kernel's checker calls broken; \
+                 they show red in the tree, and right-click › Repair shape runs its repair",
+                imported_bodies.len()
+            ));
+        }
         for (body, body_id) in imported_bodies.into_iter().zip(&body_ids_by_import_index) {
             self.session.document.set_imported_brep_data(
                 *body_id,
@@ -456,6 +487,7 @@ impl PrintCadApp {
                     bounds_mm: body.bounds_mm,
                     brep_blob_path: None,
                     face_colors_path: None,
+                    health: body.health,
                 },
             );
         }

@@ -49,6 +49,8 @@ pub struct TreeUiResult {
     pub delete_item: Option<TreeItemId>,
     /// A bench's own menu entry was picked: the bench, its id, the scope.
     pub bench_command: Option<(WorkbenchId, String, MenuScope)>,
+    /// "Repair shape" was picked: the broken bodies at or below the row.
+    pub repair: Option<Vec<BodyId>>,
 }
 
 /// View model describing the current document tree.
@@ -71,6 +73,12 @@ struct TreeNode {
     visible: bool,
     suppressed: bool,
     error: Option<String>,
+    /// The kernel's checker calls this body's shape broken, or one below
+    /// this row: the row draws in the danger colour.
+    defect: bool,
+    /// Bodies at or below this row whose shape is broken and not yet sent
+    /// for repair: what the row's "Repair" entry acts on.
+    repairable: Vec<BodyId>,
     /// Marks the body-tip feature / features past the tip (excluded from
     /// the build).
     is_tip: bool,
@@ -181,6 +189,8 @@ impl DocumentTree {
             body_nodes.append(&mut nodes);
         }
 
+        mark_shape_health(&mut body_nodes, document);
+
         Self {
             document_label: document.name().to_string(),
             nodes: body_nodes,
@@ -276,6 +286,8 @@ fn build_feature_node(
         visible: node.visible,
         suppressed: node.suppressed,
         error: node.error.clone(),
+        defect: false,
+        repairable: Vec::new(),
         is_tip,
         after_tip,
         feature_menu: Some(node.id),
@@ -306,6 +318,8 @@ fn build_body_node(body: &Body) -> TreeNode {
         visible: true,
         suppressed: false,
         error: None,
+        defect: false,
+        repairable: Vec::new(),
         is_tip: false,
         after_tip: false,
         feature_menu: None,
@@ -316,6 +330,62 @@ fn build_body_node(body: &Body) -> TreeNode {
         icon: "tree-body",
         accent_icon: true,
     }
+}
+
+/// Mark the rows whose body the kernel's checker calls broken, and every
+/// row above one: imported assemblies start closed, and a defect three
+/// levels down would otherwise be out of sight. Returns how many defective
+/// bodies lie at or below `nodes`.
+fn mark_shape_health(nodes: &mut [TreeNode], document: &Document) -> usize {
+    let mut total = 0;
+    for node in nodes {
+        let below = mark_shape_health(&mut node.children, document);
+        let own = node.body.and_then(|body| {
+            let health = document.imported_geometry(body)?.health.as_ref()?;
+            health.is_broken().then_some((body, health))
+        });
+        let mut repairable: Vec<BodyId> = node
+            .children
+            .iter()
+            .flat_map(|c| c.repairable.iter().copied())
+            .collect();
+        match own {
+            Some((body, health)) => {
+                let requested = document
+                    .bodies()
+                    .iter()
+                    .any(|b| b.id == body && b.repair_requested);
+                let next = if health.repaired {
+                    ""
+                } else if requested {
+                    "\nRepairing…"
+                } else {
+                    "\nRight-click › Repair shape to run the kernel's repair"
+                };
+                node.error = Some(format!("{}{next}", health.describe()));
+                node.defect = true;
+                if !requested {
+                    repairable.push(body);
+                }
+                total += below + 1;
+            }
+            None if below > 0 => {
+                if node.error.is_none() {
+                    node.error = Some(format!(
+                        "{below} part(s) inside have shape defects the kernel's checker \
+                         calls broken"
+                    ));
+                }
+                node.defect = true;
+                total += below;
+            }
+            None => {}
+        }
+        repairable.sort();
+        repairable.dedup();
+        node.repairable = repairable;
+    }
+    total
 }
 
 fn kind_word(kind: kernel_api::ImportedNodeKind) -> &'static str {
@@ -384,6 +454,8 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         visible: imported.visible,
         suppressed: false,
         error: None,
+        defect: false,
+        repairable: Vec::new(),
         is_tip: false,
         after_tip: false,
         feature_menu: None,
@@ -493,6 +565,7 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         has_children: !model.nodes().is_empty(),
         muted: false,
         strikethrough: false,
+        alert: false,
         badges: Vec::new(),
         eye: None,
         tooltip: None,
@@ -526,6 +599,9 @@ struct RowSpec<'a> {
     /// Hidden, suppressed or past the tip: drawn in the muted text color.
     muted: bool,
     strikethrough: bool,
+    /// Drawn in the danger colour: the row's shape, or one below it, is
+    /// broken.
+    alert: bool,
     badges: Vec<Badge>,
     /// Visibility toggle at the row's end: `Some(visible)`.
     eye: Option<bool>,
@@ -674,7 +750,13 @@ fn draw_row(
 
     let label_rect =
         egui::Rect::from_min_max(egui::pos2(x, rect.top()), egui::pos2(right, rect.bottom()));
-    let color = if spec.muted { TEXT3 } else { TEXT1 };
+    let color = if spec.alert {
+        DANGER
+    } else if spec.muted {
+        TEXT3
+    } else {
+        TEXT1
+    };
     let galley = ui
         .painter()
         .layout_no_wrap(spec.label.to_string(), sans(ROW_FONT), color);
@@ -764,6 +846,7 @@ fn draw_node(
         has_children: !node.children.is_empty(),
         muted: node.suppressed || !node.visible || node.after_tip || dimmed_by_edit,
         strikethrough: node.suppressed,
+        alert: node.defect,
         badges,
         eye,
         tooltip: node.tooltip.as_deref(),
@@ -906,8 +989,27 @@ fn attach_body_menu(
     }
     let mut select = false;
     let mut delete = false;
+    let mut repair = false;
     let mut bench_command = None;
     response.context_menu(|ui| {
+        if !node.repairable.is_empty() {
+            let label = match node.repairable.len() {
+                1 => "Repair shape".to_string(),
+                n => format!("Repair {n} shapes"),
+            };
+            if ui
+                .button(label)
+                .on_hover_text(
+                    "Run the kernel's repair on the shapes its checker calls broken. \
+                     This clears the undo history.",
+                )
+                .clicked()
+            {
+                repair = true;
+                ui.close();
+            }
+            ui.separator();
+        }
         if node.body.is_some() {
             if ui
                 .button("Select body")
@@ -936,6 +1038,9 @@ fn attach_body_menu(
     }
     if delete {
         result.delete_item = Some(node.id);
+    }
+    if repair {
+        result.repair = Some(node.repairable.clone());
     }
     if bench_command.is_some() {
         result.bench_command = bench_command;
@@ -1024,6 +1129,100 @@ mod tests {
         assert!(ids.contains(&TreeItemId::ImportedObject(root)));
         assert!(ids.contains(&TreeItemId::ImportedObject(leaf)));
         assert!(!ids.contains(&TreeItemId::Body(body_id)));
+    }
+
+    /// A part whose shape the checker calls broken is red and offers its
+    /// repair, and so is the closed assembly above it; once the repair is
+    /// asked for, neither offers it again.
+    #[test]
+    fn a_broken_shape_marks_its_row_and_every_row_above_it() {
+        let mut doc = Document::new("tree");
+        let broken = doc.create_body(Some("Broken".into()));
+        let sound = doc.create_body(Some("Sound".into()));
+        let asset = doc.add_asset_with_data(
+            core_document::AssetReference::new(
+                "assets/x.step".to_string(),
+                core_document::AssetType::Step,
+                serde_json::json!({}),
+            ),
+            b"ISO-10303-21;".to_vec(),
+        );
+        for (body, broken_count) in [(broken, 2), (sound, 0)] {
+            doc.set_imported_geometry(
+                body,
+                core_document::ImportedGeometry {
+                    mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
+                    source_asset: Some(asset),
+                    revision: 0,
+                    bounds_mm: None,
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                    health: Some(kernel_api::ShapeHealth {
+                        broken: broken_count,
+                        ..Default::default()
+                    }),
+                },
+            );
+        }
+        let root = Uuid::new_v4();
+        let (broken_leaf, sound_leaf) = (Uuid::new_v4(), Uuid::new_v4());
+        let part = |id: Uuid, body: BodyId| core_document::ImportedObjectNode {
+            id,
+            parent_id: Some(root),
+            children: Vec::new(),
+            kind: kernel_api::ImportedNodeKind::Part,
+            name: "Part".into(),
+            visible: true,
+            body_id: Some(body),
+            local_transform: None,
+        };
+        let mut graph = std::collections::HashMap::new();
+        graph.insert(
+            root,
+            core_document::ImportedObjectNode {
+                id: root,
+                parent_id: None,
+                children: vec![broken_leaf, sound_leaf],
+                kind: kernel_api::ImportedNodeKind::Assembly,
+                name: "Asm".into(),
+                visible: true,
+                body_id: None,
+                local_transform: None,
+            },
+        );
+        graph.insert(broken_leaf, part(broken_leaf, broken));
+        graph.insert(sound_leaf, part(sound_leaf, sound));
+        doc.set_imported_object_graph(vec![root], graph);
+
+        let find = |tree: &DocumentTree, id: Uuid| -> (bool, Vec<BodyId>) {
+            fn walk(nodes: &[TreeNode], id: Uuid) -> Option<(bool, Vec<BodyId>)> {
+                nodes.iter().find_map(|n| {
+                    if n.id == TreeItemId::ImportedObject(id) {
+                        Some((n.defect, n.repairable.clone()))
+                    } else {
+                        walk(&n.children, id)
+                    }
+                })
+            }
+            walk(tree.nodes(), id).expect("row exists")
+        };
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        assert_eq!(find(&tree, broken_leaf), (true, vec![broken]));
+        assert_eq!(find(&tree, sound_leaf), (false, vec![]));
+        assert_eq!(
+            find(&tree, root),
+            (true, vec![broken]),
+            "the closed assembly shows what is inside it"
+        );
+
+        assert!(doc.request_body_repair(broken));
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        assert_eq!(
+            find(&tree, broken_leaf),
+            (true, vec![]),
+            "still red until the repair lands, and not offered twice"
+        );
+        assert_eq!(find(&tree, root), (true, vec![]));
     }
 
     #[test]
