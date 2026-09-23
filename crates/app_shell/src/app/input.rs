@@ -574,7 +574,8 @@ impl PrintCadApp {
             }
 
             // Face-first selection: the first click selects the FACE under the
-            // cursor; a double click promotes to the whole body.
+            // cursor; a double click promotes to the whole body. A mesh has
+            // no faces to pick, so a click on one takes the whole body.
             let now = Instant::now();
             let previous = self.session.last_select_click;
             let is_double = previous
@@ -585,8 +586,16 @@ impl PrintCadApp {
             // the next click should undo.
             let clicked_before = previous.is_some_and(|(_, target)| target == hovered);
             self.session.last_select_click = Some((now, hovered));
+            let already_whole = self.session.selected_body == Some(hovered)
+                && self.session.face_highlight.is_none()
+                && clicked_before;
+            let whole_mesh = self
+                .session
+                .document
+                .is_mesh_body(core_document::BodyId(hovered))
+                && !already_whole;
 
-            if is_double {
+            if is_double || whole_mesh {
                 // The whole body the face belongs to — one part of an
                 // assembly, not the assembly. A modelling bench works from
                 // the tree, so there the body's row opens and scrolls into

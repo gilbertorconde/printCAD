@@ -251,12 +251,7 @@ pub fn draw_menu_bar(
                             commands.push(UiCommand::File(FileCommand::SaveAs));
                         }
                         ui.separator();
-                        if item_needing_document(
-                            ui,
-                            "Import STEP, IGES or mesh…",
-                            Some(&sc_import),
-                            have_document,
-                        ) {
+                        if item_needing_document(ui, "Import…", Some(&sc_import), have_document) {
                             commands.push(UiCommand::File(FileCommand::ImportStep));
                         }
                         ui.separator();

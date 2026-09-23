@@ -413,6 +413,7 @@ fn mark_meshes(nodes: &mut [TreeNode], document: &Document) {
                 .bodies()
                 .iter()
                 .any(|b| b.id == body && b.solid_requested);
+            node.icon = "workbench-mesh";
             node.detail = Some(if requested {
                 "Mesh, converting to a solid".to_string()
             } else {
@@ -1329,6 +1330,13 @@ mod tests {
         };
         let (detail, convertible) = row(&doc);
         assert!(detail.starts_with("Mesh"), "{detail}");
+        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let icon = tree
+            .nodes()
+            .iter()
+            .find(|n| n.id == TreeItemId::Body(mesh))
+            .map(|n| n.icon);
+        assert_eq!(icon, Some("workbench-mesh"), "a mesh row has its own icon");
         assert_eq!(convertible, vec![mesh]);
 
         assert!(doc.request_mesh_solid(mesh));
