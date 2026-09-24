@@ -112,3 +112,29 @@ Built (the `agents` crate and the Assistant panel, see [AI agents](AI.md)):
 
 Next: attaching the selection or a picture of the view to a prompt by
 hand, and the document as MCP resources.
+
+### Variables and formulas
+
+Every number in a model can be a formula over named variables and other
+objects' dimensions, so a design is driven by a few values:
+
+- Variable sets: named objects in the document (`Printer`, `Bracket`),
+  each a list of variables defined by formulas (`nozzle = 0.4 mm`,
+  `wall = 3 * Printer.nozzle`).
+- Formulas (`core_document::expr`, built): arithmetic, `if`, the usual
+  functions, and units that are checked: a length field takes a length,
+  a bare number takes the field's unit. Every reference is
+  `object.property`; renaming an object or a property rewrites the
+  formulas that use it.
+- Every numeric field of Part Design, the Sketcher's dimensions, the
+  Assembly's joints and the datums' offsets can hold a formula. The
+  document keeps what was typed; values are worked out on each replica,
+  like solids, and a feature rebuilds when a value it reads changes.
+  Sketches solve again when their dimensions do.
+- Workbenches list their numeric properties through the `Workbench`
+  trait and read evaluated values; the host evaluates and never names a
+  bench.
+- Configurations: a table whose rows (S, M, L) set chosen variables; one
+  row is active, and export can write every row.
+- Commands: `var.*`, `config.*`, and formulas wherever a command takes a
+  number, so scripts and agents drive them.

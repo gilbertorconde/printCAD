@@ -1,6 +1,7 @@
 pub mod asset;
 pub mod command;
 pub mod datum;
+pub mod expr;
 pub mod feature;
 pub mod history;
 pub mod op;
