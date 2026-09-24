@@ -430,6 +430,11 @@ impl PrintCadApp {
         self.redraw_needed = true;
     }
 
+    /// Every command's id, for the console's completion.
+    pub(crate) fn script_command_ids(&self) -> Vec<String> {
+        all_commands(self).into_iter().map(|c| c.id).collect()
+    }
+
     /// Read the scripts folder again, every couple of seconds while frames
     /// run, so a script saved in an editor shows up without a restart.
     pub(crate) fn refresh_script_library(&mut self) {

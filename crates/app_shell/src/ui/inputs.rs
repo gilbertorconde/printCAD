@@ -110,6 +110,8 @@ pub struct UiFrameInputs<'a> {
     pub scripts: &'a [crate::script_library::ScriptEntry],
     /// A script printed or failed since the last frame: show the console.
     pub console_attention: bool,
+    /// Every command's id, for the console's completion.
+    pub command_ids: &'a [String],
 }
 
 /// A body's measure as the property panel shows it.

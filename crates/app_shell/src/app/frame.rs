@@ -543,6 +543,9 @@ impl PrintCadApp {
         });
         self.drive_measurement();
         self.refresh_script_library();
+        if self.command_ids.is_empty() {
+            self.command_ids = self.script_command_ids();
+        }
 
         if self.gfx.is_none() {
             return;
@@ -678,6 +681,7 @@ impl PrintCadApp {
                         export_pending: self.session.export_pending.as_mut(),
                         scripts: &self.script_library,
                         console_attention: std::mem::take(&mut self.console_attention),
+                        command_ids: &self.command_ids,
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;

@@ -660,6 +660,12 @@ pub struct SettingsStore {
     path: PathBuf,
 }
 
+/// A file of the application's configuration folder, by name. `None` when
+/// the system names no configuration folder.
+pub fn config_path(name: &str) -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| dirs.config_dir().join(name))
+}
+
 /// The folder the user's scripts live in: every `.lua` file there is a
 /// command of the application. `None` when the system names no
 /// configuration folder.

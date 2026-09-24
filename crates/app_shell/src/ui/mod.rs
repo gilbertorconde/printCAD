@@ -137,7 +137,7 @@ impl UiLayer {
             workbench_keys: None,
             recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
-            console: Default::default(),
+            console: console_view::ConsoleState::load(),
         }
     }
 
@@ -239,6 +239,7 @@ impl UiLayer {
             mut export_pending,
             scripts,
             console_attention,
+            command_ids,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -520,7 +521,7 @@ impl UiLayer {
                 commands.push(UiCommand::CancelKernelJob);
             }
             log_view::draw_log_panel(ui, settings.rendering.show_log_panel);
-            console_view::draw_console(ui, &mut self.console, &mut commands);
+            console_view::draw_console(ui, &mut self.console, command_ids, &mut commands);
 
             let combo = combo_view::draw_combo_view(
                 ui,

@@ -258,6 +258,8 @@ struct PrintCadApp {
     script_library_read: Option<Instant>,
     /// A script printed or failed: the console opens to show it.
     console_attention: bool,
+    /// Every command's id, read once the workbenches are registered.
+    command_ids: Vec<String>,
 }
 
 /// The bench a new document lands in. A registry with no non-modal bench
@@ -350,6 +352,7 @@ impl PrintCadApp {
             script_library: Vec::new(),
             script_library_read: None,
             console_attention: false,
+            command_ids: Vec::new(),
             fps_display_idle: false,
             smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,
