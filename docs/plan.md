@@ -59,3 +59,55 @@ Next:
 - More joint kinds: gears, limits on a slide or a turn
 - Stable face and edge identity across rebuilds, so references do not have
   to be matched by geometry
+
+### Command API
+
+Scripts and AI agents both need to drive the app. They share one layer,
+so neither reaches into a workbench:
+
+- Every command the app and the workbenches offer is registered with an
+  id, a description and typed parameters and results. The tools,
+  actions and menu entries that exist today become entries in it.
+- A workbench registers its commands through the `Workbench` trait, as
+  it does its tools. The host never names a workbench.
+- Queries read the document: bodies, features, sketches, selection,
+  measurements. Commands change it by recording ordinary operations, so
+  undo, the document server and replay work unchanged.
+- A command started by a script or an agent runs on the UI thread
+  between frames, like a toolbar click.
+- The same list drives the command palette, the keyboard map, the
+  script API, the MCP tools and the reference docs.
+
+### Scripts
+
+- An embedded scripting language with a typed binding generated from the
+  command API. Choose between Python (widest reach, heavier to embed) and
+  a pure Rust language such as Rhai or Lua (no system dependency).
+- A console panel beside the log: run a line, see the result, history,
+  completion from the command API.
+- Open, edit and run script files (File › Run script, recent scripts).
+- Macros: record commands from the UI as a script, replay them.
+- Script buttons in the toolbar, with icon, label and key, set in
+  Preferences.
+- A workbench written as a script: tools, task panel and features from
+  the same API.
+- Run scripts without a window from the command line, for batch export
+  or tests.
+- One undo entry per script run. Cancel a long script from the status
+  bar.
+
+### AI
+
+- Agent registry: agents that speak the Agent Client Protocol (ACP),
+  configured in Preferences with the command that starts each, its
+  arguments and environment.
+- An MCP server inside the app that offers the command API as tools and
+  the document as resources, to the ACP agents and to any MCP client.
+- A chat panel that talks to a configured agent: several chats, each in
+  its own tab with its own agent and history, the tool calls it makes
+  shown inline with their results.
+- Every change an agent makes goes through the command API, so it lands
+  in undo and can be reverted as one step. Changes can wait for the
+  user's approval, per chat or per command.
+- An agent can attach the selection, a screenshot of the viewport and the
+  log to its context.
