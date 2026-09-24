@@ -26,6 +26,9 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
   support.
 - **Scripting:** a Lua console that reaches every command of the
   application and the workbenches.
+- **Variables and formulas:** any number can follow named variables and
+  other dimensions, with units checked, and configurations switch a model
+  between sizes.
 - **AI agents:** chat with ACP agents that work the document through the
   same commands, and an MCP server for any other client.
 

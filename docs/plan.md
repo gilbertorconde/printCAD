@@ -115,8 +115,9 @@ hand, and the document as MCP resources.
 
 ### Variables and formulas
 
-Every number in a model can be a formula over named variables and other
-objects' dimensions, so a design is driven by a few values:
+Built (see [Variables and formulas](VARIABLES.md)): every number in a model
+can be a formula over named variables and other objects' dimensions, so a
+design is driven by a few values:
 
 - Variable sets: named objects in the document (`Printer`, `Bracket`),
   each a list of variables defined by formulas (`nozzle = 0.4 mm`,

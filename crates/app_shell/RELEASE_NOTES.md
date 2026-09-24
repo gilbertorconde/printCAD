@@ -54,6 +54,14 @@ version first.
 - Scripts › Record… writes what you do as a script that does it again: every tool ends in the command it stands for, so the recording is the list of those commands, with what it makes named for later lines.
 - A script run is one undo step. See docs/SCRIPTING.md.
 
+### Variables and formulas
+- Variable sets hold named values defined by formulas (`wall = 3 * Printer.nozzle`), edited in the Variables panel (Windows › Variables).
+- Any number can be a formula: a pad's length, a hole's diameter, a sketch dimension, a joint's gap, a datum's offset, in the property panel, the task panels or the sketch's dimension editor.
+- Units are checked (a length field refuses an angle) and typed values take units (`1 in`); names complete as you type.
+- Formulas read other objects' numbers (`Pad.length`, a named sketch dimension); renaming anything rewrites the formulas that use it.
+- Configurations give chosen variables other values (Small, Large); switching rebuilds, and export can write every configuration.
+- Scripts and agents use them through `var.*`, `config.*` and `doc.set_formula`. See docs/VARIABLES.md.
+
 ### AI agents
 - The Assistant panel (Windows › Assistant) chats with AI agents that speak the Agent Client Protocol, set up in Preferences › AI agents; several chats run at once, each in its own tab.
 - Agents work the document through the same commands scripts use, and see the view and the log.

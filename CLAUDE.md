@@ -351,6 +351,40 @@ come from the "+" menu (`FileDialogKind::Attach`, `attach_view` over
 `view_png`), a paste of file paths, or a drop on the panel (winit delivers
 drops on X11 only). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
 
+**Variables and formulas.** Any number a bench lists
+(`Workbench::parameters`: a `Parameter` with a stable key, a JSON pointer
+into the feature's data, a `Dim`, a scale for radians, an integer flag)
+can be set by a formula. `core_document::expr` parses and evaluates them
+(units checked by powers of length and angle, a bare number taking the
+unit beside it or the field's, references `Object.property`, backticks for
+names with spaces, rename rewriting in place). A feature's formulas live
+in `FeatureNode::formulas` by key (op `SetFeatureFormula`, carried by
+`AddFeature` so undoing a delete restores them); the bench's own data
+keeps plain numbers, so no bench type changes. Variable sets
+(`core.variables`) and the configurations table (`core.configurations`,
+whose active row stands in for chosen variables' formulas) are body-less
+feature nodes the registry presents itself. `evaluate::evaluate_document`
+works out every slot once (loops, unknown or ambiguous names and wrong
+kinds reported on the slot); `DocumentService::evaluate` runs it when
+`mutation_seq` moved, lets each owner `settle` its evaluated data (a
+sketch solves; reused while the unsettled input is the same) and applies
+it as derived state: `Document::feature_values` is the data a bench
+builds, draws and edits from, and a feature whose values moved is marked
+dirty without marking the document edited. Results a bench records rather
+than derives follow through `Workbench::values_moved` (the assembly
+re-solves placements): the host calls it from `settle_formulas`, every
+frame and in `close_gesture`, which every undo boundary goes through, so
+an edit and what it moves are one step; headless runs settle after every
+command. A value set by hand goes through
+`DocumentService::set_parameter_value`. The UI: `ui_kit::widgets::
+FormulaField` over `core_document::DocumentFormulas` (the document's last
+values) in the property panel's Parameters group, Part Design's and the
+Assembly's task fields and the sketcher's dimensions (bound ones drawn in
+`SketchPalette::formula`), and the Variables panel (`ui/variables_view.rs`,
+a tab per set plus Configurations). Commands: `var.*`, `config.*`,
+`doc.parameters`, `doc.set_formula`, `doc.set_value`. `docs/VARIABLES.md`
+is the guide.
+
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the
 feature the tool just created). `frame.rs` skips the per-frame
