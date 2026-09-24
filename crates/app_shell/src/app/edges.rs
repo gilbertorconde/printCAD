@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use core_document::{BodyId, EdgeRef};
+use core_document::{BodyId, EdgeCircle, EdgeRef};
 use glam::{Vec2, Vec3};
 use kernel_api::TriMesh;
 use uuid::Uuid;
@@ -32,6 +32,7 @@ pub(crate) struct EdgeHit {
     pub point: [f32; 3],
     pub direction: [f32; 3],
     pub length_mm: f32,
+    pub circle: Option<EdgeCircle>,
 }
 
 impl EdgeHit {
@@ -41,6 +42,7 @@ impl EdgeHit {
             direction: self.direction,
             length_mm: self.length_mm,
             body: self.body,
+            circle: self.circle,
         }
     }
 }
@@ -160,6 +162,7 @@ impl PrintCadApp {
             point: a.lerp(b, 0.5).to_array(),
             direction: direction.to_array(),
             length_mm: edge_length(mesh, edge),
+            circle: EdgeCircle::fit(&edge_points(mesh, edge)),
         })
     }
 
@@ -194,6 +197,16 @@ impl PrintCadApp {
             .map(EdgeHit::as_ref)
             .collect()
     }
+}
+
+/// The ends of a kernel edge's outline segments.
+fn edge_points(mesh: &TriMesh, edge: u32) -> Vec<[f32; 3]> {
+    mesh.edges
+        .chunks(2)
+        .zip(&mesh.edge_ids)
+        .filter(|(_, id)| **id == edge)
+        .flat_map(|(pair, _)| pair.iter().map(|&i| mesh.positions[i as usize]))
+        .collect()
 }
 
 /// The length of a kernel edge, as the sum of its outline segments.

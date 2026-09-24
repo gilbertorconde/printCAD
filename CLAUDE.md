@@ -137,9 +137,14 @@ cargo fmt --all                   # CI enforces --check
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution).
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
-  planar anchors with offset/flip, Align of two axes, Angle between two
-  planar anchors, starting at the angle they make; anchors kept in each
-  body's own frame; Ground keeps a body where it is), the solver
+  planar anchors with offset/flip, Align of two axes, Angle, Hinge, Slider,
+  Fixed, Parallel, Perpendicular, Distance and Tangent; Ground keeps a body
+  where it is. `JointTool` is the one table of what each tool takes, its
+  command, icon and key, and how a joint starts from where the bodies sit:
+  an angle or distance at what they make, a slider's or fixed joint's
+  relative turn recorded. Anchors are kept in each body's own frame; an
+  axis comes from a round face or an edge, a circular edge's axis from
+  `EdgeRef::circle`, which the host fits to the outline), the solver
   (`solve.rs`: each free body placed on its own against the bodies placed
   before it, turning its first joint's directions into agreement, rings
   taking their turn once most of their joints have something to hold to;

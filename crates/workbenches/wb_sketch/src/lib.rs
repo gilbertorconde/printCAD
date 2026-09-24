@@ -4393,6 +4393,7 @@ mod external_geometry {
             direction: [1.0, 0.0, 0.0],
             length_mm: 10.0,
             body: body.0,
+            circle: None,
         }];
         wb.on_frame(0.016, &mut ctx);
         // Taken once, however many frames the pick stays selected.

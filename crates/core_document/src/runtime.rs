@@ -109,6 +109,61 @@ pub struct EdgeRef {
     pub length_mm: f32,
     /// The body the edge belongs to.
     pub body: uuid::Uuid,
+    /// The circle the edge runs round, when it is a circle or an arc of
+    /// one: a hole's rim brings the hole's axis.
+    pub circle: Option<EdgeCircle>,
+}
+
+/// A circle an edge lies on, in the same frame as the edge.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EdgeCircle {
+    pub center: [f32; 3],
+    pub normal: [f32; 3],
+    pub radius: f32,
+}
+
+impl EdgeCircle {
+    /// The circle through every one of `points`, when they lie on one (to
+    /// a thousandth of its radius): an edge's outline, drawn with its
+    /// vertices on the curve. A straight edge has none.
+    pub fn fit(points: &[[f32; 3]]) -> Option<EdgeCircle> {
+        use glam::DVec3;
+        let points: Vec<DVec3> = points
+            .iter()
+            .map(|p| DVec3::from_array(p.map(f64::from)))
+            .collect();
+        let a = *points.first()?;
+        // Three points far apart: the first, the one farthest from it, and
+        // the one farthest from the line through those two.
+        let b = *points
+            .iter()
+            .max_by(|p, q| p.distance_squared(a).total_cmp(&q.distance_squared(a)))?;
+        let chord = (b - a).normalize_or_zero();
+        let off = |p: &DVec3| (*p - a).reject_from_normalized(chord).length_squared();
+        let c = *points.iter().max_by(|p, q| off(p).total_cmp(&off(q)))?;
+        let (ab, ac) = (b - a, c - a);
+        let n = ab.cross(ac);
+        if n.length_squared() <= (1e-6 * ab.length_squared()).powi(2) {
+            return None;
+        }
+        let center = a
+            + (ac.length_squared() * n.cross(ab) + ab.length_squared() * ac.cross(n))
+                / (2.0 * n.length_squared());
+        let normal = n.normalize();
+        let radius = center.distance(a);
+        let tolerance = 1e-3 * radius + 1e-5;
+        points
+            .iter()
+            .all(|p| {
+                (p.distance(center) - radius).abs() <= tolerance
+                    && (*p - center).dot(normal).abs() <= tolerance
+            })
+            .then(|| EdgeCircle {
+                center: center.as_vec3().to_array(),
+                normal: normal.as_vec3().to_array(),
+                radius: radius as f32,
+            })
+    }
 }
 
 /// A picked face on a solid body: a point on the surface and its outward
@@ -130,6 +185,11 @@ impl EdgeRef {
             direction: placement.direction(self.direction),
             length_mm: self.length_mm,
             body: self.body,
+            circle: self.circle.map(|c| EdgeCircle {
+                center: placement.point(c.center),
+                normal: placement.direction(c.normal),
+                radius: c.radius,
+            }),
         }
     }
 }
@@ -463,6 +523,27 @@ pub fn viewport_to_plane(
 mod transform_tests {
     use super::*;
     use glam::{Mat4, Vec3, Vec4};
+
+    #[test]
+    fn a_circle_is_found_through_an_outline_and_a_line_has_none() {
+        let points: Vec<[f32; 3]> = (0..24)
+            .map(|i| {
+                let t = i as f32 * std::f32::consts::TAU / 24.0;
+                [5.0 + 3.0 * t.cos(), -2.0, 1.0 + 3.0 * t.sin()]
+            })
+            .collect();
+        let c = EdgeCircle::fit(&points).expect("a circle");
+        assert!((c.radius - 3.0).abs() < 1e-4);
+        assert!(Vec3::from_array(c.center).distance(Vec3::new(5.0, -2.0, 1.0)) < 1e-4);
+        assert!((c.normal[1].abs() - 1.0).abs() < 1e-5);
+        // An arc of it too.
+        assert!(EdgeCircle::fit(&points[..5]).is_some());
+        let line: Vec<[f32; 3]> = (0..5).map(|i| [i as f32, 0.0, 0.0]).collect();
+        assert!(EdgeCircle::fit(&line).is_none());
+        let mut bent = points.clone();
+        bent[7][1] += 0.5;
+        assert!(EdgeCircle::fit(&bent).is_none(), "off the plane");
+    }
 
     /// Build a Vulkan-convention view-projection like the app camera does:
     /// perspective (0..1 depth) with the Y flip baked in, looking at the

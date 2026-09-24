@@ -13,7 +13,7 @@ use core_document::{
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 
-use crate::joint::{Anchor, JOINT_KIND, JointFeature, JointKind};
+use crate::joint::{Anchor, JOINT_KIND, JointFeature, JointKind, JointTool, Takes};
 use crate::solve::joints;
 
 /// Register every command this module runs.
@@ -26,40 +26,72 @@ pub fn register(context: &mut WorkbenchContext) {
             .param("other_face", ParamKind::Any, face)
             .optional("name", ParamKind::String, "Its name in the tree")
     };
-    let flat = "A flat face, {point, normal}, as pc.doc.faces lists it";
-    context.register_command(
-        joint("asm.mate", "Put two flat faces against each other", flat)
-            .optional("offset", ParamKind::Number, "The gap between them, mm")
-            .optional(
-                "flip",
-                ParamKind::Bool,
-                "Face the same way instead of at each other",
-            )
-            .returns("the joint's id"),
-    );
-    context.register_command(
-        joint(
-            "asm.align",
-            "Put two round faces on one axis",
-            "A round face, {axis = {point, direction}}, as pc.doc.faces lists it",
-        )
-        .returns("the joint's id"),
-    );
-    context.register_command(
-        joint("asm.angle", "Hold two flat faces at an angle", flat)
-            .optional(
+    for tool in JointTool::ALL {
+        let face = match tool.takes() {
+            Takes::Flat => "A flat face, {point, normal}, as pc.doc.faces lists it",
+            Takes::Round => {
+                "A round face, {axis = {point, direction}}, as pc.doc.faces lists it; \
+                 an edge's line or circle axis goes the same way"
+            }
+            Takes::Any => "Any face, as pc.doc.faces lists it; the body's origin when left out",
+            Takes::FlatAndRound => {
+                "A flat face {point, normal} on one body and a round face {axis, radius} \
+                 on the other, either way round"
+            }
+        };
+        let spec = if tool == JointTool::Fixed {
+            CommandSpec::new(tool.command(), tool.summary())
+                .param("body", ParamKind::Id, "The body that moves")
+                .optional("face", ParamKind::Any, face)
+                .param("other", ParamKind::Id, "The body it is held against")
+                .optional("other_face", ParamKind::Any, face)
+                .optional("name", ParamKind::String, "Its name in the tree")
+        } else {
+            joint(tool.command(), tool.summary(), face)
+        };
+        let spec = match tool {
+            JointTool::Mate => spec
+                .optional("offset", ParamKind::Number, "The gap between them, mm")
+                .optional(
+                    "flip",
+                    ParamKind::Bool,
+                    "Face the same way instead of at each other",
+                ),
+            JointTool::Angle => spec.optional(
                 "degrees",
                 ParamKind::Number,
                 "Between their outward normals; the angle they make now when left out",
-            )
-            .returns("the joint's id"),
-    );
+            ),
+            JointTool::Hinge => spec.optional(
+                "offset",
+                ParamKind::Number,
+                "How far along the axis the first sits from the second, mm",
+            ),
+            JointTool::Distance => spec.optional(
+                "offset",
+                ParamKind::Number,
+                "Along the second face's normal, mm; the distance they are now when left out",
+            ),
+            JointTool::Tangent => spec.optional(
+                "radius",
+                ParamKind::Number,
+                "The round face's radius, mm; the face's own when left out",
+            ),
+            _ => spec,
+        };
+        context.register_command(spec.returns("the joint's id"));
+    }
     context.register_command(
-        CommandSpec::new("asm.set", "Change a joint's gap, side or angle")
+        CommandSpec::new("asm.set", "Change a joint's gap, side, angle or radius")
             .param("joint", ParamKind::Id, "")
-            .optional("offset", ParamKind::Number, "A mate's gap, mm")
+            .optional(
+                "offset",
+                ParamKind::Number,
+                "A mate's gap, a hinge's height or a distance, mm",
+            )
             .optional("flip", ParamKind::Bool, "A mate's side")
-            .optional("degrees", ParamKind::Number, "An angle joint's angle"),
+            .optional("degrees", ParamKind::Number, "An angle joint's angle")
+            .optional("radius", ParamKind::Number, "A tangent's radius, mm"),
     );
     context.register_command(
         CommandSpec::new(
@@ -120,7 +152,7 @@ pub fn register(context: &mut WorkbenchContext) {
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
     match id {
-        "asm.mate" | "asm.align" | "asm.angle" => make_joint(id, &a, ctx),
+        id if JointTool::of_command(id).is_some() => make_joint(id, &a, ctx),
         "asm.set" => {
             let joint = FeatureId(a.id("joint")?);
             let not_a_joint = || CommandError::bad("joint", "is not a joint");
@@ -145,7 +177,22 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         *degrees = v as f32;
                     }
                 }
-                JointKind::Align | JointKind::Ground => {}
+                JointKind::Hinge { offset } | JointKind::Distance { offset } => {
+                    if let Some(v) = a.opt_number("offset")? {
+                        *offset = v as f32;
+                    }
+                }
+                JointKind::Tangent { radius } => {
+                    if let Some(v) = a.opt_number("radius")? {
+                        *radius = v as f32;
+                    }
+                }
+                JointKind::Align
+                | JointKind::Ground
+                | JointKind::Slider { .. }
+                | JointKind::Fixed { .. }
+                | JointKind::Parallel
+                | JointKind::Perpendicular => {}
             }
             let data =
                 serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
@@ -250,31 +297,61 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
     if other == moving_body {
         return Err(CommandError::bad("other", "must be another body"));
     }
-    let round = id == "asm.align";
-    let anchor = |name: &str, body: BodyId, ctx: &WorkbenchRuntimeContext| {
-        let world = anchor_of(a.0.get(name), name, round)?;
+    let tool = JointTool::of_command(id).unwrap_or(JointTool::Mate);
+    let at = |body: BodyId| -> crate::Rigid { ctx.document.body_placement(body).into() };
+    let anchor = |name: &str, body: BodyId| {
+        if tool == JointTool::Fixed && a.0.get(name).is_none() {
+            // The body's own origin: a fixed joint holds the body, not a face.
+            return Ok(Anchor::Plane {
+                point: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+            });
+        }
+        let world = anchor_of(a.0.get(name), name, tool.takes())?;
         // Stored in the body's own frame, as a picked face is.
         Ok::<_, CommandError>(world.moved(&ctx.document.body_placement(body).inverse()))
     };
-    let moving = anchor("face", moving_body, ctx)?;
-    let fixed = anchor("other_face", other, ctx)?;
-    let kind = match id {
-        "asm.mate" => JointKind::Mate {
-            flip: a.opt_bool("flip")?.unwrap_or(false),
-            offset: a.opt_number("offset")?.unwrap_or(0.0) as f32,
-        },
-        "asm.align" => JointKind::Align,
-        _ => JointKind::Angle {
-            degrees: match a.opt_number("degrees")? {
-                Some(d) => d as f32,
-                None => moving.angle_to(
-                    &ctx.document.body_placement(moving_body).into(),
-                    &fixed,
-                    &ctx.document.body_placement(other).into(),
-                ),
-            },
-        },
+    let moving = anchor("face", moving_body)?;
+    let fixed = anchor("other_face", other)?;
+    if tool.takes() == Takes::FlatAndRound
+        && matches!(moving, Anchor::Plane { .. }) == matches!(fixed, Anchor::Plane { .. })
+    {
+        return Err(CommandError::bad(
+            "other_face",
+            "must be round where `face` is flat, or flat where it is round",
+        ));
+    }
+    let radius = match a.opt_number("radius")? {
+        Some(r) => r as f32,
+        None => ["face", "other_face"]
+            .iter()
+            .find_map(|name| a.0.get(*name)?.get("radius")?.as_f64())
+            .unwrap_or(0.0) as f32,
     };
+    if tool == JointTool::Tangent && radius <= 0.0 {
+        return Err(CommandError::bad(
+            "radius",
+            "must be given where the round face has none",
+        ));
+    }
+    let mut kind = tool.joint(&moving, &at(moving_body), &fixed, &at(other), radius);
+    match &mut kind {
+        JointKind::Mate { flip, offset } => {
+            *flip = a.opt_bool("flip")?.unwrap_or(false);
+            *offset = a.opt_number("offset")?.unwrap_or(0.0) as f32;
+        }
+        JointKind::Angle { degrees } => {
+            if let Some(d) = a.opt_number("degrees")? {
+                *degrees = d as f32;
+            }
+        }
+        JointKind::Hinge { offset } | JointKind::Distance { offset } => {
+            if let Some(v) = a.opt_number("offset")? {
+                *offset = v as f32;
+            }
+        }
+        _ => {}
+    }
     let label = kind.label();
     let name = match a.opt_string("name")? {
         Some(name) => name.to_string(),
@@ -321,8 +398,15 @@ pub(crate) fn record_joint(
     };
     let settings = |kind: &JointKind| match *kind {
         JointKind::Mate { flip, offset } => json!({"offset": offset, "flip": flip}),
-        JointKind::Align | JointKind::Ground => json!({}),
         JointKind::Angle { degrees } => json!({"degrees": degrees}),
+        JointKind::Hinge { offset } | JointKind::Distance { offset } => json!({"offset": offset}),
+        JointKind::Tangent { radius } => json!({"radius": radius}),
+        JointKind::Align
+        | JointKind::Ground
+        | JointKind::Slider { .. }
+        | JointKind::Fixed { .. }
+        | JointKind::Parallel
+        | JointKind::Perpendicular => json!({}),
     };
     match before {
         None => {
@@ -342,11 +426,9 @@ pub(crate) fn record_joint(
                     json!({"axis": {"point": point, "direction": direction}})
                 }
             };
-            let command = match joint.kind {
-                JointKind::Mate { .. } => "asm.mate",
-                JointKind::Align => "asm.align",
-                JointKind::Angle { .. } => "asm.angle",
-                JointKind::Ground => {
+            let command = match JointTool::of_kind(&joint.kind) {
+                Some(tool) => tool.command(),
+                None => {
                     ctx.record(
                         "asm.ground",
                         object(json!({"body": body.0.to_string()})),
@@ -408,11 +490,22 @@ fn body(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<BodyId, CommandError>
 
 /// A face as a joint anchors to it: a flat face's `point` and `normal`, or
 /// a round face's `axis`.
-fn anchor_of(value: Option<&Value>, name: &str, round: bool) -> Result<Anchor, CommandError> {
+fn anchor_of(value: Option<&Value>, name: &str, takes: Takes) -> Result<Anchor, CommandError> {
     let face = value
         .and_then(Value::as_object)
         .ok_or_else(|| CommandError::bad(name, "must be a face, as pc.doc.faces lists it"))?;
-    if round {
+    let flat = || -> Result<Anchor, CommandError> {
+        let point = vector(face.get("point").unwrap_or(&Value::Null), name)?;
+        let normal = face
+            .get("normal")
+            .ok_or_else(|| CommandError::bad(name, "must be a flat face, with a normal"))?;
+        let normal = vector(normal, name)?;
+        Ok(Anchor::Plane {
+            point: point.to_array(),
+            normal: normal.normalize_or_zero().to_array(),
+        })
+    };
+    let round = || -> Result<Anchor, CommandError> {
         let axis = face
             .get("axis")
             .and_then(Value::as_object)
@@ -423,16 +516,12 @@ fn anchor_of(value: Option<&Value>, name: &str, round: bool) -> Result<Anchor, C
             point: point.to_array(),
             direction: direction.normalize_or_zero().to_array(),
         })
-    } else {
-        let point = vector(face.get("point").unwrap_or(&Value::Null), name)?;
-        let normal = face
-            .get("normal")
-            .ok_or_else(|| CommandError::bad(name, "must be a flat face, with a normal"))?;
-        let normal = vector(normal, name)?;
-        Ok(Anchor::Plane {
-            point: point.to_array(),
-            normal: normal.normalize_or_zero().to_array(),
-        })
+    };
+    match takes {
+        Takes::Flat => flat(),
+        Takes::Round => round(),
+        Takes::Any | Takes::FlatAndRound if face.contains_key("normal") => flat(),
+        Takes::Any | Takes::FlatAndRound => round(),
     }
 }
 
@@ -558,6 +647,59 @@ mod tests {
             }),
         );
         assert!(err.is_err(), "an alignment takes round faces");
+    }
+
+    #[test]
+    fn a_tangent_takes_its_radius_from_the_round_face_and_either_order() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let roller = json!({"axis": {"point": [0, 0, 0], "direction": [1, 0, 0]}, "radius": 4});
+        let top = json!({"point": [0, 0, 10], "normal": [0, 0, 1]});
+        let joint = call(
+            &mut doc,
+            "asm.tangent",
+            json!({"body": a.0.to_string(), "face": roller, "other": b.0.to_string(), "other_face": top}),
+        )
+        .unwrap();
+        assert!((doc.body_placement(a).translation[2] - 14.0).abs() < 1e-3);
+        call(&mut doc, "asm.set", json!({"joint": joint, "radius": 6})).unwrap();
+        assert!((doc.body_placement(a).translation[2] - 16.0).abs() < 1e-3);
+        let both_flat = call(
+            &mut doc,
+            "asm.tangent",
+            json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
+        );
+        assert!(both_flat.is_err(), "one face of each");
+    }
+
+    #[test]
+    fn a_fixed_joint_needs_no_faces_and_carries_the_body_along() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        call(
+            &mut doc,
+            "asm.move",
+            json!({"body": a.0.to_string(), "by": [5, 6, 7]}),
+        )
+        .unwrap();
+        call(
+            &mut doc,
+            "asm.fix",
+            json!({"body": a.0.to_string(), "other": b.0.to_string()}),
+        )
+        .unwrap();
+        call(
+            &mut doc,
+            "asm.move",
+            json!({"body": b.0.to_string(), "by": [100, 0, 0]}),
+        )
+        .unwrap();
+        call(&mut doc, "asm.solve", json!({})).unwrap();
+        let at = doc.body_placement(a).translation;
+        assert!(
+            (at[0] - 105.0).abs() < 1e-3 && (at[1] - 6.0).abs() < 1e-3,
+            "{at:?}"
+        );
     }
 
     #[test]

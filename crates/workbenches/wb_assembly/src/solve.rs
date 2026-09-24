@@ -590,14 +590,20 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
             JointKind::Mate { flip: false, .. } => -df,
             JointKind::Mate { flip: true, .. } => df,
             // An axis has no way round: the nearer of its two directions.
-            JointKind::Align => {
-                if dm.dot(df) < 0.0 {
-                    -df
-                } else {
-                    df
-                }
+            JointKind::Align | JointKind::Hinge { .. } | JointKind::Parallel => {
+                if dm.dot(df) < 0.0 { -df } else { df }
             }
-            JointKind::Angle { .. } | JointKind::Ground => return None,
+            // A held turn is the whole rotation, not only a direction.
+            JointKind::Slider { turn } | JointKind::Fixed { turn, .. } => {
+                let fixed = &others[&joint.feature.other_body];
+                let want = (fixed.rotation * crate::joint::quat(turn)).normalize();
+                return Some((want * current.rotation.inverse()).normalize());
+            }
+            JointKind::Angle { .. }
+            | JointKind::Ground
+            | JointKind::Perpendicular
+            | JointKind::Distance { .. }
+            | JointKind::Tangent { .. } => return None,
         };
         (dm.length_squared() > 0.0 && target.length_squared() > 0.0)
             .then(|| DQuat::from_rotation_arc(dm, target))
@@ -1198,5 +1204,199 @@ mod tests {
         m[5][5] = 9.0;
         let (values, _) = eigen6(m);
         assert!(values.iter().any(|v| v.abs() < 1e-9), "{values:?}");
+    }
+
+    /// Each body's joints solved, every joint holding, and the motions
+    /// left to `part`.
+    fn free_after_solving(doc: &mut Document, part: BodyId) -> Vec<Motion> {
+        apply(doc);
+        assert!(holds(doc), "every joint holds");
+        freedom(doc)
+            .into_iter()
+            .find(|(b, _)| *b == part)
+            .map(|(_, m)| m)
+            .unwrap_or_default()
+    }
+
+    fn axis(point: [f32; 3], direction: [f32; 3]) -> Anchor {
+        Anchor::Axis { point, direction }
+    }
+
+    fn rigid(doc: &Document, body: BodyId) -> Rigid {
+        doc.body_placement(body).into()
+    }
+
+    /// A joint the way its tool makes it, from the bodies where they sit.
+    fn made(
+        doc: &Document,
+        tool: crate::JointTool,
+        body: BodyId,
+        moving: Anchor,
+        other: BodyId,
+        fixed: Anchor,
+    ) -> JointFeature {
+        JointFeature {
+            kind: tool.joint(&moving, &rigid(doc, body), &fixed, &rigid(doc, other), 0.0),
+            moving,
+            other_body: other,
+            fixed,
+        }
+    }
+
+    fn tilted(doc: &mut Document, body: BodyId) {
+        doc.set_body_placement(
+            body,
+            BodyPlacement::new(
+                Quat::from_rotation_x(0.4) * Quat::from_rotation_y(-0.3),
+                Vec3::new(35.0, -12.0, 20.0),
+            ),
+        );
+    }
+
+    #[test]
+    fn a_hinge_leaves_only_the_turn_about_its_axis_at_its_height() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        tilted(&mut doc, part);
+        add_joint(
+            &mut doc,
+            part,
+            JointFeature {
+                kind: JointKind::Hinge { offset: 5.0 },
+                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
+                other_body: base,
+                fixed: axis([20.0, 3.0, 0.0], [0.0, 0.0, 1.0]),
+            },
+        );
+        let motions = free_after_solving(&mut doc, part);
+        assert_eq!(motions.len(), 1, "{motions:?}");
+        let Motion::Turn { axis, through } = motions[0] else {
+            panic!("a turn: {motions:?}")
+        };
+        assert!((axis[2].abs() - 1.0).abs() < 1e-3, "{axis:?}");
+        assert!(
+            (through[0] - 20.0).abs() < 1e-2 && (through[1] - 3.0).abs() < 1e-2,
+            "{through:?}"
+        );
+        let origin = doc.body_placement(part).point([0.0; 3]);
+        assert!((origin[2] - 5.0).abs() < 1e-3, "{origin:?}");
+    }
+
+    #[test]
+    fn a_slider_leaves_only_the_slide_and_keeps_the_turn_it_was_made_with() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        doc.set_body_placement(
+            part,
+            BodyPlacement::new(Quat::from_rotation_z(0.5), Vec3::new(8.0, 9.0, 4.0)),
+        );
+        let joint = made(
+            &doc,
+            crate::JointTool::Slider,
+            part,
+            axis([0.0; 3], [0.0, 0.0, 1.0]),
+            base,
+            axis([20.0, 3.0, 0.0], [0.0, 0.0, 1.0]),
+        );
+        add_joint(&mut doc, part, joint);
+        let motions = free_after_solving(&mut doc, part);
+        assert_eq!(motions.len(), 1, "{motions:?}");
+        let Motion::Slide { direction } = motions[0] else {
+            panic!("a slide: {motions:?}")
+        };
+        assert!((direction[2].abs() - 1.0).abs() < 1e-3, "{direction:?}");
+        let placed = doc.body_placement(part);
+        let x = placed.direction([1.0, 0.0, 0.0]);
+        assert!(
+            (x[1].atan2(x[0]) - 0.5).abs() < 1e-3,
+            "still turned as made: {x:?}"
+        );
+        let origin = placed.point([0.0; 3]);
+        assert!(
+            close([origin[0], origin[1], 0.0], [20.0, 3.0, 0.0]),
+            "{origin:?}"
+        );
+    }
+
+    #[test]
+    fn a_fixed_body_follows_the_other_and_is_left_nothing() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        tilted(&mut doc, part);
+        let joint = made(
+            &doc,
+            crate::JointTool::Fixed,
+            part,
+            plane([0.0; 3], [0.0, 0.0, 1.0]),
+            base,
+            plane([0.0; 3], [0.0, 0.0, 1.0]),
+        );
+        add_joint(&mut doc, part, joint);
+        assert!(solve(&doc).unwrap().is_empty(), "made where it sits");
+        let turn = Quat::from_rotation_z(1.1);
+        let step = Vec3::new(-5.0, 30.0, 2.0);
+        doc.set_body_placement(base, BodyPlacement::new(turn, step));
+        let before = doc.body_placement(part);
+        let motions = free_after_solving(&mut doc, part);
+        assert!(motions.is_empty(), "{motions:?}");
+        let after = doc.body_placement(part);
+        for p in [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 7.0, 3.0]] {
+            let want = BodyPlacement::new(turn, step).point(before.point(p));
+            assert!(close(after.point(p), want), "{p:?}");
+        }
+    }
+
+    #[test]
+    fn parallel_perpendicular_and_distance_hold_only_what_they_say() {
+        let cases = [
+            (JointKind::Parallel, 4),
+            (JointKind::Perpendicular, 5),
+            (JointKind::Distance { offset: 7.0 }, 5),
+        ];
+        for (kind, free) in cases {
+            let mut doc = Document::new("t");
+            let base = doc.create_body(None);
+            let part = doc.create_body(None);
+            tilted(&mut doc, part);
+            add_joint(
+                &mut doc,
+                part,
+                JointFeature {
+                    kind,
+                    moving: plane([0.0; 3], [0.0, 0.0, -1.0]),
+                    other_body: base,
+                    fixed: plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
+                },
+            );
+            let motions = free_after_solving(&mut doc, part);
+            assert_eq!(motions.len(), free, "{kind:?}: {motions:?}");
+        }
+    }
+
+    #[test]
+    fn a_round_face_rests_on_a_flat_one_a_radius_up() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        tilted(&mut doc, part);
+        // A roller along the part's X, radius 4, on the base's top.
+        add_joint(
+            &mut doc,
+            part,
+            JointFeature {
+                kind: JointKind::Tangent { radius: 4.0 },
+                moving: axis([0.0; 3], [1.0, 0.0, 0.0]),
+                other_body: base,
+                fixed: plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
+            },
+        );
+        let motions = free_after_solving(&mut doc, part);
+        assert_eq!(motions.len(), 4, "roll, spin and two slides: {motions:?}");
+        let placed = doc.body_placement(part);
+        assert!((placed.point([0.0; 3])[2] - 14.0).abs() < 1e-3);
+        assert!(placed.direction([1.0, 0.0, 0.0])[2].abs() < 1e-4);
     }
 }

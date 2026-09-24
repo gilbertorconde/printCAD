@@ -3,8 +3,8 @@
 //! is later moved or rebuilt.
 
 use core_document::{
-    BodyId, BodyPlacement, DocumentResult, FaceRef, FeatureError, FeatureId, WorkbenchFeature,
-    WorkbenchId,
+    BodyId, BodyPlacement, DocumentResult, EdgeRef, FaceRef, FeatureError, FeatureId,
+    WorkbenchFeature, WorkbenchId,
 };
 use glam::{DQuat, DVec3};
 use kernel_api::FaceSurface;
@@ -30,6 +30,46 @@ pub enum JointKind {
     /// The body stays where it is: everything else is placed against it.
     /// It names no other body and holds no anchors.
     Ground,
+    /// Two axes as one, `offset` millimetres apart along them: a hinge's
+    /// pin in its knuckle. Only the turn about the axis is left.
+    Hinge { offset: f32 },
+    /// Two axes as one, the turn about them held as it was made: a
+    /// drawer's runner. Only the slide along the axis is left.
+    Slider { turn: [f64; 4] },
+    /// The body held to the other exactly as it sat when the joint was
+    /// made (`turn` and `shift` in the other body's frame).
+    Fixed { turn: [f64; 4], shift: [f64; 3] },
+    /// Two flat faces parallel, facing either way; where they sit is left.
+    Parallel,
+    /// Two flat faces square to each other; where they sit is left.
+    Perpendicular,
+    /// Two flat faces `offset` millimetres apart along the second's
+    /// normal, however they are turned.
+    Distance { offset: f32 },
+    /// A flat face against a round one of `radius`: the round face's axis
+    /// parallel to the flat face, a radius off it, on its outer side.
+    Tangent { radius: f32 },
+}
+
+/// A body's turn and shift in another body's frame.
+pub fn relative(moving: &Rigid, fixed: &Rigid) -> (DQuat, DVec3) {
+    let back = fixed.rotation.inverse();
+    (
+        (back * moving.rotation).normalize(),
+        back * (moving.translation - fixed.translation),
+    )
+}
+
+/// The turn from `from` to `to`, as a rotation vector the short way round.
+fn turn_between(from: DQuat, to: DQuat) -> DVec3 {
+    let d = (from.inverse() * to).normalize();
+    let d = if d.w < 0.0 { -d } else { d };
+    d.to_scaled_axis()
+}
+
+/// A stored turn as a quaternion.
+pub fn quat(turn: [f64; 4]) -> DQuat {
+    DQuat::from_array(turn).normalize()
 }
 
 impl JointKind {
@@ -39,6 +79,13 @@ impl JointKind {
             JointKind::Align => "Align",
             JointKind::Angle { .. } => "Angle",
             JointKind::Ground => "Ground",
+            JointKind::Hinge { .. } => "Hinge",
+            JointKind::Slider { .. } => "Slider",
+            JointKind::Fixed { .. } => "Fixed",
+            JointKind::Parallel => "Parallel",
+            JointKind::Perpendicular => "Perpendicular",
+            JointKind::Distance { .. } => "Distance",
+            JointKind::Tangent { .. } => "Tangent",
         }
     }
 
@@ -48,6 +95,13 @@ impl JointKind {
             JointKind::Align => "joint-align",
             JointKind::Angle { .. } => "constraint-angle",
             JointKind::Ground => "constraint-lock",
+            JointKind::Hinge { .. } => "revolution",
+            JointKind::Slider { .. } => "linear-pattern",
+            JointKind::Fixed { .. } => "constraint-block",
+            JointKind::Parallel => "constraint-parallel",
+            JointKind::Perpendicular => "constraint-perpendicular",
+            JointKind::Distance { .. } => "constraint-distance",
+            JointKind::Tangent { .. } => "constraint-tangent",
         }
     }
 }
@@ -94,6 +148,29 @@ impl Anchor {
     pub fn axis_of(face: &FaceRef) -> Option<Anchor> {
         let (point, direction) = face.surface?.axis()?;
         Some(Anchor::Axis { point, direction })
+    }
+
+    /// An edge as an axis: a circle's (a hole's rim), or a straight edge's
+    /// own line.
+    pub fn axis_of_edge(edge: &EdgeRef) -> Anchor {
+        match edge.circle {
+            Some(c) => Anchor::Axis {
+                point: c.center,
+                direction: c.normal,
+            },
+            None => Anchor::Axis {
+                point: edge.point,
+                direction: edge.direction,
+            },
+        }
+    }
+
+    /// The radius of the round face a pick landed on, when it has one.
+    pub fn radius_of(face: &FaceRef) -> Option<f32> {
+        match face.surface? {
+            FaceSurface::Cylinder { radius, .. } => Some(radius),
+            _ => None,
+        }
     }
 
     /// The anchor seen from a frame `placement` moves points into.
@@ -200,6 +277,37 @@ impl JointFeature {
             }
             // Grounding fixes the body rather than asking anything of it.
             JointKind::Ground => {}
+            JointKind::Hinge { offset } => {
+                out.extend(dm.cross(df).to_array().map(|c| c * ARM_MM));
+                out.extend((pm - pf).cross(df).to_array());
+                out.push((pm - pf).dot(df) - f64::from(offset));
+            }
+            JointKind::Slider { turn } => {
+                out.extend((pm - pf).cross(df).to_array());
+                let (now, _) = relative(moving, fixed);
+                out.extend(turn_between(quat(turn), now).to_array().map(|c| c * ARM_MM));
+            }
+            JointKind::Fixed { turn, shift } => {
+                let (now, at) = relative(moving, fixed);
+                out.extend(turn_between(quat(turn), now).to_array().map(|c| c * ARM_MM));
+                out.extend((at - DVec3::from_array(shift)).to_array());
+            }
+            JointKind::Parallel => {
+                out.extend(dm.cross(df).to_array().map(|c| c * ARM_MM));
+            }
+            JointKind::Perpendicular => out.push(dm.dot(df) * ARM_MM),
+            JointKind::Distance { offset } => {
+                out.push((pm - pf).dot(df) - f64::from(offset));
+            }
+            JointKind::Tangent { radius } => {
+                // Whichever end is the flat face.
+                let (plane_point, normal, axis_point, axis) = match self.moving {
+                    Anchor::Plane { .. } => (pm, dm, pf, df),
+                    Anchor::Axis { .. } => (pf, df, pm, dm),
+                };
+                out.push(axis.dot(normal) * ARM_MM);
+                out.push((axis_point - plane_point).dot(normal) - f64::from(radius));
+            }
         }
     }
 }
@@ -225,5 +333,231 @@ impl WorkbenchFeature for JointFeature {
 
     fn name(&self) -> &str {
         self.kind.label()
+    }
+}
+
+/// What a joint takes on each of its two bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Takes {
+    Flat,
+    /// A round face, or an edge: a circle's axis or a straight edge's line.
+    Round,
+    /// Anything: the joint holds the bodies, not the faces.
+    Any,
+    /// A flat face on one and a round one on the other, either way round.
+    FlatAndRound,
+}
+
+/// A tool that makes a joint from a face on each of two bodies.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JointTool {
+    Mate,
+    Align,
+    Angle,
+    Hinge,
+    Slider,
+    Fixed,
+    Parallel,
+    Perpendicular,
+    Distance,
+    Tangent,
+}
+
+impl JointTool {
+    pub const ALL: [JointTool; 10] = [
+        JointTool::Mate,
+        JointTool::Align,
+        JointTool::Angle,
+        JointTool::Hinge,
+        JointTool::Slider,
+        JointTool::Fixed,
+        JointTool::Parallel,
+        JointTool::Perpendicular,
+        JointTool::Distance,
+        JointTool::Tangent,
+    ];
+
+    /// Its tool and command id.
+    pub fn command(self) -> &'static str {
+        match self {
+            JointTool::Mate => "asm.mate",
+            JointTool::Align => "asm.align",
+            JointTool::Angle => "asm.angle",
+            JointTool::Hinge => "asm.hinge",
+            JointTool::Slider => "asm.slider",
+            JointTool::Fixed => "asm.fix",
+            JointTool::Parallel => "asm.parallel",
+            JointTool::Perpendicular => "asm.perpendicular",
+            JointTool::Distance => "asm.distance",
+            JointTool::Tangent => "asm.tangent",
+        }
+    }
+
+    pub fn of_command(id: &str) -> Option<JointTool> {
+        Self::ALL.into_iter().find(|t| t.command() == id)
+    }
+
+    /// The tool that makes a joint of this kind; `None` for a ground.
+    pub fn of_kind(kind: &JointKind) -> Option<JointTool> {
+        Some(match kind {
+            JointKind::Mate { .. } => JointTool::Mate,
+            JointKind::Align => JointTool::Align,
+            JointKind::Angle { .. } => JointTool::Angle,
+            JointKind::Ground => return None,
+            JointKind::Hinge { .. } => JointTool::Hinge,
+            JointKind::Slider { .. } => JointTool::Slider,
+            JointKind::Fixed { .. } => JointTool::Fixed,
+            JointKind::Parallel => JointTool::Parallel,
+            JointKind::Perpendicular => JointTool::Perpendicular,
+            JointKind::Distance { .. } => JointTool::Distance,
+            JointKind::Tangent { .. } => JointTool::Tangent,
+        })
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            JointTool::Mate => "Mate faces",
+            JointTool::Align => "Align axes",
+            JointTool::Angle => "Angle between faces",
+            JointTool::Hinge => "Hinge",
+            JointTool::Slider => "Slider",
+            JointTool::Fixed => "Fix together",
+            JointTool::Parallel => "Parallel faces",
+            JointTool::Perpendicular => "Perpendicular faces",
+            JointTool::Distance => "Distance between faces",
+            JointTool::Tangent => "Tangent faces",
+        }
+    }
+
+    pub fn icon(self) -> &'static str {
+        match self {
+            JointTool::Mate => "joint-mate",
+            JointTool::Align => "joint-align",
+            JointTool::Angle => "constraint-angle",
+            JointTool::Hinge => "revolution",
+            JointTool::Slider => "linear-pattern",
+            JointTool::Fixed => "constraint-block",
+            JointTool::Parallel => "constraint-parallel",
+            JointTool::Perpendicular => "constraint-perpendicular",
+            JointTool::Distance => "constraint-distance",
+            JointTool::Tangent => "constraint-tangent",
+        }
+    }
+
+    pub fn shortcut(self) -> &'static str {
+        match self {
+            JointTool::Mate => "M",
+            JointTool::Align => "A",
+            JointTool::Angle => "N",
+            JointTool::Hinge => "H",
+            JointTool::Slider => "L",
+            JointTool::Fixed => "X",
+            JointTool::Parallel => "R",
+            JointTool::Perpendicular => "Shift+R",
+            JointTool::Distance => "D",
+            JointTool::Tangent => "T",
+        }
+    }
+
+    /// What the joint does, in a sentence.
+    pub fn summary(self) -> &'static str {
+        match self {
+            JointTool::Mate => "Put two flat faces against each other",
+            JointTool::Align => "Put two round faces on one axis",
+            JointTool::Angle => "Hold two flat faces at an angle",
+            JointTool::Hinge => "Put two axes on one line: the body can only turn about it",
+            JointTool::Slider => {
+                "Put two axes on one line without turning: the body can only slide along it"
+            }
+            JointTool::Fixed => "Hold a body to another where it sits",
+            JointTool::Parallel => "Keep two flat faces parallel",
+            JointTool::Perpendicular => "Keep two flat faces square to each other",
+            JointTool::Distance => "Keep two flat faces a distance apart",
+            JointTool::Tangent => "Rest a round face on a flat one",
+        }
+    }
+
+    pub fn takes(self) -> Takes {
+        match self {
+            JointTool::Mate
+            | JointTool::Angle
+            | JointTool::Parallel
+            | JointTool::Perpendicular
+            | JointTool::Distance => Takes::Flat,
+            JointTool::Align | JointTool::Hinge | JointTool::Slider => Takes::Round,
+            JointTool::Fixed => Takes::Any,
+            JointTool::Tangent => Takes::FlatAndRound,
+        }
+    }
+
+    /// What to click next.
+    pub fn prompt(self, first_done: bool) -> &'static str {
+        match (self.takes(), first_done) {
+            (Takes::Flat, false) => "Click a flat face on the body to move",
+            (Takes::Flat, true) => "Click the flat face it keeps to, on another body",
+            (Takes::Round, false) => "Click a round face or an edge on the body to move",
+            (Takes::Round, true) => {
+                "Click the round face or edge it lines up with, on another body"
+            }
+            (Takes::Any, false) => "Click the body to move",
+            (Takes::Any, true) => "Click the body it is held to",
+            (Takes::FlatAndRound, false) => "Click a flat or a round face on the body to move",
+            (Takes::FlatAndRound, true) => "Click the face it rests against, on another body",
+        }
+    }
+
+    /// Why a pick was turned down.
+    pub fn refusal(self) -> &'static str {
+        match self.takes() {
+            Takes::Flat => "This joint takes flat faces",
+            Takes::Round => "This joint takes round faces or edges: a hole, a pin, a rim",
+            Takes::Any => "Click a face of the body",
+            Takes::FlatAndRound => {
+                "This joint takes a flat face on one body and a round one on the other"
+            }
+        }
+    }
+
+    /// The joint made from two anchors where the bodies sit now: settings
+    /// the tool does not ask for start at what the bodies make now, so
+    /// making the joint moves nothing it need not. `radius` is the round
+    /// face's, for a tangent.
+    pub fn joint(
+        self,
+        moving: &Anchor,
+        at: &Rigid,
+        fixed: &Anchor,
+        fixed_at: &Rigid,
+        radius: f32,
+    ) -> JointKind {
+        let (turn, shift) = relative(at, fixed_at);
+        match self {
+            JointTool::Mate => JointKind::Mate {
+                flip: false,
+                offset: 0.0,
+            },
+            JointTool::Align => JointKind::Align,
+            JointTool::Angle => JointKind::Angle {
+                degrees: moving.angle_to(at, fixed, fixed_at),
+            },
+            JointTool::Hinge => JointKind::Hinge { offset: 0.0 },
+            JointTool::Slider => JointKind::Slider {
+                turn: turn.to_array(),
+            },
+            JointTool::Fixed => JointKind::Fixed {
+                turn: turn.to_array(),
+                shift: shift.to_array(),
+            },
+            JointTool::Parallel => JointKind::Parallel,
+            JointTool::Perpendicular => JointKind::Perpendicular,
+            JointTool::Distance => {
+                let (pm, _) = moving.placed(at);
+                let (pf, df) = fixed.placed(fixed_at);
+                JointKind::Distance {
+                    offset: (pm - pf).dot(df) as f32,
+                }
+            }
+            JointTool::Tangent => JointKind::Tangent { radius },
+        }
     }
 }

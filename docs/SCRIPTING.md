@@ -848,9 +848,9 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.asm.align`: Put two round faces on one axis.
 
 - `body` (id): The body that moves
-- `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it
+- `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
 - `other` (id): The body it is held against
-- `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it
+- `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
 - `name` (string, optional): Its name in the tree
 - Returns the joint's id
 
@@ -864,12 +864,79 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `degrees` (number, optional): Between their outward normals; the angle they make now when left out
 - Returns the joint's id
 
-`pc.asm.set`: Change a joint's gap, side or angle.
+`pc.asm.hinge`: Put two axes on one line: the body can only turn about it.
+
+- `body` (id): The body that moves
+- `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
+- `other` (id): The body it is held against
+- `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
+- `name` (string, optional): Its name in the tree
+- `offset` (number, optional): How far along the axis the first sits from the second, mm
+- Returns the joint's id
+
+`pc.asm.slider`: Put two axes on one line without turning: the body can only slide along it.
+
+- `body` (id): The body that moves
+- `face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
+- `other` (id): The body it is held against
+- `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
+`pc.asm.fix`: Hold a body to another where it sits.
+
+- `body` (id): The body that moves
+- `face` (any, optional): Any face, as pc.doc.faces lists it; the body's origin when left out
+- `other` (id): The body it is held against
+- `other_face` (any, optional): Any face, as pc.doc.faces lists it; the body's origin when left out
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
+`pc.asm.parallel`: Keep two flat faces parallel.
+
+- `body` (id): The body that moves
+- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other` (id): The body it is held against
+- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
+`pc.asm.perpendicular`: Keep two flat faces square to each other.
+
+- `body` (id): The body that moves
+- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other` (id): The body it is held against
+- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `name` (string, optional): Its name in the tree
+- Returns the joint's id
+
+`pc.asm.distance`: Keep two flat faces a distance apart.
+
+- `body` (id): The body that moves
+- `face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `other` (id): The body it is held against
+- `other_face` (any): A flat face, {point, normal}, as pc.doc.faces lists it
+- `name` (string, optional): Its name in the tree
+- `offset` (number, optional): Along the second face's normal, mm; the distance they are now when left out
+- Returns the joint's id
+
+`pc.asm.tangent`: Rest a round face on a flat one.
+
+- `body` (id): The body that moves
+- `face` (any): A flat face {point, normal} on one body and a round face {axis, radius} on the other, either way round
+- `other` (id): The body it is held against
+- `other_face` (any): A flat face {point, normal} on one body and a round face {axis, radius} on the other, either way round
+- `name` (string, optional): Its name in the tree
+- `radius` (number, optional): The round face's radius, mm; the face's own when left out
+- Returns the joint's id
+
+`pc.asm.set`: Change a joint's gap, side, angle or radius.
 
 - `joint` (id)
-- `offset` (number, optional): A mate's gap, mm
+- `offset` (number, optional): A mate's gap, a hinge's height or a distance, mm
 - `flip` (boolean, optional): A mate's side
 - `degrees` (number, optional): An angle joint's angle
+- `radius` (number, optional): A tangent's radius, mm
 
 `pc.asm.ground`: Keep a body where it is: the bodies joined to it are placed against it.
 

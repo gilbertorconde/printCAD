@@ -2,7 +2,10 @@
 //!
 //! A joint belongs to the body it moves and names the body it holds
 //! against. Mate puts two flat faces together (with a gap, or facing the
-//! same way); Align puts two round faces on one axis. Joints are solved when
+//! same way); Align puts two round faces on one axis; a hinge, a slider, a
+//! fixed joint, parallel, perpendicular, distance, angle and tangent joints
+//! hold what their names say (`JointTool` lists them, what each takes and
+//! how each starts). An axis comes from a round face or an edge. Joints are solved when
 //! one is made or edited and when a body is moved, and the bodies' new
 //! placements are ordinary edits, so a joint and the move it causes undo as
 //! one step and reach every copy of the document the same way.
@@ -14,57 +17,20 @@ mod panel;
 mod solve;
 
 use core_document::{
-    BodyId, BodyPlacement, FaceRef, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,
+    BodyId, BodyPlacement, FeatureId, FeatureInfo, FeatureNode, HostRequest, InputResult,
     ToolDescriptor, ToolHint, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
-pub use joint::{Anchor, JOINT_KIND, JointFeature, JointKind, Rigid};
+pub use joint::{Anchor, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
 pub use solve::{HOLDS_MM, Joint, Motion, SolveError, freedom, joints, solve};
-
-/// Which joint a pick sequence makes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum PickKind {
-    Mate,
-    Align,
-    Angle,
-}
-
-impl PickKind {
-    fn label(self) -> &'static str {
-        match self {
-            PickKind::Mate => "Mate faces",
-            PickKind::Align => "Align axes",
-            PickKind::Angle => "Angle between faces",
-        }
-    }
-
-    fn icon(self) -> &'static str {
-        match self {
-            PickKind::Mate => "joint-mate",
-            PickKind::Align => "joint-align",
-            PickKind::Angle => "constraint-angle",
-        }
-    }
-
-    /// What to click next.
-    fn prompt(self, first_done: bool) -> &'static str {
-        match (self, first_done) {
-            (PickKind::Mate, false) => "Click a flat face on the body to move",
-            (PickKind::Mate, true) => "Click the face it goes against, on another body",
-            (PickKind::Align, false) => "Click a round face on the body to move",
-            (PickKind::Align, true) => "Click the round face it lines up with, on another body",
-            (PickKind::Angle, false) => "Click a flat face on the body to turn",
-            (PickKind::Angle, true) => "Click the face it keeps its angle to, on another body",
-        }
-    }
-}
 
 /// A joint being made: the kind, and the first face once picked.
 #[derive(Debug, Clone)]
 struct Picking {
-    kind: PickKind,
-    first: Option<(BodyId, Anchor)>,
+    kind: JointTool,
+    /// The first body, its anchor, and the radius of a round face.
+    first: Option<(BodyId, Anchor, Option<f32>)>,
 }
 
 /// What the task panel holds open.
@@ -178,55 +144,67 @@ impl AssemblyWorkbench {
         let Some(picking) = self.picking.clone() else {
             return;
         };
-        let (Some(body), Some(face)) = (ctx.selected_body_id, ctx.selected_face) else {
-            return;
+        // A face, or else the last edge picked, where the joint takes one.
+        let edge = ctx.selected_edges.last().copied();
+        let (body, point, face, edge) = match (ctx.selected_body_id, ctx.selected_face, edge) {
+            (Some(body), Some(face), _) => (body, face.point, Some(face), None),
+            (_, None, Some(edge)) => (edge.body, edge.point, None, Some(edge)),
+            _ => return,
         };
-        let signature = (body, face.point.map(f32::to_bits));
+        let signature = (body, point.map(f32::to_bits));
         if self.seen == Some(signature) {
             return;
         }
         self.seen = Some(signature);
         let body = BodyId(body);
-        let local: FaceRef = face.moved(&ctx.document.body_placement(body).inverse());
-        let anchor = match picking.kind {
-            PickKind::Mate | PickKind::Angle => Anchor::plane_of(&local),
-            PickKind::Align => Anchor::axis_of(&local),
+        let to_local = ctx.document.body_placement(body).inverse();
+        let face = face.map(|f| f.moved(&to_local));
+        let edge = edge.map(|e| e.moved(&to_local));
+        let flat = || face.as_ref().and_then(Anchor::plane_of);
+        let round = || {
+            face.as_ref()
+                .and_then(|f| Some((Anchor::axis_of(f)?, Anchor::radius_of(f))))
+                .or_else(|| edge.map(|e| (Anchor::axis_of_edge(&e), e.circle.map(|c| c.radius))))
         };
-        let Some(anchor) = anchor else {
-            ctx.log_warn(match picking.kind {
-                PickKind::Mate | PickKind::Angle => "This joint takes flat faces",
-                PickKind::Align => "An alignment takes round faces: a hole, a pin, a boss",
-            });
+        let first_flat = picking
+            .first
+            .map(|(_, anchor, _)| matches!(anchor, Anchor::Plane { .. }));
+        let picked = match (picking.kind.takes(), first_flat) {
+            (Takes::Flat, _) => flat().map(|a| (a, None)),
+            (Takes::Round, _) => round(),
+            (Takes::Any, _) => flat().map(|a| (a, None)).or_else(round),
+            (Takes::FlatAndRound, None) => flat().map(|a| (a, None)).or_else(round),
+            (Takes::FlatAndRound, Some(true)) => round(),
+            (Takes::FlatAndRound, Some(false)) => flat().map(|a| (a, None)),
+        };
+        let Some((anchor, radius)) = picked else {
+            ctx.log_warn(picking.kind.refusal());
             return;
         };
         match picking.first {
             None => {
                 self.picking = Some(Picking {
-                    first: Some((body, anchor)),
+                    first: Some((body, anchor, radius)),
                     ..picking
                 });
             }
-            Some((first_body, _)) if first_body == body => {
+            Some((first_body, ..)) if first_body == body => {
                 ctx.log_warn("Pick the second face on another body");
             }
-            Some((first_body, first_anchor)) => {
+            Some((first_body, first_anchor, first_radius)) => {
                 self.picking = None;
-                let kind = match picking.kind {
-                    PickKind::Mate => JointKind::Mate {
-                        flip: false,
-                        offset: 0.0,
-                    },
-                    PickKind::Align => JointKind::Align,
-                    // It starts at the angle the faces make now, so making
-                    // it moves nothing until the angle is set.
-                    PickKind::Angle => JointKind::Angle {
-                        degrees: first_anchor.angle_to(
-                            &ctx.document.body_placement(first_body).into(),
-                            &anchor,
-                            &ctx.document.body_placement(body).into(),
-                        ),
-                    },
-                };
+                let radius = first_radius.or(radius);
+                if picking.kind == JointTool::Tangent && radius.is_none() {
+                    ctx.log_warn("A tangent takes a round face with a radius: a cylinder");
+                    return;
+                }
+                let kind = picking.kind.joint(
+                    &first_anchor,
+                    &ctx.document.body_placement(first_body).into(),
+                    &anchor,
+                    &ctx.document.body_placement(body).into(),
+                    radius.unwrap_or_default(),
+                );
                 self.make_joint(
                     ctx,
                     first_body,
@@ -316,6 +294,30 @@ impl Workbench for AssemblyWorkbench {
                     "/kind/Angle/degrees",
                 )]
             }
+            Ok(JointKind::Hinge { .. }) => {
+                vec![Parameter::new(
+                    "offset",
+                    "Height",
+                    Dim::LENGTH,
+                    "/kind/Hinge/offset",
+                )]
+            }
+            Ok(JointKind::Distance { .. }) => {
+                vec![Parameter::new(
+                    "offset",
+                    "Distance",
+                    Dim::LENGTH,
+                    "/kind/Distance/offset",
+                )]
+            }
+            Ok(JointKind::Tangent { .. }) => {
+                vec![Parameter::new(
+                    "radius",
+                    "Radius",
+                    Dim::LENGTH,
+                    "/kind/Tangent/radius",
+                )]
+            }
             _ => Vec::new(),
         }
     }
@@ -349,11 +351,11 @@ impl Workbench for AssemblyWorkbench {
                 .icon(icon)
                 .row(1)
         };
-        context.register_tool(tool("asm.mate", "Mate faces", "joint-mate").shortcut("M"));
-        context.register_tool(tool("asm.align", "Align axes", "joint-align").shortcut("A"));
-        context.register_tool(
-            tool("asm.angle", "Angle between faces", "constraint-angle").shortcut("N"),
-        );
+        for joint in JointTool::ALL {
+            context.register_tool(
+                tool(joint.command(), joint.label(), joint.icon()).shortcut(joint.shortcut()),
+            );
+        }
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
@@ -421,7 +423,7 @@ impl Workbench for AssemblyWorkbench {
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
-            "asm.mate" | "asm.align" | "asm.angle" => ctx.document.bodies().len() >= 2,
+            id if JointTool::of_command(id).is_some() => ctx.document.bodies().len() >= 2,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
             _ => false,
@@ -438,12 +440,8 @@ impl Workbench for AssemblyWorkbench {
             return InputResult::ignored();
         }
         match tool {
-            Some(id @ ("asm.mate" | "asm.align" | "asm.angle")) => {
-                let kind = match id {
-                    "asm.mate" => PickKind::Mate,
-                    "asm.align" => PickKind::Align,
-                    _ => PickKind::Angle,
-                };
+            Some(id) if JointTool::of_command(id).is_some() => {
+                let kind = JointTool::of_command(id).unwrap_or(JointTool::Mate);
                 self.task = None;
                 self.seen = None;
                 self.picking = Some(Picking { kind, first: None });
@@ -596,7 +594,7 @@ impl Workbench for AssemblyWorkbench {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{Document, ImportedGeometry, TriMesh};
+    use core_document::{Document, FaceRef, ImportedGeometry, TriMesh};
     use kernel_api::FaceSurface;
     use std::sync::Arc;
 
@@ -744,6 +742,48 @@ mod tests {
     }
 
     #[test]
+    fn a_hole_s_rim_is_an_axis_for_a_hinge() {
+        let (mut doc, base, part) = scene();
+        let mut wb = AssemblyWorkbench::default();
+        let rim = |body: BodyId, center: [f32; 3]| core_document::EdgeRef {
+            point: [center[0] + 3.0, center[1], center[2]],
+            direction: [0.0, 1.0, 0.0],
+            length_mm: 18.85,
+            body: body.0,
+            circle: Some(core_document::EdgeCircle {
+                center,
+                normal: [0.0, 0.0, 1.0],
+                radius: 3.0,
+            }),
+        };
+        let edge_frame = |wb: &mut AssemblyWorkbench, doc: &mut Document, edge| {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            ctx.selected_edges = vec![edge];
+            wb.on_frame(0.016, &mut ctx);
+        };
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("asm.hinge"),
+                &mut ctx,
+            );
+        }
+        // The part's rim where the scene shows it (placed at x + 30, z + 40).
+        edge_frame(&mut wb, &mut doc, rim(part, [35.0, 5.0, 40.0]));
+        edge_frame(&mut wb, &mut doc, rim(base, [5.0, 5.0, 0.0]));
+        assert!(wb.picking.is_none(), "two rims make the hinge");
+        let joint = joints(&doc).into_iter().next().expect("a hinge");
+        assert!(matches!(joint.feature.kind, JointKind::Hinge { .. }));
+        let origin = doc.body_placement(part).point([0.0; 3]);
+        assert!(
+            origin[0].abs() < 1e-3 && origin[1].abs() < 1e-3 && origin[2].abs() < 1e-3,
+            "the rims on one axis at one height: {origin:?}"
+        );
+    }
+
+    #[test]
     fn a_round_face_is_asked_for_where_an_alignment_needs_one() {
         let (mut doc, _, part) = scene();
         let mut wb = AssemblyWorkbench::default();
@@ -778,15 +818,24 @@ mod icon_coverage {
             let icon = tool.icon.expect("every tool has an icon");
             assert!(ui_kit::icon::exists(icon), "{icon}");
         }
-        for kind in [
-            JointKind::Mate {
-                flip: false,
-                offset: 0.0,
-            },
-            JointKind::Align,
-            JointKind::Angle { degrees: 90.0 },
-        ] {
+        for tool in JointTool::ALL {
+            let kind = tool.joint(
+                &Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                &Rigid::from(BodyPlacement::default()),
+                &Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                &Rigid::from(BodyPlacement::default()),
+                1.0,
+            );
             assert!(ui_kit::icon::exists(kind.icon()), "{}", kind.icon());
+            assert!(ui_kit::icon::exists(tool.icon()), "{}", tool.icon());
+            assert_eq!(JointTool::of_kind(&kind), Some(tool));
         }
+        assert!(ui_kit::icon::exists(JointKind::Ground.icon()));
     }
 }

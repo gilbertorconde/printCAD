@@ -50,8 +50,8 @@ pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
-    CameraOrientRequest, EdgeRef, FaceRef, HookOutcome, HostRequest, InputResult, KeyCode,
-    LogEntry, LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent,
+    CameraOrientRequest, EdgeCircle, EdgeRef, FaceRef, HookOutcome, HostRequest, InputResult,
+    KeyCode, LogEntry, LogLevel, MouseButton, SketchAttachRequest, WorkbenchInputEvent,
     WorkbenchRuntimeContext,
 };
 pub use service::DocumentService;

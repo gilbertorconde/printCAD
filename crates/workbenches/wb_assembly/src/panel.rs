@@ -228,6 +228,70 @@ impl AssemblyWorkbench {
                         .color(TEXT2),
                     );
                 }
+                JointKind::Hinge { offset } => {
+                    changed |= number_row(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        (
+                            "Height",
+                            "How far along the axis the body sits from the other",
+                        ),
+                        "/kind/Hinge/offset",
+                        core_document::expr::Dim::LENGTH,
+                        offset,
+                    );
+                    note(ui, "The body can only turn about the axis.");
+                }
+                JointKind::Distance { offset } => {
+                    changed |= number_row(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        ("Distance", "Along the other face's normal"),
+                        "/kind/Distance/offset",
+                        core_document::expr::Dim::LENGTH,
+                        offset,
+                    );
+                    note(
+                        ui,
+                        "Only the distance is held: the faces may turn and slide past \
+                         each other.",
+                    );
+                }
+                JointKind::Tangent { radius } => {
+                    changed |= number_row(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        ("Radius", "The round face's radius"),
+                        "/kind/Tangent/radius",
+                        core_document::expr::Dim::LENGTH,
+                        radius,
+                    );
+                    note(
+                        ui,
+                        "The round face rests on the flat one; it can still roll and \
+                         slide along it.",
+                    );
+                }
+                JointKind::Slider { .. } => note(
+                    ui,
+                    "The body can only slide along the axis, turned as it was when the \
+                     joint was made.",
+                ),
+                JointKind::Fixed { .. } => note(
+                    ui,
+                    "The body is held to the other as it sat when the joint was made; \
+                     it moves only with it.",
+                ),
+                JointKind::Parallel => note(
+                    ui,
+                    "Only the turn is held, the faces parallel: pair it with other joints \
+                     to say where the body sits.",
+                ),
+                JointKind::Perpendicular => note(
+                    ui,
+                    "Only the turn is held, the faces square: pair it with other joints \
+                     to say where the body sits.",
+                ),
             }
         });
         if changed {
@@ -368,6 +432,36 @@ impl AssemblyWorkbench {
 /// A joint's number as a formula field: a value typed or dragged goes into
 /// `value`; a formula goes into `edits` and what it comes to into `value`,
 /// so the body moves while the panel is open.
+/// A labelled number a formula can set, in a joint's settings.
+fn number_row(
+    ui: &mut egui::Ui,
+    (document, joint, edits): (
+        &core_document::Document,
+        core_document::FeatureId,
+        &mut Vec<(String, Option<String>)>,
+    ),
+    (label, hover): (&str, &str),
+    key: &str,
+    dim: core_document::expr::Dim,
+    value: &mut f32,
+) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [90.0, INPUT],
+            egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+        );
+        changed = formula_field(ui, document, joint, key, dim, value, edits);
+    })
+    .response
+    .on_hover_text(hover);
+    changed
+}
+
+fn note(ui: &mut egui::Ui, text: &str) {
+    ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2));
+}
+
 fn formula_field(
     ui: &mut egui::Ui,
     document: &core_document::Document,
