@@ -40,6 +40,7 @@ impl EdgeHit {
             point: self.point,
             direction: self.direction,
             length_mm: self.length_mm,
+            body: self.body,
         }
     }
 }

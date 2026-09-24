@@ -616,14 +616,14 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
     ] {
         assert!((got - want).abs() < 1e-3, "bounds {lo:?}..{hi:?}");
     }
-    // The elliptic wall is measured over a tessellation, so the volume is
-    // close rather than exact, and says so.
+    // The elliptic wall is a line swept along an ellipse, which the kernel
+    // integrates in closed form: the volume is exact, and says so.
     let props = kernel.physical_properties(&result.brep_blob).unwrap();
     let volume = props.volume_mm3.expect("a closed solid");
     let expected = f64::from(std::f32::consts::PI * a * b / 2.0 * height);
-    assert!(props.approximate);
+    assert!(!props.approximate);
     assert!(
-        (volume - expected).abs() < 2e-2 * expected,
+        (volume - expected).abs() < 1e-5 * expected,
         "volume {volume} vs {expected}"
     );
 }

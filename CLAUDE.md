@@ -198,9 +198,15 @@ and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 
-**Placeholders.** What remains unbuilt of the design is the sketcher's
-external geometry, which waits on the kernel's projection of an edge onto
-a plane. Everything else the design shows is built. File › Export
+**Placeholders.** Everything the design shows is built. The sketcher's
+external geometry (`external.rs`) takes solid edges picked while its tool
+is armed (clicks fall through to the host's edge picking), projects each
+through `ctx.kernel` (`kernel_api::KernelQueries`, the host hands benches
+`kernel_ogeom::QUERIES`) onto the sketch plane in the edge body's frame,
+and stores the result as geometry marked in `Sketch::external` with its
+`ExternalSource`: pinned in the solver, left out of profiles and passive
+drawing, drawn in the external colour, never dragged, and projected again
+once per editing session (in place when the curve is the same kind). File › Export
 (`app/export.rs` over `kernel_ogeom::export`) writes the visible or the
 selected bodies as STEP, or as STL or 3MF meshed afresh at the dialog's
 tolerance and welded closed, on a thread of its own; the start page's

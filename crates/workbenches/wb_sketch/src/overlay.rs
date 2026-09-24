@@ -171,7 +171,8 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
 }
 
 /// Color, width and dashing for one element. Selection and preselection
-/// win; construction geometry is thinner and dashed; everything else takes
+/// win; external geometry takes its own colour; construction geometry is
+/// thinner and dashed; everything else takes
 /// the fully-constrained color once the sketch has no freedom left.
 pub fn element_style(
     sketch: &Sketch,
@@ -184,6 +185,8 @@ pub fn element_style(
         (pal.selected, 2.5, None)
     } else if hovered == Some(id) {
         (pal.preselect, 2.0, None)
+    } else if sketch.is_external(id) {
+        (pal.external, 1.5, None)
     } else if sketch.is_construction(id) {
         (pal.construction, 1.5, Some(CONSTRUCTION_DASH))
     } else if sketch.is_fully_constrained {

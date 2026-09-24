@@ -80,9 +80,9 @@ pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> 
     let mut edges: Vec<EdgeCurve> = Vec::new();
 
     for geom in &sketch.geometry {
-        // Construction geometry is a drawing guide, never part of the
-        // profile.
-        if sketch.is_construction(geom.id()) {
+        // Construction and external geometry are guides, never part of
+        // the profile.
+        if sketch.is_construction(geom.id()) || sketch.external.contains_key(&geom.id()) {
             continue;
         }
         match geom {

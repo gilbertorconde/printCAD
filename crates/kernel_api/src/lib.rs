@@ -928,6 +928,49 @@ pub trait Kernel: Send {
     }
 }
 
+/// An edge of a solid projected onto a plane, in the plane's own 2D
+/// coordinates (along its `x_axis` and `y_axis`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ProjectedEdge {
+    /// The edge runs along the plane's normal, so it projects to a point.
+    Point([f64; 2]),
+    /// A segment.
+    Line { start: [f64; 2], end: [f64; 2] },
+    /// A circle or circular arc, `centre + radius (cos t, sin t)`, turning
+    /// counter-clockwise from `range.0` to `range.1`; a full circle when the
+    /// range spans a turn.
+    Circle {
+        centre: [f64; 2],
+        radius: f64,
+        range: (f64, f64),
+    },
+    /// An ellipse or elliptical arc, `centre + major cos t + minor sin t`,
+    /// `minor` the major axis turned a quarter counter-clockwise and scaled
+    /// by `ratio`, from `range.0` to `range.1`.
+    Ellipse {
+        centre: [f64; 2],
+        major: [f64; 2],
+        ratio: f64,
+        range: (f64, f64),
+    },
+    /// Any other curve, as points along it: exact at each point, straight
+    /// between.
+    Polyline(Vec<[f64; 2]>),
+}
+
+/// Geometry questions a workbench may ask while it runs, answered by the
+/// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
+pub trait KernelQueries: Send + Sync {
+    /// The edge of `brep` nearest `near`, projected orthogonally onto
+    /// `plane`. Both are in the shape's own frame.
+    fn project_edge(
+        &self,
+        brep: &[u8],
+        near: [f64; 3],
+        plane: &ProfilePlane,
+    ) -> KernelResult<ProjectedEdge>;
+}
+
 /// Standardized error type for kernel interactions.
 #[derive(Debug, Error)]
 pub enum KernelError {

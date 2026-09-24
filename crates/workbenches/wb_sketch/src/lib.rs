@@ -3,6 +3,7 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
 mod constrain;
+mod external;
 mod feature;
 mod geom2d;
 mod glyphs;
@@ -189,6 +190,12 @@ pub struct SketchWorkbench {
     /// user set them, for the hints that name a key.
     action_keys: HashMap<String, String>,
     sketch_picker: Option<SketchPicker>,
+    /// The picked edges the external geometry tool has taken, so a pick is
+    /// taken once.
+    external_seen: HashSet<(Uuid, [u32; 3])>,
+    /// The sketch whose external geometry was last brought up to its
+    /// solids, once per editing session.
+    external_refreshed: Option<FeatureId>,
     /// The panel's and the Preferences page's switches.
     pub options: SketchOptions,
     /// Geometry cut or copied, as a sketch of its own, until pasted.
@@ -347,6 +354,7 @@ fn drag_point_ids(sketch: &Sketch, id: Uuid) -> Vec<Uuid> {
 /// The icon of a canonical tool id, for the viewport hint.
 fn tool_icon(tool: &str) -> &'static str {
     match tool {
+        "sketch.external" => "external-geometry",
         "sketch.arc3" => "arc-3pt",
         "sketch.circle3" => "circle-3pt",
         "sketch.ellipse3" => "ellipse-3pt",
@@ -385,6 +393,10 @@ fn idle_hint(tool: &str) -> (&'static str, &'static str) {
         "sketch.fillet" => ("Fillet", "Click a corner point"),
         "sketch.chamfer" => ("Chamfer", "Click a corner point"),
         "sketch.trim" => ("Trim", "Click the span to remove"),
+        "sketch.external" => (
+            "External geometry",
+            "Click edges of a solid to bring them in; Ctrl picks more",
+        ),
         "sketch.extend" => ("Extend", "Click the end to extend"),
         "sketch.split" => ("Split", "Click where to split"),
         "sketch.offset" => ("Offset", "Click the curve to offset"),
@@ -485,9 +497,11 @@ impl SketchWorkbench {
             vec![id]
         };
         let mut points: Vec<(Uuid, Vec2D)> = Vec::new();
+        // External geometry sits where its solid edge is; a drag leaves it.
+        let external = sketch.external_ids();
         for element in moving {
             for pid in drag_point_ids(sketch, element) {
-                if points.iter().any(|(seen, _)| *seen == pid) {
+                if external.contains(&pid) || points.iter().any(|(seen, _)| *seen == pid) {
                     continue;
                 }
                 if let Some(pos) = sketch.point_position(pid) {
@@ -1604,16 +1618,13 @@ impl Workbench for SketchWorkbench {
             if *id == "sketch.split" {
                 // The row's planned entries sit after split.
                 context.register_tool(tool);
-                // PLANNED: projecting the solid's edges into the sketch, once
-                // the kernel projects an edge onto a plane exactly.
                 context.register_tool(
-                    ToolDescriptor::new_action(
+                    ToolDescriptor::new(
                         "sketch.external",
                         "External geometry",
                         Some("geometry.external"),
                     )
                     .icon("external-geometry")
-                    .planned("projects edges of the solid into the sketch")
                     .row(1),
                 );
                 context.register_tool(
@@ -1962,6 +1973,16 @@ impl Workbench for SketchWorkbench {
         // (polygon sides, slot width, fillet radius).
         if self.last_tool.as_deref() != tool {
             self.last_tool = tool.map(str::to_string);
+            self.external_seen.clear();
+        }
+        // External geometry: a click is the host's, which picks the solid
+        // edge under it; the frame hook projects what was picked.
+        if base == Some("sketch.external") {
+            self.last_tool = Some("sketch.external".to_string());
+            return match event {
+                WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
+                _ => InputResult::ignored(),
+            };
         }
 
         match event {
@@ -2084,6 +2105,13 @@ impl Workbench for SketchWorkbench {
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
         self.sync_active_sketch_from_ctx(ctx);
+        if self.active_sketch_id.is_some() && self.external_refreshed != self.active_sketch_id {
+            self.external_refreshed = self.active_sketch_id;
+            self.refresh_external(ctx);
+        }
+        if self.last_tool.as_deref() == Some("sketch.external") {
+            self.take_external_picks(ctx);
+        }
         self.selection_shape = match self.get_active_sketch(ctx) {
             Some(feature) => constrain::SelectionShape::of(&feature.sketch, &self.selected),
             None => constrain::SelectionShape::default(),
@@ -2847,6 +2875,81 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// Project every edge picked since the external geometry tool was
+    /// armed into the edited sketch.
+    fn take_external_picks(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let fresh: Vec<core_document::EdgeRef> = ctx
+            .selected_edges
+            .iter()
+            .filter(|e| {
+                self.external_seen
+                    .insert((e.body, e.point.map(f32::to_bits)))
+            })
+            .copied()
+            .collect();
+        if fresh.is_empty() {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let mut added = 0;
+        for edge in fresh {
+            let body = BodyId(edge.body);
+            let local = edge.moved(&ctx.document.body_placement(body).inverse());
+            let source = sketch::ExternalSource {
+                body: edge.body,
+                point: local.point,
+                direction: local.direction,
+            };
+            match project_source(ctx, &feature.plane, &source) {
+                Ok(projected) => added += external::add(&mut feature.sketch, &projected, source),
+                Err(why) => ctx.log_warn(format!("Could not bring that edge in: {why}")),
+            }
+        }
+        if added > 0 {
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+            ctx.log_info(match added {
+                1 => "Added 1 external element".to_string(),
+                n => format!("Added {n} external elements"),
+            });
+        }
+    }
+
+    /// Bring the edited sketch's external geometry up to the solids it came
+    /// from: each edge projected again, moved in place where it is the same
+    /// kind of curve. An edge that no longer exists is left as it was.
+    fn refresh_external(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let groups = external::groups(&feature.sketch);
+        if groups.is_empty() || ctx.kernel.is_none() {
+            return;
+        }
+        let before = feature.sketch.clone();
+        let mut lost = 0;
+        for (source, group) in groups {
+            match project_source(ctx, &feature.plane, &source) {
+                Ok(projected) => {
+                    external::refresh_group(&mut feature.sketch, source, &group, &projected);
+                }
+                Err(_) => lost += 1,
+            }
+        }
+        if lost > 0 {
+            ctx.log_warn(format!(
+                "{lost} external element(s) kept where they were: their edges could not be projected"
+            ));
+        }
+        // Nothing moved: no edit to record.
+        if serde_json::to_value(&before).ok() != serde_json::to_value(&feature.sketch).ok() {
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+        }
+    }
+
     /// Open the panel's list of other sketches for carbon copy or merge; the
     /// same action again closes it.
     fn open_sketch_picker(&mut self, mode: SketchPickerMode) -> InputResult {
@@ -3244,6 +3347,37 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
     } else {
         trimmed.parse().ok()
     }
+}
+
+/// The edge `source` names, projected onto the sketch plane `plane` (as
+/// the scene has it), in the sketch's own coordinates.
+fn project_source(
+    ctx: &WorkbenchRuntimeContext,
+    plane: &SketchPlane,
+    source: &sketch::ExternalSource,
+) -> Result<kernel_api::ProjectedEdge, String> {
+    let kernel = ctx.kernel.ok_or("no kernel to project with")?;
+    let body = BodyId(source.body);
+    let brep = ctx
+        .document
+        .imported_brep_blob(body)
+        .ok_or("that body has no solid shape")?;
+    // The kernel works in the body's own frame: the plane goes there too,
+    // and the projection keeps the sketch's own coordinates.
+    let local = placed_plane(plane, &ctx.document.body_placement(body).inverse());
+    let f = |v: [f32; 3]| v.map(f64::from);
+    kernel
+        .project_edge(
+            brep,
+            f(source.point),
+            &kernel_api::ProfilePlane {
+                origin: f(local.origin),
+                x_axis: f(local.x_axis),
+                y_axis: f(local.y_axis),
+                normal: f(local.normal),
+            },
+        )
+        .map_err(|e| e.to_string())
 }
 
 /// A sketch as the document stores it, its plane in its body's frame.
@@ -3654,6 +3788,93 @@ mod close_sketch {
         assert!(
             requests.contains(&HostRequest::JournalLabel("Edit Sketch001".into())),
             "{requests:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod external_geometry {
+    use super::*;
+    use core_document::{BodyPlacement, Document, EdgeRef};
+    use kernel_api::{KernelQueries, KernelResult, ProfilePlane, ProjectedEdge};
+
+    /// A kernel whose every edge is a segment across the plane's X axis,
+    /// from where the probe lands in the plane to 10 mm beyond it.
+    struct FlatKernel;
+
+    impl KernelQueries for FlatKernel {
+        fn project_edge(
+            &self,
+            _brep: &[u8],
+            near: [f64; 3],
+            plane: &ProfilePlane,
+        ) -> KernelResult<ProjectedEdge> {
+            let d: Vec<f64> = (0..3).map(|k| near[k] - plane.origin[k]).collect();
+            let x: f64 = (0..3).map(|k| d[k] * plane.x_axis[k]).sum();
+            let y: f64 = (0..3).map(|k| d[k] * plane.y_axis[k]).sum();
+            Ok(ProjectedEdge::Line {
+                start: [x, y],
+                end: [x + 10.0, y],
+            })
+        }
+    }
+
+    static FLAT: FlatKernel = FlatKernel;
+
+    #[test]
+    fn a_picked_edge_comes_in_fixed_and_out_of_profiles() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        doc.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
+        // The body sits 3 up: the pick is in the scene, the edge in its body.
+        doc.set_body_placement(
+            body,
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 3.0, 0.0)),
+        );
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
+                "s".into(),
+                Some(body),
+            )
+            .unwrap();
+        let mut wb = SketchWorkbench {
+            active_sketch_id: Some(sketch),
+            last_tool: Some("sketch.external".to_string()),
+            external_refreshed: Some(sketch),
+            ..SketchWorkbench::default()
+        };
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(sketch);
+        ctx.kernel = Some(&FLAT);
+        ctx.selected_edges = vec![EdgeRef {
+            point: [2.0, 7.0, 0.0],
+            direction: [1.0, 0.0, 0.0],
+            length_mm: 10.0,
+            body: body.0,
+        }];
+        wb.on_frame(0.016, &mut ctx);
+        // Taken once, however many frames the pick stays selected.
+        wb.on_frame(0.016, &mut ctx);
+
+        let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
+        assert_eq!(stored.external.len(), 1);
+        let (line_id, source) = stored.external.iter().next().unwrap();
+        assert_eq!(source.point, [2.0, 4.0, 0.0], "kept in the body's frame");
+        let Some(GeometryElement::Line(line)) = stored.get_geometry(*line_id) else {
+            panic!("a line came in")
+        };
+        // The scene has the sketch where the body sits; in the sketch's own
+        // coordinates the edge lies where it was picked.
+        assert_eq!(
+            stored.point_position(line.start),
+            Some(Vec2D::new(2.0, 4.0))
+        );
+        assert!(stored.is_external(line.start), "its points are held too");
+        assert!(
+            profile::extract_wires(&stored).is_err(),
+            "no profile from it"
         );
     }
 }

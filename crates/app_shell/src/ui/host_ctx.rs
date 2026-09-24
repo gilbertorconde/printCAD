@@ -50,6 +50,7 @@ pub fn panel_ctx<'a>(
     ctx.selected_body_id = params.selected_body_id;
     ctx.selected_face = params.selected_face;
     ctx.selected_edges = params.selected_edges.clone();
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
     ctx
 }
 

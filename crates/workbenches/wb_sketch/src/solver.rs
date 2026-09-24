@@ -583,6 +583,16 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
             | GeometryElement::BSpline(_) => {}
         }
     }
+    // External geometry is where the solid's edge put it: its points and
+    // radii are held still, as the origin is.
+    for id in sketch.external_ids() {
+        if let Some(&v) = point_vars.get(&id) {
+            pinned.extend([v, v + 1]);
+        }
+        if let Some(&r) = radius_vars.get(&id) {
+            pinned.push(r);
+        }
+    }
 
     let point_var = |id: Uuid| {
         if id == ORIGIN_ID {

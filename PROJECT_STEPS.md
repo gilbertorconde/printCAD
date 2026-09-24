@@ -41,6 +41,7 @@ What is built, by area. The plan for what comes next is in
 - Constraints solved live, with degrees of freedom and conflict reports.
 - Trim, extend, split, fillet, chamfer, offset, mirror, move, rotate, scale,
   arrays, carbon copy and merge.
+- External geometry: a solid's edges projected in as fixed references.
 
 ## Part Design
 
@@ -60,6 +61,4 @@ What is built, by area. The plan for what comes next is in
 
 ## Not built yet
 
-- Sketch external geometry, waiting on the kernel
-  ([ogeom-rs#52](https://github.com/gilbertorconde/ogeom-rs/issues/52)).
 - More joint kinds: gears, limits.

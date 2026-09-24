@@ -12,7 +12,8 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
 ## Features
 
 - **Sketcher:** lines, polylines, arcs, circles, ellipses, splines, slots and
-  more, with geometric and dimensional constraints solved live.
+  more, with geometric and dimensional constraints solved live. Edges of a
+  solid can be projected in as fixed reference geometry.
 - **Part Design:** pad, pocket, revolve, loft, pipe, helix, holes, fillets,
   chamfers, patterns and booleans, all editable in a feature tree.
 - **Assembly:** place bodies against each other with joints: mate two flat
@@ -128,7 +129,6 @@ More detail in [docs](docs/):
 ## Roadmap
 
 - More joint kinds: gears, limits on a slide or a turn
-- Sketch external geometry, once the kernel projects edges onto planes
 
 ## License
 

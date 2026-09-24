@@ -18,6 +18,7 @@ version first.
 - Geometric and dimensional constraints, solved live, with a message for every conflicting or redundant one.
 - Trim, extend, split, fillet, offset, mirror, move, rotate, scale and arrays.
 - Carbon copy brings another sketch's geometry in; merge makes one sketch of several.
+- External geometry projects a solid's edges into the sketch as fixed references to constrain against, kept up to date when the solid changes.
 - Rendering order puts construction or normal geometry on top.
 - Drawing snaps to the origin and the two axes as it does to drawn geometry, and pins the new point there.
 
@@ -25,7 +26,7 @@ version first.
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.
 - Holes to standard sizes, fillets and chamfers on picked edges, draft, thickness, and linear, polar and mirrored patterns.
 - Datum points, lines and planes, and local coordinate systems whose planes carry sketches.
-- A body's volume, surface area and centre of mass.
+- A body's volume, surface area and centre of mass, exact wherever its faces have a closed form.
 
 ### Assembly
 - Bodies can be moved and turned, and keep their own geometry as it was made.

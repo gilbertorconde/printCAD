@@ -127,6 +127,7 @@ impl PrintCadApp {
         ctx.attach_request = params.attach_request;
         ctx.selected_face = params.selected_face;
         ctx.selected_edges = params.selected_edges;
+        ctx.kernel = Some(&kernel_ogeom::QUERIES);
         ctx.ctrl_down = params.ctrl_down;
 
         let result = f(wb.as_mut(), &mut ctx);

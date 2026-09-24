@@ -67,6 +67,20 @@ pub struct Sketch {
     /// before this field existed keep loading.
     #[serde(default)]
     pub construction: std::collections::HashSet<Uuid>,
+    /// Geometry projected from a solid's edges, by element id, each with the
+    /// edge it came from. It is fixed (the solver never moves it), left out
+    /// of profiles, and projected again when the sketch is edited.
+    #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
+    pub external: std::collections::HashMap<Uuid, ExternalSource>,
+}
+
+/// The solid edge an external element was projected from: its body, and a
+/// point on it with its direction there, in that body's own frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ExternalSource {
+    pub body: Uuid,
+    pub point: [f32; 3],
+    pub direction: [f32; 3],
 }
 
 impl Sketch {
@@ -79,7 +93,26 @@ impl Sketch {
             constraints: Vec::new(),
             is_fully_constrained: false,
             construction: std::collections::HashSet::new(),
+            external: std::collections::HashMap::new(),
         }
+    }
+
+    /// Whether `id` is external geometry, or a point of some.
+    pub fn is_external(&self, id: Uuid) -> bool {
+        self.external_ids().contains(&id)
+    }
+
+    /// Every external element and every point one is drawn through: what
+    /// the solver holds still and a drag leaves alone.
+    pub fn external_ids(&self) -> std::collections::HashSet<Uuid> {
+        let mut ids = std::collections::HashSet::new();
+        for id in self.external.keys() {
+            ids.insert(*id);
+            if let Some(element) = self.get_geometry(*id) {
+                ids.extend(Self::curve_point_ids(element));
+            }
+        }
+        ids
     }
 
     /// Whether `id` is flagged as construction geometry.
@@ -208,6 +241,7 @@ impl Sketch {
                 .any(|id| doomed.contains(id))
         });
         self.construction.retain(|id| !doomed.contains(id));
+        self.external.retain(|id, _| !doomed.contains(id));
         removed
     }
 

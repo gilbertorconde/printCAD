@@ -23,7 +23,13 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
         })
     };
     let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
-    for geom in &sketch.geometry {
+    // External geometry repeats a solid's own edge, which already draws.
+    let external = sketch.external_ids();
+    for geom in sketch
+        .geometry
+        .iter()
+        .filter(|g| !external.contains(&g.id()))
+    {
         match geom {
             GeometryElement::Point(p) => {
                 // A small cross in the plane.

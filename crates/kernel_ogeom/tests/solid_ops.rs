@@ -1235,3 +1235,43 @@ fn a_mesh_names_the_exact_surface_of_each_face() {
         "each cap faces away from the middle: {cap_normals:?}"
     );
 }
+
+/// An edge projects onto a plane as the sketch curve it is there: a
+/// cylinder's rim onto its cap's plane is its circle, and a line along the
+/// plane's normal is a point.
+#[test]
+fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    let mut kernel = new_kernel();
+    let ops = [SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 12.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let solid = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("a cylinder builds");
+    let raised = ProfilePlane {
+        origin: [0.0, 0.0, 30.0],
+        ..xy_plane()
+    };
+    let rim = kernel_ogeom::QUERIES
+        .project_edge(&solid.brep_blob, [0.0, 5.0, 12.0], &raised)
+        .expect("the rim projects");
+    match rim {
+        ProjectedEdge::Circle { centre, radius, .. } => {
+            assert!(centre[0].abs() < 1e-9 && centre[1].abs() < 1e-9);
+            assert!((radius - 5.0).abs() < 1e-9);
+        }
+        other => panic!("{other:?}"),
+    }
+    // The seam runs straight up the side, along the plane's normal.
+    let seam = kernel_ogeom::QUERIES
+        .project_edge(&solid.brep_blob, [5.0, 0.0, 6.0], &raised)
+        .expect("the seam projects");
+    assert!(matches!(seam, ProjectedEdge::Point(_)), "{seam:?}");
+}

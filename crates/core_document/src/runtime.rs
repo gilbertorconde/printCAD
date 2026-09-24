@@ -89,6 +89,12 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// on it and its direction there, in world space (millimetres). A
     /// fillet or chamfer takes them by the point.
     pub selected_edges: Vec<EdgeRef>,
+
+    /// Host → workbench: the kernel's answers to geometry questions asked
+    /// while a hook runs, such as an edge projected onto a sketch plane.
+    /// `None` where no kernel is at hand (tests, a context built for a
+    /// panel only).
+    pub kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 /// A picked edge on a solid body: a point on the edge, the edge's
@@ -98,6 +104,8 @@ pub struct EdgeRef {
     pub point: [f32; 3],
     pub direction: [f32; 3],
     pub length_mm: f32,
+    /// The body the edge belongs to.
+    pub body: uuid::Uuid,
 }
 
 /// A picked face on a solid body: a point on the surface and its outward
@@ -118,6 +126,7 @@ impl EdgeRef {
             point: placement.point(self.point),
             direction: placement.direction(self.direction),
             length_mm: self.length_mm,
+            body: self.body,
         }
     }
 }
@@ -244,6 +253,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             attach_request: None,
             selected_face: None,
             selected_edges: Vec::new(),
+            kernel: None,
             ctrl_down: false,
             sketch_palette: crate::palette::SketchPalette::default(),
         }

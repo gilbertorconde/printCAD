@@ -14,6 +14,8 @@ mod mesh;
 pub use mesh::is_mesh_file;
 mod ops;
 mod profile;
+mod queries;
+pub use queries::{OgeomQueries, QUERIES};
 pub mod progress;
 mod tess;
 

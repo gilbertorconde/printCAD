@@ -182,7 +182,6 @@ fn a_real_part_imports_back_from_iges() {
 /// Every face of a body meshes on itself: the carriage is a few
 /// centimetres across, and so is its mesh.
 #[test]
-#[ignore = "kernel: three small faces of this solid triangulate out to 10.8 m from where their vertices lie, a 4 × 12 m box on a 50 mm part (ogeom-rs#48)"]
 fn a_body_meshes_within_its_own_extent() {
     let (_, model) = import("monolith_carriage.step");
     let body = model.bodies.first().expect("one body");
