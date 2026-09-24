@@ -627,3 +627,81 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
         "volume {volume} vs {expected}"
     );
 }
+
+/// A block with a bore through it, the bore's top rim rounded: the fillet
+/// a printed part's hole mouth takes most often.
+#[test]
+#[ignore = "kernel: fillet_edges refuses the rim of a bore cut into a planar face, no seam can be built (ogeom-rs#54)"]
+fn bore_rim_fillets() {
+    let (mut doc, body, rect_id) = setup(40.0, 30.0);
+    doc.add_feature_in_body(
+        pad_feature(rect_id, 12.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top = wb_sketch::sketch::SketchPlane {
+        origin: [0.0, 0.0, 12.0],
+        ..Default::default()
+    };
+    let bore = doc
+        .add_feature_in_body(
+            circle_sketch_on(top, 20.0, 15.0, 6.0),
+            "bore".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        PartFeature::Pocket {
+            refine: false,
+            sketch: bore,
+            depth: 12.0,
+            reversed: false,
+            through_all: true,
+            mode: wb_part::ExtrudeMode::Dimension,
+            depth2: 0.0,
+            taper_deg: 0.0,
+            up_to_face: None,
+            up_to_offset: 0.0,
+        },
+        "Pocket".into(),
+        Some(body),
+    )
+    .unwrap();
+    doc.add_feature_in_body(
+        PartFeature::Fillet {
+            radius: 2.0,
+            edges: wb_part::EdgeSel::Edges(vec![wb_part::EdgePick {
+                point: [26.0, 15.0, 12.0],
+                direction: [0.0, 1.0, 0.0],
+            }]),
+        },
+        "Fillet".into(),
+        Some(body),
+    )
+    .unwrap();
+
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(
+            &wb_part::body_build_ops(&doc, body).unwrap().ops,
+            &TessellationSettings::default(),
+        )
+        .expect("the rim rounds");
+    // The fillet takes the ring of area rho^2 (1 - pi/4) off the rim, its
+    // centroid rho (10 - 3 pi) / (3 (4 - pi)) out from it (Pappus).
+    let (r, rho) = (6.0_f64, 2.0_f64);
+    let pi = std::f64::consts::PI;
+    let area = rho * rho * (1.0 - pi / 4.0);
+    let out = rho * (10.0 - 3.0 * pi) / (3.0 * (4.0 - pi));
+    let expected = 40.0 * 30.0 * 12.0 - pi * r * r * 12.0 - 2.0 * pi * (r + out) * area;
+    let volume = kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a closed solid");
+    assert!(
+        (volume - expected).abs() < 1e-3 * expected,
+        "volume {volume} vs {expected}"
+    );
+}
