@@ -154,6 +154,8 @@ pub enum UiCommand {
     SetSection(Option<crate::camera::section::SectionToggle>),
     /// Mark every part feature dirty so the next frame rebuilds them all.
     RecomputeAll,
+    /// Run a line typed in the script console.
+    RunConsole(String),
     /// The task panel closed with this outcome.
     TaskClosed(TaskOutcome),
     /// Delete a tree item: a feature, or a body with everything on it.

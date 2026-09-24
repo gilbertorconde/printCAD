@@ -9,6 +9,7 @@ pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;
 pub(crate) mod recompute;
+pub(crate) mod scripts;
 #[cfg(test)]
 mod seam_lint;
 pub(crate) mod session;

@@ -56,6 +56,14 @@ impl DocumentService {
 
         let mut context = WorkbenchContext::default();
         workbench.configure(&mut context);
+        for command in context.commands() {
+            if let Some((by, _)) = self.command(&command.id) {
+                return Err(DocumentError::CommandClaimed {
+                    id: command.id.clone(),
+                    by: by.as_str().to_owned(),
+                });
+            }
+        }
 
         for kind in &descriptor.feature_kinds {
             self.owners
@@ -299,6 +307,23 @@ impl DocumentService {
             .get(id.as_str())
             .ok_or_else(|| DocumentError::WorkbenchMissing(id.as_str().to_owned()))?;
         Ok(entry.context.tools())
+    }
+
+    /// Every workbench's commands, in registration order, each with the
+    /// workbench that runs it.
+    pub fn commands(&self) -> Vec<(WorkbenchId, &crate::CommandSpec)> {
+        let mut out = Vec::new();
+        for id in self.ids() {
+            if let Some(entry) = self.workbenches.get(id.as_str()) {
+                out.extend(entry.context.commands().iter().map(|c| (id.clone(), c)));
+            }
+        }
+        out
+    }
+
+    /// The command `id` and the workbench that runs it.
+    pub fn command(&self, id: &str) -> Option<(WorkbenchId, &crate::CommandSpec)> {
+        self.commands().into_iter().find(|(_, c)| c.id == id)
     }
 
     /// Tell every workbench the keys in effect, by tool or action id.

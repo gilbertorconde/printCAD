@@ -24,6 +24,8 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
 - **Documents:** `.prtcad` files, one tab each, with undo and redo.
 - **View:** GPU picking of faces and edges, a clipping plane, and 6-DoF mouse
   support.
+- **Scripting:** a Lua console that reaches every command of the
+  application and the workbenches.
 
 The geometry kernel, [ogeom](https://github.com/gilbertorconde/ogeom-rs), is
 pure Rust. No system CAD libraries are needed.
@@ -127,6 +129,27 @@ While a length is being typed, number keys go to the length.
 | Mate, align, angle | M, A, N |
 | Move a body, solve | G, S |
 
+## Scripting
+
+Windows › Console opens a Lua console. Every command of the application
+and the workbenches is a function under `pc`, called with named arguments:
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 30, height = 20}
+local pad = pc.part.pad{sketch = s, length = 12}
+pc.part.set{feature = pad, length = 20}
+```
+
+- `help()` lists the commands, `help("sketch")` those starting with
+  `sketch`.
+- `pc.doc.bodies()`, `pc.doc.features()` and `pc.doc.feature{id = ...}`
+  read the document. A feature's fields are the names `pc.part.set` takes.
+- A command that fails raises an error, which `pcall` catches.
+- Every change is an ordinary edit: Undo takes it back. Solids rebuild
+  after the line runs, as they do after a click.
+- A run is stopped after 10 seconds.
+
 ## Settings
 
 Settings are stored in `~/.config/printcad/settings.json`. Change them in
@@ -158,6 +181,7 @@ Preferences (Ctrl+,).
 | `workbenches/wb_sketch` | Sketcher |
 | `workbenches/wb_part` | Part Design |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
+| `scripting` | The Lua engine scripts and the console run in |
 
 More detail in [docs](docs/):
 

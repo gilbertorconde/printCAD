@@ -3,6 +3,7 @@ mod command_palette;
 mod context_menu;
 pub use context_menu::ViewportMenu;
 mod commands;
+mod console_view;
 mod details_modal;
 mod export_modal;
 mod feature_tree;
@@ -103,6 +104,7 @@ pub struct UiLayer {
     /// Keys the workbench consumed that egui also queued; egui must not
     /// act on them (Tab would move focus, Enter would accept the task).
     swallowed_keys: Vec<egui::Key>,
+    console: console_view::ConsoleState,
 }
 
 impl UiLayer {
@@ -135,6 +137,7 @@ impl UiLayer {
             workbench_keys: None,
             recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
+            console: Default::default(),
         }
     }
 
@@ -308,6 +311,7 @@ impl UiLayer {
                             match keymap::host_outcome(action, &state) {
                                 keymap::HostOutcome::Command(command) => commands.push(command),
                                 keymap::HostOutcome::OpenPalette => self.palette.open(),
+                                keymap::HostOutcome::ToggleConsole => self.console.toggle(),
                                 keymap::HostOutcome::OpenPreferences => {
                                     let (group, tab) =
                                         (self.preferences.group, self.preferences.tab);
@@ -339,6 +343,7 @@ impl UiLayer {
                     document_dirty,
                     breadcrumb: breadcrumb.as_deref(),
                     show_log_panel: settings.rendering.show_log_panel,
+                    show_console: self.console.open,
                     projection,
                     draw_style: settings.rendering.draw_style,
                     recent,
@@ -355,6 +360,9 @@ impl UiLayer {
 
             // About lands on its page; Preferences keeps the last group.
             let unit = document.display_unit();
+            if menu.toggle_console {
+                self.console.toggle();
+            }
             if menu.show_about {
                 self.preferences
                     .open_at(settings, unit, preferences::PrefGroup::General, 1);
@@ -492,6 +500,7 @@ impl UiLayer {
                 commands.push(UiCommand::CancelKernelJob);
             }
             log_view::draw_log_panel(ui, settings.rendering.show_log_panel);
+            console_view::draw_console(ui, &mut self.console, &mut commands);
 
             let combo = combo_view::draw_combo_view(
                 ui,

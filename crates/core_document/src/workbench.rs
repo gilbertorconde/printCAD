@@ -538,6 +538,19 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Run one of the commands this bench registered with
+    /// `WorkbenchContext::register_command`. The host has checked `args`
+    /// against the command's spec. A command that makes something answers
+    /// its id; it never opens a task or waits for a click.
+    fn run_command(
+        &mut self,
+        id: &str,
+        _args: &crate::CommandArgs,
+        _ctx: &mut WorkbenchRuntimeContext,
+    ) -> crate::CommandResult {
+        Err(crate::CommandError::Unknown(id.to_string()))
+    }
+
     /// What the generic property panel should know about this bench's
     /// feature payloads.
     fn property_hints(&self) -> PropertyHints {
@@ -752,6 +765,7 @@ pub trait Workbench: Send {
 pub struct WorkbenchContext {
     tools: Vec<ToolDescriptor>,
     actions: Vec<crate::shortcut::ActionDescriptor>,
+    commands: Vec<crate::CommandSpec>,
 }
 
 impl WorkbenchContext {
@@ -771,6 +785,16 @@ impl WorkbenchContext {
 
     pub fn actions(&self) -> &[crate::shortcut::ActionDescriptor] {
         &self.actions
+    }
+
+    /// Offer a command to scripts and other callers; it runs in
+    /// `Workbench::run_command`.
+    pub fn register_command(&mut self, command: crate::CommandSpec) {
+        self.commands.push(command);
+    }
+
+    pub fn commands(&self) -> &[crate::CommandSpec] {
+        &self.commands
     }
 }
 

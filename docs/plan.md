@@ -51,8 +51,13 @@ written in Rust.
 
 Built: the sketcher, Part Design, assembly joints between bodies, STEP,
 IGES and mesh import, STEP, STL and 3MF export, tabs, the document server,
-undo, configurable keyboard shortcuts, sending a part to the slicer, and
-6-DoF navigation.
+undo, configurable keyboard shortcuts, sending a part to the slicer,
+6-DoF navigation, and the first part of the command API: typed commands
+registered by the application and the workbenches, run from a Lua console.
+
+The command API has these so far: document queries and edits, every
+keyboard command, sketch geometry, and every Part Design feature with its
+fields.
 
 Next:
 
@@ -80,11 +85,11 @@ so neither reaches into a workbench:
 
 ### Scripts
 
-- An embedded scripting language with a typed binding generated from the
-  command API. Choose between Python (widest reach, heavier to embed) and
-  a pure Rust language such as Rhai or Lua (no system dependency).
-- A console panel beside the log: run a line, see the result, history,
-  completion from the command API.
+- Lua 5.4, built in (the `scripting` crate). Built: the `pc` namespace
+  over every command, `help`, a console with history. Still to do:
+  completion from the command API, a typed binding with docs per command.
+- Commands still to add: sketch constraints, datums, assembly joints,
+  export with options, waiting for a rebuild to finish.
 - Open, edit and run script files (File › Run script, recent scripts).
 - Macros: record commands from the UI as a script, replay them.
 - Script buttons in the toolbar, with icon, label and key, set in

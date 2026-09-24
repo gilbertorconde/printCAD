@@ -195,6 +195,7 @@ impl PrintCadApp {
                     intents.workbench_switch = Some((from, to));
                 }
                 UiCommand::Undo => intents.undo = true,
+                UiCommand::RunConsole(line) => self.run_console_line(&line, event_loop),
                 UiCommand::PivotAtCursor => {
                     if self.cursor_in_viewport.is_some()
                         && self

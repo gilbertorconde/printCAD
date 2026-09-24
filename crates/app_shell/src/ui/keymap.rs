@@ -58,6 +58,7 @@ pub enum HostAction {
     ShadedWithEdges,
     Shaded,
     Wireframe,
+    Console,
 }
 
 struct HostSpec {
@@ -241,8 +242,21 @@ const HOST: &[HostSpec] = {
             &["Ctrl+,"],
         )),
         anywhere(spec(LogPanel, "app.log", "Log panel", "Application", &[])),
+        anywhere(spec(
+            Console,
+            "app.console",
+            "Script console",
+            "Application",
+            &[],
+        )),
     ]
 };
+
+/// The application's commands a key can run, as `(id, label, action)`,
+/// for callers that name them rather than press them.
+pub fn host_actions() -> impl Iterator<Item = (&'static str, &'static str, HostAction)> {
+    HOST.iter().map(|spec| (spec.id, spec.label, spec.action))
+}
 
 /// What a binding runs.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -645,6 +659,7 @@ pub enum HostOutcome {
     Command(UiCommand),
     OpenPalette,
     OpenPreferences,
+    ToggleConsole,
     Nothing,
 }
 
@@ -730,6 +745,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         ShadedWithEdges => C(UiCommand::SetDrawStyle(settings::DrawStyle::ShadedEdges)),
         Shaded => C(UiCommand::SetDrawStyle(settings::DrawStyle::Shaded)),
         Wireframe => C(UiCommand::SetDrawStyle(settings::DrawStyle::Wireframe)),
+        Console => HostOutcome::ToggleConsole,
     }
 }
 

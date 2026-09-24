@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod command;
 pub mod datum;
 pub mod feature;
 pub mod history;
@@ -27,6 +28,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
+pub use command::{
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec,
+};
 pub use datum::{
     AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,
     datums_of_body,
@@ -1927,6 +1931,8 @@ pub enum DocumentError {
     WorkbenchMissing(String),
     #[error("feature kind `{kind}` is already claimed by workbench `{by}`")]
     FeatureKindClaimed { kind: String, by: String },
+    #[error("command `{id}` is already registered by {by}")]
+    CommandClaimed { id: String, by: String },
     #[error("document serialization failed: {0}")]
     Serialization(#[from] serde_json::Error),
     #[error("feature not found: {0:?}")]

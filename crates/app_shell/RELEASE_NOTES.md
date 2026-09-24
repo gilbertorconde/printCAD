@@ -45,6 +45,10 @@ version first.
 - A clipping plane cuts the view across X, Y or Z.
 - A 6-DoF mouse steers the view.
 
+### Scripting
+- Windows › Console runs Lua. Every command of the application and the workbenches is a function under `pc`: make a sketch, draw in it, pad it, change a feature's fields, read the document.
+- `help()` lists the commands; a failed command raises an error that `pcall` catches; every change undoes like a click.
+
 ### Keyboard
 - Every shortcut can be changed in Preferences › Keyboard, which also warns when two commands share a key.
 - Every workbench has default keys: a letter picks a tool, Shift and a letter its partner (a sketch constraint, or the subtractive form of a Part Design feature).

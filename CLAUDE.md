@@ -273,6 +273,23 @@ activates the tool as a click would; an action key reaches the bench as
 the sketcher, Escape for the measure tool) stay in the bench or host that
 owns the moment.
 
+**Commands and scripts.** `core_document::command` is the command
+contract: `CommandSpec` (id, typed `ParamSpec`s, `extra_args`), JSON
+`CommandArgs` in, `CommandResult` out, `spec.check` before every call. A
+bench registers commands in `configure` (`register_command`, ids unique
+across the registry) and runs them in `Workbench::run_command` with the
+same context its tools get; the app's own are `doc.*` plus every keymap
+command (`app/scripts.rs`). The `scripting` crate is Lua 5.4 (mlua,
+vendored) and knows no command: a `scripting::Host` lists and runs them,
+the prelude (`prelude.lua`) builds the `pc` namespace, `print`, `show`
+and `help`. The console (`ui/console_view.rs`, output in the `console`
+store) sends `UiCommand::RunConsole`; the line runs synchronously inside
+`apply_ui_commands` with the engine taken off `PrintCadApp.scripts`.
+Commands never open a task; Part Design's make features through
+`create_feature`, the toolbar's own path, then merge named fields into the
+feature's JSON. `kernel_ogeom/tests/scripted_part.rs` runs a script through
+the real benches to a solid.
+
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the
 feature the tool just created). `frame.rs` skips the per-frame

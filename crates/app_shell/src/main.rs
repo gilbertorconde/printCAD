@@ -1,5 +1,6 @@
 mod app;
 mod camera;
+mod console;
 mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
@@ -246,6 +247,9 @@ struct PrintCadApp {
     print_bed: Option<(u64, std::sync::Arc<kernel_api::TriMesh>)>,
     /// The title the window currently shows; rewritten only on change.
     window_title: String,
+    /// The Lua engine the console and scripts run in, made on first use;
+    /// the console's globals live in it between lines.
+    scripts: Option<scripting::ScriptEngine>,
 }
 
 /// The bench a new document lands in. A registry with no non-modal bench
@@ -333,6 +337,7 @@ impl PrintCadApp {
             last_input_time: None,
             last_wake_reason: (false, false, false, false),
             redraw_needed: true,
+            scripts: None,
             fps_display_idle: false,
             smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,

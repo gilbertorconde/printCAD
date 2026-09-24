@@ -2,6 +2,7 @@
 // the kernel bench use; the panel-only state and helpers go unused there.
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
+mod commands;
 mod constrain;
 mod external;
 mod feature;
@@ -595,7 +596,7 @@ impl SketchWorkbench {
             .unwrap_or(false)
     }
 
-    fn next_sketch_name(document: &core_document::Document) -> String {
+    pub(crate) fn next_sketch_name(document: &core_document::Document) -> String {
         let mut max_index = None::<u32>;
         for (_, node) in document.feature_tree().all_nodes() {
             if node.workbench_id.as_str() == "wb.sketch"
@@ -1463,6 +1464,15 @@ impl Workbench for SketchWorkbench {
     /// `sketch.start_blank`: a sketch on the XY plane of the selected body,
     /// open for editing. The Edit menu's clipboard entries act on the
     /// selection of the sketch under edit.
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        commands::run(id, args, ctx)
+    }
+
     fn on_command(
         &mut self,
         id: &str,
@@ -1536,6 +1546,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        commands::register(context);
         context.register_action(
             core_document::ActionDescriptor::new(
                 POLYLINE_ARC_ACTION,

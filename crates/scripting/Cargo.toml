@@ -1,0 +1,12 @@
+[package]
+name = "scripting"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Lua scripts run against the application's commands."
+
+[dependencies]
+core_document = { path = "../core_document" }
+mlua.workspace = true
+serde_json.workspace = true

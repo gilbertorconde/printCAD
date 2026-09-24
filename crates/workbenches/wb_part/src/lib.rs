@@ -4,6 +4,7 @@
 //! for dirty part features and drives the kernel rebuild (see `build.rs`).
 
 mod build;
+mod commands;
 #[cfg(feature = "egui")]
 mod editors;
 mod feature;
@@ -537,15 +538,34 @@ impl PartDesignWorkbench {
         InputResult::consumed()
     }
 
-    /// Create a feature from a toolbar action and mark it for rebuild.
+    /// Create a feature from a toolbar action and open its task.
     fn insert_feature(&mut self, ctx: &mut WorkbenchRuntimeContext, tool: &str) -> InputResult {
         let Some(body) = Self::target_body(ctx) else {
             ctx.log_warn("Select a body (or one of its features) first");
             return InputResult::consumed();
         };
-        // An imported body's solid lives in the import, not in the tree, so
-        // a feature can't extend it. It goes to a body of its own instead,
-        // which leaves the import exactly as it was.
+        match self.create_feature(ctx, tool, body, |_| Ok(())) {
+            Ok(made) => {
+                self.pending_task_from_tool = Some((made.id, made.hidden));
+                ctx.active_document_object = Some(made.id);
+            }
+            Err(message) => ctx.log_warn(message),
+        }
+        InputResult::consumed()
+    }
+
+    /// Add the feature `tool` makes, from the selection, to `body` and mark
+    /// it for rebuild; `edit` changes it before it goes in. An imported
+    /// body's solid lives in the import, not in the tree, so a feature can't
+    /// extend it: it goes to a body of its own, which leaves the import as
+    /// it was.
+    pub(crate) fn create_feature(
+        &self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: &str,
+        body: BodyId,
+        edit: impl FnOnce(&mut PartFeature) -> Result<(), String>,
+    ) -> Result<CreatedFeature, String> {
         let body = if ctx.document.body_solid_is_imported(body) {
             let imported = ctx
                 .document
@@ -564,40 +584,34 @@ impl PartDesignWorkbench {
             body
         };
         let (mut feature, base) =
-            match Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body) {
-                Ok(pair) => pair,
-                Err(message) => {
-                    ctx.log_warn(message);
-                    return InputResult::consumed();
-                }
-            };
+            Self::feature_for_tool(base_tool_id(tool), tool_variant(tool), ctx, body)?;
         feature.set_refine(self.options.refine_result);
+        edit(&mut feature)?;
         let name = Self::next_feature_name(ctx, base);
         let sketches = feature.sketches();
-
-        match ctx
+        let id = ctx
             .document
             .add_feature_in_body(feature, name.clone(), Some(body))
-        {
-            Ok(feature_id) => {
-                ctx.document.mark_feature_dirty(feature_id);
-                // Consumed sketches are hidden; the solid takes over visually.
-                let hidden = if self.options.hide_used_sketches {
-                    for sketch in &sketches {
-                        ctx.document.set_feature_visible(*sketch, false);
-                    }
-                    sketches
-                } else {
-                    Vec::new()
-                };
-                self.pending_task_from_tool = Some((feature_id, hidden));
-                ctx.active_document_object = Some(feature_id);
-                ctx.log_info(format!("Created {name}"));
+            .map_err(|e| format!("Failed to create {base}: {e}"))?;
+        ctx.document.mark_feature_dirty(id);
+        // Consumed sketches are hidden; the solid takes over visually.
+        let hidden = if self.options.hide_used_sketches {
+            for sketch in &sketches {
+                ctx.document.set_feature_visible(*sketch, false);
             }
-            Err(e) => ctx.log_error(format!("Failed to create {base}: {e}")),
-        }
-        InputResult::consumed()
+            sketches
+        } else {
+            Vec::new()
+        };
+        ctx.log_info(format!("Created {name}"));
+        Ok(CreatedFeature { id, hidden })
     }
+}
+
+/// A feature `create_feature` added, and the sketches it hid.
+pub(crate) struct CreatedFeature {
+    pub id: FeatureId,
+    pub hidden: Vec<FeatureId>,
 }
 
 /// Default keys of the tools; the user can rebind them in Preferences.
@@ -674,6 +688,7 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        commands::register(context);
         let action = |id: &str, label: &str, icon: &'static str, category: &str| {
             ToolDescriptor::new_action(id, label, Some(category)).icon(icon)
         };
@@ -862,6 +877,15 @@ impl Workbench for PartDesignWorkbench {
             context,
             action("part.boolean", "Boolean", "boolean", "boolean"),
         );
+    }
+
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        commands::run(self, id, args, ctx)
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {

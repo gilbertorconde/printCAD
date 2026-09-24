@@ -115,7 +115,36 @@ context.register_action(
 - To name a key in a hint, implement `shortcuts_changed`. It receives the
   keys in effect by id at start and after every change.
 
-## 5. Store features
+## 5. Add commands
+
+A command is something a script can call by name, with named arguments.
+Register it in `configure` and run it in `run_command`:
+
+```rust
+context.register_command(
+    CommandSpec::new("mine.slab", "Add a slab")
+        .param("width", ParamKind::Number, "In millimetres")
+        .optional("name", ParamKind::String, "Its name in the tree")
+        .returns("the feature's id"),
+);
+
+fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let a = Args(args);
+    match id {
+        "mine.slab" => { /* read a.number("width")?, edit ctx.document */ Ok(json!(id)) }
+        _ => Err(CommandError::Unknown(id.to_string())),
+    }
+}
+```
+
+- The host checks the arguments against the spec before the call.
+- A command changes the document through its mutators, so the change is
+  undoable like a click. It never opens a task or waits for input.
+- Ids are unique across the application; registration fails on a
+  duplicate.
+- Scripts reach it as `pc.mine.slab{width = 20}`.
+
+## 6. Store features
 
 Define a type implementing `WorkbenchFeature` (see
 [Document model](DOCUMENT_MODEL.md)) and add it with
@@ -149,7 +178,7 @@ Double clicking a feature in the tree switches to its owner and makes the
 feature the active document object. `locks_view_to_plane` keeps the camera
 square to the plane while editing.
 
-## 6. Build solids
+## 7. Build solids
 
 A workbench whose features make a body's solid implements:
 
@@ -170,7 +199,7 @@ A `BuildPlan` is a list of `kernel_api::SolidOp`s with the feature that
 made each one. The application runs it on the kernel thread. A failure is
 shown on the feature named in `BuildError::feature`.
 
-## 7. Add menu entries
+## 8. Add menu entries
 
 ```rust
 fn menu_items(&self, scope: &MenuScope, doc: &Document) -> Vec<MenuItem>;
@@ -182,7 +211,7 @@ a body row in the tree, the Edit menu, and the start page. A start page
 item becomes a New card. Its command runs in a fresh document with one
 body.
 
-## 8. Ask the host for things
+## 9. Ask the host for things
 
 Every method gets a `WorkbenchRuntimeContext`: the document, the camera
 and viewport, hover and selection, the active document object, projection
@@ -205,7 +234,7 @@ The host applies requests after the method returns. Requests from
 those run during a switch. `StartOn` switches workbench and passes `attach`
 to the new one as `ctx.attach_request`.
 
-## 9. Draw panels
+## 10. Draw panels
 
 - `task()` opens the task panel on the right; `ui_task_panel` draws it and
   handles OK and Cancel. One task is one undo step.
@@ -229,7 +258,8 @@ to the new one as `ctx.attach_request`.
 5. `on_input` for the tools.
 6. `task` and `ui_task_panel` for editing, `ui_settings` for preferences.
 7. `menu_items` and `on_command` for menus and start cards.
-8. Registration in `crates/workbenches/src/lib.rs`.
+8. `register_command` and `run_command` for what scripts can do.
+9. Registration in `crates/workbenches/src/lib.rs`.
 
 `crates/app_shell/src/app/seam_lint.rs` fails if a workbench name appears in
 the application, and CI checks the same.
