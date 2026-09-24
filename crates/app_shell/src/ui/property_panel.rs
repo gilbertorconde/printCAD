@@ -151,7 +151,7 @@ fn flatten_field(
     unit: Unit,
 ) {
     match v {
-        serde_json::Value::Null => rows.push(PropRow::text(name, "—").dim(true)),
+        serde_json::Value::Null => rows.push(PropRow::text(name, "-").dim(true)),
         serde_json::Value::Bool(b) => rows.push(PropRow::mono(name, b.to_string()).dim(!b)),
         serde_json::Value::Number(n) => {
             rows.push(number_row(
@@ -347,7 +347,7 @@ fn data_groups(
                         obj.body_id
                             .and_then(|b| document.bodies().iter().find(|x| x.id == b))
                             .map(|b| b.name.clone())
-                            .unwrap_or_else(|| "—".to_string()),
+                            .unwrap_or_else(|| "-".to_string()),
                     )
                     .dim(obj.body_id.is_none()),
                     PropRow::mono("Children", obj.children.len().to_string()),

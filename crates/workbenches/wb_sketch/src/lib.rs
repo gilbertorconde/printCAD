@@ -1844,7 +1844,16 @@ impl Workbench for SketchWorkbench {
 
         if base == Some("sketch.finish") {
             if self.active_sketch_id.is_some() {
-                self.finish_editing(ctx);
+                // As the task panel's Close does: the host ends the session,
+                // names its undo entry, and returns to the workbench it came
+                // from.
+                if let Some(feature) = self.get_active_sketch(ctx) {
+                    ctx.request(HostRequest::JournalLabel(format!(
+                        "Edit {}",
+                        feature.sketch.name
+                    )));
+                }
+                ctx.request(HostRequest::FinishEditing);
             } else {
                 ctx.log_warn("No active sketch to finish");
             }
@@ -3607,5 +3616,44 @@ mod placed_body {
         let stored = stored_sketch(ctx.document, sketch).unwrap().plane;
         assert!(close(stored.origin, [0.0, 5.0, 0.0]), "{:?}", stored.origin);
         assert!(close(stored.normal, [0.0, 0.0, 1.0]));
+    }
+}
+
+#[cfg(test)]
+mod close_sketch {
+    use super::*;
+    use core_document::Document;
+
+    #[test]
+    fn the_close_tool_ends_the_session_through_the_host_as_the_panel_does() {
+        let mut doc = Document::new("t");
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(Sketch::new("Sketch001"), SketchPlane::xy()),
+                "Sketch001".into(),
+                None,
+            )
+            .unwrap();
+        let mut wb = SketchWorkbench {
+            active_sketch_id: Some(sketch),
+            ..SketchWorkbench::default()
+        };
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = Some(sketch);
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("sketch.finish"),
+            &mut ctx,
+        );
+        let requests = ctx.take_requests();
+        assert!(
+            requests.contains(&HostRequest::FinishEditing),
+            "{requests:?}"
+        );
+        assert!(
+            requests.contains(&HostRequest::JournalLabel("Edit Sketch001".into())),
+            "{requests:?}"
+        );
     }
 }

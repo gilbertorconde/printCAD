@@ -121,7 +121,7 @@ fn humanize_age(then_ms: u64, now_ms: u64) -> String {
 
 fn humanize_size(bytes: u64) -> String {
     if bytes == 0 {
-        "—".to_string()
+        "-".to_string()
     } else if bytes < 1024 {
         format!("{bytes} B")
     } else if bytes < 1024 * 1024 {
@@ -443,7 +443,7 @@ pub fn draw_start_page(
                             true,
                             Some(landing_icon),
                             &landing_label,
-                            "Body + sketch, ready to pad",
+                            "A new body, ready for its first sketch",
                         )
                         .clicked()
                         {
@@ -679,7 +679,7 @@ mod tests {
 
     #[test]
     fn sizes_pick_the_readable_unit() {
-        assert_eq!(humanize_size(0), "—");
+        assert_eq!(humanize_size(0), "-");
         assert_eq!(humanize_size(340 * 1024), "340 KB");
         assert_eq!(humanize_size(1_258_291), "1.2 MB");
     }

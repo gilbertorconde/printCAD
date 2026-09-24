@@ -165,7 +165,7 @@ fn coords_text(inputs: &StatusBarInputs<'_>) -> String {
         None => {
             let suffix = inputs.display_unit.short_label();
             axes.iter()
-                .map(|(role, axis)| format!("{}({}) — {}", role, axis.signed_label(), suffix))
+                .map(|(role, axis)| format!("{}({}): {}", role, axis.signed_label(), suffix))
                 .collect::<Vec<_>>()
                 .join(" · ")
         }

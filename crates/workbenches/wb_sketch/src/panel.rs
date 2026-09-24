@@ -921,7 +921,7 @@ fn dimension_value_cell(
         let text = match measured {
             Some(m) if angular => format!("({m:.1}°)"),
             Some(m) => format!("({m:.2})"),
-            None => "(—)".to_string(),
+            None => "(-)".to_string(),
         };
         let color = if constraint.active { ACCENT } else { TEXT3 };
         mono_label(ui, text, FONT_SM, color).on_hover_text("Measured value (reference dimension)");

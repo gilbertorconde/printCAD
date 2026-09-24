@@ -145,7 +145,7 @@ impl Activity {
             return self.context.clone();
         }
         match (self.context.as_deref(), self.detail.as_deref()) {
-            (Some(context), Some(detail)) => Some(format!("{context} — {detail}")),
+            (Some(context), Some(detail)) => Some(format!("{context} · {detail}")),
             (Some(only), None) | (None, Some(only)) => Some(only.to_owned()),
             (None, None) => None,
         }
@@ -566,7 +566,7 @@ mod tests {
     fn a_status_line_pairs_our_label_with_the_kernels_stage() {
         assert_eq!(
             activity(Some("Fillet 4/7"), Some("boolean: intersect")).status(),
-            Some("Fillet 4/7 — boolean: intersect".to_string())
+            Some("Fillet 4/7 · boolean: intersect".to_string())
         );
     }
 

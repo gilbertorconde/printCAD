@@ -303,7 +303,11 @@ impl PrintCadApp {
             app_log::info("Recomputing every feature");
         }
         if let Some(outcome) = intents.task_closed {
-            // The task's edits form one undo entry; a closed task ends it.
+            // The task's edits form one undo entry, named by the task; a
+            // closed task ends it.
+            if let core_document::TaskOutcome::Accepted { label } = &outcome {
+                self.session.journal.label_next(label.clone());
+            }
             self.session.journal.note(&mut self.session.document);
             match outcome {
                 core_document::TaskOutcome::Accepted { label } => app_log::info(label),

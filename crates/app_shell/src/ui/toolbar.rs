@@ -278,7 +278,7 @@ fn draw_tool(
             });
             let r = ui.interact(row.response.rect, ui.id().with(i), egui::Sense::click());
             if let Some(note) = variant.planned {
-                r.on_hover_text(format!("{} — planned\n{note}", variant.label));
+                r.on_hover_text(format!("{} (planned)\n{note}", variant.label));
             } else if r.clicked() {
                 remember_variant(ui.ctx(), &tool.id, i);
                 if enabled {

@@ -66,7 +66,7 @@ pub(crate) fn render(
     ));
 
     if !report.summary.is_empty() {
-        out.push_str("\nBy kind — count, worst value (mm), one entity to look at first\n");
+        out.push_str("\nBy kind: count, worst value (mm), one entity to look at first\n");
         for kind in &report.summary {
             out.push_str(&format!(
                 "  {:<16} {:>7}   {:<10}  #{}\n",

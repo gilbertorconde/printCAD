@@ -79,9 +79,10 @@ pub struct CameraController {
     rmb_dragging_scene: bool,
     lmb_dragging_roll: bool,
     lmb_was_down_scene: bool,
-    /// LMB orbit pivot (world) when [`settings::CameraSettings::orbit_pivot_pick`] is enabled;
-    /// rotates the eye about this point without reframing.
-    orbit_lmb_anchor_world: Option<DVec3>,
+    /// Orbit pivot (world) picked under the cursor when a middle-button orbit
+    /// starts with [`settings::CameraSettings::orbit_pivot_pick`] on; rotates
+    /// the eye about this point without reframing.
+    orbit_anchor_world: Option<DVec3>,
     /// Out-of-plane rotation disabled (sketch editing keeps the view planar).
     orbit_locked: bool,
     /// MMB drag state (orbit lives on the middle button; a clean MMB click
@@ -108,7 +109,7 @@ impl CameraController {
             rmb_dragging_scene: false,
             lmb_dragging_roll: false,
             lmb_was_down_scene: false,
-            orbit_lmb_anchor_world: None,
+            orbit_anchor_world: None,
             orbit_locked: false,
             mmb_was_down_scene: false,
             mmb_anchor_vp: Vec2::ZERO,
@@ -125,20 +126,20 @@ impl CameraController {
         self.tween.cancel();
     }
 
-    /// Lock out-of-plane rotation (LMB orbit). Pan, zoom, and roll stay
+    /// Lock out-of-plane rotation (the middle-button orbit). Pan, zoom, and roll stay
     /// available — they keep the view planar. Used while editing a sketch.
     pub fn set_orbit_lock(&mut self, locked: bool) {
         self.orbit_locked = locked;
     }
 
-    /// Begin / update pointer drag modes: LMB orbit / select, RMB pan, LMB+RMB tilt (roll).
+    /// Begin / update pointer drag modes: MMB orbit (a clean MMB click picks the pivot), LMB select, RMB pan, LMB+RMB tilt (roll).
     ///
     /// Orbit activates after movement from the press anchor exceeds
     /// `CameraSettings::click_drag_threshold_px` (over geometry or empty space). A shorter click
     /// without that much motion selects under the cursor instead.
     ///
     /// When `CameraSettings::orbit_pivot_pick` is set, the first orbit-drag frame remembers
-    /// `pick_world_under_cursor` as an off-axis LMB orbit pivot (no recenter jump).
+    /// `pick_world_under_cursor` as an off-axis orbit pivot (no recenter jump).
     pub fn on_viewport_pointer(
         &mut self,
         event: &WindowEvent,
@@ -153,7 +154,7 @@ impl CameraController {
             } => {
                 self.cancel_animation();
                 self.lmb_was_down_scene = true;
-                self.orbit_lmb_anchor_world = None;
+                self.orbit_anchor_world = None;
                 self.lmb_dragging_scene = false;
                 self.lmb_dragging_roll = false;
                 if let Some(p) = self.last_cursor_viewport {
@@ -183,7 +184,7 @@ impl CameraController {
                 self.cancel_animation();
                 self.mmb_was_down_scene = true;
                 self.mmb_dragging_scene = false;
-                self.orbit_lmb_anchor_world = None;
+                self.orbit_anchor_world = None;
                 if let Some(p) = self.last_cursor_viewport {
                     self.mmb_anchor_vp = p;
                     self.last_cursor_vp_for_drag = Some(p);
@@ -199,7 +200,7 @@ impl CameraController {
                 self.mmb_was_down_scene = false;
                 self.mmb_dragging_scene = false;
                 self.last_cursor_vp_for_drag = None;
-                self.orbit_lmb_anchor_world = None;
+                self.orbit_anchor_world = None;
                 if was_click && self.last_cursor_viewport.is_some() {
                     // A clean middle click (no drag) picks the orbit pivot.
                     self.on_mmb_pivot_pick(pick_world_under_cursor, settings);
@@ -219,7 +220,7 @@ impl CameraController {
                 self.lmb_dragging_roll = false;
                 self.lmb_was_down_scene = false;
                 self.lmb_dragging_scene = false;
-                self.orbit_lmb_anchor_world = None;
+                self.orbit_anchor_world = None;
 
                 if should_maybe_select && self.last_cursor_viewport.is_some() {
                     return CameraPointerResult::LmbReleasedMaybeSelect;
@@ -289,12 +290,12 @@ impl CameraController {
                     if exceeds_anchor && !self.mmb_dragging_scene && !self.orbit_locked {
                         self.mmb_dragging_scene = true;
                         if settings.orbit_pivot_pick {
-                            self.orbit_lmb_anchor_world = pick_world_under_cursor
+                            self.orbit_anchor_world = pick_world_under_cursor
                                 .map(|h| DVec3::new(h.x as f64, h.y as f64, h.z as f64));
                         }
                     }
                     if self.mmb_dragging_scene {
-                        if let Some(pivot) = self.orbit_lmb_anchor_world {
+                        if let Some(pivot) = self.orbit_anchor_world {
                             ops::orbit_pixels_around_world_anchor(
                                 &mut self.state,
                                 &self.axes,
@@ -425,7 +426,7 @@ impl CameraController {
         // normal — roll — is kept.
         if orbit != Vec2::ZERO && !self.orbit_locked {
             let delta = orbit * dt * std::f32::consts::PI / 180.0 / radians_per_px;
-            match self.orbit_lmb_anchor_world {
+            match self.orbit_anchor_world {
                 Some(pivot) if settings.orbit_pivot_pick => {
                     ops::orbit_pixels_around_world_anchor(
                         &mut self.state,
@@ -537,16 +538,16 @@ impl CameraController {
         self.state.focal_point_vec3(&self.axes)
     }
 
-    /// Red crosshair at orbit focal point: only while LMB orbit / LMB+RMB roll / view tween.
+    /// Red crosshair at orbit focal point: only while orbiting (MMB), rolling (LMB+RMB) or animating a view.
     pub fn rotation_pivot_marker_visible(&self) -> bool {
-        self.lmb_dragging_scene
+        self.mmb_dragging_scene
             || self.lmb_dragging_roll
             || matches!(self.tween, CameraTween::Running { .. })
     }
 
     /// Physical pixel position for the red orbit pivot HUD (matches [`Self::world_to_screen`] space).
     ///
-    /// When [`CameraSettings::orbit_pivot_pick`] is on and LMB orbit rotates about a picked surface
+    /// When [`CameraSettings::orbit_pivot_pick`] is on and the orbit rotates about a picked surface
     /// point, the indicator is drawn at that **anchor** projected to screen (not under the cursor
     /// while dragging).
     pub fn rotation_pivot_indicator_screen_px(&self, orbit_pivot_pick: bool) -> Option<(f32, f32)> {
@@ -554,8 +555,8 @@ impl CameraController {
             return None;
         }
         if orbit_pivot_pick
-            && self.lmb_dragging_scene
-            && let Some(p) = self.orbit_lmb_anchor_world
+            && self.mmb_dragging_scene
+            && let Some(p) = self.orbit_anchor_world
         {
             let world = Vec3::new(p.x as f32, p.y as f32, p.z as f32);
             if let Some(px) = self.world_to_screen(world) {

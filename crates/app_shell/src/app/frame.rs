@@ -688,9 +688,9 @@ impl PrintCadApp {
                 let title = if self.session.screen == crate::ui::Screen::Start {
                     "printCAD".to_string()
                 } else if self.session.document.metadata().dirty() {
-                    format!("{} • — printCAD", self.session.document.name())
+                    format!("• {} - printCAD", self.session.document.name())
                 } else {
-                    format!("{} — printCAD", self.session.document.name())
+                    format!("{} - printCAD", self.session.document.name())
                 };
                 if title != self.window_title {
                     window.set_title(&title);

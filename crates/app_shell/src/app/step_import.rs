@@ -258,7 +258,7 @@ impl PrintCadApp {
         let bodies = imported.bodies;
         if bodies.len() != route.body_ids.len() {
             app_log::error(format!(
-                "Remote import mismatch: peer created {} bodies, re-derivation produced {} — geometry left empty",
+                "Remote import mismatch: peer created {} bodies, re-derivation produced {}; geometry left empty",
                 route.body_ids.len(),
                 bodies.len()
             ));

@@ -465,7 +465,7 @@ pub fn tool_button(
         );
     }
     let response = match state.planned {
-        Some(note) => response.on_hover_text(format!("{label} — planned\n{note}")),
+        Some(note) => response.on_hover_text(format!("{label} (planned)\n{note}")),
         None if !enabled => response.on_hover_text(label),
         None => response.on_hover_text(label),
     };
@@ -691,7 +691,7 @@ pub fn select_field<T: PartialEq + Copy>(
         .iter()
         .find(|(v, _)| *v == *current)
         .map(|(_, l)| *l)
-        .unwrap_or("—");
+        .unwrap_or("-");
     let mut changed = false;
     egui::ComboBox::from_id_salt(id_salt)
         .selected_text(RichText::new(label).font(sans(FONT_SM)))
@@ -718,7 +718,7 @@ pub fn planned<R>(ui: &mut Ui, note: &str, add: impl FnOnce(&mut Ui) -> R) -> In
     let response = inner
         .response
         .clone()
-        .on_disabled_hover_text(format!("Planned — {note}"));
+        .on_disabled_hover_text(format!("Planned: {note}"));
     InnerResponse::new(inner.inner, response)
 }
 

@@ -67,7 +67,7 @@ fn item_needing_document(
     }
     let response = ui
         .add_enabled(have_document, button)
-        .on_disabled_hover_text(format!("{label} — open or create a document first"));
+        .on_disabled_hover_text(format!("{label}: open or create a document first"));
     let clicked = response.clicked();
     if clicked {
         ui.close();
@@ -368,7 +368,7 @@ pub fn draw_menu_bar(
                                     egui::Sense::click(),
                                 );
                                 if let Some(note) = tool.planned {
-                                    r.on_hover_text(format!("{} — planned\n{note}", tool.label));
+                                    r.on_hover_text(format!("{} (planned)\n{note}", tool.label));
                                     continue;
                                 }
                                 if r.clicked() {

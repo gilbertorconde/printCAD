@@ -200,7 +200,7 @@ fn dim_text(sketch: &Sketch, constraint: &sketch::Constraint) -> String {
         sketch::measured_value(sketch, &constraint.kind)
             .or_else(|| sketch::dimension_value(&constraint.kind))
     };
-    let val = value.map(fmt_num).unwrap_or_else(|| "—".to_string());
+    let val = value.map(fmt_num).unwrap_or_else(|| "-".to_string());
     let text = match constraint.kind {
         ConstraintKind::Radius { .. } => format!("R {val}"),
         ConstraintKind::Diameter { .. } => format!("Ø {val}"),

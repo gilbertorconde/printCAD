@@ -428,7 +428,7 @@ pub fn draw_command_palette(
                         };
                         right.label(RichText::new(scope).font(sans(FONT_XS)).color(TEXT3));
                         let response = match entry.planned {
-                            Some(note) => response.on_hover_text(format!("Planned — {note}")),
+                            Some(note) => response.on_hover_text(format!("Planned: {note}")),
                             None => response,
                         };
                         if response.hovered() {

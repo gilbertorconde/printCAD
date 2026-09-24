@@ -644,7 +644,7 @@ pub fn readout_rows(
                 match implied_value(state, sketch, cursor, *field) {
                     Some(v) if field.is_angle() => format!("{v:.1}"),
                     Some(v) => format!("{v:.2}"),
-                    None => "—".to_string(),
+                    None => "-".to_string(),
                 }
             } else {
                 buffer.to_string()
