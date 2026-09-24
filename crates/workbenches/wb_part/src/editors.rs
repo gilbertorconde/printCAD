@@ -22,11 +22,13 @@ use crate::feature::{
 
 /// The label column of a parameter row.
 pub(crate) fn label_cell(ui: &mut Ui, label: &str) {
+    // A long label is cut to the column, and whole on hover.
     let text = label.trim_end_matches(':');
     ui.add_sized(
         [96.0, INPUT],
-        egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)),
-    );
+        egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).truncate(),
+    )
+    .on_hover_text(text);
 }
 
 /// One parameter row: the label column, then `add` draws the control and
@@ -63,6 +65,10 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Size 2", "size2"),
     ("Thickness", "thickness"),
     ("Occurrences", "occurrences"),
+    ("Offset X", "offset_x"),
+    ("Offset Y", "offset_y"),
+    ("Normal offset", "offset_z"),
+    ("Rotation", "rotation"),
 ];
 
 /// What a feature's fields know of formulas: the feature's parameters,
@@ -291,7 +297,8 @@ fn face_pick_row(
     label: &str,
 ) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
+    // The button goes under the point when the row is narrow.
+    ui.horizontal_wrapped(|ui| {
         label_cell(ui, label);
         match pick {
             Some(p) => {
@@ -971,15 +978,11 @@ pub fn datum_editor(
         changed = true;
     }
 
-    label_cell(ui, "Attachment offset");
-    ui.horizontal(|ui| {
-        for (value, label) in datum.offset.translation.iter_mut().zip(["x", "y", "n"]) {
-            label_cell(ui, label);
-            changed |= ui
-                .add(egui::DragValue::new(value).speed(0.5).suffix(" mm"))
-                .changed();
-        }
-    });
+    // One row each: side by side they are wider than the panel.
+    let [x, y, n] = &mut datum.offset.translation;
+    changed |= mm_drag(ui, fx, x, "Offset X:");
+    changed |= mm_drag(ui, fx, y, "Offset Y:");
+    changed |= mm_drag(ui, fx, n, "Normal offset:");
     changed |= deg_drag(
         ui,
         fx,
@@ -1551,7 +1554,11 @@ pub fn feature_editor(
             refine: _,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
-            label_cell(ui, "Steps (each applies to all previous results)");
+            ui.label(
+                RichText::new("Steps, each applied to every result of the ones before")
+                    .font(sans(FONT_SM))
+                    .color(TEXT2),
+            );
             let mut remove = None;
             for (i, step) in steps.iter_mut().enumerate() {
                 let label = match step {
@@ -1599,7 +1606,7 @@ pub fn feature_editor(
                                 .add(egui::DragValue::new(factor).speed(0.05).range(0.01..=100.0))
                                 .changed();
                         });
-                        ui.horizontal(|ui| {
+                        ui.horizontal_wrapped(|ui| {
                             label_cell(ui, "Center");
                             for v in center.iter_mut() {
                                 changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
@@ -1613,7 +1620,7 @@ pub fn feature_editor(
                 steps.remove(i);
                 changed = true;
             }
-            ui.horizontal(|ui| {
+            ui.horizontal_wrapped(|ui| {
                 if secondary_button(ui, "+ Linear").clicked() {
                     steps.push(TransformStep::Linear {
                         axis: PatternAxis::X,
@@ -1771,5 +1778,110 @@ mod formula_fields {
                 "{label} maps to {name}, which no feature lists"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod panel_width {
+    use super::*;
+    use core_document::{Document, WorkbenchFeature};
+    use serde_json::json;
+
+    const WIDTH: f32 = 300.0;
+
+    /// How wide `draw` lays out in a column `WIDTH` wide.
+    fn used_width(
+        doc: &mut Document,
+        feature: FeatureId,
+        draw: &dyn Fn(&mut Ui, &WorkbenchRuntimeContext, &mut Formulas),
+    ) -> f32 {
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        let wctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let shown: &WorkbenchRuntimeContext = &wctx;
+        let mut width = 0.0;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                let mut column = ui.new_child(egui::UiBuilder::new().max_rect(
+                    egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(WIDTH, 3000.0)),
+                ));
+                let mut fx = Formulas::of(shown.document, feature);
+                draw(&mut column, shown, &mut fx);
+                width = column.min_rect().width();
+            });
+            output.textures_delta.clear();
+        }
+        width
+    }
+
+    #[test]
+    fn every_editor_fits_a_narrow_task_panel() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let sketch = doc
+            .add_feature_in_body(
+                wb_sketch::SketchFeature::from_sketch(wb_sketch::sketch::Sketch::new("s")),
+                "Sketch".into(),
+                Some(body),
+            )
+            .unwrap();
+        let s = sketch.0.to_string();
+        let features = [
+            json!({"Pad": {"sketch": s, "length": 10.0, "reversed": false}}),
+            json!({"Pocket": {"sketch": s, "depth": 5.0, "reversed": false}}),
+            json!({"Hole": {"sketch": s, "diameter": 5.0, "depth": 8.0, "through_all": false,
+                "cut": {"Counterbore": {"diameter": 9.0, "depth": 2.0}}}}),
+            json!({"Chamfer": {"size": 1.0}}),
+            json!({"LinearPattern": {"originals": [], "axis": "X", "length": 20.0, "occurrences": 3}}),
+            json!({"PolarPattern": {"originals": [], "axis": "Z", "angle_deg": 360.0, "occurrences": 6}}),
+            json!({"MultiTransform": {"originals": [], "steps": [
+                {"Linear": {"axis": "X", "length": 20.0, "occurrences": 3}}]}}),
+            json!({"Revolution": {"sketch": s, "angle_deg": 360.0}}),
+            json!({"Groove": {"sketch": s, "angle_deg": 360.0}}),
+            json!({"Helix": {"sketch": s, "axis": "SketchY", "mode": "PitchHeight", "pitch": 2.0,
+                "height": 10.0, "turns": 5.0, "left_handed": false, "cone_angle_deg": 0.0,
+                "reversed": false, "subtractive": false}}),
+            json!({"Loft": {"sections": [s], "ruled": false, "closed": false, "subtractive": false}}),
+            json!({"Pipe": {"profile": s, "spine": s, "frenet": false, "subtractive": false}}),
+            json!({"Fillet": {"radius": 1.0}}),
+            json!({"Chamfer": {"size": 1.0, "mode": "DistanceAngle"}}),
+            json!({"Draft": {"angle_deg": 3.0, "neutral": {"point": [0.0, 0.0, 0.0], "normal": [0.0, 0.0, 1.0]}, "faces": []}}),
+            json!({"Thickness": {"value": 1.0, "faces": []}}),
+            json!({"Mirrored": {"originals": [], "plane": "XY"}}),
+            json!({"MultiTransform": {"originals": [], "steps": [
+                {"Scale": {"factor": 2.0, "center": [0.0, 0.0, 0.0], "occurrences": 2}},
+                {"Mirror": {"plane": "XZ"}}]}}),
+            json!({"Primitive": {
+                "kind": {"Cylinder": {"radius": 5.0, "height": 10.0, "angle_deg": 360.0}},
+                "placement": {"origin": [0.0, 0.0, 0.0], "x_axis": [1.0, 0.0, 0.0], "z_axis": [0.0, 0.0, 1.0]},
+                "subtractive": false}}),
+        ];
+        for data in features {
+            let feature = PartFeature::from_json(&data).unwrap();
+            let id = doc
+                .add_feature_in_body(feature.clone(), "Feature".into(), Some(body))
+                .unwrap();
+            let width = used_width(&mut doc, id, &|ui, ctx, fx| {
+                let mut f = feature.clone();
+                feature_editor(ui, ctx, fx, body, id, &mut f);
+            });
+            assert!(width <= WIDTH + 0.5, "{data} lays out {width} px wide");
+        }
+        let datum = core_document::DatumFeature {
+            shape: core_document::DatumShape::Plane { size: 30.0 },
+            attachment: core_document::DatumAttachment::BasePlane(core_document::BasePlane::XY),
+            offset: Default::default(),
+        };
+        let id = doc
+            .add_feature_in_body(datum, "Plane".into(), Some(body))
+            .unwrap();
+        let width = used_width(&mut doc, id, &|ui, ctx, fx| {
+            let mut d = datum;
+            datum_editor(ui, ctx, fx, id, &mut d);
+        });
+        assert!(
+            width <= WIDTH + 0.5,
+            "the datum editor lays out {width} px wide"
+        );
     }
 }

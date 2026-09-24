@@ -72,6 +72,8 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
         .size_range(260.0..=480.0)
         .frame(egui::Frame::new().fill(BG1))
         .show(ui, |ui| {
+            // Nothing paints past the panel, whatever a bench's editor asks.
+            ui.set_clip_rect(ui.max_rect());
             let rect = ui.max_rect().intersect(ui.clip_rect());
             ui.painter().vline(
                 rect.left() + 0.5,

@@ -94,6 +94,8 @@ pub fn draw_assistant(
                 .inner_margin(egui::Margin::symmetric(10, 8)),
         )
         .show(ui, |ui| {
+            // Nothing paints past the panel, whatever its content asks.
+            ui.set_clip_rect(ui.max_rect());
             let panel = ui.max_rect();
             if let Some(chat) = state.active.clone() {
                 take_dropped_files(ui, panel, chat, commands);
@@ -634,9 +636,25 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                 );
                 ui.horizontal(|ui| {
                     attach_menu(ui, chat, open, commands);
-                    let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+                    // Send (or Stop) keeps the right end; the options take
+                    // the rest, on more lines when it is narrow.
+                    let line = ui.spacing().interact_size.y;
+                    let end = 52.0;
+                    let rest = (ui.available_width() - end).max(0.0);
                     ui.allocate_ui_with_layout(
-                        row,
+                        egui::vec2(rest, line),
+                        egui::Layout::left_to_right(egui::Align::Center).with_main_wrap(true),
+                        |ui| {
+                            if busy {
+                                ui.add(egui::Spinner::new().size(12.0).color(TEXT3));
+                            }
+                            for option in ordered(&chat.options) {
+                                option_control(ui, chat, option, commands);
+                            }
+                        },
+                    );
+                    ui.allocate_ui_with_layout(
+                        egui::vec2(ui.available_width(), line),
                         egui::Layout::right_to_left(egui::Align::Center),
                         |ui| {
                             if busy {
@@ -651,13 +669,6 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                                 .clicked()
                             {
                                 send = true;
-                            }
-                            // Laid out from the right: the last option first.
-                            for option in ordered(&chat.options).into_iter().rev() {
-                                option_control(ui, chat, option, commands);
-                            }
-                            if busy {
-                                ui.add(egui::Spinner::new().size(12.0).color(TEXT3));
                             }
                         },
                     );
@@ -850,12 +861,36 @@ mod tests {
     /// The panel in a window `width` wide with a busy chat whose tool
     /// title is one very long line: the input's rect, and what is left for
     /// the viewport.
-    fn lay_out(width: f32) -> (egui::Rect, egui::Rect) {
+    /// A select option of a chat's agent, with these choices.
+    fn select(id: &str, category: &str, choices: &[&str]) -> agents::acp::SessionOption {
+        agents::acp::SessionOption {
+            id: id.into(),
+            name: id.into(),
+            description: String::new(),
+            category: category.into(),
+            value: agents::acp::OptionValue::Select {
+                current: choices[0].into(),
+                choices: choices
+                    .iter()
+                    .map(|c| agents::acp::OptionChoice {
+                        value: c.to_string(),
+                        name: c.to_string(),
+                        description: String::new(),
+                    })
+                    .collect(),
+            },
+            via: agents::acp::OptionVia::Config,
+        }
+    }
+
+    /// Lay the panel out: the input's rect, what is left for the
+    /// viewport, and everything the panel painted, before clipping.
+    fn lay_out(width: f32) -> (egui::Rect, egui::Rect, egui::Rect) {
         let long = format!(
             "jq -r '.[0].text' {}",
             "/home/someone/a/long/path".repeat(12)
         );
-        let chats = [Chat::for_test(
+        let mut chats = [Chat::for_test(
             "c",
             ChatStatus::Busy,
             vec![
@@ -872,6 +907,20 @@ mod tests {
                 },
             ],
         )];
+        // An agent's options as wide as a real one's.
+        chats[0].options = vec![
+            select("mode", "mode", &["Bypass permissions", "Manual"]),
+            select("model", "model", &["Opus 5.5 (1M context)", "Sonnet 5"]),
+            select("effort", "thought_level", &["Default", "Max"]),
+            agents::acp::SessionOption {
+                id: "fast".into(),
+                name: "Fast mode".into(),
+                description: String::new(),
+                category: "other".into(),
+                value: agents::acp::OptionValue::Toggle(false),
+                via: agents::acp::OptionVia::Config,
+            },
+        ];
         let ctx = egui::Context::default();
         ui_kit::apply_theme(&ctx);
         let mut state = AssistantState {
@@ -879,6 +928,7 @@ mod tests {
             ..Default::default()
         };
         let mut viewport = egui::Rect::NOTHING;
+        let mut painted = egui::Rect::NOTHING;
         for _ in 0..3 {
             let raw = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
@@ -901,18 +951,28 @@ mod tests {
                 viewport = ui.available_rect_before_wrap();
             });
             output.textures_delta.clear();
+            painted = output
+                .shapes
+                .iter()
+                .map(|s| s.shape.visual_bounding_rect())
+                .filter(|r| r.is_finite() && r.is_positive())
+                .fold(egui::Rect::NOTHING, |all, r| all.union(r));
         }
         let input = ctx
             .read_response(egui::Id::new(("assistant_input", "c")))
             .expect("the input is drawn")
             .rect;
-        (input, viewport)
+        (input, viewport, painted)
     }
 
     #[test]
     fn a_long_line_neither_widens_the_panel_nor_moves_the_input_off_the_bottom() {
         for width in [780.0, 1600.0] {
-            let (input, viewport) = lay_out(width);
+            let (input, viewport, painted) = lay_out(width);
+            assert!(
+                painted.left() >= viewport.right() - 1.0 && painted.right() <= width + 1.0,
+                "at {width}: everything the panel paints is in it: {painted:?}, {viewport:?}"
+            );
             assert!(
                 viewport.width() >= MIN_VIEWPORT_WIDTH - 1.0,
                 "at {width}: the viewport keeps its room: {viewport:?}"
