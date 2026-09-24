@@ -1,5 +1,6 @@
-//! The command palette: every shell command and every workbench tool
-//! behind one search box (Ctrl+K or the toolbar's search field).
+//! The command palette: every shell command, every workbench tool and
+//! every script of the scripts folder behind one search box (Ctrl+K or
+//! the toolbar's search field).
 
 use core_document::{DocumentService, ToolDescriptor, WorkbenchId};
 use egui::{Align2, Key, Modifiers, RichText, Sense, Stroke, Vec2, pos2, vec2};
@@ -35,6 +36,7 @@ pub struct PaletteResult {
     pub show_preferences: bool,
     /// Switch to this workbench, then activate the tool.
     pub activate_tool: Option<(ActiveWorkbench, String)>,
+    pub toggle_console: bool,
 }
 
 /// A shell action the palette can run.
@@ -49,6 +51,7 @@ enum ShellAction {
     ToggleLog,
     RecomputeAll,
     Projection(ProjectionMode),
+    Console,
     Quit,
 }
 
@@ -158,6 +161,18 @@ const SHELL: &[ShellEntry] = &[
         action: ShellAction::Projection(ProjectionMode::Perspective),
     },
     ShellEntry {
+        label: "Run script…",
+        icon: "script",
+        binding: Some("file.run_script"),
+        action: ShellAction::File(FileCommand::RunScript),
+    },
+    ShellEntry {
+        label: "Script console",
+        icon: "console",
+        binding: Some("app.console"),
+        action: ShellAction::Console,
+    },
+    ShellEntry {
         label: "Quit",
         icon: "close",
         binding: Some("app.quit"),
@@ -181,6 +196,7 @@ struct Entry {
 enum EntryKind {
     Shell(ShellAction),
     Tool { bench: WorkbenchId, id: String },
+    Script(std::path::PathBuf),
 }
 
 /// 0 = substring, 1 = subsequence, None = no match.
@@ -250,6 +266,20 @@ fn entries(
             kind: EntryKind::Shell(shell.action),
         });
     }
+    // The scripts folder's scripts are in the keymap, as every command is.
+    for binding in keymap.bindings() {
+        if let super::keymap::Target::Script(path) = &binding.target {
+            out.push(Entry {
+                label: binding.label.clone(),
+                scope: binding.group.clone(),
+                icon: "script",
+                keys: binding.keys.first().map(ToString::to_string),
+                inert: false,
+                planned: None,
+                kind: EntryKind::Script(path.clone()),
+            });
+        }
+    }
     out
 }
 
@@ -265,11 +295,13 @@ fn run(entry: &Entry, commands: &mut Vec<UiCommand>, result: &mut PaletteResult)
             ShellAction::ToggleLog => commands.push(UiCommand::ToggleLogPanel),
             ShellAction::RecomputeAll => commands.push(UiCommand::RecomputeAll),
             ShellAction::Projection(mode) => commands.push(UiCommand::SetProjection(*mode)),
+            ShellAction::Console => result.toggle_console = true,
             ShellAction::Quit => commands.push(UiCommand::Quit),
         },
         EntryKind::Tool { bench, id } => {
             result.activate_tool = Some((ActiveWorkbench(bench.clone()), id.clone()));
         }
+        EntryKind::Script(path) => commands.push(UiCommand::RunScriptFile(path.clone())),
     }
 }
 

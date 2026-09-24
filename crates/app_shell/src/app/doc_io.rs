@@ -78,6 +78,7 @@ pub(crate) enum FileDialogKind {
     SaveAs,
     ImportStep,
     Export(kernel_ogeom::export::ExportFormat),
+    RunScript,
 }
 
 pub(crate) struct FileDialogResult {
@@ -773,6 +774,11 @@ impl PrintCadApp {
                     self.start_export(path);
                 }
             }
+            FileDialogKind::RunScript => {
+                if let Some(path) = result.path {
+                    self.scripts_to_run.push(path);
+                }
+            }
         }
         self.file_dialog_rx = None;
     }
@@ -804,13 +810,22 @@ impl PrintCadApp {
                     .add_filter("STEP file", &["step", "stp"])
                     .add_filter("IGES file", &["iges", "igs"])
                     .add_filter("Mesh (STL, OBJ, 3MF)", &["stl", "obj", "3mf"]),
+                FileDialogKind::RunScript => {
+                    let dialog = rfd::FileDialog::new().add_filter("Lua script", &["lua"]);
+                    match settings::scripts_dir().filter(|d| d.is_dir()) {
+                        Some(dir) => dialog.set_directory(dir),
+                        None => dialog,
+                    }
+                }
                 FileDialogKind::Export(format) => rfd::FileDialog::new()
                     .add_filter(format!("{} file", format.label()), &[format.extension()])
                     .set_file_name(format!("{stem}.{}", format.extension())),
                 _ => rfd::FileDialog::new().add_filter("printCAD Document", &["prtcad", "json"]),
             };
 
-            if let Some(recent_dir) = recent_dir {
+            if let Some(recent_dir) = recent_dir
+                && !matches!(kind, FileDialogKind::RunScript)
+            {
                 dialog = dialog.set_directory(recent_dir);
             }
 
@@ -826,6 +841,7 @@ impl PrintCadApp {
                 }
                 FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
                 FileDialogKind::Export(_) => dialog.save_file(),
+                FileDialogKind::RunScript => dialog.pick_file(),
             };
 
             let _ = tx.send(FileDialogResult { kind, path });

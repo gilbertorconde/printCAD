@@ -106,6 +106,10 @@ pub struct UiFrameInputs<'a> {
     pub nav_buttons: u32,
     pub step_import_pending: Option<&'a mut (PathBuf, kernel_api::TessellationSettings)>,
     pub export_pending: Option<&'a mut crate::app::export::ExportDraft>,
+    /// The scripts folder's scripts.
+    pub scripts: &'a [crate::script_library::ScriptEntry],
+    /// A script printed or failed since the last frame: show the console.
+    pub console_attention: bool,
 }
 
 /// A body's measure as the property panel shows it.

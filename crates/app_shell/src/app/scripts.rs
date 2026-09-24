@@ -81,7 +81,13 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
         .filter(|(_, _, action)| {
             !matches!(
                 action,
-                Palette | Preferences | Console | Delete | ToggleVisibility | PivotAtCursor
+                Palette
+                    | Preferences
+                    | Console
+                    | RunScript
+                    | Delete
+                    | ToggleVisibility
+                    | PivotAtCursor
             )
         })
         .map(|(id, label, action)| (with_file_args(CommandSpec::new(id, label), action), action))
@@ -378,6 +384,105 @@ impl PrintCadApp {
                 }))
             }
             _ => Err(CommandError::failed("this command takes no file")),
+        }
+    }
+
+    /// Run a script file, with what it printed and any error in the
+    /// console, which opens when there is something to show.
+    pub(crate) fn run_script_file(&mut self, path: &std::path::Path, event_loop: &ActiveEventLoop) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.display().to_string());
+        let source = match std::fs::read_to_string(path) {
+            Ok(source) => source,
+            Err(err) => {
+                console::push(LineKind::Error, format!("{name}: {err}"));
+                self.console_attention = true;
+                return;
+            }
+        };
+        console::push(LineKind::Input, format!("run {name}"));
+        let mut engine = self.scripts.take().unwrap_or_default();
+        let out = engine.run_script(
+            &source,
+            &name,
+            &mut AppHost {
+                app: self,
+                event_loop,
+            },
+        );
+        self.scripts = Some(engine);
+        if !out.printed.is_empty() || out.error.is_some() {
+            self.console_attention = true;
+        }
+        for printed in out.printed {
+            console::push(LineKind::Printed, printed);
+        }
+        match out.error {
+            Some(error) => {
+                console::push(LineKind::Error, error.clone());
+                crate::app_log::warn(format!("Script {name} stopped: {error}"));
+            }
+            None => crate::app_log::info(format!("Ran {name}")),
+        }
+        self.session.journal.label_next(format!("Run {name}"));
+        self.redraw_needed = true;
+    }
+
+    /// Read the scripts folder again, every couple of seconds while frames
+    /// run, so a script saved in an editor shows up without a restart.
+    pub(crate) fn refresh_script_library(&mut self) {
+        let due = self
+            .script_library_read
+            .is_none_or(|at| at.elapsed() > std::time::Duration::from_secs(2));
+        if !due {
+            return;
+        }
+        self.script_library_read = Some(std::time::Instant::now());
+        self.script_library = settings::scripts_dir()
+            .map(|dir| crate::script_library::scan(&dir))
+            .unwrap_or_default();
+    }
+
+    /// Make a new script from the template in the scripts folder and open
+    /// it in the system's editor.
+    pub(crate) fn new_script(&mut self) {
+        let Some(dir) = settings::scripts_dir() else {
+            crate::app_log::warn("The system names no configuration folder for scripts");
+            return;
+        };
+        let path = crate::script_library::fresh_path(&dir);
+        let written = std::fs::create_dir_all(&dir)
+            .and_then(|()| std::fs::write(&path, crate::script_library::TEMPLATE));
+        match written {
+            Ok(()) => {
+                crate::app_log::info(format!("New script {}", path.display()));
+                self.script_library_read = None;
+                self.edit_script(Some(path));
+            }
+            Err(err) => crate::app_log::error(format!("Could not write {}: {err}", path.display())),
+        }
+    }
+
+    /// Open `path` in the system's editor, or the scripts folder in its
+    /// file manager.
+    pub(crate) fn edit_script(&mut self, path: Option<std::path::PathBuf>) {
+        let target = match path {
+            Some(path) => path,
+            None => {
+                let Some(dir) = settings::scripts_dir() else {
+                    return;
+                };
+                if let Err(err) = std::fs::create_dir_all(&dir) {
+                    crate::app_log::error(format!("Could not make {}: {err}", dir.display()));
+                    return;
+                }
+                dir
+            }
+        };
+        if let Err(err) = std::process::Command::new("xdg-open").arg(&target).spawn() {
+            crate::app_log::error(format!("Could not open {}: {err}", target.display()));
         }
     }
 

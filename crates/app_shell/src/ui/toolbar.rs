@@ -144,6 +144,95 @@ pub struct ToolbarInputs<'a> {
     pub measuring: bool,
     /// The keys buttons name in their tooltips.
     pub keymap: &'a super::keymap::Keymap,
+    /// The scripts folder's scripts, for the Scripts button.
+    pub scripts: &'a [crate::script_library::ScriptEntry],
+    /// The console is showing.
+    pub console_open: bool,
+}
+
+/// The Scripts button: the scripts folder's scripts, then running a file,
+/// the console and the folder itself.
+fn scripts_button(
+    ui: &mut egui::Ui,
+    scripts: &[crate::script_library::ScriptEntry],
+    console_open: bool,
+    keymap: &super::keymap::Keymap,
+    commands: &mut Vec<UiCommand>,
+    toggle_console: &mut bool,
+) {
+    let state = ToolButtonState {
+        enabled: true,
+        active: false,
+        planned: None,
+        menu: true,
+    };
+    let response = tool_button(ui, "script", "Scripts", TOOLBAR_BUTTON, state);
+    Popup::menu(&response).show(|ui| {
+        // One row: an icon, the label and its key; whether it was clicked.
+        let entry = |ui: &mut egui::Ui, icon: &str, label: &str, key: Option<String>, tip: &str| {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_2;
+                ui_kit::icon::draw(ui, icon, 14.0, TEXT2);
+                let mut button =
+                    egui::Button::new(RichText::new(label).font(sans(FONT_SM))).frame(false);
+                if let Some(key) = key {
+                    button =
+                        button.shortcut_text(RichText::new(key).font(sans(FONT_XS)).color(TEXT3));
+                }
+                let response = ui.add(button);
+                if tip.is_empty() {
+                    response.clicked()
+                } else {
+                    response.on_hover_text(tip).clicked()
+                }
+            })
+            .inner
+        };
+        for script in scripts {
+            let tip = script.about.as_deref().unwrap_or("");
+            if entry(ui, "script", &script.name, keymap.text(&script.id), tip) {
+                commands.push(UiCommand::RunScriptFile(script.path.clone()));
+                ui.close();
+            }
+        }
+        if !scripts.is_empty() {
+            ui.separator();
+        }
+        let run = keymap.text("file.run_script");
+        if entry(ui, "open", "Run script…", run, "Run a Lua file") {
+            commands.push(UiCommand::File(super::FileCommand::RunScript));
+            ui.close();
+        }
+        let console = if console_open {
+            "Hide console"
+        } else {
+            "Console"
+        };
+        if entry(ui, "console", console, keymap.text("app.console"), "") {
+            *toggle_console = true;
+            ui.close();
+        }
+        if entry(
+            ui,
+            "new-file",
+            "New script",
+            None,
+            "A new script in the scripts folder",
+        ) {
+            commands.push(UiCommand::NewScript);
+            ui.close();
+        }
+        if entry(
+            ui,
+            "open",
+            "Open scripts folder",
+            None,
+            "Its .lua files are the scripts above",
+        ) {
+            commands.push(UiCommand::EditScript(None));
+            ui.close();
+        }
+    });
 }
 
 /// The tool a variant dropdown last picked, remembered per tool id.
@@ -368,6 +457,7 @@ pub fn draw_toolbars(
     active_tool: &mut ActiveTool,
     commands: &mut Vec<UiCommand>,
     open_palette: &mut bool,
+    toggle_console: &mut bool,
 ) {
     let ToolbarInputs {
         registry,
@@ -377,6 +467,8 @@ pub fn draw_toolbars(
         show_print_bed,
         measuring,
         keymap,
+        scripts,
+        console_open,
     } = inputs;
     // This copy carries the keys in effect, which the tooltips name.
     let mut tools: Vec<ToolDescriptor> = registry
@@ -440,6 +532,7 @@ pub fn draw_toolbars(
                         }
                     }
                 }
+                scripts_button(ui, scripts, console_open, keymap, commands, toggle_console);
                 separator(ui);
                 workbench_combo(ui, active_workbench);
                 separator(ui);

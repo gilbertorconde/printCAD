@@ -39,6 +39,8 @@ pub enum FileCommand {
     Export,
     /// Every visible body written for the slicer and opened in it.
     SendToSlicer,
+    /// Pick a Lua script and run it.
+    RunScript,
 }
 
 /// What a start-page NEW card creates.
@@ -156,6 +158,12 @@ pub enum UiCommand {
     RecomputeAll,
     /// Run a line typed in the script console.
     RunConsole(String),
+    /// Run a Lua script file.
+    RunScriptFile(std::path::PathBuf),
+    /// Make a new script in the scripts folder and open it for editing.
+    NewScript,
+    /// Open a script for editing, or the scripts folder when `None`.
+    EditScript(Option<std::path::PathBuf>),
     /// The task panel closed with this outcome.
     TaskClosed(TaskOutcome),
     /// Delete a tree item: a feature, or a body with everything on it.

@@ -38,6 +38,8 @@ const LOCAL = new Set([
   "workbench-assembly",
   "joint-mate",
   "joint-align",
+  "script",
+  "console",
 ]);
 
 // The source set also carries a handful of 200x200 illustrations of the

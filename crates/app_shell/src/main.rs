@@ -4,6 +4,7 @@ mod console;
 mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
+mod script_library;
 mod thumbnail;
 mod ui;
 
@@ -250,6 +251,13 @@ struct PrintCadApp {
     /// The Lua engine the console and scripts run in, made on first use;
     /// the console's globals live in it between lines.
     scripts: Option<scripting::ScriptEngine>,
+    /// Script files picked in a dialog, to run once it answers.
+    scripts_to_run: Vec<PathBuf>,
+    /// The scripts folder's scripts, and when it was last read.
+    script_library: Vec<script_library::ScriptEntry>,
+    script_library_read: Option<Instant>,
+    /// A script printed or failed: the console opens to show it.
+    console_attention: bool,
 }
 
 /// The bench a new document lands in. A registry with no non-modal bench
@@ -338,6 +346,10 @@ impl PrintCadApp {
             last_wake_reason: (false, false, false, false),
             redraw_needed: true,
             scripts: None,
+            scripts_to_run: Vec::new(),
+            script_library: Vec::new(),
+            script_library_read: None,
+            console_attention: false,
             fps_display_idle: false,
             smoothed_frame_s: None,
             pending_ui_repaint: std::time::Duration::MAX,

@@ -660,6 +660,14 @@ pub struct SettingsStore {
     path: PathBuf,
 }
 
+/// The folder the user's scripts live in: every `.lua` file there is a
+/// command of the application. `None` when the system names no
+/// configuration folder.
+pub fn scripts_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.config_dir().join("scripts"))
+}
+
 impl SettingsStore {
     pub fn new() -> Result<Self, SettingsError> {
         let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)

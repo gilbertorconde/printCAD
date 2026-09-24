@@ -196,6 +196,12 @@ impl PrintCadApp {
                 }
                 UiCommand::Undo => intents.undo = true,
                 UiCommand::RunConsole(line) => self.run_console_line(&line, event_loop),
+                UiCommand::RunScriptFile(path) => self.run_script_file(&path, event_loop),
+                UiCommand::NewScript => self.new_script(),
+                UiCommand::EditScript(path) => self.edit_script(path),
+                UiCommand::File(FileCommand::RunScript) => {
+                    intents.file_dialog = Some(FileDialogKind::RunScript);
+                }
                 UiCommand::PivotAtCursor => {
                     if self.cursor_in_viewport.is_some()
                         && self
@@ -502,6 +508,9 @@ impl PrintCadApp {
         }
 
         self.poll_file_dialog();
+        for path in std::mem::take(&mut self.scripts_to_run) {
+            self.run_script_file(&path, event_loop);
+        }
         self.poll_export();
         self.open_export_when_ready();
 

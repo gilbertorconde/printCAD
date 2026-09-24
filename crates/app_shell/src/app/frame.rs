@@ -542,6 +542,7 @@ impl PrintCadApp {
             app.drive_mesh_solids();
         });
         self.drive_measurement();
+        self.refresh_script_library();
 
         if self.gfx.is_none() {
             return;
@@ -675,6 +676,8 @@ impl PrintCadApp {
                         nav_buttons: self.nav_device.button_count(),
                         step_import_pending: self.session.step_import_pending.as_mut(),
                         export_pending: self.session.export_pending.as_mut(),
+                        scripts: &self.script_library,
+                        console_attention: std::mem::take(&mut self.console_attention),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;

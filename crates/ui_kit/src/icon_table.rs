@@ -93,6 +93,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/clone-geometry.svg"),
     ),
     ("close", include_str!("../icons/close.svg")),
+    ("console", include_str!("../icons/console.svg")),
     (
         "constraint-angle",
         include_str!("../icons/constraint-angle.svg"),
@@ -324,6 +325,7 @@ pub const ICONS: &[(&str, &str)] = &[
         include_str!("../icons/scale-geometry.svg"),
     ),
     ("scaled", include_str!("../icons/scaled.svg")),
+    ("script", include_str!("../icons/script.svg")),
     ("search", include_str!("../icons/search.svg")),
     ("select", include_str!("../icons/select.svg")),
     (

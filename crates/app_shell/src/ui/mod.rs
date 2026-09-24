@@ -237,6 +237,8 @@ impl UiLayer {
             save_progress,
             mut step_import_pending,
             mut export_pending,
+            scripts,
+            console_attention,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -276,7 +278,10 @@ impl UiLayer {
             .and_then(|id| document.get_feature_meta(id))
             .map(|node| node.name.clone());
 
-        let keymap = keymap::Keymap::build(registry, &settings.keyboard);
+        let keymap = keymap::Keymap::build(registry, &settings.keyboard, scripts);
+        if console_attention {
+            self.console.open = true;
+        }
         // The workbenches hear of their keys at the start and after every
         // change, not every frame.
         let workbench_keys = keymap.workbench_keys();
@@ -326,6 +331,9 @@ impl UiLayer {
                             }
                         }
                         keymap::Target::Tool => key_tools.push(hit.id),
+                        keymap::Target::Script(path) => {
+                            commands.push(UiCommand::RunScriptFile(path));
+                        }
                         keymap::Target::Action => commands.push(UiCommand::BenchAction {
                             workbench: active_workbench.0.clone(),
                             id: hit.id,
@@ -350,6 +358,7 @@ impl UiLayer {
                     screen,
                     active_tab_blank: tabs.iter().any(|t| t.active && t.blank),
                     active_tab: tabs.iter().find(|t| t.active).map(|t| t.tab),
+                    scripts,
                 },
                 &mut active_workbench,
                 &mut active_tool,
@@ -401,11 +410,13 @@ impl UiLayer {
                         gpus,
                         gpu_name,
                         nav_buttons,
+                        scripts,
                     },
                 );
                 return;
             }
 
+            let mut toggle_console = false;
             toolbar::draw_toolbars(
                 ui,
                 toolbar::ToolbarInputs {
@@ -416,12 +427,18 @@ impl UiLayer {
                     show_print_bed: settings.printing.show_bed,
                     measuring,
                     keymap: &keymap,
+                    scripts,
+                    console_open: self.console.open,
                 },
                 &mut active_workbench,
                 &mut active_tool,
                 &mut commands,
                 &mut open_palette,
+                &mut toggle_console,
             );
+            if toggle_console {
+                self.console.toggle();
+            }
 
             if open_palette {
                 self.palette.open();
@@ -463,6 +480,9 @@ impl UiLayer {
                     &enabled_active,
                     &mut commands,
                 );
+                if palette.toggle_console {
+                    self.console.toggle();
+                }
                 if palette.show_preferences {
                     let (group, tab) = (self.preferences.group, self.preferences.tab);
                     self.preferences.open_at(settings, unit, group, tab);
@@ -588,6 +608,7 @@ impl UiLayer {
                     gpus,
                     gpu_name,
                     nav_buttons,
+                    scripts,
                 },
             );
 

@@ -148,6 +148,8 @@ pub struct PreferencesInputs<'a> {
     /// How many buttons the connected 6-DoF mouse has, so the page offers a
     /// row per button it actually owns. Zero when none is connected.
     pub nav_buttons: u32,
+    /// The scripts folder's scripts, which take keys like any command.
+    pub scripts: &'a [crate::script_library::ScriptEntry],
 }
 
 /// The six ways the puck moves, in the order the device reports them: what
@@ -250,7 +252,8 @@ pub fn draw_preferences(
     {
         state.recording = None;
         let escape = core_document::Chord::key(core_document::KeyCode::Escape);
-        let keymap = super::keymap::Keymap::build(inputs.registry, &state.draft.keyboard);
+        let keymap =
+            super::keymap::Keymap::build(inputs.registry, &state.draft.keyboard, inputs.scripts);
         if chord != escape
             && let Some(binding) = keymap.get(&id)
         {
@@ -528,7 +531,9 @@ fn draw_content(
                         PrefGroup::General => general_page(ui, state, inputs, &filter),
                         PrefGroup::Display => display_page(ui, state, inputs, &filter),
                         PrefGroup::Input => input_page(ui, state, inputs, &filter),
-                        PrefGroup::Keyboard => keyboard_page(ui, state, inputs.registry, &filter),
+                        PrefGroup::Keyboard => {
+                            keyboard_page(ui, state, inputs.registry, inputs.scripts, &filter)
+                        }
                         PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, &filter),
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
@@ -647,10 +652,11 @@ fn keyboard_page(
     ui: &mut Ui,
     state: &mut PreferencesState,
     registry: &DocumentService,
+    scripts: &[crate::script_library::ScriptEntry],
     filter: &str,
 ) {
     use super::keymap::{Keymap, set_keys};
-    let keymap = Keymap::build(registry, &state.draft.keyboard);
+    let keymap = Keymap::build(registry, &state.draft.keyboard, scripts);
     let key_text = |keys: &[core_document::Chord]| {
         keys.iter()
             .map(ToString::to_string)
@@ -1136,7 +1142,9 @@ fn search_results(
                 PrefGroup::General => general_page(ui, state, inputs, filter),
                 PrefGroup::Display => display_page(ui, state, inputs, filter),
                 PrefGroup::Input => input_page(ui, state, inputs, filter),
-                PrefGroup::Keyboard => keyboard_page(ui, state, inputs.registry, filter),
+                PrefGroup::Keyboard => {
+                    keyboard_page(ui, state, inputs.registry, inputs.scripts, filter)
+                }
                 PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, filter),
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),

@@ -32,6 +32,8 @@ pub struct MenuBarInputs<'a> {
     pub active_tab_blank: bool,
     /// The tab on screen, for Close tab.
     pub active_tab: Option<uuid::Uuid>,
+    /// The scripts folder's scripts.
+    pub scripts: &'a [crate::script_library::ScriptEntry],
 }
 
 /// Menu-driven requests that are UI-local state rather than app commands.
@@ -398,6 +400,46 @@ pub fn draw_menu_bar(
                             }
                         });
                     }
+
+                    ui.menu_button(menu_title("Scripts"), |ui| {
+                        if item(ui, "Run script…", key("file.run_script")) {
+                            commands.push(UiCommand::File(super::FileCommand::RunScript));
+                        }
+                        if choice(ui, inputs.show_console, "Console", key("app.console")) {
+                            result.toggle_console = true;
+                        }
+                        ui.separator();
+                        if inputs.scripts.is_empty() {
+                            ui.label(
+                                RichText::new("No scripts in the scripts folder yet")
+                                    .font(sans(FONT_SM))
+                                    .color(TEXT3),
+                            );
+                        }
+                        for script in inputs.scripts {
+                            let mut button =
+                                egui::Button::new(RichText::new(&script.name).font(sans(FONT_SM)));
+                            if let Some(k) = key(&script.id) {
+                                button = button.shortcut_text(k);
+                            }
+                            let response = ui.add(button);
+                            let response = match &script.about {
+                                Some(about) => response.on_hover_text(about),
+                                None => response,
+                            };
+                            if response.clicked() {
+                                commands.push(UiCommand::RunScriptFile(script.path.clone()));
+                                ui.close();
+                            }
+                        }
+                        ui.separator();
+                        if item(ui, "New script", None) {
+                            commands.push(UiCommand::NewScript);
+                        }
+                        if item(ui, "Open scripts folder", None) {
+                            commands.push(UiCommand::EditScript(None));
+                        }
+                    });
 
                     ui.menu_button(menu_title("Windows"), |ui| {
                         if ui

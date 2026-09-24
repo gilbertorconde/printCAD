@@ -59,6 +59,7 @@ pub enum HostAction {
     Shaded,
     Wireframe,
     Console,
+    RunScript,
 }
 
 struct HostSpec {
@@ -118,6 +119,13 @@ const HOST: &[HostSpec] = {
             "File",
             &["Ctrl+P"],
         ),
+        anywhere(spec(
+            RunScript,
+            "file.run_script",
+            "Run script",
+            "File",
+            &[],
+        )),
         anywhere(spec(Quit, "app.quit", "Quit", "File", &["Ctrl+Q"])),
         text_owned(spec(Undo, "edit.undo", "Undo", "Edit", &["Ctrl+Z"])),
         text_owned(spec(
@@ -266,6 +274,8 @@ pub enum Target {
     Tool,
     /// A workbench's registered keyboard action.
     Action,
+    /// A script of the scripts folder.
+    Script(std::path::PathBuf),
 }
 
 /// One entry of the keymap.
@@ -325,7 +335,11 @@ impl Keymap {
     /// The application's commands, then every registered workbench's tools
     /// and actions in registration order, each with the user's keys where
     /// the user changed them.
-    pub fn build(registry: &DocumentService, user: &KeyboardSettings) -> Self {
+    pub fn build(
+        registry: &DocumentService,
+        user: &KeyboardSettings,
+        scripts: &[crate::script_library::ScriptEntry],
+    ) -> Self {
         let mut bindings = Vec::new();
         for spec in HOST {
             bindings.push(Binding {
@@ -366,6 +380,19 @@ impl Keymap {
             for action in registry.actions_for(bench).into_iter().flatten() {
                 add(&action.id, &action.label, Target::Action, &action.shortcuts);
             }
+        }
+        for script in scripts {
+            bindings.push(Binding {
+                id: script.id.clone(),
+                label: script.name.clone(),
+                group: "Scripts".to_string(),
+                scope: None,
+                target: Target::Script(script.path.clone()),
+                defaults: Vec::new(),
+                keys: Vec::new(),
+                needs_document: false,
+                text_owned: false,
+            });
         }
         for binding in &mut bindings {
             binding.keys = match user.bindings.get(&binding.id) {
@@ -746,6 +773,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Shaded => C(UiCommand::SetDrawStyle(settings::DrawStyle::Shaded)),
         Wireframe => C(UiCommand::SetDrawStyle(settings::DrawStyle::Wireframe)),
         Console => HostOutcome::ToggleConsole,
+        RunScript => C(UiCommand::File(FileCommand::RunScript)),
     }
 }
 
@@ -845,7 +873,7 @@ mod tests {
 
     #[test]
     fn a_workbench_key_wins_while_it_is_active_and_the_application_s_elsewhere() {
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default());
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
         let one = WorkbenchId::from("wb.one");
         let two = WorkbenchId::from("wb.two");
         assert_eq!(keymap.lookup(key("F"), &one).unwrap().id, "wb.one.tool");
@@ -867,7 +895,7 @@ mod tests {
         let mut user = KeyboardSettings::default();
         user.bindings.insert("file.save".into(), vec!["F5".into()]);
         user.bindings.insert("view.fit_all".into(), Vec::new());
-        let keymap = Keymap::build(&registry(), &user);
+        let keymap = Keymap::build(&registry(), &user, &[]);
         let one = WorkbenchId::from("wb.one");
         assert_eq!(keymap.lookup(key("F5"), &one).unwrap().id, "file.save");
         assert!(keymap.lookup(key("Ctrl+S"), &one).is_none());
@@ -925,7 +953,7 @@ mod tests {
     #[test]
     fn pressed_keys_run_their_bindings_and_leave_the_input() {
         use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default());
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
         let (hits, left) = press(
             &keymap,
             &[
@@ -954,7 +982,7 @@ mod tests {
     #[test]
     fn a_focused_text_field_keeps_its_typing_and_editing_keys() {
         use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default());
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
         let keys = [
             (Key::L, Modifiers::NONE, false),
             (Key::Z, Modifiers::CTRL, false),
@@ -968,7 +996,7 @@ mod tests {
     #[test]
     fn a_workbench_taking_a_number_keeps_the_number_keys() {
         use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default());
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
         let keys = [
             (Key::Num1, Modifiers::NONE, false),
             (Key::Minus, Modifiers::NONE, false),
@@ -1023,7 +1051,7 @@ mod tests {
     #[test]
     fn document_commands_wait_for_a_document() {
         use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default());
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
         let keys = [
             (Key::S, Modifiers::CTRL, false),
             (Key::N, Modifiers::CTRL, false),
@@ -1037,7 +1065,7 @@ mod tests {
         let mut user = KeyboardSettings::default();
         user.bindings
             .insert("file.open".into(), vec!["Ctrl+N".into()]);
-        let keymap = Keymap::build(&registry(), &user);
+        let keymap = Keymap::build(&registry(), &user, &[]);
         let open = keymap.clashes("file.open");
         assert_eq!(open.len(), 1);
         assert_eq!(open[0].other, "New");
@@ -1049,10 +1077,30 @@ mod tests {
     }
 
     #[test]
+    fn a_script_is_a_command_the_user_can_give_a_key() {
+        let script = crate::script_library::ScriptEntry {
+            id: "script.make_block".into(),
+            name: "make block".into(),
+            path: "/tmp/make_block.lua".into(),
+            about: None,
+        };
+        let mut user = KeyboardSettings::default();
+        user.bindings
+            .insert("script.make_block".into(), vec!["Ctrl+Shift+B".into()]);
+        let keymap = Keymap::build(&registry(), &user, std::slice::from_ref(&script));
+        let binding = keymap
+            .lookup(key("Ctrl+Shift+B"), &WorkbenchId::from("wb.one"))
+            .unwrap();
+        assert_eq!(binding.target, Target::Script(script.path.clone()));
+        assert_eq!(binding.group, "Scripts");
+        assert!(!binding.needs_document);
+    }
+
+    #[test]
     fn a_key_back_to_its_default_leaves_no_trace_in_the_settings() {
         let registry = registry();
         let mut user = KeyboardSettings::default();
-        let keymap = Keymap::build(&registry, &user);
+        let keymap = Keymap::build(&registry, &user, &[]);
         let save = keymap.get("file.save").unwrap().clone();
         set_keys(&mut user, &save, vec![key("F5")]);
         assert_eq!(user.bindings["file.save"], ["F5"]);
