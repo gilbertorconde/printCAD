@@ -659,7 +659,7 @@ fn extrude_terminations(
             let pick = up_to_face.ok_or("pick a target face for the up-to-face mode")?;
             let (point, normal) = face_pick_plane(pick);
             Ok((
-                ExtrudeTermination::UpToPlane {
+                ExtrudeTermination::UpToFace {
                     point,
                     normal,
                     offset: up_to_offset as f64,

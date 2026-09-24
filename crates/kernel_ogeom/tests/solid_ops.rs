@@ -1327,3 +1327,149 @@ fn two_solids_overlap_by_the_volume_they_share() {
         assert!(none.is_none(), "{apart:?}");
     }
 }
+
+/// A pad run from a sketch beside a cylinder toward its side stops on the
+/// curved surface itself, not on a plane through where it is first met:
+/// to the first face, up to the picked face, and up to it with an offset.
+#[test]
+#[ignore = "kernel: booleans refuse a half space bounded by a curved face, so a sweep cannot be trimmed on a curved surface (ogeom-rs#55)"]
+fn a_pad_stops_exactly_on_a_curved_face() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let rod = SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 10.0,
+            height: 20.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    };
+    // A 4 × 10 rectangle on the plane x = 30, facing +X, padded back
+    // toward the rod (reversed).
+    let beside = ProfilePlane {
+        origin: [30.0, 0.0, 0.0],
+        x_axis: [0.0, 1.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [1.0, 0.0, 0.0],
+    };
+    let pad = |termination: ExtrudeTermination| SolidOp::Sweep {
+        profile: Profile {
+            plane: beside,
+            wires: vec![rect_wire(-2.0, 5.0, 2.0, 15.0)],
+        },
+        kind: SweepKind::Extrude {
+            termination,
+            second_side: None,
+            symmetric: false,
+            reversed: true,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::Fuse,
+    };
+    // The pad from x = 30 in to a cylinder of radius `r`, across y in
+    // [-2, 2] and 10 high: 10 × ∫ (30 − √(r² − y²)) dy.
+    let pad_volume = |r: f64| {
+        let chord = 2.0 * (r * r - 4.0).sqrt() + r * r * (2.0 / r).asin();
+        10.0 * (120.0 - chord)
+    };
+    let rod_volume = std::f64::consts::PI * 100.0 * 20.0;
+    let cases = [
+        ("to first", ExtrudeTermination::ToFirst, pad_volume(10.0)),
+        (
+            "up to face",
+            ExtrudeTermination::UpToFace {
+                point: [10.0, 0.0, 10.0],
+                normal: [1.0, 0.0, 0.0],
+                offset: 0.0,
+            },
+            pad_volume(10.0),
+        ),
+        (
+            "up to face, 1 mm off",
+            ExtrudeTermination::UpToFace {
+                point: [10.0, 0.0, 10.0],
+                normal: [1.0, 0.0, 0.0],
+                offset: 1.0,
+            },
+            pad_volume(11.0),
+        ),
+    ];
+    for (name, termination, want_pad) in cases {
+        let solid = kernel
+            .execute_solid_chain(&[rod.clone(), pad(termination)], &detail)
+            .unwrap_or_else(|e| panic!("{name}: builds: {e}"));
+        let volume = kernel
+            .physical_properties(&solid.brep_blob)
+            .expect("measures")
+            .volume_mm3
+            .expect("a volume");
+        let want = rod_volume + want_pad;
+        assert!(
+            (volume - want).abs() < 1e-3 * want,
+            "{name}: volume {volume}, want {want}"
+        );
+    }
+}
+
+/// Up to a picked flat face: the base's face nearest the pick, pushed out
+/// by the offset.
+#[test]
+fn a_pad_stops_on_the_picked_flat_face_and_its_offset() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    // A 20 × 20 × 10 block with a 10 × 10 step, 5 high, on top.
+    let block = blind_pad(
+        vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+        10.0,
+        BooleanOp::NewSolid,
+    );
+    let step = SolidOp::Sweep {
+        profile: Profile {
+            plane: plane_at_z(10.0),
+            wires: vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance: 5.0 },
+            second_side: None,
+            symmetric: false,
+            reversed: false,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::Fuse,
+    };
+    // A pad from z = 20 down beside the step, up to the block's top face
+    // (picked at z = 10), 2 mm off it.
+    let pad = SolidOp::Sweep {
+        profile: Profile {
+            plane: plane_at_z(20.0),
+            wires: vec![rect_wire(12.0, 12.0, 18.0, 18.0)],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::UpToFace {
+                point: [15.0, 15.0, 10.0],
+                normal: [0.0, 0.0, 1.0],
+                offset: 2.0,
+            },
+            second_side: None,
+            symmetric: false,
+            reversed: true,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::Fuse,
+    };
+    let solid = kernel
+        .execute_solid_chain(&[block, step, pad], &detail)
+        .expect("builds");
+    let volume = kernel
+        .physical_properties(&solid.brep_blob)
+        .expect("measures")
+        .volume_mm3
+        .expect("a volume");
+    // Block, step, and a 6 × 6 pad from z = 12 to z = 20.
+    let want = 4000.0 + 500.0 + 36.0 * 8.0;
+    assert!((volume - want).abs() < 1e-3, "volume {volume}, want {want}");
+}

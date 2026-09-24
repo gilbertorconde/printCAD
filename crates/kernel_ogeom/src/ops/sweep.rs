@@ -1,12 +1,15 @@
 //! Extrude / revolve / helix tools from a sketch profile.
 //!
-//! Terminations mirror the previous kernel: blind prisms, through-all lengths
-//! derived from the base bounding box, up-to-plane via half-space trims, and
-//! to-first/to-last via a ray query against the base solid's faces.
+//! Terminations: blind prisms, through-all lengths derived from the base
+//! bounding box, and stops on a plane or on a face of the base (picked, or
+//! the first or last a ray from the profile meets), each a long prism
+//! trimmed by the half-space of the target's surface: a plane's, or a
+//! curved face's whole surface, so a prism stops exactly on a cylinder, a
+//! sphere or a spline.
 
 use kernel_api::{ExtrudeTermination, Profile, SweepKind};
 use ogeom::algo::{make_natural_face, make_prism, make_prism_tapered, make_revolution};
-use ogeom::geom::{Curve, Curve3d, HelixCurve, PlaneSurface, SurfaceGeometry};
+use ogeom::geom::{Curve, Curve3d, HelixCurve, PlaneSurface, SurfaceGeometry, Transformable};
 use ogeom::math::{Axis, Direction, Frame, Plane, Point, Transform, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
@@ -161,6 +164,29 @@ fn extrude_one_side(
                 Point::new(point[0], point[1], point[2]) + plane_normal.vector() * *offset;
             up_to_plane(model, built, dir, plane_point, plane_normal, taper_deg)
         }
+        ExtrudeTermination::UpToFace {
+            point,
+            normal,
+            offset,
+        } => {
+            let at = Point::new(point[0], point[1], point[2]);
+            let target = match base {
+                Some(base) => face_at(model, base, at)?,
+                None => None,
+            };
+            match (base, target) {
+                (Some(base), Some(face)) => {
+                    up_to_face(model, built, base, dir, &face, *offset, taper_deg)
+                }
+                _ => {
+                    let plane_normal =
+                        Direction::new(Vector::new(normal[0], normal[1], normal[2]), tol())
+                            .map_err(|_| "target face normal is (near) zero".to_string())?;
+                    let plane_point = at + plane_normal.vector() * *offset;
+                    up_to_plane(model, built, dir, plane_point, plane_normal, taper_deg)
+                }
+            }
+        }
         ExtrudeTermination::ToFirst | ExtrudeTermination::ToLast => {
             let base = base.ok_or_else(|| {
                 "a to-first/to-last extrusion needs existing material to stop at".to_string()
@@ -172,7 +198,7 @@ fn extrude_one_side(
             })?;
             match hit.plane {
                 Some((p, n)) => up_to_plane(model, built, dir, p, n, taper_deg),
-                None => prism_solid(model, built, dir, hit.distance, taper_deg),
+                None => up_to_face(model, built, base, dir, &hit.face, 0.0, taper_deg),
             }
         }
     }
@@ -199,6 +225,121 @@ fn up_to_plane(
     let reach = t + diag + 1.0;
     let long_prism = prism_solid(model, built, dir, reach, taper_deg)?;
     trim_with_halfspace(model, &long_prism, plane_point, plane_normal, centroid)
+}
+
+/// How far from a picked point the face it names may be: a pick lands on
+/// a face's drawn triangles, a chord off a curved surface.
+const FACE_REACH_MM: f64 = 0.5;
+
+/// The face of `base` nearest `point`, when one comes within reach of it.
+fn face_at(model: &mut Model, base: &Shape, point: Point) -> Result<Option<Shape>, String> {
+    let face = super::dressup::nearest_of(model, base, ShapeType::Face, point)?;
+    let probe = model.add_vertex(ogeom::topo::VertexData::new(point));
+    let near = ogeom::algo::distance_between_shapes(
+        model,
+        &probe,
+        &face,
+        ogeom::intersect::ExtremaOptions::default(),
+        tol(),
+    )
+    .map_err(|e| format!("measuring to the target face failed: {e}"))?;
+    Ok((near.distance <= FACE_REACH_MM).then_some(face))
+}
+
+/// A face's whole surface, where the face sits, as a face of its own:
+/// what a half-space needs to trim by the surface beyond the face's edges.
+/// `offset` pushes it out along the face's outward normal.
+fn whole_surface(model: &mut Model, face: &Shape, offset: f64) -> Result<Shape, String> {
+    let node = model
+        .node(face)
+        .ok_or("the target face is not in the model")?;
+    let NodeData::Face(data) = node.data() else {
+        return Err("the target is not a face".into());
+    };
+    let surface = model
+        .geometry()
+        .surface(data.surface)
+        .ok_or("the target face has no surface")?
+        .clone();
+    let placement = face
+        .transform(model.datums())
+        .map_err(|e| format!("placing the target face failed: {e}"))?;
+    let mut surface = surface
+        .transformed(&placement, tol())
+        .map_err(|e| format!("placing the target surface failed: {e}"))?;
+    if offset != 0.0 {
+        // The surface's own normal points out of the material unless the
+        // face is reversed on it.
+        let outward = if face.orientation() == ogeom::topo::Orientation::Reversed {
+            -offset
+        } else {
+            offset
+        };
+        surface = SurfaceGeometry::Offset(Box::new(
+            ogeom::geom::OffsetSurface::new(surface, outward)
+                .map_err(|e| format!("offsetting the target face failed: {e}"))?,
+        ));
+    }
+    Ok(make_natural_face(model, surface)
+        .map_err(|e| format!("the target surface as a face: {e}"))?
+        .shape)
+}
+
+/// A prism from the profile stopped on `face`'s surface: long enough to
+/// pass it, trimmed by the surface's half-space on the profile's side, and
+/// kept only where it starts at the profile (a curved surface can let the
+/// long prism back out beyond it).
+fn up_to_face(
+    model: &mut Model,
+    built: &BuiltProfile,
+    base: &Shape,
+    dir: Direction,
+    face: &Shape,
+    offset: f64,
+    taper_deg: f64,
+) -> Result<Shape, String> {
+    if let Some((point, normal)) = face_plane(model, face) {
+        let outward = if face.orientation() == ogeom::topo::Orientation::Reversed {
+            -normal.vector()
+        } else {
+            normal.vector()
+        };
+        let outward = Direction::new(outward, tol()).map_err(|e| e.to_string())?;
+        let point = point + outward.vector() * offset;
+        return up_to_plane(model, built, dir, point, outward, taper_deg);
+    }
+    let centroid = profile::profile_centroid(model, built)?;
+    let reach = through_all_length(model, base, centroid, dir)? + offset.abs();
+    let long_prism = prism_solid(model, built, dir, reach, taper_deg)?;
+    let surface = whole_surface(model, face, offset)?;
+    let half = ogeom::algo::make_half_space(model, &surface, centroid, tol())
+        .map_err(|e| format!("the target surface's half-space: {e}"))?
+        .shape;
+    let trimmed = ogeom::boolean::common(model, &long_prism, &half, tol())
+        .map_err(|e| format!("trimming the sweep at the target face failed: {e}"))?
+        .shape;
+    let trimmed = super::normalized(model, trimmed);
+    let starting: Vec<Shape> = super::solids_of(model, &trimmed)
+        .into_iter()
+        .filter(|piece| {
+            tess::robust_bounds(model, piece).is_some_and(|(lo, hi)| {
+                // The piece's nearest corner along the sweep: at the profile
+                // for a piece the profile starts.
+                let mut nearest = f64::MAX;
+                for &x in &[lo.x, hi.x] {
+                    for &y in &[lo.y, hi.y] {
+                        for &z in &[lo.z, hi.z] {
+                            nearest =
+                                nearest.min((Point::new(x, y, z) - centroid).dot(dir.vector()));
+                        }
+                    }
+                }
+                nearest <= 1e-3
+            })
+        })
+        .collect();
+    super::wrap_pieces(model, starting)
+        .map_err(|_| "the sweep does not reach the target face".to_string())
 }
 
 /// Keep only the material on `keep_point`'s side of the plane.
@@ -284,9 +425,10 @@ fn profile_diagonal(model: &Model, built: &BuiltProfile) -> f64 {
 }
 
 pub struct RayHit {
-    pub distance: f64,
     /// Set when the hit face is planar: its world-space plane.
     pub plane: Option<(Point, Direction)>,
+    /// The face hit.
+    pub face: Shape,
 }
 
 /// Nearest (or farthest) intersection of the ray with the base solid's
@@ -327,12 +469,12 @@ pub fn ray_hit(
             }
         }
     }
-    let Some((distance, face_idx)) = best else {
+    let Some((_, face_idx)) = best else {
         return Ok(None);
     };
     Ok(Some(RayHit {
-        distance,
         plane: face_plane(model, &faces[face_idx]),
+        face: faces[face_idx].clone(),
     }))
 }
 

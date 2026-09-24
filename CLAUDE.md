@@ -749,9 +749,14 @@ on the start page (`Screen::Start`); the recent list lives in
   see picked edges as `ctx.selected_edges` (point, direction, length);
   Part Design's fillet and chamfer store them as `EdgeSel::Edges` probe
   points the kernel resolves through `EdgeSelection::Near`.
-- "Through all" derives its length from the base solid's bounding box; up-to-
-  face trims with a half-space, so only PLANAR target faces terminate exactly
-  (curved to-first/to-last faces stop at the profile-centroid hit distance).
+- "Through all" derives its length from the base solid's bounding box.
+  Up to face (`ExtrudeTermination::UpToFace`, the base's face nearest the
+  pick), to first and to last trim a long prism by the half-space of the
+  target face's whole surface, pushed out by the offset along an offset
+  surface. Flat targets are exact; curved ones wait on the kernel's
+  booleans accepting a curved half-space and until then fail as a
+  `ChainError` on the feature (the ignored `a_pad_stops_exactly_on_a_curved_face`
+  test flips green when they do).
 - Helix with height 0 (flat spiral) is rejected; use a small pitch instead.
 - Hole threads are standards data only (tap-drill / ISO 273 clearance
   diameters); no helical thread geometry is generated.

@@ -627,11 +627,20 @@ pub enum ExtrudeTermination {
         normal: [f64; 3],
         offset: f64,
     },
-    /// Stop at the first planar face of the base solid hit along the
-    /// extrusion direction.
+    /// Stop on the base solid's face nearest `point` (a picked face, where
+    /// it was picked), exactly on its surface whatever its shape, pushed
+    /// `offset` out along its outward normal. With no base solid, or no
+    /// face of it there, the plane through `point` square to `normal`.
+    UpToFace {
+        point: [f64; 3],
+        normal: [f64; 3],
+        offset: f64,
+    },
+    /// Stop at the first face of the base solid hit along the extrusion
+    /// direction, on its surface.
     ToFirst,
-    /// Stop at the last planar face of the base solid hit along the
-    /// extrusion direction.
+    /// Stop at the last face of the base solid hit along the extrusion
+    /// direction, on its surface.
     ToLast,
 }
 
