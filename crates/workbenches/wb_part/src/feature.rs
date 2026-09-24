@@ -320,6 +320,12 @@ impl HoleFit {
     }
 }
 
+/// A metric size's nominal (major) diameter, from its designation: "M2.5"
+/// is 2.5 mm.
+pub fn metric_nominal(index: usize) -> Option<f32> {
+    METRIC_SIZES.get(index)?.0.strip_prefix('M')?.parse().ok()
+}
+
 /// ISO metric coarse sizes: (designation, thread pitch, tap drill Ø,
 /// clearance Ø close/normal/loose per ISO 273).
 pub const METRIC_SIZES: [(&str, f32, f32, [f32; 3]); 10] = [
@@ -477,6 +483,13 @@ pub enum PartFeature {
         metric_index: Option<usize>,
         #[serde(default)]
         threaded: bool,
+        /// A threaded hole's thread cut into its wall, not only its tap
+        /// drill: for printing threads rather than tapping them.
+        #[serde(default)]
+        modeled_thread: bool,
+        /// How far down a modeled thread runs, mm.
+        #[serde(default)]
+        thread_depth: f32,
         #[serde(default)]
         fit: HoleFit,
         #[serde(default)]

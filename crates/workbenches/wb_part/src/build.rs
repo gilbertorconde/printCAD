@@ -781,6 +781,10 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
         through_all,
         cut,
         reversed,
+        metric_index,
+        threaded,
+        modeled_thread,
+        thread_depth,
         ..
     } = feature
     else {
@@ -884,7 +888,95 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
             ));
         }
     }
+    if *threaded && *modeled_thread {
+        let index = metric_index.ok_or("a modeled thread needs a standard size")?;
+        let (_, pitch, ..) = METRIC_SIZES[index];
+        let nominal = crate::feature::metric_nominal(index).ok_or("the size names no diameter")?;
+        if *thread_depth <= 0.0 {
+            return Err("give the modeled thread a depth".into());
+        }
+        // Into the material: against the sketch normal unless reversed.
+        let into = if *reversed {
+            plane.normal
+        } else {
+            plane.normal.map(|c| -c)
+        };
+        for center in &centers {
+            ops.push(thread_cut(
+                &plane,
+                *center,
+                into,
+                f64::from(diameter) * 0.5,
+                f64::from(nominal) * 0.5,
+                f64::from(pitch),
+                f64::from(*thread_depth),
+            ));
+        }
+    }
     Ok(ops)
+}
+
+/// The groove of an internal metric thread, cut into a hole's wall: a 60°
+/// tooth space from inside the drilled wall (`wall` radius) out to the
+/// thread's major radius, flat-topped a pitch's eighth wide there, swept
+/// right-handed along a helix at `pitch` from a pitch above the surface to
+/// `depth` into the material.
+fn thread_cut(
+    plane: &kernel_api::ProfilePlane,
+    center: [f64; 2],
+    into: [f64; 3],
+    wall: f64,
+    major: f64,
+    pitch: f64,
+    depth: f64,
+) -> SolidOp {
+    let at = |k: usize| plane.origin[k] + plane.x_axis[k] * center[0] + plane.y_axis[k] * center[1];
+    let x = plane.x_axis;
+    let normal = [
+        x[1] * into[2] - x[2] * into[1],
+        x[2] * into[0] - x[0] * into[2],
+        x[0] * into[1] - x[1] * into[0],
+    ];
+    // The section, in a plane through the hole's axis: x out from the
+    // axis, y down it.
+    let section = kernel_api::ProfilePlane {
+        origin: [at(0), at(1), at(2)],
+        x_axis: x,
+        y_axis: into,
+        normal,
+    };
+    let inner = (wall - 0.1 * pitch).max(0.1 * wall);
+    let crest = pitch / 16.0;
+    let root = (crest + (major - inner) * 30f64.to_radians().tan()).min(0.45 * pitch);
+    let start = -pitch;
+    let corners = [
+        [inner, start - root],
+        [major, start - crest],
+        [major, start + crest],
+        [inner, start + root],
+    ];
+    let segments = (0..4)
+        .map(|i| ProfileSegment::Line {
+            start: corners[i],
+            end: corners[(i + 1) % 4],
+        })
+        .collect();
+    SolidOp::Sweep {
+        profile: Profile {
+            plane: section,
+            wires: vec![ProfileWire { segments }],
+        },
+        kind: SweepKind::Helix {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            pitch,
+            height: depth + pitch,
+            left_handed: false,
+            cone_angle_deg: 0.0,
+            reversed: false,
+        },
+        op: BooleanOp::Cut,
+    }
 }
 
 fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeature, String> {
@@ -1809,6 +1901,8 @@ mod tests {
                 },
                 metric_index: None,
                 threaded: false,
+                modeled_thread: false,
+                thread_depth: 0.0,
                 fit: crate::feature::HoleFit::Normal,
                 reversed: false,
             },
@@ -1841,6 +1935,8 @@ mod tests {
             cut: HoleCut::None,
             metric_index: Some(5), // M6
             threaded: true,
+            modeled_thread: false,
+            thread_depth: 0.0,
             fit: crate::feature::HoleFit::Normal,
             reversed: false,
         };
@@ -1854,6 +1950,8 @@ mod tests {
             cut: HoleCut::None,
             metric_index: Some(5),
             threaded: false,
+            modeled_thread: false,
+            thread_depth: 0.0,
             fit: crate::feature::HoleFit::Normal,
             reversed: false,
         };

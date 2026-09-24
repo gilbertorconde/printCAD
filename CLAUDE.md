@@ -758,6 +758,11 @@ on the start page (`Screen::Start`); the recent list lives in
   `ChainError` on the feature (the ignored `a_pad_stops_exactly_on_a_curved_face`
   test flips green when they do).
 - Helix with height 0 (flat spiral) is rejected; use a small pitch instead.
-- Hole threads are standards data only (tap-drill / ISO 273 clearance
-  diameters); no helical thread geometry is generated.
+- Hole threads: a threaded standard hole drills its tap diameter
+  (ISO 273 clearances otherwise); "Modeled thread" also cuts the 60°
+  metric groove along a helix out to the major diameter (`thread_cut` in
+  `wb_part/src/build.rs`), which waits on the kernel's boolean handling
+  a multi-turn helical sweep and until then fails as a `ChainError` on the
+  hole (the ignored `a_modeled_thread_cuts_its_groove_into_the_hole_wall`
+  flips green when it does).
 - `orientation_cube/mod.rs` (1340 LOC) still needs the camera-style split.

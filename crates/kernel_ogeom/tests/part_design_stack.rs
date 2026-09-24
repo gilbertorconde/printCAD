@@ -352,6 +352,8 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
             cut: wb_part::HoleCut::None,
             metric_index: None,
             threaded: false,
+            modeled_thread: false,
+            thread_depth: 0.0,
             fit: wb_part::HoleFit::Normal,
             reversed: false,
         },
@@ -872,4 +874,74 @@ fn a_variable_drives_a_named_sketch_dimension_and_the_pad_on_it() {
     let [x, _, z] = size(&mut doc);
     assert!((x - 16.0).abs() < 1e-3, "{x}");
     assert!((z - 4.0).abs() < 1e-3, "{z}");
+}
+
+/// An M6 hole with its thread modeled: the thread's groove is cut into the
+/// tap-drilled wall, out toward the M6 major diameter, a closed solid.
+#[test]
+#[ignore = "kernel: cutting a multi-turn helical sweep from a bored solid fails in the boolean (ogeom-rs#56)"]
+fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
+    let (mut doc, body, rect_id) = setup(20.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(rect_id, 10.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top_face = wb_sketch::sketch::SketchPlane::from_face([10.0, 10.0, 10.0], [0.0, 0.0, 1.0]);
+    let mut holes = Sketch::new("holes");
+    holes.plane = top_face;
+    holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
+    let holes_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(holes, top_face),
+            "holes".into(),
+            Some(body),
+        )
+        .unwrap();
+    let m6 = wb_part::METRIC_SIZES
+        .iter()
+        .position(|(name, ..)| *name == "M6")
+        .unwrap();
+    let hole = |modeled_thread: bool| PartFeature::Hole {
+        refine: false,
+        sketch: holes_id,
+        diameter: 5.0,
+        depth: 8.0,
+        through_all: false,
+        cut: wb_part::HoleCut::None,
+        metric_index: Some(m6),
+        threaded: true,
+        modeled_thread,
+        thread_depth: 6.0,
+        fit: wb_part::HoleFit::Normal,
+        reversed: false,
+    };
+    let hole_id = doc
+        .add_feature_in_body(hole(false), "Hole".into(), Some(body))
+        .unwrap();
+    let mut kernel = OgeomKernel::new();
+    let mut volume = |doc: &Document| {
+        let plan = wb_part::body_build_ops(doc, body).unwrap();
+        let result = kernel
+            .execute_solid_chain(&plan.ops, &TessellationSettings::default())
+            .unwrap_or_else(|e| panic!("builds: {e}"));
+        kernel
+            .physical_properties(&result.brep_blob)
+            .expect("measures")
+            .volume_mm3
+            .expect("a volume")
+    };
+    let tapped = volume(&doc);
+    let block = 20.0 * 20.0 * 10.0;
+    let drill = std::f64::consts::PI * 2.5 * 2.5 * 8.0;
+    assert!((tapped - (block - drill)).abs() < 0.01, "{tapped}");
+    doc.update_feature_data(hole_id, serde_json::to_value(hole(true)).unwrap())
+        .unwrap();
+    let threaded = volume(&doc);
+    let major = std::f64::consts::PI * 3.0 * 3.0 * 8.0;
+    assert!(
+        threaded < tapped - 5.0 && threaded > block - major,
+        "the groove takes some of the wall, not all of it: {threaded} (tapped {tapped})"
+    );
 }

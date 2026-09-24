@@ -60,6 +60,7 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Bore depth", "counterbore_depth"),
     ("Sink Ø", "countersink_diameter"),
     ("Sink angle", "countersink_angle"),
+    ("Thread depth", "thread_depth"),
     ("Radius", "radius"),
     ("Size", "size"),
     ("Size 2", "size2"),
@@ -1303,6 +1304,8 @@ pub fn feature_editor(
             cut,
             metric_index,
             threaded,
+            modeled_thread,
+            thread_depth,
             fit,
             reversed,
         } => {
@@ -1349,6 +1352,20 @@ pub fn feature_editor(
                 changed |= check_row(ui, threaded, "Threaded (tap drill)")
                     .on_hover_text("Use the tap-drill diameter for later thread cutting")
                     .changed();
+                if *threaded {
+                    if check_row(ui, modeled_thread, "Modeled thread")
+                        .on_hover_text("Cut the thread itself into the wall, to print it")
+                        .changed()
+                    {
+                        if *modeled_thread && *thread_depth <= 0.0 {
+                            *thread_depth = if *through_all { 10.0 } else { *depth };
+                        }
+                        changed = true;
+                    }
+                    if *modeled_thread {
+                        changed |= mm_drag(ui, fx, thread_depth, "Thread depth:");
+                    }
+                }
                 if !*threaded {
                     ui.horizontal(|ui| {
                         label_cell(ui, "Fit");
@@ -1381,6 +1398,8 @@ pub fn feature_editor(
                             cut: *cut,
                             metric_index: *metric_index,
                             threaded: *threaded,
+                            modeled_thread: *modeled_thread,
+                            thread_depth: *thread_depth,
                             fit: *fit,
                             reversed: *reversed,
                         })

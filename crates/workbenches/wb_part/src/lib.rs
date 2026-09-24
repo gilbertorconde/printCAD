@@ -345,6 +345,8 @@ impl PartDesignWorkbench {
                         cut: HoleCut::None,
                         metric_index: None,
                         threaded: false,
+                        modeled_thread: false,
+                        thread_depth: 0.0,
                         fit: HoleFit::Normal,
                         reversed: false,
                     },

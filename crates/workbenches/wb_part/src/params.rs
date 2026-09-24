@@ -70,6 +70,7 @@ fn fields(variant: &str) -> &'static [Field] {
                 "Countersink angle",
                 Some(ANGLE),
             ),
+            ("thread_depth", "thread_depth", "Thread depth", Some(LENGTH)),
         ],
         "Fillet" => &[("radius", "radius", "Radius", Some(LENGTH))],
         "Chamfer" => &[
