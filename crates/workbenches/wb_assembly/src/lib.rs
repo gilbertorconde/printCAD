@@ -7,6 +7,7 @@
 //! placements are ordinary edits, so a joint and the move it causes undo as
 //! one step and reach every copy of the document the same way.
 
+mod commands;
 mod joint;
 #[cfg(feature = "egui")]
 mod panel;
@@ -117,34 +118,40 @@ fn body_name(ctx: &WorkbenchRuntimeContext, body: BodyId) -> String {
         .unwrap_or_else(|| "a removed body".to_string())
 }
 
+/// Place every jointed body, as edits: how many moved, or why they could
+/// not all be placed.
+pub(crate) fn apply_solve(ctx: &mut WorkbenchRuntimeContext) -> Result<String, String> {
+    match solve(ctx.document) {
+        Ok(moves) => {
+            let count = moves.len();
+            for (body, placement) in moves {
+                ctx.document.set_body_placement(body, placement);
+            }
+            Ok(match count {
+                0 => "Every joint holds".to_string(),
+                1 => "Moved 1 body; every joint holds".to_string(),
+                n => format!("Moved {n} bodies; every joint holds"),
+            })
+        }
+        Err(SolveError::Loop(bodies)) => {
+            let names: Vec<String> = bodies.iter().map(|b| body_name(ctx, *b)).collect();
+            Err(format!(
+                "These bodies are joined in a ring, so none can go first: {}",
+                names.join(", ")
+            ))
+        }
+        Err(SolveError::Conflict { body, joints }) => Err(format!(
+            "{} cannot hold all its joints at once: {}",
+            body_name(ctx, body),
+            joints.join(", ")
+        )),
+    }
+}
+
 impl AssemblyWorkbench {
     /// Place every jointed body, as edits, and say how it went.
     fn solve_and_apply(&mut self, ctx: &mut WorkbenchRuntimeContext) {
-        self.verdict = Some(match solve(ctx.document) {
-            Ok(moves) => {
-                let count = moves.len();
-                for (body, placement) in moves {
-                    ctx.document.set_body_placement(body, placement);
-                }
-                Ok(match count {
-                    0 => "Every joint holds".to_string(),
-                    1 => "Moved 1 body; every joint holds".to_string(),
-                    n => format!("Moved {n} bodies; every joint holds"),
-                })
-            }
-            Err(SolveError::Loop(bodies)) => {
-                let names: Vec<String> = bodies.iter().map(|b| body_name(ctx, *b)).collect();
-                Err(format!(
-                    "These bodies are joined in a ring, so none can go first: {}",
-                    names.join(", ")
-                ))
-            }
-            Err(SolveError::Conflict { body, joints }) => Err(format!(
-                "{} cannot hold all its joints at once: {}",
-                body_name(ctx, body),
-                joints.join(", ")
-            )),
-        });
+        self.verdict = Some(apply_solve(ctx));
         if let Some(Err(message)) = &self.verdict {
             ctx.log_warn(message.clone());
         }
@@ -284,6 +291,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
+        commands::register(context);
         let tool = |id: &str, label: &str, icon: &'static str| {
             ToolDescriptor::new_action(id, label, Some("joints"))
                 .icon(icon)
@@ -296,6 +304,15 @@ impl Workbench for AssemblyWorkbench {
         );
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
+    }
+
+    fn run_command(
+        &mut self,
+        id: &str,
+        args: &core_document::CommandArgs,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> core_document::CommandResult {
+        commands::run(id, args, ctx)
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {

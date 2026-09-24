@@ -247,16 +247,58 @@ impl PrintCadApp {
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
         let document = &self.session.document;
         let selected = self.session.selected_body;
+        self.bodies_to_export(|id| {
+            if draft.selected_only {
+                selected == Some(id.0)
+            } else {
+                document.imported_body_effective_visible(id)
+            }
+        })
+    }
+
+    /// Write `bodies` (every visible one when `None`) to `path` now, on
+    /// this thread: what a script's export does.
+    pub(crate) fn export_now(
+        &self,
+        path: PathBuf,
+        format: ExportFormat,
+        bodies: Option<Vec<core_document::BodyId>>,
+        tolerance: Option<f32>,
+    ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
+        let document = &self.session.document;
+        let owned = self.bodies_to_export(|id| match &bodies {
+            Some(list) => list.contains(&id),
+            None => document.imported_body_effective_visible(id),
+        });
+        if owned.is_empty() {
+            return Err("there is nothing to export".to_string());
+        }
+        let mut detail = ExportDraft::default().detail;
+        if let Some(tolerance) = tolerance {
+            detail.chord_tolerance = tolerance;
+        }
+        let borrowed: Vec<ExportBody<'_>> = owned
+            .iter()
+            .map(|b| ExportBody {
+                name: b.name.clone(),
+                brep: b.brep.as_deref().map(Vec::as_slice),
+                transform: b.transform,
+                mesh: &b.mesh,
+            })
+            .collect();
+        let path = with_extension(&path, format);
+        let exported = export(&borrowed, format, &detail).map_err(|e| e.to_string())?;
+        std::fs::write(&path, &exported.bytes)
+            .map_err(|e| format!("could not write the file: {e}"))?;
+        Ok((path, exported))
+    }
+
+    /// The bodies `take` accepts that have geometry, in tree order.
+    fn bodies_to_export(&self, take: impl Fn(core_document::BodyId) -> bool) -> Vec<OwnedBody> {
+        let document = &self.session.document;
         let mut out: Vec<(usize, OwnedBody)> = document
             .imported_geometries()
-            .filter(|(id, geometry)| {
-                !geometry.mesh.indices.is_empty()
-                    && if draft.selected_only {
-                        selected == Some(id.0)
-                    } else {
-                        document.imported_body_effective_visible(**id)
-                    }
-            })
+            .filter(|(id, geometry)| !geometry.mesh.indices.is_empty() && take(**id))
             .map(|(id, geometry)| {
                 let order = document
                     .bodies()

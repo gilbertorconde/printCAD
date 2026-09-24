@@ -22,7 +22,7 @@ mod status_bar;
 mod step_import_modal;
 mod tab_bar;
 mod task_panel;
-mod toolbar;
+pub(crate) mod toolbar;
 mod view_toolbar;
 
 pub use commands::{EditCommand, FileCommand, StartKind, UiCommand};
