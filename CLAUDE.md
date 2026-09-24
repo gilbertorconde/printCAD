@@ -765,4 +765,3 @@ on the start page (`Screen::Start`); the recent list lives in
   a multi-turn helical sweep and until then fails as a `ChainError` on the
   hole (the ignored `a_modeled_thread_cuts_its_groove_into_the_hole_wall`
   flips green when it does).
-- `orientation_cube/mod.rs` (1340 LOC) still needs the camera-style split.
