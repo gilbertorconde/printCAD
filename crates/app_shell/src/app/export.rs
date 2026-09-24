@@ -21,6 +21,8 @@ pub(crate) struct ExportDraft {
     pub selected_only: bool,
     /// The mesh formats' tolerance.
     pub detail: TessellationSettings,
+    /// One file per configuration, each named after it.
+    pub every_configuration: bool,
 }
 
 impl Default for ExportDraft {
@@ -28,6 +30,7 @@ impl Default for ExportDraft {
         Self {
             format: ExportFormat::ThreeMf,
             selected_only: false,
+            every_configuration: false,
             // A print resolves far finer than a screen: a hundredth of a
             // millimetre off the true surface and a few degrees per facet.
             detail: TessellationSettings {
@@ -114,7 +117,49 @@ impl PrintCadApp {
     /// Write the confirmed export to `path` on a thread of its own.
     pub(crate) fn start_export(&mut self, path: PathBuf) {
         let draft = self.last_export.clone();
+        let configured = self
+            .session
+            .document
+            .configurations()
+            .is_some_and(|(_, t)| !t.rows.is_empty());
+        if draft.every_configuration && configured {
+            self.export_every_configuration(&path, &draft);
+            return;
+        }
         self.write_export(path, draft, None);
+    }
+
+    /// One file per configuration beside `path`, each named after it
+    /// (`bracket-Large.3mf`): every configuration in turn is put in
+    /// effect, built and written, and the one in effect before comes back.
+    /// It runs as a script, which waits for each build, and is one undo
+    /// step.
+    fn export_every_configuration(&mut self, path: &Path, draft: &ExportDraft) {
+        let base = path.with_extension("");
+        let bodies = if draft.selected_only {
+            match self.session.selected_body {
+                Some(body) => format!("{{\"{body}\"}}"),
+                None => {
+                    app_log::warn("Nothing to export: select a body with geometry first");
+                    return;
+                }
+            }
+        } else {
+            "nil".to_string()
+        };
+        let source = every_configuration_script(
+            &base.display().to_string(),
+            draft.format.extension(),
+            draft.detail.chord_tolerance,
+            &bodies,
+        );
+        self.submit_script(
+            scripting::Job::Script {
+                name: "Export every configuration".to_string(),
+                source,
+            },
+            crate::app::scripts::RunKind::File,
+        );
     }
 
     /// Hand every visible body to the slicer: written to a file of the
@@ -129,6 +174,7 @@ impl PrintCadApp {
             },
             selected_only: false,
             detail: self.last_export.detail.clone(),
+            every_configuration: false,
         };
         if self.export_bodies(&draft).is_empty() {
             app_log::warn("Nothing to send: no visible body has geometry");
@@ -255,6 +301,31 @@ impl PrintCadApp {
             }
         })
     }
+}
+
+/// The script that writes every configuration: `base-<name>.<ext>` each,
+/// `bodies` a Lua list of body ids or `nil` for every visible body.
+pub(crate) fn every_configuration_script(
+    base: &str,
+    ext: &str,
+    tolerance: f32,
+    bodies: &str,
+) -> String {
+    format!(
+        r#"-- Export every configuration
+local base, ext, tolerance, bodies = {base:?}, {ext:?}, {tolerance}, {bodies}
+local table = pc.config.list()
+local was = table.active
+for _, row in ipairs(table.rows) do
+  pc.config.activate{{name = row.name}}
+  pc.doc.rebuild()
+  local file = base .. "-" .. row.name:gsub("[^%w%-_. ]", "-") .. "." .. ext
+  pc.file.export{{path = file, tolerance = tolerance, bodies = bodies}}
+  print("Wrote " .. file)
+end
+pc.config.activate{{name = was}}
+"#
+    )
 }
 
 /// A document name as a file name: letters, digits and a few marks kept,

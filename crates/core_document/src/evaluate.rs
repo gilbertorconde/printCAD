@@ -275,6 +275,11 @@ pub fn evaluate_formula(
 fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>) -> Graph {
     let mut slots = Vec::new();
     let mut objects: HashMap<String, Vec<FeatureId>> = HashMap::new();
+    // The active configuration's values stand in for variables' own.
+    let overrides: HashMap<(String, String), String> = document
+        .configurations()
+        .map(|(_, table)| table.overrides().into_iter().collect())
+        .unwrap_or_default();
     let mut nodes: Vec<(&FeatureId, &FeatureNode)> = document.feature_tree().all_nodes().collect();
     nodes.sort_by_key(|(_, n)| n.seq);
     for (id, node) in nodes {
@@ -284,13 +289,17 @@ fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter
                 continue;
             };
             for variable in set.variables {
+                let formula = overrides
+                    .get(&(node.name.clone(), variable.name.clone()))
+                    .cloned()
+                    .unwrap_or(variable.formula);
                 slots.push(Slot {
                     feature: *id,
                     key: variable.name.clone(),
                     name: Some(variable.name.clone()),
                     label: variable.name,
                     dim: None,
-                    source: Source::Formula(variable.formula),
+                    source: Source::Formula(formula),
                     pointer: None,
                     scale: 1.0,
                     integer: false,

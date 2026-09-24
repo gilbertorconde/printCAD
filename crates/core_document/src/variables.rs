@@ -207,7 +207,24 @@ impl crate::Document {
                 }
             }
         }
-        for (id, data) in set_updates {
+        let mut table_update = None;
+        if let Some((id, mut table)) = self.configurations() {
+            let mut changed = false;
+            for text in table
+                .columns
+                .iter_mut()
+                .chain(table.rows.iter_mut().flat_map(|r| r.values.iter_mut()))
+            {
+                if let Some(new) = rewrite(text) {
+                    *text = new;
+                    changed = true;
+                }
+            }
+            if changed {
+                table_update = Some((id, table.to_json()));
+            }
+        }
+        for (id, data) in set_updates.into_iter().chain(table_update) {
             let _ = self.update_feature_data(id, data);
         }
         for (id, key, text) in formula_updates {

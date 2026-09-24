@@ -183,6 +183,57 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                  kind, error, comment}",
         )
         .read_only(),
+        CommandSpec::new(
+            "config.list",
+            "The configurations: the variables they set, each row, and which is in effect",
+        )
+        .returns("{columns, rows: [{name, values}], active}")
+        .read_only(),
+        CommandSpec::new("config.new", "Add a configuration")
+            .param("name", ParamKind::String, "Such as \"Large\"")
+            .optional(
+                "like",
+                ParamKind::String,
+                "Start from this configuration's values",
+            ),
+        CommandSpec::new("config.remove", "Remove a configuration").param(
+            "name",
+            ParamKind::String,
+            "",
+        ),
+        CommandSpec::new("config.rename", "Rename a configuration")
+            .param("name", ParamKind::String, "")
+            .param("to", ParamKind::String, ""),
+        CommandSpec::new(
+            "config.add_variable",
+            "Let the configurations set a variable: it becomes a column",
+        )
+        .param(
+            "variable",
+            ParamKind::String,
+            "As formulas read it: Size.width",
+        ),
+        CommandSpec::new("config.remove_variable", "Take a variable's column away").param(
+            "variable",
+            ParamKind::String,
+            "As formulas read it: Size.width",
+        ),
+        CommandSpec::new(
+            "config.set",
+            "What a configuration gives a variable: a formula, or empty for its own",
+        )
+        .param("name", ParamKind::String, "The configuration")
+        .param(
+            "variable",
+            ParamKind::String,
+            "As formulas read it: Size.width",
+        )
+        .param("value", ParamKind::String, "Such as \"60 mm\""),
+        CommandSpec::new("config.activate", "Put a configuration in effect").optional(
+            "name",
+            ParamKind::String,
+            "Nil leaves every variable its own",
+        ),
         CommandSpec::new("var.eval", "What a formula comes to in this document")
             .param("formula", ParamKind::String, "")
             .returns("{value, kind, text}: value in mm or degrees")
@@ -1025,6 +1076,10 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         result: Value::Null,
     };
     match command {
+        UiCommand::Config(edit) => {
+            let (id, args) = edit.command();
+            Some(call(id, args))
+        }
         UiCommand::SetVariable {
             set,
             name,
@@ -1424,6 +1479,45 @@ pub(crate) fn document_command(
                     .collect(),
             ))
         }
+        "config.list" => {
+            let table = document
+                .configurations()
+                .map(|(_, t)| t)
+                .unwrap_or_default();
+            Ok(json!({
+                "columns": table.columns,
+                "rows": table.rows.iter().map(|r| json!({"name": r.name, "values": r.values})).collect::<Vec<_>>(),
+                "active": table.active,
+            }))
+        }
+        "config.new" => document
+            .add_configuration(a.string("name")?, a.opt_string("like")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
+        "config.remove" => document
+            .remove_configuration(a.string("name")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
+        "config.rename" => document
+            .rename_configuration(a.string("name")?, a.string("to")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
+        "config.add_variable" => document
+            .add_configuration_column(a.string("variable")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
+        "config.remove_variable" => document
+            .remove_configuration_column(a.string("variable")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
+        "config.set" => document
+            .set_configuration_value(a.string("name")?, a.string("variable")?, a.string("value")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
+        "config.activate" => document
+            .activate_configuration(a.opt_string("name")?)
+            .map(|()| Value::Null)
+            .map_err(CommandError::failed),
         "var.eval" => {
             let q = registry
                 .evaluate_formula(document, a.string("formula")?, None)

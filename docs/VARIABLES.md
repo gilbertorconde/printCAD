@@ -67,6 +67,31 @@ Renaming an object or a variable rewrites every formula that refers to
 it. A formula that reads itself, however far round, is reported as a loop,
 as is a name that is missing or that two objects share.
 
+## Configurations
+
+Configurations are versions of a model: a small, a medium and a large
+bracket, each giving some variables values of its own. In the Variables
+panel's Configurations tab, add the configurations, then with "+ variable"
+the variables they set: each row then gives each variable a formula, or
+leaves it empty to keep the variable's own. The radio button, or the
+selector at the top of the panel, puts one in effect; everything that
+follows those variables rebuilds.
+
+A row's value takes the place of the variable's formula, so it cannot
+read that same variable (that would be a loop).
+
+File › Export offers "Every configuration": one file per configuration,
+named after it (`bracket-Large.3mf`), each built in turn; the
+configuration in effect before comes back after. From a script:
+
+```lua
+for _, row in ipairs(pc.config.list().rows) do
+  pc.config.activate{name = row.name}
+  pc.doc.rebuild()
+  pc.file.export{path = "bracket-" .. row.name .. ".3mf"}
+end
+```
+
 ## Undo and saving
 
 The document keeps what you typed; what a formula comes to is worked out

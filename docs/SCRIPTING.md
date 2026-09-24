@@ -305,6 +305,44 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `formula` (string)
 - Returns {value, kind, text}: value in mm or degrees
 
+### config
+
+`pc.config.list`: The configurations: the variables they set, each row, and which is in effect.
+
+- Returns {columns, rows: [{name, values}], active}
+
+`pc.config.new`: Add a configuration.
+
+- `name` (string): Such as "Large"
+- `like` (string, optional): Start from this configuration's values
+
+`pc.config.remove`: Remove a configuration.
+
+- `name` (string)
+
+`pc.config.rename`: Rename a configuration.
+
+- `name` (string)
+- `to` (string)
+
+`pc.config.add_variable`: Let the configurations set a variable: it becomes a column.
+
+- `variable` (string): As formulas read it: Size.width
+
+`pc.config.remove_variable`: Take a variable's column away.
+
+- `variable` (string): As formulas read it: Size.width
+
+`pc.config.set`: What a configuration gives a variable: a formula, or empty for its own.
+
+- `name` (string): The configuration
+- `variable` (string): As formulas read it: Size.width
+- `value` (string): Such as "60 mm"
+
+`pc.config.activate`: Put a configuration in effect.
+
+- `name` (string, optional): Nil leaves every variable its own
+
 ### app
 
 `pc.app.workbenches`: The workbenches, in the order they load.

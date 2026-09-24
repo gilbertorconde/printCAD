@@ -224,6 +224,7 @@ impl PrintCadApp {
                     edit,
                 } => self.set_parameter(feature, &parameter, edit),
                 UiCommand::NewVariableSet => self.new_variable_set(),
+                UiCommand::Config(edit) => self.apply_config_edit(edit),
                 UiCommand::SetVariable {
                     set,
                     name,
@@ -766,8 +767,11 @@ impl PrintCadApp {
         };
         let kind = node.workbench_id.clone();
         self.apply_tree_selection(item);
-        // A variable set opens in the Variables panel.
-        if kind.as_str() == core_document::VARIABLES_KIND {
+        // A variable set, or the configurations, opens in the Variables
+        // panel.
+        if kind.as_str() == core_document::VARIABLES_KIND
+            || kind.as_str() == core_document::CONFIGURATIONS_KIND
+        {
             self.variables_focus = Some(id);
             return;
         }
@@ -1131,5 +1135,47 @@ impl PrintCadApp {
             }
             Err(why) => crate::log_panel::warn(why),
         }
+    }
+}
+
+impl PrintCadApp {
+    /// Apply an edit of the configurations table as one undo step.
+    fn apply_config_edit(&mut self, edit: crate::ui::ConfigEdit) {
+        use crate::ui::ConfigEdit;
+        let doc = &mut self.session.document;
+        let (done, label) = match &edit {
+            ConfigEdit::New { name, like } => (
+                doc.add_configuration(name, like.as_deref()),
+                format!("Add {name}"),
+            ),
+            ConfigEdit::Remove(name) => (doc.remove_configuration(name), format!("Remove {name}")),
+            ConfigEdit::Rename { name, to } => {
+                (doc.rename_configuration(name, to), format!("Rename {name}"))
+            }
+            ConfigEdit::AddVariable(v) => (
+                doc.add_configuration_column(v),
+                "Configure a variable".to_string(),
+            ),
+            ConfigEdit::RemoveVariable(v) => (
+                doc.remove_configuration_column(v),
+                "Stop configuring a variable".to_string(),
+            ),
+            ConfigEdit::Set {
+                name,
+                variable,
+                value,
+            } => (
+                doc.set_configuration_value(name, variable, value),
+                format!("Set {variable} in {name}"),
+            ),
+            ConfigEdit::Activate(name) => (
+                doc.activate_configuration(name.as_deref()),
+                match name {
+                    Some(name) => format!("Switch to {name}"),
+                    None => "No configuration".to_string(),
+                },
+            ),
+        };
+        self.finish_variable_edit(done, label);
     }
 }

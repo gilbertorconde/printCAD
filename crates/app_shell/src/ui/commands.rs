@@ -202,6 +202,8 @@ pub enum UiCommand {
     },
     /// Make a variable set with a fresh name.
     NewVariableSet,
+    /// An edit of the configurations table.
+    Config(ConfigEdit),
     /// Set a variable's formula (and comment, when given), adding it when
     /// new.
     SetVariable {
@@ -266,4 +268,49 @@ pub enum UiCommand {
     OpenRecent(std::path::PathBuf),
     /// Forget a document in the recent list.
     RemoveRecent(std::path::PathBuf),
+}
+
+/// An edit of the configurations table.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConfigEdit {
+    New {
+        name: String,
+        like: Option<String>,
+    },
+    Remove(String),
+    Rename {
+        name: String,
+        to: String,
+    },
+    AddVariable(String),
+    RemoveVariable(String),
+    Set {
+        name: String,
+        variable: String,
+        value: String,
+    },
+    Activate(Option<String>),
+}
+
+impl ConfigEdit {
+    /// The command it is, for recordings and scripts.
+    pub fn command(&self) -> (&'static str, serde_json::Value) {
+        use serde_json::json;
+        match self {
+            ConfigEdit::New { name, like } => ("config.new", json!({"name": name, "like": like})),
+            ConfigEdit::Remove(name) => ("config.remove", json!({"name": name})),
+            ConfigEdit::Rename { name, to } => ("config.rename", json!({"name": name, "to": to})),
+            ConfigEdit::AddVariable(v) => ("config.add_variable", json!({"variable": v})),
+            ConfigEdit::RemoveVariable(v) => ("config.remove_variable", json!({"variable": v})),
+            ConfigEdit::Set {
+                name,
+                variable,
+                value,
+            } => (
+                "config.set",
+                json!({"name": name, "variable": variable, "value": value}),
+            ),
+            ConfigEdit::Activate(name) => ("config.activate", json!({"name": name})),
+        }
+    }
 }

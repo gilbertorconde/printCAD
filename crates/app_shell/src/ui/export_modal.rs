@@ -20,7 +20,13 @@ fn label(ui: &mut egui::Ui, text: &str) {
     );
 }
 
-pub fn draw_export_modal(ctx: &Context, draft: &mut ExportDraft) -> DialogAction {
+/// `configurations` is how many the document has: with any, the dialog
+/// offers a file for each.
+pub fn draw_export_modal(
+    ctx: &Context,
+    draft: &mut ExportDraft,
+    configurations: usize,
+) -> DialogAction {
     let mut action = DialogAction::None;
     let frame = egui::Frame::new()
         .fill(BG1)
@@ -65,6 +71,16 @@ pub fn draw_export_modal(ctx: &Context, draft: &mut ExportDraft) -> DialogAction
                     });
                     check_row(ui, &mut draft.selected_only, "Selected body only")
                         .on_hover_text("Otherwise every visible body");
+                    if configurations > 0 {
+                        check_row(
+                            ui,
+                            &mut draft.every_configuration,
+                            &format!("Every configuration ({configurations} files)"),
+                        )
+                        .on_hover_text(
+                            "One file per configuration, each built and named after it",
+                        );
+                    }
                     if draft.format.is_mesh() {
                         ui.horizontal(|ui| {
                             label(ui, "Chord tolerance");

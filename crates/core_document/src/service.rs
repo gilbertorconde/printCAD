@@ -124,6 +124,14 @@ impl DocumentService {
     /// How `node` presents, asked of the bench that claimed its kind;
     /// `None` when no bench did.
     pub fn feature_info(&self, node: &FeatureNode) -> Option<FeatureInfo> {
+        if node.workbench_id.as_str() == crate::configurations::CONFIGURATIONS_KIND {
+            return Some(FeatureInfo {
+                icon: "expression",
+                kind_label: "Configurations".to_string(),
+                family_label: "Variables".to_string(),
+                builds_solid: false,
+            });
+        }
         if node.workbench_id.as_str() == crate::variables::VARIABLES_KIND {
             return Some(FeatureInfo {
                 icon: "expression",

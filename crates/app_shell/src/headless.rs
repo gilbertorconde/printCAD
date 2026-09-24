@@ -133,6 +133,14 @@ const DOC_COMMANDS: &[&str] = &[
     "var.rename",
     "var.list",
     "var.eval",
+    "config.list",
+    "config.new",
+    "config.remove",
+    "config.rename",
+    "config.add_variable",
+    "config.remove_variable",
+    "config.set",
+    "config.activate",
     "doc.info",
     "doc.bodies",
     "doc.features",
@@ -526,6 +534,106 @@ mod tests {
             reopened.feature_formula(pad, "/Pad/length"),
             Some("Printer.wall * 10")
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn each_configuration_builds_its_own_size_and_exports() {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let dir = std::env::temp_dir().join(format!("printcad-configs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("configs.lua");
+        std::fs::write(
+            &script,
+            r#"
+            pc.var.new{name = "Size"}
+            pc.var.set{set = "Size", name = "height", formula = "5 mm"}
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.part.pad{sketch = s, length = 1}
+            local body = pc.doc.feature{id = pad}.body
+            pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.height"}
+            pc.config.new{name = "Small"}
+            pc.config.new{name = "Large"}
+            pc.config.add_variable{variable = "Size.height"}
+            pc.config.set{name = "Small", variable = "Size.height", value = "3 mm"}
+            pc.config.set{name = "Large", variable = "Size.height", value = "20 mm"}
+            local heights = {}
+            for _, row in ipairs(pc.config.list().rows) do
+              pc.config.activate{name = row.name}
+              assert(#pc.doc.rebuild() == 0, "it builds")
+              local m = pc.doc.measure{body = body}
+              heights[row.name] = m.max[3] - m.min[3]
+              pc.file.export{path = arg[1] .. "/" .. row.name .. ".stl"}
+            end
+            pc.config.activate{}
+            assert(math.abs(heights.Small - 3) < 1e-3, "small " .. heights.Small)
+            assert(math.abs(heights.Large - 20) < 1e-3, "large " .. heights.Large)
+            "#,
+        )
+        .unwrap();
+        let ok = run(
+            &Invocation {
+                script,
+                open: None,
+                save: None,
+                args: vec![dir.display().to_string()],
+            },
+            registry,
+        )
+        .unwrap();
+        assert!(ok, "the script's checks hold");
+        for name in ["Small", "Large"] {
+            assert!(dir.join(format!("{name}.stl")).exists(), "{name}.stl");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_export_of_every_configuration_writes_one_file_each_and_puts_back_the_active_one() {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let dir = std::env::temp_dir().join(format!("printcad-every-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("every.lua");
+        let setup = r#"
+            pc.var.new{name = "Size"}
+            pc.var.set{set = "Size", name = "height", formula = "5 mm"}
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.part.pad{sketch = s, length = 1}
+            pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.height"}
+            pc.config.new{name = "Small"}
+            pc.config.new{name = "Large two"}
+            pc.config.add_variable{variable = "Size.height"}
+            pc.config.set{name = "Small", variable = "Size.height", value = "3 mm"}
+            pc.config.set{name = "Large two", variable = "Size.height", value = "20 mm"}
+            pc.config.activate{name = "Small"}
+        "#;
+        let export = crate::app::export::every_configuration_script(
+            &dir.join("part").display().to_string(),
+            "stl",
+            0.05,
+            "nil",
+        );
+        let check = r#"
+            assert(pc.config.list().active == "Small", "the active one is back")
+        "#;
+        std::fs::write(&script, format!("{setup}\n{export}\n{check}")).unwrap();
+        let ok = run(
+            &Invocation {
+                script,
+                open: None,
+                save: None,
+                args: Vec::new(),
+            },
+            registry,
+        )
+        .unwrap();
+        assert!(ok, "the script runs");
+        assert!(dir.join("part-Small.stl").exists());
+        assert!(dir.join("part-Large two.stl").exists());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

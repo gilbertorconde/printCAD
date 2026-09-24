@@ -1,5 +1,6 @@
 pub mod asset;
 pub mod command;
+pub mod configurations;
 pub mod datum;
 pub mod evaluate;
 pub mod expr;
@@ -34,6 +35,7 @@ pub use asset::{AssetReference, AssetType};
 pub use command::{
     Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec, Recorded,
 };
+pub use configurations::{CONFIGURATIONS_KIND, Configuration, Configurations};
 pub use datum::{
     AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,
     datums_of_body,

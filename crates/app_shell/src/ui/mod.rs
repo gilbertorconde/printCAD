@@ -27,7 +27,7 @@ mod task_panel;
 pub(crate) mod toolbar;
 mod view_toolbar;
 
-pub use commands::{EditCommand, FileCommand, StartKind, UiCommand};
+pub use commands::{ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{HoverCard, Physical, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
@@ -298,8 +298,15 @@ impl UiLayer {
         if assistant_attention {
             self.assistant.open = true;
         }
-        if let Some(set) = variables_focus {
-            self.variables.show_set(set);
+        if let Some(focus) = variables_focus {
+            let configurations = document
+                .get_feature_meta(focus)
+                .is_some_and(|n| n.workbench_id.as_str() == core_document::CONFIGURATIONS_KIND);
+            if configurations {
+                self.variables.show_configurations();
+            } else {
+                self.variables.show_set(focus);
+            }
         }
         // The workbenches hear of their keys at the start and after every
         // change, not every frame.
@@ -746,7 +753,8 @@ impl UiLayer {
                     step_import_modal::draw_step_import_modal(ui.ctx(), path, draft);
             }
             if let Some(draft) = export_pending.as_mut() {
-                export_dialog = export_modal::draw_export_modal(ui.ctx(), draft);
+                let configurations = document.configurations().map_or(0, |(_, t)| t.rows.len());
+                export_dialog = export_modal::draw_export_modal(ui.ctx(), draft, configurations);
             }
             if let Some((title, text)) = &self.details
                 && !details_modal::draw_details_modal(ui.ctx(), title, text)
