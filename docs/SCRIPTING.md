@@ -87,7 +87,9 @@ stands for, and the recording is the list of those commands.
   pasted geometry goes into the script), mirrored and merged sketches,
   carbon copies, external geometry, a new plane, driving and active flags.
 - Renaming, showing or hiding, suppressing, reordering, moving the tip of
-  and deleting tree rows record as `doc.*`; the Solve button as `asm.solve`.
+  and deleting tree rows record as `doc.*`, as do Repair shape and Convert
+  to solid; an import records as `file.import` with its path; the Solve
+  button as `asm.solve`.
 - What a recording makes is named (`pad1`, `rect2.elements[3]`), and later
   lines use the name, so a replay works on the things it makes. Things
   that were there before the recording started are named by their id: the
@@ -190,6 +192,16 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `id` (id)
 
+`pc.doc.repair`: Repair the shapes the kernel's checker calls broken.
+
+- `bodies` (list): The bodies
+- Returns nothing; pc.doc.rebuild() waits for the repair
+
+`pc.doc.convert_to_solid`: Turn mesh bodies into solids.
+
+- `bodies` (list): The mesh bodies
+- Returns nothing; pc.doc.rebuild() waits for the conversion
+
 `pc.doc.suppress`: Leave a feature out of its body's solid, or back in.
 
 - `id` (id): The feature
@@ -206,7 +218,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `id` (id): A feature of the body
 - `clear` (boolean, optional): true: build the whole history again
 
-`pc.doc.rebuild`: Rebuild every solid that changed and wait for it.
+`pc.doc.rebuild`: Rebuild every solid that changed, repair or convert what was asked, and wait.
 
 - `timeout` (number, optional): Seconds to wait at most (60)
 - Returns a list of {feature, error} for every feature that failed

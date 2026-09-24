@@ -41,6 +41,16 @@ impl PrintCadApp {
             format_of(path),
             path.display()
         ));
+        self.record_calls(vec![core_document::Recorded {
+            id: "file.import".to_string(),
+            args: [(
+                "path".to_string(),
+                serde_json::json!(path.display().to_string()),
+            )]
+            .into_iter()
+            .collect(),
+            result: serde_json::Value::Null,
+        }]);
         self.import_owner
             .insert(path.to_path_buf(), self.session.tab);
         self.kernel_worker

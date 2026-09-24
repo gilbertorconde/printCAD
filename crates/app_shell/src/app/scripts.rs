@@ -52,6 +52,15 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("visible", ParamKind::Bool, ""),
         CommandSpec::new("doc.delete", "Delete a body or a feature").param("id", ParamKind::Id, ""),
         CommandSpec::new(
+            "doc.repair",
+            "Repair the shapes the kernel's checker calls broken",
+        )
+        .param("bodies", ParamKind::List, "The bodies")
+        .returns("nothing; pc.doc.rebuild() waits for the repair"),
+        CommandSpec::new("doc.convert_to_solid", "Turn mesh bodies into solids")
+            .param("bodies", ParamKind::List, "The mesh bodies")
+            .returns("nothing; pc.doc.rebuild() waits for the conversion"),
+        CommandSpec::new(
             "doc.suppress",
             "Leave a feature out of its body's solid, or back in",
         )
@@ -75,7 +84,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         ),
         CommandSpec::new(
             "doc.rebuild",
-            "Rebuild every solid that changed and wait for it",
+            "Rebuild every solid that changed, repair or convert what was asked, and wait",
         )
         .optional("timeout", ParamKind::Number, "Seconds to wait at most (60)")
         .returns("a list of {feature, error} for every feature that failed"),
@@ -578,6 +587,7 @@ impl PrintCadApp {
         self.in_script_tab(|app| {
             app.drive_part_recompute();
             app.drive_shape_repairs();
+            app.drive_mesh_solids();
         });
         self.script_rebuild = Some(RebuildWait {
             reply,
@@ -801,6 +811,16 @@ impl PrintCadApp {
                 self.apply_ui_commands(vec![command], event_loop);
                 Ok(Value::Null)
             }
+            "doc.repair" | "doc.convert_to_solid" => {
+                let bodies = body_list(args.get("bodies"))?.unwrap_or_default();
+                let command = if id == "doc.repair" {
+                    crate::ui::UiCommand::RepairShapes(bodies)
+                } else {
+                    crate::ui::UiCommand::ConvertToSolid(bodies)
+                };
+                self.apply_ui_commands(vec![command], event_loop);
+                Ok(Value::Null)
+            }
             "doc.delete" => {
                 let item = tree_item(&self.session.document, a.id("id")?)?;
                 self.apply_ui_commands(
@@ -853,6 +873,15 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         UiCommand::DeleteTreeItem(item) => {
             let id = item_id(*item)?;
             Some(call("doc.delete", json!({"id": id.to_string()})))
+        }
+        UiCommand::RepairShapes(bodies) | UiCommand::ConvertToSolid(bodies) => {
+            let id = if matches!(command, UiCommand::RepairShapes(_)) {
+                "doc.repair"
+            } else {
+                "doc.convert_to_solid"
+            };
+            let bodies: Vec<String> = bodies.iter().map(|b| b.0.to_string()).collect();
+            Some(call(id, json!({"bodies": bodies})))
         }
         UiCommand::TreeFeature { feature, command } => {
             let id = feature.0.to_string();
@@ -1347,9 +1376,17 @@ mod tests {
         ] {
             more.push(recorded_of(&UiCommand::TreeFeature { feature, command }).unwrap());
         }
+        more.push(recorded_of(&UiCommand::RepairShapes(vec![body])).unwrap());
+        more.push(recorded_of(&UiCommand::ConvertToSolid(vec![body])).unwrap());
         assert_eq!(
             more.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
-            ["doc.suppress", "doc.move", "doc.set_tip"]
+            [
+                "doc.suppress",
+                "doc.move",
+                "doc.set_tip",
+                "doc.repair",
+                "doc.convert_to_solid"
+            ]
         );
         // Every call a recording can hold is a command a script can call.
         for call in [rename, hide, delete].into_iter().chain(more) {
