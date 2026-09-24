@@ -1,11 +1,13 @@
 pub mod asset;
 pub mod command;
 pub mod datum;
+pub mod evaluate;
 pub mod expr;
 pub mod feature;
 pub mod history;
 pub mod op;
 pub mod palette;
+pub mod param;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
@@ -15,6 +17,7 @@ pub mod service;
 pub mod shortcut;
 pub mod undo;
 pub mod units;
+pub mod variables;
 pub mod workbench;
 
 use std::collections::HashMap;
@@ -36,11 +39,13 @@ pub use datum::{
     AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,
     datums_of_body,
 };
+pub use evaluate::{Evaluation, Parameter, SlotValue};
 pub use feature::{
     BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature, node_revision,
 };
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
+pub use param::Param;
 pub use placement::BodyPlacement;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
@@ -51,6 +56,7 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
+pub use variables::{VARIABLES_KIND, Variable, VariableSet};
 pub use workbench::{
     FeatureInfo, MarkKind, MenuItem, MenuScope, OvpRow, OvpWidget, PassiveGeometry, PropertyHints,
     ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, StatusItems, TaskInfo, TaskOutcome,
@@ -149,6 +155,18 @@ pub struct Document {
     /// document: those must not journal themselves.
     #[serde(skip)]
     history_suppressed: bool,
+    /// What every formula comes to (`evaluate`), and at which edit it was
+    /// worked out. Derived on each replica, never an op.
+    #[serde(skip)]
+    evaluated: Evaluated,
+}
+
+/// The document's formulas, worked out.
+#[derive(Debug, Clone, Default)]
+struct Evaluated {
+    evaluation: evaluate::Evaluation,
+    /// The `mutation_seq` it was worked out at.
+    at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -286,6 +304,7 @@ impl Document {
             pending_ops: op::OpBuffer::default(),
             journal_pending: op::JournalBuffer::default(),
             history_suppressed: false,
+            evaluated: Evaluated::default(),
         }
     }
 
@@ -788,6 +807,56 @@ impl Document {
     /// Get feature data (returns JSON, workbench must deserialize).
     pub fn get_feature_data(&self, id: FeatureId) -> Option<&serde_json::Value> {
         self.feature_tree.get_node(id).map(|n| &n.data)
+    }
+
+    /// The feature's data as it builds: what the user set, with every
+    /// formula's current value in. Benches build from this.
+    pub fn feature_values(&self, id: FeatureId) -> Option<&serde_json::Value> {
+        self.evaluated
+            .evaluation
+            .data
+            .get(&id)
+            .or_else(|| self.get_feature_data(id))
+    }
+
+    /// What the feature's formulas and variables come to, in order.
+    pub fn evaluated_slots(&self, id: FeatureId) -> &[evaluate::SlotValue] {
+        self.evaluated
+            .evaluation
+            .slots
+            .get(&id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+    }
+
+    /// Whether the document changed since its formulas were worked out.
+    pub fn needs_evaluation(&self) -> bool {
+        self.evaluated.at != Some(self.mutation_seq)
+    }
+
+    /// Take `evaluation` as what the formulas come to now. A feature whose
+    /// values changed is marked for rebuilding, and what depends on it;
+    /// the document is not marked edited, as nothing the user set moved.
+    /// Answers the features marked.
+    pub fn apply_evaluation(&mut self, evaluation: evaluate::Evaluation) -> Vec<FeatureId> {
+        let mut changed: Vec<FeatureId> = Vec::new();
+        let old = &self.evaluated.evaluation.data;
+        for id in old.keys().chain(evaluation.data.keys()) {
+            let raw = self.feature_tree.get_node(*id).map(|n| &n.data);
+            let before = old.get(id).or(raw);
+            let after = evaluation.data.get(id).or(raw);
+            if before != after && !changed.contains(id) {
+                changed.push(*id);
+            }
+        }
+        for id in &changed {
+            self.feature_tree.mark_dirty(*id);
+        }
+        self.evaluated = Evaluated {
+            evaluation,
+            at: Some(self.mutation_seq),
+        };
+        changed
     }
 
     /// Get feature metadata (id, name, dirty, etc.).

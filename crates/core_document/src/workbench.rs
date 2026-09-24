@@ -551,6 +551,14 @@ pub trait Workbench: Send {
         Err(crate::CommandError::Unknown(id.to_string()))
     }
 
+    /// The numbers of an owned feature that formulas may set and read:
+    /// where each is in its JSON and what kind of quantity it is. A field
+    /// listed here builds from `Document::feature_values`, which has every
+    /// formula's current value in.
+    fn parameters(&self, _node: &FeatureNode) -> Vec<crate::evaluate::Parameter> {
+        Vec::new()
+    }
+
     /// What the generic property panel should know about this bench's
     /// feature payloads.
     fn property_hints(&self) -> PropertyHints {

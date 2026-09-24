@@ -184,7 +184,27 @@ impl DocumentService {
     }
 
     /// Every bench's rebuild jobs, in registration order.
+    /// The numeric properties of `node`, from the bench that claimed its
+    /// kind.
+    pub fn parameters(&self, node: &FeatureNode) -> Vec<crate::evaluate::Parameter> {
+        self.owner_of(&node.workbench_id)
+            .map(|wb| wb.parameters(node))
+            .unwrap_or_default()
+    }
+
+    /// Work out the document's formulas when it changed since they last
+    /// were; features whose values moved are marked for rebuilding.
+    pub fn evaluate(&self, document: &mut Document) {
+        if document.needs_evaluation() {
+            let evaluation =
+                crate::evaluate::evaluate_document(document, &|node| self.parameters(node));
+            document.apply_evaluation(evaluation);
+        }
+    }
+
+    /// Every bench's rebuilds, after the formulas are worked out.
     pub fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
+        self.evaluate(document);
         self.benches()
             .flat_map(|wb| wb.rebuild_jobs(document))
             .collect()
