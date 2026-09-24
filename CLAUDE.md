@@ -291,7 +291,19 @@ UI thread in `drive_scripts` (8 ms a frame, in the tab the run started in,
 (`script_rebuild`) rather than blocking a frame. The journal is held
 (`OpJournal::hold`) from `Started` to `Finished`, so a run is one undo
 step. The thread wakes the loop through `AppEvent::Script` and a busy
-thread counts as async work. Stop sets the engine's stop flag. The app's own
+thread counts as async work. Stop sets the engine's stop flag.
+Tools end in commands, which is what recording rests on: a bench calls
+`ctx.record(id, args, result)` where a UI action ends in the code its
+command runs (`HookOutcome.recorded`, carried through `PanelWriteback`
+for panel hooks). The sketcher's click is `step::click`, shared with
+`sketch.draw` (a shape is one call, flushed when the tool returns to rest);
+drags are `step::drag`; Part Design records in `record_task` when a task
+closes, diffing against what the command makes alone (`default_feature`);
+Assembly in `record_joint`. The host maps its own UI commands in
+`recorded_of` and keeps calls in `PrintCadApp.recording`
+(`scripting::Recorder`, which names results and writes numbers exactly
+so a replay meets single-precision values bit for bit); nothing records
+while a script runs. The app's own
 commands: `doc.*` (the pure ones in `scripts::document_command`, shared
 with `headless.rs`), `app.*`, and every keymap command, the file ones
 taking a `path` to skip their dialog. Script files: `script_library.rs`

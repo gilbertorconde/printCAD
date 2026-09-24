@@ -15,7 +15,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+mod record;
 mod thread;
+pub use record::Recorder;
 pub use thread::{Event, Job, ScriptThread};
 
 use core_document::{CommandArgs, CommandError, CommandResult, CommandSpec};

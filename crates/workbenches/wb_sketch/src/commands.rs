@@ -155,7 +155,68 @@ pub fn register(context: &mut WorkbenchContext) {
             "Change a dimension's value",
         ))
         .param("constraint", ParamKind::Id, "")
-        .param("value", ParamKind::Number, "mm, or degrees for an angle"),
+        .param("value", ParamKind::Number, "mm, or degrees for an angle")
+        .optional(
+            "driving",
+            ParamKind::Bool,
+            "false makes it a reference dimension that only measures",
+        ),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.draw",
+            "Run a drawing or editing tool over points of the sketch, as clicks there would",
+        ))
+        .param(
+            "tool",
+            ParamKind::String,
+            "line, polyline, rect, rect_center, rect_rounded, circle, circle3, arc, arc3, \
+             ellipse, ellipse3, ellipse_arc, bspline, polygon, slot, arc_slot, point, fillet, \
+             chamfer, trim, extend, split, offset, translate, rotate, scale or mirror",
+        )
+        .param(
+            "points",
+            ParamKind::List,
+            "The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} \
+             with values typed at it; \"arc\" and \"line\" switch a polyline, \"finish\" \
+             ends a spline",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How close a click snaps onto points and curves, mm (0.001)",
+        )
+        .optional(
+            "params",
+            ParamKind::Any,
+            "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, \
+             offset_distance, copies, bspline_periodic, auto_constraints, array_rows, \
+             array_cols, array_dx, array_dy",
+        )
+        .optional(
+            "construction",
+            ParamKind::Bool,
+            "What it makes is construction geometry",
+        )
+        .optional(
+            "avoid_redundant",
+            ParamKind::Bool,
+            "Drop auto constraints that add nothing (true)",
+        )
+        .optional(
+            "selection",
+            ParamKind::List,
+            "The elements offset, translate, rotate, scale and mirror act on",
+        )
+        .returns("{elements, constraints}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.drag",
+            "Drag elements by a step, the rest of the sketch following its constraints",
+        ))
+        .param("items", ParamKind::List, "The elements to drag")
+        .param("by", ParamKind::List, "The step, {x, y}"),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -267,15 +328,29 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 return Err(CommandError::bad("constraint", "is not a dimension"));
             }
             constraint.kind = crate::sketch::with_dimension_value(&constraint.kind, value);
+            if let Some(driving) = a.opt_bool("driving")? {
+                constraint.driving = driving;
+            }
             Value::Null
         }
         "sketch.delete" => {
             let items = ids(args.get("items"), "items", sketch)?;
-            let (constraints, elements): (Vec<Uuid>, Vec<Uuid>) = items
-                .into_iter()
-                .partition(|id| sketch.constraints.iter().any(|c| c.id == *id));
-            sketch.constraints.retain(|c| !constraints.contains(&c.id));
-            sketch.remove_geometry_cascade(&elements);
+            delete_items(sketch, &items);
+            Value::Null
+        }
+        "sketch.draw" => {
+            let (elements, constraints) = draw(sketch, &a, args)?;
+            json!({"elements": elements, "constraints": constraints})
+        }
+        "sketch.drag" => {
+            let items = ids(args.get("items"), "items", sketch)?;
+            let by = points(Some(&json!([args
+                .get("by")
+                .cloned()
+                .unwrap_or(Value::Null)])))
+            .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+            let targets = crate::step::drag_targets(sketch, &items);
+            crate::step::drag(sketch, &targets, by);
             Value::Null
         }
         "sketch.construction" => {
@@ -543,7 +618,194 @@ fn ids(value: Option<&Value>, name: &str, sketch: &Sketch) -> Result<Vec<Uuid>, 
 }
 
 /// Add the constraints `kind` makes for `items`, at `value` when given.
-fn constrain(
+/// Named arguments from a JSON object.
+pub(crate) fn args(value: Value) -> CommandArgs {
+    match value {
+        Value::Object(map) => map,
+        _ => CommandArgs::new(),
+    }
+}
+
+/// Delete elements and constraints, and what hangs on them. The origin and
+/// the axes are not the sketch's to delete. How many went.
+pub(crate) fn delete_items(sketch: &mut Sketch, items: &[Uuid]) -> usize {
+    let (constraints, elements): (Vec<Uuid>, Vec<Uuid>) = items
+        .iter()
+        .copied()
+        .partition(|id| sketch.constraints.iter().any(|c| c.id == *id));
+    let before = sketch.constraints.len();
+    sketch.constraints.retain(|c| !constraints.contains(&c.id));
+    let elements: Vec<Uuid> = elements
+        .into_iter()
+        .filter(|id| crate::sketch::Reference::of(*id).is_none())
+        .collect();
+    before - sketch.constraints.len() + sketch.remove_geometry_cascade(&elements).len()
+}
+
+/// `sketch.draw`: the tool run over the points as clicks, the same step a
+/// click in the viewport takes. The ids of what it made.
+fn draw(
+    sketch: &mut Sketch,
+    a: &Args,
+    args: &CommandArgs,
+) -> Result<(Vec<String>, Vec<String>), CommandError> {
+    use crate::step;
+    let name = a.string("tool")?;
+    let tool = if name.starts_with("sketch.") {
+        name.to_string()
+    } else {
+        format!("sketch.{name}")
+    };
+    if !DRAW_TOOLS.contains(&tool.trim_start_matches("sketch.")) {
+        return Err(CommandError::bad("tool", format!("has no tool `{name}`")));
+    }
+    let settings = step::StepSettings {
+        tol: a.opt_number("tolerance")?.unwrap_or(1e-3) as f32,
+        params: step::params_from_json(args.get("params"))
+            .map_err(|e| CommandError::bad("params", e))?,
+        construction: a.opt_bool("construction")?.unwrap_or(false),
+        avoid_redundant: a.opt_bool("avoid_redundant")?.unwrap_or(true),
+    };
+    let selected: std::collections::HashSet<Uuid> = match args.get("selection") {
+        Some(v) if !v.is_null() => ids(Some(v), "selection", sketch)?.into_iter().collect(),
+        _ => Default::default(),
+    };
+    let events = args
+        .get("points")
+        .and_then(Value::as_array)
+        .ok_or_else(|| CommandError::bad("points", "must be a list of clicks"))?;
+    let elements_before: std::collections::HashSet<Uuid> =
+        sketch.geometry.iter().map(GeometryElement::id).collect();
+    let constraints_before: std::collections::HashSet<Uuid> =
+        sketch.constraints.iter().map(|c| c.id).collect();
+    let mut state = crate::tools::ToolState::Idle;
+    let mut capture = crate::ovp::DimCapture::default();
+    for event in events {
+        match event {
+            Value::String(word) => match word.as_str() {
+                "arc" | "line" => {
+                    let want = word == "arc";
+                    if let crate::tools::ToolState::PolylineFrom { arc, .. } = &state
+                        && *arc != want
+                    {
+                        crate::tools::toggle_polyline_arc(&mut state);
+                    }
+                }
+                "finish" => {
+                    let effect =
+                        crate::tools::finish_click_sequence(&mut state, sketch, &settings.params);
+                    if effect.changed {
+                        crate::solver::solve(sketch);
+                    }
+                }
+                other => {
+                    return Err(CommandError::bad(
+                        "points",
+                        format!("has `{other}`; a word there is arc, line or finish"),
+                    ));
+                }
+            },
+            click => {
+                let (at, typed, constrain) = click_of(click)?;
+                let outcome = step::click(
+                    &mut state,
+                    &mut capture,
+                    &tool,
+                    sketch,
+                    at,
+                    &typed,
+                    constrain,
+                    &settings,
+                    &selected,
+                );
+                // The sketch settles after every click that changes it, as
+                // it does between clicks in the viewport, so the next click
+                // meets the same sketch.
+                if outcome.changed || outcome.added > 0 {
+                    crate::solver::solve(sketch);
+                }
+            }
+        }
+    }
+    let elements = sketch
+        .geometry
+        .iter()
+        .map(GeometryElement::id)
+        .filter(|id| !elements_before.contains(id))
+        .map(|id| id.to_string())
+        .collect();
+    let constraints = sketch
+        .constraints
+        .iter()
+        .map(|c| c.id)
+        .filter(|id| !constraints_before.contains(id))
+        .map(|id| id.to_string())
+        .collect();
+    Ok((elements, constraints))
+}
+
+/// The tools `sketch.draw` runs, without the `sketch.` prefix.
+const DRAW_TOOLS: &[&str] = &[
+    "point",
+    "line",
+    "polyline",
+    "rect",
+    "rect_rounded",
+    "rect_center",
+    "circle",
+    "circle3",
+    "arc",
+    "arc3",
+    "ellipse",
+    "ellipse3",
+    "ellipse_arc",
+    "bspline",
+    "polygon",
+    "slot",
+    "arc_slot",
+    "fillet",
+    "chamfer",
+    "trim",
+    "extend",
+    "split",
+    "offset",
+    "translate",
+    "rotate",
+    "scale",
+    "mirror",
+];
+
+/// One click of `sketch.draw`: where, the values typed at it, and whether
+/// they become constraints.
+type Click = (Vec2D, Vec<(crate::ovp::FieldKind, f32)>, bool);
+
+/// Read one click of `sketch.draw`.
+fn click_of(click: &Value) -> Result<Click, CommandError> {
+    let at = points(Some(&json!([click])))
+        .map_err(|_| CommandError::bad("points", "must hold {x, y} clicks"))?[0];
+    let mut typed = Vec::new();
+    let mut constrain = false;
+    if let Value::Object(fields) = click {
+        if let Some(Value::Object(values)) = fields.get("typed") {
+            for (name, v) in values {
+                let kind = crate::step::field_of(name).ok_or_else(|| {
+                    CommandError::bad("points", format!("types `{name}`, which no tool asks for"))
+                })?;
+                let v = v
+                    .as_f64()
+                    .ok_or_else(|| CommandError::bad("points", "typed values are numbers"))?;
+                typed.push((kind, v as f32));
+            }
+        }
+        constrain = fields
+            .get("constrain")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    }
+    Ok((at, typed, constrain))
+}
+
+pub(crate) fn constrain(
     sketch: &mut Sketch,
     kind: &str,
     items: &[Uuid],

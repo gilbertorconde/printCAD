@@ -94,6 +94,14 @@ pub fn fresh_path(dir: &Path) -> PathBuf {
         .expect("some name is free")
 }
 
+/// `<stem>_<n>.lua` in `dir` with the first `n` not taken.
+pub fn fresh_name(dir: &Path, stem: &str) -> PathBuf {
+    (1..)
+        .map(|n| dir.join(format!("{stem}_{n}.lua")))
+        .find(|p| !p.exists())
+        .expect("some name is free")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

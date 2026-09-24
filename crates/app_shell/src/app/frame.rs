@@ -685,6 +685,7 @@ impl PrintCadApp {
                         console_attention: std::mem::take(&mut self.console_attention),
                         command_ids: &self.command_ids,
                         script_running: self.script_runs.front().map(|r| r.label.as_str()),
+                        recording: self.recording.is_some(),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;

@@ -123,6 +123,7 @@ impl AssemblyWorkbench {
             return TaskOutcome::Cancelled;
         }
         if request.accept {
+            crate::commands::record_joint(ctx, id, before.as_ref(), placements);
             self.task = None;
             ctx.active_document_object = None;
             return TaskOutcome::Accepted {
@@ -214,6 +215,14 @@ impl AssemblyWorkbench {
             .clicked()
             && ctx.document.remove_feature(id).is_ok()
         {
+            // A joint the task made has nothing to undo in a recording.
+            if !created {
+                ctx.record(
+                    "doc.delete",
+                    crate::commands::object(serde_json::json!({"id": id.0.to_string()})),
+                    serde_json::Value::Null,
+                );
+            }
             self.task = None;
             ctx.active_document_object = None;
             return TaskOutcome::Accepted {
@@ -237,6 +246,16 @@ impl AssemblyWorkbench {
             return TaskOutcome::Cancelled;
         }
         if request.accept {
+            let placement = ctx.document.body_placement(body);
+            ctx.record(
+                "asm.place",
+                crate::commands::object(serde_json::json!({
+                    "body": body.0.to_string(),
+                    "translation": placement.translation,
+                    "rotation": placement.rotation,
+                })),
+                serde_json::Value::Null,
+            );
             self.task = None;
             return TaskOutcome::Accepted {
                 label: "Move body".to_string(),

@@ -553,6 +553,68 @@ mod tests {
         assert!(matches!(wb.task, Some(Task::Joint { before: None, .. })));
     }
 
+    /// One frame of the task panel, as the host runs it; what it recorded.
+    fn task_frame(
+        wb: &mut AssemblyWorkbench,
+        doc: &mut Document,
+        request: core_document::TaskRequest,
+    ) -> Vec<core_document::Recorded> {
+        let egui_ctx = egui::Context::default();
+        ui_kit::apply_theme(&egui_ctx);
+        let mut recorded = Vec::new();
+        let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.ui_task_panel(ui, &mut ctx, request);
+            recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+        });
+        output.textures_delta.clear();
+        recorded
+    }
+
+    #[test]
+    fn a_mate_made_by_picks_records_as_the_command_and_replays_to_the_same_place() {
+        let (mut doc, base, part) = scene();
+        let before = doc.clone();
+        let mut wb = AssemblyWorkbench::default();
+        {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("asm.mate"),
+                &mut ctx,
+            );
+        }
+        frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
+        frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
+        let recorded = task_frame(
+            &mut wb,
+            &mut doc,
+            core_document::TaskRequest {
+                accept: true,
+                cancel: false,
+            },
+        );
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        assert_eq!(recorded[0].id, "asm.mate");
+
+        let mut replay = before;
+        let mut ctx = WorkbenchRuntimeContext::new(&mut replay, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        AssemblyWorkbench::default()
+            .run_command(&recorded[0].id, &recorded[0].args, &mut ctx)
+            .unwrap();
+        let (a, b) = (replay.body_placement(part), doc.body_placement(part));
+        for i in 0..3 {
+            assert!(
+                (a.translation[i] - b.translation[i]).abs() < 1e-4,
+                "{a:?} {b:?}"
+            );
+        }
+        for i in 0..4 {
+            assert!((a.rotation[i] - b.rotation[i]).abs() < 1e-4, "{a:?} {b:?}");
+        }
+    }
+
     #[test]
     fn a_round_face_is_asked_for_where_an_alignment_needs_one() {
         let (mut doc, _, part) = scene();

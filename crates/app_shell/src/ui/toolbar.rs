@@ -148,18 +148,31 @@ pub struct ToolbarInputs<'a> {
     pub scripts: &'a [crate::script_library::ScriptEntry],
     /// The console is showing.
     pub console_open: bool,
+    /// A recording is on.
+    pub recording: bool,
 }
 
 /// The Scripts button: the scripts folder's scripts, then running a file,
 /// the console and the folder itself.
+/// What the Scripts button's menu shows.
+struct ScriptsMenu<'a> {
+    scripts: &'a [crate::script_library::ScriptEntry],
+    console_open: bool,
+    recording: bool,
+}
+
 fn scripts_button(
     ui: &mut egui::Ui,
-    scripts: &[crate::script_library::ScriptEntry],
-    console_open: bool,
+    menu: ScriptsMenu<'_>,
     keymap: &super::keymap::Keymap,
     commands: &mut Vec<UiCommand>,
     toggle_console: &mut bool,
 ) {
+    let ScriptsMenu {
+        scripts,
+        console_open,
+        recording,
+    } = menu;
     let state = ToolButtonState {
         enabled: true,
         active: false,
@@ -201,6 +214,18 @@ fn scripts_button(
         let run = keymap.text("file.run_script");
         if entry(ui, "open", "Run script…", run, "Run a Lua file") {
             commands.push(UiCommand::File(super::FileCommand::RunScript));
+            ui.close();
+        }
+        let (record, tip) = if recording {
+            ("Stop recording", "Save what was recorded as a new script")
+        } else {
+            (
+                "Record…",
+                "Record what you do from now on as a script that does it again",
+            )
+        };
+        if entry(ui, "script", record, keymap.text("app.record"), tip) {
+            commands.push(UiCommand::ToggleRecording);
             ui.close();
         }
         let console = if console_open {
@@ -469,6 +494,7 @@ pub fn draw_toolbars(
         keymap,
         scripts,
         console_open,
+        recording,
     } = inputs;
     // This copy carries the keys in effect, which the tooltips name.
     let mut tools: Vec<ToolDescriptor> = registry
@@ -532,7 +558,17 @@ pub fn draw_toolbars(
                         }
                     }
                 }
-                scripts_button(ui, scripts, console_open, keymap, commands, toggle_console);
+                scripts_button(
+                    ui,
+                    ScriptsMenu {
+                        scripts,
+                        console_open,
+                        recording,
+                    },
+                    keymap,
+                    commands,
+                    toggle_console,
+                );
                 separator(ui);
                 workbench_combo(ui, active_workbench);
                 separator(ui);

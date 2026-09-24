@@ -185,6 +185,15 @@ impl CommandSpec {
     }
 }
 
+/// A command the user ran through the UI rather than a script: what it
+/// was called with and what it answered. A recording is a list of these.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Recorded {
+    pub id: String,
+    pub args: CommandArgs,
+    pub result: Value,
+}
+
 /// Why a command did not run.
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum CommandError {

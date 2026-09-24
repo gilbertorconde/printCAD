@@ -246,6 +246,87 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
     solved(ctx, json!(feature.0.to_string()))
 }
 
+/// A joint's task accepted, as a recording says it: a new joint as the
+/// command that makes it, its faces where the bodies sat before it moved
+/// them (where a replay finds them); an edited one as `asm.set` with what
+/// changed.
+#[cfg(feature = "egui")]
+pub(crate) fn record_joint(
+    ctx: &mut WorkbenchRuntimeContext,
+    id: FeatureId,
+    before: Option<&Value>,
+    placements: &[(BodyId, BodyPlacement)],
+) {
+    let Some(node) = ctx.document.get_feature_meta(id).cloned() else {
+        return;
+    };
+    let Ok(joint) = serde_json::from_value::<JointFeature>(node.data.clone()) else {
+        return;
+    };
+    let settings = |kind: &JointKind| match *kind {
+        JointKind::Mate { flip, offset } => json!({"offset": offset, "flip": flip}),
+        JointKind::Align => json!({}),
+        JointKind::Angle { degrees } => json!({"degrees": degrees}),
+    };
+    match before {
+        None => {
+            let Some(body) = node.body else {
+                return;
+            };
+            let at = |b: BodyId| {
+                placements
+                    .iter()
+                    .find(|(p, _)| *p == b)
+                    .map(|(_, placement)| *placement)
+                    .unwrap_or_default()
+            };
+            let face = |anchor: &Anchor, b: BodyId| match anchor.moved(&at(b)) {
+                Anchor::Plane { point, normal } => json!({"point": point, "normal": normal}),
+                Anchor::Axis { point, direction } => {
+                    json!({"axis": {"point": point, "direction": direction}})
+                }
+            };
+            let command = match joint.kind {
+                JointKind::Mate { .. } => "asm.mate",
+                JointKind::Align => "asm.align",
+                JointKind::Angle { .. } => "asm.angle",
+            };
+            let mut args = object(json!({
+                "body": body.0.to_string(),
+                "face": face(&joint.moving, body),
+                "other": joint.other_body.0.to_string(),
+                "other_face": face(&joint.fixed, joint.other_body),
+                "name": node.name,
+            }));
+            args.extend(object(settings(&joint.kind)));
+            ctx.record(command, args, json!(id.0.to_string()));
+        }
+        Some(before) => {
+            let Ok(old) = serde_json::from_value::<JointFeature>(before.clone()) else {
+                return;
+            };
+            let (was, now) = (object(settings(&old.kind)), object(settings(&joint.kind)));
+            let mut args = object(json!({"joint": id.0.to_string()}));
+            for (name, value) in now {
+                if was.get(&name) != Some(&value) {
+                    args.insert(name, value);
+                }
+            }
+            if args.len() > 1 {
+                ctx.record("asm.set", args, Value::Null);
+            }
+        }
+    }
+}
+
+/// A JSON object as named arguments.
+pub(crate) fn object(value: Value) -> CommandArgs {
+    match value {
+        Value::Object(map) => map,
+        _ => CommandArgs::new(),
+    }
+}
+
 /// Solve, and answer `value` when every joint holds.
 fn solved(ctx: &mut WorkbenchRuntimeContext, value: Value) -> CommandResult {
     crate::apply_solve(ctx).map_err(CommandError::failed)?;

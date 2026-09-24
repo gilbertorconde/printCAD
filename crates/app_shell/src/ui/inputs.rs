@@ -114,6 +114,8 @@ pub struct UiFrameInputs<'a> {
     pub command_ids: &'a [String],
     /// The script running, by name, while one is.
     pub script_running: Option<&'a str>,
+    /// A recording is on.
+    pub recording: bool,
 }
 
 /// A body's measure as the property panel shows it.

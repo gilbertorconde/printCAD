@@ -60,9 +60,21 @@ pub struct PartDesignWorkbench {
     /// The feature open in the task panel.
     #[cfg(feature = "egui")]
     task: Option<task::TaskState>,
-    /// A feature a tool just created, with the sketches it hid: the task
-    /// that opens for it deletes it on Cancel.
-    pending_task_from_tool: Option<(FeatureId, Vec<FeatureId>)>,
+    /// A feature a tool just created: the task that opens for it deletes it
+    /// on Cancel, and records it on OK as the command that makes it.
+    pending_task_from_tool: Option<ToolMade>,
+}
+
+/// What a tool just made, for the task that opens on it.
+#[derive(Debug, Clone)]
+pub(crate) struct ToolMade {
+    pub feature: FeatureId,
+    /// The sketches it hid, shown again when it is cancelled.
+    pub hidden: Vec<FeatureId>,
+    /// The tool, with its variant (`part.primitive:box`).
+    pub tool: String,
+    /// The body it was made for.
+    pub body: BodyId,
 }
 
 /// Primitive shapes offered from the primitive tools' dropdowns.
@@ -529,7 +541,12 @@ impl PartDesignWorkbench {
             .add_feature_in_body(datum, name.clone(), Some(body))
         {
             Ok(feature_id) => {
-                self.pending_task_from_tool = Some((feature_id, Vec::new()));
+                self.pending_task_from_tool = Some(ToolMade {
+                    feature: feature_id,
+                    hidden: Vec::new(),
+                    tool: tool.to_string(),
+                    body,
+                });
                 ctx.active_document_object = Some(feature_id);
                 ctx.log_info(format!("Created {name}"));
             }
@@ -546,7 +563,12 @@ impl PartDesignWorkbench {
         };
         match self.create_feature(ctx, tool, body, |_| Ok(())) {
             Ok(made) => {
-                self.pending_task_from_tool = Some((made.id, made.hidden));
+                self.pending_task_from_tool = Some(ToolMade {
+                    feature: made.id,
+                    hidden: made.hidden,
+                    tool: tool.to_string(),
+                    body,
+                });
                 ctx.active_document_object = Some(made.id);
             }
             Err(message) => ctx.log_warn(message),
@@ -912,6 +934,11 @@ impl Workbench for PartDesignWorkbench {
                     .map(|b| b.name.clone())
                     .unwrap_or_else(|| format!("body {:?}", body));
                 ctx.log_info(format!("Created {name}"));
+                ctx.record(
+                    "doc.new_body",
+                    commands::object(serde_json::json!({"name": name})),
+                    serde_json::json!(body.0.to_string()),
+                );
                 ctx.request(HostRequest::SelectBody(body));
                 ctx.request(HostRequest::JournalLabel("Create body".to_string()));
                 InputResult::consumed()

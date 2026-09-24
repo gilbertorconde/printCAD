@@ -162,6 +162,11 @@ pub enum UiCommand {
     RunScriptFile(std::path::PathBuf),
     /// Stop the running script.
     StopScript,
+    /// Start recording what is done through the UI as a script, or stop
+    /// and save the recording.
+    ToggleRecording,
+    /// What a panel hook recorded.
+    Recorded(Vec<core_document::Recorded>),
     /// Make a new script in the scripts folder and open it for editing.
     NewScript,
     /// Write what the console ran as a new script in the scripts folder.

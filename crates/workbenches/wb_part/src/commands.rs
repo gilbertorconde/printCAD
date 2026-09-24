@@ -297,6 +297,160 @@ fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> 
     ])
 }
 
+/// What a task accepted, as a recording says it: a feature a tool made as
+/// the command that makes it, with the fields that differ from what that
+/// command would make alone; a datum a tool made as `part.datum`; an edit
+/// of an existing one as `part.set` with the fields it changed.
+#[cfg(feature = "egui")]
+pub(crate) fn record_task(
+    bench: &PartDesignWorkbench,
+    ctx: &mut WorkbenchRuntimeContext,
+    task: &crate::task::TaskState,
+) {
+    let Some(node) = ctx.document.get_feature_meta(task.feature).cloned() else {
+        return;
+    };
+    let id = json!(task.feature.0.to_string());
+    match (&task.made_by, &task.kind) {
+        (Some((tool, body)), crate::task::TaskKind::Part) => {
+            let command = core_document::base_tool_id(tool);
+            if !FEATURES.iter().any(|(f, _)| *f == command) {
+                return;
+            }
+            let fields = inner(&node.data);
+            let sketch = fields
+                .get("sketch")
+                .and_then(Value::as_str)
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                .map(FeatureId);
+            let default = default_feature(bench, ctx, tool, *body, sketch);
+            let mut args = Map::new();
+            if let Some(sketch) = sketch {
+                args.insert("sketch".into(), json!(sketch.0.to_string()));
+            }
+            args.insert("body".into(), json!(body.0.to_string()));
+            args.insert("name".into(), json!(node.name));
+            if let Some(variant) = core_document::tool_variant(tool) {
+                args.insert("variant".into(), json!(variant));
+            }
+            let default_fields = default.as_ref().map(inner).unwrap_or_default();
+            for (name, value) in fields {
+                if name != "sketch" && default_fields.get(&name) != Some(&value) {
+                    args.insert(name, value);
+                }
+            }
+            ctx.record(command, args, id);
+        }
+        (Some((_, body)), crate::task::TaskKind::Datum) => {
+            let Ok(datum) = DatumFeature::from_json(&node.data) else {
+                return;
+            };
+            let (kind, size) = match datum.shape {
+                DatumShape::Plane { size } => ("plane", Some(size)),
+                DatumShape::Line { length } => ("line", Some(length)),
+                DatumShape::Point => ("point", None),
+                DatumShape::CoordinateSystem { size } => ("coordinate_system", Some(size)),
+            };
+            let mut args = json!({
+                "kind": kind,
+                "body": body.0.to_string(),
+                "name": node.name,
+                "offset": datum.offset.translation,
+                "rotation": datum.offset.rotation_deg,
+                "flip": datum.offset.flip,
+            });
+            if let Some(size) = size {
+                args["size"] = json!(size);
+            }
+            match datum.attachment {
+                DatumAttachment::BasePlane(plane) => {
+                    args["plane"] = json!(match plane {
+                        BasePlane::XY => "XY",
+                        BasePlane::XZ => "XZ",
+                        BasePlane::YZ => "YZ",
+                    });
+                }
+                DatumAttachment::FlatFace { point, normal } => {
+                    args["face_point"] = json!(point);
+                    args["face_normal"] = json!(normal);
+                }
+            }
+            ctx.record("part.datum", crate::commands::object(args), id);
+        }
+        (None, kind) => {
+            let (before, after) = match kind {
+                crate::task::TaskKind::Part => (inner(&task.snapshot), inner(&node.data)),
+                crate::task::TaskKind::Datum => (
+                    task.snapshot.as_object().cloned().unwrap_or_default(),
+                    node.data.as_object().cloned().unwrap_or_default(),
+                ),
+            };
+            let mut args = Map::new();
+            args.insert("feature".into(), id.clone());
+            for (name, value) in after {
+                if before.get(&name) != Some(&value) {
+                    args.insert(name, value);
+                }
+            }
+            if args.len() > 1 {
+                ctx.record("part.set", args, Value::Null);
+            }
+        }
+    }
+}
+
+/// The fields of a feature's JSON, inside its kind: `{"Pad": {...}}` gives
+/// the `{...}`.
+fn inner(value: &Value) -> Map<String, Value> {
+    value
+        .as_object()
+        .and_then(|m| m.values().next())
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// A JSON object as named arguments.
+pub(crate) fn object(value: Value) -> Map<String, Value> {
+    match value {
+        Value::Object(map) => map,
+        _ => Map::new(),
+    }
+}
+
+/// The feature `tool` makes for `body` from `sketch` alone, nothing else
+/// selected: what the command makes before any field is named.
+#[cfg(feature = "egui")]
+fn default_feature(
+    bench: &PartDesignWorkbench,
+    ctx: &mut WorkbenchRuntimeContext,
+    tool: &str,
+    body: BodyId,
+    sketch: Option<FeatureId>,
+) -> Option<Value> {
+    let saved = (
+        ctx.active_document_object,
+        ctx.selected_face.take(),
+        std::mem::take(&mut ctx.selected_edges),
+        ctx.selected_body_id.take(),
+    );
+    ctx.active_document_object = sketch;
+    let made = PartDesignWorkbench::feature_for_tool(
+        core_document::base_tool_id(tool),
+        core_document::tool_variant(tool),
+        ctx,
+        body,
+    );
+    ctx.active_document_object = saved.0;
+    ctx.selected_face = saved.1;
+    ctx.selected_edges = saved.2;
+    ctx.selected_body_id = saved.3;
+    made.ok().map(|(mut feature, _)| {
+        feature.set_refine(bench.options.refine_result);
+        feature.to_json()
+    })
+}
+
 /// Replace the named fields of the JSON object `value`, refusing a name it
 /// does not have.
 fn merge_fields(kind: &str, value: &mut Value, fields: &Map<String, Value>) -> Result<(), String> {
@@ -409,6 +563,114 @@ mod tests {
         let data = fields(&doc, &pad);
         assert_eq!(data["Pad"]["length"], json!(40.0));
         assert_eq!(data["Pad"]["reversed"], json!(true));
+    }
+
+    /// One frame of the task panel, as the host runs it; what it recorded
+    /// and the active object it left.
+    #[cfg(feature = "egui")]
+    fn task_frame(
+        bench: &mut PartDesignWorkbench,
+        doc: &mut Document,
+        active: FeatureId,
+        request: core_document::TaskRequest,
+    ) -> Vec<core_document::Recorded> {
+        let egui_ctx = egui::Context::default();
+        ui_kit::apply_theme(&egui_ctx);
+        let mut recorded = Vec::new();
+        let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.active_document_object = Some(active);
+            bench.ui_task_panel(ui, &mut ctx, request);
+            recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+        });
+        output.textures_delta.clear();
+        recorded
+    }
+
+    #[cfg(feature = "egui")]
+    #[test]
+    fn a_pad_made_with_the_tool_records_as_the_command_that_makes_it() {
+        let mut doc = Document::new("t");
+        let (_, sketch) = sketch_in(&mut doc);
+        let before = doc.clone();
+        let mut bench = PartDesignWorkbench::default();
+        let pad = {
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.active_document_object = Some(sketch);
+            bench.on_input(
+                &core_document::WorkbenchInputEvent::KeyPress {
+                    key: core_document::KeyCode::A,
+                },
+                Some("part.pad"),
+                &mut ctx,
+            );
+            ctx.active_document_object.unwrap()
+        };
+        task_frame(&mut bench, &mut doc, pad, Default::default());
+        // The panel's length field, as a person types into it.
+        let mut data = doc.get_feature_data(pad).unwrap().clone();
+        data["Pad"]["length"] = json!(25.0);
+        doc.update_feature_data(pad, data).unwrap();
+        let recorded = task_frame(
+            &mut bench,
+            &mut doc,
+            pad,
+            core_document::TaskRequest {
+                accept: true,
+                cancel: false,
+            },
+        );
+        assert_eq!(recorded.len(), 1, "{recorded:?}");
+        let call = &recorded[0];
+        assert_eq!(call.id, "part.pad");
+        assert_eq!(call.args["length"], json!(25.0));
+        assert!(
+            !call.args.contains_key("reversed"),
+            "only what differs from the command's own: {:?}",
+            call.args
+        );
+
+        // The call makes the same pad on the document as it was.
+        let mut replay = before;
+        let made = call_on(&mut replay, &call.id, Value::Object(call.args.clone())).unwrap();
+        let made = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
+        assert_eq!(
+            replay.get_feature_data(made),
+            doc.get_feature_data(pad),
+            "the same fields"
+        );
+        assert_eq!(
+            replay.get_feature_meta(made).unwrap().name,
+            doc.get_feature_meta(pad).unwrap().name
+        );
+
+        // Editing it again records the change alone.
+        task_frame(&mut bench, &mut doc, pad, Default::default());
+        let mut data = doc.get_feature_data(pad).unwrap().clone();
+        data["Pad"]["reversed"] = json!(true);
+        doc.update_feature_data(pad, data).unwrap();
+        let edit = task_frame(
+            &mut bench,
+            &mut doc,
+            pad,
+            core_document::TaskRequest {
+                accept: true,
+                cancel: false,
+            },
+        );
+        assert_eq!(edit.len(), 1);
+        assert_eq!(edit[0].id, "part.set");
+        assert_eq!(
+            edit[0].args.len(),
+            2,
+            "the feature and the one field: {:?}",
+            edit[0].args
+        );
+    }
+
+    fn call_on(doc: &mut Document, id: &str, args: Value) -> CommandResult {
+        let mut bench = PartDesignWorkbench::default();
+        call(&mut bench, doc, id, args)
     }
 
     #[test]

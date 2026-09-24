@@ -79,6 +79,14 @@ impl PrintCadApp {
     ) {
         let mut intents = FrameIntents::default();
         for command in commands {
+            if let Some(call) = crate::app::scripts::recorded_of(&command) {
+                self.record_calls(vec![call]);
+            }
+            if self.recording.is_some() && matches!(command, UiCommand::Undo | UiCommand::Redo) {
+                crate::app_log::warn(
+                    "Undo and Redo are not in the recording: what they took back stays in it",
+                );
+            }
             match command {
                 UiCommand::File(FileCommand::New) => intents.new_document = true,
                 UiCommand::File(FileCommand::Export) => self.open_export_dialog(),
@@ -198,6 +206,8 @@ impl PrintCadApp {
                 UiCommand::RunConsole(line) => self.run_console_line(&line),
                 UiCommand::RunScriptFile(path) => self.run_script_file(&path),
                 UiCommand::StopScript => self.stop_script(),
+                UiCommand::ToggleRecording => self.toggle_recording(),
+                UiCommand::Recorded(calls) => self.record_calls(calls),
                 UiCommand::NewScript => self.new_script(None),
                 UiCommand::SaveRunsAsScript(runs) => self.new_script(Some(runs)),
                 UiCommand::EditScript(path) => self.edit_script(path),

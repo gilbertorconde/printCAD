@@ -17,6 +17,7 @@ pub mod render;
 pub mod sketch;
 pub mod snap;
 mod solver;
+mod step;
 pub mod style;
 mod tools;
 
@@ -32,7 +33,7 @@ use core_document::{
 pub use feature::SketchFeature;
 use overlay::SketchProjector;
 use ovp::DimCapture;
-use sketch::{Constraint, ConstraintKind, GeometryElement, Sketch, SketchPlane, Vec2D};
+use sketch::{Constraint, GeometryElement, Sketch, SketchPlane, Vec2D};
 use solver::{Diagnosis, SolveOutcome};
 pub use tools::ToolParams;
 use tools::ToolState;
@@ -88,6 +89,26 @@ struct DragState {
     /// whole selection, and a release without movement drops it again.
     was_selected: bool,
     moved: bool,
+    /// The elements the drag carries, and how far it has carried them:
+    /// what a recording of it says.
+    elements: Vec<Uuid>,
+    delta: Vec2D,
+}
+
+/// A shape the active tool is drawing, as a recording will say it: the
+/// `sketch.draw` call its clicks add up to.
+struct DrawRecord {
+    sketch: FeatureId,
+    tool: String,
+    /// Each click (a point, or a point with typed values), and the polyline's
+    /// "arc"/"line" switches and "finish".
+    events: Vec<serde_json::Value>,
+    /// The other arguments: tolerance, tool settings, construction.
+    settings: serde_json::Map<String, serde_json::Value>,
+    /// Something was made or changed.
+    changed: bool,
+    elements_before: HashSet<Uuid>,
+    constraints_before: HashSet<Uuid>,
 }
 
 /// In-progress drag of a dimension label (select mode).
@@ -263,6 +284,8 @@ pub struct SketchWorkbench {
     renaming_constraint: Option<Uuid>,
     /// Substring filter over the constraint list.
     constraint_filter: String,
+    /// The shape being drawn, until it is recorded.
+    draw_record: Option<DrawRecord>,
 }
 
 /// The solver's verdict on the edited sketch, as the panel, HUD and status
@@ -375,7 +398,25 @@ fn keyed(tool: ToolDescriptor) -> ToolDescriptor {
 /// The points a drag of `id` moves: the point itself, or every point the
 /// curve is pinned to. Moving them all translates the element, and
 /// anything sharing those points comes with it.
-fn drag_point_ids(sketch: &Sketch, id: Uuid) -> Vec<Uuid> {
+/// The tools that act on the selection, whose recording names it.
+const SELECTION_TOOLS: &[&str] = &[
+    "sketch.offset",
+    "sketch.translate",
+    "sketch.rotate",
+    "sketch.scale",
+    "sketch.mirror",
+];
+
+/// Ids as a JSON list of strings.
+fn ids_json(ids: &[Uuid]) -> serde_json::Value {
+    serde_json::Value::Array(
+        ids.iter()
+            .map(|id| serde_json::json!(id.to_string()))
+            .collect(),
+    )
+}
+
+pub(crate) fn drag_point_ids(sketch: &Sketch, id: Uuid) -> Vec<Uuid> {
     match sketch.get_geometry(id) {
         Some(sketch::GeometryElement::Point(p)) => vec![p.id],
         Some(other) => Sketch::curve_point_ids(other),
@@ -528,25 +569,15 @@ impl SketchWorkbench {
         } else {
             vec![id]
         };
-        let mut points: Vec<(Uuid, Vec2D)> = Vec::new();
-        // External geometry sits where its solid edge is; a drag leaves it.
-        let external = sketch.external_ids();
-        for element in moving {
-            for pid in drag_point_ids(sketch, element) {
-                if external.contains(&pid) || points.iter().any(|(seen, _)| *seen == pid) {
-                    continue;
-                }
-                if let Some(pos) = sketch.point_position(pid) {
-                    points.push((pid, pos));
-                }
-            }
-        }
+        let points = step::drag_targets(sketch, &moving);
         self.dragging = Some(DragState {
             points,
             grab: cursor,
             hit: id,
             was_selected,
             moved: false,
+            elements: moving,
+            delta: Vec2D::new(0.0, 0.0),
         });
     }
 
@@ -655,6 +686,20 @@ impl SketchWorkbench {
             .add_feature_in_body(sketch_feature, sketch_name.clone(), body)
         {
             Ok(feature_id) => {
+                let mut args = serde_json::json!({
+                    "name": sketch_name,
+                    "normal": plane.normal,
+                    "origin": plane.origin,
+                    "x_axis": plane.x_axis,
+                });
+                if let Some(body) = body {
+                    args["body"] = serde_json::json!(body.0.to_string());
+                }
+                ctx.record(
+                    "sketch.new",
+                    commands::args(args),
+                    serde_json::json!(feature_id.0.to_string()),
+                );
                 self.active_sketch_id = Some(feature_id);
                 self.clear_interaction_state();
                 ctx.active_document_object = Some(feature_id);
@@ -716,86 +761,42 @@ impl SketchWorkbench {
         };
         self.dim_capture.sync(&self.tool_state);
         let typed = self.dim_capture.typed();
-        let cursor = if typed.is_empty() {
-            cursor
-        } else {
-            ovp::override_cursor(&self.tool_state, &feature.sketch, cursor, &typed)
+        let settings = step::StepSettings {
+            tol,
+            params,
+            construction: self.construction_mode,
+            avoid_redundant: self.options.avoid_redundant_auto,
         };
-        // Remember which geometry existed so construction mode can
-        // flag everything the tool created, regardless of which
-        // tool ran (an id set, not a Vec index: the fillet tool
-        // also *removes* the corner point, shifting indices).
-        let before: Option<HashSet<Uuid>> = self.construction_mode.then(|| {
-            feature
-                .sketch
-                .geometry
-                .iter()
-                .map(GeometryElement::id)
-                .collect()
-        });
-        let state_before = self.tool_state.clone();
-        let constraints_before: HashSet<Uuid> =
-            feature.sketch.constraints.iter().map(|c| c.id).collect();
-        let effect = tools::handle_click(
+        self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
+        let outcome = step::click(
             &mut self.tool_state,
+            &mut self.dim_capture,
             tool,
             &mut feature.sketch,
             cursor,
-            tol,
-            &params,
-            &self.selected,
-        );
-        // An auto constraint the solver would call redundant adds nothing
-        // the sketch does not already enforce; it goes before it lands.
-        if self.options.avoid_redundant_auto
-            && feature
-                .sketch
-                .constraints
-                .iter()
-                .any(|c| !constraints_before.contains(&c.id))
-        {
-            let diagnosis = solver::diagnose(&feature.sketch);
-            let redundant_new: Vec<Uuid> = feature
-                .sketch
-                .constraints
-                .iter()
-                .filter(|c| {
-                    !constraints_before.contains(&c.id) && diagnosis.redundant.contains(&c.id)
-                })
-                .map(|c| c.id)
-                .collect();
-            if !redundant_new.is_empty() {
-                feature
-                    .sketch
-                    .constraints
-                    .retain(|c| !redundant_new.contains(&c.id));
-                ctx.log_info(format!(
-                    "Skipped {} redundant auto constraint(s)",
-                    redundant_new.len()
-                ));
-            }
-        }
-        if let Some(before) = before {
-            let new_ids: Vec<Uuid> = feature
-                .sketch
-                .geometry
-                .iter()
-                .map(GeometryElement::id)
-                .filter(|id| !before.contains(id))
-                .collect();
-            for id in new_ids {
-                feature.sketch.set_construction(id, true);
-            }
-        }
-        let added = ovp::apply_typed_constraints(
-            &mut self.dim_capture,
-            &mut feature.sketch,
-            &state_before,
-            &self.tool_state,
-            effect.changed,
             &typed,
             constrain,
+            &settings,
+            &self.selected,
         );
+        if outcome.skipped > 0 {
+            ctx.log_info(format!(
+                "Skipped {} redundant auto constraint(s)",
+                outcome.skipped
+            ));
+        }
+        let (effect, added) = (
+            tools::ToolEffect {
+                changed: outcome.changed,
+                log: outcome.log,
+            },
+            outcome.added,
+        );
+        if (effect.changed || added > 0)
+            && let Some(record) = self.draw_record.as_mut()
+        {
+            record.changed = true;
+        }
         if effect.changed {
             self.dim_capture.clear_buffers();
         }
@@ -807,6 +808,115 @@ impl SketchWorkbench {
             self.store_sketch(ctx, feature);
         }
         InputResult::consumed()
+    }
+
+    /// Note a click for the recording: the start of a new `sketch.draw`
+    /// call when the tool starts a shape, else one more of its points.
+    #[allow(clippy::too_many_arguments)]
+    fn note_draw_click(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        tool: &str,
+        cursor: Vec2D,
+        typed: &[(ovp::FieldKind, f32)],
+        constrain: bool,
+        settings: &step::StepSettings,
+    ) {
+        let Some(sketch_id) = self.active_sketch_id else {
+            return;
+        };
+        let fresh = match &self.draw_record {
+            Some(r) => r.tool != tool || r.sketch != sketch_id || self.tool_state.is_idle(),
+            None => true,
+        };
+        if fresh {
+            self.flush_draw_record(ctx);
+            let mut named = serde_json::Map::new();
+            named.insert("tolerance".into(), serde_json::json!(settings.tol));
+            let params = step::params_to_json(&settings.params);
+            if !params.is_empty() {
+                named.insert("params".into(), serde_json::Value::Object(params));
+            }
+            if settings.construction {
+                named.insert("construction".into(), serde_json::json!(true));
+            }
+            if !settings.avoid_redundant {
+                named.insert("avoid_redundant".into(), serde_json::json!(false));
+            }
+            if SELECTION_TOOLS.contains(&tool) && !self.selected.is_empty() {
+                let mut selected: Vec<Uuid> = self.selected.iter().copied().collect();
+                selected.sort();
+                named.insert("selection".into(), ids_json(&selected));
+            }
+            self.draw_record = Some(DrawRecord {
+                sketch: sketch_id,
+                tool: tool.to_string(),
+                events: Vec::new(),
+                settings: named,
+                changed: false,
+                elements_before: feature.sketch.geometry.iter().map(|g| g.id()).collect(),
+                constraints_before: feature.sketch.constraints.iter().map(|c| c.id).collect(),
+            });
+        }
+        let event = if typed.is_empty() {
+            serde_json::json!([cursor.x, cursor.y])
+        } else {
+            let values: serde_json::Map<String, serde_json::Value> = typed
+                .iter()
+                .map(|(k, v)| (step::field_name(*k).to_string(), serde_json::json!(v)))
+                .collect();
+            serde_json::json!({"x": cursor.x, "y": cursor.y, "typed": values, "constrain": constrain})
+        };
+        if let Some(record) = self.draw_record.as_mut() {
+            record.events.push(event);
+        }
+    }
+
+    /// Record the shape drawn so far as one `sketch.draw` call, with what
+    /// it made, when it made anything.
+    fn flush_draw_record(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(record) = self.draw_record.take() else {
+            return;
+        };
+        if !record.changed {
+            return;
+        }
+        let Some(feature) = stored_sketch(ctx.document, record.sketch) else {
+            return;
+        };
+        let elements: Vec<Uuid> = feature
+            .sketch
+            .geometry
+            .iter()
+            .map(|g| g.id())
+            .filter(|id| !record.elements_before.contains(id))
+            .collect();
+        let constraints: Vec<Uuid> = feature
+            .sketch
+            .constraints
+            .iter()
+            .map(|c| c.id)
+            .filter(|id| !record.constraints_before.contains(id))
+            .collect();
+        let mut args = record.settings;
+        args.insert(
+            "sketch".into(),
+            serde_json::json!(record.sketch.0.to_string()),
+        );
+        args.insert(
+            "tool".into(),
+            serde_json::json!(record.tool.trim_start_matches("sketch.")),
+        );
+        args.insert("points".into(), serde_json::Value::Array(record.events));
+        ctx.record(
+            "sketch.draw",
+            args,
+            serde_json::json!({
+                "elements": ids_json(&elements),
+                "constraints": ids_json(&constraints),
+            }),
+        );
     }
 
     fn handle_left_click(
@@ -975,13 +1085,8 @@ impl SketchWorkbench {
                 return InputResult::consumed();
             }
             drag.moved = true;
-            let points = drag.points.clone();
-            for (id, original) in points {
-                if let Some(sketch::GeometryElement::Point(p)) = feature.sketch.get_geometry_mut(id)
-                {
-                    p.position = original + delta;
-                }
-            }
+            drag.delta = delta;
+            step::drag(&mut feature.sketch, &drag.points, delta);
             self.solve(ctx, &mut feature);
             self.store_sketch(ctx, feature);
             return InputResult::consumed();
@@ -1019,6 +1124,19 @@ impl SketchWorkbench {
             // there before comes back out.
             if !drag.moved && drag.was_selected {
                 self.selected.remove(&drag.hit);
+            }
+            if drag.moved
+                && let Some(sketch_id) = self.active_sketch_id
+            {
+                ctx.record(
+                    "sketch.drag",
+                    commands::args(serde_json::json!({
+                        "sketch": sketch_id.0.to_string(),
+                        "items": ids_json(&drag.elements),
+                        "by": [drag.delta.x, drag.delta.y],
+                    })),
+                    serde_json::Value::Null,
+                );
             }
             return InputResult::consumed();
         }
@@ -1062,19 +1180,25 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        // The origin and the axes are not the sketch's to delete.
-        let doomed: Vec<Uuid> = self
-            .selected
-            .drain()
-            .filter(|id| sketch::Reference::of(*id).is_none())
-            .collect();
-        let removed = feature.sketch.remove_geometry_cascade(&doomed);
+        let mut doomed: Vec<Uuid> = self.selected.drain().collect();
+        doomed.sort();
+        let removed = commands::delete_items(&mut feature.sketch, &doomed);
         self.hovered = None;
-        if removed.is_empty() {
+        if removed == 0 {
             return InputResult::consumed();
         }
+        if let Some(sketch_id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.delete",
+                commands::args(serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "items": ids_json(&doomed),
+                })),
+                serde_json::Value::Null,
+            );
+        }
         self.solve(ctx, &mut feature);
-        ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
+        ctx.log_info(format!("Deleted {removed} sketch element(s)"));
         self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
@@ -1097,11 +1221,34 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let mut toggled = 0usize;
+        let (mut on, mut off) = (Vec::new(), Vec::new());
         for id in &self.selected {
             if feature.sketch.get_geometry(*id).is_some() {
                 let flag = !feature.sketch.is_construction(*id);
                 feature.sketch.set_construction(*id, flag);
+                if flag {
+                    on.push(*id)
+                } else {
+                    off.push(*id)
+                }
                 toggled += 1;
+            }
+        }
+        if let Some(sketch_id) = self.active_sketch_id {
+            for (mut items, flag) in [(on, true), (off, false)] {
+                if items.is_empty() {
+                    continue;
+                }
+                items.sort();
+                ctx.record(
+                    "sketch.construction",
+                    commands::args(serde_json::json!({
+                        "sketch": sketch_id.0.to_string(),
+                        "items": ids_json(&items),
+                        "on": flag,
+                    })),
+                    serde_json::Value::Null,
+                );
             }
         }
         if toggled > 0 {
@@ -1129,6 +1276,10 @@ impl SketchWorkbench {
                     &mut feature.sketch,
                     &self.tool_params,
                 );
+                if let Some(record) = self.draw_record.as_mut() {
+                    record.events.push(serde_json::json!("finish"));
+                    record.changed |= effect.changed;
+                }
                 if effect.changed {
                     self.solve(ctx, &mut feature);
                     if let Some(log) = effect.log {
@@ -1226,15 +1377,23 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let doomed: HashSet<Uuid> = std::mem::take(&mut self.selected_constraints);
-        let before = feature.sketch.constraints.len();
-        feature
-            .sketch
-            .constraints
-            .retain(|c| !doomed.contains(&c.id));
-        let removed = before - feature.sketch.constraints.len();
+        let mut doomed: Vec<Uuid> = std::mem::take(&mut self.selected_constraints)
+            .into_iter()
+            .collect();
+        doomed.sort();
+        let removed = commands::delete_items(&mut feature.sketch, &doomed);
         if removed == 0 {
             return InputResult::consumed();
+        }
+        if let Some(sketch_id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.delete",
+                commands::args(serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "items": ids_json(&doomed),
+                })),
+                serde_json::Value::Null,
+            );
         }
         self.solve(ctx, &mut feature);
         ctx.log_info(format!("Deleted {removed} constraint(s)"));
@@ -1262,6 +1421,13 @@ impl SketchWorkbench {
     fn handle_action(&mut self, id: &str) -> InputResult {
         match id {
             POLYLINE_ARC_ACTION if tools::toggle_polyline_arc(&mut self.tool_state) => {
+                if let (Some(record), ToolState::PolylineFrom { arc, .. }) =
+                    (self.draw_record.as_mut(), &self.tool_state)
+                {
+                    record
+                        .events
+                        .push(serde_json::json!(if *arc { "arc" } else { "line" }));
+                }
                 InputResult::consumed()
             }
             _ => InputResult::ignored(),
@@ -1345,6 +1511,18 @@ impl SketchWorkbench {
         };
         c.kind = sketch::with_dimension_value(&c.kind, value);
         c.driving = edit.driving;
+        if let Some(sketch_id) = self.active_sketch_id {
+            ctx.record(
+                "sketch.set_value",
+                commands::args(serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "constraint": edit.constraint.to_string(),
+                    "value": value,
+                    "driving": edit.driving,
+                })),
+                serde_json::Value::Null,
+            );
+        }
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
     }
@@ -1365,27 +1543,24 @@ impl SketchWorkbench {
         let Some(slot) = feature.sketch.constraints.get_mut(idx) else {
             return;
         };
-        *slot = constraint;
-        self.solve(ctx, &mut feature);
-        self.store_sketch(ctx, feature);
-    }
-
-    /// Add a constraint from the panel, then re-solve and persist. New
-    /// dimensional constraints get their value field focused for immediate
-    /// typing.
-    fn add_constraint(&mut self, ctx: &mut WorkbenchRuntimeContext, kind: ConstraintKind) {
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return;
-        };
-        ctx.log_info(format!(
-            "Added constraint: {}",
-            sketch::constraint_label(&kind)
-        ));
-        let dimensional = kind.is_dimensional();
-        let id = feature.sketch.add_constraint(kind);
-        if dimensional {
-            self.pending_focus = Some(id);
+        // A dimension's value or driving flag, as a recording says it; the
+        // panel's other edits (a name, a label's place) are not modelling.
+        let value = sketch::dimension_value(&constraint.kind);
+        if (value != sketch::dimension_value(&slot.kind) || constraint.driving != slot.driving)
+            && let (Some(value), Some(sketch_id)) = (value, self.active_sketch_id)
+        {
+            ctx.record(
+                "sketch.set_value",
+                commands::args(serde_json::json!({
+                    "sketch": sketch_id.0.to_string(),
+                    "constraint": constraint.id.to_string(),
+                    "value": value,
+                    "driving": constraint.driving,
+                })),
+                serde_json::Value::Null,
+            );
         }
+        *slot = constraint;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
     }
@@ -2148,6 +2323,14 @@ impl Workbench for SketchWorkbench {
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        // A shape is recorded once it is done: its tool back at rest, or
+        // another tool picked.
+        let shape_done = self.draw_record.as_ref().is_some_and(|r| {
+            self.tool_state.is_idle() || self.last_tool.as_deref() != Some(r.tool.as_str())
+        });
+        if shape_done {
+            self.flush_draw_record(ctx);
+        }
         self.sync_active_sketch_from_ctx(ctx);
         if self.active_sketch_id.is_some() && self.external_refreshed != self.active_sketch_id {
             self.external_refreshed = self.active_sketch_id;
@@ -2221,6 +2404,7 @@ impl Workbench for SketchWorkbench {
     }
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        self.flush_draw_record(ctx);
         if self.active_sketch_id.is_some() {
             self.active_sketch_id = None;
             self.sketch_picker = None;
@@ -2568,13 +2752,42 @@ impl SketchWorkbench {
         } else {
             which
         };
-        match constrain::kinds_for(which, &shape, &feature.sketch) {
-            Some(kinds) => {
-                for kind in kinds {
-                    self.add_constraint(ctx, kind);
+        let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+        items.sort();
+        let mut feature = feature;
+        match commands::constrain(&mut feature.sketch, which, &items, None) {
+            Ok(made) => {
+                if let Some(sketch_id) = self.active_sketch_id {
+                    ctx.record(
+                        "sketch.constrain",
+                        commands::args(serde_json::json!({
+                            "sketch": sketch_id.0.to_string(),
+                            "kind": which,
+                            "items": ids_json(&items),
+                        })),
+                        serde_json::json!(made),
+                    );
                 }
+                for id in &made {
+                    if let Some(c) = feature
+                        .sketch
+                        .constraints
+                        .iter()
+                        .find(|c| c.id.to_string() == *id)
+                    {
+                        ctx.log_info(format!(
+                            "Added constraint: {}",
+                            sketch::constraint_label(&c.kind)
+                        ));
+                        if c.kind.is_dimensional() {
+                            self.pending_focus = Some(c.id);
+                        }
+                    }
+                }
+                self.solve(ctx, &mut feature);
+                self.store_sketch(ctx, feature);
             }
-            None => ctx.log_warn(format!(
+            Err(_) => ctx.log_warn(format!(
                 "The {which} constraint does not fit the current selection"
             )),
         }
@@ -3630,6 +3843,7 @@ mod dimension_tool {
 #[cfg(test)]
 mod sketch_picker {
     use super::*;
+    use crate::sketch::ConstraintKind;
     use core_document::Document;
     use sketch::{Line, Point};
 

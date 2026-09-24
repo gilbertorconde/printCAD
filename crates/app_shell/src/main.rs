@@ -280,6 +280,8 @@ struct PrintCadApp {
     script_runs: std::collections::VecDeque<app::scripts::ScriptRun>,
     /// The running script's `doc.rebuild`, waiting on the kernel.
     script_rebuild: Option<app::scripts::RebuildWait>,
+    /// A recording of what is done through the UI, while one is on.
+    recording: Option<scripting::Recorder>,
     /// Script files picked in a dialog, to run once it answers.
     scripts_to_run: Vec<PathBuf>,
     /// The scripts folder's scripts, and when it was last read.
@@ -375,6 +377,7 @@ impl PrintCadApp {
             },
             script_runs: Default::default(),
             script_rebuild: None,
+            recording: None,
             bench_open_fired: false,
             bench_select_fired: false,
             bench_repair_fired: false,

@@ -84,19 +84,14 @@ so neither reaches into a workbench:
 Built: Lua 5.4 (the `scripting` crate) over every command, the console
 (completion, several lines, history kept), script files and the scripts
 folder in the Scripts menu, toolbar, palette and keymap, Save as script,
-one undo step per run, scripts on a thread of their own with Stop, and
-runs without a window. See [Scripting](SCRIPTING.md). Workbenches stay
+one undo step per run, scripts on a thread of their own with Stop,
+recording, and runs without a window. See [Scripting](SCRIPTING.md). Workbenches stay
 Rust.
 
-Next:
-
-- Tools that end in a command: each tool turns its clicks into the
-  arguments of the command it stands for (snapped points, typed lengths,
-  picked faces as a point and a direction) and calls it, so a click and a
-  script run the same code.
-- Recording: with every tool ending in a command, a macro is the list of
-  commands a session called, results bound to variables so later calls
-  refer to them rather than to this session's ids.
+Built as well: tools that end in a command (a sketch tool's clicks are
+`sketch.draw` over the points they landed on; Part Design and Assembly
+tasks close into the command that makes their feature or joint) and
+recording, which writes a session as the list of those commands.
 
 ### AI
 

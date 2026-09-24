@@ -37,6 +37,8 @@ pub struct StatusBarInputs<'a> {
     pub dimensions: Option<&'a str>,
     /// The script running, by name, while one is.
     pub script_running: Option<&'a str>,
+    /// A recording is on.
+    pub recording: bool,
 }
 
 /// What the status bar's buttons asked for.
@@ -46,6 +48,8 @@ pub struct StatusBarResult {
     pub cancel_kernel: bool,
     /// Stop the running script.
     pub stop_script: bool,
+    /// Stop the recording and save it.
+    pub stop_recording: bool,
 }
 
 fn progress_bar(ui: &mut egui::Ui, done: u64, total: u64) {
@@ -64,6 +68,7 @@ fn megabytes(bytes: u64) -> f64 {
 pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
     let mut cancel_requested = false;
     let mut stop_script = false;
+    let mut stop_recording = false;
     egui::Panel::bottom("status_bar")
         .exact_size(STATUS_BAR)
         .frame(
@@ -79,6 +84,21 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_4;
                 draw_activity(ui, inputs, &mut cancel_requested);
+                if inputs.recording {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_2;
+                        let (rect, _) =
+                            ui.allocate_exact_size(Vec2::splat(8.0), egui::Sense::hover());
+                        ui.painter().circle_filled(rect.center(), 4.0, DANGER);
+                        ui.label(RichText::new("Recording").font(sans(FONT_XS)).color(TEXT1));
+                        if small_secondary_button(ui, "Stop")
+                            .on_hover_text("Save what was recorded as a new script")
+                            .clicked()
+                        {
+                            stop_recording = true;
+                        }
+                    });
+                }
                 if let Some(script) = inputs.script_running {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = SPACE_2;
@@ -158,6 +178,7 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
     StatusBarResult {
         cancel_kernel: cancel_requested,
         stop_script,
+        stop_recording,
     }
 }
 

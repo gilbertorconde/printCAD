@@ -74,6 +74,8 @@ pub struct PanelWriteback {
     /// released).
     pub active_object_changed: Option<Option<FeatureId>>,
     pub requests: Vec<core_document::HostRequest>,
+    /// What the hook recorded, for a recording in progress.
+    pub recorded: Vec<core_document::Recorded>,
 }
 
 impl PanelWriteback {
@@ -84,6 +86,7 @@ impl PanelWriteback {
         Self {
             active_object_changed,
             requests: outcome.requests,
+            recorded: outcome.recorded,
         }
     }
 }

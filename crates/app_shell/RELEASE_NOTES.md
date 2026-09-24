@@ -51,6 +51,7 @@ version first.
 - Every `.lua` file in the scripts folder shows in the Scripts menu, the toolbar and the palette, and takes a key.
 - `printcad --script build.lua` runs a script without a window, for batch work.
 - Scripts run on a thread of their own: the window stays live and the status bar shows the running script with a Stop button.
+- Scripts › Record… writes what you do as a script that does it again: every tool ends in the command it stands for, so the recording is the list of those commands, with what it makes named for later lines.
 - A script run is one undo step. See docs/SCRIPTING.md.
 
 ### Keyboard

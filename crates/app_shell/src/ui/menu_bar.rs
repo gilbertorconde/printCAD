@@ -34,6 +34,8 @@ pub struct MenuBarInputs<'a> {
     pub active_tab: Option<uuid::Uuid>,
     /// The scripts folder's scripts.
     pub scripts: &'a [crate::script_library::ScriptEntry],
+    /// A recording is on.
+    pub recording: bool,
 }
 
 /// Menu-driven requests that are UI-local state rather than app commands.
@@ -407,6 +409,14 @@ pub fn draw_menu_bar(
                         }
                         if choice(ui, inputs.show_console, "Console", key("app.console")) {
                             result.toggle_console = true;
+                        }
+                        let record = if inputs.recording {
+                            "Stop recording"
+                        } else {
+                            "Record…"
+                        };
+                        if item(ui, record, key("app.record")) {
+                            commands.push(UiCommand::ToggleRecording);
                         }
                         ui.separator();
                         if inputs.scripts.is_empty() {

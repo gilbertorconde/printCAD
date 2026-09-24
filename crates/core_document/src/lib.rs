@@ -29,7 +29,7 @@ use uuid::Uuid;
 
 pub use asset::{AssetReference, AssetType};
 pub use command::{
-    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec,
+    Args, CommandArgs, CommandError, CommandResult, CommandSpec, ParamKind, ParamSpec, Recorded,
 };
 pub use datum::{
     AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumFrame, DatumShape,

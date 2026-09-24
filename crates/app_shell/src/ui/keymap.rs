@@ -60,6 +60,7 @@ pub enum HostAction {
     Wireframe,
     Console,
     RunScript,
+    Record,
 }
 
 struct HostSpec {
@@ -123,6 +124,13 @@ const HOST: &[HostSpec] = {
             RunScript,
             "file.run_script",
             "Run script",
+            "File",
+            &[],
+        )),
+        anywhere(spec(
+            Record,
+            "app.record",
+            "Record a script, or stop",
             "File",
             &[],
         )),
@@ -774,6 +782,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Wireframe => C(UiCommand::SetDrawStyle(settings::DrawStyle::Wireframe)),
         Console => HostOutcome::ToggleConsole,
         RunScript => C(UiCommand::File(FileCommand::RunScript)),
+        Record => C(UiCommand::ToggleRecording),
     }
 }
 

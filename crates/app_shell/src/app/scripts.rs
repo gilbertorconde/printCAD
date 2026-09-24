@@ -85,6 +85,7 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
                     | Preferences
                     | Console
                     | RunScript
+                    | Record
                     | Delete
                     | ToggleVisibility
                     | PivotAtCursor
@@ -595,6 +596,56 @@ impl PrintCadApp {
         }
     }
 
+    /// Keep `calls` in the recording, when one is on and no script is
+    /// running (a script's own calls are already a script).
+    pub(crate) fn record_calls(&mut self, calls: Vec<core_document::Recorded>) {
+        if !self.script_runs.is_empty() {
+            return;
+        }
+        if let Some(recorder) = self.recording.as_mut() {
+            for call in &calls {
+                recorder.push(call);
+            }
+        }
+    }
+
+    /// Start a recording, or stop the one on and save it as a new script
+    /// in the scripts folder, where the Scripts menu lists it.
+    pub(crate) fn toggle_recording(&mut self) {
+        let Some(recorder) = self.recording.take() else {
+            self.recording = Some(scripting::Recorder::default());
+            crate::app_log::info("Recording: what you do now is written as a script when you stop");
+            return;
+        };
+        if recorder.is_empty() {
+            crate::app_log::info("Recording stopped; nothing was recorded");
+            return;
+        }
+        let Some(dir) = settings::scripts_dir() else {
+            crate::app_log::warn("The system names no configuration folder for scripts");
+            return;
+        };
+        let path = crate::script_library::fresh_name(&dir, "recording");
+        let name = path
+            .file_stem()
+            .map(|s| s.to_string_lossy().replace('_', " "))
+            .unwrap_or_default();
+        let text = recorder.script(&format!("A recording ({name})"));
+        match std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text)) {
+            Ok(()) => {
+                self.script_library_read = None;
+                console::push(
+                    LineKind::Printed,
+                    format!("Recording saved as {}", path.display()),
+                );
+                crate::app_log::info(format!("Recording saved as {}", path.display()));
+            }
+            Err(err) => {
+                crate::app_log::error(format!("Could not write {}: {err}", path.display()));
+            }
+        }
+    }
+
     /// Every command's id, for the console's completion.
     pub(crate) fn script_command_ids(&self) -> Vec<String> {
         all_commands(self).into_iter().map(|c| c.id).collect()
@@ -738,6 +789,50 @@ impl PrintCadApp {
             }
             _ => Err(CommandError::Unknown(id.to_string())),
         }
+    }
+}
+
+/// What a host UI command does, as the command a recording says it with:
+/// renaming, showing or hiding and deleting tree rows. The benches record
+/// their own.
+pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_document::Recorded> {
+    use crate::ui::{TreeFeatureCommand, UiCommand};
+    let call = |id: &str, args: Value| core_document::Recorded {
+        id: id.to_string(),
+        args: match args {
+            Value::Object(map) => map,
+            _ => CommandArgs::new(),
+        },
+        result: Value::Null,
+    };
+    match command {
+        UiCommand::RenameTreeItem { item, name } => {
+            let id = item_id(*item)?;
+            Some(call(
+                "doc.rename",
+                json!({"id": id.to_string(), "name": name}),
+            ))
+        }
+        UiCommand::SetBodyVisible { body, visible } => Some(call(
+            "doc.set_visible",
+            json!({"id": body.0.to_string(), "visible": visible}),
+        )),
+        UiCommand::SetImportedVisibility { node, visible } => Some(call(
+            "doc.set_visible",
+            json!({"id": node.to_string(), "visible": visible}),
+        )),
+        UiCommand::TreeFeature {
+            feature,
+            command: TreeFeatureCommand::SetVisible(visible),
+        } => Some(call(
+            "doc.set_visible",
+            json!({"id": feature.0.to_string(), "visible": visible}),
+        )),
+        UiCommand::DeleteTreeItem(item) => {
+            let id = item_id(*item)?;
+            Some(call("doc.delete", json!({"id": id.to_string()})))
+        }
+        _ => None,
     }
 }
 
@@ -1120,6 +1215,41 @@ mod tests {
                      PRINTCAD_WRITE_DOCS=1 cargo test -p app_shell scripting_guide rewrites it"
                 );
             }
+        }
+    }
+
+    #[test]
+    fn host_ui_edits_record_as_the_document_s_commands() {
+        use crate::ui::{TreeFeatureCommand, UiCommand};
+        let body = BodyId(Uuid::new_v4());
+        let feature = FeatureId(Uuid::new_v4());
+        let rename = recorded_of(&UiCommand::RenameTreeItem {
+            item: TreeItemId::Body(body),
+            name: "Frame".into(),
+        })
+        .unwrap();
+        assert_eq!(rename.id, "doc.rename");
+        assert_eq!(rename.args["name"], json!("Frame"));
+        let hide = recorded_of(&UiCommand::TreeFeature {
+            feature,
+            command: TreeFeatureCommand::SetVisible(false),
+        })
+        .unwrap();
+        assert_eq!(
+            (hide.id.as_str(), &hide.args["visible"]),
+            ("doc.set_visible", &json!(false))
+        );
+        let delete = recorded_of(&UiCommand::DeleteTreeItem(TreeItemId::Feature(feature))).unwrap();
+        assert_eq!(delete.args["id"], json!(feature.0.to_string()));
+        assert!(recorded_of(&UiCommand::FitView).is_none());
+        // Every call a recording can hold is a command a script can call.
+        for call in [rename, hide, delete] {
+            assert!(doc_commands().iter().any(|c| c.id == call.id));
+            let spec = doc_commands()
+                .into_iter()
+                .find(|c| c.id == call.id)
+                .unwrap();
+            spec.check(&call.args).unwrap();
         }
     }
 

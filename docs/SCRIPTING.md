@@ -59,6 +59,36 @@ pc.part.set{feature = pad, length = 20}
   Lines and scripts started meanwhile wait their turn. On the command line
   a run stops after an hour.
 
+## Recording
+
+Scripts › Record… (or the toolbar's Scripts button) records what you do
+from then on; Stop saves it as `recording_<n>.lua` in the scripts folder,
+where the Scripts menu lists it. The status bar shows the recording with a
+Stop button.
+
+A click and a script run the same code: every tool ends in the command it
+stands for, and the recording is the list of those commands.
+
+- A sketch tool records one `pc.sketch.draw` call per shape: the tool, the
+  points its clicks landed on in the sketch, the values typed at them, and
+  its settings. A replay runs the same tool over the same points, so it
+  snaps and constrains the same way.
+- Constraint tools, dimension edits, drags, deletes and construction record
+  as `sketch.constrain`, `sketch.set_value`, `sketch.drag`, `sketch.delete`
+  and `sketch.construction`.
+- A Part Design feature records when its task closes with OK, as the
+  command that makes it with the fields that differ from what that command
+  makes on its own. An edit records as `part.set` with the fields changed.
+- A joint records with its faces where the bodies were before it moved
+  them; a move records the placement it ended at.
+- Renaming, showing or hiding and deleting tree rows record as `doc.*`.
+- What a recording makes is named (`pad1`, `rect2.elements[3]`), and later
+  lines use the name, so a replay works on the things it makes. Things
+  that were there before the recording started are named by their id: the
+  script expects the same document.
+- Undo and Redo are not recorded; what they take back stays in the
+  recording. Nor are the view, the selection or a script run meanwhile.
+
 ## Examples
 
 A plate with a centred hole, sized from the command line, written as 3MF:
@@ -364,6 +394,25 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id): The sketch to draw in
 - `constraint` (id)
 - `value` (number): mm, or degrees for an angle
+- `driving` (boolean, optional): false makes it a reference dimension that only measures
+
+`pc.sketch.draw`: Run a drawing or editing tool over points of the sketch, as clicks there would.
+
+- `sketch` (id): The sketch to draw in
+- `tool` (string): line, polyline, rect, rect_center, rect_rounded, circle, circle3, arc, arc3, ellipse, ellipse3, ellipse_arc, bspline, polygon, slot, arc_slot, point, fillet, chamfer, trim, extend, split, offset, translate, rotate, scale or mirror
+- `points` (list): The clicks, each {x, y}, or {x = , y = , typed = {length = 20}, constrain = true} with values typed at it; "arc" and "line" switch a polyline, "finish" ends a spline
+- `tolerance` (number, optional): How close a click snaps onto points and curves, mm (0.001)
+- `params` (any, optional): Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, offset_distance, copies, bspline_periodic, auto_constraints, array_rows, array_cols, array_dx, array_dy
+- `construction` (boolean, optional): What it makes is construction geometry
+- `avoid_redundant` (boolean, optional): Drop auto constraints that add nothing (true)
+- `selection` (list, optional): The elements offset, translate, rotate, scale and mirror act on
+- Returns {elements, constraints}: what it made
+
+`pc.sketch.drag`: Drag elements by a step, the rest of the sketch following its constraints.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The elements to drag
+- `by` (list): The step, {x, y}
 
 `pc.sketch.constraints`: List the sketch's constraints.
 

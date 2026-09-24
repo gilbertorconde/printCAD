@@ -31,6 +31,9 @@ pub(crate) struct TaskState {
     pub created_by_tool: bool,
     /// Sketches the tool hid; shown again when the feature is cancelled.
     pub hidden_sketches: Vec<FeatureId>,
+    /// The tool that made it and the body it was made for, when a tool
+    /// did: OK records the command that makes it.
+    pub made_by: Option<(String, core_document::BodyId)>,
 }
 
 /// The kind of task node `id` is, if it is one this workbench edits.
@@ -72,13 +75,17 @@ impl PartDesignWorkbench {
         let created = self
             .pending_task_from_tool
             .take()
-            .filter(|(created, _)| *created == id);
+            .filter(|made| made.feature == id);
         self.task = Some(TaskState {
             feature: id,
             kind,
             snapshot: node.data.clone(),
             created_by_tool: created.is_some(),
-            hidden_sketches: created.map(|(_, s)| s).unwrap_or_default(),
+            hidden_sketches: created
+                .as_ref()
+                .map(|m| m.hidden.clone())
+                .unwrap_or_default(),
+            made_by: created.map(|m| (m.tool, m.body)),
         });
     }
 
@@ -95,16 +102,21 @@ impl PartDesignWorkbench {
         let Some((target_id, target_kind)) = target else {
             // Deselected: the edits so far stay.
             return match self.task.take() {
-                Some(_) => TaskOutcome::Accepted {
-                    label: "Edit feature".to_string(),
-                },
+                Some(task) => {
+                    crate::commands::record_task(self, ctx, &task);
+                    TaskOutcome::Accepted {
+                        label: "Edit feature".to_string(),
+                    }
+                }
                 None => TaskOutcome::Open,
             };
         };
         // Selecting another feature accepts the open task implicitly.
         if self.task.as_ref().is_some_and(|t| t.feature != target_id) {
             let label = self.task_label(ctx);
-            self.task = None;
+            if let Some(task) = self.task.take() {
+                crate::commands::record_task(self, ctx, &task);
+            }
             self.open_task(ctx, target_id, target_kind.clone());
             return TaskOutcome::Accepted { label };
         }
@@ -117,7 +129,9 @@ impl PartDesignWorkbench {
         }
         if request.accept {
             let label = self.task_label(ctx);
-            self.task = None;
+            if let Some(task) = self.task.take() {
+                crate::commands::record_task(self, ctx, &task);
+            }
             ctx.active_document_object = None;
             // With the live preview off, the accepted edit is what
             // rebuilds.

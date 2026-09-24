@@ -68,6 +68,9 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// What the bench asked of the host during this hook, in the order it
     /// asked. The host takes them when the hook returns.
     requests: Vec<HostRequest>,
+    /// What the user did through the UI in this hook, as the commands that
+    /// do the same (see [`Self::record`]).
+    recorded: Vec<crate::command::Recorded>,
 
     /// Host → workbench: a "start on this body" request another bench
     /// made ([`HostRequest::StartOn`]), carried by the host until the
@@ -215,6 +218,8 @@ pub struct HookOutcome {
     pub attach_request: Option<SketchAttachRequest>,
     /// The hook's requests, in the host's application order.
     pub requests: Vec<HostRequest>,
+    /// What the hook recorded, in order.
+    pub recorded: Vec<crate::command::Recorded>,
 }
 
 impl HookOutcome {
@@ -225,6 +230,7 @@ impl HookOutcome {
             active_document_object: ctx.active_document_object,
             attach_request: ctx.attach_request,
             requests,
+            recorded: std::mem::take(&mut ctx.recorded),
         }
     }
 }
@@ -250,6 +256,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             active_document_object: None,
             view_proj: None,
             requests: Vec::new(),
+            recorded: Vec::new(),
             attach_request: None,
             selected_face: None,
             selected_edges: Vec::new(),
@@ -307,6 +314,24 @@ impl<'a> WorkbenchRuntimeContext<'a> {
     /// Ask the host for something once this hook returns.
     pub fn request(&mut self, request: HostRequest) {
         self.requests.push(request);
+    }
+
+    /// Say that the user just did, through the UI, what command `id` with
+    /// `args` does, and that it answered `result`. A bench calls this where
+    /// a click, a key or a panel ends in the same code the command runs, so
+    /// a recording of the session replays it as a script. Commands run by a
+    /// script never record.
+    pub fn record(
+        &mut self,
+        id: impl Into<String>,
+        args: crate::CommandArgs,
+        result: serde_json::Value,
+    ) {
+        self.recorded.push(crate::command::Recorded {
+            id: id.into(),
+            args,
+            result,
+        });
     }
 
     /// The requests made so far, in the order they were made (the host

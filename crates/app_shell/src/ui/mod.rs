@@ -241,6 +241,7 @@ impl UiLayer {
             console_attention,
             command_ids,
             script_running,
+            recording,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -361,6 +362,7 @@ impl UiLayer {
                     active_tab_blank: tabs.iter().any(|t| t.active && t.blank),
                     active_tab: tabs.iter().find(|t| t.active).map(|t| t.tab),
                     scripts,
+                    recording,
                 },
                 &mut active_workbench,
                 &mut active_tool,
@@ -431,6 +433,7 @@ impl UiLayer {
                     keymap: &keymap,
                     scripts,
                     console_open: self.console.open,
+                    recording,
                 },
                 &mut active_workbench,
                 &mut active_tool,
@@ -517,8 +520,12 @@ impl UiLayer {
                     preselect: hover_card.as_ref().map(|h| h.title.as_str()),
                     dimensions: dimensions.as_deref(),
                     script_running,
+                    recording,
                 },
             );
+            if status.stop_recording {
+                commands.push(UiCommand::ToggleRecording);
+            }
             if status.cancel_kernel {
                 commands.push(UiCommand::CancelKernelJob);
             }
@@ -805,6 +812,9 @@ fn apply_writeback(
     }
     for request in &writeback.requests {
         commands.push(UiCommand::HostRequest(request.clone()));
+    }
+    if !writeback.recorded.is_empty() {
+        commands.push(UiCommand::Recorded(writeback.recorded.clone()));
     }
 }
 

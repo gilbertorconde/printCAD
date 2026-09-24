@@ -154,6 +154,7 @@ impl PrintCadApp {
     /// changed, the attach inbox as it left it, then its requests in the
     /// host's order.
     pub(crate) fn apply_hook_outcome(&mut self, outcome: HookOutcome, site: HookSite) {
+        self.record_calls(outcome.recorded);
         if outcome.active_document_object != self.session.active_document_object {
             self.session.active_document_object = outcome.active_document_object;
         }

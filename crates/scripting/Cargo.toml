@@ -10,3 +10,4 @@ description = "Lua scripts run against the application's commands."
 core_document = { path = "../core_document" }
 mlua.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
