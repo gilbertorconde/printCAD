@@ -1,4 +1,5 @@
-//! Cursor snapping: endpoint reuse and axis alignment.
+//! Cursor snapping: endpoint reuse, curves (the sketch's origin and axes
+//! among them) and axis alignment.
 //!
 //! Snapping to an existing point *reuses* that point id instead of creating
 //! a coincident twin, so shared endpoints produce naturally connected
@@ -6,7 +7,7 @@
 
 use uuid::Uuid;
 
-use crate::sketch::{GeometryElement, Sketch, Vec2D};
+use crate::sketch::{GeometryElement, ORIGIN_ID, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID};
 
 /// What the cursor resolved to after snapping.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -200,9 +201,13 @@ fn project_to_curve(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Opti
 
 /// Snap `cursor` onto the nearest curve (line, circle or arc rim) within
 /// `tol`, returning the curve id and the projected position. Callers check
-/// `snap_to_point` first — a nearby point always wins (id reuse). The
+/// `snap_to_point` first: a nearby point always wins (id reuse). The
 /// projected position is what makes the matching PointOnLine/PointOnCircle
 /// auto-constraint start satisfied.
+///
+/// The sketch's reference geometry snaps too, answering to its fixed ids:
+/// the origin as a point, ahead of any curve within reach, and the two
+/// axes as lines, behind drawn geometry at the same distance.
 pub fn snap_to_curve(
     sketch: &Sketch,
     cursor: Vec2D,
@@ -220,6 +225,22 @@ pub fn snap_to_curve(
         let d = (proj - cursor).to_glam().length();
         if d <= tol && best.as_ref().map(|(_, _, bd)| d < *bd).unwrap_or(true) {
             best = Some((geom.id(), proj, d));
+        }
+    }
+    let origin = Vec2D::new(0.0, 0.0);
+    if !exclude.contains(&ORIGIN_ID) && cursor.to_glam().length() <= tol {
+        return Some((ORIGIN_ID, origin));
+    }
+    for (id, proj) in [
+        (X_AXIS_ID, Vec2D::new(cursor.x, 0.0)),
+        (Y_AXIS_ID, Vec2D::new(0.0, cursor.y)),
+    ] {
+        if exclude.contains(&id) {
+            continue;
+        }
+        let d = (proj - cursor).to_glam().length();
+        if d <= tol && best.as_ref().map(|(_, _, bd)| d < *bd).unwrap_or(true) {
+            best = Some((id, proj, d));
         }
     }
     best.map(|(id, proj, _)| (id, proj))
@@ -360,8 +381,21 @@ mod tests {
         assert!((proj.x - 5.0).abs() < 1e-5 && proj.y.abs() < 1e-5);
         // Too far: no snap.
         assert!(snap_to_curve(&sketch, Vec2D::new(5.0, 3.0), 0.5, &[]).is_none());
-        // Excluded: no snap.
-        assert!(snap_to_curve(&sketch, Vec2D::new(5.0, 0.3), 0.5, &[l]).is_none());
+        // Excluded, the X axis under it answers; with that excluded too,
+        // nothing does.
+        assert_eq!(
+            snap_to_curve(&sketch, Vec2D::new(5.0, 0.3), 0.5, &[l]).map(|(id, _)| id),
+            Some(crate::sketch::X_AXIS_ID)
+        );
+        assert!(
+            snap_to_curve(
+                &sketch,
+                Vec2D::new(5.0, 0.3),
+                0.5,
+                &[l, crate::sketch::X_AXIS_ID]
+            )
+            .is_none()
+        );
 
         let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 20.0))));
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 5.0)));
@@ -398,6 +432,35 @@ mod tests {
             Some(crate::sketch::ORIGIN_ID)
         );
         assert_eq!(hit_test(&sketch, Vec2D::new(4.0, 4.0), 0.5), None);
+    }
+
+    #[test]
+    fn the_origin_and_the_axes_snap_behind_drawn_geometry() {
+        use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+        let empty = Sketch::new("t");
+        assert_eq!(
+            snap_to_curve(&empty, Vec2D::new(6.0, 0.3), 0.5, &[]),
+            Some((X_AXIS_ID, Vec2D::new(6.0, 0.0)))
+        );
+        assert_eq!(
+            snap_to_curve(&empty, Vec2D::new(-0.2, -3.0), 0.5, &[]),
+            Some((Y_AXIS_ID, Vec2D::new(0.0, -3.0)))
+        );
+        assert_eq!(
+            snap_to_curve(&empty, Vec2D::new(0.3, 0.2), 0.5, &[]),
+            Some((ORIGIN_ID, Vec2D::new(0.0, 0.0)))
+        );
+        assert_eq!(snap_to_curve(&empty, Vec2D::new(4.0, 4.0), 0.5, &[]), None);
+        // A line drawn along the X axis takes the snap at the same distance.
+        let (sketch, _, _, l) = sketch_with_line();
+        assert_eq!(
+            snap_to_curve(&sketch, Vec2D::new(5.0, 0.2), 0.5, &[]).map(|(id, _)| id),
+            Some(l)
+        );
+        assert_eq!(
+            snap_to_curve(&sketch, Vec2D::new(5.0, 0.2), 0.5, &[l]).map(|(id, _)| id),
+            Some(X_AXIS_ID)
+        );
     }
 
     #[test]

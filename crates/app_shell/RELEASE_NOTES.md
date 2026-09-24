@@ -19,6 +19,7 @@ version first.
 - Trim, extend, split, fillet, offset, mirror, move, rotate, scale and arrays.
 - Carbon copy brings another sketch's geometry in; merge makes one sketch of several.
 - Rendering order puts construction or normal geometry on top.
+- Drawing snaps to the origin and the two axes as it does to drawn geometry, and pins the new point there.
 
 ### Part Design
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.

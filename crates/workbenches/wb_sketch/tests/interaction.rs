@@ -397,16 +397,17 @@ fn dragging_a_constrained_point_respects_constraints() {
     let mut h = Harness::new();
     h.create_sketch();
     // Axis-snapped horizontal line gets an auto Horizontal constraint.
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(15.0, 0.05, "sketch.line");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(18.0, 4.05, "sketch.line");
     let sketch = h.sketch();
     assert_eq!(sketch.constraints.len(), 1);
 
     // Drag the far endpoint up and sideways: the solver must keep the line
     // horizontal (y's equal) while the x movement sticks.
-    h.click(15.0, 0.0, "sketch.select");
-    h.mouse_move(20.0, 6.0, "sketch.select");
-    h.release(20.0, 6.0, "sketch.select");
+    h.click(18.0, 4.0, "sketch.select");
+    h.mouse_move(23.0, 10.0, "sketch.select");
+    h.release(23.0, 10.0, "sketch.select");
 
     let sketch = h.sketch();
     let ys: Vec<f32> = sketch
@@ -429,7 +430,7 @@ fn dragging_a_constrained_point_respects_constraints() {
             _ => None,
         })
         .fold(f32::MIN, f32::max);
-    assert!(max_x > 17.0, "x movement applied: {max_x}");
+    assert!(max_x > 20.0, "x movement applied: {max_x}");
 }
 
 #[test]
@@ -481,8 +482,9 @@ fn escape_cancels_pending_segment_without_orphans() {
 fn rectangle_tool_produces_constrained_rectangle() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.rect");
-    h.click(12.0, 8.0, "sketch.rect");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.rect");
+    h.click(15.0, 12.0, "sketch.rect");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (4, 4));
     let sketch = h.sketch();
@@ -548,9 +550,10 @@ fn deleting_a_point_cascades_to_its_line() {
 fn horizontal_axis_snap_adds_auto_constraint() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
     // Slightly off-horizontal: within the 8px snap tolerance at this zoom.
-    h.click(15.0, 0.05, "sketch.line");
+    h.click(18.0, 4.05, "sketch.line");
     let sketch = h.sketch();
     assert_eq!(sketch.constraints.len(), 1);
     let ys: Vec<f32> = sketch
@@ -561,7 +564,10 @@ fn horizontal_axis_snap_adds_auto_constraint() {
             _ => None,
         })
         .collect();
-    assert!(ys.iter().all(|y| y.abs() < 1e-4), "snapped level: {ys:?}");
+    assert!(
+        ys.iter().all(|y| (y - 4.0).abs() < 1e-4),
+        "snapped level: {ys:?}"
+    );
 }
 
 #[test]
@@ -678,10 +684,11 @@ fn slot_tool_draws_closed_slot_end_to_end() {
 fn fillet_tool_rounds_rectangle_corner_end_to_end() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.rect");
-    h.click(12.0, 8.0, "sketch.rect");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.rect");
+    h.click(15.0, 12.0, "sketch.rect");
     // Click the shared corner point with the fillet tool (default r=2).
-    h.click(12.0, 8.0, "sketch.fillet");
+    h.click(15.0, 12.0, "sketch.fillet");
     let (p, l, c, a) = h.counts();
     assert_eq!((p, l, c, a), (6, 4, 0, 1), "corner replaced by arc");
     let sketch = h.sketch();
@@ -1503,14 +1510,15 @@ fn clicking_near_a_line_attaches_new_point_onto_it() {
     let mut h = Harness::new();
     h.create_sketch();
     // Base line along X (gets an auto Horizontal from the axis snap).
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(20.0, 0.0, "sketch.line");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 4.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
     // Start a new line just off the base line's mid-span (no point nearby):
     // the start point is projected ONTO the line and constrained to it.
-    h.click(10.0, 0.5, "sketch.line");
-    h.click(14.0, 8.0, "sketch.line");
+    h.click(13.0, 4.5, "sketch.line");
+    h.click(17.0, 12.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
     let sketch = h.sketch();
@@ -1525,7 +1533,7 @@ fn clicking_near_a_line_attaches_new_point_onto_it() {
     let (point, _line) = on_line;
     let p = sketch.point_position(point).unwrap();
     assert!(
-        (p.x - 10.0).abs() < 0.1 && p.y.abs() < 1e-3,
+        (p.x - 13.0).abs() < 0.1 && (p.y - 4.0).abs() < 1e-3,
         "start point projected onto the base line, got ({}, {})",
         p.x,
         p.y
@@ -1717,7 +1725,8 @@ fn typed_length_and_angle_commit_exact_polar() {
 fn rect_typed_width_height_creates_edge_lengths() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.rect");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.rect");
     h.key(KeyCode::Key1, Some("sketch.rect"));
     h.key(KeyCode::Key2, Some("sketch.rect"));
     h.key(KeyCode::Tab, Some("sketch.rect"));
@@ -1734,8 +1743,8 @@ fn rect_typed_width_height_creates_edge_lengths() {
             GeometryElement::Point(pt) => Some(pt.position),
             _ => None,
         })
-        .find(|p| (p.x - 12.0).abs() < 1e-3 && (p.y - 8.0).abs() < 1e-3);
-    assert!(corner.is_some(), "opposite corner at typed (12, 8)");
+        .find(|p| (p.x - 15.0).abs() < 1e-3 && (p.y - 12.0).abs() < 1e-3);
+    assert!(corner.is_some(), "opposite corner 12 across and 8 up");
     let mut lengths: Vec<f32> = sketch
         .constraints
         .iter()
@@ -1866,10 +1875,11 @@ fn polygon_typed_radius_creates_construction_circumcircle() {
 fn escape_clears_typed_buffer_then_cancels_tool() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
     h.key(KeyCode::Key9, Some("sketch.line"));
     h.key(KeyCode::Escape, Some("sketch.line")); // clears the buffer only
-    h.click(10.0, 6.0, "sketch.line"); // commits at the cursor, unconstrained
+    h.click(13.0, 10.0, "sketch.line"); // commits at the cursor, unconstrained
 
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (2, 1), "tool survived the first Escape");
@@ -1904,8 +1914,9 @@ fn backspace_edits_typed_buffer_before_deleting_geometry() {
 fn glyph_click_selects_constraint_and_delete_removes_it() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(15.0, 0.05, "sketch.line"); // axis snap → auto Horizontal
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(18.0, 4.05, "sketch.line"); // axis snap → auto Horizontal
     h.key(KeyCode::Escape, Some("sketch.line"));
     assert_eq!(h.sketch().constraints.len(), 1);
 
@@ -2055,13 +2066,14 @@ fn dim_edit_cancel_leaves_constraint_untouched() {
 fn glyph_click_keeps_geometry_selection() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(15.0, 0.05, "sketch.line");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(18.0, 4.05, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
     // Select the line, then ctrl-click the H glyph: both stay selected, so
     // Delete removes the constraint (constraints win) but keeps the line.
-    h.click(3.0, 0.0, "sketch.select");
+    h.click(6.0, 4.0, "sketch.select");
     let marks = h.marks();
     let glyph = marks
         .iter()
@@ -2092,8 +2104,9 @@ fn glyph_click_keeps_geometry_selection() {
 fn selected_constraint_highlights_glyph_and_geometry() {
     let mut h = Harness::new();
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(15.0, 0.05, "sketch.line");
+    // Off the axes: a point there would pin to the origin or an axis.
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(18.0, 4.05, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
     let marks = h.marks();
@@ -2169,20 +2182,20 @@ fn live_readouts_follow_the_cursor_while_drawing() {
 fn dragging_a_line_carries_both_ends_and_the_line_attached_to_it() {
     let mut h = Harness::new();
     h.create_sketch();
-    // A chain: L1 (0,0)→(10,0), L2 (10,0)→(10,10). They share the corner
+    // A chain off the axes: L1 (3,4)→(13,4), L2 (13,4)→(13,14). They share the corner
     // point, so moving L1 has to bring L2's start with it.
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.click(10.0, 10.0, "sketch.line");
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(13.0, 4.0, "sketch.line");
+    h.click(13.0, 14.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
     // Grab L1 mid-span and move it 4 up.
-    h.drag((5.0, 0.0), (5.0, 4.0));
+    h.drag((8.0, 4.0), (8.0, 8.0));
 
-    assert!(h.point_at(0.0, 4.0), "the free end followed the drag");
-    assert!(h.point_at(10.0, 4.0), "the shared corner followed too");
+    assert!(h.point_at(3.0, 8.0), "the free end followed the drag");
+    assert!(h.point_at(13.0, 8.0), "the shared corner followed too");
     assert!(
-        h.point_at(10.0, 10.0),
+        h.point_at(13.0, 14.0),
         "the far end of the attached line stayed put, so it stretched"
     );
 }
@@ -2190,14 +2203,21 @@ fn dragging_a_line_carries_both_ends_and_the_line_attached_to_it() {
 #[test]
 fn dragging_inside_a_selection_moves_every_selected_element() {
     let mut h = Harness::new();
-    two_lines(&mut h);
+    // Two free lines off the axes, where nothing pins them.
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(13.0, 11.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(3.0, 24.0, "sketch.line");
+    h.click(13.0, 31.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
     // Select both lines, then drag from a point of one of them.
-    h.click(5.0, 3.5, "sketch.select");
-    h.click(5.0, 23.5, "sketch.select");
-    h.drag((5.0, 3.5), (5.0, 8.5));
+    h.click(8.0, 7.5, "sketch.select");
+    h.click(8.0, 27.5, "sketch.select");
+    h.drag((8.0, 7.5), (8.0, 12.5));
 
-    assert!(h.point_at(0.0, 5.0), "L1 moved by the drag delta");
-    assert!(h.point_at(0.0, 25.0), "L2 came along with the selection");
+    assert!(h.point_at(3.0, 9.0), "L1 moved by the drag delta");
+    assert!(h.point_at(3.0, 29.0), "L2 came along with the selection");
 }
 
 #[test]
@@ -2581,4 +2601,56 @@ fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
         Some("sketch.polyline"),
     );
     assert!(names(&mut h).contains(&("Shift+A".to_string(), "lines")));
+}
+
+/// The origin and the two axes snap like drawn geometry: a line started at
+/// the origin is pinned to it, one ending on an axis stays on it, and a
+/// circle centred on the Y axis keeps its centre there.
+#[test]
+fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
+    use wb_sketch::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
+    let mut h = Harness::new();
+    h.create_sketch();
+    // Near the origin, then near the X axis far from it.
+    h.click(0.05, -0.04, "sketch.line");
+    h.click(12.0, 0.08, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    // A circle centred near the Y axis.
+    h.click(-0.07, 6.0, "sketch.circle");
+    h.click(2.0, 6.0, "sketch.circle");
+
+    let sketch = h.sketch();
+    let pinned = |target: uuid::Uuid| {
+        sketch.constraints.iter().any(|c| match c.kind {
+            ConstraintKind::Coincident { point2, .. } => point2 == target,
+            ConstraintKind::PointOnLine { line, .. } => line == target,
+            _ => false,
+        })
+    };
+    assert!(pinned(ORIGIN_ID), "the line's start is on the origin");
+    assert!(pinned(X_AXIS_ID), "the line's end is on the X axis");
+    assert!(pinned(Y_AXIS_ID), "the circle's centre is on the Y axis");
+    let points: Vec<[f32; 2]> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some([p.position.x, p.position.y]),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        points
+            .iter()
+            .any(|p| p[0].abs() < 1e-5 && p[1].abs() < 1e-5)
+    );
+    assert!(
+        points
+            .iter()
+            .any(|p| (p[0] - 12.0).abs() < 1e-3 && p[1].abs() < 1e-5)
+    );
+    assert!(
+        points
+            .iter()
+            .any(|p| p[0].abs() < 1e-5 && (p[1] - 6.0).abs() < 1e-3)
+    );
 }

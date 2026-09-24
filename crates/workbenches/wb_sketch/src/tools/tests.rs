@@ -190,14 +190,14 @@ fn nearly_horizontal_line_gets_auto_constraint() {
         &mut state,
         "sketch.line",
         &mut sketch,
-        Vec2D::new(0.0, 0.0),
+        Vec2D::new(3.0, 4.0),
         0.5,
     );
     handle_click(
         &mut state,
         "sketch.line",
         &mut sketch,
-        Vec2D::new(12.0, 0.3),
+        Vec2D::new(15.0, 4.3),
         0.5,
     );
     assert_eq!(sketch.constraints.len(), 1);
@@ -214,7 +214,7 @@ fn nearly_horizontal_line_gets_auto_constraint() {
             _ => None,
         })
         .collect();
-    assert_eq!(ys, vec![0.0, 0.0]);
+    assert_eq!(ys, vec![4.0, 4.0]);
 }
 
 #[test]
@@ -225,14 +225,14 @@ fn rectangle_builds_four_lines_with_constraints() {
         &mut state,
         "sketch.rect",
         &mut sketch,
-        Vec2D::new(0.0, 0.0),
+        Vec2D::new(2.0, 3.0),
         0.5,
     );
     handle_click(
         &mut state,
         "sketch.rect",
         &mut sketch,
-        Vec2D::new(8.0, 5.0),
+        Vec2D::new(10.0, 8.0),
         0.5,
     );
     assert_eq!((points(&sketch), lines(&sketch)), (4, 4));

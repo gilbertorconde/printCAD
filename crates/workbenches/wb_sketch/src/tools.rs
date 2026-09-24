@@ -279,18 +279,30 @@ fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) 
     let curve = snap::snap_to_curve(sketch, pos, curve_attach_eps(snap_tol), &[]);
     let point = sketch.add_geometry(GeometryElement::Point(Point::new(pos)));
     if let Some((curve_id, _)) = curve {
-        let kind = match sketch.get_geometry(curve_id) {
-            Some(GeometryElement::Line(_)) => ConstraintKind::PointOnLine {
+        let kind = match curve_id {
+            // The sketch's own origin and axes: fixed references, not
+            // geometry, pinned by the same constraints drawn curves take.
+            crate::sketch::ORIGIN_ID => ConstraintKind::Coincident {
+                point1: point,
+                point2: curve_id,
+            },
+            crate::sketch::X_AXIS_ID | crate::sketch::Y_AXIS_ID => ConstraintKind::PointOnLine {
                 point,
                 line: curve_id,
             },
-            Some(GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
-                ConstraintKind::PointOnCircle {
+            _ => match sketch.get_geometry(curve_id) {
+                Some(GeometryElement::Line(_)) => ConstraintKind::PointOnLine {
                     point,
-                    circle: curve_id,
+                    line: curve_id,
+                },
+                Some(GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
+                    ConstraintKind::PointOnCircle {
+                        point,
+                        circle: curve_id,
+                    }
                 }
-            }
-            _ => return point,
+                _ => return point,
+            },
         };
         sketch.add_constraint(kind);
     }
