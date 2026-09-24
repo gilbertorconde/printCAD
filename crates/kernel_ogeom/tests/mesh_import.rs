@@ -196,9 +196,9 @@ fn a_converted_mesh_is_drilled_and_measured() {
     let mut kernel = OgeomKernel::new();
     let detail = TessellationSettings::default();
     for (name, mesh, drill, whole) in [
-        ("cube.stl", cube(false), [5.0, 5.0, -5.0], 1000.0),
+        ("drilled-cube.stl", cube(false), [5.0, 5.0, -5.0], 1000.0),
         (
-            "rod.stl",
+            "drilled-rod.stl",
             cylinder(10.0, 20.0, 64),
             [4.0, 0.0, -5.0],
             // The 64-gon's own area, whatever the converter makes of it.
@@ -211,7 +211,11 @@ fn a_converted_mesh_is_drilled_and_measured() {
             .mesh_to_solid(&model.bodies[0].mesh, &detail)
             .expect("converts");
         assert!(solid.closed, "{name}: {:?}", solid.summary);
-        let height = if name == "cube.stl" { 10.0 } else { 20.0 };
+        let height = if name == "drilled-cube.stl" {
+            10.0
+        } else {
+            20.0
+        };
         let ops = [
             SolidOp::Shape {
                 brep: solid.brep_blob.clone(),
