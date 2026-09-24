@@ -208,6 +208,16 @@ impl AssemblyWorkbench {
                         .color(TEXT2),
                     );
                 }
+                JointKind::Ground => {
+                    ui.label(
+                        RichText::new(
+                            "The body stays where it is; the bodies joined to it are \
+                             placed against it.",
+                        )
+                        .font(sans(FONT_SM))
+                        .color(TEXT2),
+                    );
+                }
                 JointKind::Align => {
                     ui.label(
                         RichText::new(
@@ -227,6 +237,9 @@ impl AssemblyWorkbench {
         }
         ui.add_space(SPACE_2);
         self.verdict_card(ui);
+        if let Some(body) = node.body {
+            freedom_line(ui, ctx, body);
+        }
         ui.add_space(SPACE_2);
         if destructive_button(ui, "Delete joint")
             .on_hover_text("Remove the joint; the bodies stay where they are")
@@ -409,4 +422,23 @@ fn formula_field(
         }
         None => false,
     }
+}
+
+/// What `body` may still do, its joints holding: "fully placed", or its
+/// free motions.
+fn freedom_line(ui: &mut egui::Ui, ctx: &WorkbenchRuntimeContext, body: BodyId) {
+    let Some((_, motions)) = crate::freedom(ctx.document)
+        .into_iter()
+        .find(|(b, _)| *b == body)
+    else {
+        return;
+    };
+    let text = if motions.is_empty() {
+        "Its joints place this body fully.".to_string()
+    } else {
+        let words: Vec<String> = motions.iter().map(crate::Motion::describe).collect();
+        format!("It may still {}.", words.join(", "))
+    };
+    ui.add_space(SPACE_1);
+    ui.add(egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT2)).wrap());
 }

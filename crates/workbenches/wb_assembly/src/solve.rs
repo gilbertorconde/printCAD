@@ -8,7 +8,7 @@
 //! leaves free (a slide along a mated face, a turn about an aligned axis)
 //! keeps its current value.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
 use core_document::{BodyId, BodyPlacement, Document, FeatureId};
 use glam::{DQuat, DVec3};
@@ -52,58 +52,133 @@ pub fn joints(document: &Document) -> Vec<Joint> {
 /// Why the joints could not all hold.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SolveError {
-    /// Bodies joined to each other in a ring: each would have to wait for
-    /// the next.
-    Loop(Vec<BodyId>),
     /// A body's joints ask for more than one place at once; the named
     /// joints are the ones left apart.
     Conflict { body: BodyId, joints: Vec<String> },
 }
 
+/// The joints the solver reads: both bodies there and different, or a
+/// ground.
+fn usable(document: &Document) -> Vec<Joint> {
+    let exists = |body: BodyId| document.bodies().iter().any(|b| b.id == body);
+    joints(document)
+        .into_iter()
+        .filter(|j| {
+            exists(j.body)
+                && (j.feature.kind == JointKind::Ground
+                    || (exists(j.feature.other_body) && j.feature.other_body != j.body))
+        })
+        .collect()
+}
+
+/// The bodies the solver moves: those that own a joint and are not
+/// grounded. Every other body stays where it is.
+fn free_bodies(all: &[Joint]) -> BTreeSet<BodyId> {
+    let grounded: BTreeSet<BodyId> = all
+        .iter()
+        .filter(|j| j.feature.kind == JointKind::Ground)
+        .map(|j| j.body)
+        .collect();
+    all.iter()
+        .filter(|j| j.feature.kind != JointKind::Ground)
+        .map(|j| j.body)
+        .filter(|b| !grounded.contains(b))
+        .collect()
+}
+
 /// The placement every jointed body takes. Bodies whose joints already
 /// hold are left out, as are bodies without joints.
+///
+/// Each free body is first placed on its own against the bodies placed
+/// before it, a joint at a time turning it round where it faces the wrong
+/// way; bodies joined in a ring take their turn once most of their joints
+/// have something placed to hold to. Then every free body is refined
+/// together against every joint, which is what closes a ring.
 pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveError> {
-    let all = joints(document);
-    let exists = |body: BodyId| document.bodies().iter().any(|b| b.id == body);
-    let mut by_body: BTreeMap<BodyId, Vec<&Joint>> = BTreeMap::new();
-    for joint in &all {
-        if exists(joint.body)
-            && exists(joint.feature.other_body)
-            && joint.body != joint.feature.other_body
-        {
-            by_body.entry(joint.body).or_default().push(joint);
-        }
-    }
-    let order = order(&by_body)?;
-    let mut placements: HashMap<BodyId, Rigid> = document
+    let all = usable(document);
+    let free = free_bodies(&all);
+    let starts: HashMap<BodyId, Rigid> = document
         .bodies()
         .iter()
         .map(|b| (b.id, Rigid::from(b.placement)))
         .collect();
-    let mut moved = Vec::new();
-    for body in order {
-        let body_joints = &by_body[&body];
-        let start = placements[&body];
-        let placed = place(start, body_joints, &placements);
-        let left_apart: Vec<String> = body_joints
+    let mut placements = starts.clone();
+    // Every joint with a free body at either end: one a grounded body
+    // owns still holds, by moving the body at its other end.
+    let holding: Vec<&Joint> = all
+        .iter()
+        .filter(|j| {
+            j.feature.kind != JointKind::Ground
+                && (free.contains(&j.body) || free.contains(&j.feature.other_body))
+        })
+        .collect();
+
+    // One body at a time, against what is placed.
+    let mut placed: BTreeSet<BodyId> = placements
+        .keys()
+        .copied()
+        .filter(|b| !free.contains(b))
+        .collect();
+    let mut pending: Vec<BodyId> = free.iter().copied().collect();
+    while !pending.is_empty() {
+        let holds_to = |body: BodyId| -> Vec<&Joint> {
+            holding
+                .iter()
+                .copied()
+                .filter(|j| j.body == body && placed.contains(&j.feature.other_body))
+                .collect()
+        };
+        // Ready: every joint holds to something placed. In a ring none is;
+        // the one with the most joints placed goes first.
+        let next = pending
             .iter()
-            .filter(|j| worst(&j.feature, &placed, &placements[&j.feature.other_body]) > HOLDS_MM)
+            .copied()
+            .find(|b| holding.iter().filter(|j| j.body == *b).count() == holds_to(*b).len())
+            .or_else(|| pending.iter().copied().max_by_key(|b| holds_to(*b).len()))
+            .expect("pending is not empty");
+        let joints_now = holds_to(next);
+        if !joints_now.is_empty() {
+            let at = place(placements[&next], &joints_now, &placements);
+            placements.insert(next, at);
+        }
+        placed.insert(next);
+        pending.retain(|b| *b != next);
+    }
+
+    // Every free body together, against every joint.
+    refine(&mut placements, &free, &holding);
+
+    // Joints still apart: the first free body with one, and every one at
+    // either end of it.
+    for body in &free {
+        let left_apart: Vec<String> = holding
+            .iter()
+            .filter(|j| j.body == *body || j.feature.other_body == *body)
+            .filter(|j| {
+                worst(
+                    &j.feature,
+                    &placements[&j.body],
+                    &placements[&j.feature.other_body],
+                ) > HOLDS_MM
+            })
             .map(|j| j.name.clone())
             .collect();
         if !left_apart.is_empty() {
             return Err(SolveError::Conflict {
-                body,
+                body: *body,
                 joints: left_apart,
             });
         }
+    }
+    let mut moved = Vec::new();
+    for body in &free {
         // Rounding is no move: an assembly that already holds records
         // nothing when solved again.
-        let before = BodyPlacement::from(start);
-        let after = BodyPlacement::from(placed);
+        let before = BodyPlacement::from(starts[body]);
+        let after = BodyPlacement::from(placements[body]);
         if !after.after(&before.inverse()).is_identity() {
-            moved.push((body, after));
+            moved.push((*body, after));
         }
-        placements.insert(body, placed);
     }
     Ok(moved)
 }
@@ -117,32 +192,370 @@ fn worst(joint: &JointFeature, moving: &Rigid, fixed: &Rigid) -> f64 {
     r.iter().fold(0.0, |m: f64, v| m.max(v.abs()))
 }
 
-/// Jointed bodies after every body they are joined to.
-fn order(by_body: &BTreeMap<BodyId, Vec<&Joint>>) -> Result<Vec<BodyId>, SolveError> {
-    let mut done: BTreeSet<BodyId> = BTreeSet::new();
-    let mut out = Vec::new();
-    let mut pending: Vec<BodyId> = by_body.keys().copied().collect();
-    while !pending.is_empty() {
-        let ready: Vec<BodyId> = pending
-            .iter()
-            .copied()
-            .filter(|body| {
-                by_body[body].iter().all(|j| {
-                    let other = j.feature.other_body;
-                    !by_body.contains_key(&other) || done.contains(&other)
+/// Where each free body's turns pivot: the middle of its anchors, so a
+/// turn does not throw it across the room.
+fn pivots(
+    placements: &HashMap<BodyId, Rigid>,
+    free: &BTreeSet<BodyId>,
+    joints: &[&Joint],
+) -> HashMap<BodyId, DVec3> {
+    free.iter()
+        .map(|body| {
+            let at = placements[body];
+            let points: Vec<DVec3> = joints
+                .iter()
+                .flat_map(|j| {
+                    let mut p = Vec::new();
+                    if j.body == *body {
+                        p.push(j.feature.moving.placed(&at).0);
+                    }
+                    if j.feature.other_body == *body {
+                        p.push(j.feature.fixed.placed(&at).0);
+                    }
+                    p
                 })
-            })
-            .collect();
-        if ready.is_empty() {
-            return Err(SolveError::Loop(pending));
-        }
-        for body in ready {
-            done.insert(body);
-            out.push(body);
-        }
-        pending.retain(|b| !done.contains(b));
+                .collect();
+            let middle = if points.is_empty() {
+                at.translation
+            } else {
+                points.iter().copied().sum::<DVec3>() / points.len() as f64
+            };
+            (*body, middle)
+        })
+        .collect()
+}
+
+/// `at` turned by the rotation vector `turn` about `pivot`, then moved by
+/// `step`.
+fn stepped(at: Rigid, pivot: DVec3, turn: DVec3, step: DVec3) -> Rigid {
+    let q = DQuat::from_scaled_axis(turn);
+    Rigid {
+        rotation: (q * at.rotation).normalize(),
+        translation: q * (at.translation - pivot) + pivot + step,
     }
-    Ok(out)
+}
+
+/// Every joint's residuals with the bodies at `placements`.
+fn residuals_of(placements: &HashMap<BodyId, Rigid>, joints: &[&Joint]) -> Vec<f64> {
+    let mut r = Vec::new();
+    for j in joints {
+        j.feature.residuals(
+            &placements[&j.body],
+            &placements[&j.feature.other_body],
+            &mut r,
+        );
+    }
+    r
+}
+
+/// Damped least squares over every free body's six freedoms at once.
+fn refine(placements: &mut HashMap<BodyId, Rigid>, free: &BTreeSet<BodyId>, joints: &[&Joint]) {
+    let bodies: Vec<BodyId> = free.iter().copied().collect();
+    let n = bodies.len() * 6;
+    if n == 0 || joints.is_empty() {
+        return;
+    }
+    let apply = |base: &HashMap<BodyId, Rigid>, pivots: &HashMap<BodyId, DVec3>, x: &[f64]| {
+        let mut out = base.clone();
+        for (i, body) in bodies.iter().enumerate() {
+            let v = &x[i * 6..i * 6 + 6];
+            out.insert(
+                *body,
+                stepped(
+                    base[body],
+                    pivots[body],
+                    DVec3::new(v[0], v[1], v[2]),
+                    DVec3::new(v[3], v[4], v[5]),
+                ),
+            );
+        }
+        out
+    };
+    let cost = |r: &[f64]| r.iter().map(|v| v * v).sum::<f64>();
+    let mut r0 = residuals_of(placements, joints);
+    let mut c0 = cost(&r0);
+    let mut damping = 1e-3;
+    for _ in 0..200 {
+        if c0 < 1e-16 {
+            break;
+        }
+        let pivots = pivots(placements, free, joints);
+        // The Jacobian by central differences, a column per freedom.
+        let h = 1e-7;
+        let mut jac = vec![0.0f64; r0.len() * n];
+        let mut x = vec![0.0; n];
+        for k in 0..n {
+            x[k] = h;
+            let rp = residuals_of(&apply(placements, &pivots, &x), joints);
+            x[k] = -h;
+            let rm = residuals_of(&apply(placements, &pivots, &x), joints);
+            x[k] = 0.0;
+            for row in 0..r0.len() {
+                jac[row * n + k] = (rp[row] - rm[row]) / (2.0 * h);
+            }
+        }
+        let mut jtj = vec![0.0f64; n * n];
+        let mut jtr = vec![0.0f64; n];
+        for row in 0..r0.len() {
+            let jr = &jac[row * n..row * n + n];
+            for a in 0..n {
+                if jr[a] == 0.0 {
+                    continue;
+                }
+                jtr[a] += jr[a] * r0[row];
+                for b in 0..n {
+                    jtj[a * n + b] += jr[a] * jr[b];
+                }
+            }
+        }
+        let mut accepted = false;
+        for _ in 0..12 {
+            let mut m = jtj.clone();
+            for a in 0..n {
+                // On the identity as well as the diagonal: a freedom the
+                // joints leave open takes no step.
+                m[a * n + a] += damping * (jtj[a * n + a] + 1.0);
+            }
+            let Some(step) = solve_dense(m, jtr.iter().map(|v| -v).collect(), n) else {
+                damping *= 10.0;
+                continue;
+            };
+            let trial = apply(placements, &pivots, &step);
+            let rt = residuals_of(&trial, joints);
+            let ct = cost(&rt);
+            if ct < c0 {
+                *placements = trial;
+                r0 = rt;
+                c0 = ct;
+                damping = (damping / 3.0).max(1e-12);
+                accepted = true;
+                break;
+            }
+            damping *= 10.0;
+        }
+        if !accepted {
+            break;
+        }
+    }
+}
+
+/// `m · x = b` for an `n`×`n` system by Gaussian elimination with
+/// pivoting.
+fn solve_dense(mut m: Vec<f64>, mut b: Vec<f64>, n: usize) -> Option<Vec<f64>> {
+    for col in 0..n {
+        let pivot =
+            (col..n).max_by(|&i, &j| m[i * n + col].abs().total_cmp(&m[j * n + col].abs()))?;
+        if m[pivot * n + col].abs() < 1e-18 {
+            return None;
+        }
+        if pivot != col {
+            for k in 0..n {
+                m.swap(col * n + k, pivot * n + k);
+            }
+            b.swap(col, pivot);
+        }
+        for row in col + 1..n {
+            let f = m[row * n + col] / m[col * n + col];
+            if f == 0.0 {
+                continue;
+            }
+            for k in col..n {
+                m[row * n + k] -= f * m[col * n + k];
+            }
+            b[row] -= f * b[col];
+        }
+    }
+    let mut x = vec![0.0; n];
+    for row in (0..n).rev() {
+        let s: f64 = (row + 1..n).map(|k| m[row * n + k] * x[k]).sum();
+        x[row] = (b[row] - s) / m[row * n + row];
+    }
+    Some(x)
+}
+
+/// A motion a body's joints leave it, the bodies it is joined to held
+/// still.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Motion {
+    /// A turn about a line through `through`, along `axis`.
+    Turn { axis: [f64; 3], through: [f64; 3] },
+    /// A slide along `direction`.
+    Slide { direction: [f64; 3] },
+}
+
+impl Motion {
+    /// In words: "turn about Z", "slide along (0.6, 0.8, 0)".
+    pub fn describe(&self) -> String {
+        let name = |v: [f64; 3]| {
+            for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
+                if (v[i].abs() - 1.0).abs() < 1e-3 {
+                    return axis.to_string();
+                }
+            }
+            format!("({:.2}, {:.2}, {:.2})", v[0], v[1], v[2])
+        };
+        match self {
+            Motion::Turn { axis, .. } => format!("turn about {}", name(*axis)),
+            Motion::Slide { direction } => format!("slide along {}", name(*direction)),
+        }
+    }
+}
+
+/// What each jointed body may still do where it sits: the motions its
+/// joints leave open, the bodies around it held still. A body with none
+/// is fully placed.
+pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
+    let all = usable(document);
+    let free = free_bodies(&all);
+    let holding: Vec<&Joint> = all
+        .iter()
+        .filter(|j| j.feature.kind != JointKind::Ground)
+        .collect();
+    let placements: HashMap<BodyId, Rigid> = document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, Rigid::from(b.placement)))
+        .collect();
+    let pivots = pivots(&placements, &free, &holding);
+    free.iter()
+        .map(|body| {
+            let own: Vec<&Joint> = holding
+                .iter()
+                .copied()
+                .filter(|j| j.body == *body || j.feature.other_body == *body)
+                .collect();
+            // This body's six columns, turns first, by central
+            // differences: both sides go through the same steps (a stored
+            // rotation is normalised on the way), so nothing but the
+            // motion differs.
+            let h = 1e-6;
+            let at = |x: [f64; 6]| {
+                let mut moved = placements.clone();
+                moved.insert(
+                    *body,
+                    stepped(
+                        placements[body],
+                        pivots[body],
+                        DVec3::new(x[0], x[1], x[2]),
+                        DVec3::new(x[3], x[4], x[5]),
+                    ),
+                );
+                residuals_of(&moved, &own)
+            };
+            let mut columns = vec![[0.0f64; 6]; at([0.0; 6]).len()];
+            for k in 0..6 {
+                let (mut plus, mut minus) = ([0.0; 6], [0.0; 6]);
+                plus[k] = h;
+                minus[k] = -h;
+                let (rp, rm) = (at(plus), at(minus));
+                for (row, (a, b)) in columns.iter_mut().zip(rp.iter().zip(&rm)) {
+                    row[k] = (a - b) / (2.0 * h);
+                }
+            }
+            let mut jtj = [[0.0f64; 6]; 6];
+            for row in &columns {
+                for a in 0..6 {
+                    for b in 0..6 {
+                        jtj[a][b] += row[a] * row[b];
+                    }
+                }
+            }
+            let (values, vectors) = eigen6(jtj);
+
+            let scale = values.iter().fold(1.0f64, |m, v| m.max(*v));
+            let motions = (0..6)
+                .filter(|i| values[*i] < 1e-6 * scale)
+                .map(|i| {
+                    let v = vectors[i];
+                    let turn = DVec3::new(v[0], v[1], v[2]);
+                    let slide = DVec3::new(v[3], v[4], v[5]);
+                    let pivot = pivots[body];
+                    if turn.length() > 1e-3 {
+                        // Turning by ω about the pivot and sliding by v is a
+                        // turn about the line where the two agree.
+                        let axis = turn.normalize();
+                        let through = pivot + turn.cross(slide) / turn.length_squared();
+                        Motion::Turn {
+                            axis: tidy(axis),
+                            through: through.to_array(),
+                        }
+                    } else {
+                        Motion::Slide {
+                            direction: tidy(slide.normalize_or_zero()),
+                        }
+                    }
+                })
+                .collect();
+            (*body, motions)
+        })
+        .collect()
+}
+
+/// A direction pointing its larger part the positive way, noise dropped.
+fn tidy(v: DVec3) -> [f64; 3] {
+    let biggest = v
+        .to_array()
+        .into_iter()
+        .fold(0.0f64, |m, c| if c.abs() > m.abs() { c } else { m });
+    let v = if biggest < 0.0 { -v } else { v };
+    v.to_array().map(|c| if c.abs() < 1e-9 { 0.0 } else { c })
+}
+
+/// The eigenvalues and eigenvectors of a symmetric 6×6 matrix, by Jacobi
+/// rotations; rows and columns by index, as the algebra reads.
+#[allow(clippy::needless_range_loop)]
+fn eigen6(mut a: [[f64; 6]; 6]) -> ([f64; 6], [[f64; 6]; 6]) {
+    let mut v = [[0.0f64; 6]; 6];
+    for (i, row) in v.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    for _ in 0..100 {
+        let mut off = 0.0;
+        for p in 0..6 {
+            for q in p + 1..6 {
+                off += a[p][q] * a[p][q];
+            }
+        }
+        if off < 1e-30 {
+            break;
+        }
+        for p in 0..6 {
+            for q in p + 1..6 {
+                if a[p][q].abs() < 1e-300 {
+                    continue;
+                }
+                let theta = (a[q][q] - a[p][p]) / (2.0 * a[p][q]);
+                let t = theta.signum() / (theta.abs() + (theta * theta + 1.0).sqrt());
+                let t = if theta == 0.0 { 1.0 } else { t };
+                let c = 1.0 / (t * t + 1.0).sqrt();
+                let s = t * c;
+                for k in 0..6 {
+                    let (akp, akq) = (a[k][p], a[k][q]);
+                    a[k][p] = c * akp - s * akq;
+                    a[k][q] = s * akp + c * akq;
+                }
+                for k in 0..6 {
+                    let (apk, aqk) = (a[p][k], a[q][k]);
+                    a[p][k] = c * apk - s * aqk;
+                    a[q][k] = s * apk + c * aqk;
+                }
+                for row in v.iter_mut() {
+                    let (vp, vq) = (row[p], row[q]);
+                    row[p] = c * vp - s * vq;
+                    row[q] = s * vp + c * vq;
+                }
+            }
+        }
+    }
+    let values = [a[0][0], a[1][1], a[2][2], a[3][3], a[4][4], a[5][5]];
+    // Columns of `v` are the vectors; hand them back as rows.
+    let mut vectors = [[0.0f64; 6]; 6];
+    for (i, vector) in vectors.iter_mut().enumerate() {
+        for (k, c) in vector.iter_mut().enumerate() {
+            *c = v[k][i];
+        }
+    }
+    (values, vectors)
 }
 
 /// The placement nearest `start` at which `joints` hold, the bodies they
@@ -184,7 +597,7 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
                     df
                 }
             }
-            JointKind::Angle { .. } => return None,
+            JointKind::Angle { .. } | JointKind::Ground => return None,
         };
         (dm.length_squared() > 0.0 && target.length_squared() > 0.0)
             .then(|| DQuat::from_rotation_arc(dm, target))
@@ -450,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn a_chain_settles_from_its_grounded_end_and_a_loop_is_refused() {
+    fn a_chain_settles_from_its_grounded_end_and_a_ring_closes_or_is_named() {
         let mut doc = Document::new("t");
         let a = doc.create_body(None);
         let b = doc.create_body(None);
@@ -476,9 +889,34 @@ mod tests {
         apply(&mut doc);
         assert!((doc.body_placement(b).offset().z - 5.0).abs() < 1e-3);
         assert!((doc.body_placement(c).offset().z - 10.0).abs() < 1e-3);
-        // a on c closes a ring.
-        add_joint(&mut doc, a, mate(c));
-        assert!(matches!(solve(&doc), Err(SolveError::Loop(_))));
+        // Grounding a lets it take a joint of its own: a ring that can
+        // close does, one that cannot is named.
+        let ground = JointFeature {
+            kind: JointKind::Ground,
+            moving: Anchor::Plane {
+                point: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+            },
+            other_body: a,
+            fixed: Anchor::Plane {
+                point: [0.0; 3],
+                normal: [0.0, 0.0, 1.0],
+            },
+        };
+        add_joint(&mut doc, a, ground);
+        let mut on_a = mate(a);
+        if let JointKind::Mate { offset, .. } = &mut on_a.kind {
+            *offset = 10.0;
+        }
+        add_joint(&mut doc, c, on_a.clone());
+        apply(&mut doc);
+        assert!((doc.body_placement(c).offset().z - 10.0).abs() < 1e-3);
+        assert!(solve(&doc).unwrap().is_empty(), "the ring holds");
+        if let JointKind::Mate { offset, .. } = &mut on_a.kind {
+            *offset = 12.0;
+        }
+        add_joint(&mut doc, c, on_a);
+        assert!(matches!(solve(&doc), Err(SolveError::Conflict { .. })));
     }
 
     #[test]
@@ -594,5 +1032,171 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
+    }
+
+    fn plane(point: [f32; 3], normal: [f32; 3]) -> Anchor {
+        Anchor::Plane { point, normal }
+    }
+
+    fn mate(moving: Anchor, other: BodyId, fixed: Anchor, flip: bool, offset: f32) -> JointFeature {
+        JointFeature {
+            kind: JointKind::Mate { flip, offset },
+            moving,
+            other_body: other,
+            fixed,
+        }
+    }
+
+    fn holds(doc: &Document) -> bool {
+        let placements: HashMap<BodyId, Rigid> = doc
+            .bodies()
+            .iter()
+            .map(|b| (b.id, Rigid::from(b.placement)))
+            .collect();
+        joints(doc).iter().all(|j| {
+            j.feature.kind == JointKind::Ground
+                || worst(
+                    &j.feature,
+                    &placements[&j.body],
+                    &placements[&j.feature.other_body],
+                ) <= HOLDS_MM
+        })
+    }
+
+    #[test]
+    fn a_ring_the_bodies_close_together_holds() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let b = doc.create_body(None);
+        let c = doc.create_body(None);
+        doc.set_body_placement(
+            b,
+            BodyPlacement::new(Quat::IDENTITY, Vec3::new(10.0, 4.0, 7.0)),
+        );
+        doc.set_body_placement(
+            c,
+            BodyPlacement::new(Quat::IDENTITY, Vec3::new(-5.0, -6.0, 2.0)),
+        );
+        // Both stand on the base.
+        for body in [b, c] {
+            add_joint(
+                &mut doc,
+                body,
+                mate(
+                    plane([0.0; 3], [0.0, 0.0, -1.0]),
+                    base,
+                    plane([0.0; 3], [0.0, 0.0, 1.0]),
+                    false,
+                    0.0,
+                ),
+            );
+        }
+        // b's side 3 mm from c's, along X; c's front against b's, along Y:
+        // each needs where the other ends up.
+        add_joint(
+            &mut doc,
+            b,
+            mate(
+                plane([0.0; 3], [1.0, 0.0, 0.0]),
+                c,
+                plane([0.0; 3], [-1.0, 0.0, 0.0]),
+                false,
+                3.0,
+            ),
+        );
+        add_joint(
+            &mut doc,
+            c,
+            mate(
+                plane([0.0; 3], [0.0, 1.0, 0.0]),
+                b,
+                plane([0.0; 3], [0.0, -1.0, 0.0]),
+                false,
+                0.0,
+            ),
+        );
+        apply(&mut doc);
+        assert!(holds(&doc), "every joint holds");
+        assert!(
+            solve(&doc).unwrap().is_empty(),
+            "and solving again moves nothing"
+        );
+    }
+
+    #[test]
+    fn the_freedom_left_is_the_motions_the_joints_do_not_hold() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        add_joint(
+            &mut doc,
+            part,
+            mate(
+                plane([0.0; 3], [0.0, 0.0, -1.0]),
+                base,
+                plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
+                false,
+                0.0,
+            ),
+        );
+        apply(&mut doc);
+        let free = freedom(&doc);
+        let motions = &free.iter().find(|(b, _)| *b == part).unwrap().1;
+        let mut words: Vec<String> = motions.iter().map(Motion::describe).collect();
+        words.sort();
+        assert_eq!(
+            words,
+            ["slide along X", "slide along Y", "turn about Z"],
+            "{motions:?}"
+        );
+
+        // A pin in a hole, resting on the face: only its turn is left,
+        // about the pin's own axis.
+        add_joint(
+            &mut doc,
+            part,
+            JointFeature {
+                kind: JointKind::Align,
+                moving: Anchor::Axis {
+                    point: [5.0, 0.0, 0.0],
+                    direction: [0.0, 0.0, 1.0],
+                },
+                other_body: base,
+                fixed: Anchor::Axis {
+                    point: [20.0, 3.0, 0.0],
+                    direction: [0.0, 0.0, 1.0],
+                },
+            },
+        );
+        apply(&mut doc);
+        let free = freedom(&doc);
+        let motions = &free.iter().find(|(b, _)| *b == part).unwrap().1;
+        assert_eq!(motions.len(), 1, "{motions:?}");
+        let Motion::Turn { axis, through } = motions[0] else {
+            panic!("a turn: {motions:?}")
+        };
+        assert!((axis[2] - 1.0).abs() < 1e-3);
+        assert!(
+            (through[0] - 20.0).abs() < 1e-2 && (through[1] - 3.0).abs() < 1e-2,
+            "{through:?}"
+        );
+    }
+
+    #[test]
+    fn eigen_finds_a_known_null() {
+        let (a, b) = (2.0, -1.5);
+        let mut m = [[0.0f64; 6]; 6];
+        m[0][0] = 1.0;
+        m[1][1] = 1.0;
+        m[0][2] = a;
+        m[2][0] = a;
+        m[1][2] = b;
+        m[2][1] = b;
+        m[2][2] = a * a + b * b;
+        m[3][3] = 5.0;
+        m[4][4] = 7.0;
+        m[5][5] = 9.0;
+        let (values, _) = eigen6(m);
+        assert!(values.iter().any(|v| v.abs() < 1e-9), "{values:?}");
     }
 }

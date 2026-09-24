@@ -20,7 +20,7 @@ use core_document::{
 };
 
 pub use joint::{Anchor, JOINT_KIND, JointFeature, JointKind, Rigid};
-pub use solve::{HOLDS_MM, Joint, SolveError, joints, solve};
+pub use solve::{HOLDS_MM, Joint, Motion, SolveError, freedom, joints, solve};
 
 /// Which joint a pick sequence makes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +92,29 @@ pub struct AssemblyWorkbench {
     task: Option<Task>,
     /// What the last solve said, for the task panel.
     verdict: Option<Result<String, String>>,
+    /// What each jointed body may still do, and at which edit of the
+    /// document that was worked out: the status bar asks every frame.
+    freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
+}
+
+/// Each jointed body and the motions its joints leave it.
+type Freedom = Vec<(BodyId, Vec<Motion>)>;
+
+impl AssemblyWorkbench {
+    /// Each jointed body's free motions, worked out again only after an
+    /// edit.
+    fn freedom_now(&self, ctx: &WorkbenchRuntimeContext) -> Freedom {
+        let seq = ctx.document.mutation_seq();
+        let mut cache = self.freedom.lock().unwrap();
+        match &*cache {
+            Some((at, found)) if *at == seq => found.clone(),
+            _ => {
+                let found = freedom(ctx.document);
+                *cache = Some((seq, found.clone()));
+                found
+            }
+        }
+    }
 }
 
 /// Every body's placement, to put back when a task is cancelled.
@@ -132,13 +155,6 @@ pub(crate) fn apply_solve(ctx: &mut WorkbenchRuntimeContext) -> Result<String, S
                 1 => "Moved 1 body; every joint holds".to_string(),
                 n => format!("Moved {n} bodies; every joint holds"),
             })
-        }
-        Err(SolveError::Loop(bodies)) => {
-            let names: Vec<String> = bodies.iter().map(|b| body_name(ctx, *b)).collect();
-            Err(format!(
-                "These bodies are joined in a ring, so none can go first: {}",
-                names.join(", ")
-            ))
         }
         Err(SolveError::Conflict { body, joints }) => Err(format!(
             "{} cannot hold all its joints at once: {}",
@@ -339,6 +355,7 @@ impl Workbench for AssemblyWorkbench {
             tool("asm.angle", "Angle between faces", "constraint-angle").shortcut("N"),
         );
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
+        context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
 
@@ -361,10 +378,51 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
+    /// Whether the assembly is fully placed, or how many motions its
+    /// joints leave open; the selected body's, in words.
+    fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let free = self.freedom_now(ctx);
+        if free.is_empty() {
+            return None;
+        }
+        let pal = ctx.sketch_palette;
+        let open: usize = free.iter().map(|(_, m)| m.len()).sum();
+        let state = if open == 0 {
+            (pal.fully_constrained, "Fully placed".to_string())
+        } else {
+            (
+                pal.constraint,
+                format!("{open} motion{} free", if open == 1 { "" } else { "s" }),
+            )
+        };
+        let selection = Self::body_to_move(ctx).and_then(|body| {
+            let (_, motions) = free.iter().find(|(b, _)| *b == body)?;
+            let name = ctx
+                .document
+                .bodies()
+                .iter()
+                .find(|b| b.id == body)
+                .map(|b| b.name.clone())
+                .unwrap_or_default();
+            Some(if motions.is_empty() {
+                format!("{name}: fully placed")
+            } else {
+                let words: Vec<String> = motions.iter().map(Motion::describe).collect();
+                format!("{name}: {}", words.join(", "))
+            })
+        });
+        Some(core_document::StatusItems {
+            state: Some(state),
+            selection,
+            coords: None,
+            mode: None,
+        })
+    }
+
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
             "asm.mate" | "asm.align" | "asm.angle" => ctx.document.bodies().len() >= 2,
-            "asm.move" => Self::body_to_move(ctx).is_some(),
+            "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
             _ => false,
         }
@@ -401,6 +459,34 @@ impl Workbench for AssemblyWorkbench {
                     });
                 }
                 None => ctx.log_warn("Select a body to move"),
+            },
+            Some("asm.ground") => match Self::body_to_move(ctx) {
+                Some(body) => {
+                    let grounded = joints(ctx.document)
+                        .iter()
+                        .any(|j| j.body == body && j.feature.kind == JointKind::Ground);
+                    let made = commands::set_grounded(ctx, body, !grounded);
+                    ctx.record(
+                        "asm.ground",
+                        commands::object(serde_json::json!({
+                            "body": body.0.to_string(),
+                            "grounded": !grounded,
+                        })),
+                        made.map_or(serde_json::Value::Null, |id| {
+                            serde_json::json!(id.0.to_string())
+                        }),
+                    );
+                    self.solve_and_apply(ctx);
+                    ctx.request(HostRequest::JournalLabel(
+                        if grounded {
+                            "Unground body"
+                        } else {
+                            "Ground body"
+                        }
+                        .into(),
+                    ));
+                }
+                None => ctx.log_warn("Select a body to ground"),
             },
             Some("asm.solve") => {
                 self.solve_and_apply(ctx);

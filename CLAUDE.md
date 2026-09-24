@@ -139,11 +139,14 @@ cargo fmt --all                   # CI enforces --check
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
   planar anchors with offset/flip, Align of two axes, Angle between two
   planar anchors, starting at the angle they make; anchors kept in each
-  body's own frame), the solver (`solve.rs`: bodies in dependency order,
-  each by damped least squares in double precision from where it sits,
-  after turning its first joint's directions into agreement, or its first
-  angle to its value; rings and
-  conflicting joints are reported), and task panels for picking,
+  body's own frame; Ground keeps a body where it is), the solver
+  (`solve.rs`: each free body placed on its own against the bodies placed
+  before it, turning its first joint's directions into agreement, rings
+  taking their turn once most of their joints have something to hold to;
+  then every free body refined together by damped least squares over all
+  joints, which closes rings; joints still apart are reported by name;
+  `freedom` reads each body's remaining motions off its joints' Jacobian,
+  cached per edit for the status bar), and task panels for picking,
   joint settings and moving a body by numbers. Solves run inside the
   gesture that made or edited a joint and record ordinary
   `SetBodyPlacement` ops.

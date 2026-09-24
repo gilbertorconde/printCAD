@@ -27,6 +27,9 @@ pub enum JointKind {
     /// faces them at each other, 90 stands one square to the other. Only
     /// the turn is held; where the faces sit is left free.
     Angle { degrees: f32 },
+    /// The body stays where it is: everything else is placed against it.
+    /// It names no other body and holds no anchors.
+    Ground,
 }
 
 impl JointKind {
@@ -35,6 +38,7 @@ impl JointKind {
             JointKind::Mate { .. } => "Mate",
             JointKind::Align => "Align",
             JointKind::Angle { .. } => "Angle",
+            JointKind::Ground => "Ground",
         }
     }
 
@@ -43,6 +47,7 @@ impl JointKind {
             JointKind::Mate { .. } => "joint-mate",
             JointKind::Align => "joint-align",
             JointKind::Angle { .. } => "constraint-angle",
+            JointKind::Ground => "constraint-lock",
         }
     }
 }
@@ -193,6 +198,8 @@ impl JointFeature {
                 let between = dm.cross(df).length().atan2(dm.dot(df));
                 out.push((between - f64::from(degrees).to_radians()) * ARM_MM);
             }
+            // Grounding fixes the body rather than asking anything of it.
+            JointKind::Ground => {}
         }
     }
 }

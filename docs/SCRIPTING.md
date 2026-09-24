@@ -871,6 +871,17 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `flip` (boolean, optional): A mate's side
 - `degrees` (number, optional): An angle joint's angle
 
+`pc.asm.ground`: Keep a body where it is: the bodies joined to it are placed against it.
+
+- `body` (id)
+- `grounded` (boolean, optional): false lets it move again (true by default)
+- Returns the ground joint's id, or nil when it was taken away
+
+`pc.asm.freedom`: What each jointed body may still do: the motions its joints leave open.
+
+- `body` (id, optional): Only this body
+- Returns a list of {body, free, motions}, each motion {turn = {axis, through}} or {slide = direction}
+
 `pc.asm.solve`: Place every body its joints hold.
 
 - Returns what moved, in words

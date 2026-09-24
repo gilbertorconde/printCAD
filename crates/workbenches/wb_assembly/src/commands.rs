@@ -62,6 +62,31 @@ pub fn register(context: &mut WorkbenchContext) {
             .optional("degrees", ParamKind::Number, "An angle joint's angle"),
     );
     context.register_command(
+        CommandSpec::new(
+            "asm.ground",
+            "Keep a body where it is: the bodies joined to it are placed against it",
+        )
+        .param("body", ParamKind::Id, "")
+        .optional(
+            "grounded",
+            ParamKind::Bool,
+            "false lets it move again (true by default)",
+        )
+        .returns("the ground joint's id, or nil when it was taken away"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.freedom",
+            "What each jointed body may still do: the motions its joints leave open",
+        )
+        .optional("body", ParamKind::Id, "Only this body")
+        .returns(
+            "a list of {body, free, motions}, each motion {turn = {axis, through}} \
+             or {slide = direction}",
+        )
+        .read_only(),
+    );
+    context.register_command(
         CommandSpec::new("asm.solve", "Place every body its joints hold")
             .returns("what moved, in words"),
     );
@@ -120,7 +145,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         *degrees = v as f32;
                     }
                 }
-                JointKind::Align => {}
+                JointKind::Align | JointKind::Ground => {}
             }
             let data =
                 serde_json::to_value(&feature).map_err(|e| CommandError::failed(e.to_string()))?;
@@ -129,6 +154,36 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(|e| CommandError::failed(e.to_string()))?;
             ctx.document.clear_feature_dirty(joint);
             solved(ctx, Value::Null)
+        }
+        "asm.ground" => {
+            let body = BodyId(a.id("body")?);
+            if !ctx.document.bodies().iter().any(|b| b.id == body) {
+                return Err(CommandError::bad("body", "is not a body"));
+            }
+            let grounded = a.opt_bool("grounded")?.unwrap_or(true);
+            let id = set_grounded(ctx, body, grounded);
+            solved(ctx, id.map_or(Value::Null, |id| json!(id.0.to_string())))
+        }
+        "asm.freedom" => {
+            let only = a.opt_id("body")?.map(BodyId);
+            Ok(Value::Array(
+                crate::freedom(ctx.document)
+                    .into_iter()
+                    .filter(|(body, _)| only.is_none_or(|o| o == *body))
+                    .map(|(body, motions)| {
+                        json!({
+                            "body": body.0.to_string(),
+                            "free": motions.len(),
+                            "motions": motions.iter().map(|m| match m {
+                                crate::Motion::Turn { axis, through } => {
+                                    json!({"turn": {"axis": axis, "through": through}})
+                                }
+                                crate::Motion::Slide { direction } => json!({"slide": direction}),
+                            }).collect::<Vec<_>>(),
+                        })
+                    })
+                    .collect(),
+            ))
         }
         "asm.solve" => crate::apply_solve(ctx)
             .map(Value::String)
@@ -266,7 +321,7 @@ pub(crate) fn record_joint(
     };
     let settings = |kind: &JointKind| match *kind {
         JointKind::Mate { flip, offset } => json!({"offset": offset, "flip": flip}),
-        JointKind::Align => json!({}),
+        JointKind::Align | JointKind::Ground => json!({}),
         JointKind::Angle { degrees } => json!({"degrees": degrees}),
     };
     match before {
@@ -291,6 +346,14 @@ pub(crate) fn record_joint(
                 JointKind::Mate { .. } => "asm.mate",
                 JointKind::Align => "asm.align",
                 JointKind::Angle { .. } => "asm.angle",
+                JointKind::Ground => {
+                    ctx.record(
+                        "asm.ground",
+                        object(json!({"body": body.0.to_string()})),
+                        json!(id.0.to_string()),
+                    );
+                    return;
+                }
             };
             let mut args = object(json!({
                 "body": body.0.to_string(),
@@ -406,6 +469,45 @@ fn quaternion(value: &Value) -> Result<Quat, CommandError> {
         return Err(bad());
     }
     Ok(q.normalize())
+}
+
+/// Ground `body`, or let it move again: a ground joint on it, or none.
+/// Answers the ground joint made.
+pub(crate) fn set_grounded(
+    ctx: &mut WorkbenchRuntimeContext,
+    body: BodyId,
+    grounded: bool,
+) -> Option<FeatureId> {
+    let existing: Vec<FeatureId> = crate::joints(ctx.document)
+        .into_iter()
+        .filter(|j| j.body == body && j.feature.kind == JointKind::Ground)
+        .map(|j| j.id)
+        .collect();
+    if !grounded {
+        for id in existing {
+            let _ = ctx.document.remove_feature(id);
+        }
+        return None;
+    }
+    if let Some(id) = existing.first() {
+        return Some(*id);
+    }
+    let anchor = Anchor::Plane {
+        point: [0.0; 3],
+        normal: [0.0, 0.0, 1.0],
+    };
+    ctx.document
+        .add_feature_in_body(
+            JointFeature {
+                kind: JointKind::Ground,
+                moving: anchor,
+                other_body: body,
+                fixed: anchor,
+            },
+            "Ground".into(),
+            Some(body),
+        )
+        .ok()
 }
 
 #[cfg(test)]
