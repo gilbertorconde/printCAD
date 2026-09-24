@@ -255,6 +255,9 @@ pub struct BodySubmission {
     /// Whether the pick pass sees it. Paint over a surface (a selection
     /// overlay) and guides are not; a body is, however see-through.
     pub pickable: bool,
+    /// Drawn last, blended at `opacity`, over everything whatever its
+    /// depth: what the scene would hide and must show.
+    pub on_top: bool,
 }
 
 impl fmt::Debug for BodySubmission {

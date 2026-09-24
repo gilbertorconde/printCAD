@@ -1,7 +1,10 @@
 //! The kernel's answers to the questions a workbench asks while it runs
 //! (`kernel_api::KernelQueries`).
 
-use kernel_api::{KernelError, KernelQueries, KernelResult, Overlap, ProfilePlane, ProjectedEdge};
+use kernel_api::{
+    KernelError, KernelQueries, KernelResult, Overlap, ProfilePlane, ProjectedEdge,
+    TessellationSettings,
+};
 use ogeom::algo::volume_properties;
 use ogeom::algo::{ProjectedCurve, project_edge_onto_plane};
 use ogeom::geom::Curve2d as _;
@@ -44,12 +47,16 @@ impl KernelQueries for OgeomQueries {
             volume += mass;
             moment += Vector::new(measured.centre.x, measured.centre.y, measured.centre.z) * mass;
         }
-        Ok((volume > TOUCHING_MM3).then(|| {
-            let centre = moment / volume;
-            Overlap {
-                volume_mm3: volume,
-                centre_mm: [centre.x, centre.y, centre.z],
-            }
+        if volume <= TOUCHING_MM3 {
+            return Ok(None);
+        }
+        let shared = crate::ops::wrap_pieces(&mut model, pieces).map_err(other)?;
+        let mesh = tess::mesh_shape(&model, &shared, &[], &TessellationSettings::default())?;
+        let centre = moment / volume;
+        Ok(Some(Overlap {
+            volume_mm3: volume,
+            centre_mm: [centre.x, centre.y, centre.z],
+            mesh,
         }))
     }
 

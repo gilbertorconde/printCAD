@@ -466,10 +466,16 @@ fn solve_dense(mut m: Vec<f64>, mut b: Vec<f64>, n: usize) -> Option<Vec<f64>> {
 /// still.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Motion {
-    /// A turn about a line through `through`, along `axis`.
-    Turn { axis: [f64; 3], through: [f64; 3] },
-    /// A slide along `direction`.
-    Slide { direction: [f64; 3] },
+    /// A turn about a line through `through`, along `axis`. `at_limit`: a
+    /// hinge's limit holds it at one end, so it turns one way only.
+    Turn {
+        axis: [f64; 3],
+        through: [f64; 3],
+        at_limit: bool,
+    },
+    /// A slide along `direction`. `at_limit`: a slider's limit holds it at
+    /// one end, so it slides one way only.
+    Slide { direction: [f64; 3], at_limit: bool },
 }
 
 impl Motion {
@@ -483,19 +489,70 @@ impl Motion {
             }
             format!("({:.2}, {:.2}, {:.2})", v[0], v[1], v[2])
         };
-        match self {
-            Motion::Turn { axis, .. } => format!("turn about {}", name(*axis)),
-            Motion::Slide { direction } => format!("slide along {}", name(*direction)),
+        let (words, at_limit) = match self {
+            Motion::Turn { axis, at_limit, .. } => {
+                (format!("turn about {}", name(*axis)), at_limit)
+            }
+            Motion::Slide {
+                direction,
+                at_limit,
+            } => (format!("slide along {}", name(*direction)), at_limit),
+        };
+        if *at_limit {
+            format!("{words} (one way, at its limit)")
+        } else {
+            words
         }
     }
+
+    fn mark_at_limit(&mut self) {
+        match self {
+            Motion::Turn { at_limit, .. } | Motion::Slide { at_limit, .. } => *at_limit = true,
+        }
+    }
+}
+
+/// How near an end of its limits, in degrees or millimetres, a hinge or a
+/// slider rests on it.
+const AT_LIMIT: f64 = 1e-3;
+
+/// The lines along which a limit holds a motion at one end, for `body`:
+/// each a hinge's axis (`true`) or a slider's (`false`), in the world.
+fn limits_reached(
+    joints: &[Joint],
+    placements: &HashMap<BodyId, Rigid>,
+    body: BodyId,
+) -> Vec<(bool, DVec3)> {
+    joints
+        .iter()
+        .filter(|j| j.body == body || j.feature.other_body == body)
+        .filter_map(|j| {
+            let (hinge, drive) = match j.feature.kind {
+                JointKind::Hinge { drive, .. } => (true, drive),
+                JointKind::Slider { drive, .. } => (false, drive),
+                _ => return None,
+            };
+            let [low, high] = drive.limits.filter(|_| drive.to.is_none())?;
+            let (moving, fixed) = (
+                placements.get(&j.body)?,
+                placements.get(&j.feature.other_body)?,
+            );
+            let now = j.feature.travel(moving, fixed)?;
+            let near = |end: f32| (now - f64::from(end)).abs() <= AT_LIMIT;
+            (near(low) || near(high)).then(|| (hinge, j.feature.fixed.placed(fixed).1))
+        })
+        .collect()
 }
 
 /// What each jointed body may still do where it sits: the motions its
 /// joints leave open, the bodies around it held still. A body with none
 /// is fully placed.
 pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
-    // A limit stops a motion only at its ends: the motion is still there.
-    let all: Vec<Joint> = usable(document)
+    let limited = usable(document);
+    // A limit stops a motion only at its ends: the motion is still there,
+    // marked one way where a limit holds it.
+    let all: Vec<Joint> = limited
+        .clone()
         .into_iter()
         .map(|mut j| {
             if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } =
@@ -578,14 +635,26 @@ pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
                         Motion::Turn {
                             axis: tidy(axis),
                             through: through.to_array(),
+                            at_limit: false,
                         }
                     } else {
                         Motion::Slide {
                             direction: tidy(slide.normalize_or_zero()),
+                            at_limit: false,
                         }
                     }
                 })
-                .collect();
+                .collect::<Vec<Motion>>();
+            let mut motions = motions;
+            for (hinge, line) in limits_reached(&limited, &placements, *body) {
+                let along = |v: &[f64; 3]| DVec3::from_array(*v).dot(line).abs() > 0.999;
+                if let Some(motion) = motions.iter_mut().find(|m| match m {
+                    Motion::Turn { axis, .. } => hinge && along(axis),
+                    Motion::Slide { direction, .. } => !hinge && along(direction),
+                }) {
+                    motion.mark_at_limit();
+                }
+            }
             (*body, motions)
         })
         .collect()
@@ -1278,7 +1347,7 @@ mod tests {
         let free = freedom(&doc);
         let motions = &free.iter().find(|(b, _)| *b == part).unwrap().1;
         assert_eq!(motions.len(), 1, "{motions:?}");
-        let Motion::Turn { axis, through } = motions[0] else {
+        let Motion::Turn { axis, through, .. } = motions[0] else {
             panic!("a turn: {motions:?}")
         };
         assert!((axis[2] - 1.0).abs() < 1e-3);
@@ -1375,7 +1444,7 @@ mod tests {
         );
         let motions = free_after_solving(&mut doc, part);
         assert_eq!(motions.len(), 1, "{motions:?}");
-        let Motion::Turn { axis, through } = motions[0] else {
+        let Motion::Turn { axis, through, .. } = motions[0] else {
             panic!("a turn: {motions:?}")
         };
         assert!((axis[2].abs() - 1.0).abs() < 1e-3, "{axis:?}");
@@ -1407,7 +1476,7 @@ mod tests {
         add_joint(&mut doc, part, joint);
         let motions = free_after_solving(&mut doc, part);
         assert_eq!(motions.len(), 1, "{motions:?}");
-        let Motion::Slide { direction } = motions[0] else {
+        let Motion::Slide { direction, .. } = motions[0] else {
             panic!("a slide: {motions:?}")
         };
         assert!((direction[2].abs() - 1.0).abs() < 1e-3, "{direction:?}");

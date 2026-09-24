@@ -665,6 +665,7 @@ pub(crate) struct MeshRenderer {
     wireframe_pipeline: vk::Pipeline,
     edge_pipeline: vk::Pipeline,
     translucent_pipeline: vk::Pipeline,
+    on_top_pipeline: vk::Pipeline,
     msaa_samples: vk::SampleCountFlags,
     solid_line_width: f32,
     line_width_range: [f32; 2],
@@ -735,6 +736,17 @@ impl MeshRenderer {
             non_solid_fill,
         )?;
 
+        let on_top_pipeline = create_mesh_pipeline(
+            &device,
+            render_pass,
+            pipeline_layout,
+            msaa_samples,
+            MeshPipelineMode::OnTop,
+            solid_line_width,
+            false,
+            non_solid_fill,
+        )?;
+
         Ok(Self {
             device,
             memory_properties,
@@ -743,6 +755,7 @@ impl MeshRenderer {
             wireframe_pipeline,
             edge_pipeline,
             translucent_pipeline,
+            on_top_pipeline,
             msaa_samples,
             solid_line_width,
             line_width_range: line_range,
@@ -761,6 +774,7 @@ impl MeshRenderer {
             self.device.destroy_pipeline(self.edge_pipeline, None);
             self.device
                 .destroy_pipeline(self.translucent_pipeline, None);
+            self.device.destroy_pipeline(self.on_top_pipeline, None);
         }
         self.msaa_samples = msaa_samples;
         self.pipeline = create_mesh_pipeline(
@@ -799,6 +813,16 @@ impl MeshRenderer {
             self.pipeline_layout,
             msaa_samples,
             MeshPipelineMode::Translucent,
+            self.solid_line_width,
+            false,
+            self.non_solid_fill,
+        )?;
+        self.on_top_pipeline = create_mesh_pipeline(
+            &self.device,
+            render_pass,
+            self.pipeline_layout,
+            msaa_samples,
+            MeshPipelineMode::OnTop,
             self.solid_line_width,
             false,
             self.non_solid_fill,
@@ -918,7 +942,7 @@ impl MeshRenderer {
         // Solid pass: bind solid pipeline once, draw every non-wireframe body
         // sequentially. Wireframes get a second pass with the depth-biased
         // pipeline, edges a third with line-list topology.
-        let opaque = |b: &BodySubmission| !b.is_wireframe && b.opacity >= 1.0;
+        let opaque = |b: &BodySubmission| !b.is_wireframe && !b.on_top && b.opacity >= 1.0;
         let has_solid = bodies.iter().zip(&visible).any(|(b, v)| *v && opaque(b));
         if has_solid {
             unsafe {
@@ -964,7 +988,7 @@ impl MeshRenderer {
         let has_edges = bodies
             .iter()
             .zip(&edges_eligible)
-            .filter(|(b, v)| **v && !b.is_wireframe)
+            .filter(|(b, v)| **v && !b.is_wireframe && !b.on_top)
             .any(|(b, _)| matches!(cache.get(&b.id), Some(c) if draws_edges(c)));
         if has_edges {
             unsafe {
@@ -984,7 +1008,7 @@ impl MeshRenderer {
             for (body, _) in bodies
                 .iter()
                 .zip(&edges_eligible)
-                .filter(|(b, v)| **v && !b.is_wireframe)
+                .filter(|(b, v)| **v && !b.is_wireframe && !b.on_top)
             {
                 let cached = match cache.get(&body.id) {
                     Some(c) if draws_edges(c) => c,
@@ -1027,7 +1051,7 @@ impl MeshRenderer {
 
         // Translucent bodies last, over everything opaque and its edges:
         // blended, depth-tested, never writing depth.
-        let translucent = |b: &BodySubmission| !b.is_wireframe && b.opacity < 1.0;
+        let translucent = |b: &BodySubmission| !b.is_wireframe && !b.on_top && b.opacity < 1.0;
         if bodies
             .iter()
             .zip(&visible)
@@ -1048,6 +1072,29 @@ impl MeshRenderer {
                 .zip(&visible)
                 .filter(|(b, v)| **v && translucent(b))
             {
+                let cached = match cache.get(&body.id) {
+                    Some(c) if c.index_count > 0 => c,
+                    _ => continue,
+                };
+                stats.bodies_drawn += 1;
+                stats.triangle_indices += u64::from(cached.index_count);
+                self.draw_body(command_buffer, cached, body, false);
+            }
+        }
+
+        // Over everything, depth or not.
+        if bodies.iter().zip(&visible).any(|(b, v)| *v && b.on_top) {
+            unsafe {
+                self.device.cmd_bind_pipeline(
+                    command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    self.on_top_pipeline,
+                );
+                self.device.cmd_set_viewport(command_buffer, 0, &[viewport]);
+                self.device.cmd_set_scissor(command_buffer, 0, &[scissor]);
+                self.push_frame_constants(command_buffer, &frame_pc);
+            }
+            for (body, _) in bodies.iter().zip(&visible).filter(|(b, v)| **v && b.on_top) {
                 let cached = match cache.get(&body.id) {
                     Some(c) if c.index_count > 0 => c,
                     _ => continue,
@@ -1171,6 +1218,7 @@ impl MeshRenderer {
             self.device.destroy_pipeline(self.edge_pipeline, None);
             self.device
                 .destroy_pipeline(self.translucent_pipeline, None);
+            self.device.destroy_pipeline(self.on_top_pipeline, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
         }
@@ -1192,6 +1240,10 @@ pub(crate) enum MeshPipelineMode {
     /// never writing depth: for bodies drawn with an opacity under 1.0,
     /// after every opaque body and its edges.
     Translucent,
+    /// As `Translucent` with no depth test: drawn over everything, for
+    /// what the scene would hide and must show (material two bodies
+    /// share).
+    OnTop,
     /// Face-boundary outlines as a `LINE_LIST`. Two-sided (no culling),
     /// depth-tested (`LESS_OR_EQUAL`, depth write off) for correct occlusion.
     /// Small constant raster bias + clip-space pull in `edge.vert` limit
@@ -1214,6 +1266,7 @@ fn create_mesh_pipeline(
     let (vert_spv, frag_spv) = match mode {
         MeshPipelineMode::Solid
         | MeshPipelineMode::Translucent
+        | MeshPipelineMode::OnTop
         | MeshPipelineMode::WireframeTriangles => (MESH_VERT_SPV, MESH_FRAG_SPV),
         MeshPipelineMode::Edges => (EDGE_VERT_SPV, EDGE_FRAG_SPV),
     };
@@ -1260,6 +1313,7 @@ fn create_mesh_pipeline(
     let attr_count = match mode {
         MeshPipelineMode::Solid
         | MeshPipelineMode::Translucent
+        | MeshPipelineMode::OnTop
         | MeshPipelineMode::WireframeTriangles => attr_descs.len(),
         MeshPipelineMode::Edges => 2,
     };
@@ -1272,6 +1326,7 @@ fn create_mesh_pipeline(
     let topology = match mode {
         MeshPipelineMode::Solid
         | MeshPipelineMode::Translucent
+        | MeshPipelineMode::OnTop
         | MeshPipelineMode::WireframeTriangles => vk::PrimitiveTopology::TRIANGLE_LIST,
         MeshPipelineMode::Edges => vk::PrimitiveTopology::LINE_LIST,
     };
@@ -1288,7 +1343,9 @@ fn create_mesh_pipeline(
     // bias only** (slope is poorly defined and can over-pull on steep spans).
     // Too much bias + `edge.vert` nudge causes ghost edges through occluders.
     let (depth_bias_enable, depth_bias_constant_factor, depth_bias_slope_factor) = match mode {
-        MeshPipelineMode::Solid | MeshPipelineMode::Translucent => (false, 0.0, 0.0),
+        MeshPipelineMode::Solid | MeshPipelineMode::Translucent | MeshPipelineMode::OnTop => {
+            (false, 0.0, 0.0)
+        }
         MeshPipelineMode::WireframeTriangles => (true, 1.0, 1.0),
         MeshPipelineMode::Edges => (true, -0.55, 0.0),
     };
@@ -1298,7 +1355,9 @@ fn create_mesh_pipeline(
     let depth_write = matches!(mode, MeshPipelineMode::Solid);
 
     let polygon_mode = match mode {
-        MeshPipelineMode::Solid | MeshPipelineMode::Translucent => vk::PolygonMode::FILL,
+        MeshPipelineMode::Solid | MeshPipelineMode::Translucent | MeshPipelineMode::OnTop => {
+            vk::PolygonMode::FILL
+        }
         // POLYGON_MODE_LINE requires the fillModeNonSolid device feature;
         // fall back to filled triangles where it's unavailable.
         MeshPipelineMode::WireframeTriangles if non_solid_fill => vk::PolygonMode::LINE,
@@ -1320,9 +1379,10 @@ fn create_mesh_pipeline(
     // Cost: roughly twice as many fragments enter the depth test, but most
     // of them fail it cheaply and never run the full lighting code.
     let cull_mode = match mode {
-        MeshPipelineMode::Solid | MeshPipelineMode::Translucent | MeshPipelineMode::Edges => {
-            vk::CullModeFlags::NONE
-        }
+        MeshPipelineMode::Solid
+        | MeshPipelineMode::Translucent
+        | MeshPipelineMode::OnTop
+        | MeshPipelineMode::Edges => vk::CullModeFlags::NONE,
         MeshPipelineMode::WireframeTriangles => vk::CullModeFlags::BACK,
     };
     let rasterizer = vk::PipelineRasterizationStateCreateInfo::default()
@@ -1344,6 +1404,7 @@ fn create_mesh_pipeline(
     // without winning over clearly nearer geometry (avoid heavy bias + nudge).
     let (depth_test_enable, depth_compare_op) = match mode {
         MeshPipelineMode::Solid => (true, vk::CompareOp::LESS),
+        MeshPipelineMode::OnTop => (false, vk::CompareOp::ALWAYS),
         MeshPipelineMode::Translucent
         | MeshPipelineMode::WireframeTriangles
         | MeshPipelineMode::Edges => (true, vk::CompareOp::LESS_OR_EQUAL),
@@ -1357,7 +1418,10 @@ fn create_mesh_pipeline(
 
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::default()
         .color_write_mask(vk::ColorComponentFlags::RGBA)
-        .blend_enable(matches!(mode, MeshPipelineMode::Translucent))
+        .blend_enable(matches!(
+            mode,
+            MeshPipelineMode::Translucent | MeshPipelineMode::OnTop
+        ))
         .src_color_blend_factor(vk::BlendFactor::SRC_ALPHA)
         .dst_color_blend_factor(vk::BlendFactor::ONE_MINUS_SRC_ALPHA)
         .color_blend_op(vk::BlendOp::ADD)

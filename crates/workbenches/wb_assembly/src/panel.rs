@@ -82,7 +82,7 @@ impl AssemblyWorkbench {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
             Some(Task::Interference { found, seq }) => {
-                self.interference_panel(ui, ctx, request, &found, seq)
+                self.interference_panel(ui, ctx, request, found.as_ref(), seq)
             }
             Some(Task::Explode { placements, spread }) => {
                 self.explode_panel(ui, ctx, request, placements, spread)
@@ -111,15 +111,42 @@ impl AssemblyWorkbench {
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         request: TaskRequest,
-        found: &crate::Interference,
+        found: Option<&crate::Interference>,
         seq: u64,
     ) -> TaskOutcome {
         if request.accept || request.cancel {
+            self.checking = None;
             self.task = None;
             return TaskOutcome::Cancelled;
         }
         header(ui, "check-geometry", "Interference");
         ui.add_space(SPACE_2);
+        self.collect_interference(ctx);
+        let Some(found) = found else {
+            let (done, total) = self.interference_progress().unwrap_or((0, 0));
+            ui.label(
+                RichText::new(format!("Checking {done} of {total} pairs that may touch"))
+                    .font(sans(FONT_SM))
+                    .color(TEXT1),
+            );
+            ui.add(egui::ProgressBar::new(if total == 0 {
+                0.0
+            } else {
+                done as f32 / total as f32
+            }));
+            ui.add_space(SPACE_2);
+            if ui_kit::widgets::secondary_button(ui, "Stop")
+                .on_hover_text("Stop checking; the clashes found so far stay")
+                .clicked()
+            {
+                self.stop_interference();
+            }
+            // The answer arrives on another thread, with no event to wake
+            // the window.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+            return TaskOutcome::Open;
+        };
         let bodies = format!(
             "{} bod{}",
             found.checked,
@@ -154,6 +181,15 @@ impl AssemblyWorkbench {
             if row.clicked() {
                 ctx.request(core_document::HostRequest::SelectBody(clash.a));
             }
+        }
+        if found.stopped {
+            ui.add_space(SPACE_1);
+            note_card(
+                ui,
+                Note::Warning,
+                None,
+                "Stopped early: some pairs were not checked",
+            );
         }
         if found.skipped > 0 {
             ui.add_space(SPACE_1);

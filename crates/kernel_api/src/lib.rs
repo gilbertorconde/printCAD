@@ -960,12 +960,13 @@ pub enum ProjectedEdge {
 
 /// Geometry questions a workbench may ask while it runs, answered by the
 /// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
-/// The solid two shapes share: its volume and its centre, in the first
-/// shape's frame.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+/// The solid two shapes share: its volume, its centre and its mesh, in
+/// the first shape's frame.
+#[derive(Debug, Clone)]
 pub struct Overlap {
     pub volume_mm3: f64,
     pub centre_mm: [f64; 3],
+    pub mesh: TriMesh,
 }
 
 pub trait KernelQueries: Send + Sync {

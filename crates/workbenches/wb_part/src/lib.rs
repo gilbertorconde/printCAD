@@ -1225,7 +1225,7 @@ impl Workbench for PartDesignWorkbench {
         &self,
         ctx: &WorkbenchRuntimeContext,
         active_feature: Option<FeatureId>,
-    ) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
+    ) -> Vec<core_document::OverlayMesh> {
         let Some(body) = Self::target_body(ctx) else {
             return Vec::new();
         };
@@ -1246,7 +1246,10 @@ impl Workbench for PartDesignWorkbench {
             } else {
                 [0.55, 0.55, 0.95]
             };
-            meshes.push((placement.mesh(&datum_mesh(&datum)), color, true));
+            meshes.push(core_document::OverlayMesh::wireframe(
+                placement.mesh(&datum_mesh(&datum)),
+                color,
+            ));
         }
         meshes
     }

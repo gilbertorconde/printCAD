@@ -38,7 +38,8 @@ and for the selected body which ones.
 A hinge's angle and a slider's position can be driven: tick Drive in its
 settings and give a value, or a formula (see [VARIABLES.md](VARIABLES.md)).
 A hinge's angle counts from where it sat when the joint was made. Limits
-keep the motion within a range while it is not driven. Play sweeps a
+keep the motion within a range while it is not driven; a joint resting
+on a limit shows its motion as "one way, at its limit". Play sweeps a
 driven joint through its limits (or a whole turn, or 25 mm either way) to
 show the motion, and puts it back when stopped.
 
@@ -52,9 +53,12 @@ not drag; use Move body (G) for those. A drag is one undo step.
 ## Checking interference
 
 Check interference (I) looks at every pair of visible solid bodies and
-lists those that share material, with how much. Each clash is marked in
-the view with its volume. Mesh bodies are left out; convert one to a solid
-to check it.
+lists those that share material, with how much. The shared material is
+drawn in red over the whole scene, where the bodies would hide it, and
+marked with its volume. The check runs beside the window, which stays
+usable: the panel shows how many pairs are done, and Stop keeps what was
+found so far. Only pairs whose boxes meet are checked. Mesh bodies are
+left out; convert one to a solid to check it.
 
 ## Exploded view and parts list
 

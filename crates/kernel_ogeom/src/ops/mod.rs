@@ -94,7 +94,7 @@ pub fn solids_of(model: &Model, shape: &Shape) -> Vec<Shape> {
     }
 }
 
-fn wrap_pieces(model: &mut Model, mut pieces: Vec<Shape>) -> Result<Shape, String> {
+pub(crate) fn wrap_pieces(model: &mut Model, mut pieces: Vec<Shape>) -> Result<Shape, String> {
     match pieces.len() {
         0 => Err("boolean removed all material".into()),
         1 => Ok(pieces.remove(0)),

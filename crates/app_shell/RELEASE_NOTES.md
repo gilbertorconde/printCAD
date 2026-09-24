@@ -34,7 +34,7 @@ version first.
 - More joints: a hinge that leaves only the turn about an axis, a slider that leaves only the slide along one, a fixed joint that carries a body with another, parallel, perpendicular and distance between flat faces, and a round face resting on a flat one.
 - Joints that ask for an axis take a round face or an edge: a hole's rim gives the hole's axis.
 - Drag a jointed body with the mouse: it follows as far as its joints let it, a door swinging on its hinge, and the drag undoes as one step.
-- Check interference (I) finds every pair of visible solids that share material, with how much and where, marked in the view.
+- Check interference (I) finds every pair of visible solids that share material, with how much, and draws what they share over the scene; it runs beside the window, with progress and Stop.
 - Exploded view (E) spreads the bodies out from the middle of the assembly, and the parts list (B) counts every part with its size, ready to copy for a spreadsheet.
 - A hinge's angle and a slider's position can be driven, by a number or a formula, or kept within limits; Play sweeps a driven joint through its range to show the motion.
 - Grounding keeps a body where it is; the whole assembly solves together, rings of joints included, and the status bar says what each body may still do.

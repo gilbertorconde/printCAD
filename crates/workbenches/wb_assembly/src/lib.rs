@@ -52,8 +52,12 @@ enum Task {
         body: BodyId,
         placements: Vec<(BodyId, BodyPlacement)>,
     },
-    /// Where bodies clash, as found at edit `seq` of the document.
-    Interference { found: Interference, seq: u64 },
+    /// Where bodies clash, as found at edit `seq` of the document; `None`
+    /// while the check runs.
+    Interference {
+        found: Option<Interference>,
+        seq: u64,
+    },
     /// The bodies spread apart to show how they go together; they go back
     /// to `placements` when it closes.
     Explode {
@@ -77,6 +81,8 @@ pub struct AssemblyWorkbench {
     freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
     /// A body held by the mouse, dragged with its joints holding.
     grab: Option<Grab>,
+    /// An interference check running on its own thread.
+    checking: Option<Checking>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
@@ -92,6 +98,22 @@ struct Grab {
     press: (f32, f32),
     dragging: bool,
     placements: Vec<(BodyId, BodyPlacement)>,
+}
+
+/// An interference check under way: its answer to come, the pairs asked
+/// about so far out of `total`, and the flag that stops it.
+struct Checking {
+    answer: std::sync::mpsc::Receiver<Result<Interference, String>>,
+    done: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    total: usize,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for Checking {
+    /// A check nobody waits for stops at its next pair.
+    fn drop(&mut self) {
+        self.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 /// How far, in pixels, the mouse goes before a press is a drag.
@@ -164,22 +186,97 @@ impl AssemblyWorkbench {
             ctx.log_warn("No kernel to check interference with");
             return;
         };
-        match interference(ctx.document, kernel, None) {
+        let check = interference::plan(ctx.document, None);
+        let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (send, answer) = std::sync::mpsc::channel();
+        let total = check.pairs();
+        {
+            let (done, stop) = (done.clone(), stop.clone());
+            let spawned = std::thread::Builder::new()
+                .name("printcad-interference".into())
+                .spawn(move || {
+                    let _ = send.send(check.run(kernel, &done, &stop));
+                });
+            if let Err(why) = spawned {
+                ctx.log_warn(format!("The interference check could not start: {why}"));
+                return;
+            }
+        }
+        self.checking = Some(Checking {
+            answer,
+            done,
+            total,
+            stop,
+        });
+        self.task = Some(Task::Interference {
+            found: None,
+            seq: ctx.document.mutation_seq(),
+        });
+    }
+
+    /// A finished check's answer, when it has come: shown, and said in the
+    /// log.
+    pub(crate) fn collect_interference(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if !matches!(self.task, Some(Task::Interference { .. })) {
+            // Closed while it ran: nobody waits for it.
+            self.checking = None;
+            return;
+        }
+        let Some(checking) = &self.checking else {
+            return;
+        };
+        let answer = match checking.answer.try_recv() {
+            Ok(answer) => answer,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                Err("the check ended without an answer".to_string())
+            }
+        };
+        self.checking = None;
+        match answer {
             Ok(found) => {
+                let stopped = if found.stopped {
+                    " (stopped early)"
+                } else {
+                    ""
+                };
                 ctx.log_info(match found.clashes.len() {
-                    0 => format!("No interference among {} bodies", found.checked),
+                    0 => format!("No interference among {} bodies{stopped}", found.checked),
                     n => format!(
-                        "{n} clash{} among {} bodies",
+                        "{n} clash{} among {} bodies{stopped}",
                         if n == 1 { "" } else { "es" },
                         found.checked
                     ),
                 });
-                self.task = Some(Task::Interference {
-                    found,
-                    seq: ctx.document.mutation_seq(),
-                });
+                if let Some(Task::Interference { found: slot, .. }) = &mut self.task {
+                    *slot = Some(found);
+                }
             }
-            Err(why) => ctx.log_warn(format!("The interference check failed: {why}")),
+            Err(why) => {
+                ctx.log_warn(format!("The interference check failed: {why}"));
+                if matches!(self.task, Some(Task::Interference { .. })) {
+                    self.task = None;
+                }
+            }
+        }
+    }
+
+    /// How far a running check has got: pairs asked about, of how many.
+    pub(crate) fn interference_progress(&self) -> Option<(usize, usize)> {
+        let checking = self.checking.as_ref()?;
+        Some((
+            checking.done.load(std::sync::atomic::Ordering::Relaxed),
+            checking.total,
+        ))
+    }
+
+    /// Stop a running check; what it found so far still comes.
+    pub(crate) fn stop_interference(&self) {
+        if let Some(checking) = &self.checking {
+            checking
+                .stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -189,7 +286,9 @@ impl AssemblyWorkbench {
         ctx: &'a WorkbenchRuntimeContext,
     ) -> impl Iterator<Item = ([f32; 2], &'a Clash)> + 'a {
         let clashes = match &self.task {
-            Some(Task::Interference { found, .. }) => found.clashes.as_slice(),
+            Some(Task::Interference {
+                found: Some(found), ..
+            }) => found.clashes.as_slice(),
             _ => &[],
         };
         clashes.iter().filter_map(|clash| {
@@ -784,6 +883,7 @@ impl Workbench for AssemblyWorkbench {
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.collect_interference(ctx);
         if self.picking.is_some() {
             self.take_pick(ctx);
             return;
@@ -859,6 +959,31 @@ impl Workbench for AssemblyWorkbench {
         }
     }
 
+    /// The material each clash shares, drawn over everything.
+    fn get_overlay_meshes(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::OverlayMesh> {
+        let Some(Task::Interference {
+            found: Some(found), ..
+        }) = &self.task
+        else {
+            return Vec::new();
+        };
+        found
+            .clashes
+            .iter()
+            .map(|clash| {
+                core_document::OverlayMesh::on_top(
+                    (*clash.mesh).clone(),
+                    ctx.sketch_palette.conflict,
+                    0.6,
+                )
+            })
+            .collect()
+    }
+
     /// Each clash found, marked where it is.
     fn get_screen_space_marks(
         &self,
@@ -922,12 +1047,14 @@ impl Workbench for AssemblyWorkbench {
 
     fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.picking = None;
+        self.checking = None;
         self.put_back_explosion(ctx);
         self.task = None;
     }
 
     fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.picking = None;
+        self.checking = None;
         self.put_back_explosion(ctx);
         self.task = None;
     }
@@ -1166,6 +1293,79 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].id, "asm.place");
         assert!(requests.contains(&HostRequest::JournalLabel("Drag body".into())));
+    }
+
+    /// A kernel for which every pair shares a little.
+    struct AlwaysShared;
+
+    impl kernel_api::KernelQueries for AlwaysShared {
+        fn project_edge(
+            &self,
+            _: &[u8],
+            _: [f64; 3],
+            _: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("projection".into()))
+        }
+
+        fn overlap(
+            &self,
+            _: &[u8],
+            _: &[u8],
+            _: &[[f64; 4]; 4],
+        ) -> kernel_api::KernelResult<Option<kernel_api::Overlap>> {
+            Ok(Some(kernel_api::Overlap {
+                volume_mm3: 2.0,
+                centre_mm: [1.0, 1.0, 0.0],
+                mesh: TriMesh {
+                    positions: vec![[0.0; 3], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+                    normals: vec![[0.0, 0.0, 1.0]; 3],
+                    indices: vec![0, 1, 2],
+                    ..TriMesh::default()
+                },
+            }))
+        }
+    }
+
+    static ALWAYS_SHARED: AlwaysShared = AlwaysShared;
+
+    #[test]
+    fn an_interference_check_runs_away_from_the_window_and_draws_what_is_shared() {
+        let (mut doc, base, part) = scene();
+        for body in [base, part] {
+            doc.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
+        }
+        doc.set_body_placement(part, BodyPlacement::default());
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.kernel = Some(&ALWAYS_SHARED);
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("asm.interference"),
+            &mut ctx,
+        );
+        assert!(matches!(
+            wb.task,
+            Some(Task::Interference { found: None, .. })
+        ));
+        let started = std::time::Instant::now();
+        while wb.checking.is_some() {
+            assert!(started.elapsed().as_secs() < 5, "the check finishes");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            wb.on_frame(0.016, &mut ctx);
+        }
+        let Some(Task::Interference {
+            found: Some(found), ..
+        }) = &wb.task
+        else {
+            panic!("the answer is shown")
+        };
+        assert_eq!(found.clashes.len(), 1);
+        let drawn = wb.get_overlay_meshes(&ctx, None);
+        assert_eq!(drawn.len(), 1);
+        assert!(drawn[0].on_top && drawn[0].opacity < 1.0);
+        wb.finish_editing(&mut ctx);
+        assert!(wb.get_overlay_meshes(&ctx, None).is_empty());
     }
 
     #[test]

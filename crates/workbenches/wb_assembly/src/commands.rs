@@ -196,7 +196,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional("body", ParamKind::Id, "Only this body")
         .returns(
             "a list of {body, free, motions}, each motion {turn = {axis, through}} \
-             or {slide = direction}",
+             or {slide = direction}, with at_limit true where a limit lets it go one \
+             way only",
         )
         .read_only(),
     );
@@ -374,10 +375,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                             "body": body.0.to_string(),
                             "free": motions.len(),
                             "motions": motions.iter().map(|m| match m {
-                                crate::Motion::Turn { axis, through } => {
-                                    json!({"turn": {"axis": axis, "through": through}})
+                                crate::Motion::Turn { axis, through, at_limit } => json!({
+                                    "turn": {"axis": axis, "through": through},
+                                    "at_limit": at_limit,
+                                }),
+                                crate::Motion::Slide { direction, at_limit } => {
+                                    json!({"slide": direction, "at_limit": at_limit})
                                 }
-                                crate::Motion::Slide { direction } => json!({"slide": direction}),
                             }).collect::<Vec<_>>(),
                         })
                     })
@@ -869,8 +873,30 @@ mod tests {
         )
         .unwrap();
         assert!((travel(&mut doc) - 10.0).abs() < 1e-2);
-        // Within its limits it is still free to turn.
-        assert_eq!(crate::freedom(&doc)[0].1.len(), 1);
+        // At its limit it may still turn, back the other way.
+        let motions = &crate::freedom(&doc)[0].1;
+        assert_eq!(motions.len(), 1);
+        assert!(
+            matches!(motions[0], crate::Motion::Turn { at_limit: true, .. }),
+            "{motions:?}"
+        );
+        assert!(motions[0].describe().ends_with("(one way, at its limit)"));
+        call(
+            &mut doc,
+            "asm.set",
+            json!({"joint": joint, "limits": [-45, 45]}),
+        )
+        .unwrap();
+        assert!(
+            matches!(
+                crate::freedom(&doc)[0].1[0],
+                crate::Motion::Turn {
+                    at_limit: false,
+                    ..
+                }
+            ),
+            "well within its limits"
+        );
         let bad = call(
             &mut doc,
             "asm.set",

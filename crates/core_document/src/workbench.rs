@@ -716,21 +716,15 @@ pub trait Workbench: Send {
         ctx.document.remove_feature(id).is_ok()
     }
 
-    /// Get additional render meshes for overlay/helper visualization.
-    /// Called every frame to allow workbenches to contribute visual aids (grid lines, guides, etc.).
-    /// Returns a vector of (mesh, color, is_wireframe) tuples where:
-    /// - mesh: The triangular mesh to render
-    /// - color: RGB color [r, g, b] in range 0.0-1.0
-    /// - is_wireframe: If true, render as wireframe with depth bias (appears on top of solid geometry)
-    ///
-    /// These meshes are rendered in 3D world space and will scale with zoom and rotate with the camera.
-    /// For constant-thickness lines that don't change with zoom/rotation, use `get_screen_space_overlays` instead.
-    /// Default implementation returns empty vector.
+    /// Meshes drawn in the scene, in world space, for guides and marks
+    /// (datums, what two bodies share), called every frame. They scale and
+    /// turn with the view; for constant-thickness lines use
+    /// `get_screen_space_overlays`.
     fn get_overlay_meshes(
         &self,
         _ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
-    ) -> Vec<(kernel_api::TriMesh, [f32; 3], bool)> {
+    ) -> Vec<OverlayMesh> {
         Vec::new()
     }
 
@@ -777,6 +771,45 @@ pub trait Workbench: Send {
         _active_feature: Option<FeatureId>,
     ) -> Vec<ScreenSpaceMark> {
         Vec::new()
+    }
+}
+
+/// A mesh a bench draws in the scene: never picked.
+#[derive(Debug, Clone)]
+pub struct OverlayMesh {
+    pub mesh: kernel_api::TriMesh,
+    /// RGB in 0..=1.
+    pub color: [f32; 3],
+    /// Drawn as its triangles' lines, pulled toward the camera so it shows
+    /// on the surfaces it lies on.
+    pub wireframe: bool,
+    /// Under 1.0 it blends over what is behind it.
+    pub opacity: f32,
+    /// Over everything, whatever is in front of it.
+    pub on_top: bool,
+}
+
+impl OverlayMesh {
+    /// A wireframe guide.
+    pub fn wireframe(mesh: kernel_api::TriMesh, color: [f32; 3]) -> Self {
+        Self {
+            mesh,
+            color,
+            wireframe: true,
+            opacity: 1.0,
+            on_top: false,
+        }
+    }
+
+    /// A see-through solid drawn over the whole scene.
+    pub fn on_top(mesh: kernel_api::TriMesh, color: [f32; 3], opacity: f32) -> Self {
+        Self {
+            mesh,
+            color,
+            wireframe: false,
+            opacity,
+            on_top: true,
+        }
     }
 }
 

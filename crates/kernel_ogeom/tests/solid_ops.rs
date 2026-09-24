@@ -1309,7 +1309,13 @@ fn two_solids_overlap_by_the_volume_they_share() {
         .expect("they overlap");
     assert!(
         (shared.volume_mm3 - 4.0 * 5.0 * 10.0).abs() < 1e-6,
-        "{shared:?}"
+        "{}",
+        shared.volume_mm3
+    );
+    let (lo, hi) = shared.mesh.bounds().expect("the shared solid is drawn");
+    assert!(
+        (lo[0] - 6.0).abs() < 1e-3 && (hi[0] - 10.0).abs() < 1e-3 && (lo[1] - 5.0).abs() < 1e-3,
+        "{lo:?} {hi:?}"
     );
     let centre = shared.centre_mm;
     assert!(
@@ -1318,6 +1324,6 @@ fn two_solids_overlap_by_the_volume_they_share() {
     );
     for apart in [shifted(10.0, 0.0, 0.0), shifted(30.0, 0.0, 0.0)] {
         let none = kernel_ogeom::QUERIES.overlap(blob, blob, &apart).unwrap();
-        assert_eq!(none, None, "{apart:?}");
+        assert!(none.is_none(), "{apart:?}");
     }
 }

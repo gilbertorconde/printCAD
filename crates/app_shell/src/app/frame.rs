@@ -914,6 +914,7 @@ impl PrintCadApp {
                     is_wireframe: false,
                     opacity: 1.0,
                     pickable: true,
+                    on_top: false,
                 }
             })
             .collect();
@@ -990,6 +991,7 @@ impl PrintCadApp {
                     highlight,
                     is_wireframe: wireframe,
                     pickable: true,
+                    on_top: false,
                 }
             })
             .collect();
@@ -1009,7 +1011,7 @@ impl PrintCadApp {
             .unwrap_or_default()
             .into_iter()
             .enumerate()
-            .map(|(i, (mesh, color, is_wireframe))| {
+            .map(|(i, overlay)| {
                 // Overlays are regenerated every frame; give slot `i` a
                 // stable id from the pool and a content-hash revision so an
                 // unchanged overlay is a GPU cache hit instead of a
@@ -1019,14 +1021,15 @@ impl PrintCadApp {
                 }
                 BodySubmission {
                     id: self.overlay_id_pool[i],
-                    revision: hash_trimesh(&mesh),
-                    mesh: Arc::new(mesh),
-                    color,
-                    opacity: 1.0,
+                    revision: hash_trimesh(&overlay.mesh),
+                    mesh: Arc::new(overlay.mesh),
+                    color: overlay.color,
+                    opacity: overlay.opacity,
                     highlight: HighlightState::None,
-                    is_wireframe,
+                    is_wireframe: overlay.wireframe,
                     // A guide is drawn, never picked.
                     pickable: false,
+                    on_top: overlay.on_top,
                 }
             })
             .collect();
@@ -1153,6 +1156,7 @@ impl PrintCadApp {
                 highlight: HighlightState::None,
                 is_wireframe: false,
                 pickable: false,
+                on_top: false,
             });
         } else if let Some(geometry) = self
             .session
@@ -1177,6 +1181,7 @@ impl PrintCadApp {
                 highlight: HighlightState::None,
                 is_wireframe: false,
                 pickable: false,
+                on_top: false,
             });
         }
 
@@ -1200,6 +1205,7 @@ impl PrintCadApp {
                 highlight: HighlightState::None,
                 is_wireframe: false,
                 pickable: false,
+                on_top: false,
             });
         }
 
@@ -1267,6 +1273,7 @@ impl PrintCadApp {
                     highlight: HighlightState::None,
                     is_wireframe: false,
                     pickable: false,
+                    on_top: false,
                 });
             }
         }

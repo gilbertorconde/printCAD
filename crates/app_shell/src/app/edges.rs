@@ -256,6 +256,7 @@ pub(crate) fn highlight_submission(
         highlight: render_vk::HighlightState::None,
         is_wireframe: false,
         pickable: false,
+        on_top: false,
     })
 }
 

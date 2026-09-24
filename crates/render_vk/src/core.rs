@@ -1599,6 +1599,7 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         body.opacity.to_bits().hash(&mut h);
         (body.highlight as u8).hash(&mut h);
         body.is_wireframe.hash(&mut h);
+        body.on_top.hash(&mut h);
     }
     h.finish()
 }

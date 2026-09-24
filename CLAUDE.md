@@ -144,12 +144,17 @@ cargo fmt --all                   # CI enforces --check
   an angle or distance at what they make, a slider's or fixed joint's
   relative turn recorded. A hinge or slider carries a `Drive`: its one
   motion (`JointFeature::travel`, degrees from the turn it was made at, or
-  mm along the axis) held at a value or kept within limits, which
-  `freedom` ignores. Anchors are kept in each body's own frame; an
+  mm along the axis) held at a value or kept within limits; `freedom`
+  counts a limited motion as free and marks it `at_limit` where the
+  joint rests on an end. Anchors are kept in each body's own frame; an
   axis comes from a round face or an edge, a circular edge's axis from
   `EdgeRef::circle`, which the host fits to the outline), interference
-  (`interference.rs`: visible solids whose placed bounds meet go to
-  `KernelQueries::overlap`, the kernel's common of the two, measured),
+  (`interference.rs`: `plan` reads the visible solids and the pairs whose
+  placed bounds meet, `Check::run` asks `KernelQueries::overlap`, the
+  kernel's common of each pair, measured and meshed, on worker threads
+  away from the window with progress and a stop flag; the shared solid
+  draws as an `OverlayMesh::on_top`, the renderer's `on_top` pass, blended
+  with no depth test),
   dragging (a left press on a body the solver moves takes hold of it
   without consuming the press; moves solve `solve::drag`, the joints plus
   a light pull of the grabbed point toward the cursor on a view-facing

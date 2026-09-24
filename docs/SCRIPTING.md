@@ -967,7 +967,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.asm.freedom`: What each jointed body may still do: the motions its joints leave open.
 
 - `body` (id, optional): Only this body
-- Returns a list of {body, free, motions}, each motion {turn = {axis, through}} or {slide = direction}
+- Returns a list of {body, free, motions}, each motion {turn = {axis, through}} or {slide = direction}, with at_limit true where a limit lets it go one way only
 
 `pc.asm.solve`: Place every body its joints hold.
 
