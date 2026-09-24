@@ -97,7 +97,11 @@ cargo fmt --all                   # CI enforces --check
   `scripts/vendor-fonts.sh`; `sans/sans_medium/sans_semibold/mono` font
   helpers), `widgets` (Card, overline, badge, key chip, toggle, check row,
   note card, the button set, `tool_button`, `section_header`, `QtyField`,
-  `select_field`, `PrefRow` + `pref_group`, `planned`, and `Tab` +
+  `select_field`, `PrefRow` + `pref_group`, `planned`,
+  `completion::completing_text_edit` (a text edit whose dropdown offers
+  the five names nearest the word at the cursor, arrows, Enter/Tab and
+  clicks, fed by `core_document::formula_candidates` wherever a formula
+  is typed), and `Tab` +
   `tab_plus`, the one tab every strip draws: documents, chats, the property
   panel's pages, Preferences), `icon` (the SVG
   set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a

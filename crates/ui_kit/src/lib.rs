@@ -3,6 +3,7 @@
 //! draws UI — the app shell and the workbenches — builds on this one, so it
 //! knows nothing about documents.
 
+pub mod completion;
 pub mod icon;
 mod icon_table;
 pub mod theme;

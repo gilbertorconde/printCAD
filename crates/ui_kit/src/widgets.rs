@@ -1091,9 +1091,9 @@ pub trait FormulaHost {
     /// Whether `text` reads nothing but numbers: it becomes the value
     /// rather than a formula.
     fn is_constant(&self, text: &str) -> bool;
-    /// The references a formula can read, as it writes them
-    /// (`Printer.nozzle`).
-    fn references(&self) -> Vec<String>;
+    /// The names a formula can read, as it writes them
+    /// (`Printer.nozzle`), each with what it is, for completion.
+    fn candidates(&self) -> Vec<crate::completion::Candidate>;
 }
 
 /// What a [`FormulaField`] was set to this frame.
@@ -1281,51 +1281,32 @@ impl<'a> FormulaField<'a> {
     }
 
     fn show_editing(self, ui: &mut Ui, mut text: String) -> Option<FormulaEdit> {
-        let token_start = text
-            .char_indices()
-            .rev()
-            .take_while(|(_, c)| c.is_alphanumeric() || matches!(c, '_' | '.' | '`'))
-            .last()
-            .map_or(text.len(), |(i, _)| i);
-        let token = text[token_start..].to_lowercase();
-        let suggestions: Vec<String> = if token.is_empty() {
-            Vec::new()
-        } else {
-            self.host
-                .references()
-                .into_iter()
-                .filter(|r| {
-                    let lower = r.to_lowercase();
-                    lower.starts_with(&token) && lower != token
-                })
-                .take(6)
-                .collect()
-        };
         let text_id = self.id.with("text");
-        // Tab takes the first suggestion rather than moving on.
-        if !suggestions.is_empty()
-            && ui.memory(|m| m.has_focus(text_id))
-            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Tab))
-        {
-            text.replace_range(token_start.., &suggestions[0]);
-        }
-        let preview = self.host.evaluate(&text);
+        let host = self.host;
         let mut out = None;
         let mut done = false;
         ui.vertical(|ui| {
+            let mut preview = host.evaluate(&text);
             self.frame(if preview.is_err() { DANGER } else { ACCENT })
                 .show(ui, |ui| {
                     ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
                     ui.horizontal_centered(|ui| {
                         icon::draw(ui, "expression", 12.0, ACCENT);
-                        let resp = ui.add(
-                            egui::TextEdit::singleline(&mut text)
-                                .id(text_id)
-                                .frame(Frame::NONE)
-                                .font(mono(FONT_SM))
-                                .desired_width(self.width * 1.6),
+                        let edit = crate::completion::completing_text_edit(
+                            ui,
+                            text_id,
+                            &mut text,
+                            &|| host.candidates(),
+                            |edit| {
+                                edit.frame(Frame::NONE)
+                                    .font(mono(FONT_SM))
+                                    .desired_width(self.width * 1.6)
+                            },
                         );
-                        if resp.lost_focus() {
+                        let resp = edit.response;
+                        // A name picked from the dropdown is not the end
+                        // of the formula: the edit gets the keyboard back.
+                        if resp.lost_focus() && !edit.picked {
                             let (enter, escape) = ui.input(|i| {
                                 (
                                     i.key_pressed(egui::Key::Enter),
@@ -1341,8 +1322,8 @@ impl<'a> FormulaField<'a> {
                                         out = Some(FormulaEdit::Value(self.value));
                                     }
                                     done = true;
-                                } else if self.host.is_constant(typed) {
-                                    if let Ok(v) = self.host.evaluate(typed) {
+                                } else if host.is_constant(typed) {
+                                    if let Ok(v) = host.evaluate(typed) {
                                         out = Some(FormulaEdit::Value(v));
                                         done = true;
                                     }
@@ -1354,23 +1335,12 @@ impl<'a> FormulaField<'a> {
                         }
                     });
                 });
+            preview = host.evaluate(&text);
             let (line, color) = match &preview {
                 Ok(v) => (format!("= {v:.*} {}", self.decimals, self.unit), TEXT3),
                 Err(why) => (why.clone(), DANGER),
             };
             ui.label(RichText::new(line).font(sans(FONT_XS)).color(color));
-            for suggestion in &suggestions {
-                if ui
-                    .add(
-                        egui::Button::new(RichText::new(suggestion).font(mono(FONT_XS)))
-                            .frame(false),
-                    )
-                    .clicked()
-                {
-                    text.replace_range(token_start.., suggestion);
-                    ui.memory_mut(|m| m.request_focus(text_id));
-                }
-            }
         });
         if done {
             self.stop_editing(ui);
@@ -1399,8 +1369,14 @@ mod formula_field_tests {
         fn is_constant(&self, text: &str) -> bool {
             !text.contains('.') || text.trim().parse::<f64>().is_ok()
         }
-        fn references(&self) -> Vec<String> {
-            vec!["Printer.x".into(), "Printer.y".into()]
+        fn candidates(&self) -> Vec<crate::completion::Candidate> {
+            ["Printer.x", "Printer.y"]
+                .iter()
+                .map(|t| crate::completion::Candidate {
+                    text: t.to_string(),
+                    detail: String::new(),
+                })
+                .collect()
         }
     }
 

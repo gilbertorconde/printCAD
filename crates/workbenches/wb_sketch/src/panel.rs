@@ -857,11 +857,16 @@ impl SketchWorkbench {
                                 .font(ui_kit::sans_medium(FONT_SM))
                                 .color(TEXT1),
                         );
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut edit.text)
-                                .desired_width(180.0)
-                                .font(mono(FONT_SM)),
+                        // Names complete as they are typed.
+                        let document: &core_document::Document = ctx.document;
+                        let completed = ui_kit::completion::completing_text_edit(
+                            ui,
+                            egui::Id::new("sketch_dim_edit_text"),
+                            &mut edit.text,
+                            &|| core_document::formula_candidates(document),
+                            |edit| edit.desired_width(180.0).font(mono(FONT_SM)),
                         );
+                        let response = completed.response;
                         response.request_focus();
                         // What it comes to, as typed: a value, or a formula.
                         let angular = self_angular;

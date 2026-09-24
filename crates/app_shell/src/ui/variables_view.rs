@@ -123,6 +123,51 @@ fn labelled_field(ui: &mut egui::Ui, label: &str, text: &mut String, font: egui:
     .inner
 }
 
+/// A labelled formula box that completes names as they are typed;
+/// answers whether Enter kept what was typed.
+fn labelled_formula(
+    ui: &mut egui::Ui,
+    label: &str,
+    text: &mut String,
+    document: &Document,
+    id: egui::Id,
+) -> bool {
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [64.0, INPUT],
+            egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
+        );
+        formula_box(ui, text, document, id, None)
+    })
+    .inner
+}
+
+/// A formula box filling the width, completing names; answers whether
+/// Enter kept what was typed.
+fn formula_box(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    document: &Document,
+    id: egui::Id,
+    hint: Option<&str>,
+) -> bool {
+    let width = ui.available_width();
+    let edit = ui_kit::completion::completing_text_edit(
+        ui,
+        id,
+        text,
+        &|| core_document::formula_candidates(document),
+        |edit| {
+            let edit = edit.font(mono(FONT_SM)).desired_width(width);
+            match hint {
+                Some(hint) => edit.hint_text(RichText::new(hint).color(TEXT3)),
+                None => edit,
+            }
+        },
+    );
+    !edit.picked && edit.response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
 /// What `formula` comes to in `document`, under a formula being typed.
 fn preview(ui: &mut egui::Ui, document: &Document, formula: &str) {
     if formula.trim().is_empty() {
@@ -273,7 +318,13 @@ pub fn variable_set_section(
         .inner_margin(egui::Margin::symmetric(12, 6))
         .show(ui, |ui| {
             let mut entered = labelled_field(ui, "Name", &mut state.new_name, sans(FONT_SM));
-            entered |= labelled_field(ui, "Formula", &mut state.new_formula, mono(FONT_SM));
+            entered |= labelled_formula(
+                ui,
+                "Formula",
+                &mut state.new_formula,
+                document,
+                egui::Id::new(("new_variable_formula", set)),
+            );
             preview(ui, document, &state.new_formula);
             let ready = !state.new_name.trim().is_empty() && !state.new_formula.trim().is_empty();
             let add = ui
@@ -314,7 +365,13 @@ fn variable_editor(
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
             apply |= labelled_field(ui, "Name", &mut draft.name, sans(FONT_SM));
-            apply |= labelled_field(ui, "Formula", &mut draft.formula, mono(FONT_SM));
+            apply |= labelled_formula(
+                ui,
+                "Formula",
+                &mut draft.formula,
+                document,
+                egui::Id::new(("variable_formula", set, &variable.name)),
+            );
             preview(ui, document, &draft.formula);
             apply |= labelled_field(ui, "Comment", &mut draft.comment, sans(FONT_SM));
             ui.horizontal(|ui| {
@@ -545,13 +602,13 @@ fn configuration_editor(
             apply |= labelled_field(ui, "Name", &mut draft.name, sans(FONT_SM));
             for (column, value) in table.columns.iter().zip(draft.values.iter_mut()) {
                 ui.label(RichText::new(column).font(mono(FONT_XS)).color(TEXT2));
-                let field = ui.add(
-                    egui::TextEdit::singleline(value)
-                        .hint_text(RichText::new(own(column)).color(TEXT3))
-                        .font(mono(FONT_SM))
-                        .desired_width(ui.available_width()),
+                apply |= formula_box(
+                    ui,
+                    value,
+                    document,
+                    egui::Id::new(("configuration_value", &configuration.name, column)),
+                    Some(&own(column)),
                 );
-                apply |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 preview(ui, document, value);
             }
             ui.horizontal(|ui| {

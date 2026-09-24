@@ -35,6 +35,15 @@ formula comes to and suggests names (Tab takes the first). A number set by
 a formula shows `fx` and its value; click it to change the formula, and
 empty the formula to keep the number as it stands.
 
+## Completion
+
+Wherever a formula is typed (a number's `fx`, a variable, a
+configuration's value, a sketch dimension), a list of the five names most
+like the word you are typing opens under it, each with its value. Up and
+Down move through it; Enter or Tab puts the highlighted name in, a click
+puts in the one clicked, and Escape puts the list away. A word right
+after a number is taken as a unit (`2 in`) and is left alone.
+
 ## What a formula can say
 
 - Numbers and arithmetic: `+ - * / % ^` and brackets.
