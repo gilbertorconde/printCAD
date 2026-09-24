@@ -3,6 +3,7 @@ mod command_palette;
 mod context_menu;
 pub use context_menu::ViewportMenu;
 mod commands;
+mod details_modal;
 mod export_modal;
 mod feature_tree;
 mod host_ctx;
@@ -94,6 +95,8 @@ pub struct UiLayer {
     /// The start page's recent-files filter; UI-local.
     recent_search: String,
     start_view: start_page::StartView,
+    /// A message opened from a tree row's "!": the row and the text.
+    details: Option<(String, String)>,
     /// The workbench keys last sent to the workbenches.
     workbench_keys: Option<std::collections::HashMap<String, Vec<core_document::Chord>>>,
     recent_thumbnails: start_page::ThumbnailCache,
@@ -128,6 +131,7 @@ impl UiLayer {
             rename_buffer: None,
             recent_search: String::new(),
             start_view: Default::default(),
+            details: None,
             workbench_keys: None,
             recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
@@ -526,6 +530,9 @@ impl UiLayer {
             if let Some(bodies) = combo.repair {
                 commands.push(UiCommand::RepairShapes(bodies));
             }
+            if combo.details.is_some() {
+                self.details = combo.details;
+            }
             if let Some(bodies) = combo.convert {
                 commands.push(UiCommand::ConvertToSolid(bodies));
             }
@@ -630,6 +637,11 @@ impl UiLayer {
             }
             if let Some(draft) = export_pending.as_mut() {
                 export_dialog = export_modal::draw_export_modal(ui.ctx(), draft);
+            }
+            if let Some((title, text)) = &self.details
+                && !details_modal::draw_details_modal(ui.ctx(), title, text)
+            {
+                self.details = None;
             }
 
             if let Some((px, py)) = pivot_screen_pos {

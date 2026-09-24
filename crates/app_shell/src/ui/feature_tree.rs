@@ -55,6 +55,9 @@ pub struct TreeUiResult {
     pub repair: Option<Vec<BodyId>>,
     /// "Convert to solid" was picked: the mesh bodies at or below the row.
     pub convert: Option<Vec<BodyId>>,
+    /// A row's "!" was clicked: its label and the full message, to show
+    /// where it can be read at length and copied.
+    pub details: Option<(String, String)>,
 }
 
 /// View model describing the current document tree.
@@ -636,6 +639,8 @@ struct Badge {
     text: &'static str,
     color: egui::Color32,
     tooltip: Option<String>,
+    /// A click opens the tooltip's text in a window of its own.
+    opens_details: bool,
 }
 
 /// Everything one row draws.
@@ -791,12 +796,25 @@ fn draw_row(
             badge.color,
         );
         if let Some(tip) = &badge.tooltip {
-            ui.interact(
-                badge_rect,
-                ui.id().with(("tree_badge", spec.id, badge.text)),
-                egui::Sense::hover(),
-            )
-            .on_hover_text(tip);
+            let sense = if badge.opens_details {
+                egui::Sense::click()
+            } else {
+                egui::Sense::hover()
+            };
+            let response = ui
+                .interact(
+                    badge_rect,
+                    ui.id().with(("tree_badge", spec.id, badge.text)),
+                    sense,
+                )
+                .on_hover_text(if badge.opens_details {
+                    format!("{tip}\n\nClick to open this in a window you can copy from")
+                } else {
+                    tip.clone()
+                });
+            if badge.opens_details && response.clicked() {
+                result.details = Some((spec.label.to_string(), tip.clone()));
+            }
         }
         right -= w + 6.0;
     }
@@ -853,6 +871,7 @@ fn draw_node(
             text: "TIP",
             color: SUCCESS,
             tooltip: Some("The body's shape stops at this feature".to_string()),
+            opens_details: false,
         });
     }
     if editing_here {
@@ -860,6 +879,7 @@ fn draw_node(
             text: "EDITING",
             color: ACCENT,
             tooltip: None,
+            opens_details: false,
         });
     }
     if node.dirty {
@@ -867,6 +887,7 @@ fn draw_node(
             text: "…",
             color: TEXT3,
             tooltip: Some("Pending recompute".to_string()),
+            opens_details: false,
         });
     }
     if let Some(error) = &node.error {
@@ -874,6 +895,7 @@ fn draw_node(
             text: "!",
             color: DANGER,
             tooltip: Some(error.clone()),
+            opens_details: true,
         });
     }
     let dimmed_by_edit = options.editing.is_some() && !editing_here;
