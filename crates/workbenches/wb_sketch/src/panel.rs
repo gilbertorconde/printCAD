@@ -500,6 +500,11 @@ impl SketchWorkbench {
         let filter = self.constraint_filter.trim().to_lowercase();
         let mut delete: Option<usize> = None;
         let mut edited: Option<(usize, Constraint)> = None;
+        let mut typed: Option<(Uuid, String)> = None;
+        let cell = DimensionCell {
+            document: ctx.document,
+            sketch_id: self.active_sketch_id,
+        };
         let mut clicked: Option<(Uuid, bool)> = None;
         for (idx, constraint) in sketch.constraints.iter().enumerate() {
             let label = constraint.name.clone().unwrap_or_else(|| {
@@ -521,6 +526,12 @@ impl SketchWorkbench {
                 TEXT3
             } else if constraint.kind.is_dimensional() && !constraint.driving {
                 ACCENT
+            } else if cell.sketch_id.is_some_and(|id| {
+                cell.document
+                    .feature_formula(id, &constraint.id.to_string())
+                    .is_some()
+            }) {
+                SKETCH_FORMULA
             } else {
                 SKETCH_CONSTRAINT
             };
@@ -557,8 +568,8 @@ impl SketchWorkbench {
                         ui,
                         sketch,
                         constraint,
-                        idx,
-                        &mut edited,
+                        &cell,
+                        &mut typed,
                         self.pending_focus == Some(constraint.id),
                     );
                 });
@@ -627,6 +638,9 @@ impl SketchWorkbench {
         }
         if let Some((idx, constraint)) = edited {
             self.update_constraint(ctx, idx, constraint);
+        }
+        if let Some((constraint, text)) = typed {
+            self.set_dimension(ctx, constraint, &text, true);
         }
     }
 
@@ -806,6 +820,19 @@ impl SketchWorkbench {
     /// In-viewport dimension editor (opened by double-clicking a
     /// dimensional glyph), drawn as a floating card near the label.
     pub(crate) fn dim_edit_window(&mut self, ui: &egui::Ui, ctx: &mut WorkbenchRuntimeContext) {
+        let self_angular = self
+            .dim_edit
+            .as_ref()
+            .and_then(|edit| {
+                let sketch = self.get_active_sketch(ctx)?;
+                let c = sketch
+                    .sketch
+                    .constraints
+                    .iter()
+                    .find(|c| c.id == edit.constraint)?;
+                Some(sketch::is_angular(&c.kind))
+            })
+            .unwrap_or(false);
         let Some(edit) = self.dim_edit.as_mut() else {
             return;
         };
@@ -832,10 +859,37 @@ impl SketchWorkbench {
                         );
                         let response = ui.add(
                             egui::TextEdit::singleline(&mut edit.text)
-                                .desired_width(96.0)
+                                .desired_width(180.0)
                                 .font(mono(FONT_SM)),
                         );
                         response.request_focus();
+                        // What it comes to, as typed: a value, or a formula.
+                        let angular = self_angular;
+                        let preview = ctx.document.evaluate_formula(
+                            &edit.text,
+                            Some(if angular {
+                                core_document::expr::Dim::ANGLE
+                            } else {
+                                core_document::expr::Dim::LENGTH
+                            }),
+                        );
+                        let (line, color) = match preview {
+                            Ok(q) if core_document::expr::is_constant(&edit.text) => (
+                                format!("{:.3}{}", q.value, if angular { "°" } else { " mm" }),
+                                TEXT3,
+                            ),
+                            Ok(q) => (
+                                format!("ƒ = {:.3}{}", q.value, if angular { "°" } else { " mm" }),
+                                SKETCH_FORMULA,
+                            ),
+                            Err(why) => (why, DANGER),
+                        };
+                        ui.label(RichText::new(line).font(sans(FONT_XS)).color(color));
+                        ui.label(
+                            RichText::new("A value (1 in) or a formula (Sizes.width / 2)")
+                                .font(sans(FONT_XS))
+                                .color(TEXT3),
+                        );
                         if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             commit = true;
                         }
@@ -886,12 +940,19 @@ fn list_row(
 
 /// The value cell of a constraint row: an editable driving value, or the
 /// measured reference value in parentheses.
+/// What a dimension's value cell reads besides the constraint: the
+/// document, for its formula and to read typed formulas against.
+struct DimensionCell<'a> {
+    document: &'a core_document::Document,
+    sketch_id: Option<core_document::FeatureId>,
+}
+
 fn dimension_value_cell(
     ui: &mut egui::Ui,
     sketch: &Sketch,
     constraint: &Constraint,
-    idx: usize,
-    edited: &mut Option<(usize, Constraint)>,
+    cell: &DimensionCell,
+    typed: &mut Option<(Uuid, String)>,
     focus: bool,
 ) {
     let Some(value) = sketch::dimension_value(&constraint.kind) else {
@@ -899,22 +960,49 @@ fn dimension_value_cell(
     };
     let angular = sketch::is_angular(&constraint.kind);
     if constraint.driving && constraint.active {
-        let mut v = value;
-        let unit = if angular { "°" } else { "mm" };
-        let mut field = QtyField::new(&mut v).unit(unit).width(96.0);
-        field = if angular {
-            field.speed(1.0).decimals(1)
-        } else {
-            field.speed(0.1).range(0.001..=1.0e6)
+        let key = constraint.id.to_string();
+        let formula = cell
+            .sketch_id
+            .and_then(|id| cell.document.feature_formula(id, &key));
+        let error = cell.sketch_id.and_then(|id| {
+            cell.document
+                .evaluated_slots(id)
+                .iter()
+                .find(|s| s.key == key)
+                .and_then(|s| s.result.as_ref().err())
+                .map(String::as_str)
+        });
+        let host = core_document::DocumentFormulas {
+            document: cell.document,
+            dim: if angular {
+                core_document::expr::Dim::ANGLE
+            } else {
+                core_document::expr::Dim::LENGTH
+            },
         };
-        let changed = field.show(ui);
+        let field = ui_kit::widgets::FormulaField::new(
+            egui::Id::new(("dimension", constraint.id)),
+            f64::from(value),
+            &host,
+        )
+        .formula(formula)
+        .error(error)
+        .unit(if angular { "°" } else { "mm" })
+        .speed(if angular { 1.0 } else { 0.1 })
+        .decimals(if angular { 1 } else { 2 })
+        .width(96.0);
         if focus {
-            ui.ctx().memory_mut(|m| m.request_focus(ui.id()));
+            ui.ctx()
+                .memory_mut(|m| m.request_focus(egui::Id::new(("dimension", constraint.id))));
         }
-        if changed {
-            let mut c = constraint.clone();
-            c.kind = sketch::with_dimension_value(&c.kind, v);
-            *edited = Some((idx, c));
+        match field.show(ui) {
+            Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
+                *typed = Some((constraint.id, format!("{v}")));
+            }
+            Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
+                *typed = Some((constraint.id, text));
+            }
+            None => {}
         }
     } else {
         let measured = sketch::measured_value(sketch, &constraint.kind);

@@ -44,6 +44,8 @@ pub const SKETCH_GEOMETRY: Color32 = rgb(0xE6EBF0);
 pub const SKETCH_CONSTRUCTION: Color32 = rgb(0x4FA3E6);
 pub const SKETCH_EXTERNAL: Color32 = rgb(0xC77DFF);
 pub const SKETCH_CONSTRAINT: Color32 = rgb(0xE6A44F);
+/// A value a formula sets.
+pub const SKETCH_FORMULA: Color32 = rgb(0x6FD3C9);
 pub const SKETCH_FULLY_CONSTRAINED: Color32 = rgb(0x4FD08F);
 pub const SKETCH_SELECTED: Color32 = rgb(0x7CC4F5);
 pub const SKETCH_PRESELECT: Color32 = rgb(0xF2D479);

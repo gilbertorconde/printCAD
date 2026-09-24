@@ -453,10 +453,13 @@ fn dimension_lines(
 }
 
 /// Build every glyph for the sketch's constraints, in viewport pixels.
+/// `bound` are the dimensions a formula sets: drawn in the formula colour,
+/// their value marked `ƒ`.
 pub fn build(
     sketch: &Sketch,
     proj: &SketchProjector,
     selected: &HashSet<Uuid>,
+    bound: &HashSet<Uuid>,
     pal: &SketchPalette,
 ) -> Vec<Glyph> {
     // Repeated relational kinds get a shared 1-based index suffix.
@@ -477,6 +480,8 @@ pub fn build(
             pal.inactive
         } else if c.kind.is_dimensional() && !c.driving {
             pal.reference
+        } else if bound.contains(&c.id) {
+            pal.formula
         } else {
             pal.constraint
         };
@@ -499,7 +504,11 @@ pub fn build(
                 pos,
                 anchor: anchor_px,
                 visual: GlyphVisual::Pill {
-                    text: dim_text(sketch, c),
+                    text: if bound.contains(&c.id) {
+                        format!("ƒ {}", dim_text(sketch, c))
+                    } else {
+                        dim_text(sketch, c)
+                    },
                 },
                 color,
                 lines,

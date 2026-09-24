@@ -35,29 +35,6 @@ pub struct PropertyPanelResult {
     )>,
 }
 
-/// How the panel's formula fields read typed text: against what the
-/// document's formulas last came to, for a field of one kind.
-pub(crate) struct DocumentFormulas<'a> {
-    pub document: &'a Document,
-    pub dim: core_document::expr::Dim,
-}
-
-impl ui_kit::widgets::FormulaHost for DocumentFormulas<'_> {
-    fn evaluate(&self, text: &str) -> Result<f64, String> {
-        self.document
-            .evaluate_formula(text, Some(self.dim))
-            .map(|q| q.value)
-    }
-
-    fn is_constant(&self, text: &str) -> bool {
-        core_document::expr::is_constant(text)
-    }
-
-    fn references(&self) -> Vec<String> {
-        self.document.formula_references()
-    }
-}
-
 /// The suffix a field of kind `dim` shows.
 pub(crate) fn unit_suffix(dim: core_document::expr::Dim) -> &'static str {
     use core_document::expr::Dim;
@@ -103,7 +80,7 @@ fn parameter_rows(
         let error = slot
             .and_then(|s| s.result.as_ref().err())
             .map(String::as_str);
-        let host = DocumentFormulas {
+        let host = core_document::DocumentFormulas {
             document,
             dim: p.dim,
         };

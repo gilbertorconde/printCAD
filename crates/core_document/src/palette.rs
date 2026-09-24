@@ -25,6 +25,8 @@ pub struct SketchPalette {
     pub constraint: Rgb,
     /// Reference (non-driving) dimensions.
     pub reference: Rgb,
+    /// Dimensions a formula sets.
+    pub formula: Rgb,
     /// Inactive constraints.
     pub inactive: Rgb,
     pub axis_x: Rgb,
@@ -48,6 +50,7 @@ impl Default for SketchPalette {
             preselect: hex(0xF2D479),
             constraint: hex(0xE6A44F),
             reference: hex(0x4FA3E6),
+            formula: hex(0x6FD3C9),
             inactive: hex(0x667180),
             axis_x: hex(0xE86E6E),
             axis_y: hex(0x4FD08F),

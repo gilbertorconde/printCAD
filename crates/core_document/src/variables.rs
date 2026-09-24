@@ -260,6 +260,31 @@ impl crate::Document {
     }
 }
 
+/// How a formula field reads typed text: against what the document's
+/// formulas last came to, for a field holding `dim`.
+#[cfg(feature = "egui")]
+pub struct DocumentFormulas<'a> {
+    pub document: &'a crate::Document,
+    pub dim: crate::expr::Dim,
+}
+
+#[cfg(feature = "egui")]
+impl ui_kit::widgets::FormulaHost for DocumentFormulas<'_> {
+    fn evaluate(&self, text: &str) -> Result<f64, String> {
+        self.document
+            .evaluate_formula(text, Some(self.dim))
+            .map(|q| q.value)
+    }
+
+    fn is_constant(&self, text: &str) -> bool {
+        crate::expr::is_constant(text)
+    }
+
+    fn references(&self) -> Vec<String> {
+        self.document.formula_references()
+    }
+}
+
 /// References read from the last evaluation.
 struct LastValues<'a>(&'a crate::Document);
 

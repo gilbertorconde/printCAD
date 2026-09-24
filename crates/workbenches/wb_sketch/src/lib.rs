@@ -486,6 +486,19 @@ impl SketchWorkbench {
     /// The active sketch, with its plane where the scene has it: a sketch
     /// keeps its plane in its body's frame, and editing works where the
     /// body sits.
+    /// The dimensions of the edited sketch that a formula sets.
+    fn bound_dimensions(&self, ctx: &WorkbenchRuntimeContext) -> HashSet<Uuid> {
+        self.active_sketch_id
+            .and_then(|id| ctx.document.get_feature_meta(id))
+            .map(|node| {
+                node.formulas
+                    .keys()
+                    .filter_map(|k| Uuid::parse_str(k).ok())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     fn get_active_sketch(&self, ctx: &WorkbenchRuntimeContext) -> Option<SketchFeature> {
         let id = self.active_sketch_id?;
         let mut feature = stored_sketch(ctx.document, id)?;
@@ -983,6 +996,7 @@ impl SketchWorkbench {
             &feature.sketch,
             &proj,
             &self.selected_constraints,
+            &self.bound_dimensions(ctx),
             &ctx.sketch_palette,
         );
         glyphs::hit_test(&glyphs, [viewport_pos.0, viewport_pos.1]).map(|g| GlyphHit {
@@ -1015,12 +1029,20 @@ impl SketchWorkbench {
 
         if double && hit.dimensional {
             if let Some(c) = constraint {
+                // A dimension a formula sets opens on its formula.
+                let formula = self.active_sketch_id.and_then(|sketch| {
+                    ctx.document
+                        .feature_formula(sketch, &c.id.to_string())
+                        .map(str::to_string)
+                });
                 self.dim_edit = Some(DimEdit {
                     constraint: c.id,
                     screen_pos: hit.pos,
-                    text: sketch::dimension_value(&c.kind)
-                        .map(glyphs::fmt_num)
-                        .unwrap_or_default(),
+                    text: formula.unwrap_or_else(|| {
+                        sketch::dimension_value(&c.kind)
+                            .map(glyphs::fmt_num)
+                            .unwrap_or_default()
+                    }),
                     driving: c.driving,
                 });
             }
@@ -1495,8 +1517,20 @@ impl SketchWorkbench {
         let Some(edit) = self.dim_edit.take() else {
             return;
         };
-        let Ok(value) = edit.text.trim().parse::<f32>() else {
-            ctx.log_warn(format!("Not a number: {}", edit.text));
+        self.set_dimension(ctx, edit.constraint, &edit.text, edit.driving);
+    }
+
+    /// Set a dimension from typed text: a value (with a unit if typed,
+    /// `1 in`) that stands as it is, or a formula that reads other values
+    /// and sets it from now on.
+    pub(crate) fn set_dimension(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        constraint: Uuid,
+        text: &str,
+        driving: bool,
+    ) {
+        let Some(sketch_id) = self.active_sketch_id else {
             return;
         };
         let Some(mut feature) = self.get_active_sketch(ctx) else {
@@ -1506,24 +1540,64 @@ impl SketchWorkbench {
             .sketch
             .constraints
             .iter_mut()
-            .find(|c| c.id == edit.constraint)
+            .find(|c| c.id == constraint)
         else {
             return;
         };
-        c.kind = sketch::with_dimension_value(&c.kind, value);
-        c.driving = edit.driving;
-        if let Some(sketch_id) = self.active_sketch_id {
+        let text = text.trim();
+        let dim = if sketch::is_angular(&c.kind) {
+            core_document::expr::Dim::ANGLE
+        } else {
+            core_document::expr::Dim::LENGTH
+        };
+        let key = constraint.to_string();
+        let evaluated = ctx.document.evaluate_formula(text, Some(dim));
+        if !core_document::expr::is_constant(text) {
+            if let Err(why) = core_document::expr::check_syntax(text) {
+                ctx.log_warn(format!("{text}: {}", why.message));
+                return;
+            }
+            let _ =
+                ctx.document
+                    .set_feature_formula(sketch_id, key.clone(), Some(text.to_string()));
             ctx.record(
-                "sketch.set_value",
+                "doc.set_formula",
                 commands::args(serde_json::json!({
-                    "sketch": sketch_id.0.to_string(),
-                    "constraint": edit.constraint.to_string(),
-                    "value": value,
-                    "driving": edit.driving,
+                    "id": sketch_id.0.to_string(),
+                    "parameter": key,
+                    "formula": text,
                 })),
                 serde_json::Value::Null,
             );
+            match evaluated {
+                Ok(q) => c.kind = sketch::with_dimension_value(&c.kind, q.value as f32),
+                Err(why) => ctx.log_warn(format!("{text}: {why}")),
+            }
+            c.driving = true;
+            self.solve(ctx, &mut feature);
+            self.store_sketch(ctx, feature);
+            return;
         }
+        let value = match evaluated {
+            Ok(q) => q.value as f32,
+            Err(why) => {
+                ctx.log_warn(format!("{text}: {why}"));
+                return;
+            }
+        };
+        let _ = ctx.document.set_feature_formula(sketch_id, key, None);
+        c.kind = sketch::with_dimension_value(&c.kind, value);
+        c.driving = driving;
+        ctx.record(
+            "sketch.set_value",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "constraint": constraint.to_string(),
+                "value": value,
+                "driving": driving,
+            })),
+            serde_json::Value::Null,
+        );
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
     }
@@ -1560,6 +1634,22 @@ impl SketchWorkbench {
                 })),
                 serde_json::Value::Null,
             );
+        }
+        // Formulas that read it by its old name read it by the new one.
+        if let (Some(old), Some(new), Some(sketch_id)) = (
+            slot.name.clone(),
+            constraint.name.clone(),
+            self.active_sketch_id,
+        ) && old != new
+            && !new.trim().is_empty()
+            && let Some(sketch_name) = ctx
+                .document
+                .get_feature_meta(sketch_id)
+                .map(|n| n.name.clone())
+        {
+            ctx.document.rewrite_formulas(|text| {
+                core_document::expr::rename_property(text, &sketch_name, &old, &new)
+            });
         }
         *slot = constraint;
         self.solve(ctx, &mut feature);
@@ -2557,7 +2647,13 @@ impl Workbench for SketchWorkbench {
         let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
         out.extend(self.build_overlays(ctx, &feature, &proj, &pal).lines);
         if !self.options.constraints_hidden {
-            let glyphs = glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal);
+            let glyphs = glyphs::build(
+                &feature.sketch,
+                &proj,
+                &self.selected_constraints,
+                &self.bound_dimensions(ctx),
+                &pal,
+            );
             out.extend(glyphs::dimension_overlays(&glyphs));
         }
         out
@@ -2576,9 +2672,15 @@ impl Workbench for SketchWorkbench {
         let mut out = self.build_overlays(ctx, &feature, &proj, &pal).marks;
         if !self.options.constraints_hidden {
             out.extend(
-                glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
-                    .iter()
-                    .filter_map(glyphs::Glyph::mark),
+                glyphs::build(
+                    &feature.sketch,
+                    &proj,
+                    &self.selected_constraints,
+                    &self.bound_dimensions(ctx),
+                    &pal,
+                )
+                .iter()
+                .filter_map(glyphs::Glyph::mark),
             );
         }
         out
@@ -2597,10 +2699,16 @@ impl Workbench for SketchWorkbench {
         }
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        glyphs::build(&feature.sketch, &proj, &self.selected_constraints, &pal)
-            .iter()
-            .filter_map(glyphs::Glyph::label)
-            .collect()
+        glyphs::build(
+            &feature.sketch,
+            &proj,
+            &self.selected_constraints,
+            &self.bound_dimensions(ctx),
+            &pal,
+        )
+        .iter()
+        .filter_map(glyphs::Glyph::label)
+        .collect()
     }
 }
 
@@ -4308,5 +4416,107 @@ mod external_geometry {
             profile::extract_wires(&stored).is_err(),
             "no profile from it"
         );
+    }
+}
+
+#[cfg(test)]
+mod formulas {
+    use super::*;
+    use crate::sketch::{Constraint, ConstraintKind};
+    use core_document::{Document, DocumentService};
+    use sketch::{Line, Point};
+
+    /// A horizontal line fixed at the origin, with a length dimension.
+    fn scene() -> (Document, SketchWorkbench, FeatureId, Uuid) {
+        let mut sketch = Sketch::new("s");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch
+            .constraints
+            .push(Constraint::new(ConstraintKind::FixedPoint {
+                point: a,
+                position: Vec2D::new(0.0, 0.0),
+            }));
+        sketch
+            .constraints
+            .push(Constraint::new(ConstraintKind::Horizontal {
+                element: line,
+            }));
+        let length = Constraint::new(ConstraintKind::Length { line, length: 10.0 });
+        let length_id = length.id;
+        sketch.constraints.push(length);
+        let plane = sketch.plane;
+        let mut doc = Document::new("t");
+        let sizes = doc.add_variable_set("Sizes").unwrap();
+        doc.set_variable(sizes, "w", "30 mm", None).unwrap();
+        let id = doc
+            .add_feature(SketchFeature::new(sketch, plane), "Profile".into())
+            .unwrap();
+        let wb = SketchWorkbench {
+            active_sketch_id: Some(id),
+            ..Default::default()
+        };
+        (doc, wb, id, length_id)
+    }
+
+    fn line_length(wb: &SketchWorkbench, doc: &mut Document) -> f32 {
+        let ctx = WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
+        let feature = wb.get_active_sketch(&ctx).unwrap();
+        let xs: Vec<f32> = feature
+            .sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Point(p) => Some(p.position.x),
+                _ => None,
+            })
+            .collect();
+        xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min)
+    }
+
+    #[test]
+    fn a_dimension_set_by_a_formula_solves_and_follows_its_variable_while_open() {
+        let mut registry = DocumentService::default();
+        registry
+            .register_workbench(Box::new(SketchWorkbench::default()))
+            .unwrap();
+        let (mut doc, mut wb, id, length) = scene();
+        registry.evaluate(&mut doc);
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut doc,
+                [0.0, 0.0, 50.0],
+                [0.0; 3],
+                (0, 0, 800, 600),
+            );
+            wb.set_dimension(&mut ctx, length, "Sizes.w / 2", true);
+        }
+        assert_eq!(
+            doc.feature_formula(id, &length.to_string()),
+            Some("Sizes.w / 2")
+        );
+        registry.evaluate(&mut doc);
+        assert!((line_length(&wb, &mut doc) - 15.0).abs() < 1e-3);
+
+        // The variable changes: the open sketch reads its solved copy.
+        let sizes = doc.object_named("Sizes").unwrap();
+        doc.set_variable(sizes, "w", "50 mm", None).unwrap();
+        registry.evaluate(&mut doc);
+        assert!((line_length(&wb, &mut doc) - 25.0).abs() < 1e-3);
+
+        // A value typed with a unit takes the formula away.
+        {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                &mut doc,
+                [0.0, 0.0, 50.0],
+                [0.0; 3],
+                (0, 0, 800, 600),
+            );
+            wb.set_dimension(&mut ctx, length, "1 in", true);
+        }
+        assert_eq!(doc.feature_formula(id, &length.to_string()), None);
+        registry.evaluate(&mut doc);
+        assert!((line_length(&wb, &mut doc) - 25.4).abs() < 1e-3);
     }
 }
