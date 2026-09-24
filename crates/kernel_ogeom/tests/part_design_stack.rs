@@ -631,7 +631,6 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
 /// A block with a bore through it, the bore's top rim rounded: the fillet
 /// a printed part's hole mouth takes most often.
 #[test]
-#[ignore = "kernel: fillet_edges refuses the rim of a bore cut into a planar face, no seam can be built (ogeom-rs#54)"]
 fn bore_rim_fillets() {
     let (mut doc, body, rect_id) = setup(40.0, 30.0);
     doc.add_feature_in_body(
