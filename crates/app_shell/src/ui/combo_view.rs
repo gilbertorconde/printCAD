@@ -65,6 +65,9 @@ pub struct ComboViewInputs<'a> {
     pub keymap: &'a super::keymap::Keymap,
     /// The Data tab's variable and configuration editors.
     pub variables: &'a mut super::variables_view::VariablesState,
+    /// The tree's share of the height below the header; the property
+    /// panel has the rest. The divider between them drags it.
+    pub tree_share: &'a mut f32,
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -83,6 +86,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         physical,
         keymap,
         variables,
+        tree_share,
     } = inputs;
     let mut result = ComboViewResult::default();
 
@@ -164,9 +168,10 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 flush_ctx_logs(&mut ctx);
             }
             ui.add_space(SPACE_1);
-            // The tree takes the upper part; the property panel the rest.
+            // The tree takes the upper part and the property panel the
+            // rest, split where the divider between them was dragged.
             let total = ui.available_height();
-            let tree_height = (total * 0.55).max(120.0);
+            let tree_height = tree_height(total, *tree_share);
             let mut selected_detail: Option<String> = None;
             let selected_id = active_tree_selection
                 .or_else(|| active_document_object.map(TreeItemId::from))
@@ -216,6 +221,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .or_else(|| tree_model.detail_for(selected_id));
                 });
 
+            divider(ui, total, tree_share);
             let props = property_panel::draw_property_panel(
                 ui,
                 document,
@@ -250,4 +256,92 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         });
 
     result
+}
+
+/// The tree's share of the height when nothing has moved the divider.
+pub const TREE_SHARE: f32 = 0.55;
+/// The least either part keeps, in points.
+const MIN_PART: f32 = 80.0;
+const DIVIDER: f32 = 6.0;
+
+/// How tall the tree is in `total`, at `share`, leaving each part its
+/// least.
+fn tree_height(total: f32, share: f32) -> f32 {
+    let most = (total - MIN_PART - DIVIDER).max(MIN_PART);
+    (total * share).clamp(MIN_PART, most)
+}
+
+/// The handle between the tree and the property panel: dragging it moves
+/// `share`, and a double click puts it back.
+fn divider(ui: &mut egui::Ui, total: f32, share: &mut f32) {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), DIVIDER),
+        egui::Sense::click_and_drag(),
+    );
+    let active = response.hovered() || response.dragged();
+    ui.painter().hline(
+        rect.x_range(),
+        rect.center().y,
+        egui::Stroke::new(
+            if active { 2.0 } else { 1.0 },
+            if active { ACCENT } else { BORDER },
+        ),
+    );
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::ResizeVertical)
+        .on_hover_text("Drag to share the height between the tree and the properties");
+    if response.dragged() && total > 0.0 {
+        let height = tree_height(total, *share) + response.drag_delta().y;
+        *share = (height / total).clamp(0.0, 1.0);
+    }
+    if response.double_clicked() {
+        *share = TREE_SHARE;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_split_leaves_each_part_its_least() {
+        assert_eq!(tree_height(1000.0, TREE_SHARE), 550.0);
+        assert_eq!(tree_height(1000.0, 0.0), MIN_PART);
+        assert_eq!(tree_height(1000.0, 1.0), 1000.0 - MIN_PART - DIVIDER);
+        // Too short for both: the tree keeps its least.
+        assert_eq!(tree_height(100.0, 0.5), MIN_PART);
+    }
+
+    #[test]
+    fn dragging_the_divider_moves_the_split_by_as_much() {
+        let ctx = egui::Context::default();
+        let mut share = TREE_SHARE;
+        let total = 1000.0;
+        let at = egui::pos2(100.0, DIVIDER / 2.0);
+        let below = egui::pos2(100.0, DIVIDER / 2.0 + 100.0);
+        let press = |pos, pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        };
+        for events in [
+            vec![egui::Event::PointerMoved(at)],
+            vec![press(at, true)],
+            vec![egui::Event::PointerMoved(egui::pos2(100.0, 40.0))],
+            vec![egui::Event::PointerMoved(below)],
+            vec![press(below, false)],
+        ] {
+            let raw = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| divider(ui, total, &mut share));
+            output.textures_delta.clear();
+        }
+        assert!(
+            (share - (TREE_SHARE + 0.1)).abs() < 0.002,
+            "100 of 1000 points down: {share}"
+        );
+    }
 }

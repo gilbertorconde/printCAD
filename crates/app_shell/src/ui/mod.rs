@@ -109,6 +109,8 @@ pub struct UiLayer {
     console: console_view::ConsoleState,
     assistant: assistant::AssistantState,
     variables: variables_view::VariablesState,
+    /// The tree's share of the left column, as its divider was dragged.
+    tree_share: f32,
 }
 
 impl UiLayer {
@@ -144,6 +146,7 @@ impl UiLayer {
             console: console_view::ConsoleState::load(),
             assistant: Default::default(),
             variables: Default::default(),
+            tree_share: combo_view::TREE_SHARE,
         }
     }
 
@@ -575,6 +578,7 @@ impl UiLayer {
                     property_tab: &mut self.property_tab,
                     rename_buffer: &mut self.rename_buffer,
                     variables: &mut self.variables,
+                    tree_share: &mut self.tree_share,
                     physical: physical.as_ref(),
                     keymap: &keymap,
                 },
