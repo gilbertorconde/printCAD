@@ -69,6 +69,25 @@ pub enum Incoming {
     },
     /// The stream ended.
     Closed,
+    /// Put in by [`Connection::caught_up`]: whoever reads these passes it
+    /// once everything ahead of it is dealt with.
+    Barrier(Barrier),
+}
+
+/// A mark in the incoming messages: see [`Connection::caught_up`].
+#[derive(Debug, Clone)]
+pub struct Barrier(Sender<()>);
+
+impl Barrier {
+    pub fn pass(self) {
+        let _ = self.0.send(());
+    }
+}
+
+impl PartialEq for Barrier {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self, other)
+    }
 }
 
 type Waiting = Arc<Mutex<HashMap<u64, Sender<Result<Value, RpcError>>>>>;
@@ -79,6 +98,7 @@ pub struct Connection {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     next_id: Arc<AtomicU64>,
     waiting: Waiting,
+    incoming: Sender<Incoming>,
 }
 
 impl Connection {
@@ -94,12 +114,23 @@ impl Connection {
             writer: Arc::new(Mutex::new(Box::new(writer))),
             next_id: Arc::new(AtomicU64::new(1)),
             waiting: waiting.clone(),
+            incoming: incoming_tx.clone(),
         };
         std::thread::Builder::new()
             .name("printcad-rpc-reader".to_string())
             .spawn(move || read_loop(BufReader::new(reader), waiting, incoming_tx))
             .expect("the reader thread starts");
         (connection, incoming_rx)
+    }
+
+    /// Wait, at most `within`, until whoever reads the incoming messages
+    /// has dealt with every one that arrived before now. The reader hands
+    /// on a message before any answer that follows it, so once an answer
+    /// is in, this makes the notifications sent ahead of it land first.
+    pub fn caught_up(&self, within: std::time::Duration) -> bool {
+        let (tx, rx) = channel();
+        self.incoming.send(Incoming::Barrier(Barrier(tx))).is_ok()
+            && rx.recv_timeout(within).is_ok()
     }
 
     /// Send a request; its answer arrives on the receiver returned.

@@ -505,6 +505,10 @@ fn spawn(agent: &Program) -> Result<Pipes, String> {
     Ok((child, stdout, stdin, stderr))
 }
 
+/// How long to wait for the agent's messages ahead of an answer to be
+/// shown.
+const SETTLE: Duration = Duration::from_secs(1);
+
 /// How long the agent has to answer `initialize` and `session/new`: a
 /// program fetched on first use can take a while.
 const START_TIMEOUT: Duration = Duration::from_secs(120);
@@ -526,6 +530,9 @@ fn run(
     }
     let (session, can) = match open_session(&connection, &cwd, &mcp, resume.as_deref()) {
         Ok(opened) => {
+            // A reloaded session replays its conversation ahead of the
+            // answer: it is shown before the chat says it is ready.
+            connection.caught_up(SETTLE);
             options.lock().unwrap().list = opened.options;
             if let Some(note) = opened.note {
                 events.send(ChatEvent::Error(note));
@@ -563,6 +570,8 @@ fn run(
         if let Some(pending) = &turn {
             match pending.try_recv() {
                 Ok(Ok(answer)) => {
+                    // The turn's last words arrive ahead of its answer.
+                    connection.caught_up(SETTLE);
                     let stop_reason = answer
                         .get("stopReason")
                         .and_then(Value::as_str)
@@ -973,6 +982,7 @@ fn serve_agent(
                 events.send(ChatEvent::Exited);
                 return;
             }
+            Incoming::Barrier(mark) => mark.pass(),
         }
     }
 }
@@ -1162,7 +1172,7 @@ mod tests {
                             .respond(id, Err(RpcError::new(RpcError::METHOD_NOT_FOUND, "no")))
                             .unwrap(),
                     },
-                    Incoming::Notification { .. } => {}
+                    Incoming::Notification { .. } | Incoming::Barrier(_) => {}
                     Incoming::Closed => return,
                 }
             }

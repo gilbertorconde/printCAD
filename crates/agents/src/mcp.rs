@@ -170,6 +170,7 @@ pub fn serve(
                 }
             }
             Incoming::Notification { .. } => {}
+            Incoming::Barrier(mark) => mark.pass(),
             Incoming::Closed => return,
         }
     }
