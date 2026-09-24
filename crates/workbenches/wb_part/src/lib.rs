@@ -8,6 +8,7 @@ mod commands;
 #[cfg(feature = "egui")]
 mod editors;
 mod feature;
+mod params;
 #[cfg(feature = "egui")]
 mod task;
 
@@ -1178,6 +1179,14 @@ impl Workbench for PartDesignWorkbench {
             .map(|s| *s)
             .unwrap_or_default();
         self.options = options;
+    }
+
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        if node.workbench_id.as_str() == "core.datum" {
+            params::datum_parameters()
+        } else {
+            params::feature_parameters(node)
+        }
     }
 
     fn property_hints(&self) -> core_document::PropertyHints {

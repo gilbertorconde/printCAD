@@ -252,7 +252,7 @@ pub fn datums_of_body(
         .all_nodes()
         .filter(|(_, n)| n.workbench_id.as_str() == "core.datum" && n.body == Some(body))
         .filter_map(|(id, n)| {
-            DatumFeature::from_json(&n.data)
+            DatumFeature::from_json(document.feature_values(*id)?)
                 .ok()
                 .map(|d| (n.seq, *id, n.name.clone(), d))
         })

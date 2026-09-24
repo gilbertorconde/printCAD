@@ -40,6 +40,8 @@ pub struct Parameter {
     /// What the JSON holds for one unit of formula value (millimetre or
     /// degree): 1, or π/180 for an angle kept in radians.
     pub scale: f64,
+    /// It holds a whole number (a count): a formula's value is rounded.
+    pub integer: bool,
 }
 
 impl Parameter {
@@ -53,6 +55,15 @@ impl Parameter {
             dim,
             pointer,
             scale: 1.0,
+            integer: false,
+        }
+    }
+
+    /// A count: a plain number, rounded to a whole one.
+    pub fn count(name: &str, label: &str, pointer: impl Into<String>) -> Self {
+        Self {
+            integer: true,
+            ..Self::new(name, label, Dim::NUMBER, pointer)
         }
     }
 
@@ -108,6 +119,7 @@ struct Slot {
     source: Source,
     pointer: Option<String>,
     scale: f64,
+    integer: bool,
 }
 
 #[derive(Clone)]
@@ -221,6 +233,7 @@ pub fn evaluate_document(
                     source: Source::Formula(variable.formula),
                     pointer: None,
                     scale: 1.0,
+                    integer: false,
                 });
             }
             continue;
@@ -242,6 +255,7 @@ pub fn evaluate_document(
                 },
                 pointer: Some(p.pointer),
                 scale: p.scale,
+                integer: p.integer,
             });
         }
     }
@@ -274,7 +288,11 @@ pub fn evaluate_document(
                     .unwrap_or_default()
             });
             if let Some(target) = data.pointer_mut(pointer) {
-                *target = serde_json::json!(q.value * slot.scale);
+                *target = if slot.integer {
+                    serde_json::json!((q.value * slot.scale).round() as i64)
+                } else {
+                    serde_json::json!(q.value * slot.scale)
+                };
             }
         }
         out.slots.entry(slot.feature).or_default().push(SlotValue {

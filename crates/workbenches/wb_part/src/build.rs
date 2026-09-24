@@ -27,7 +27,8 @@ pub fn part_features_of_body(document: &Document, body: BodyId) -> Vec<(FeatureI
         .all_nodes()
         .filter(|(_, node)| node.workbench_id.as_str() == "wb.part" && node.body == Some(body))
         .filter_map(|(id, node)| {
-            PartFeature::from_json(&node.data)
+            // As it builds: with every formula's current value in.
+            PartFeature::from_json(document.feature_values(*id)?)
                 .ok()
                 .map(|f| (node.seq, *id, f))
         })

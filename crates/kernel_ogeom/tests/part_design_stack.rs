@@ -705,3 +705,64 @@ fn bore_rim_fillets() {
         "volume {volume} vs {expected}"
     );
 }
+
+#[test]
+fn a_variable_drives_the_pad_and_changing_it_rebuilds_the_solid() {
+    use core_document::{DocumentService, Variable, VariableSet, WorkbenchFeature};
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .unwrap();
+    let (mut doc, body, sketch_id) = setup(10.0, 5.0);
+    let sizes = doc
+        .add_feature(
+            VariableSet {
+                variables: vec![
+                    Variable {
+                        name: "base".into(),
+                        formula: "4 mm".into(),
+                        comment: String::new(),
+                    },
+                    Variable {
+                        name: "height".into(),
+                        formula: "Sizes.base * 2 - 1 mm".into(),
+                        comment: String::new(),
+                    },
+                ],
+            },
+            "Sizes".into(),
+        )
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(
+            pad_feature(sketch_id, 8.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.set_feature_formula(pad_id, "/Pad/length", Some("Sizes.height".into()))
+        .unwrap();
+
+    let height = |doc: &mut Document| {
+        let jobs = registry.rebuild_jobs(doc);
+        let job = jobs
+            .into_iter()
+            .find(|j| j.body == body)
+            .expect("a rebuild");
+        let ops = job.plan.unwrap().ops;
+        let result = OgeomKernel::new()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap();
+        let (min, max) = mesh_bounds(&result.mesh);
+        max[2] - min[2]
+    };
+    assert!((height(&mut doc) - 7.0).abs() < 1e-3, "2 * 4 - 1");
+
+    // Change the variable: the pad rebuilds at the new height, and nothing
+    // else asked for it.
+    let mut set = VariableSet::from_json(doc.get_feature_data(sizes).unwrap()).unwrap();
+    set.variables[0].formula = "6 mm".into();
+    doc.update_feature_data(sizes, set.to_json()).unwrap();
+    assert!((height(&mut doc) - 11.0).abs() < 1e-3, "2 * 6 - 1");
+    assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
+}
