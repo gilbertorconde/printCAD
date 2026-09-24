@@ -131,8 +131,8 @@ While a length is being typed, number keys go to the length.
 
 ## Scripting
 
-Windows › Console opens a Lua console. Every command of the application
-and the workbenches is a function under `pc`, called with named arguments:
+Scripts are Lua. Every command of the application and the workbenches is
+a function under `pc`, called with named arguments:
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
@@ -141,14 +141,10 @@ local pad = pc.part.pad{sketch = s, length = 12}
 pc.part.set{feature = pad, length = 20}
 ```
 
-- `help()` lists the commands, `help("sketch")` those starting with
-  `sketch`.
-- `pc.doc.bodies()`, `pc.doc.features()` and `pc.doc.feature{id = ...}`
-  read the document. A feature's fields are the names `pc.part.set` takes.
-- A command that fails raises an error, which `pcall` catches.
-- Every change is an ordinary edit: Undo takes it back. Solids rebuild
-  after the line runs, as they do after a click.
-- A run is stopped after 10 seconds.
+Run them in the console (Windows › Console), from the Scripts menu and
+toolbar button (every `.lua` file in `~/.config/printcad/scripts`), or
+without a window: `printcad --script build.lua`. See
+[Scripting](docs/SCRIPTING.md) for the guide and every command.
 
 ## Settings
 
@@ -189,6 +185,7 @@ More detail in [docs](docs/):
 - [Editing workflow](docs/WB_IMP.md)
 - [Document model](docs/DOCUMENT_MODEL.md)
 - [Writing a workbench](docs/WORKBENCH_GUIDE.md)
+- [Scripting](docs/SCRIPTING.md)
 - [Camera](camera_system.md)
 - [Project status](PROJECT_STEPS.md)
 

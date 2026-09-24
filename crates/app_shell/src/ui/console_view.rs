@@ -31,6 +31,8 @@ pub struct ConsoleState {
     focus: bool,
     /// Where the history is kept; `None` keeps it for this session only.
     history_file: Option<std::path::PathBuf>,
+    /// What was run since the application started, for Save as script.
+    session_runs: Vec<String>,
 }
 
 impl ConsoleState {
@@ -80,6 +82,7 @@ impl ConsoleState {
         if text.trim().is_empty() {
             return None;
         }
+        self.session_runs.push(text.clone());
         if self.history.last() != Some(&text) {
             self.history.push(text.clone());
             if self.history.len() > HISTORY_KEPT {
@@ -168,6 +171,14 @@ pub fn draw_console(
                 ui.add_space(SPACE_2);
                 if small_secondary_button(ui, "Clear").clicked() {
                     console::clear();
+                }
+                let save = ui.add_enabled_ui(!state.session_runs.is_empty(), |ui| {
+                    small_secondary_button(ui, "Save as script")
+                        .on_hover_text("Everything run here since the start, as a new script")
+                        .on_disabled_hover_text("Run something first")
+                });
+                if save.inner.clicked() {
+                    commands.push(UiCommand::SaveRunsAsScript(state.session_runs.clone()));
                 }
                 ui.label(
                     RichText::new(

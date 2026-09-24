@@ -197,7 +197,8 @@ impl PrintCadApp {
                 UiCommand::Undo => intents.undo = true,
                 UiCommand::RunConsole(line) => self.run_console_line(&line, event_loop),
                 UiCommand::RunScriptFile(path) => self.run_script_file(&path, event_loop),
-                UiCommand::NewScript => self.new_script(),
+                UiCommand::NewScript => self.new_script(None),
+                UiCommand::SaveRunsAsScript(runs) => self.new_script(Some(runs)),
                 UiCommand::EditScript(path) => self.edit_script(path),
                 UiCommand::File(FileCommand::RunScript) => {
                     intents.file_dialog = Some(FileDialogKind::RunScript);

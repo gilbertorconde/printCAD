@@ -29,6 +29,16 @@ pc.part.pad{sketch = s, length = 10}
 pc.doc.rebuild()
 ";
 
+/// A script of what the console ran, in order.
+pub fn from_runs(runs: &[String]) -> String {
+    let mut out = String::from("-- Saved from the console\n\n");
+    for run in runs {
+        out.push_str(run.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
 /// The scripts in `dir`, by name. A folder that is not there has none.
 pub fn scan(dir: &Path) -> Vec<ScriptEntry> {
     let Ok(read) = std::fs::read_dir(dir) else {
@@ -106,6 +116,8 @@ mod tests {
         assert_eq!(found[0].about.as_deref(), Some("A block to start from"));
         assert_eq!(found[1].about, None);
         assert_eq!(fresh_path(&dir), dir.join("new_script.lua"));
+        let saved = from_runs(&["x = 1".into(), "print(x)\n".into()]);
+        assert_eq!(saved, "-- Saved from the console\n\nx = 1\nprint(x)\n");
         std::fs::remove_dir_all(&dir).unwrap();
         assert!(scan(&dir).is_empty(), "a missing folder has none");
     }

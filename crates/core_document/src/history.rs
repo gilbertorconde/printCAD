@@ -33,6 +33,9 @@ pub struct OpJournal {
     /// Label for the next boundary, set by explicit commits ("Create
     /// body"); gestures without one get a generic label.
     pending_label: Option<String>,
+    /// Boundaries wait while this is set: a script's edits are one gesture
+    /// whatever the commands it calls do.
+    held: bool,
 }
 
 impl OpJournal {
@@ -48,10 +51,23 @@ impl OpJournal {
         self.pending_label = Some(label.into());
     }
 
+    /// Hold boundaries until released, so everything done meanwhile is one
+    /// gesture; releasing does not close it, the next boundary does.
+    pub fn hold(&mut self, held: bool) {
+        self.held = held;
+    }
+
     /// Close the current gesture: drain captured pairs into one entry.
-    /// Called at gesture boundaries — every frame with no mouse button held,
+    /// Called at gesture boundaries: every frame with no mouse button held,
     /// and immediately after discrete commands. A barrier clears history.
+    /// Nothing closes while the journal is held.
     pub fn note(&mut self, document: &mut Document) {
+        if !self.held {
+            self.close(document);
+        }
+    }
+
+    fn close(&mut self, document: &mut Document) {
         let (pairs, barrier) = document.take_journal_pairs();
         if barrier {
             self.undo.clear();
@@ -81,8 +97,9 @@ impl OpJournal {
 
     /// Undo the newest gesture. Returns its label.
     pub fn undo(&mut self, document: &mut Document) -> Option<String> {
-        // Fold any uncommitted edits first so they are what gets undone.
-        self.note(document);
+        // Fold any uncommitted edits first so they are what gets undone,
+        // held or not.
+        self.close(document);
         let entry = self.undo.pop()?;
         document.without_journal(|doc| {
             for op in entry.inverse.iter().rev() {
@@ -160,6 +177,25 @@ mod tests {
         assert_eq!(doc.bodies().len(), 1);
         assert_eq!(journal.redo(&mut doc).as_deref(), Some("Edit"));
         assert_eq!(doc.bodies()[0].name, "Renamed");
+    }
+
+    #[test]
+    fn a_held_journal_makes_everything_until_the_next_boundary_one_step() {
+        let mut doc = Document::new("Script");
+        let mut journal = OpJournal::new(16);
+        journal.label_next("Run script");
+        journal.hold(true);
+        let body = doc.create_body(Some("A".into()));
+        journal.note(&mut doc);
+        doc.rename_body(body, "B");
+        journal.note(&mut doc);
+        doc.create_body(Some("C".into()));
+        journal.hold(false);
+        journal.note(&mut doc);
+
+        assert_eq!(journal.undo(&mut doc).as_deref(), Some("Run script"));
+        assert!(doc.bodies().is_empty(), "the whole run went back at once");
+        assert!(!journal.can_undo());
     }
 
     #[test]

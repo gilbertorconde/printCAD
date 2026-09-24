@@ -52,12 +52,8 @@ written in Rust.
 Built: the sketcher, Part Design, assembly joints between bodies, STEP,
 IGES and mesh import, STEP, STL and 3MF export, tabs, the document server,
 undo, configurable keyboard shortcuts, sending a part to the slicer,
-6-DoF navigation, and the first part of the command API: typed commands
-registered by the application and the workbenches, run from a Lua console.
-
-The command API has these so far: document queries and edits, every
-keyboard command, sketch geometry, and every Part Design feature with its
-fields.
+6-DoF navigation, and the command API: typed commands registered by the
+application and the workbenches, run from Lua scripts.
 
 Next:
 
@@ -85,21 +81,21 @@ so neither reaches into a workbench:
 
 ### Scripts
 
-- Lua 5.4, built in (the `scripting` crate). Built: the `pc` namespace
-  over every command, `help`, a console with history. Still to do:
-  completion from the command API, a typed binding with docs per command.
-- Commands still to add: sketch constraints, datums, assembly joints,
-  export with options, waiting for a rebuild to finish.
-- Open, edit and run script files (File › Run script, recent scripts).
-- Macros: record commands from the UI as a script, replay them.
-- Script buttons in the toolbar, with icon, label and key, set in
-  Preferences.
+Built: Lua 5.4 (the `scripting` crate) over every command, the console
+(completion, several lines, history kept), script files and the scripts
+folder in the Scripts menu, toolbar, palette and keymap, Save as script,
+one undo step per run, and runs without a window. See
+[Scripting](SCRIPTING.md).
+
+Later:
+
 - A workbench written as a script: tools, task panel and features from
   the same API.
-- Run scripts without a window from the command line, for batch export
-  or tests.
-- One undo entry per script run. Cancel a long script from the status
-  bar.
+- Recording clicks in the viewport as a script. Tools act on clicks
+  rather than through commands, so this waits on tools that end in a
+  command.
+- Running a script off the UI thread, so a long one can be cancelled
+  while the window stays live.
 
 ### AI
 

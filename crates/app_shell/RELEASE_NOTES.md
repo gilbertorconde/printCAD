@@ -46,8 +46,11 @@ version first.
 - A 6-DoF mouse steers the view.
 
 ### Scripting
-- Windows › Console runs Lua. Every command of the application and the workbenches is a function under `pc`: make a sketch, draw in it, pad it, change a feature's fields, read the document.
-- `help()` lists the commands; a failed command raises an error that `pcall` catches; every change undoes like a click.
+- Lua scripts reach every command of the application and the workbenches under `pc`: sketches and constraints, every Part Design feature and datum, assembly joints, rebuilding, measuring, faces, files and export.
+- The console completes command names with Tab, takes several lines, and keeps its history; Save as script turns a session into a script.
+- Every `.lua` file in the scripts folder shows in the Scripts menu, the toolbar and the palette, and takes a key.
+- `printcad --script build.lua` runs a script without a window, for batch work.
+- A script run is one undo step. See docs/SCRIPTING.md.
 
 ### Keyboard
 - Every shortcut can be changed in Preferences › Keyboard, which also warns when two commands share a key.

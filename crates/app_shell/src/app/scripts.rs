@@ -155,10 +155,68 @@ fn app_commands() -> Vec<CommandSpec> {
 /// The commands a script can call, by the application and then the
 /// workbenches in registration order.
 fn all_commands(app: &PrintCadApp) -> Vec<CommandSpec> {
+    command_specs(&app.registry)
+}
+
+/// Every command a script in the application can call: the application's,
+/// then each workbench's in registration order.
+pub(crate) fn command_specs(registry: &core_document::DocumentService) -> Vec<CommandSpec> {
     let mut out = doc_commands();
     out.extend(app_commands());
     out.extend(key_commands().map(|(spec, _)| spec));
-    out.extend(app.registry.commands().into_iter().map(|(_, c)| c.clone()));
+    out.extend(registry.commands().into_iter().map(|(_, c)| c.clone()));
+    out
+}
+
+/// The command reference `docs/SCRIPTING.md` carries: every command, by
+/// the name before its first dot.
+#[cfg(test)]
+pub(crate) fn reference(commands: &[CommandSpec]) -> String {
+    let mut groups: Vec<&str> = Vec::new();
+    for c in commands {
+        let group = c.id.split('.').next().unwrap_or("");
+        if !groups.contains(&group) {
+            groups.push(group);
+        }
+    }
+    let mut out = String::new();
+    for group in groups {
+        out.push_str(&format!("\n### {group}\n"));
+        for c in commands
+            .iter()
+            .filter(|c| c.id.split('.').next() == Some(group))
+        {
+            out.push_str(&format!(
+                "\n`pc.{}`: {}.\n",
+                c.id,
+                c.summary.trim_end_matches('.')
+            ));
+            let mut lines: Vec<String> = c
+                .params
+                .iter()
+                .map(|p| {
+                    let optional = if p.required { "" } else { ", optional" };
+                    let doc = if p.doc.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", p.doc)
+                    };
+                    format!("- `{}` ({}{optional}){doc}", p.name, p.kind.name())
+                })
+                .collect();
+            if let Some(extra) = &c.extra_args {
+                lines.push(format!("- Other arguments: {extra}"));
+            }
+            if c.returns != "nothing" {
+                lines.push(format!("- Returns {}", c.returns));
+            }
+            if !lines.is_empty() {
+                out.push('\n');
+                out.push_str(&lines.join("\n"));
+                out.push('\n');
+            }
+        }
+    }
     out
 }
 
@@ -209,6 +267,7 @@ impl PrintCadApp {
     pub(crate) fn run_console_line(&mut self, line: &str, event_loop: &ActiveEventLoop) {
         console::push(LineKind::Input, line);
         let mut engine = self.scripts.take().unwrap_or_default();
+        self.begin_script_step("Console");
         let out = engine.eval_line(
             line,
             &mut AppHost {
@@ -216,6 +275,7 @@ impl PrintCadApp {
                 event_loop,
             },
         );
+        self.end_script_step();
         self.scripts = Some(engine);
         for printed in out.printed {
             console::push(LineKind::Printed, printed);
@@ -226,8 +286,21 @@ impl PrintCadApp {
         if let Some(error) = out.error {
             console::push(LineKind::Error, error);
         }
-        self.session.journal.label_next("Console");
         self.redraw_needed = true;
+    }
+
+    /// Everything a script run changes is one undo step, named `label`,
+    /// whatever the commands it calls do: the edits before it close first,
+    /// and no boundary closes until [`Self::end_script_step`].
+    fn begin_script_step(&mut self, label: &str) {
+        self.session.journal.note(&mut self.session.document);
+        self.session.journal.label_next(label);
+        self.session.journal.hold(true);
+    }
+
+    fn end_script_step(&mut self) {
+        self.session.journal.hold(false);
+        self.session.journal.note(&mut self.session.document);
     }
 
     fn run_app_command(&mut self, id: &str, args: &CommandArgs) -> CommandResult {
@@ -380,6 +453,7 @@ impl PrintCadApp {
         };
         console::push(LineKind::Input, format!("run {name}"));
         let mut engine = self.scripts.take().unwrap_or_default();
+        self.begin_script_step(&format!("Run {name}"));
         let out = engine.run_script(
             &source,
             &name,
@@ -388,6 +462,7 @@ impl PrintCadApp {
                 event_loop,
             },
         );
+        self.end_script_step();
         self.scripts = Some(engine);
         if !out.printed.is_empty() || out.error.is_some() {
             self.console_attention = true;
@@ -402,7 +477,6 @@ impl PrintCadApp {
             }
             None => crate::app_log::info(format!("Ran {name}")),
         }
-        self.session.journal.label_next(format!("Run {name}"));
         self.redraw_needed = true;
     }
 
@@ -426,16 +500,20 @@ impl PrintCadApp {
             .unwrap_or_default();
     }
 
-    /// Make a new script from the template in the scripts folder and open
-    /// it in the system's editor.
-    pub(crate) fn new_script(&mut self) {
+    /// Make a new script in the scripts folder, from `runs` (what the
+    /// console ran) or else the template, and open it in the system's
+    /// editor.
+    pub(crate) fn new_script(&mut self, runs: Option<Vec<String>>) {
         let Some(dir) = settings::scripts_dir() else {
             crate::app_log::warn("The system names no configuration folder for scripts");
             return;
         };
         let path = crate::script_library::fresh_path(&dir);
-        let written = std::fs::create_dir_all(&dir)
-            .and_then(|()| std::fs::write(&path, crate::script_library::TEMPLATE));
+        let text = match runs {
+            Some(runs) => crate::script_library::from_runs(&runs),
+            None => crate::script_library::TEMPLATE.to_string(),
+        };
+        let written = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, text));
         match written {
             Ok(()) => {
                 crate::app_log::info(format!("New script {}", path.display()));
@@ -919,6 +997,36 @@ mod tests {
         assert_eq!(faces[1]["kind"], "cylinder");
         assert_eq!(faces[1]["axis"]["direction"], json!([0.0, 0.0, 1.0]));
         assert_eq!(faces[1]["radius"], json!(3.0));
+    }
+
+    /// Where the reference sits in `docs/SCRIPTING.md`.
+    const BEGIN: &str = "<!-- commands: generated from the registered commands -->";
+    const END: &str = "<!-- /commands -->";
+
+    #[test]
+    fn the_scripting_guide_lists_every_command_as_registered() {
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let generated = reference(&command_specs(&registry));
+        assert!(!generated.contains('\u{2014}'), "the docs use no long dash");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/SCRIPTING.md");
+        let text = std::fs::read_to_string(&path).unwrap();
+        let (Some(start), Some(end)) = (text.find(BEGIN), text.find(END)) else {
+            panic!("docs/SCRIPTING.md has no command reference markers");
+        };
+        let current = &text[start + BEGIN.len()..end];
+        let wanted = format!("\n{}\n", generated.trim());
+        if current != wanted {
+            if std::env::var_os("PRINTCAD_WRITE_DOCS").is_some() {
+                let updated = format!("{}{BEGIN}{wanted}{}", &text[..start], &text[end..]);
+                std::fs::write(&path, updated).unwrap();
+            } else {
+                panic!(
+                    "docs/SCRIPTING.md's command reference is out of date; \
+                     PRINTCAD_WRITE_DOCS=1 cargo test -p app_shell scripting_guide rewrites it"
+                );
+            }
+        }
     }
 
     #[test]

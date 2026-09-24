@@ -59,6 +59,12 @@ What is built, by area. The plan for what comes next is in
   solved into placements.
 - Move a body by numbers.
 
+## Scripting
+
+- Lua scripts over every command of the application and the workbenches.
+- A console, script files, a scripts folder in the menus and toolbar, and
+  runs without a window.
+
 ## Not built yet
 
 - More joint kinds: gears, limits.

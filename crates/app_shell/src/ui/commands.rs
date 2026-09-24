@@ -162,6 +162,8 @@ pub enum UiCommand {
     RunScriptFile(std::path::PathBuf),
     /// Make a new script in the scripts folder and open it for editing.
     NewScript,
+    /// Write what the console ran as a new script in the scripts folder.
+    SaveRunsAsScript(Vec<String>),
     /// Open a script for editing, or the scripts folder when `None`.
     EditScript(Option<std::path::PathBuf>),
     /// The task panel closed with this outcome.

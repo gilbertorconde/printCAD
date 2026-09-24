@@ -284,7 +284,17 @@ vendored) and knows no command: a `scripting::Host` lists and runs them,
 the prelude (`prelude.lua`) builds the `pc` namespace, `print`, `show`
 and `help`. The console (`ui/console_view.rs`, output in the `console`
 store) sends `UiCommand::RunConsole`; the line runs synchronously inside
-`apply_ui_commands` with the engine taken off `PrintCadApp.scripts`.
+`apply_ui_commands` with the engine taken off `PrintCadApp.scripts`, the
+journal held (`OpJournal::hold`) so a run is one undo step. The app's own
+commands: `doc.*` (the pure ones in `scripts::document_command`, shared
+with `headless.rs`), `app.*`, and every keymap command, the file ones
+taking a `path` to skip their dialog. Script files: `script_library.rs`
+reads `settings::scripts_dir()` every 2 s into `script.<name>` keymap
+bindings (`Target::Script`), the Scripts menu, toolbar button and palette.
+`printcad --script` (`headless.rs`) runs before the event loop, rebuilds
+on the calling thread, logs to stderr. `docs/SCRIPTING.md`'s command
+reference is generated; a test fails when it drifts
+(`PRINTCAD_WRITE_DOCS=1` rewrites it).
 Commands never open a task; Part Design's make features through
 `create_feature`, the toolbar's own path, then merge named fields into the
 feature's JSON. `kernel_ogeom/tests/scripted_part.rs` runs a script through
