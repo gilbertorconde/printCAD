@@ -68,6 +68,7 @@ version first.
 - Every change an agent asks for waits for your OK unless you allow the chat; each is one undo step.
 - Attach files or a picture of the view to a message from the "+" in the chat's bar, by pasting copied files, or by dropping them on the panel.
 - The bar under a chat's box sets what the agent offers, such as its permission mode, model and effort, and new chats with that agent keep the choice.
+- A document's chats are kept with its file: open it again and they continue where they left off, the conversation replayed.
 - `printcad --mcp` serves the running application to any MCP client. See docs/AI.md.
 
 ### Keyboard

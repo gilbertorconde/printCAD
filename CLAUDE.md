@@ -337,7 +337,14 @@ registers the command) is what never waits. `app/chats.rs` keeps
 (every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
 client that defers tools behind a search has them in its first turn;
 `read_only` becomes `readOnlyHint`);
-`ui/assistant.rs` draws them and answers with `UiCommand`s. The agent's
+`ui/assistant.rs` draws them and answers with `UiCommand`s. A chat belongs
+to the tab it started in (`Chat::tab`; its tool calls run there through
+`submit_script_in`), and once it has a session id and the tab a file,
+`persist_chats` keeps `{agent, session, title}` with the file in the
+app's `chats.json` (`app/chat_store.rs`); opening the file
+(`restore_chats`) brings them back `Resting`, and the first time one is
+shown `wake_chat` starts its agent with `session/load`
+(`AgentChat::start`'s `resume`), which replays the conversation. The agent's
 session options (`acp::SessionOption`: `configOptions`, or the older
 `modes`/`models`) draw as the bar under the input; a change shows at once
 and is put back if the agent refuses, an answer an agent-side update has

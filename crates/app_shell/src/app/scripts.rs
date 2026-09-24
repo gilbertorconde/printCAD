@@ -509,9 +509,15 @@ impl PrintCadApp {
     }
 
     pub(crate) fn submit_script(&mut self, job: scripting::Job, kind: RunKind) {
+        let tab = self.session.tab;
+        self.submit_script_in(job, kind, tab);
+    }
+
+    /// Run `job` on the document of `tab`, whichever tab is on screen.
+    pub(crate) fn submit_script_in(&mut self, job: scripting::Job, kind: RunKind, tab: uuid::Uuid) {
         let commands = command_specs(&self.registry);
         self.script_runs.push_back(ScriptRun {
-            tab: self.session.tab,
+            tab,
             kind,
             label: match &job {
                 scripting::Job::Line(_) => "a console line".to_string(),

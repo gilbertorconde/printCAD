@@ -322,6 +322,14 @@ pub enum ChatEvent {
     Ready,
     /// The session's options, all of them, whenever one changed.
     Options(Vec<SessionOption>),
+    /// The session the chat is in: the one asked to resume (`resumed`,
+    /// its conversation replayed before this), or a new one.
+    Session {
+        id: String,
+        resumed: bool,
+    },
+    /// A piece of the user's message, replayed from an earlier session.
+    UserText(String),
     /// The chat could not start, or stopped, and why.
     Failed(String),
     /// A piece of the agent's message, or of its thinking.
@@ -370,12 +378,15 @@ pub struct AgentChat {
 }
 
 impl AgentChat {
-    /// Start `agent` and open a session in `cwd` with `mcp` servers. `wake`
-    /// is called whenever an event is ready.
+    /// Start `agent` and open a session in `cwd` with `mcp` servers: the
+    /// session `resume` names, reloaded with its conversation, when the
+    /// agent can, else a new one. `wake` is called whenever an event is
+    /// ready.
     pub fn start(
         agent: &Program,
         cwd: PathBuf,
         mcp: Vec<McpServer>,
+        resume: Option<String>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Self {
         let (commands_tx, commands_rx) = channel();
@@ -396,7 +407,7 @@ impl AgentChat {
                                 stderr_events.send(ChatEvent::Stderr(line));
                             }
                         });
-                        run(stdout, stdin, cwd, mcp, commands_rx, events);
+                        run(stdout, stdin, cwd, mcp, resume, commands_rx, events);
                         let _ = child.kill();
                         let _ = child.wait();
                     }
@@ -416,6 +427,7 @@ impl AgentChat {
         writer: impl Write + Send + 'static,
         cwd: PathBuf,
         mcp: Vec<McpServer>,
+        resume: Option<String>,
         wake: Arc<dyn Fn() + Send + Sync>,
     ) -> Self {
         let (commands_tx, commands_rx) = channel();
@@ -426,6 +438,7 @@ impl AgentChat {
                 writer,
                 cwd,
                 mcp,
+                resume,
                 commands_rx,
                 Events {
                     tx: events_tx,
@@ -501,6 +514,7 @@ fn run(
     writer: impl Write + Send + 'static,
     cwd: PathBuf,
     mcp: Vec<McpServer>,
+    resume: Option<String>,
     commands: Receiver<ChatCommand>,
     events: Events,
 ) {
@@ -510,10 +524,17 @@ fn run(
         let (connection, events, options) = (connection.clone(), events.clone(), options.clone());
         std::thread::spawn(move || serve_agent(connection, incoming, events, options));
     }
-    let (session, can) = match open_session(&connection, &cwd, &mcp) {
-        Ok((session, offered, can)) => {
-            options.lock().unwrap().list = offered;
-            (session, can)
+    let (session, can) = match open_session(&connection, &cwd, &mcp, resume.as_deref()) {
+        Ok(opened) => {
+            options.lock().unwrap().list = opened.options;
+            if let Some(note) = opened.note {
+                events.send(ChatEvent::Error(note));
+            }
+            events.send(ChatEvent::Session {
+                id: opened.id.clone(),
+                resumed: opened.resumed,
+            });
+            (opened.id, opened.can)
         }
         Err(why) => {
             events.send(ChatEvent::Failed(why));
@@ -648,11 +669,23 @@ struct Change {
     pushed: u64,
 }
 
+/// A session the agent opened.
+struct Opened {
+    id: String,
+    options: Vec<SessionOption>,
+    can: PromptCapabilities,
+    /// It is the session asked for, its conversation replayed.
+    resumed: bool,
+    /// Why the session asked for was not the one opened.
+    note: Option<String>,
+}
+
 fn open_session(
     connection: &Connection,
     cwd: &std::path::Path,
     mcp: &[McpServer],
-) -> Result<(String, Vec<SessionOption>, PromptCapabilities), String> {
+    resume: Option<&str>,
+) -> Result<Opened, String> {
     let wait =
         |rx: Receiver<Result<Value, RpcError>>, what: &str| match rx.recv_timeout(START_TIMEOUT) {
             Ok(Ok(value)) => Ok(value),
@@ -694,6 +727,43 @@ fn open_session(
             })
         })
         .collect();
+    let can_load = init
+        .get("agentCapabilities")
+        .and_then(|c| c.get("loadSession"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    // The earlier session, when there is one and the agent can reload it:
+    // it replays the conversation as updates before it answers.
+    let mut note = None;
+    if let Some(earlier) = resume {
+        if can_load {
+            let loaded = wait(
+                connection.request(
+                    "session/load",
+                    json!({
+                        "sessionId": earlier,
+                        "cwd": cwd.display().to_string(),
+                        "mcpServers": servers,
+                    }),
+                ),
+                "the agent could not continue the earlier chat",
+            );
+            match loaded {
+                Ok(session) => {
+                    return Ok(Opened {
+                        id: earlier.to_string(),
+                        options: session_options(&session),
+                        can: prompt_capabilities(&init),
+                        resumed: true,
+                        note: None,
+                    });
+                }
+                Err(why) => note = Some(format!("{why}; this is a new chat")),
+            }
+        } else {
+            note = Some("This agent cannot continue earlier chats; this is a new one".to_string());
+        }
+    }
     let session = wait(
         connection.request(
             "session/new",
@@ -706,6 +776,17 @@ fn open_session(
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "the agent opened a session without an id".to_string())?;
+    Ok(Opened {
+        id,
+        options: session_options(&session),
+        can: prompt_capabilities(&init),
+        resumed: false,
+        note,
+    })
+}
+
+/// What a prompt may carry, as the agent's `initialize` answer says.
+fn prompt_capabilities(init: &Value) -> PromptCapabilities {
     let prompt = init
         .get("agentCapabilities")
         .and_then(|c| c.get("promptCapabilities"));
@@ -715,11 +796,10 @@ fn open_session(
             .and_then(Value::as_bool)
             .unwrap_or(false)
     };
-    let can = PromptCapabilities {
+    PromptCapabilities {
         image: flag("image"),
         embedded: flag("embeddedContext"),
-    };
-    Ok((id, session_options(&session), can))
+    }
 }
 
 type Options = Arc<Mutex<Shared>>;
@@ -953,6 +1033,7 @@ fn update_event(update: &Value) -> Option<ChatEvent> {
     let kind = update.get("sessionUpdate").and_then(Value::as_str)?;
     let optional = |key: &str| update.get(key).and_then(Value::as_str).map(str::to_string);
     Some(match kind {
+        "user_message_chunk" => ChatEvent::UserText(content_text(update.get("content")?)?),
         "agent_message_chunk" | "agent_thought_chunk" => ChatEvent::Text {
             thought: kind == "agent_thought_chunk",
             text: content_text(update.get("content")?)?,
@@ -1109,8 +1190,13 @@ mod tests {
             ours,
             PathBuf::from("/tmp"),
             mcp,
+            None,
             Arc::new(|| {}),
         );
+        assert!(matches!(
+            next(&chat),
+            ChatEvent::Session { resumed: false, .. }
+        ));
         assert_eq!(next(&chat), ChatEvent::Ready);
         assert_eq!(next(&chat), ChatEvent::Options(Vec::new()));
         chat.send(ChatCommand::Prompt {
@@ -1198,8 +1284,10 @@ mod tests {
             ours,
             PathBuf::from("/tmp"),
             Vec::new(),
+            None,
             Arc::new(|| {}),
         );
+        assert!(matches!(next(&chat), ChatEvent::Session { .. }));
         assert_eq!(next(&chat), ChatEvent::Ready);
         let ChatEvent::Options(options) = next(&chat) else {
             panic!("the options")
@@ -1436,6 +1524,108 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// An agent that can reload session "old", replaying one exchange.
+    fn reloading_agent(stream: UnixStream, can_load: bool) {
+        let (connection, incoming) = Connection::new(stream.try_clone().unwrap(), stream);
+        std::thread::spawn(move || {
+            for message in incoming {
+                let Incoming::Request { id, method, params } = message else {
+                    continue;
+                };
+                let answer = match method.as_str() {
+                    "initialize" => Ok(json!({
+                        "protocolVersion": 1,
+                        "agentCapabilities": {"loadSession": can_load},
+                    })),
+                    "session/load" if params["sessionId"] == "old" => {
+                        for update in [
+                            json!({"sessionUpdate": "user_message_chunk",
+                                "content": {"type": "text", "text": "make a box"}}),
+                            json!({"sessionUpdate": "agent_message_chunk",
+                                "content": {"type": "text", "text": "Done."}}),
+                        ] {
+                            connection
+                                .notify(
+                                    "session/update",
+                                    json!({"sessionId": "old", "update": update}),
+                                )
+                                .unwrap();
+                        }
+                        Ok(json!({}))
+                    }
+                    "session/load" => {
+                        Err(RpcError::new(RpcError::INVALID_PARAMS, "no such session"))
+                    }
+                    "session/new" => Ok(json!({"sessionId": "fresh"})),
+                    _ => Err(RpcError::new(RpcError::METHOD_NOT_FOUND, "no")),
+                };
+                connection.respond(id, answer).unwrap();
+            }
+        });
+    }
+
+    fn resume(can_load: bool, session: &str) -> Vec<ChatEvent> {
+        let (ours, theirs) = UnixStream::pair().unwrap();
+        reloading_agent(theirs, can_load);
+        let chat = AgentChat::over(
+            ours.try_clone().unwrap(),
+            ours,
+            PathBuf::from("/tmp"),
+            Vec::new(),
+            Some(session.to_string()),
+            Arc::new(|| {}),
+        );
+        let mut events = Vec::new();
+        loop {
+            let event = next(&chat);
+            let done = event == ChatEvent::Ready;
+            events.push(event);
+            if done {
+                return events;
+            }
+        }
+    }
+
+    #[test]
+    fn an_earlier_session_is_reloaded_with_its_conversation() {
+        assert_eq!(
+            resume(true, "old"),
+            [
+                ChatEvent::UserText("make a box".into()),
+                ChatEvent::Text {
+                    thought: false,
+                    text: "Done.".into()
+                },
+                ChatEvent::Session {
+                    id: "old".into(),
+                    resumed: true
+                },
+                ChatEvent::Ready,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_session_that_cannot_be_reloaded_starts_a_new_one_and_says_why() {
+        for (can_load, session, why) in [
+            (false, "old", "cannot continue earlier chats"),
+            (true, "gone", "no such session"),
+        ] {
+            let events = resume(can_load, session);
+            assert!(
+                matches!(&events[0], ChatEvent::Error(note) if note.contains(why)),
+                "{events:?}"
+            );
+            assert_eq!(
+                events[1],
+                ChatEvent::Session {
+                    id: "fresh".into(),
+                    resumed: false
+                }
+            );
+        }
+    }
+
     #[test]
     fn a_program_that_is_not_there_says_so() {
         let chat = AgentChat::start(
@@ -1445,6 +1635,7 @@ mod tests {
             },
             PathBuf::from("/tmp"),
             Vec::new(),
+            None,
             Arc::new(|| {}),
         );
         let ChatEvent::Failed(why) = next(&chat) else {
@@ -1465,6 +1656,7 @@ mod tests {
             },
             PathBuf::from("/tmp"),
             Vec::new(),
+            None,
             Arc::new(|| {}),
         );
         loop {

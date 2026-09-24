@@ -48,6 +48,18 @@ own agent and history, and several can run at once.
 - When the agent asks for permission to do something outside printCAD
   (edit a file, run a command), the chat shows its choices.
 
+## Chats stay with their document
+
+A chat works on the document of the tab it was started in, whichever tab
+is on screen. Once the document has a file, its chats are kept with it:
+open the file again and they come back, and the first time one is shown
+its agent starts in the same session, the conversation replayed, so it
+continues where it left off. (The agent must be able to reload sessions;
+Claude can. One that cannot starts a new chat and says so.) Closing a
+chat's tab forgets it for the file; closing the document's tab keeps
+them. They are kept in the application's own folder, not in the file, so
+a document you pass on carries no conversations.
+
 ## Approving changes
 
 "Ask before changes" (on by default, in Preferences and per chat) holds

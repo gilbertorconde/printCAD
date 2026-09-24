@@ -202,6 +202,8 @@ impl PrintCadApp {
     fn apply_opened_document(&mut self, path: PathBuf, document: Document) {
         self.session.document = document;
         self.session.current_file = Some(path.clone());
+        // The chats kept with the file come back, resting until shown.
+        self.restore_chats();
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -468,6 +470,8 @@ impl PrintCadApp {
         }
 
         self.session.current_file = Some(path.to_path_buf());
+        // Its chats are kept with the file it is saved as.
+        self.persist_chats();
         self.touch_recent(path);
         self.session.document.mark_clean();
         app_log::info(format!("Saved document to {}", path.display()));

@@ -744,6 +744,15 @@ impl SettingsStore {
         &self.path
     }
 
+    /// Where the chats kept with each document are written.
+    pub fn chats_file_path() -> Result<PathBuf, SettingsError> {
+        let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+            .ok_or(SettingsError::MissingProjectDirs)?;
+        let config_dir = dirs.config_dir();
+        fs::create_dir_all(config_dir)?;
+        Ok(config_dir.join("chats.json"))
+    }
+
     pub fn recent_file_path() -> Result<PathBuf, SettingsError> {
         let dirs = ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
             .ok_or(SettingsError::MissingProjectDirs)?;

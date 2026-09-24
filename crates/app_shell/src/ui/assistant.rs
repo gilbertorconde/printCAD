@@ -113,6 +113,10 @@ pub fn draw_assistant(
                 empty(ui, &agents, commands, &mut result);
                 return;
             };
+            // A chat from an earlier visit wakes once it is on screen.
+            if chat.status == ChatStatus::Resting {
+                commands.push(UiCommand::WakeChat(chat.id.clone()));
+            }
             chat_header(ui, chat, commands);
             ui.add_space(SPACE_1);
             let draft = state.drafts.entry(chat.id.clone()).or_default();
@@ -348,6 +352,7 @@ fn chat_header(ui: &mut egui::Ui, chat: &Chat, commands: &mut Vec<UiCommand>) {
                 .color(TEXT1),
         );
         let (text, color) = match &chat.status {
+            ChatStatus::Resting => ("earlier chat", TEXT3),
             ChatStatus::Starting => ("starting", TEXT3),
             ChatStatus::Ready => ("ready", SUCCESS),
             ChatStatus::Busy => ("working", ACCENT),
@@ -562,7 +567,11 @@ fn draw_entry(
 /// options (permission mode, model, effort ...), its working spinner and
 /// Send, or Stop while it works.
 fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
-    let open = matches!(chat.status, ChatStatus::Ready | ChatStatus::Busy);
+    // A resting chat takes a message too: sending wakes it.
+    let open = matches!(
+        chat.status,
+        ChatStatus::Ready | ChatStatus::Busy | ChatStatus::Resting
+    );
     let busy = chat.status == ChatStatus::Busy;
     let sendable = !draft.trim().is_empty() || !chat.attachments.is_empty();
     let id = egui::Id::new(("assistant_input", &chat.id));
@@ -621,6 +630,7 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                 }
                 let hint = match chat.status {
                     ChatStatus::Starting => "The agent is starting…",
+                    ChatStatus::Resting => "Continue this chat (Enter sends)",
                     ChatStatus::Failed(_) => "The chat has stopped",
                     _ => "Ask the agent (Enter sends, Shift+Enter for a new line)",
                 };

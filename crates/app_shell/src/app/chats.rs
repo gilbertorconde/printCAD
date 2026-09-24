@@ -19,6 +19,9 @@ use crate::PrintCadApp;
 /// Where a chat stands.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ChatStatus {
+    /// A chat from an earlier visit to the document: its agent starts,
+    /// and its conversation comes back, once the chat is shown.
+    Resting,
     /// The agent is starting and opening its session.
     Starting,
     /// Waiting for a prompt.
@@ -84,7 +87,21 @@ pub(crate) struct Chat {
     stderr: Vec<String>,
     /// Prompts sent: the first carries a word on where the agent is.
     prompts: usize,
-    session: AgentChat,
+    /// The tab whose document the chat works on.
+    pub tab: uuid::Uuid,
+    /// The agent's session, kept with the document's file so the chat can
+    /// continue when the file is opened again.
+    pub session_id: Option<String>,
+    /// The running agent; `None` while the chat rests.
+    session: Option<AgentChat>,
+}
+
+impl Chat {
+    fn send(&self, command: ChatCommand) {
+        if let Some(session) = &self.session {
+            session.send(command);
+        }
+    }
 }
 
 /// Where the chat's agent works: the document's folder, else home.
@@ -100,39 +117,14 @@ const PREAMBLE: &str = "You are working in printCAD, a parametric CAD applicatio
 to read and change it: start with `commands` to see what can be done.";
 
 impl PrintCadApp {
-    /// Start a chat with agent number `agent` of the Preferences.
+    /// Start a chat with agent number `agent` of the Preferences, on the
+    /// document on screen.
     pub(crate) fn new_chat(&mut self, agent: usize) {
         let Some(config) = self.user_settings.ai.agents.get(agent).cloned() else {
             return;
         };
         let id = uuid::Uuid::new_v4().to_string();
-        let mut mcp = Vec::new();
-        if let (Some(server), Ok(exe)) = (&self.mcp, std::env::current_exe()) {
-            mcp.push(McpServer {
-                name: "printcad".to_string(),
-                program: Program {
-                    command: exe.display().to_string(),
-                    args: vec![
-                        "--mcp".into(),
-                        "--socket".into(),
-                        server.socket.display().to_string(),
-                        "--chat".into(),
-                        id.clone(),
-                    ],
-                    env: Vec::new(),
-                },
-            });
-        }
-        let session = AgentChat::start(
-            &Program {
-                command: config.command.clone(),
-                args: config.args.clone(),
-                env: config.env.clone(),
-            },
-            working_folder(self.session.current_file.as_deref()),
-            mcp,
-            self.waker.clone(),
-        );
+        let session = self.start_agent(&config, &id, None);
         let number = self.chats_made + 1;
         self.chats_made = number;
         self.chats.push(Chat {
@@ -148,8 +140,156 @@ impl PrintCadApp {
             choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 0,
-            session,
+            tab: self.session.tab,
+            session_id: None,
+            session: Some(session),
         });
+    }
+
+    /// Start `config`'s program for chat `id`, with this application's MCP
+    /// server, in the folder of the chat's document; in session `resume`
+    /// when there is one.
+    fn start_agent(
+        &self,
+        config: &settings::AgentSettings,
+        id: &str,
+        resume: Option<String>,
+    ) -> AgentChat {
+        let mut mcp = Vec::new();
+        if let (Some(server), Ok(exe)) = (&self.mcp, std::env::current_exe()) {
+            mcp.push(McpServer {
+                name: "printcad".to_string(),
+                program: Program {
+                    command: exe.display().to_string(),
+                    args: vec![
+                        "--mcp".into(),
+                        "--socket".into(),
+                        server.socket.display().to_string(),
+                        "--chat".into(),
+                        id.to_string(),
+                    ],
+                    env: Vec::new(),
+                },
+            });
+        }
+        AgentChat::start(
+            &Program {
+                command: config.command.clone(),
+                args: config.args.clone(),
+                env: config.env.clone(),
+            },
+            working_folder(self.session.current_file.as_deref()),
+            mcp,
+            resume,
+            self.waker.clone(),
+        )
+    }
+
+    /// Bring back the chats kept with the file of the document on screen,
+    /// resting until each is shown.
+    pub(crate) fn restore_chats(&mut self) {
+        let Some(file) = self.session.current_file.clone() else {
+            return;
+        };
+        let tab = self.session.tab;
+        let saved = crate::app::chat_store::chats_of(&file);
+        let mut restored = false;
+        for kept in saved {
+            if self
+                .chats
+                .iter()
+                .any(|c| c.session_id.as_deref() == Some(kept.session.as_str()))
+            {
+                continue;
+            }
+            self.chats.push(Chat {
+                id: uuid::Uuid::new_v4().to_string(),
+                title: kept.title,
+                agent: kept.agent,
+                status: ChatStatus::Resting,
+                ask: self.user_settings.ai.ask_before_changes,
+                entries: Vec::new(),
+                options: Vec::new(),
+                attachments: Vec::new(),
+                chose: false,
+                choices_left: Vec::new(),
+                stderr: Vec::new(),
+                // The conversation already began: no word on where it is.
+                prompts: 1,
+                tab,
+                session_id: Some(kept.session),
+                session: None,
+            });
+            restored = true;
+        }
+        if restored {
+            self.assistant_attention = true;
+        }
+    }
+
+    /// Start a resting chat's agent in its earlier session; its
+    /// conversation comes back as the agent replays it.
+    pub(crate) fn wake_chat(&mut self, id: &str) {
+        let Some(chat) = self.chats.iter().find(|c| c.id == id) else {
+            return;
+        };
+        if chat.status != ChatStatus::Resting {
+            return;
+        }
+        let (agent, resume) = (chat.agent.clone(), chat.session_id.clone());
+        let config = self
+            .user_settings
+            .ai
+            .agents
+            .iter()
+            .find(|a| a.name == agent)
+            .cloned();
+        let session = config.map(|config| self.start_agent(&config, id, resume));
+        let Some(chat) = self.chat_mut(id) else {
+            return;
+        };
+        match session {
+            Some(session) => {
+                chat.session = Some(session);
+                chat.status = ChatStatus::Starting;
+            }
+            None => {
+                chat.status = ChatStatus::Failed(format!(
+                    "No agent called {agent} is set up any more: add it again in Preferences › AI agents"
+                ))
+            }
+        }
+    }
+
+    /// Keep each document's chats with its file, for the next time it is
+    /// opened: the chats of every tab that has a file and a session.
+    pub(crate) fn persist_chats(&self) {
+        let mut files: Vec<(uuid::Uuid, PathBuf)> = Vec::new();
+        if let Some(file) = &self.session.current_file {
+            files.push((self.session.tab, file.clone()));
+        }
+        for slot in &self.tabs {
+            if let Some(parked) = &slot.parked
+                && let Some(file) = &parked.current_file
+            {
+                files.push((parked.tab, file.clone()));
+            }
+        }
+        for (tab, file) in files {
+            let kept: Vec<crate::app::chat_store::SavedChat> = self
+                .chats
+                .iter()
+                .filter(|c| c.tab == tab)
+                .filter_map(|c| {
+                    Some(crate::app::chat_store::SavedChat {
+                        agent: c.agent.clone(),
+                        session: c.session_id.clone()?,
+                        title: c.title.clone(),
+                    })
+                })
+                .collect();
+            crate::app::chat_store::keep(&file, kept);
+        }
     }
 
     pub(crate) fn chat_asks(&self, id: &str) -> Option<bool> {
@@ -161,6 +301,7 @@ impl PrintCadApp {
     }
 
     pub(crate) fn send_to_chat(&mut self, id: &str, text: String) {
+        self.wake_chat(id);
         let Some(chat) = self.chat_mut(id) else {
             return;
         };
@@ -181,7 +322,7 @@ impl PrintCadApp {
             text
         };
         chat.prompts += 1;
-        chat.session.send(ChatCommand::Prompt {
+        chat.send(ChatCommand::Prompt {
             text: prompt,
             attachments,
         });
@@ -240,7 +381,7 @@ impl PrintCadApp {
     /// Ask the chat's agent to stop its turn; its held changes are refused.
     pub(crate) fn cancel_chat(&mut self, id: &str) {
         if let Some(chat) = self.chat_mut(id) {
-            chat.session.send(ChatCommand::Cancel);
+            chat.send(ChatCommand::Cancel);
         }
         let held: Vec<usize> = (0..self.approvals.len())
             .rev()
@@ -255,23 +396,23 @@ impl PrintCadApp {
     pub(crate) fn close_chat(&mut self, id: &str) {
         self.cancel_chat(id);
         self.chats.retain(|c| c.id != id);
+        self.persist_chats();
     }
 
     pub(crate) fn answer_permission(&mut self, id: &str, entry: usize, option: Option<String>) {
         let Some(chat) = self.chat_mut(id) else {
             return;
         };
-        if let Some(ChatEntry::Permission {
-            request, answer, ..
-        }) = chat.entries.get_mut(entry)
-            && answer.is_none()
-        {
-            *answer = Some(option.clone().unwrap_or_else(|| "refused".to_string()));
-            chat.session.send(ChatCommand::Permission {
-                request: request.clone(),
-                option,
-            });
-        }
+        let request = match chat.entries.get_mut(entry) {
+            Some(ChatEntry::Permission {
+                request, answer, ..
+            }) if answer.is_none() => {
+                *answer = Some(option.clone().unwrap_or_else(|| "refused".to_string()));
+                request.clone()
+            }
+            _ => return,
+        };
+        chat.send(ChatCommand::Permission { request, option });
     }
 
     /// Set whether the chat's changes wait for an OK; turned off, the ones
@@ -301,7 +442,7 @@ impl PrintCadApp {
         };
         let agent = chat.agent.clone();
         chat.choices_left.clear();
-        chat.session.send(ChatCommand::SetOption {
+        chat.send(ChatCommand::SetOption {
             id: option.clone(),
             value: value.clone(),
         });
@@ -323,9 +464,11 @@ impl PrintCadApp {
     /// chat.
     pub(crate) fn drive_chats(&mut self) {
         let mut attention = false;
+        let mut learned = false;
         for chat in &mut self.chats {
-            while let Some(event) = chat.session.try_event() {
+            while let Some(event) = chat.session.as_ref().and_then(AgentChat::try_event) {
                 attention |= matches!(event, ChatEvent::Permission { .. });
+                learned |= matches!(event, ChatEvent::Session { .. });
                 apply(chat, event);
             }
             if !chat.chose && !chat.options.is_empty() {
@@ -345,6 +488,10 @@ impl PrintCadApp {
                 }
             }
             put_choices(chat);
+        }
+        // A chat that learned its session is kept with its document.
+        if learned {
+            self.persist_chats();
         }
         if attention {
             self.assistant_attention = true;
@@ -370,13 +517,16 @@ impl Chat {
             choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 1,
-            session: AgentChat::over(
+            tab: uuid::Uuid::nil(),
+            session_id: None,
+            session: Some(AgentChat::over(
                 ours.try_clone().unwrap(),
                 ours,
                 PathBuf::from("/"),
                 Vec::new(),
+                None,
                 std::sync::Arc::new(|| {}),
-            ),
+            )),
         }
     }
 }
@@ -386,6 +536,9 @@ impl Chat {
 fn put_choices(chat: &mut Chat) {
     let options = &chat.options;
     let session = &chat.session;
+    let Some(session) = session else {
+        return;
+    };
     chat.choices_left.retain(|(id, value)| {
         let Some(option) = options.iter().find(|o| &o.id == id) else {
             return true;
@@ -409,6 +562,21 @@ fn apply(chat: &mut Chat, event: ChatEvent) {
     match event {
         ChatEvent::Ready => chat.status = ChatStatus::Ready,
         ChatEvent::Options(options) => chat.options = options,
+        ChatEvent::Session { id, .. } => chat.session_id = Some(id),
+        ChatEvent::UserText(text) => {
+            // A replayed first prompt without the word on where it is.
+            let text = text
+                .strip_prefix(PREAMBLE)
+                .map(|rest| rest.trim_start().to_string())
+                .unwrap_or(text);
+            match chat.entries.last_mut() {
+                Some(ChatEntry::User { text: last, .. }) => last.push_str(&text),
+                _ => chat.entries.push(ChatEntry::User {
+                    text,
+                    attachments: Vec::new(),
+                }),
+            }
+        }
         ChatEvent::Failed(why) => {
             let tail = chat.stderr.join("\n");
             chat.status = ChatStatus::Failed(if tail.is_empty() {
@@ -535,13 +703,16 @@ mod tests {
             choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 1,
-            session: AgentChat::over(
+            tab: uuid::Uuid::nil(),
+            session_id: None,
+            session: Some(AgentChat::over(
                 ours.try_clone().unwrap(),
                 ours,
                 PathBuf::from("/"),
                 Vec::new(),
+                None,
                 std::sync::Arc::new(|| {}),
-            ),
+            )),
         }
     }
 
@@ -596,6 +767,40 @@ mod tests {
         );
         put_choices(&mut c);
         assert!(c.choices_left.is_empty(), "the large model takes it");
+    }
+
+    #[test]
+    fn a_replayed_conversation_comes_back_as_it_was_typed() {
+        let mut c = chat();
+        c.entries.clear();
+        for event in [
+            ChatEvent::UserText(format!("{PREAMBLE}\n\nmake a box")),
+            ChatEvent::Text {
+                thought: false,
+                text: "Done.".into(),
+            },
+            ChatEvent::UserText("taller".into()),
+            ChatEvent::Session {
+                id: "s1".into(),
+                resumed: true,
+            },
+        ] {
+            apply(&mut c, event);
+        }
+        let users: Vec<&str> = c
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                ChatEntry::User { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            users,
+            ["make a box", "taller"],
+            "without the preamble, in order"
+        );
+        assert_eq!(c.session_id.as_deref(), Some("s1"));
     }
 
     #[test]

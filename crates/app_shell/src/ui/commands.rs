@@ -175,6 +175,8 @@ pub enum UiCommand {
     },
     /// Ask a chat's agent to stop its turn.
     CancelChat(String),
+    /// Start a chat from an earlier visit, its conversation coming back.
+    WakeChat(String),
     CloseChat(String),
     /// Answer an agent's request for permission, entry `entry` of `chat`.
     AnswerPermission {

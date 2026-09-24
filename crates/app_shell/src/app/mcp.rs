@@ -425,11 +425,18 @@ impl PrintCadApp {
                 name: "an agent's script".to_string(),
             },
         };
-        self.submit_script(
+        // A chat works on its own document, whichever is on screen.
+        let tab = request
+            .chat
+            .as_ref()
+            .and_then(|id| self.chats.iter().find(|c| &c.id == id))
+            .map_or(self.session.tab, |c| c.tab);
+        self.submit_script_in(
             job,
             RunKind::Agent {
                 reply: request.reply,
             },
+            tab,
         );
     }
 

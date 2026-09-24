@@ -154,6 +154,8 @@ impl PrintCadApp {
             .and_then(|neighbour| self.tabs[neighbour].parked.take());
         let replacement = replacement.unwrap_or_else(|| self.new_session(Screen::Start));
         let mut closing = std::mem::replace(&mut self.session, replacement);
+        // Its chats go with it; they stay kept with its file.
+        self.chats.retain(|c| c.tab != closing.tab);
         self.carry_viewport_from(&closing);
         app_log::info(format!("Closed `{}`", closing.document.name()));
         closing.server.flush();
