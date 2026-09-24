@@ -223,6 +223,30 @@ impl PrintCadApp {
                     parameter,
                     edit,
                 } => self.set_parameter(feature, &parameter, edit),
+                UiCommand::NewVariableSet => self.new_variable_set(),
+                UiCommand::SetVariable {
+                    set,
+                    name,
+                    formula,
+                    comment,
+                } => {
+                    let label = format!("Set {name}");
+                    let done = self.session.document.set_variable(
+                        set,
+                        &name,
+                        &formula,
+                        comment.as_deref(),
+                    );
+                    self.finish_variable_edit(done, label);
+                }
+                UiCommand::RemoveVariable { set, name } => {
+                    let done = self.session.document.remove_variable(set, &name);
+                    self.finish_variable_edit(done, format!("Remove {name}"));
+                }
+                UiCommand::RenameVariable { set, name, to } => {
+                    let done = self.session.document.rename_variable(set, &name, &to);
+                    self.finish_variable_edit(done, format!("Rename {name}"));
+                }
                 UiCommand::AttachFiles(chat) => {
                     self.start_file_dialog(FileDialogKind::Attach(chat))
                 }
@@ -742,6 +766,11 @@ impl PrintCadApp {
         };
         let kind = node.workbench_id.clone();
         self.apply_tree_selection(item);
+        // A variable set opens in the Variables panel.
+        if kind.as_str() == core_document::VARIABLES_KIND {
+            self.variables_focus = Some(id);
+            return;
+        }
         // The bench that claimed the feature's kind edits it: it becomes
         // active and finds the feature as the active document object. A
         // kind no bench claims is only selected.
@@ -1062,5 +1091,45 @@ impl PrintCadApp {
             .journal
             .label_next(format!("Set {}", parameter.label.to_lowercase()));
         self.close_gesture();
+    }
+}
+
+impl PrintCadApp {
+    /// A variable set with the first free name of Variables, Variables 2 …
+    fn new_variable_set(&mut self) {
+        let doc = &mut self.session.document;
+        let name = (1..)
+            .map(|n| match n {
+                1 => "Variables".to_string(),
+                n => format!("Variables {n}"),
+            })
+            .find(|name| !doc.has_object_named(name))
+            .expect("a free name");
+        match doc.add_variable_set(&name) {
+            Ok(id) => {
+                self.variables_focus = Some(id);
+                self.record_calls(vec![core_document::Recorded {
+                    id: "var.new".to_string(),
+                    args: serde_json::json!({"name": name})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                    result: serde_json::json!(id.0.to_string()),
+                }]);
+                self.session.journal.label_next("New variable set");
+                self.close_gesture();
+            }
+            Err(why) => crate::log_panel::warn(why),
+        }
+    }
+
+    fn finish_variable_edit(&mut self, done: Result<(), String>, label: String) {
+        match done {
+            Ok(()) => {
+                self.session.journal.label_next(label);
+                self.close_gesture();
+            }
+            Err(why) => crate::log_panel::warn(why),
+        }
     }
 }

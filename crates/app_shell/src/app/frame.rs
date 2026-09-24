@@ -691,6 +691,7 @@ impl PrintCadApp {
                         chats: &self.chats,
                         approvals: &self.approvals,
                         assistant_attention: std::mem::take(&mut self.assistant_attention),
+                        variables_focus: self.variables_focus.take(),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;

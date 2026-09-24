@@ -62,6 +62,7 @@ pub enum HostAction {
     RunScript,
     Record,
     Assistant,
+    Variables,
 }
 
 struct HostSpec {
@@ -263,6 +264,13 @@ const HOST: &[HostSpec] = {
             Assistant,
             "app.assistant",
             "Assistant",
+            "Application",
+            &[],
+        )),
+        anywhere(spec(
+            Variables,
+            "app.variables",
+            "Variables",
             "Application",
             &[],
         )),
@@ -704,6 +712,7 @@ pub enum HostOutcome {
     OpenPreferences,
     ToggleConsole,
     ToggleAssistant,
+    ToggleVariables,
     Nothing,
 }
 
@@ -791,6 +800,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Wireframe => C(UiCommand::SetDrawStyle(settings::DrawStyle::Wireframe)),
         Console => HostOutcome::ToggleConsole,
         Assistant => HostOutcome::ToggleAssistant,
+        Variables => HostOutcome::ToggleVariables,
         RunScript => C(UiCommand::File(FileCommand::RunScript)),
         Record => C(UiCommand::ToggleRecording),
     }

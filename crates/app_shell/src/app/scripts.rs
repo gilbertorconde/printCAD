@@ -267,6 +267,7 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
                     | Preferences
                     | Console
                     | Assistant
+                    | Variables
                     | RunScript
                     | Record
                     | Delete
@@ -1024,6 +1025,26 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         result: Value::Null,
     };
     match command {
+        UiCommand::SetVariable {
+            set,
+            name,
+            formula,
+            comment,
+        } => {
+            let mut args = json!({"set": set.0.to_string(), "name": name, "formula": formula});
+            if let Some(comment) = comment {
+                args["comment"] = json!(comment);
+            }
+            Some(call("var.set", args))
+        }
+        UiCommand::RemoveVariable { set, name } => Some(call(
+            "var.remove",
+            json!({"set": set.0.to_string(), "name": name}),
+        )),
+        UiCommand::RenameVariable { set, name, to } => Some(call(
+            "var.rename",
+            json!({"set": set.0.to_string(), "name": name, "to": to}),
+        )),
         UiCommand::SetParameter {
             feature,
             parameter,

@@ -299,6 +299,8 @@ struct PrintCadApp {
     approvals: Vec<app::mcp::Approval>,
     /// An agent needs the user: the assistant panel opens.
     assistant_attention: bool,
+    /// A variable set to show in the Variables panel, opened for it.
+    variables_focus: Option<core_document::FeatureId>,
     /// The chats with agents, in the order they were opened.
     chats: Vec<app::chats::Chat>,
     /// How many chats this session has opened, for the next one's name.
@@ -404,6 +406,7 @@ impl PrintCadApp {
             mcp: None,
             approvals: Vec::new(),
             assistant_attention: false,
+            variables_focus: None,
             chats: Vec::new(),
             chats_made: 0,
             waker: {

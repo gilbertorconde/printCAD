@@ -24,6 +24,7 @@ pub struct MenuBarInputs<'a> {
     pub show_log_panel: bool,
     pub show_console: bool,
     pub show_assistant: bool,
+    pub show_variables: bool,
     pub projection: ProjectionMode,
     pub draw_style: settings::DrawStyle,
     pub recent: &'a [settings::recent::RecentEntry],
@@ -47,6 +48,7 @@ pub struct MenuBarResult {
     pub open_palette: bool,
     pub toggle_console: bool,
     pub toggle_assistant: bool,
+    pub toggle_variables: bool,
 }
 
 fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> bool {
@@ -327,6 +329,16 @@ pub fn draw_menu_bar(
                             result.toggle_assistant = true;
                             ui.close();
                         }
+                        if ui
+                            .checkbox(
+                                &mut inputs.show_variables.clone(),
+                                RichText::new("Variables").font(sans(FONT_SM)),
+                            )
+                            .clicked()
+                        {
+                            result.toggle_variables = true;
+                            ui.close();
+                        }
                         ui.separator();
                         ui.menu_button(RichText::new("Workbench").font(sans(FONT_SM)), |ui| {
                             let workbenches = REGISTERED_WORKBENCHES.lock().unwrap();
@@ -492,6 +504,16 @@ pub fn draw_menu_bar(
                             .clicked()
                         {
                             result.toggle_assistant = true;
+                            ui.close();
+                        }
+                        if ui
+                            .checkbox(
+                                &mut inputs.show_variables.clone(),
+                                RichText::new("Variables").font(sans(FONT_SM)),
+                            )
+                            .clicked()
+                        {
+                            result.toggle_variables = true;
                             ui.close();
                         }
                     });

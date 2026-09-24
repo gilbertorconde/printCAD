@@ -2,6 +2,7 @@ mod assistant;
 mod combo_view;
 mod command_palette;
 mod context_menu;
+mod variables_view;
 pub use context_menu::ViewportMenu;
 mod commands;
 mod console_view;
@@ -107,6 +108,7 @@ pub struct UiLayer {
     swallowed_keys: Vec<egui::Key>,
     console: console_view::ConsoleState,
     assistant: assistant::AssistantState,
+    variables: variables_view::VariablesState,
 }
 
 impl UiLayer {
@@ -141,6 +143,7 @@ impl UiLayer {
             swallowed_keys: Vec::new(),
             console: console_view::ConsoleState::load(),
             assistant: Default::default(),
+            variables: Default::default(),
         }
     }
 
@@ -248,6 +251,7 @@ impl UiLayer {
             chats,
             approvals,
             assistant_attention,
+            variables_focus,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -294,6 +298,9 @@ impl UiLayer {
         if assistant_attention {
             self.assistant.open = true;
         }
+        if let Some(set) = variables_focus {
+            self.variables.show_set(set);
+        }
         // The workbenches hear of their keys at the start and after every
         // change, not every frame.
         let workbench_keys = keymap.workbench_keys();
@@ -330,6 +337,7 @@ impl UiLayer {
                                 keymap::HostOutcome::OpenPalette => self.palette.open(),
                                 keymap::HostOutcome::ToggleConsole => self.console.toggle(),
                                 keymap::HostOutcome::ToggleAssistant => self.assistant.toggle(),
+                                keymap::HostOutcome::ToggleVariables => self.variables.toggle(),
                                 keymap::HostOutcome::OpenPreferences => {
                                     let (group, tab) =
                                         (self.preferences.group, self.preferences.tab);
@@ -366,6 +374,7 @@ impl UiLayer {
                     show_log_panel: settings.rendering.show_log_panel,
                     show_console: self.console.open,
                     show_assistant: self.assistant.open,
+                    show_variables: self.variables.open,
                     projection,
                     draw_style: settings.rendering.draw_style,
                     recent,
@@ -389,6 +398,9 @@ impl UiLayer {
             }
             if menu.toggle_assistant {
                 self.assistant.toggle();
+            }
+            if menu.toggle_variables {
+                self.variables.toggle();
             }
             if menu.show_about {
                 self.preferences
@@ -554,6 +566,7 @@ impl UiLayer {
                 script_running,
                 &mut commands,
             );
+            variables_view::draw_variables(ui, &mut self.variables, document, &mut commands);
 
             let combo = combo_view::draw_combo_view(
                 ui,

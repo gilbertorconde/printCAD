@@ -200,6 +200,25 @@ pub enum UiCommand {
         chat: String,
         index: usize,
     },
+    /// Make a variable set with a fresh name.
+    NewVariableSet,
+    /// Set a variable's formula (and comment, when given), adding it when
+    /// new.
+    SetVariable {
+        set: core_document::FeatureId,
+        name: String,
+        formula: String,
+        comment: Option<String>,
+    },
+    RemoveVariable {
+        set: core_document::FeatureId,
+        name: String,
+    },
+    RenameVariable {
+        set: core_document::FeatureId,
+        name: String,
+        to: String,
+    },
     /// Set one of a feature's numbers to a value or a formula.
     SetParameter {
         feature: core_document::FeatureId,

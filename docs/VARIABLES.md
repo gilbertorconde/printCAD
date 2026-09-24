@@ -19,6 +19,21 @@ formula:
 A document can have as many sets as it needs (`Printer`, `Bracket`,
 `Fasteners`). Formulas read a variable as `Set.name`.
 
+Windows › Variables opens the Variables panel: one tab per set, a row per
+variable with its formula, what it comes to, and a comment. Click a cell
+to edit it; the row at the end adds a variable, and the tab strip's "+"
+makes a new set. Sets also appear in the model tree, where a double click
+opens them in the panel.
+
+## Setting a number by a formula
+
+Select a feature: the property panel's Data tab lists its numbers under
+Parameters. Type a value, with a unit if you like (`1 in`), or press `fx`
+beside it to give it a formula; while you type, the field shows what the
+formula comes to and suggests names (Tab takes the first). A number set by
+a formula shows `fx` and its value; click it to change the formula, and
+empty the formula to keep the number as it stands.
+
 ## What a formula can say
 
 - Numbers and arithmetic: `+ - * / % ^` and brackets.
