@@ -34,6 +34,11 @@ pub struct ComboViewResult {
     pub bench_command: Option<(core_document::WorkbenchId, String, core_document::MenuScope)>,
     /// The property panel changed a body's look.
     pub body_display: Option<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
+    pub parameter: Option<(
+        core_document::FeatureId,
+        core_document::Parameter,
+        ui_kit::widgets::FormulaEdit,
+    )>,
 }
 
 pub struct ComboViewInputs<'a> {
@@ -217,6 +222,9 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
             }
             if props.body_visibility.is_some() {
                 result.body_visibility_change = props.body_visibility;
+            }
+            if props.parameter.is_some() {
+                result.parameter = props.parameter;
             }
             if props.body_display.is_some() {
                 result.body_display = props.body_display;

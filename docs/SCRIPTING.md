@@ -263,6 +263,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `formula` (string, optional): Such as "Printer.wall * 2"; nil takes it away
 - Returns {value, text, error}: what it comes to
 
+`pc.doc.set_value`: Set one of a feature's numbers, taking away any formula on it.
+
+- `id` (id): The feature
+- `parameter` (string): Its name or key, as doc.parameters lists them
+- `value` (number): In millimetres or degrees
+
 ### var
 
 `pc.var.new`: Make a variable set.

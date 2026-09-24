@@ -901,6 +901,14 @@ impl Document {
         changed
     }
 
+    /// A value of `id` was set by hand: what follows from it (a joint's
+    /// placements) follows as if a formula had moved it.
+    pub fn note_value_moved(&mut self, id: FeatureId) {
+        if !self.evaluated.moved.contains(&id) {
+            self.evaluated.moved.push(id);
+        }
+    }
+
     /// The features whose values formulas moved since this was last
     /// asked, for `Workbench::values_moved`.
     pub fn take_moved_values(&mut self) -> Vec<FeatureId> {

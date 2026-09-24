@@ -200,6 +200,12 @@ pub enum UiCommand {
         chat: String,
         index: usize,
     },
+    /// Set one of a feature's numbers to a value or a formula.
+    SetParameter {
+        feature: core_document::FeatureId,
+        parameter: Box<core_document::Parameter>,
+        edit: ui_kit::widgets::FormulaEdit,
+    },
     /// Change one of the agent's session options (mode, model ...).
     SetChatOption {
         chat: String,

@@ -216,6 +216,75 @@ impl crate::Document {
     }
 }
 
+impl crate::Document {
+    /// What `text` comes to against the values the document's formulas
+    /// last came to: for a field holding `want`, or as it is. For the
+    /// interface, which has no registry to evaluate with.
+    pub fn evaluate_formula(
+        &self,
+        text: &str,
+        want: Option<crate::expr::Dim>,
+    ) -> Result<crate::expr::Quantity, String> {
+        let ctx = crate::expr::Context {
+            length_unit: self.display_unit(),
+            resolve: &LastValues(self),
+        };
+        match want {
+            Some(dim) => crate::expr::evaluate_as(text, dim, &ctx)
+                .map(|v| crate::expr::Quantity::new(v, dim)),
+            None => crate::expr::evaluate(text, &ctx),
+        }
+        .map_err(|e| e.message)
+    }
+
+    /// Every `Object.property` a formula can read, written as a formula
+    /// writes it, for completion.
+    pub fn formula_references(&self) -> Vec<String> {
+        let mut out: Vec<(u64, String)> = Vec::new();
+        for (id, node) in self.feature_tree().all_nodes() {
+            for slot in self.evaluated_slots(*id) {
+                if let Some(name) = &slot.name {
+                    out.push((
+                        node.seq,
+                        format!(
+                            "{}.{}",
+                            crate::expr::quote_name(&node.name),
+                            crate::expr::quote_name(name)
+                        ),
+                    ));
+                }
+            }
+        }
+        out.sort();
+        out.into_iter().map(|(_, r)| r).collect()
+    }
+}
+
+/// References read from the last evaluation.
+struct LastValues<'a>(&'a crate::Document);
+
+impl crate::expr::Resolve for LastValues<'_> {
+    fn resolve(&self, object: &str, property: &str) -> Result<crate::expr::Quantity, String> {
+        let id = self
+            .0
+            .object_named(object)
+            .ok_or_else(|| format!("nothing is called {}", crate::expr::quote_name(object)))?;
+        self.0
+            .evaluated_slots(id)
+            .iter()
+            .find(|s| s.name.as_deref() == Some(property))
+            .ok_or_else(|| {
+                format!(
+                    "{} has no {}",
+                    crate::expr::quote_name(object),
+                    crate::expr::quote_name(property)
+                )
+            })?
+            .result
+            .clone()
+    }
+}
+
 /// A name a variable or a set may have.
 fn check_name(name: &str) -> Result<(), String> {
     if crate::expr::is_valid_name(name) {

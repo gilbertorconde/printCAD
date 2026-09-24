@@ -605,6 +605,13 @@ impl UiLayer {
             if let Some(bodies) = combo.convert {
                 commands.push(UiCommand::ConvertToSolid(bodies));
             }
+            if let Some((feature, parameter, edit)) = combo.parameter {
+                commands.push(UiCommand::SetParameter {
+                    feature,
+                    parameter: Box::new(parameter),
+                    edit,
+                });
+            }
             if let Some((body, display)) = combo.body_display {
                 commands.push(UiCommand::SetBodyDisplay { body, display });
             }

@@ -218,6 +218,11 @@ impl PrintCadApp {
                     option,
                 } => self.answer_permission(&chat, entry, option),
                 UiCommand::SetChatAsk { chat, ask } => self.set_chat_asks(&chat, ask),
+                UiCommand::SetParameter {
+                    feature,
+                    parameter,
+                    edit,
+                } => self.set_parameter(feature, &parameter, edit),
                 UiCommand::AttachFiles(chat) => {
                     self.start_file_dialog(FileDialogKind::Attach(chat))
                 }
@@ -1025,5 +1030,37 @@ impl PrintCadApp {
         {
             self.session.tree_selection = Some(TreeItemId::Feature(feature));
         }
+    }
+}
+
+impl PrintCadApp {
+    /// Set one of a feature's numbers: a formula is kept as typed; a value
+    /// takes any formula away and goes into the feature's data, settled
+    /// by its bench (a sketch solves), with what depends on it marked.
+    pub(crate) fn set_parameter(
+        &mut self,
+        feature: core_document::FeatureId,
+        parameter: &core_document::Parameter,
+        edit: ui_kit::widgets::FormulaEdit,
+    ) {
+        use ui_kit::widgets::FormulaEdit;
+        let doc = &mut self.session.document;
+        match edit {
+            FormulaEdit::Formula(text) => {
+                let _ = doc.set_feature_formula(feature, parameter.key.clone(), Some(text));
+            }
+            FormulaEdit::Value(v) => {
+                if let Err(why) = self
+                    .registry
+                    .set_parameter_value(doc, feature, parameter, v)
+                {
+                    crate::log_panel::warn(why);
+                }
+            }
+        }
+        self.session
+            .journal
+            .label_next(format!("Set {}", parameter.label.to_lowercase()));
+        self.close_gesture();
     }
 }

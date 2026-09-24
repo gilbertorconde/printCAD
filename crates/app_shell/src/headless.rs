@@ -126,6 +126,7 @@ struct Headless {
 const DOC_COMMANDS: &[&str] = &[
     "doc.parameters",
     "doc.set_formula",
+    "doc.set_value",
     "var.new",
     "var.set",
     "var.remove",

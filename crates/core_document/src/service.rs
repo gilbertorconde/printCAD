@@ -220,6 +220,74 @@ impl DocumentService {
         document.apply_evaluation(evaluation);
     }
 
+    /// The parameter of `feature` that formulas call `name`, or whose key
+    /// is `name`.
+    pub fn parameter_named(
+        &self,
+        document: &Document,
+        feature: FeatureId,
+        name: &str,
+    ) -> Result<crate::evaluate::Parameter, String> {
+        let node = document
+            .get_feature_meta(feature)
+            .ok_or("no such feature")?;
+        let params = self.parameters(node);
+        params
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name) || p.key == name)
+            .cloned()
+            .ok_or_else(|| {
+                let names: Vec<String> = params
+                    .iter()
+                    .map(|p| p.name.clone().unwrap_or_else(|| p.key.clone()))
+                    .collect();
+                format!(
+                    "{} has no number {name}; it has {}",
+                    node.name,
+                    names.join(", ")
+                )
+            })
+    }
+
+    /// Set `parameter` of `feature` to `value` (millimetres or degrees):
+    /// any formula on it goes, the number goes into the feature's data,
+    /// settled by its bench (a sketch solves), and what depends on it is
+    /// marked, as are the benches' follow-ups (`values_moved`).
+    pub fn set_parameter_value(
+        &self,
+        document: &mut Document,
+        feature: FeatureId,
+        parameter: &crate::evaluate::Parameter,
+        value: f64,
+    ) -> Result<(), String> {
+        let node = document
+            .get_feature_meta(feature)
+            .cloned()
+            .ok_or("no such feature")?;
+        let mut data = node.data.clone();
+        let slot = data
+            .pointer_mut(&parameter.pointer)
+            .ok_or_else(|| format!("{} has no {} now", node.name, parameter.label))?;
+        let stored = value * parameter.scale;
+        *slot = if parameter.integer {
+            serde_json::json!(stored.round() as i64)
+        } else {
+            serde_json::json!(stored)
+        };
+        if let Some(owner) = self.owner_of(&node.workbench_id) {
+            owner.settle(&node, &mut data);
+        }
+        document
+            .set_feature_formula(feature, parameter.key.clone(), None)
+            .map_err(|e| e.to_string())?;
+        document
+            .update_feature_data(feature, data)
+            .map_err(|e| e.to_string())?;
+        document.mark_feature_dirty(feature);
+        document.note_value_moved(feature);
+        Ok(())
+    }
+
     /// What `text` comes to in `document`: for a field holding `want`, or
     /// as it is.
     pub fn evaluate_formula(

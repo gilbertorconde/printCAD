@@ -135,6 +135,17 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "Such as \"Printer.wall * 2\"; nil takes it away",
         )
         .returns("{value, text, error}: what it comes to"),
+        CommandSpec::new(
+            "doc.set_value",
+            "Set one of a feature's numbers, taking away any formula on it",
+        )
+        .param("id", ParamKind::Id, "The feature")
+        .param(
+            "parameter",
+            ParamKind::String,
+            "Its name or key, as doc.parameters lists them",
+        )
+        .param("value", ParamKind::Number, "In millimetres or degrees"),
         CommandSpec::new("var.new", "Make a variable set")
             .param(
                 "name",
@@ -1013,6 +1024,27 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         result: Value::Null,
     };
     match command {
+        UiCommand::SetParameter {
+            feature,
+            parameter,
+            edit,
+        } => {
+            let which = parameter
+                .name
+                .clone()
+                .unwrap_or_else(|| parameter.key.clone());
+            let id = feature.0.to_string();
+            Some(match edit {
+                ui_kit::widgets::FormulaEdit::Formula(text) => call(
+                    "doc.set_formula",
+                    json!({"id": id, "parameter": which, "formula": text}),
+                ),
+                ui_kit::widgets::FormulaEdit::Value(v) => call(
+                    "doc.set_value",
+                    json!({"id": id, "parameter": which, "value": v}),
+                ),
+            })
+        }
         UiCommand::RenameTreeItem { item, name } => {
             let id = item_id(*item)?;
             Some(call(
@@ -1288,26 +1320,9 @@ pub(crate) fn document_command(
         }
         "doc.set_formula" => {
             let feature = FeatureId(a.id("id")?);
-            let node = document
-                .get_feature_meta(feature)
-                .ok_or_else(|| CommandError::failed("no such feature"))?
-                .clone();
-            let wanted = a.string("parameter")?;
-            let params = registry.parameters(&node);
-            let parameter = params
-                .iter()
-                .find(|p| p.name.as_deref() == Some(wanted) || p.key == wanted)
-                .ok_or_else(|| {
-                    let names: Vec<String> = params
-                        .iter()
-                        .map(|p| p.name.clone().unwrap_or_else(|| p.key.clone()))
-                        .collect();
-                    CommandError::failed(format!(
-                        "{} has no number {wanted}; it has {}",
-                        node.name,
-                        names.join(", ")
-                    ))
-                })?;
+            let parameter = registry
+                .parameter_named(document, feature, a.string("parameter")?)
+                .map_err(CommandError::failed)?;
             let formula = a.opt_string("formula")?.map(str::to_string);
             if let Some(text) = &formula {
                 core_document::expr::check_syntax(text)
@@ -1317,6 +1332,16 @@ pub(crate) fn document_command(
                 .set_feature_formula(feature, parameter.key.clone(), formula)
                 .map_err(|e| CommandError::failed(e.to_string()))?;
             Ok(slot_answer(document, registry, feature, &parameter.key))
+        }
+        "doc.set_value" => {
+            let feature = FeatureId(a.id("id")?);
+            let parameter = registry
+                .parameter_named(document, feature, a.string("parameter")?)
+                .map_err(CommandError::failed)?;
+            registry
+                .set_parameter_value(document, feature, &parameter, a.number("value")?)
+                .map(|()| Value::Null)
+                .map_err(CommandError::failed)
         }
         "var.new" => document
             .add_variable_set(a.string("name")?)

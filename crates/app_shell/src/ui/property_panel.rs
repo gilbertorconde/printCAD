@@ -27,6 +27,114 @@ pub struct PropertyPanelResult {
     /// The body's look changed: a colour and opacity of its own, or back
     /// to the one it came with.
     pub body_display: Option<(BodyId, Option<core_document::BodyDisplay>)>,
+    /// One of a feature's numbers was set: to a value or a formula.
+    pub parameter: Option<(
+        FeatureId,
+        core_document::Parameter,
+        ui_kit::widgets::FormulaEdit,
+    )>,
+}
+
+/// How the panel's formula fields read typed text: against what the
+/// document's formulas last came to, for a field of one kind.
+pub(crate) struct DocumentFormulas<'a> {
+    pub document: &'a Document,
+    pub dim: core_document::expr::Dim,
+}
+
+impl ui_kit::widgets::FormulaHost for DocumentFormulas<'_> {
+    fn evaluate(&self, text: &str) -> Result<f64, String> {
+        self.document
+            .evaluate_formula(text, Some(self.dim))
+            .map(|q| q.value)
+    }
+
+    fn is_constant(&self, text: &str) -> bool {
+        core_document::expr::is_constant(text)
+    }
+
+    fn references(&self) -> Vec<String> {
+        self.document.formula_references()
+    }
+}
+
+/// The suffix a field of kind `dim` shows.
+pub(crate) fn unit_suffix(dim: core_document::expr::Dim) -> &'static str {
+    use core_document::expr::Dim;
+    match dim {
+        Dim::LENGTH => "mm",
+        Dim::ANGLE => "°",
+        _ => "",
+    }
+}
+
+/// A feature's numbers, each a field a formula may set.
+fn parameter_rows(
+    ui: &mut egui::Ui,
+    document: &Document,
+    registry: &core_document::DocumentService,
+    feature: FeatureId,
+    result: &mut PropertyPanelResult,
+) {
+    let Some(node) = document.get_feature_meta(feature) else {
+        return;
+    };
+    let params = registry.parameters(node);
+    if params.is_empty() {
+        return;
+    }
+    group_header(ui, "Parameters");
+    let slots = document.evaluated_slots(feature);
+    for p in params {
+        // Only the numbers the feature has now (a counterbore hole has no
+        // countersink angle).
+        let Some(raw) = node
+            .data
+            .pointer(&p.pointer)
+            .and_then(serde_json::Value::as_f64)
+        else {
+            continue;
+        };
+        let slot = slots.iter().find(|s| s.key == p.key);
+        let value = match slot.map(|s| &s.result) {
+            Some(Ok(q)) => q.value,
+            _ => raw / p.scale,
+        };
+        let error = slot
+            .and_then(|s| s.result.as_ref().err())
+            .map(String::as_str);
+        let host = DocumentFormulas {
+            document,
+            dim: p.dim,
+        };
+        ui.horizontal(|ui| {
+            let half = ui.available_width() * 0.5;
+            ui.add_space(24.0);
+            ui.add_sized(
+                [half - 32.0, TREE_ROW],
+                egui::Label::new(RichText::new(&p.label).font(sans(FONT_SM)).color(TEXT2))
+                    .truncate(),
+            )
+            .on_hover_text(match &p.name {
+                Some(name) => format!("{}.{name}", core_document::expr::quote_name(&node.name)),
+                None => "Name it to read it from formulas".to_string(),
+            });
+            let field = ui_kit::widgets::FormulaField::new(
+                ui.id().with(("parameter", feature, &p.key)),
+                value,
+                &host,
+            )
+            .formula(node.formulas.get(&p.key).map(String::as_str))
+            .error(error)
+            .unit(unit_suffix(p.dim))
+            .decimals(if p.integer { 0 } else { 2 })
+            .speed(if p.integer { 0.05 } else { 0.1 })
+            .width((ui.available_width() - 40.0).max(80.0));
+            if let Some(edit) = field.show(ui) {
+                result.parameter = Some((feature, p.clone(), edit));
+            }
+        });
+    }
 }
 
 /// One value row.
@@ -445,6 +553,9 @@ pub fn draw_property_panel(
         .auto_shrink([false, false])
         .show(ui, |ui| match *tab {
             PropertyTab::Data => {
+                if let TreeItemId::Feature(feature) = selected {
+                    parameter_rows(ui, document, registry, feature, &mut result);
+                }
                 let mut groups = data_groups(document, registry, selected);
                 if let Some(physical) = physical {
                     groups.push(physical_group(physical, document.display_unit()));
