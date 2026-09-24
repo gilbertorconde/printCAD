@@ -89,6 +89,10 @@ pub fn draw_assistant(
                 .inner_margin(egui::Margin::symmetric(10, 8)),
         )
         .show(ui, |ui| {
+            let panel = ui.max_rect();
+            if let Some(chat) = state.active.clone() {
+                take_dropped_files(ui, panel, chat, commands);
+            }
             tab_strip(ui, state, chats, &agents, commands, &mut result);
             ui.separator();
             for (index, approval) in approvals.iter().enumerate() {
@@ -130,6 +134,43 @@ pub fn draw_assistant(
             });
         });
     result
+}
+
+/// Files dropped on the panel go with the chat's next prompt; while
+/// files hover over it, it says so.
+fn take_dropped_files(
+    ui: &mut egui::Ui,
+    panel: egui::Rect,
+    chat: String,
+    commands: &mut Vec<UiCommand>,
+) {
+    let (hovering, dropped, pointer) = ui.ctx().input(|i| {
+        (
+            !i.raw.hovered_files.is_empty(),
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect::<Vec<_>>(),
+            i.pointer.latest_pos(),
+        )
+    });
+    // Some systems give no pointer position during a drag from outside.
+    let here = pointer.is_none_or(|p| panel.contains(p));
+    if hovering && here {
+        ui.painter().rect_stroke(
+            panel.shrink(2.0),
+            RADIUS_MD,
+            egui::Stroke::new(2.0, ACCENT),
+            egui::StrokeKind::Inside,
+        );
+    }
+    if !dropped.is_empty() && here {
+        commands.push(UiCommand::AttachPaths {
+            chat,
+            paths: dropped,
+        });
+    }
 }
 
 fn tab_strip(
@@ -332,17 +373,26 @@ fn draw_entry(
     commands: &mut Vec<UiCommand>,
 ) {
     match entry {
-        ChatEntry::User(text) => {
+        ChatEntry::User { text, attachments } => {
             egui::Frame::new()
                 .fill(BG3)
                 .corner_radius(RADIUS_MD as u8)
                 .inner_margin(egui::Margin::symmetric(8, 6))
                 .show(ui, |ui| {
-                    ui.add(
-                        egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
-                            .selectable(true)
-                            .wrap(),
-                    );
+                    if !text.is_empty() {
+                        ui.add(
+                            egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
+                                .selectable(true)
+                                .wrap(),
+                        );
+                    }
+                    if !attachments.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            for name in attachments {
+                                chip(ui, name);
+                            }
+                        });
+                    }
                 });
         }
         ChatEntry::Agent {
@@ -482,22 +532,41 @@ fn draw_entry(
 fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
     let open = matches!(chat.status, ChatStatus::Ready | ChatStatus::Busy);
     let busy = chat.status == ChatStatus::Busy;
+    let sendable = !draft.trim().is_empty() || !chat.attachments.is_empty();
     let id = egui::Id::new(("assistant_input", &chat.id));
     let mut send = false;
     if open && ui.memory(|m| m.has_focus(id)) {
+        let mut pasted_files = Vec::new();
         send = ui.input_mut(|i| {
             let mut hit = false;
-            i.events.retain(|e| {
-                let bare_enter = matches!(
-                    e,
-                    egui::Event::Key { key: egui::Key::Enter, pressed: true, modifiers, .. }
-                        if modifiers.is_none()
-                );
-                hit |= bare_enter;
-                !bare_enter
+            i.events.retain(|e| match e {
+                egui::Event::Key {
+                    key: egui::Key::Enter,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } if modifiers.is_none() => {
+                    hit = true;
+                    false
+                }
+                // Files copied in a file manager paste as their paths.
+                egui::Event::Paste(text) => match pasted_paths(text) {
+                    Some(paths) => {
+                        pasted_files.extend(paths);
+                        false
+                    }
+                    None => true,
+                },
+                _ => true,
             });
             hit
         });
+        if !pasted_files.is_empty() {
+            commands.push(UiCommand::AttachPaths {
+                chat: chat.id.clone(),
+                paths: pasted_files,
+            });
+        }
     }
     egui::Frame::new()
         .fill(BG2)
@@ -506,6 +575,18 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                if !chat.attachments.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        for (index, attachment) in chat.attachments.iter().enumerate() {
+                            if chip(ui, &attachment.name()).clicked() {
+                                commands.push(UiCommand::Detach {
+                                    chat: chat.id.clone(),
+                                    index,
+                                });
+                            }
+                        }
+                    });
+                }
                 let hint = match chat.status {
                     ChatStatus::Starting => "The agent is starting…",
                     ChatStatus::Failed(_) => "The chat has stopped",
@@ -522,6 +603,7 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                         .hint_text(hint),
                 );
                 ui.horizontal(|ui| {
+                    attach_menu(ui, chat, open, commands);
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if busy {
                             if stop_button(ui).on_hover_text("Stop the agent").clicked() {
@@ -529,7 +611,7 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                             }
                         } else if ui
                             .add_enabled(
-                                open && !draft.trim().is_empty(),
+                                open && sendable,
                                 egui::Button::new(RichText::new("Send").font(sans(FONT_XS))),
                             )
                             .clicked()
@@ -547,12 +629,92 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                 });
             });
         });
-    if send && !draft.trim().is_empty() {
+    if send && sendable {
         commands.push(UiCommand::SendChat {
             chat: chat.id.clone(),
             text: std::mem::take(draft),
         });
     }
+}
+
+/// The files a paste names, when every line of it is a `file://` URI or
+/// the absolute path of a file that exists; `None` for any other text.
+fn pasted_paths(text: &str) -> Option<Vec<std::path::PathBuf>> {
+    let mut paths = Vec::new();
+    for line in text.lines().map(str::trim).filter(|l| !l.is_empty()) {
+        let path = match line.strip_prefix("file://") {
+            Some(uri) => std::path::PathBuf::from(percent_decoded(uri)?),
+            None => std::path::PathBuf::from(line),
+        };
+        if !path.is_absolute() || !path.is_file() {
+            return None;
+        }
+        paths.push(path);
+    }
+    (!paths.is_empty()).then_some(paths)
+}
+
+fn percent_decoded(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
+/// The "+" menu: files, or a picture of the view, to go with the next
+/// prompt.
+fn attach_menu(ui: &mut egui::Ui, chat: &Chat, open: bool, commands: &mut Vec<UiCommand>) {
+    let plus = match ui_kit::icon::image(ui.ctx(), "plus", 14.0, TEXT2) {
+        Some(icon) => egui::containers::menu::MenuButton::new(icon),
+        None => egui::containers::menu::MenuButton::new(RichText::new("+").font(sans(FONT_SM))),
+    };
+    ui.add_enabled_ui(open, |ui| {
+        plus.ui(ui, |ui| {
+            ui.set_min_width(200.0);
+            if ui
+                .button(RichText::new("Files…").font(sans(FONT_SM)))
+                .on_hover_text("Pictures go as pictures, small text files with their text, other files as a path the agent can open")
+                .clicked()
+            {
+                commands.push(UiCommand::AttachFiles(chat.id.clone()));
+                ui.close();
+            }
+            if ui
+                .button(RichText::new("Picture of the view").font(sans(FONT_SM)))
+                .clicked()
+            {
+                commands.push(UiCommand::AttachView(chat.id.clone()));
+                ui.close();
+            }
+        })
+        .0
+        .on_hover_text("Attach files or a picture of the view (or drop files on the panel)");
+    });
+}
+
+/// An attachment's name in a small rounded box; with a pointer on it,
+/// clicking takes it off.
+fn chip(ui: &mut egui::Ui, name: &str) -> egui::Response {
+    egui::Frame::new()
+        .fill(BG4)
+        .corner_radius(RADIUS_SM as u8)
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.label(RichText::new(name).font(sans(FONT_XS)).color(TEXT1));
+        })
+        .response
+        .interact(egui::Sense::click())
+        .on_hover_text("Click to take it off")
 }
 
 /// The options in the order the bar shows them: the permission mode, the
@@ -644,4 +806,35 @@ fn stop_button(ui: &mut egui::Ui) -> egui::Response {
     };
     ui.painter().rect_filled(rect.shrink(5.0), 2.0, fill);
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_paste_of_copied_files_names_them_and_other_text_stays_text() {
+        let dir = std::env::temp_dir().join(format!("printcad-paste-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("a b.step");
+        let b = dir.join("notes.txt");
+        std::fs::write(&a, "x").unwrap();
+        std::fs::write(&b, "x").unwrap();
+        let uri = format!("file://{}", a.display()).replace(' ', "%20");
+        assert_eq!(
+            pasted_paths(&format!("{uri}\r\n{}\n", b.display())),
+            Some(vec![a.clone(), b.clone()])
+        );
+        assert_eq!(pasted_paths("make the wall 2 mm"), None);
+        assert_eq!(
+            pasted_paths(&format!("{}\nand some words", b.display())),
+            None
+        );
+        assert_eq!(
+            pasted_paths(&dir.join("gone.txt").display().to_string()),
+            None
+        );
+        assert_eq!(pasted_paths("notes.txt"), None, "relative paths are text");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

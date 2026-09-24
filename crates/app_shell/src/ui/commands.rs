@@ -186,6 +186,20 @@ pub enum UiCommand {
         chat: String,
         ask: bool,
     },
+    /// Pick files to go with the chat's next prompt.
+    AttachFiles(String),
+    /// These files go with the chat's next prompt.
+    AttachPaths {
+        chat: String,
+        paths: Vec<std::path::PathBuf>,
+    },
+    /// A picture of the view goes with the chat's next prompt.
+    AttachView(String),
+    /// Take attachment `index` off the chat's next prompt.
+    Detach {
+        chat: String,
+        index: usize,
+    },
     /// Change one of the agent's session options (mode, model ...).
     SetChatOption {
         chat: String,

@@ -434,11 +434,16 @@ impl PrintCadApp {
     }
 
     /// The scene as the user sees it, as a picture an agent can look at.
-    fn view_picture(&self) -> ToolAnswer {
-        use base64::Engine as _;
+    /// The scene from the current view, as a PNG `width` by `height`.
+    pub(crate) fn view_png(&self, width: u32, height: u32) -> Option<Vec<u8>> {
         let shapes = self.thumbnail_shapes();
         let (forward, up) = self.session.camera.view_basis();
-        match crate::thumbnail::render_at(&shapes, forward, up, 800, 600) {
+        crate::thumbnail::render_at(&shapes, forward, up, width, height)
+    }
+
+    fn view_picture(&self) -> ToolAnswer {
+        use base64::Engine as _;
+        match self.view_png(800, 600) {
             Some(png) => ToolAnswer {
                 content: vec![Content::Image {
                     data: base64::engine::general_purpose::STANDARD.encode(png),

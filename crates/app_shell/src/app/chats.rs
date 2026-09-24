@@ -9,7 +9,7 @@
 use std::path::PathBuf;
 
 use agents::acp::{
-    AgentChat, ChatCommand, ChatEvent, McpServer, PermissionOption, PlanEntry, Program,
+    AgentChat, Attachment, ChatCommand, ChatEvent, McpServer, PermissionOption, PlanEntry, Program,
     SessionOption,
 };
 use serde_json::Value;
@@ -32,7 +32,11 @@ pub(crate) enum ChatStatus {
 /// One thing shown in a chat.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ChatEntry {
-    User(String),
+    /// What the user sent, and the names of what went with it.
+    User {
+        text: String,
+        attachments: Vec<String>,
+    },
     /// The agent's message, or its thinking.
     Agent {
         text: String,
@@ -68,6 +72,8 @@ pub(crate) struct Chat {
     pub entries: Vec<ChatEntry>,
     /// The session options the agent offers, as they stand.
     pub options: Vec<SessionOption>,
+    /// What goes with the next prompt.
+    pub attachments: Vec<Attachment>,
     /// The agent's remembered choices have been read.
     chose: bool,
     /// Remembered choices not yet put to the agent, in the order it lists
@@ -137,6 +143,7 @@ impl PrintCadApp {
             ask: self.user_settings.ai.ask_before_changes,
             entries: Vec::new(),
             options: Vec::new(),
+            attachments: Vec::new(),
             chose: false,
             choices_left: Vec::new(),
             stderr: Vec::new(),
@@ -157,20 +164,76 @@ impl PrintCadApp {
         let Some(chat) = self.chat_mut(id) else {
             return;
         };
-        if text.trim().is_empty() || matches!(chat.status, ChatStatus::Failed(_)) {
+        if (text.trim().is_empty() && chat.attachments.is_empty())
+            || matches!(chat.status, ChatStatus::Failed(_))
+        {
             return;
         }
         chat.choices_left.clear();
-        chat.entries.push(ChatEntry::User(text.clone()));
+        let attachments = std::mem::take(&mut chat.attachments);
+        chat.entries.push(ChatEntry::User {
+            text: text.clone(),
+            attachments: attachments.iter().map(Attachment::name).collect(),
+        });
         let prompt = if chat.prompts == 0 {
             format!("{PREAMBLE}\n\n{text}")
         } else {
             text
         };
         chat.prompts += 1;
-        chat.session.send(ChatCommand::Prompt(prompt));
+        chat.session.send(ChatCommand::Prompt {
+            text: prompt,
+            attachments,
+        });
         if chat.status == ChatStatus::Ready {
             chat.status = ChatStatus::Busy;
+        }
+    }
+
+    /// Add files to what goes with the chat's next prompt.
+    pub(crate) fn attach_files(&mut self, id: &str, paths: Vec<PathBuf>) {
+        if let Some(chat) = self.chat_mut(id) {
+            for path in paths {
+                if !chat
+                    .attachments
+                    .iter()
+                    .any(|a| matches!(a, Attachment::File(p) if *p == path))
+                {
+                    chat.attachments.push(Attachment::File(path));
+                }
+            }
+        }
+    }
+
+    /// Add a picture of the scene as the user sees it.
+    pub(crate) fn attach_view(&mut self, id: &str) {
+        let Some(png) = self.view_png(1280, 960) else {
+            crate::app_log::warn("Nothing is visible to attach a picture of");
+            return;
+        };
+        if let Some(chat) = self.chat_mut(id) {
+            let taken = chat
+                .attachments
+                .iter()
+                .filter(|a| matches!(a, Attachment::Image { .. }))
+                .count();
+            let name = match taken {
+                0 => "view.png".to_string(),
+                n => format!("view-{}.png", n + 1),
+            };
+            chat.attachments.push(Attachment::Image {
+                name,
+                mime: "image/png".to_string(),
+                data: png,
+            });
+        }
+    }
+
+    pub(crate) fn detach(&mut self, id: &str, index: usize) {
+        if let Some(chat) = self.chat_mut(id)
+            && index < chat.attachments.len()
+        {
+            chat.attachments.remove(index);
         }
     }
 
@@ -438,6 +501,7 @@ mod tests {
             ask: true,
             entries: Vec::new(),
             options: Vec::new(),
+            attachments: Vec::new(),
             chose: false,
             choices_left: Vec::new(),
             stderr: Vec::new(),

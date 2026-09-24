@@ -42,8 +42,12 @@ pub struct McpServer {
 /// What the holder asks of the chat.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatCommand {
-    /// Send a prompt; one sent while the agent is busy waits its turn.
-    Prompt(String),
+    /// Send a prompt with what is attached to it; one sent while the
+    /// agent is busy waits its turn.
+    Prompt {
+        text: String,
+        attachments: Vec<Attachment>,
+    },
     /// Ask the agent to stop the turn it is on.
     Cancel,
     /// Answer the agent's request for permission `request` with the option
@@ -55,6 +59,163 @@ pub enum ChatCommand {
     /// Change session option `id` to `value`: a choice's value for a
     /// select, a boolean for a toggle.
     SetOption { id: String, value: Value },
+}
+
+/// Something sent along with a prompt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Attachment {
+    /// A file: a picture goes as one, a small text file with its text,
+    /// anything else as a link the agent opens itself.
+    File(PathBuf),
+    /// A picture made for the prompt (a view of the scene).
+    Image {
+        name: String,
+        mime: String,
+        data: Vec<u8>,
+    },
+}
+
+impl Attachment {
+    /// What the chat calls it.
+    pub fn name(&self) -> String {
+        match self {
+            Attachment::File(path) => path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string()),
+            Attachment::Image { name, .. } => name.clone(),
+        }
+    }
+}
+
+/// What a prompt may carry beyond text, as the agent said when it started.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct PromptCapabilities {
+    pub image: bool,
+    /// Files with their contents; without it a file goes as a link.
+    pub embedded: bool,
+}
+
+/// The largest text file sent with its text; a larger one goes as a link.
+const EMBED_LIMIT: u64 = 256 * 1024;
+/// The largest picture sent as one.
+const IMAGE_LIMIT: u64 = 8 * 1024 * 1024;
+
+/// The content blocks of a prompt, and a word on each attachment that
+/// could not go as asked.
+pub fn prompt_blocks(
+    text: &str,
+    attachments: &[Attachment],
+    can: PromptCapabilities,
+) -> (Vec<Value>, Vec<String>) {
+    use base64::Engine as _;
+    let encode = |data: &[u8]| base64::engine::general_purpose::STANDARD.encode(data);
+    let mut blocks = vec![json!({"type": "text", "text": text})];
+    let mut notes = Vec::new();
+    for attachment in attachments {
+        match attachment {
+            Attachment::Image { name, mime, data } => {
+                if can.image {
+                    blocks.push(json!({"type": "image", "mimeType": mime, "data": encode(data)}));
+                } else {
+                    notes.push(format!(
+                        "The agent does not take pictures: {name} was left out"
+                    ));
+                }
+            }
+            Attachment::File(path) => {
+                let name = attachment.name();
+                let size = match std::fs::metadata(path) {
+                    Ok(meta) if meta.is_file() => meta.len(),
+                    Ok(_) => {
+                        notes.push(format!("{name} is not a file and was left out"));
+                        continue;
+                    }
+                    Err(err) => {
+                        notes.push(format!("{name} could not be read ({err}) and was left out"));
+                        continue;
+                    }
+                };
+                let uri = file_uri(path);
+                let mime = mime_of(path);
+                if can.image
+                    && mime.starts_with("image/")
+                    && size <= IMAGE_LIMIT
+                    && let Ok(data) = std::fs::read(path)
+                {
+                    blocks.push(json!({"type": "image", "mimeType": mime, "data": encode(&data), "uri": uri}));
+                    continue;
+                }
+                if can.embedded
+                    && size <= EMBED_LIMIT
+                    && let Ok(data) = std::fs::read(path)
+                    && !data.contains(&0)
+                    && let Ok(contents) = String::from_utf8(data)
+                {
+                    let mime = if mime == "application/octet-stream" {
+                        "text/plain"
+                    } else {
+                        mime
+                    };
+                    blocks.push(json!({
+                        "type": "resource",
+                        "resource": {"uri": uri, "mimeType": mime, "text": contents},
+                    }));
+                    continue;
+                }
+                blocks.push(json!({
+                    "type": "resource_link",
+                    "uri": uri,
+                    "name": name,
+                    "mimeType": mime,
+                    "size": size,
+                }));
+            }
+        }
+    }
+    (blocks, notes)
+}
+
+/// A `file://` URI for `path`, its bytes outside the plain ones escaped.
+fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt as _;
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut out = String::from("file://");
+    for &b in absolute.as_os_str().as_bytes() {
+        if b.is_ascii_alphanumeric() || b"/-._~".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// The media type a file's extension names.
+fn mime_of(path: &std::path::Path) -> &'static str {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "svg" => "image/svg+xml",
+        "pdf" => "application/pdf",
+        "txt" | "log" => "text/plain",
+        "md" => "text/markdown",
+        "json" => "application/json",
+        "lua" => "text/x-lua",
+        "csv" => "text/csv",
+        "step" | "stp" => "model/step",
+        "iges" | "igs" => "model/iges",
+        "stl" => "model/stl",
+        "obj" => "model/obj",
+        "3mf" => "model/3mf",
+        _ => "application/octet-stream",
+    }
 }
 
 /// A setting of the session the agent offers: its permission mode, its
@@ -349,10 +510,10 @@ fn run(
         let (connection, events, options) = (connection.clone(), events.clone(), options.clone());
         std::thread::spawn(move || serve_agent(connection, incoming, events, options));
     }
-    let session = match open_session(&connection, &cwd, &mcp) {
-        Ok((session, offered)) => {
+    let (session, can) = match open_session(&connection, &cwd, &mcp) {
+        Ok((session, offered, can)) => {
             options.lock().unwrap().list = offered;
-            session
+            (session, can)
         }
         Err(why) => {
             events.send(ChatEvent::Failed(why));
@@ -364,14 +525,18 @@ fn run(
     let mut changing: Vec<Change> = Vec::new();
 
     let mut turn: Option<Receiver<Result<Value, RpcError>>> = None;
-    let mut queued: std::collections::VecDeque<String> = Default::default();
+    let mut queued: std::collections::VecDeque<(String, Vec<Attachment>)> = Default::default();
     loop {
         if turn.is_none()
-            && let Some(text) = queued.pop_front()
+            && let Some((text, attachments)) = queued.pop_front()
         {
+            let (prompt, notes) = prompt_blocks(&text, &attachments, can);
+            for note in notes {
+                events.send(ChatEvent::Error(note));
+            }
             turn = Some(connection.request(
                 "session/prompt",
-                json!({"sessionId": session, "prompt": [{"type": "text", "text": text}]}),
+                json!({"sessionId": session, "prompt": prompt}),
             ));
         }
         if let Some(pending) = &turn {
@@ -422,7 +587,7 @@ fn run(
             Err(_) => true,
         });
         match commands.recv_timeout(Duration::from_millis(50)) {
-            Ok(ChatCommand::Prompt(text)) => queued.push_back(text),
+            Ok(ChatCommand::Prompt { text, attachments }) => queued.push_back((text, attachments)),
             Ok(ChatCommand::Cancel) => {
                 queued.clear();
                 let _ = connection.notify("session/cancel", json!({"sessionId": session}));
@@ -487,7 +652,7 @@ fn open_session(
     connection: &Connection,
     cwd: &std::path::Path,
     mcp: &[McpServer],
-) -> Result<(String, Vec<SessionOption>), String> {
+) -> Result<(String, Vec<SessionOption>, PromptCapabilities), String> {
     let wait =
         |rx: Receiver<Result<Value, RpcError>>, what: &str| match rx.recv_timeout(START_TIMEOUT) {
             Ok(Ok(value)) => Ok(value),
@@ -541,7 +706,20 @@ fn open_session(
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| "the agent opened a session without an id".to_string())?;
-    Ok((id, session_options(&session)))
+    let prompt = init
+        .get("agentCapabilities")
+        .and_then(|c| c.get("promptCapabilities"));
+    let flag = |key: &str| {
+        prompt
+            .and_then(|p| p.get(key))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    let can = PromptCapabilities {
+        image: flag("image"),
+        embedded: flag("embeddedContext"),
+    };
+    Ok((id, session_options(&session), can))
 }
 
 type Options = Arc<Mutex<Shared>>;
@@ -935,7 +1113,10 @@ mod tests {
         );
         assert_eq!(next(&chat), ChatEvent::Ready);
         assert_eq!(next(&chat), ChatEvent::Options(Vec::new()));
-        chat.send(ChatCommand::Prompt("make a box".into()));
+        chat.send(ChatCommand::Prompt {
+            text: "make a box".into(),
+            attachments: Vec::new(),
+        });
         assert_eq!(
             next(&chat),
             ChatEvent::Text {
@@ -1170,6 +1351,89 @@ mod tests {
             chat.next_event(Duration::from_millis(200)).is_none(),
             "no refusal"
         );
+    }
+
+    #[test]
+    fn attachments_go_as_pictures_texts_or_links_as_the_agent_can_take_them() {
+        let dir = std::env::temp_dir().join(format!("printcad-attach-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let png = dir.join("shot.png");
+        std::fs::write(&png, [0x89, b'P', b'N', b'G']).unwrap();
+        let notes = dir.join("my notes.txt");
+        std::fs::write(&notes, "wall 2 mm").unwrap();
+        let step = dir.join("part.step");
+        std::fs::write(&step, b"ISO-10303-21;\0binary").unwrap();
+        let big = dir.join("big.txt");
+        std::fs::write(&big, "x".repeat(EMBED_LIMIT as usize + 1)).unwrap();
+        let all = [
+            Attachment::File(png.clone()),
+            Attachment::File(notes.clone()),
+            Attachment::File(step.clone()),
+            Attachment::File(big),
+            Attachment::File(dir.join("gone.txt")),
+            Attachment::Image {
+                name: "view.png".into(),
+                mime: "image/png".into(),
+                data: vec![1, 2, 3],
+            },
+        ];
+        let kinds = |blocks: &[Value]| -> Vec<String> {
+            blocks
+                .iter()
+                .map(|b| b["type"].as_str().unwrap().to_string())
+                .collect()
+        };
+
+        let (blocks, notes_out) = prompt_blocks(
+            "look",
+            &all,
+            PromptCapabilities {
+                image: true,
+                embedded: true,
+            },
+        );
+        assert_eq!(
+            kinds(&blocks),
+            [
+                "text",
+                "image",
+                "resource",
+                "resource_link",
+                "resource_link",
+                "image"
+            ]
+        );
+        assert_eq!(blocks[0]["text"], "look");
+        assert_eq!(blocks[1]["data"], "iVBORw==");
+        assert_eq!(blocks[2]["resource"]["text"], "wall 2 mm");
+        assert!(
+            blocks[2]["resource"]["uri"]
+                .as_str()
+                .unwrap()
+                .ends_with("/my%20notes.txt"),
+            "{}",
+            blocks[2]["resource"]["uri"]
+        );
+        assert_eq!(blocks[3]["name"], "part.step", "a binary file is linked");
+        assert_eq!(blocks[3]["mimeType"], "model/step");
+        assert_eq!(blocks[5]["data"], "AQID");
+        assert_eq!(notes_out.len(), 1, "the missing file: {notes_out:?}");
+        assert!(notes_out[0].contains("gone.txt"));
+
+        // An agent that takes neither gets links, and a word on the picture.
+        let (blocks, notes_out) = prompt_blocks("look", &all, PromptCapabilities::default());
+        assert_eq!(
+            kinds(&blocks),
+            [
+                "text",
+                "resource_link",
+                "resource_link",
+                "resource_link",
+                "resource_link"
+            ]
+        );
+        assert_eq!(notes_out.len(), 2, "{notes_out:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

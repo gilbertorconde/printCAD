@@ -79,11 +79,14 @@ pub(crate) enum FileDialogKind {
     ImportStep,
     Export(kernel_ogeom::export::ExportFormat),
     RunScript,
+    /// Files to go with a chat's next prompt, by chat id.
+    Attach(String),
 }
 
 pub(crate) struct FileDialogResult {
     kind: FileDialogKind,
-    path: Option<PathBuf>,
+    /// What was picked: one path, or several for an attachment.
+    paths: Vec<PathBuf>,
 }
 
 impl PrintCadApp {
@@ -744,14 +747,15 @@ impl PrintCadApp {
         let Ok(result) = rx.try_recv() else {
             return;
         };
+        let path = result.paths.first().cloned();
         match result.kind {
             FileDialogKind::Open => {
-                if let Some(path) = result.path {
+                if let Some(path) = path {
                     self.request_document_open(path);
                 }
             }
             FileDialogKind::Save | FileDialogKind::SaveAs => {
-                if let Some(path) = result.path
+                if let Some(path) = path
                     && let Err(err) = self.save_document_at(&path)
                 {
                     app_log::error(format!("Failed to save document: {err}"));
@@ -760,7 +764,7 @@ impl PrintCadApp {
             FileDialogKind::ImportStep => {
                 // A mesh file has no shapes to mesh, so the meshing options
                 // the import dialog asks for mean nothing to it.
-                if let Some(path) = result.path {
+                if let Some(path) = path {
                     if kernel_ogeom::is_mesh_file(&path) {
                         self.import_step_at(&path, self.last_step_import_detail.clone());
                     } else {
@@ -770,15 +774,16 @@ impl PrintCadApp {
                 }
             }
             FileDialogKind::Export(_) => {
-                if let Some(path) = result.path {
+                if let Some(path) = path {
                     self.start_export(path);
                 }
             }
             FileDialogKind::RunScript => {
-                if let Some(path) = result.path {
+                if let Some(path) = path {
                     self.scripts_to_run.push(path);
                 }
             }
+            FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
         }
         self.file_dialog_rx = None;
     }
@@ -817,6 +822,7 @@ impl PrintCadApp {
                         None => dialog,
                     }
                 }
+                FileDialogKind::Attach(_) => rfd::FileDialog::new().set_title("Attach files"),
                 FileDialogKind::Export(format) => rfd::FileDialog::new()
                     .add_filter(format!("{} file", format.label()), &[format.extension()])
                     .set_file_name(format!("{stem}.{}", format.extension())),
@@ -829,22 +835,26 @@ impl PrintCadApp {
                 dialog = dialog.set_directory(recent_dir);
             }
 
-            let path = match kind {
-                FileDialogKind::Open => dialog.pick_file(),
-                FileDialogKind::ImportStep => dialog.pick_file(),
-                FileDialogKind::Save => {
-                    if let Some(existing) = current_path {
-                        Some(existing)
-                    } else {
-                        dialog.set_file_name("untitled.prtcad").save_file()
+            let paths = match kind {
+                FileDialogKind::Attach(_) => dialog.pick_files().unwrap_or_default(),
+                _ => Vec::from_iter(match kind {
+                    FileDialogKind::Open => dialog.pick_file(),
+                    FileDialogKind::ImportStep => dialog.pick_file(),
+                    FileDialogKind::Save => {
+                        if let Some(existing) = current_path {
+                            Some(existing)
+                        } else {
+                            dialog.set_file_name("untitled.prtcad").save_file()
+                        }
                     }
-                }
-                FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
-                FileDialogKind::Export(_) => dialog.save_file(),
-                FileDialogKind::RunScript => dialog.pick_file(),
+                    FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
+                    FileDialogKind::Export(_) => dialog.save_file(),
+                    FileDialogKind::RunScript => dialog.pick_file(),
+                    FileDialogKind::Attach(_) => None,
+                }),
             };
 
-            let _ = tx.send(FileDialogResult { kind, path });
+            let _ = tx.send(FileDialogResult { kind, paths });
         });
     }
 }

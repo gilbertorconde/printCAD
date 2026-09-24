@@ -338,7 +338,13 @@ session options (`acp::SessionOption`: `configOptions`, or the older
 and is put back if the agent refuses, an answer an agent-side update has
 overtaken is dropped, and the choice is kept per agent in
 `AgentSettings.choices`, put to each new chat in the agent's own order
-(`put_choices`). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
+(`put_choices`). A prompt's attachments (`acp::Attachment`, held on the
+`Chat` until sent) become content blocks in the chat thread
+(`prompt_blocks`, by the agent's `promptCapabilities`): pictures as
+images, small UTF-8 files embedded, the rest as `resource_link`s. They
+come from the "+" menu (`FileDialogKind::Attach`, `attach_view` over
+`view_png`), a paste of file paths, or a drop on the panel (winit delivers
+drops on X11 only). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
 
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the

@@ -218,6 +218,12 @@ impl PrintCadApp {
                     option,
                 } => self.answer_permission(&chat, entry, option),
                 UiCommand::SetChatAsk { chat, ask } => self.set_chat_asks(&chat, ask),
+                UiCommand::AttachFiles(chat) => {
+                    self.start_file_dialog(FileDialogKind::Attach(chat))
+                }
+                UiCommand::AttachPaths { chat, paths } => self.attach_files(&chat, paths),
+                UiCommand::AttachView(chat) => self.attach_view(&chat),
+                UiCommand::Detach { chat, index } => self.detach(&chat, index),
                 UiCommand::SetChatOption { chat, id, value } => {
                     self.set_chat_option(&chat, id, value)
                 }
