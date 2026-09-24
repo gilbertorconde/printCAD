@@ -115,7 +115,7 @@ impl PartDesignWorkbench {
         !part_features_of_body(ctx.document, body).is_empty()
     }
 
-    fn next_feature_name(ctx: &WorkbenchRuntimeContext, base: &str) -> String {
+    pub(crate) fn next_feature_name(ctx: &WorkbenchRuntimeContext, base: &str) -> String {
         let count = ctx
             .document
             .feature_tree()

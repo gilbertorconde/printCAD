@@ -87,3 +87,70 @@ fn a_script_draws_and_pads_a_block() {
     let top = result.mesh.bounds().expect("a solid").1[2];
     assert!((top - 5.0).abs() < 1e-3, "{top}");
 }
+
+#[test]
+fn a_script_sketches_on_a_datum_and_moves_it() {
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .unwrap();
+    let mut host = Benches {
+        registry,
+        document: Document::new("datum"),
+    };
+    let body = host.document.create_body(None);
+    let mut engine = ScriptEngine::new();
+    let out = engine.run_script(
+        &format!(
+            r#"
+            local d = pc.part.datum{{kind = "plane", body = "{}", offset = {{0, 0, 10}}}}
+            local s = pc.sketch.new{{on = d}}
+            local c = pc.sketch.circle{{sketch = s, x = 0, y = 0, radius = 5}}
+            pc.sketch.constrain{{sketch = s, kind = "radius", items = {{c}}, value = 4}}
+            pc.part.pad{{sketch = s, length = 3}}
+            datum = d
+            "#,
+            body.0
+        ),
+        "datum.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    let build = |doc: &Document| {
+        let ops = wb_part::body_build_ops(doc, body).unwrap().ops;
+        OgeomKernel::new()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap()
+            .mesh
+            .bounds()
+            .expect("a solid")
+    };
+    let (min, max) = build(&host.document);
+    assert!(
+        (min[2] - 10.0).abs() < 1e-3 && (max[2] - 13.0).abs() < 1e-3,
+        "{min:?} {max:?}"
+    );
+    assert!(
+        (max[0] - min[0] - 8.0).abs() < 1e-2,
+        "the radius constraint holds"
+    );
+
+    let out = engine.run_script(
+        "pc.part.set{feature = datum, offset = {translation = {0, 0, 20}, rotation_deg = 0, flip = false}}",
+        "move.lua",
+        &mut host,
+    );
+    assert_eq!(out.error, None);
+    // The datum moved; the sketch keeps the plane it was made on.
+    let d = host
+        .document
+        .feature_tree()
+        .all_nodes()
+        .find(|(_, n)| n.workbench_id.as_str() == "core.datum")
+        .map(|(_, n)| n.data.clone())
+        .unwrap();
+    assert_eq!(d["offset"]["translation"][2], serde_json::json!(20.0));
+}

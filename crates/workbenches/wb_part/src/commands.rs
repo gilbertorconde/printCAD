@@ -12,6 +12,8 @@ use core_document::{
 };
 use serde_json::{Map, Value, json};
 
+use core_document::{AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape};
+
 use crate::PartDesignWorkbench;
 use crate::feature::PartFeature;
 
@@ -80,10 +82,54 @@ pub fn register(context: &mut WorkbenchContext) {
         );
     }
     context.register_command(
-        CommandSpec::new("part.set", "Change fields of a Part Design feature")
-            .param("feature", ParamKind::Id, "The feature to change")
-            .extra_args("The fields to change, such as length = 25")
-            .returns("nothing"),
+        CommandSpec::new(
+            "part.set",
+            "Change fields of a Part Design feature or a datum",
+        )
+        .param("feature", ParamKind::Id, "The feature to change")
+        .extra_args("The fields to change, such as length = 25")
+        .returns("nothing"),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "part.datum",
+            "Add a datum plane, line, point or coordinate system",
+        )
+        .param(
+            "kind",
+            ParamKind::String,
+            "plane, line, point or coordinate_system",
+        )
+        .param("body", ParamKind::Id, "The body it belongs to")
+        .optional(
+            "plane",
+            ParamKind::String,
+            "The base plane it sits on: XY (the default), XZ or YZ",
+        )
+        .optional(
+            "face_point",
+            ParamKind::List,
+            "Or a flat face it sits on: a point of the face, {x, y, z}",
+        )
+        .optional(
+            "face_normal",
+            ParamKind::List,
+            "With face_point: the face's outward normal, {x, y, z}",
+        )
+        .optional(
+            "offset",
+            ParamKind::List,
+            "Moved along its own x, y and normal, {x, y, z} in mm",
+        )
+        .optional(
+            "rotation",
+            ParamKind::Number,
+            "Turned about its normal, degrees",
+        )
+        .optional("flip", ParamKind::Bool, "Turned to face the other way")
+        .optional("size", ParamKind::Number, "How large it draws, mm")
+        .optional("name", ParamKind::String, "Its name in the tree")
+        .returns("the datum's id"),
     );
 }
 
@@ -97,6 +143,9 @@ pub fn run(
     let a = Args(args);
     if id == "part.set" {
         return set(&a, args, ctx);
+    }
+    if id == "part.datum" {
+        return datum(&a, ctx);
     }
     if !FEATURES.iter().any(|(f, _)| *f == id) {
         return Err(CommandError::Unknown(id.to_string()));
@@ -147,20 +196,125 @@ pub fn run(
 
 fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let id = FeatureId(a.id("feature")?);
-    let not_ours = || CommandError::bad("feature", "is not a Part Design feature");
+    let not_ours = || CommandError::bad("feature", "is not a Part Design feature or a datum");
     let data = ctx.document.get_feature_data(id).ok_or_else(not_ours)?;
-    let mut feature = PartFeature::from_json(data).map_err(|_| not_ours())?;
     let fields: Map<String, Value> = args
         .iter()
         .filter(|(k, _)| k.as_str() != "feature")
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect();
-    apply_fields(&mut feature, &fields).map_err(CommandError::failed)?;
+    let data = if let Ok(mut feature) = PartFeature::from_json(data) {
+        apply_fields(&mut feature, &fields).map_err(CommandError::failed)?;
+        feature.to_json()
+    } else if let Ok(datum) = DatumFeature::from_json(data) {
+        let mut value = datum.to_json();
+        merge_fields("Datum", &mut value, &fields).map_err(CommandError::failed)?;
+        DatumFeature::from_json(&value)
+            .map_err(|e| CommandError::failed(format!("Datum: {e}")))?
+            .to_json()
+    } else {
+        return Err(not_ours());
+    };
     ctx.document
-        .update_feature_data(id, feature.to_json())
+        .update_feature_data(id, data)
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
+}
+
+fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let body = BodyId(a.id("body")?);
+    if !ctx.document.bodies().iter().any(|b| b.id == body) {
+        return Err(CommandError::bad("body", "is not a body of this document"));
+    }
+    let size = a.opt_number("size")?.map(|s| s as f32);
+    let shape = match a.string("kind")? {
+        "plane" => DatumShape::Plane {
+            size: size.unwrap_or(30.0),
+        },
+        "line" => DatumShape::Line {
+            length: size.unwrap_or(40.0),
+        },
+        "point" => DatumShape::Point,
+        "coordinate_system" => DatumShape::CoordinateSystem {
+            size: size.unwrap_or(20.0),
+        },
+        _ => {
+            return Err(CommandError::bad(
+                "kind",
+                "must be plane, line, point or coordinate_system",
+            ));
+        }
+    };
+    let attachment = if a.has("face_point") {
+        DatumAttachment::FlatFace {
+            point: vector3(a.0.get("face_point"), "face_point")?,
+            normal: vector3(a.0.get("face_normal"), "face_normal")?,
+        }
+    } else {
+        DatumAttachment::BasePlane(match a.opt_string("plane")?.unwrap_or("XY") {
+            p if p.eq_ignore_ascii_case("XY") => BasePlane::XY,
+            p if p.eq_ignore_ascii_case("XZ") => BasePlane::XZ,
+            p if p.eq_ignore_ascii_case("YZ") => BasePlane::YZ,
+            _ => return Err(CommandError::bad("plane", "must be XY, XZ or YZ")),
+        })
+    };
+    let offset = AttachmentOffset {
+        translation: match a.0.get("offset") {
+            Some(v) if !v.is_null() => vector3(Some(v), "offset")?,
+            _ => [0.0; 3],
+        },
+        rotation_deg: a.opt_number("rotation")?.unwrap_or(0.0) as f32,
+        flip: a.opt_bool("flip")?.unwrap_or(false),
+    };
+    let name = a
+        .opt_string("name")?
+        .map(str::to_string)
+        .unwrap_or_else(|| PartDesignWorkbench::next_feature_name(ctx, shape.label()));
+    let datum = DatumFeature {
+        shape,
+        attachment,
+        offset,
+    };
+    let id = ctx
+        .document
+        .add_feature_in_body(datum, name, Some(body))
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    Ok(json!(id.0.to_string()))
+}
+
+fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
+    let bad = || CommandError::bad(name, "must be {x, y, z}");
+    let v = match value {
+        Some(Value::Array(v)) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
+        Some(Value::Object(m)) => ["x", "y", "z"].map(|k| m.get(k).and_then(Value::as_f64)),
+        _ => return Err(bad()),
+    };
+    Ok([
+        v[0].ok_or_else(bad)? as f32,
+        v[1].ok_or_else(bad)? as f32,
+        v[2].ok_or_else(bad)? as f32,
+    ])
+}
+
+/// Replace the named fields of the JSON object `value`, refusing a name it
+/// does not have.
+fn merge_fields(kind: &str, value: &mut Value, fields: &Map<String, Value>) -> Result<(), String> {
+    let Value::Object(own) = value else {
+        return Err(format!("{kind} has no fields to set"));
+    };
+    for (name, field) in fields {
+        if !own.contains_key(name) {
+            let mut known: Vec<&str> = own.keys().map(String::as_str).collect();
+            known.sort_unstable();
+            return Err(format!(
+                "{kind} has no field `{name}`; it has {}",
+                known.join(", ")
+            ));
+        }
+        own.insert(name.clone(), field.clone());
+    }
+    Ok(())
 }
 
 /// Replace fields of `feature` with `fields`, refusing a name the feature

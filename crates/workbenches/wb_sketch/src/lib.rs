@@ -3291,7 +3291,7 @@ impl SketchWorkbench {
 /// be switched off.
 /// The dimensional constraint tool a selection takes, if any: a radius
 /// for one circle or arc, an angle for two lines, a distance otherwise.
-fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'static str> {
+pub(crate) fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'static str> {
     ["radius", "angle", "distance", "distance_x", "distance_y"]
         .into_iter()
         .find(|tool| constrain::fits(tool, shape))
