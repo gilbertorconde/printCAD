@@ -145,6 +145,14 @@ impl crate::Document {
             .map_err(|e| e.to_string())
     }
 
+    /// The configurations table, made empty when the document has none.
+    pub fn add_configurations_table(&mut self) -> Result<FeatureId, String> {
+        self.edit_configurations(|_| Ok(()))?;
+        self.configurations()
+            .map(|(id, _)| id)
+            .ok_or_else(|| "the table was not made".to_string())
+    }
+
     /// Add configuration `name`; its values start empty, or as `like`'s.
     pub fn add_configuration(&mut self, name: &str, like: Option<&str>) -> Result<(), String> {
         if !expr::is_valid_name(name) {

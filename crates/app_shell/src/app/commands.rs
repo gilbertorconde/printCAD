@@ -767,14 +767,6 @@ impl PrintCadApp {
         };
         let kind = node.workbench_id.clone();
         self.apply_tree_selection(item);
-        // A variable set, or the configurations, opens in the Variables
-        // panel.
-        if kind.as_str() == core_document::VARIABLES_KIND
-            || kind.as_str() == core_document::CONFIGURATIONS_KIND
-        {
-            self.variables_focus = Some(id);
-            return;
-        }
         // The bench that claimed the feature's kind edits it: it becomes
         // active and finds the feature as the active document object. A
         // kind no bench claims is only selected.
@@ -1111,7 +1103,7 @@ impl PrintCadApp {
             .expect("a free name");
         match doc.add_variable_set(&name) {
             Ok(id) => {
-                self.variables_focus = Some(id);
+                self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
                 self.record_calls(vec![core_document::Recorded {
                     id: "var.new".to_string(),
                     args: serde_json::json!({"name": name})
@@ -1144,6 +1136,17 @@ impl PrintCadApp {
         use crate::ui::ConfigEdit;
         let doc = &mut self.session.document;
         let (done, label) = match &edit {
+            ConfigEdit::NewTable => {
+                match doc.add_configurations_table() {
+                    Ok(id) => {
+                        self.session.journal.label_next("New configurations table");
+                        self.close_gesture();
+                        self.apply_tree_selection(crate::ui::TreeItemId::Feature(id));
+                    }
+                    Err(why) => crate::log_panel::warn(why),
+                }
+                return;
+            }
             ConfigEdit::New { name, like } => (
                 doc.add_configuration(name, like.as_deref()),
                 format!("Add {name}"),

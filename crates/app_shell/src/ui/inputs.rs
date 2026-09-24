@@ -122,8 +122,6 @@ pub struct UiFrameInputs<'a> {
     pub approvals: &'a [crate::app::mcp::Approval],
     /// An agent needs the user: the assistant panel opens.
     pub assistant_attention: bool,
-    /// Open the Variables panel on this set.
-    pub variables_focus: Option<core_document::FeatureId>,
 }
 
 /// A body's measure as the property panel shows it.

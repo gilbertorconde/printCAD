@@ -34,6 +34,9 @@ pub struct ComboViewResult {
     pub bench_command: Option<(core_document::WorkbenchId, String, core_document::MenuScope)>,
     /// The property panel changed a body's look.
     pub body_display: Option<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
+    /// Edits of variables and configurations, and what the tree's
+    /// document row made.
+    pub commands: Vec<super::UiCommand>,
     pub parameter: Option<(
         core_document::FeatureId,
         core_document::Parameter,
@@ -60,6 +63,8 @@ pub struct ComboViewInputs<'a> {
     pub physical: Option<&'a super::Physical>,
     /// The keys the tree's menus name.
     pub keymap: &'a super::keymap::Keymap,
+    /// The Data tab's variable and configuration editors.
+    pub variables: &'a mut super::variables_view::VariablesState,
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -77,6 +82,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         rename_buffer,
         physical,
         keymap,
+        variables,
     } = inputs;
     let mut result = ComboViewResult::default();
 
@@ -194,6 +200,14 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     result.repair = tree_ui.repair;
                     result.details = tree_ui.details;
                     result.convert = tree_ui.convert;
+                    if tree_ui.new_variable_set {
+                        result.commands.push(super::UiCommand::NewVariableSet);
+                    }
+                    if tree_ui.new_configurations {
+                        result
+                            .commands
+                            .push(super::UiCommand::Config(super::ConfigEdit::NewTable));
+                    }
                     // Hover wins; the selection stands in when the pointer
                     // is elsewhere, so the line never goes blank mid-glance.
                     selected_detail = tree_ui
@@ -213,7 +227,9 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                 },
                 property_tab,
                 rename_buffer,
+                variables,
             );
+            result.commands.extend(props.commands);
             if props.feature_command.is_some() {
                 result.tree_feature_command = props.feature_command;
             }

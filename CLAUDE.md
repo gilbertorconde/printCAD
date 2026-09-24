@@ -380,8 +380,9 @@ command. A value set by hand goes through
 FormulaField` over `core_document::DocumentFormulas` (the document's last
 values) in the property panel's Parameters group, Part Design's and the
 Assembly's task fields and the sketcher's dimensions (bound ones drawn in
-`SketchPalette::formula`), and the Variables panel (`ui/variables_view.rs`,
-a tab per set plus Configurations). Commands: `var.*`, `config.*`,
+`SketchPalette::formula`); a selected variable set or the configurations
+table shows its editor in the Data tab (`ui/variables_view.rs`), and the
+tree's document row makes them. Commands: `var.*`, `config.*`,
 `doc.parameters`, `doc.set_formula`, `doc.set_value`. `docs/VARIABLES.md`
 is the guide.
 

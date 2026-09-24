@@ -318,7 +318,6 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
                     | Preferences
                     | Console
                     | Assistant
-                    | Variables
                     | RunScript
                     | Record
                     | Delete
@@ -1076,6 +1075,7 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         result: Value::Null,
     };
     match command {
+        UiCommand::Config(crate::ui::ConfigEdit::NewTable) => None,
         UiCommand::Config(edit) => {
             let (id, args) = edit.command();
             Some(call(id, args))

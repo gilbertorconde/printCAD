@@ -60,6 +60,10 @@ pub struct TreeUiResult {
     /// A row's "!" was clicked: its label and the full message, to show
     /// where it can be read at length and copied.
     pub details: Option<(String, String)>,
+    /// The document row's menu asked for a new variable set.
+    pub new_variable_set: bool,
+    /// The document row's menu asked for the configurations table.
+    pub new_configurations: bool,
 }
 
 /// View model describing the current document tree.
@@ -866,6 +870,27 @@ fn draw_row(
     };
     let response = match node {
         Some(node) => attach_feature_menu(response, node, options, result),
+        None if spec.id == TreeItemId::DocumentRoot => {
+            response.context_menu(|ui| {
+                if ui
+                    .button("New variable set")
+                    .on_hover_text("Named values any number in the model can follow")
+                    .clicked()
+                {
+                    result.new_variable_set = true;
+                    ui.close();
+                }
+                if ui
+                    .button("New configurations table")
+                    .on_hover_text("Versions of the model, each giving variables values of its own")
+                    .clicked()
+                {
+                    result.new_configurations = true;
+                    ui.close();
+                }
+            });
+            response
+        }
         None => response,
     };
     handle_response(response, spec.id, result);

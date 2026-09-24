@@ -1,651 +1,582 @@
-//! The Variables panel at the bottom: one tab per variable set, and in
-//! it the set's variables with their formulas, what each comes to, and
-//! their comments.
+//! Variable sets and the configurations table in the property panel's
+//! Data tab, shown when one is selected in the tree.
 //!
-//! A cell edits on a click and keeps on Enter or a click away; Escape
-//! leaves it. The row at the end adds a variable. The panel reads the
-//! document and answers with commands.
+//! A set lists its variables, one row each with what it comes to; a click
+//! opens the row to edit its name, formula (with what it comes to as you
+//! type) and comment, and the rows at the end add one. The configurations
+//! list theirs with the one in effect marked; a click opens a
+//! configuration's values. Everything answers with commands.
 
-use core_document::{Document, FeatureId};
+use core_document::{Configuration, Configurations, Document, FeatureId, Variable};
 use egui::RichText;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Tab, small_secondary_button, tab_plus};
-use ui_kit::{mono, sans};
+use ui_kit::widgets::small_secondary_button;
+use ui_kit::{mono, sans, sans_medium};
 
-use super::UiCommand;
+use super::{ConfigEdit, UiCommand};
 
-/// Which cell of a row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Column {
-    Name,
-    Formula,
-    Comment,
-}
-
-/// The panel's own state.
+/// What the Data tab's variable and configuration editors hold between
+/// frames.
 #[derive(Debug, Default)]
 pub struct VariablesState {
-    pub open: bool,
-    /// The set on screen.
-    active: Option<FeatureId>,
-    /// The cell being edited: its set, variable, column and text.
-    editing: Option<(FeatureId, String, Column, String)>,
-    /// What the adding row holds.
+    /// The variable open for editing: its set and name, and the drafts.
+    open: Option<(FeatureId, String, Draft)>,
+    /// The configuration open for editing, by name, with its drafts.
+    open_configuration: Option<(String, ConfigDraft)>,
     new_name: String,
     new_formula: String,
-    /// The Configurations tab is on screen rather than a set.
-    configurations: bool,
-    /// The configuration cell being edited: its row, the column (`None`
-    /// for the row's name) and the text.
-    config_editing: Option<(String, Option<String>, String)>,
-    /// A new configuration's name, as typed.
     new_configuration: String,
 }
 
-impl VariablesState {
-    pub fn toggle(&mut self) {
-        self.open = !self.open;
-    }
-
-    /// Open on `set`.
-    pub fn show_set(&mut self, set: FeatureId) {
-        self.open = true;
-        self.active = Some(set);
-        self.configurations = false;
-    }
-
-    /// Open on the configurations.
-    pub fn show_configurations(&mut self) {
-        self.open = true;
-        self.configurations = true;
-    }
+/// An open variable's name, formula and comment, as typed.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct Draft {
+    name: String,
+    formula: String,
+    comment: String,
 }
 
-pub fn draw_variables(
-    ui: &mut egui::Ui,
-    state: &mut VariablesState,
-    document: &Document,
-    commands: &mut Vec<UiCommand>,
-) {
-    if !state.open {
-        return;
-    }
-    let sets = document.variable_sets();
-    if !state
-        .active
-        .is_some_and(|id| sets.iter().any(|(s, ..)| *s == id))
-    {
-        state.active = sets.first().map(|(id, ..)| *id);
-    }
-    egui::Panel::bottom("variables_panel")
-        .resizable(true)
-        .default_size(220.0)
-        .min_size(120.0)
-        .frame(
-            egui::Frame::new()
-                .fill(BG1)
-                .inner_margin(egui::Margin::symmetric(10, 6)),
-        )
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for (id, name, _) in &sets {
-                    let on = !state.configurations && state.active == Some(*id);
-                    let tab = Tab::new(name, on).show(ui);
-                    if tab.selected {
-                        state.active = Some(*id);
-                        state.configurations = false;
-                        state.editing = None;
-                    }
-                }
-                if Tab::new("Configurations", state.configurations)
-                    .show(ui)
-                    .selected
-                {
-                    state.configurations = true;
-                    state.config_editing = None;
-                }
-                if tab_plus(ui, TAB_BAR - 8.0)
-                    .on_hover_text("New variable set")
-                    .clicked()
-                {
-                    commands.push(UiCommand::NewVariableSet);
-                }
-                ui.add_space(SPACE_3);
-                active_selector(ui, document, commands);
-                ui.label(
-                    RichText::new(
-                        "Formulas read a variable as Set.name · units: mm, in, deg · \
-                         click a cell to edit",
-                    )
-                    .font(sans(FONT_XS))
-                    .color(TEXT3),
-                );
-            });
-            ui.separator();
-            if state.configurations {
-                draw_configurations(ui, state, document, commands);
-                return;
-            }
-            let Some((set, set_name, variables)) = sets
-                .iter()
-                .find(|(id, ..)| Some(*id) == state.active)
-                .cloned()
-            else {
-                ui.add_space(SPACE_3);
-                ui.label(
-                    RichText::new(
-                        "No variables yet. A variable set holds named values, such as a \
-                         printer's nozzle or a part's wall, that any number in the model \
-                         can follow.",
-                    )
-                    .font(sans(FONT_SM))
-                    .color(TEXT2),
-                );
-                if small_secondary_button(ui, "New variable set").clicked() {
-                    commands.push(UiCommand::NewVariableSet);
-                }
-                return;
-            };
-            let slots = document.evaluated_slots(set);
-            let unit = document.display_unit();
-            egui::ScrollArea::vertical()
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Grid::new(("variables", set))
-                        .num_columns(5)
-                        .spacing([SPACE_4, SPACE_1])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for title in ["Name", "Formula", "Value", "Comment", ""] {
-                                ui.label(RichText::new(title).font(sans(FONT_XS)).color(TEXT3));
-                            }
-                            ui.end_row();
-                            for v in &variables.variables {
-                                let result = slots
-                                    .iter()
-                                    .find(|s| s.key == v.name)
-                                    .map(|s| s.result.clone());
-                                cell(
-                                    ui,
-                                    state,
-                                    set,
-                                    &v.name,
-                                    Column::Name,
-                                    &v.name,
-                                    commands,
-                                    &v.formula,
-                                );
-                                cell(
-                                    ui,
-                                    state,
-                                    set,
-                                    &v.name,
-                                    Column::Formula,
-                                    &v.formula,
-                                    commands,
-                                    &v.formula,
-                                );
-                                match result {
-                                    Some(Ok(q)) => {
-                                        ui.label(
-                                            RichText::new(q.display(unit, 4))
-                                                .font(mono(FONT_SM))
-                                                .color(TEXT1),
-                                        )
-                                        .on_hover_text(
-                                            format!(
-                                                "{}.{}",
-                                                core_document::expr::quote_name(&set_name),
-                                                core_document::expr::quote_name(&v.name)
-                                            ),
-                                        );
-                                    }
-                                    Some(Err(why)) => {
-                                        ui.label(
-                                            RichText::new("error")
-                                                .font(sans(FONT_SM))
-                                                .color(DANGER),
-                                        )
-                                        .on_hover_text(why);
-                                    }
-                                    None => {
-                                        ui.label("");
-                                    }
-                                }
-                                cell(
-                                    ui,
-                                    state,
-                                    set,
-                                    &v.name,
-                                    Column::Comment,
-                                    &v.comment,
-                                    commands,
-                                    &v.formula,
-                                );
-                                if ui
-                                    .add(
-                                        egui::Button::new(RichText::new("×").font(sans(FONT_MD)))
-                                            .frame(false),
-                                    )
-                                    .on_hover_text("Remove this variable")
-                                    .clicked()
-                                {
-                                    commands.push(UiCommand::RemoveVariable {
-                                        set,
-                                        name: v.name.clone(),
-                                    });
-                                }
-                                ui.end_row();
-                            }
-                        });
-                    ui.add_space(SPACE_2);
-                    adding_row(ui, state, set, commands);
-                });
-        });
+/// An open configuration's name and a value per column, as typed.
+#[derive(Debug, Clone, Default, PartialEq)]
+struct ConfigDraft {
+    name: String,
+    values: Vec<String>,
 }
 
-/// One cell of a variable's row: its text, or its editor while it is the
-/// one being edited.
-#[allow(clippy::too_many_arguments)]
-fn cell(
-    ui: &mut egui::Ui,
-    state: &mut VariablesState,
-    set: FeatureId,
-    variable: &str,
-    column: Column,
-    text: &str,
-    commands: &mut Vec<UiCommand>,
-    formula: &str,
-) {
-    let font = if column == Column::Formula {
-        mono(FONT_SM)
-    } else {
-        sans(FONT_SM)
-    };
-    let editing_here = matches!(
-        &state.editing,
-        Some((s, v, c, _)) if *s == set && v == variable && *c == column
+/// A group's title bar, as the property panel draws its groups.
+fn group(ui: &mut egui::Ui, title: &str) {
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, BG0);
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        egui::Stroke::new(1.0, BORDER),
     );
-    if !editing_here {
-        let shown = if text.is_empty() && column == Column::Comment {
-            RichText::new("add a comment").font(font).color(TEXT3)
-        } else {
-            RichText::new(text)
-                .font(font)
-                .color(if column == Column::Comment {
-                    TEXT2
-                } else {
-                    TEXT1
-                })
-        };
-        if ui
-            .add(egui::Label::new(shown).sense(egui::Sense::click()))
-            .on_hover_cursor(egui::CursorIcon::Text)
-            .clicked()
-        {
-            state.editing = Some((set, variable.to_string(), column, text.to_string()));
-        }
-        return;
-    }
-    let Some((_, _, _, buffer)) = &mut state.editing else {
-        return;
-    };
-    let id = egui::Id::new(("variable_cell", set, variable, column as u8));
-    let resp = ui.add(
-        egui::TextEdit::singleline(buffer)
-            .id(id)
-            .font(font)
-            .desired_width(if column == Column::Formula {
-                220.0
-            } else {
-                140.0
-            }),
+    ui.painter().text(
+        egui::pos2(rect.left() + 8.0, rect.center().y),
+        egui::Align2::LEFT_CENTER,
+        title.to_uppercase(),
+        ui_kit::sans_semibold(FONT_XS),
+        TEXT3,
     );
-    if !resp.has_focus() && !resp.lost_focus() {
-        resp.request_focus();
-    }
-    if resp.lost_focus() {
-        let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        let typed = buffer.trim().to_string();
-        state.editing = None;
-        if escaped || typed == text {
-            return;
-        }
-        commands.push(match column {
-            Column::Name => UiCommand::RenameVariable {
-                set,
-                name: variable.to_string(),
-                to: typed,
-            },
-            Column::Formula => UiCommand::SetVariable {
-                set,
-                name: variable.to_string(),
-                formula: typed,
-                comment: None,
-            },
-            Column::Comment => UiCommand::SetVariable {
-                set,
-                name: variable.to_string(),
-                formula: formula.to_string(),
-                comment: Some(typed),
-            },
-        });
-    }
 }
 
-/// The row that adds a variable: its name and formula, then Enter or Add.
-fn adding_row(
-    ui: &mut egui::Ui,
-    state: &mut VariablesState,
-    set: FeatureId,
-    commands: &mut Vec<UiCommand>,
-) {
+/// A row with `left` and `right` across the width, clickable.
+fn row(ui: &mut egui::Ui, left: RichText, right: RichText, open: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), TREE_ROW),
+        egui::Sense::click(),
+    );
+    if open {
+        ui.painter().rect_filled(rect, 0.0, ACCENT_DIM);
+    } else if response.hovered() {
+        ui.painter().rect_filled(rect, 0.0, BG2);
+    }
+    ui.painter().hline(
+        rect.x_range(),
+        rect.bottom() - 0.5,
+        egui::Stroke::new(1.0, BG2),
+    );
+    let split = rect.left() + rect.width() * 0.45;
+    for (text, area) in [
+        (
+            left,
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left() + 12.0, rect.top()),
+                egui::pos2(split - 6.0, rect.bottom()),
+            ),
+        ),
+        (
+            right,
+            egui::Rect::from_min_max(
+                egui::pos2(split + 6.0, rect.top()),
+                egui::pos2(rect.right() - 8.0, rect.bottom()),
+            ),
+        ),
+    ] {
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(area)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        child.add(egui::Label::new(text).truncate().selectable(false));
+    }
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+/// A labelled field of an open row's editor; answers whether Enter was
+/// pressed in it.
+fn labelled_field(ui: &mut egui::Ui, label: &str, text: &mut String, font: egui::FontId) -> bool {
     ui.horizontal(|ui| {
-        ui.add(
-            egui::TextEdit::singleline(&mut state.new_name)
-                .hint_text("name")
-                .font(sans(FONT_SM))
-                .desired_width(120.0),
+        ui.add_sized(
+            [64.0, INPUT],
+            egui::Label::new(RichText::new(label).font(sans(FONT_SM)).color(TEXT2)),
         );
-        let formula = ui.add(
-            egui::TextEdit::singleline(&mut state.new_formula)
-                .hint_text("formula, such as 0.4 mm")
-                .font(mono(FONT_SM))
-                .desired_width(220.0),
+        let field = ui.add(
+            egui::TextEdit::singleline(text)
+                .font(font)
+                .desired_width(ui.available_width()),
         );
-        let ready = !state.new_name.trim().is_empty() && !state.new_formula.trim().is_empty();
-        let entered = formula.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        let add = ui
-            .add_enabled(
-                ready,
-                egui::Button::new(RichText::new("Add").font(sans(FONT_SM))),
-            )
-            .clicked();
-        if ready && (entered || add) {
-            commands.push(UiCommand::SetVariable {
-                set,
-                name: state.new_name.trim().to_string(),
-                formula: state.new_formula.trim().to_string(),
-                comment: None,
-            });
-            state.new_name.clear();
-            state.new_formula.clear();
-        }
+        field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+    })
+    .inner
+}
+
+/// What `formula` comes to in `document`, under a formula being typed.
+fn preview(ui: &mut egui::Ui, document: &Document, formula: &str) {
+    if formula.trim().is_empty() {
+        return;
+    }
+    let (line, color) = match document.evaluate_formula(formula, None) {
+        Ok(q) => (
+            format!("= {}", q.display(document.display_unit(), 4)),
+            TEXT3,
+        ),
+        Err(why) => (why, DANGER),
+    };
+    ui.horizontal(|ui| {
+        ui.add_space(68.0);
+        ui.add(egui::Label::new(RichText::new(line).font(sans(FONT_XS)).color(color)).wrap());
     });
 }
 
-/// Which configuration is in effect, to switch from any tab.
-fn active_selector(ui: &mut egui::Ui, document: &Document, commands: &mut Vec<UiCommand>) {
-    let Some((_, table)) = document.configurations() else {
+/// A note in the list's own margin.
+fn note(ui: &mut egui::Ui, text: &str) {
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        ui.add(egui::Label::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT3)).wrap());
+    });
+}
+
+/// The commands that apply `draft` to `variable` of `set`.
+fn variable_changes(set: FeatureId, variable: &Variable, draft: &Draft) -> Vec<UiCommand> {
+    let mut out = Vec::new();
+    let formula = draft.formula.trim();
+    let comment = draft.comment.trim();
+    if formula != variable.formula || comment != variable.comment {
+        out.push(UiCommand::SetVariable {
+            set,
+            name: variable.name.clone(),
+            formula: formula.to_string(),
+            comment: Some(comment.to_string()),
+        });
+    }
+    let name = draft.name.trim();
+    if !name.is_empty() && name != variable.name {
+        out.push(UiCommand::RenameVariable {
+            set,
+            name: variable.name.clone(),
+            to: name.to_string(),
+        });
+    }
+    out
+}
+
+/// The commands that apply `draft` to `configuration`.
+fn configuration_changes(
+    table: &Configurations,
+    configuration: &Configuration,
+    draft: &ConfigDraft,
+) -> Vec<UiCommand> {
+    let mut out = Vec::new();
+    for (i, (column, value)) in table.columns.iter().zip(&draft.values).enumerate() {
+        let before = configuration.values.get(i).map_or("", String::as_str);
+        if value.trim() != before {
+            out.push(UiCommand::Config(ConfigEdit::Set {
+                name: configuration.name.clone(),
+                variable: column.clone(),
+                value: value.trim().to_string(),
+            }));
+        }
+    }
+    let name = draft.name.trim();
+    if !name.is_empty() && name != configuration.name {
+        out.push(UiCommand::Config(ConfigEdit::Rename {
+            name: configuration.name.clone(),
+            to: name.to_string(),
+        }));
+    }
+    out
+}
+
+/// A variable set's variables, editable.
+pub fn variable_set_section(
+    ui: &mut egui::Ui,
+    state: &mut VariablesState,
+    document: &Document,
+    set: FeatureId,
+    commands: &mut Vec<UiCommand>,
+) {
+    let Some((_, set_name, variables)) = document
+        .variable_sets()
+        .into_iter()
+        .find(|(id, ..)| *id == set)
+    else {
         return;
     };
-    if table.rows.is_empty() {
-        return;
+    let slots = document.evaluated_slots(set);
+    let unit = document.display_unit();
+    group(ui, "Variables");
+    if variables.variables.is_empty() {
+        ui.add_space(SPACE_1);
+        note(
+            ui,
+            &format!(
+                "None yet. Formulas read a variable here as {}.name.",
+                core_document::expr::quote_name(&set_name)
+            ),
+        );
     }
-    let shown = table.active.clone().unwrap_or_else(|| "None".to_string());
-    egui::ComboBox::from_id_salt("active_configuration")
-        .selected_text(RichText::new(format!("Configuration: {shown}")).font(sans(FONT_SM)))
-        .show_ui(ui, |ui| {
-            if ui
-                .selectable_label(table.active.is_none(), "None")
-                .clicked()
-            {
-                commands.push(UiCommand::Config(super::ConfigEdit::Activate(None)));
-            }
-            for row in &table.rows {
-                let on = table.active.as_deref() == Some(row.name.as_str());
-                if ui.selectable_label(on, &row.name).clicked() && !on {
-                    commands.push(UiCommand::Config(super::ConfigEdit::Activate(Some(
-                        row.name.clone(),
-                    ))));
-                }
+    for v in &variables.variables {
+        let result = slots.iter().find(|s| s.key == v.name).map(|s| &s.result);
+        let value = match result {
+            Some(Ok(q)) => RichText::new(q.display(unit, 4))
+                .font(mono(FONT_SM))
+                .color(TEXT1),
+            Some(Err(_)) => RichText::new("error").font(sans(FONT_SM)).color(DANGER),
+            None => RichText::new(""),
+        };
+        let is_open = matches!(&state.open, Some((s, n, _)) if *s == set && *n == v.name);
+        let response = row(
+            ui,
+            RichText::new(&v.name).font(sans(FONT_SM)).color(TEXT1),
+            value,
+            is_open,
+        );
+        let hover = match result {
+            Some(Err(why)) => format!("{}\n{why}", v.formula),
+            _ if v.comment.is_empty() => v.formula.clone(),
+            _ => format!("{}\n{}", v.formula, v.comment),
+        };
+        if response.on_hover_text(hover).clicked() {
+            state.open = (!is_open).then(|| {
+                (
+                    set,
+                    v.name.clone(),
+                    Draft {
+                        name: v.name.clone(),
+                        formula: v.formula.clone(),
+                        comment: v.comment.clone(),
+                    },
+                )
+            });
+        }
+        if is_open {
+            variable_editor(ui, state, document, set, v, commands);
+        }
+    }
+
+    ui.add_space(SPACE_2);
+    group(ui, "Add a variable");
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            let mut entered = labelled_field(ui, "Name", &mut state.new_name, sans(FONT_SM));
+            entered |= labelled_field(ui, "Formula", &mut state.new_formula, mono(FONT_SM));
+            preview(ui, document, &state.new_formula);
+            let ready = !state.new_name.trim().is_empty() && !state.new_formula.trim().is_empty();
+            let add = ui
+                .add_enabled_ui(ready, |ui| small_secondary_button(ui, "Add"))
+                .inner
+                .clicked();
+            if ready && (add || entered) {
+                commands.push(UiCommand::SetVariable {
+                    set,
+                    name: state.new_name.trim().to_string(),
+                    formula: state.new_formula.trim().to_string(),
+                    comment: None,
+                });
+                state.new_name.clear();
+                state.new_formula.clear();
             }
         });
 }
 
-/// The configurations: a row per configuration, a column per variable it
-/// sets, the one in effect marked.
-fn draw_configurations(
+/// An open variable: its name, formula and comment, kept by Apply or
+/// Enter; Remove takes it away.
+fn variable_editor(
+    ui: &mut egui::Ui,
+    state: &mut VariablesState,
+    document: &Document,
+    set: FeatureId,
+    variable: &Variable,
+    commands: &mut Vec<UiCommand>,
+) {
+    let Some((_, _, draft)) = &mut state.open else {
+        return;
+    };
+    let mut apply = false;
+    let mut close = false;
+    egui::Frame::new()
+        .fill(BG2)
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            apply |= labelled_field(ui, "Name", &mut draft.name, sans(FONT_SM));
+            apply |= labelled_field(ui, "Formula", &mut draft.formula, mono(FONT_SM));
+            preview(ui, document, &draft.formula);
+            apply |= labelled_field(ui, "Comment", &mut draft.comment, sans(FONT_SM));
+            ui.horizontal(|ui| {
+                if small_secondary_button(ui, "Apply").clicked() {
+                    apply = true;
+                }
+                if small_secondary_button(ui, "Remove")
+                    .on_hover_text("Formulas that read it report it missing")
+                    .clicked()
+                {
+                    commands.push(UiCommand::RemoveVariable {
+                        set,
+                        name: variable.name.clone(),
+                    });
+                    close = true;
+                }
+            });
+        });
+    if apply {
+        commands.extend(variable_changes(set, variable, draft));
+        close = true;
+    }
+    if close {
+        state.open = None;
+    }
+}
+
+/// The configurations: which is in effect, the variables they set, and
+/// each one's values.
+pub fn configurations_section(
     ui: &mut egui::Ui,
     state: &mut VariablesState,
     document: &Document,
     commands: &mut Vec<UiCommand>,
 ) {
-    use super::ConfigEdit;
     let table = document
         .configurations()
         .map(|(_, t)| t)
         .unwrap_or_default();
+    // A variable's own formula, shown where a configuration leaves it.
     let own = |column: &str| -> String {
-        let Ok(refs) = core_document::expr::references(column) else {
-            return String::new();
-        };
-        let Some(r) = refs.first() else {
-            return String::new();
-        };
-        document
-            .variable_sets()
-            .into_iter()
-            .find(|(_, name, _)| *name == r.object)
-            .and_then(|(_, _, set)| set.variable(&r.property).map(|v| v.formula.clone()))
+        core_document::expr::references(column)
+            .ok()
+            .and_then(|refs| refs.into_iter().next())
+            .and_then(|r| {
+                document
+                    .variable_sets()
+                    .into_iter()
+                    .find(|(_, name, _)| *name == r.object)
+                    .and_then(|(_, _, set)| set.variable(&r.property).map(|v| v.formula.clone()))
+            })
             .unwrap_or_default()
     };
-    if table.rows.is_empty() && table.columns.is_empty() {
-        ui.label(
-            RichText::new(
-                "Configurations are versions of the model, a small and a large one, each \
-                 giving some variables values of its own. Add a configuration, then the \
-                 variables it sets.",
-            )
-            .font(sans(FONT_SM))
-            .color(TEXT2),
-        );
-        ui.add_space(SPACE_2);
-    }
-    egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            egui::Grid::new("configurations")
-                .spacing([SPACE_4, SPACE_1])
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("");
-                    ui.label(
-                        RichText::new("Configuration")
-                            .font(sans(FONT_XS))
-                            .color(TEXT3),
-                    );
-                    for column in &table.columns {
-                        ui.horizontal(|ui| {
-                            ui.label(RichText::new(column).font(mono(FONT_XS)).color(TEXT2));
-                            if ui
-                                .add(
-                                    egui::Button::new(RichText::new("×").font(sans(FONT_SM)))
-                                        .frame(false),
-                                )
-                                .on_hover_text("Stop configuring this variable")
-                                .clicked()
-                            {
-                                commands.push(UiCommand::Config(ConfigEdit::RemoveVariable(
-                                    column.clone(),
-                                )));
-                            }
-                        });
-                    }
-                    ui.menu_button(RichText::new("+ variable").font(sans(FONT_XS)), |ui| {
-                        let mut any = false;
-                        for (_, set_name, set) in document.variable_sets() {
-                            for v in &set.variables {
-                                let reference = format!(
-                                    "{}.{}",
-                                    core_document::expr::quote_name(&set_name),
-                                    core_document::expr::quote_name(&v.name)
-                                );
-                                if table.columns.contains(&reference) {
-                                    continue;
-                                }
-                                any = true;
-                                if ui
-                                    .button(RichText::new(&reference).font(mono(FONT_SM)))
-                                    .clicked()
-                                {
-                                    commands.push(UiCommand::Config(ConfigEdit::AddVariable(
-                                        reference,
-                                    )));
-                                    ui.close();
-                                }
-                            }
-                        }
-                        if !any {
-                            ui.label(
-                                RichText::new("No variables left: add some in a variable set")
-                                    .font(sans(FONT_SM))
-                                    .color(TEXT3),
-                            );
-                        }
-                    });
-                    ui.end_row();
 
-                    for row in &table.rows {
-                        let active = table.active.as_deref() == Some(row.name.as_str());
-                        if ui
-                            .radio(active, "")
-                            .on_hover_text("Put this configuration in effect")
-                            .clicked()
-                        {
-                            commands.push(UiCommand::Config(ConfigEdit::Activate(
-                                (!active).then(|| row.name.clone()),
-                            )));
-                        }
-                        config_cell(ui, state, &row.name, None, &row.name, "", commands);
-                        for (i, column) in table.columns.iter().enumerate() {
-                            let value = row.values.get(i).cloned().unwrap_or_default();
-                            config_cell(
-                                ui,
-                                state,
-                                &row.name,
-                                Some(column),
-                                &value,
-                                &own(column),
-                                commands,
-                            );
-                        }
-                        if ui
-                            .add(
-                                egui::Button::new(RichText::new("×").font(sans(FONT_MD)))
-                                    .frame(false),
-                            )
-                            .on_hover_text("Remove this configuration")
-                            .clicked()
-                        {
-                            commands.push(UiCommand::Config(ConfigEdit::Remove(row.name.clone())));
-                        }
-                        ui.end_row();
+    group(ui, "In effect");
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        let shown = table.active.clone().unwrap_or_else(|| "None".to_string());
+        egui::ComboBox::from_id_salt("active_configuration")
+            .selected_text(RichText::new(shown).font(sans(FONT_SM)))
+            .width((ui.available_width() - 12.0).max(80.0))
+            .show_ui(ui, |ui| {
+                if ui
+                    .selectable_label(table.active.is_none(), "None")
+                    .clicked()
+                {
+                    commands.push(UiCommand::Config(ConfigEdit::Activate(None)));
+                }
+                for r in &table.rows {
+                    let on = table.active.as_deref() == Some(r.name.as_str());
+                    if ui.selectable_label(on, &r.name).clicked() && !on {
+                        commands.push(UiCommand::Config(ConfigEdit::Activate(Some(
+                            r.name.clone(),
+                        ))));
                     }
-                });
-            ui.add_space(SPACE_2);
-            ui.horizontal(|ui| {
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut state.new_configuration)
-                        .hint_text("new configuration, such as Large")
-                        .font(sans(FONT_SM))
-                        .desired_width(200.0),
-                );
-                let name = state.new_configuration.trim().to_string();
-                let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let add = ui
-                    .add_enabled(
-                        !name.is_empty(),
-                        egui::Button::new(RichText::new("Add").font(sans(FONT_SM))),
-                    )
-                    .clicked();
-                if !name.is_empty() && (entered || add) {
-                    commands.push(UiCommand::Config(ConfigEdit::New {
-                        like: table.active.clone(),
-                        name,
-                    }));
-                    state.new_configuration.clear();
                 }
             });
+    });
+
+    group(ui, "Variables they set");
+    if table.columns.is_empty() {
+        note(ui, "None yet: add the variables the configurations change.");
+    }
+    for column in &table.columns {
+        let response = row(
+            ui,
+            RichText::new(column).font(mono(FONT_SM)).color(TEXT1),
+            RichText::new(own(column)).font(mono(FONT_XS)).color(TEXT3),
+            false,
+        )
+        .on_hover_text("Its own formula, used where a configuration leaves it empty. Right-click to stop configuring it.");
+        response.context_menu(|ui| {
+            if ui.button("Stop configuring it").clicked() {
+                commands.push(UiCommand::Config(ConfigEdit::RemoveVariable(
+                    column.clone(),
+                )));
+                ui.close();
+            }
+        });
+    }
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        ui.menu_button(RichText::new("+ Variable").font(sans(FONT_SM)), |ui| {
+            let mut any = false;
+            for (_, set_name, set) in document.variable_sets() {
+                for v in &set.variables {
+                    let reference = format!(
+                        "{}.{}",
+                        core_document::expr::quote_name(&set_name),
+                        core_document::expr::quote_name(&v.name)
+                    );
+                    if table.columns.contains(&reference) {
+                        continue;
+                    }
+                    any = true;
+                    if ui
+                        .button(RichText::new(&reference).font(mono(FONT_SM)))
+                        .clicked()
+                    {
+                        commands.push(UiCommand::Config(ConfigEdit::AddVariable(reference)));
+                        ui.close();
+                    }
+                }
+            }
+            if !any {
+                ui.label(
+                    RichText::new("Every variable is set here, or there are none yet")
+                        .font(sans(FONT_SM))
+                        .color(TEXT3),
+                );
+            }
+        });
+    });
+
+    group(ui, "Configurations");
+    if table.rows.is_empty() {
+        note(
+            ui,
+            "None yet: a configuration is a version of the model, a small or a large one.",
+        );
+    }
+    for r in &table.rows {
+        let active = table.active.as_deref() == Some(r.name.as_str());
+        let is_open = matches!(&state.open_configuration, Some((n, _)) if *n == r.name);
+        let response = row(
+            ui,
+            RichText::new(&r.name)
+                .font(if active {
+                    sans_medium(FONT_SM)
+                } else {
+                    sans(FONT_SM)
+                })
+                .color(TEXT1),
+            RichText::new(if active { "in effect" } else { "" })
+                .font(sans(FONT_XS))
+                .color(SUCCESS),
+            is_open,
+        );
+        if response.clicked() {
+            state.open_configuration = (!is_open).then(|| {
+                (
+                    r.name.clone(),
+                    ConfigDraft {
+                        name: r.name.clone(),
+                        values: (0..table.columns.len())
+                            .map(|i| r.values.get(i).cloned().unwrap_or_default())
+                            .collect(),
+                    },
+                )
+            });
+        }
+        if is_open {
+            configuration_editor(ui, state, document, &table, r, active, &own, commands);
+        }
+    }
+
+    ui.add_space(SPACE_2);
+    group(ui, "Add a configuration");
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            let entered = labelled_field(ui, "Name", &mut state.new_configuration, sans(FONT_SM));
+            let name = state.new_configuration.trim().to_string();
+            let add = ui
+                .add_enabled_ui(!name.is_empty(), |ui| small_secondary_button(ui, "Add"))
+                .inner
+                .clicked();
+            if !name.is_empty() && (entered || add) {
+                commands.push(UiCommand::Config(ConfigEdit::New {
+                    like: table.active.clone(),
+                    name,
+                }));
+                state.new_configuration.clear();
+            }
+            if table.active.is_some() {
+                ui.label(
+                    RichText::new("It starts with the values of the one in effect.")
+                        .font(sans(FONT_XS))
+                        .color(TEXT3),
+                );
+            }
         });
 }
 
-/// One cell of the table: a row's name (`column` is `None`) or its value
-/// for a variable, empty showing the variable's own formula, dimmed.
-fn config_cell(
+/// An open configuration: its name and a value per variable it sets,
+/// kept by Apply or Enter; it can be put in effect or removed.
+#[allow(clippy::too_many_arguments)]
+fn configuration_editor(
     ui: &mut egui::Ui,
     state: &mut VariablesState,
-    row: &str,
-    column: Option<&str>,
-    text: &str,
-    own: &str,
+    document: &Document,
+    table: &Configurations,
+    configuration: &Configuration,
+    active: bool,
+    own: &dyn Fn(&str) -> String,
     commands: &mut Vec<UiCommand>,
 ) {
-    use super::ConfigEdit;
-    let here = matches!(
-        &state.config_editing,
-        Some((r, c, _)) if r == row && c.as_deref() == column
-    );
-    let font = if column.is_some() {
-        mono(FONT_SM)
-    } else {
-        sans(FONT_SM)
-    };
-    if !here {
-        let shown = if text.is_empty() {
-            RichText::new(own).font(font).color(TEXT3)
-        } else {
-            RichText::new(text).font(font).color(TEXT1)
-        };
-        let response = ui
-            .add(egui::Label::new(shown).sense(egui::Sense::click()))
-            .on_hover_cursor(egui::CursorIcon::Text);
-        let response = if text.is_empty() && column.is_some() {
-            response
-                .on_hover_text("The variable's own formula: click to give this configuration one")
-        } else {
-            response
-        };
-        if response.clicked() {
-            state.config_editing = Some((
-                row.to_string(),
-                column.map(str::to_string),
-                text.to_string(),
-            ));
-        }
-        return;
-    }
-    let Some((_, _, buffer)) = &mut state.config_editing else {
+    let Some((_, draft)) = &mut state.open_configuration else {
         return;
     };
-    let resp = ui.add(
-        egui::TextEdit::singleline(buffer)
-            .id(egui::Id::new(("configuration_cell", row, column)))
-            .font(font)
-            .desired_width(140.0),
-    );
-    if !resp.has_focus() && !resp.lost_focus() {
-        resp.request_focus();
+    let mut apply = false;
+    let mut close = false;
+    egui::Frame::new()
+        .fill(BG2)
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            apply |= labelled_field(ui, "Name", &mut draft.name, sans(FONT_SM));
+            for (column, value) in table.columns.iter().zip(draft.values.iter_mut()) {
+                ui.label(RichText::new(column).font(mono(FONT_XS)).color(TEXT2));
+                let field = ui.add(
+                    egui::TextEdit::singleline(value)
+                        .hint_text(RichText::new(own(column)).color(TEXT3))
+                        .font(mono(FONT_SM))
+                        .desired_width(ui.available_width()),
+                );
+                apply |= field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                preview(ui, document, value);
+            }
+            ui.horizontal(|ui| {
+                if small_secondary_button(ui, "Apply").clicked() {
+                    apply = true;
+                }
+                if !active && small_secondary_button(ui, "Put in effect").clicked() {
+                    commands.push(UiCommand::Config(ConfigEdit::Activate(Some(
+                        configuration.name.clone(),
+                    ))));
+                }
+                if small_secondary_button(ui, "Remove").clicked() {
+                    commands.push(UiCommand::Config(ConfigEdit::Remove(
+                        configuration.name.clone(),
+                    )));
+                    close = true;
+                }
+            });
+        });
+    if apply {
+        commands.extend(configuration_changes(table, configuration, draft));
+        close = true;
     }
-    if resp.lost_focus() {
-        let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
-        let typed = buffer.trim().to_string();
-        state.config_editing = None;
-        if escaped || typed == text {
-            return;
-        }
-        commands.push(UiCommand::Config(match column {
-            None => ConfigEdit::Rename {
-                name: row.to_string(),
-                to: typed,
-            },
-            Some(variable) => ConfigEdit::Set {
-                name: row.to_string(),
-                variable: variable.to_string(),
-                value: typed,
-            },
-        }));
+    if close {
+        state.open_configuration = None;
     }
 }
 
@@ -654,49 +585,92 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_formula_cell_edits_and_enter_sets_the_variable() {
-        let mut doc = Document::new("t");
-        let set = doc.add_variable_set("Printer").unwrap();
-        doc.set_variable(set, "nozzle", "0.4 mm", None).unwrap();
-        let mut state = VariablesState {
-            open: true,
-            ..Default::default()
+    fn an_open_variable_applies_only_what_changed() {
+        let set = FeatureId::new();
+        let v = Variable {
+            name: "nozzle".into(),
+            formula: "0.4 mm".into(),
+            comment: String::new(),
         };
-        state.editing = Some((set, "nozzle".into(), Column::Formula, "0.6 mm".into()));
-        let ctx = egui::Context::default();
-        ui_kit::apply_theme(&ctx);
-        let mut commands = Vec::new();
-        for events in [
-            Vec::new(),
-            vec![egui::Event::Key {
-                key: egui::Key::Enter,
-                physical_key: None,
-                pressed: true,
-                repeat: false,
-                modifiers: egui::Modifiers::NONE,
-            }],
-        ] {
-            let raw = egui::RawInput {
-                screen_rect: Some(egui::Rect::from_min_size(
-                    egui::Pos2::ZERO,
-                    egui::vec2(1000.0, 700.0),
-                )),
-                events,
-                ..Default::default()
-            };
-            let mut output = ctx.run_ui(raw, |ui| {
-                draw_variables(ui, &mut state, &doc, &mut commands)
-            });
-            output.textures_delta.clear();
-        }
+        let same = Draft {
+            name: "nozzle".into(),
+            formula: " 0.4 mm ".into(),
+            comment: String::new(),
+        };
+        assert!(variable_changes(set, &v, &same).is_empty());
+        let both = Draft {
+            name: "bore".into(),
+            formula: "0.6 mm".into(),
+            comment: "wider".into(),
+        };
+        let changes = variable_changes(set, &v, &both);
         assert!(
             matches!(
-                commands.as_slice(),
-                [UiCommand::SetVariable { name, formula, comment: None, .. }]
-                    if name == "nozzle" && formula == "0.6 mm"
+                changes.as_slice(),
+                [
+                    UiCommand::SetVariable { name, formula, comment: Some(c), .. },
+                    UiCommand::RenameVariable { to, .. },
+                ] if name == "nozzle" && formula == "0.6 mm" && c == "wider" && to == "bore"
             ),
-            "{commands:?}"
+            "the formula under its old name, then the rename: {changes:?}"
         );
-        assert!(state.editing.is_none());
+    }
+
+    #[test]
+    fn an_open_configuration_applies_its_changed_values_and_name() {
+        let table = Configurations {
+            columns: vec!["Size.width".into(), "Size.height".into()],
+            rows: vec![Configuration {
+                name: "S".into(),
+                values: vec!["30 mm".into()],
+            }],
+            active: None,
+        };
+        let draft = ConfigDraft {
+            name: "Small".into(),
+            values: vec!["30 mm".into(), "5 mm".into()],
+        };
+        let changes = configuration_changes(&table, &table.rows[0], &draft);
+        assert!(
+            matches!(
+                changes.as_slice(),
+                [
+                    UiCommand::Config(ConfigEdit::Set { variable, value, .. }),
+                    UiCommand::Config(ConfigEdit::Rename { to, .. }),
+                ] if variable == "Size.height" && value == "5 mm" && to == "Small"
+            ),
+            "{changes:?}"
+        );
+    }
+
+    #[test]
+    fn both_sections_draw_in_a_narrow_column() {
+        let mut doc = Document::new("t");
+        let set = doc.add_variable_set("Printer").unwrap();
+        doc.set_variable(set, "nozzle", "0.4 mm", Some("the nozzle"))
+            .unwrap();
+        doc.add_configuration("Small", None).unwrap();
+        doc.add_configuration_column("Printer.nozzle").unwrap();
+        let mut state = VariablesState {
+            open: Some((set, "nozzle".into(), Draft::default())),
+            open_configuration: Some(("Small".into(), ConfigDraft::default())),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        let raw = egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(260.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        let mut commands = Vec::new();
+        let mut output = ctx.run_ui(raw, |ui| {
+            variable_set_section(ui, &mut state, &doc, set, &mut commands);
+            configurations_section(ui, &mut state, &doc, &mut commands);
+        });
+        output.textures_delta.clear();
+        assert!(commands.is_empty());
     }
 }

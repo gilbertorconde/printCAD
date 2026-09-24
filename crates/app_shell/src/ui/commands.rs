@@ -273,6 +273,8 @@ pub enum UiCommand {
 /// An edit of the configurations table.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfigEdit {
+    /// Make the configurations table, empty.
+    NewTable,
     New {
         name: String,
         like: Option<String>,
@@ -297,6 +299,7 @@ impl ConfigEdit {
     pub fn command(&self) -> (&'static str, serde_json::Value) {
         use serde_json::json;
         match self {
+            ConfigEdit::NewTable => ("config.list", json!({})),
             ConfigEdit::New { name, like } => ("config.new", json!({"name": name, "like": like})),
             ConfigEdit::Remove(name) => ("config.remove", json!({"name": name})),
             ConfigEdit::Rename { name, to } => ("config.rename", json!({"name": name, "to": to})),

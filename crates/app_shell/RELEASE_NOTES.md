@@ -55,7 +55,7 @@ version first.
 - A script run is one undo step. See docs/SCRIPTING.md.
 
 ### Variables and formulas
-- Variable sets hold named values defined by formulas (`wall = 3 * Printer.nozzle`), edited in the Variables panel (Windows › Variables).
+- Variable sets hold named values defined by formulas (`wall = 3 * Printer.nozzle`), made from the tree's document row and edited in the property panel when selected.
 - Any number can be a formula: a pad's length, a hole's diameter, a sketch dimension, a joint's gap, a datum's offset, in the property panel, the task panels or the sketch's dimension editor.
 - Units are checked (a length field refuses an angle) and typed values take units (`1 in`); names complete as you type.
 - Formulas read other objects' numbers (`Pad.length`, a named sketch dimension); renaming anything rewrites the formulas that use it.

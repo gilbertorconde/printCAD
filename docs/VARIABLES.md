@@ -19,11 +19,12 @@ formula:
 A document can have as many sets as it needs (`Printer`, `Bracket`,
 `Fasteners`). Formulas read a variable as `Set.name`.
 
-Windows › Variables opens the Variables panel: one tab per set, a row per
-variable with its formula, what it comes to, and a comment. Click a cell
-to edit it; the row at the end adds a variable, and the tab strip's "+"
-makes a new set. Sets also appear in the model tree, where a double click
-opens them in the panel.
+Right-click the document's row in the model tree and pick "New variable
+set". Sets are rows of the tree; select one and the property panel's Data
+tab lists its variables with what each comes to. Click a variable to edit
+its name, formula (it shows what the formula comes to as you type) and
+comment, or remove it; "Add a variable" at the end adds one. The set's
+Label row renames it.
 
 ## Setting a number by a formula
 
@@ -70,12 +71,14 @@ as is a name that is missing or that two objects share.
 ## Configurations
 
 Configurations are versions of a model: a small, a medium and a large
-bracket, each giving some variables values of its own. In the Variables
-panel's Configurations tab, add the configurations, then with "+ variable"
-the variables they set: each row then gives each variable a formula, or
-leaves it empty to keep the variable's own. The radio button, or the
-selector at the top of the panel, puts one in effect; everything that
-follows those variables rebuilds.
+bracket, each giving some variables values of its own. Right-click the
+document's row in the tree and pick "New configurations table", then
+select the table: its Data tab has the one in effect at the top, the
+variables the configurations set ("+ Variable" adds one), and the
+configurations themselves ("Add a configuration"). Click a configuration
+to give each variable a formula, or leave it empty to keep the variable's
+own; "Put in effect", or the selector at the top, switches to it, and
+everything that follows those variables rebuilds.
 
 A row's value takes the place of the variable's formula, so it cannot
 read that same variable (that would be a loop).

@@ -251,7 +251,6 @@ impl UiLayer {
             chats,
             approvals,
             assistant_attention,
-            variables_focus,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -298,16 +297,7 @@ impl UiLayer {
         if assistant_attention {
             self.assistant.open = true;
         }
-        if let Some(focus) = variables_focus {
-            let configurations = document
-                .get_feature_meta(focus)
-                .is_some_and(|n| n.workbench_id.as_str() == core_document::CONFIGURATIONS_KIND);
-            if configurations {
-                self.variables.show_configurations();
-            } else {
-                self.variables.show_set(focus);
-            }
-        }
+
         // The workbenches hear of their keys at the start and after every
         // change, not every frame.
         let workbench_keys = keymap.workbench_keys();
@@ -344,7 +334,6 @@ impl UiLayer {
                                 keymap::HostOutcome::OpenPalette => self.palette.open(),
                                 keymap::HostOutcome::ToggleConsole => self.console.toggle(),
                                 keymap::HostOutcome::ToggleAssistant => self.assistant.toggle(),
-                                keymap::HostOutcome::ToggleVariables => self.variables.toggle(),
                                 keymap::HostOutcome::OpenPreferences => {
                                     let (group, tab) =
                                         (self.preferences.group, self.preferences.tab);
@@ -381,7 +370,6 @@ impl UiLayer {
                     show_log_panel: settings.rendering.show_log_panel,
                     show_console: self.console.open,
                     show_assistant: self.assistant.open,
-                    show_variables: self.variables.open,
                     projection,
                     draw_style: settings.rendering.draw_style,
                     recent,
@@ -406,9 +394,7 @@ impl UiLayer {
             if menu.toggle_assistant {
                 self.assistant.toggle();
             }
-            if menu.toggle_variables {
-                self.variables.toggle();
-            }
+
             if menu.show_about {
                 self.preferences
                     .open_at(settings, unit, preferences::PrefGroup::General, 1);
@@ -573,7 +559,6 @@ impl UiLayer {
                 script_running,
                 &mut commands,
             );
-            variables_view::draw_variables(ui, &mut self.variables, document, &mut commands);
 
             let combo = combo_view::draw_combo_view(
                 ui,
@@ -589,6 +574,7 @@ impl UiLayer {
                     filter: &mut self.tree_filter,
                     property_tab: &mut self.property_tab,
                     rename_buffer: &mut self.rename_buffer,
+                    variables: &mut self.variables,
                     physical: physical.as_ref(),
                     keymap: &keymap,
                 },
@@ -625,6 +611,7 @@ impl UiLayer {
             if let Some(bodies) = combo.convert {
                 commands.push(UiCommand::ConvertToSolid(bodies));
             }
+            commands.extend(combo.commands);
             if let Some((feature, parameter, edit)) = combo.parameter {
                 commands.push(UiCommand::SetParameter {
                     feature,

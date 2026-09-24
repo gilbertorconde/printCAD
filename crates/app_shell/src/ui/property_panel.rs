@@ -27,6 +27,8 @@ pub struct PropertyPanelResult {
     /// The body's look changed: a colour and opacity of its own, or back
     /// to the one it came with.
     pub body_display: Option<(BodyId, Option<core_document::BodyDisplay>)>,
+    /// Edits of variables and configurations.
+    pub commands: Vec<super::UiCommand>,
     /// One of a feature's numbers was set: to a value or a formula.
     pub parameter: Option<(
         FeatureId,
@@ -409,6 +411,11 @@ fn data_groups(
             if let Some(position) = position {
                 base.push(PropRow::mono("History position", position));
             }
+            // A variable set's and the configurations' own editors follow.
+            let kind = node.workbench_id.as_str();
+            if kind == core_document::VARIABLES_KIND || kind == core_document::CONFIGURATIONS_KIND {
+                return vec![("Base".to_string(), base)];
+            }
             let hints = registry.property_hints();
             let (group, rows) = flatten_feature_json(&node.data, document, &hints, unit);
             vec![("Base".to_string(), base), (group, rows)]
@@ -459,6 +466,7 @@ pub fn draw_property_panel(
     subject: PanelSubject<'_>,
     tab: &mut PropertyTab,
     rename_buffer: &mut Option<(TreeItemId, String)>,
+    variables: &mut super::variables_view::VariablesState,
 ) -> PropertyPanelResult {
     let PanelSubject {
         selected,
@@ -530,8 +538,21 @@ pub fn draw_property_panel(
         .auto_shrink([false, false])
         .show(ui, |ui| match *tab {
             PropertyTab::Data => {
-                if let TreeItemId::Feature(feature) = selected {
-                    parameter_rows(ui, document, registry, feature, &mut result);
+                // A variable set or the configurations: their editor after
+                // the Base rows; any other feature: its numbers first.
+                let kind = match selected {
+                    TreeItemId::Feature(feature) => document
+                        .get_feature_meta(feature)
+                        .map(|n| (feature, n.workbench_id.as_str().to_string())),
+                    _ => None,
+                };
+                let table = kind.as_ref().filter(|(_, k)| {
+                    k == core_document::VARIABLES_KIND || k == core_document::CONFIGURATIONS_KIND
+                });
+                if table.is_none()
+                    && let Some((feature, _)) = &kind
+                {
+                    parameter_rows(ui, document, registry, *feature, &mut result);
                 }
                 let mut groups = data_groups(document, registry, selected);
                 if let Some(physical) = physical {
@@ -548,6 +569,24 @@ pub fn draw_property_panel(
                             value_row(ui, &row);
                         }
                     }
+                }
+                match table {
+                    Some((set, k)) if k == core_document::VARIABLES_KIND => {
+                        super::variables_view::variable_set_section(
+                            ui,
+                            variables,
+                            document,
+                            *set,
+                            &mut result.commands,
+                        );
+                    }
+                    Some(_) => super::variables_view::configurations_section(
+                        ui,
+                        variables,
+                        document,
+                        &mut result.commands,
+                    ),
+                    None => {}
                 }
             }
             PropertyTab::View => view_rows(ui, document, selected, &mut result),
