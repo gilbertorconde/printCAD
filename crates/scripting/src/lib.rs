@@ -101,6 +101,14 @@ impl ScriptEngine {
         }
     }
 
+    /// Give scripts `arg`, the list of words they were run with, as Lua's
+    /// own interpreter does.
+    pub fn set_args(&mut self, args: &[String]) {
+        if let Ok(table) = self.lua.create_sequence_from(args.iter().cloned()) {
+            let _ = self.lua.globals().set("arg", table);
+        }
+    }
+
     /// Stop any run that takes longer than `limit`.
     pub fn set_time_limit(&mut self, limit: Duration) {
         self.time_limit.set(limit);
@@ -331,6 +339,17 @@ mod tests {
             unknown.error.as_deref(),
             Some("nothing.here: no command `nothing.here`")
         );
+    }
+
+    #[test]
+    fn a_script_reads_the_words_it_was_run_with() {
+        let mut engine = ScriptEngine::new();
+        engine.set_args(&["out.stl".to_string(), "20".to_string()]);
+        let out = engine.eval_line(
+            "arg[1] .. ':' .. tonumber(arg[2]) * 2",
+            &mut Recorder::default(),
+        );
+        assert_eq!(out.value.as_deref(), Some("\"out.stl:40\""));
     }
 
     #[test]

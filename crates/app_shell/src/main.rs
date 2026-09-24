@@ -1,6 +1,7 @@
 mod app;
 mod camera;
 mod console;
+mod headless;
 mod kernel_worker;
 mod log_panel;
 mod orientation_cube;
@@ -33,7 +34,7 @@ use workbenches::register_all_workbenches;
 
 fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_blocking::WorkerGuard>>
 {
-    let stdout_filter =
+    let console_filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     if let Ok(raw) = std::env::var("PRINTCAD_CAMERA_LOG") {
@@ -58,14 +59,22 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
             .with_filter(EnvFilter::new(cam_filter.trim()));
 
         tracing_subscriber::registry()
-            .with(fmt::layer().with_filter(stdout_filter.clone()))
+            .with(
+                fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_filter(console_filter.clone()),
+            )
             .with(file_layer)
             .init();
 
         Ok(Some(guard))
     } else {
         tracing_subscriber::registry()
-            .with(fmt::layer().with_filter(stdout_filter))
+            .with(
+                fmt::layer()
+                    .with_writer(std::io::stderr)
+                    .with_filter(console_filter),
+            )
             .init();
 
         Ok(None)
@@ -95,6 +104,20 @@ fn main() -> Result<()> {
 
     // The benches' own settings, back from the file.
     registry.apply_settings(&user_settings.workbenches);
+
+    // A script run from the command line needs no window.
+    let words: Vec<String> = std::env::args().skip(1).collect();
+    match headless::parse(&words) {
+        Ok(Some(invocation)) => {
+            let finished = headless::run(&invocation, registry)?;
+            std::process::exit(if finished { 0 } else { 1 });
+        }
+        Ok(None) => {}
+        Err(usage) => {
+            eprintln!("{usage}");
+            std::process::exit(2);
+        }
+    }
 
     let event_loop = EventLoop::<AppEvent>::with_user_event()
         .build()

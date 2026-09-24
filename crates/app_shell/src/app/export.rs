@@ -247,85 +247,13 @@ impl PrintCadApp {
     fn export_bodies(&self, draft: &ExportDraft) -> Vec<OwnedBody> {
         let document = &self.session.document;
         let selected = self.session.selected_body;
-        self.bodies_to_export(|id| {
+        bodies_to_export(document, |id| {
             if draft.selected_only {
                 selected == Some(id.0)
             } else {
                 document.imported_body_effective_visible(id)
             }
         })
-    }
-
-    /// Write `bodies` (every visible one when `None`) to `path` now, on
-    /// this thread: what a script's export does.
-    pub(crate) fn export_now(
-        &self,
-        path: PathBuf,
-        format: ExportFormat,
-        bodies: Option<Vec<core_document::BodyId>>,
-        tolerance: Option<f32>,
-    ) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
-        let document = &self.session.document;
-        let owned = self.bodies_to_export(|id| match &bodies {
-            Some(list) => list.contains(&id),
-            None => document.imported_body_effective_visible(id),
-        });
-        if owned.is_empty() {
-            return Err("there is nothing to export".to_string());
-        }
-        let mut detail = ExportDraft::default().detail;
-        if let Some(tolerance) = tolerance {
-            detail.chord_tolerance = tolerance;
-        }
-        let borrowed: Vec<ExportBody<'_>> = owned
-            .iter()
-            .map(|b| ExportBody {
-                name: b.name.clone(),
-                brep: b.brep.as_deref().map(Vec::as_slice),
-                transform: b.transform,
-                mesh: &b.mesh,
-            })
-            .collect();
-        let path = with_extension(&path, format);
-        let exported = export(&borrowed, format, &detail).map_err(|e| e.to_string())?;
-        std::fs::write(&path, &exported.bytes)
-            .map_err(|e| format!("could not write the file: {e}"))?;
-        Ok((path, exported))
-    }
-
-    /// The bodies `take` accepts that have geometry, in tree order.
-    fn bodies_to_export(&self, take: impl Fn(core_document::BodyId) -> bool) -> Vec<OwnedBody> {
-        let document = &self.session.document;
-        let mut out: Vec<(usize, OwnedBody)> = document
-            .imported_geometries()
-            .filter(|(id, geometry)| !geometry.mesh.indices.is_empty() && take(**id))
-            .map(|(id, geometry)| {
-                let order = document
-                    .bodies()
-                    .iter()
-                    .position(|b| b.id == *id)
-                    .unwrap_or(usize::MAX);
-                let name = document
-                    .bodies()
-                    .get(order)
-                    .map(|b| b.name.clone())
-                    .unwrap_or_else(|| format!("Body {}", &id.0.to_string()[..8]));
-                (
-                    order,
-                    OwnedBody {
-                        name,
-                        brep: document.imported_brep_blob_arc(*id),
-                        transform: {
-                            let placement = document.body_placement(*id);
-                            (!placement.is_identity()).then(|| placement.rows())
-                        },
-                        mesh: Arc::clone(&geometry.mesh),
-                    },
-                )
-            })
-            .collect();
-        out.sort_by_key(|(order, body)| (*order, body.name.clone()));
-        out.into_iter().map(|(_, body)| body).collect()
     }
 }
 
@@ -415,6 +343,79 @@ fn open_in_slicer(command: &str, file: &Path) -> std::io::Result<String> {
         let _ = child.wait();
     });
     Ok(program)
+}
+
+/// Write `bodies` of `document` (every visible one when `None`) to `path`
+/// now, on this thread: what a script's export does.
+pub(crate) fn export_document(
+    document: &core_document::Document,
+    path: PathBuf,
+    format: ExportFormat,
+    bodies: Option<Vec<core_document::BodyId>>,
+    tolerance: Option<f32>,
+) -> Result<(PathBuf, kernel_ogeom::export::Exported), String> {
+    let owned = bodies_to_export(document, |id| match &bodies {
+        Some(list) => list.contains(&id),
+        None => document.imported_body_effective_visible(id),
+    });
+    if owned.is_empty() {
+        return Err("there is nothing to export".to_string());
+    }
+    let mut detail = ExportDraft::default().detail;
+    if let Some(tolerance) = tolerance {
+        detail.chord_tolerance = tolerance;
+    }
+    let borrowed: Vec<ExportBody<'_>> = owned
+        .iter()
+        .map(|b| ExportBody {
+            name: b.name.clone(),
+            brep: b.brep.as_deref().map(Vec::as_slice),
+            transform: b.transform,
+            mesh: &b.mesh,
+        })
+        .collect();
+    let path = with_extension(&path, format);
+    let exported = export(&borrowed, format, &detail).map_err(|e| e.to_string())?;
+    std::fs::write(&path, &exported.bytes).map_err(|e| format!("could not write the file: {e}"))?;
+    Ok((path, exported))
+}
+
+/// The bodies of `document` that `take` accepts and that have geometry,
+/// in tree order.
+fn bodies_to_export(
+    document: &core_document::Document,
+    take: impl Fn(core_document::BodyId) -> bool,
+) -> Vec<OwnedBody> {
+    let mut out: Vec<(usize, OwnedBody)> = document
+        .imported_geometries()
+        .filter(|(id, geometry)| !geometry.mesh.indices.is_empty() && take(**id))
+        .map(|(id, geometry)| {
+            let order = document
+                .bodies()
+                .iter()
+                .position(|b| b.id == *id)
+                .unwrap_or(usize::MAX);
+            let name = document
+                .bodies()
+                .get(order)
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| format!("Body {}", &id.0.to_string()[..8]));
+            (
+                order,
+                OwnedBody {
+                    name,
+                    brep: document.imported_brep_blob_arc(*id),
+                    transform: {
+                        let placement = document.body_placement(*id);
+                        (!placement.is_identity()).then(|| placement.rows())
+                    },
+                    mesh: Arc::clone(&geometry.mesh),
+                },
+            )
+        })
+        .collect();
+    out.sort_by_key(|(order, body)| (*order, body.name.clone()));
+    out.into_iter().map(|(_, body)| body).collect()
 }
 
 #[cfg(test)]

@@ -274,3 +274,26 @@ impl PrintCadApp {
         }
     }
 }
+
+/// Put a body's rebuilt solid in the document: its shape and the mesh drawn
+/// from it.
+pub(crate) fn store_built_solid(
+    document: &mut core_document::Document,
+    body: core_document::BodyId,
+    result: kernel_api::SolidBuildResult,
+) {
+    let bounds_mm = result.bounds_mm;
+    document.set_imported_brep_data(body, result.brep_blob, Vec::new());
+    document.set_imported_geometry(
+        body,
+        core_document::ImportedGeometry {
+            mesh: std::sync::Arc::new(result.mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm,
+            brep_blob_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+}

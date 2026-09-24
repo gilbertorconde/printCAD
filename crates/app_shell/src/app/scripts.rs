@@ -22,7 +22,7 @@ use crate::ui::TreeItemId;
 use crate::ui::keymap::{self, HostOutcome, HostState};
 
 /// The application's own commands beyond the keyboard's.
-fn doc_commands() -> Vec<CommandSpec> {
+pub(crate) fn doc_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("doc.info", "The document's name, file and unit")
             .returns("{name, file, unit, modified}"),
@@ -341,41 +341,17 @@ impl PrintCadApp {
                 Ok(Value::Null)
             }
             Export => {
-                let format = match a.opt_string("format")? {
-                    Some(name) => match name.to_ascii_lowercase().as_str() {
-                        "step" | "stp" => kernel_ogeom::export::ExportFormat::Step,
-                        "stl" => kernel_ogeom::export::ExportFormat::Stl,
-                        "3mf" => kernel_ogeom::export::ExportFormat::ThreeMf,
-                        _ => return Err(CommandError::bad("format", "must be step, stl or 3mf")),
-                    },
-                    None => {
-                        kernel_ogeom::export::ExportFormat::of_path(&path).ok_or_else(|| {
-                            CommandError::bad(
-                                "format",
-                                "is needed when the path has no .step, .stl or .3mf",
-                            )
-                        })?
-                    }
-                };
-                let bodies = match args.get("bodies") {
-                    Some(Value::Array(list)) => Some(
-                        list.iter()
-                            .map(|v| {
-                                v.as_str()
-                                    .and_then(|s| Uuid::parse_str(s).ok())
-                                    .map(BodyId)
-                                    .ok_or_else(|| {
-                                        CommandError::bad("bodies", "must be a list of body ids")
-                                    })
-                            })
-                            .collect::<Result<Vec<_>, _>>()?,
-                    ),
-                    _ => None,
-                };
+                let format = export_format(a.opt_string("format")?, &path)?;
+                let bodies = body_list(args.get("bodies"))?;
                 let tolerance = a.opt_number("tolerance")?.map(|t| t as f32);
-                let (path, exported) = self
-                    .export_now(path, format, bodies, tolerance)
-                    .map_err(CommandError::failed)?;
+                let (path, exported) = crate::app::export::export_document(
+                    &self.session.document,
+                    path,
+                    format,
+                    bodies,
+                    tolerance,
+                )
+                .map_err(CommandError::failed)?;
                 Ok(json!({
                     "path": path.display().to_string(),
                     "written": exported.written,
@@ -518,96 +494,30 @@ impl PrintCadApp {
         args: &CommandArgs,
         event_loop: &ActiveEventLoop,
     ) -> CommandResult {
+        if let Some(answer) = document_command(
+            id,
+            args,
+            &mut self.session.document,
+            &self.registry,
+            self.session.current_file.as_deref(),
+        ) {
+            return answer;
+        }
         let a = Args(args);
-        let document = &self.session.document;
         match id {
-            "doc.info" => Ok(json!({
-                "name": document.name(),
-                "file": self.session.current_file.as_ref().map(|p| p.display().to_string()),
-                "unit": document.display_unit().short_label(),
-                "modified": document.metadata().dirty(),
-            })),
-            "doc.bodies" => Ok(Value::Array(
-                document
-                    .bodies()
-                    .iter()
-                    .map(|b| {
-                        json!({
-                            "id": b.id.0.to_string(),
-                            "name": b.name,
-                            "visible": !b.hidden,
-                            "features": features_in_order(document, Some(b.id))
-                                .iter()
-                                .map(|n| n.id.0.to_string())
-                                .collect::<Vec<_>>(),
-                        })
-                    })
-                    .collect(),
-            )),
-            "doc.features" => {
-                let body = a.opt_id("body")?.map(BodyId);
-                Ok(Value::Array(
-                    features_in_order(document, None)
-                        .into_iter()
-                        .filter(|n| body.is_none() || n.body == body)
-                        .map(|n| {
-                            json!({
-                                "id": n.id.0.to_string(),
-                                "name": n.name,
-                                "kind": self.kind_of(n),
-                                "body": n.body.map(|b| b.0.to_string()),
-                                "visible": n.visible,
-                                "suppressed": n.suppressed,
-                                "error": n.error,
-                            })
-                        })
-                        .collect(),
-                ))
-            }
-            "doc.feature" => {
-                let node = document
-                    .get_feature_meta(FeatureId(a.id("id")?))
-                    .ok_or_else(|| CommandError::bad("id", "is not a feature of this document"))?;
-                Ok(json!({
-                    "id": node.id.0.to_string(),
-                    "name": node.name,
-                    "kind": self.kind_of(node),
-                    "body": node.body.map(|b| b.0.to_string()),
-                    "visible": node.visible,
-                    "fields": node.data,
-                }))
-            }
             "doc.selection" => Ok(json!({
                 "item": self.session.tree_selection.and_then(item_id).map(|u| u.to_string()),
                 "body": self.session.active_body_id.map(|b| b.0.to_string()),
                 "feature": self.session.active_document_object.map(|f| f.0.to_string()),
             })),
             "doc.select" => {
-                let item = self.tree_item(a.id("id")?)?;
+                let item = tree_item(&self.session.document, a.id("id")?)?;
                 self.apply_tree_selection(item);
-                Ok(Value::Null)
-            }
-            "doc.new_body" => {
-                let body = self.session.document.create_body(None);
-                if let Some(name) = a.opt_string("name")? {
-                    self.session.document.rename_body(body, name);
-                }
-                Ok(json!(body.0.to_string()))
-            }
-            "doc.rename" => {
-                let name = a.string("name")?.to_string();
-                match self.tree_item(a.id("id")?)? {
-                    TreeItemId::Body(body) => self.session.document.rename_body(body, name),
-                    TreeItemId::Feature(feature) => {
-                        self.session.document.rename_feature(feature, name)
-                    }
-                    _ => return Err(CommandError::bad("id", "cannot be renamed")),
-                }
                 Ok(Value::Null)
             }
             "doc.set_visible" => {
                 let visible = a.opt_bool("visible")?.unwrap_or(true);
-                let command = match self.tree_item(a.id("id")?)? {
+                let command = match tree_item(&self.session.document, a.id("id")?)? {
                     TreeItemId::Body(body) => {
                         crate::ui::UiCommand::SetBodyVisible { body, visible }
                     }
@@ -626,7 +536,7 @@ impl PrintCadApp {
                 Ok(Value::Null)
             }
             "doc.delete" => {
-                let item = self.tree_item(a.id("id")?)?;
+                let item = tree_item(&self.session.document, a.id("id")?)?;
                 self.apply_ui_commands(
                     vec![crate::ui::UiCommand::DeleteTreeItem(item)],
                     event_loop,
@@ -637,49 +547,7 @@ impl PrintCadApp {
                 let timeout = a.opt_number("timeout")?.unwrap_or(60.0);
                 self.rebuild_and_wait(std::time::Duration::from_secs_f64(timeout.max(0.0)))
             }
-            "doc.faces" => {
-                let body = self.body_arg(&a)?;
-                let geometry = self
-                    .session
-                    .document
-                    .imported_geometry(body)
-                    .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
-                Ok(faces_of(&geometry.mesh))
-            }
-            "doc.measure" => {
-                let body = self.body_arg(&a)?;
-                let document = &self.session.document;
-                let (min, max) = document
-                    .imported_geometry(body)
-                    .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
-                    .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
-                let blob = document.imported_brep_blob_arc(body).ok_or_else(|| {
-                    CommandError::failed("the body is a mesh; it has no solid to measure")
-                })?;
-                let props = kernel_ogeom::OgeomKernel::new()
-                    .physical_properties(&blob)
-                    .map_err(|e| CommandError::failed(e.to_string()))?;
-                let c = props.centre_mm.map(|v| v as f32);
-                let centre = document.body_placement(body).point(c);
-                Ok(json!({
-                    "volume": props.volume_mm3,
-                    "area": props.area_mm2,
-                    "centre": centre,
-                    "min": min,
-                    "max": max,
-                    "approximate": props.approximate,
-                }))
-            }
             _ => Err(CommandError::Unknown(id.to_string())),
-        }
-    }
-
-    fn body_arg(&self, a: &Args) -> Result<BodyId, CommandError> {
-        let body = BodyId(a.id("body")?);
-        if self.session.document.bodies().iter().any(|b| b.id == body) {
-            Ok(body)
-        } else {
-            Err(CommandError::bad("body", "is not a body of this document"))
         }
     }
 
@@ -715,27 +583,199 @@ impl PrintCadApp {
             .collect();
         Ok(Value::Array(errors))
     }
+}
 
-    /// What kind of feature `node` is, as its workbench names it.
-    fn kind_of(&self, node: &core_document::FeatureNode) -> String {
-        self.registry
-            .feature_info(node)
-            .map(|info| info.kind_label)
-            .unwrap_or_else(|| node.workbench_id.as_str().to_string())
-    }
-
-    /// The tree row an id names: a body, a feature or an imported part.
-    fn tree_item(&self, id: Uuid) -> Result<TreeItemId, CommandError> {
-        let document = &self.session.document;
-        if document.bodies().iter().any(|b| b.id.0 == id) {
-            Ok(TreeItemId::Body(BodyId(id)))
-        } else if document.get_feature_meta(FeatureId(id)).is_some() {
-            Ok(TreeItemId::Feature(FeatureId(id)))
-        } else if document.imported_object(id).is_some() {
-            Ok(TreeItemId::ImportedObject(id))
-        } else {
-            Err(CommandError::bad("id", "is not in this document"))
+/// The commands every host of a document answers the same way, with or
+/// without a window: reading it, naming and adding bodies, and measuring.
+/// `None` for any other command.
+pub(crate) fn document_command(
+    id: &str,
+    args: &CommandArgs,
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    file: Option<&std::path::Path>,
+) -> Option<CommandResult> {
+    let a = Args(args);
+    let answer = (|| match id {
+        "doc.info" => Ok(json!({
+            "name": document.name(),
+            "file": file.map(|p| p.display().to_string()),
+            "unit": document.display_unit().short_label(),
+            "modified": document.metadata().dirty(),
+        })),
+        "doc.bodies" => Ok(Value::Array(
+            document
+                .bodies()
+                .iter()
+                .map(|b| {
+                    json!({
+                        "id": b.id.0.to_string(),
+                        "name": b.name,
+                        "visible": !b.hidden,
+                        "features": features_in_order(document, Some(b.id))
+                            .iter()
+                            .map(|n| n.id.0.to_string())
+                            .collect::<Vec<_>>(),
+                    })
+                })
+                .collect(),
+        )),
+        "doc.features" => {
+            let body = a.opt_id("body")?.map(BodyId);
+            Ok(Value::Array(
+                features_in_order(document, None)
+                    .into_iter()
+                    .filter(|n| body.is_none() || n.body == body)
+                    .map(|n| {
+                        json!({
+                            "id": n.id.0.to_string(),
+                            "name": n.name,
+                            "kind": kind_of(registry, n),
+                            "body": n.body.map(|b| b.0.to_string()),
+                            "visible": n.visible,
+                            "suppressed": n.suppressed,
+                            "error": n.error,
+                        })
+                    })
+                    .collect(),
+            ))
         }
+        "doc.feature" => {
+            let node = document
+                .get_feature_meta(FeatureId(a.id("id")?))
+                .ok_or_else(|| CommandError::bad("id", "is not a feature of this document"))?;
+            Ok(json!({
+                "id": node.id.0.to_string(),
+                "name": node.name,
+                "kind": kind_of(registry, node),
+                "body": node.body.map(|b| b.0.to_string()),
+                "visible": node.visible,
+                "fields": node.data,
+            }))
+        }
+        "doc.new_body" => {
+            let body = document.create_body(None);
+            if let Some(name) = a.opt_string("name")? {
+                document.rename_body(body, name);
+            }
+            Ok(json!(body.0.to_string()))
+        }
+        "doc.rename" => {
+            let name = a.string("name")?.to_string();
+            match tree_item(document, a.id("id")?)? {
+                TreeItemId::Body(body) => document.rename_body(body, name),
+                TreeItemId::Feature(feature) => document.rename_feature(feature, name),
+                _ => return Err(CommandError::bad("id", "cannot be renamed")),
+            }
+            Ok(Value::Null)
+        }
+        "doc.faces" => {
+            let body = body_arg(document, &a)?;
+            let geometry = document
+                .imported_geometry(body)
+                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
+            Ok(faces_of(&geometry.mesh))
+        }
+        "doc.measure" => {
+            let body = body_arg(document, &a)?;
+            let (min, max) = document
+                .imported_geometry(body)
+                .and_then(|g| g.bounds_mm.or_else(|| g.mesh.bounds()))
+                .ok_or_else(|| CommandError::failed("the body has no solid yet"))?;
+            let blob = document.imported_brep_blob_arc(body).ok_or_else(|| {
+                CommandError::failed("the body is a mesh; it has no solid to measure")
+            })?;
+            let props = kernel_ogeom::OgeomKernel::new()
+                .physical_properties(&blob)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            let c = props.centre_mm.map(|v| v as f32);
+            let centre = document.body_placement(body).point(c);
+            Ok(json!({
+                "volume": props.volume_mm3,
+                "area": props.area_mm2,
+                "centre": centre,
+                "min": min,
+                "max": max,
+                "approximate": props.approximate,
+            }))
+        }
+        _ => Err(CommandError::Unknown(id.to_string())),
+    })();
+    match answer {
+        Err(CommandError::Unknown(_)) => None,
+        answer => Some(answer),
+    }
+}
+
+fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {
+    let body = BodyId(a.id("body")?);
+    if document.bodies().iter().any(|b| b.id == body) {
+        Ok(body)
+    } else {
+        Err(CommandError::bad("body", "is not a body of this document"))
+    }
+}
+
+/// What kind of feature `node` is, as its workbench names it.
+fn kind_of(registry: &core_document::DocumentService, node: &core_document::FeatureNode) -> String {
+    registry
+        .feature_info(node)
+        .map(|info| info.kind_label)
+        .unwrap_or_else(|| node.workbench_id.as_str().to_string())
+}
+
+/// The tree row an id names: a body, a feature or an imported part.
+pub(crate) fn tree_item(
+    document: &core_document::Document,
+    id: Uuid,
+) -> Result<TreeItemId, CommandError> {
+    if document.bodies().iter().any(|b| b.id.0 == id) {
+        Ok(TreeItemId::Body(BodyId(id)))
+    } else if document.get_feature_meta(FeatureId(id)).is_some() {
+        Ok(TreeItemId::Feature(FeatureId(id)))
+    } else if document.imported_object(id).is_some() {
+        Ok(TreeItemId::ImportedObject(id))
+    } else {
+        Err(CommandError::bad("id", "is not in this document"))
+    }
+}
+
+/// The format an export names, else the one its path's extension says.
+pub(crate) fn export_format(
+    name: Option<&str>,
+    path: &std::path::Path,
+) -> Result<kernel_ogeom::export::ExportFormat, CommandError> {
+    use kernel_ogeom::export::ExportFormat;
+    match name {
+        Some(name) => match name.to_ascii_lowercase().as_str() {
+            "step" | "stp" => Ok(ExportFormat::Step),
+            "stl" => Ok(ExportFormat::Stl),
+            "3mf" => Ok(ExportFormat::ThreeMf),
+            _ => Err(CommandError::bad("format", "must be step, stl or 3mf")),
+        },
+        None => ExportFormat::of_path(path).ok_or_else(|| {
+            CommandError::bad(
+                "format",
+                "is needed when the path has no .step, .stl or .3mf",
+            )
+        }),
+    }
+}
+
+/// A list of body ids, when one is given.
+pub(crate) fn body_list(value: Option<&Value>) -> Result<Option<Vec<BodyId>>, CommandError> {
+    match value {
+        Some(Value::Array(list)) => list
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .and_then(|s| Uuid::parse_str(s).ok())
+                    .map(BodyId)
+                    .ok_or_else(|| CommandError::bad("bodies", "must be a list of body ids"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        _ => Ok(None),
     }
 }
 

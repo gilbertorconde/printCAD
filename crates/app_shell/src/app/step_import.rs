@@ -136,21 +136,10 @@ impl PrintCadApp {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
-                    let bounds_mm = result.bounds_mm;
-                    self.session
-                        .document
-                        .set_imported_brep_data(bid, result.brep_blob, Vec::new());
-                    self.session.document.set_imported_geometry(
+                    crate::app::recompute::store_built_solid(
+                        &mut self.session.document,
                         bid,
-                        ImportedGeometry {
-                            mesh: Arc::new(result.mesh),
-                            source_asset: None,
-                            revision: 0,
-                            bounds_mm,
-                            brep_blob_path: None,
-                            face_colors_path: None,
-                            health: None,
-                        },
+                        result,
                     );
                     if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
                         // The face sub-mesh belongs to the replaced solid.
