@@ -888,8 +888,9 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
 }
 
 fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeature, String> {
+    // As its formulas leave it, solved.
     let data = document
-        .get_feature_data(sketch_id)
+        .feature_values(sketch_id)
         .ok_or("references a missing sketch")?;
     SketchFeature::from_json(data).map_err(|e| format!("invalid sketch data: {e}"))
 }

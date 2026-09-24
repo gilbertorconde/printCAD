@@ -559,6 +559,11 @@ pub trait Workbench: Send {
         Vec::new()
     }
 
+    /// Make an owned feature's data whole once formulas' values are in it
+    /// (a sketch solves for its new dimensions). `values` is the data the
+    /// feature builds from; it is derived, and never recorded.
+    fn settle(&self, _node: &FeatureNode, _values: &mut serde_json::Value) {}
+
     /// What the generic property panel should know about this bench's
     /// feature payloads.
     fn property_hints(&self) -> PropertyHints {

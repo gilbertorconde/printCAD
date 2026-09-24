@@ -40,7 +40,8 @@ pub use datum::{
 };
 pub use evaluate::{Evaluation, Parameter, SlotValue};
 pub use feature::{
-    BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature, node_revision,
+    BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature, data_revision,
+    node_revision,
 };
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
@@ -846,6 +847,19 @@ impl Document {
             .get(&id)
             .map(Vec::as_slice)
             .unwrap_or(&[])
+    }
+
+    /// What the feature's data settled to last time its values were
+    /// `unsettled`, if they were.
+    pub fn settled_values(
+        &self,
+        id: FeatureId,
+        unsettled: &serde_json::Value,
+    ) -> Option<&serde_json::Value> {
+        let last = &self.evaluated.evaluation;
+        (last.unsettled.get(&id) == Some(unsettled))
+            .then(|| last.data.get(&id))
+            .flatten()
     }
 
     /// Whether the document changed since its formulas were worked out.

@@ -766,3 +766,111 @@ fn a_variable_drives_the_pad_and_changing_it_rebuilds_the_solid() {
     assert!((height(&mut doc) - 11.0).abs() < 1e-3, "2 * 6 - 1");
     assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
 }
+
+#[test]
+fn a_variable_drives_a_named_sketch_dimension_and_the_pad_on_it() {
+    use core_document::{DocumentService, Variable, VariableSet, WorkbenchFeature};
+    use wb_sketch::sketch::{Constraint, ConstraintKind};
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .unwrap();
+
+    // A 10 x 5 rectangle, fixed at the origin, square, its bottom named
+    // `width`.
+    let mut sketch = Sketch::new("s");
+    let at = |x, y| GeometryElement::Point(Point::new(Vec2D::new(x, y)));
+    let a = sketch.add_geometry(at(0.0, 0.0));
+    let b = sketch.add_geometry(at(10.0, 0.0));
+    let c = sketch.add_geometry(at(10.0, 5.0));
+    let d = sketch.add_geometry(at(0.0, 5.0));
+    let lines: Vec<_> = [(a, b), (b, c), (c, d), (d, a)]
+        .into_iter()
+        .map(|(s, e)| sketch.add_geometry(GeometryElement::Line(Line::new(s, e))))
+        .collect();
+    let mut add = |kind| sketch.constraints.push(Constraint::new(kind));
+    add(ConstraintKind::FixedPoint {
+        point: a,
+        position: Vec2D::new(0.0, 0.0),
+    });
+    add(ConstraintKind::Horizontal { element: lines[0] });
+    add(ConstraintKind::Vertical { element: lines[1] });
+    add(ConstraintKind::Horizontal { element: lines[2] });
+    add(ConstraintKind::Vertical { element: lines[3] });
+    add(ConstraintKind::Length {
+        line: lines[1],
+        length: 5.0,
+    });
+    let mut width = Constraint::new(ConstraintKind::Length {
+        line: lines[0],
+        length: 10.0,
+    });
+    width.name = Some("width".into());
+    let width_key = width.id.to_string();
+    sketch.constraints.push(width);
+    let plane = sketch.plane;
+
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sizes = doc
+        .add_feature(
+            VariableSet {
+                variables: vec![Variable {
+                    name: "w".into(),
+                    formula: "24 mm".into(),
+                    comment: String::new(),
+                }],
+            },
+            "Sizes".into(),
+        )
+        .unwrap();
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "Profile".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.set_feature_formula(sketch_id, &width_key, Some("Sizes.w".into()))
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(
+            pad_feature(sketch_id, 3.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    // The pad reads the sketch's named dimension too.
+    doc.set_feature_formula(pad_id, "/Pad/length", Some("Profile.width / 4".into()))
+        .unwrap();
+
+    let size = |doc: &mut Document| {
+        let job = registry
+            .rebuild_jobs(doc)
+            .into_iter()
+            .find(|j| j.body == body)
+            .expect("a rebuild");
+        let result = OgeomKernel::new()
+            .execute_solid_chain(&job.plan.unwrap().ops, &TessellationSettings::default())
+            .unwrap();
+        let (min, max) = mesh_bounds(&result.mesh);
+        [max[0] - min[0], max[1] - min[1], max[2] - min[2]]
+    };
+    let [x, y, z] = size(&mut doc);
+    assert!(
+        (x - 24.0).abs() < 1e-3,
+        "the sketch solved to the variable: {x}"
+    );
+    assert!((y - 5.0).abs() < 1e-3, "{y}");
+    assert!((z - 6.0).abs() < 1e-3, "the pad read Profile.width: {z}");
+
+    let mut set = VariableSet::from_json(doc.get_feature_data(sizes).unwrap()).unwrap();
+    set.variables[0].formula = "16 mm".into();
+    doc.update_feature_data(sizes, set.to_json()).unwrap();
+    let [x, _, z] = size(&mut doc);
+    assert!((x - 16.0).abs() < 1e-3, "{x}");
+    assert!((z - 4.0).abs() < 1e-3, "{z}");
+}

@@ -12,6 +12,7 @@ mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
 mod panel;
+mod params;
 pub mod profile;
 pub mod render;
 pub mod sketch;
@@ -1667,16 +1668,26 @@ impl Workbench for SketchWorkbench {
         }
     }
 
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        params::parameters(node)
+    }
+
+    fn settle(&self, _node: &core_document::FeatureNode, values: &mut serde_json::Value) {
+        params::settle(values);
+    }
+
     fn passive_geometry(
         &self,
-        _document: &core_document::Document,
-        _id: FeatureId,
-        node: &core_document::FeatureNode,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
     ) -> Option<core_document::PassiveGeometry> {
-        let feature = SketchFeature::from_json(&node.data).ok()?;
+        // As its formulas leave it, solved.
+        let data = document.feature_values(id)?;
+        let feature = SketchFeature::from_json(data).ok()?;
         Some(core_document::PassiveGeometry {
             mesh: render::sketch_to_lines(&feature.sketch, &feature.plane),
-            revision: core_document::node_revision(node),
+            revision: core_document::data_revision(data),
         })
     }
 
@@ -1686,13 +1697,13 @@ impl Workbench for SketchWorkbench {
     /// at the sketch origin so the answer is zoom-independent.
     fn pick_feature(
         &self,
-        _document: &core_document::Document,
-        _id: FeatureId,
-        node: &core_document::FeatureNode,
+        document: &core_document::Document,
+        id: FeatureId,
+        _node: &core_document::FeatureNode,
         pick: &core_document::ViewportPick,
     ) -> Option<f32> {
         use core_document::runtime::{viewport_to_plane, world_to_viewport};
-        let feature = SketchFeature::from_json(&node.data).ok()?;
+        let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
         let plane = feature.plane;
         let world = viewport_to_plane(
             pick.view_proj,
@@ -3333,7 +3344,8 @@ impl SketchWorkbench {
             })
             .filter_map(|(id, node)| {
                 // Seen where its body sits, as the edited sketch is.
-                let mut feature = SketchFeature::from_json(&node.data).ok()?;
+                let mut feature =
+                    SketchFeature::from_json(ctx.document.feature_values(*id)?).ok()?;
                 let placement = sketch_placement(ctx.document, *id);
                 feature.plane = placed_plane(&feature.plane, &placement);
                 Some((node.seq, *id, node.name.clone(), feature))
@@ -3765,13 +3777,14 @@ pub(crate) fn project_source(
         .map_err(|e| e.to_string())
 }
 
-/// A sketch as the document stores it, its plane in its body's frame.
+/// A sketch as the document has it, its plane in its body's frame: its
+/// formulas' values in, and solved for them.
 pub(crate) fn stored_sketch(
     document: &core_document::Document,
     id: FeatureId,
 ) -> Option<SketchFeature> {
     document
-        .get_feature_data(id)
+        .feature_values(id)
         .and_then(|data| SketchFeature::from_json(data).ok())
 }
 

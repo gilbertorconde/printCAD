@@ -104,8 +104,14 @@ pub struct FeatureNode {
 /// A revision for a node's payload: the same JSON hashes the same, so a
 /// mesh cache keyed on it re-uploads only when the feature changed.
 pub fn node_revision(node: &FeatureNode) -> u64 {
+    data_revision(&node.data)
+}
+
+/// A revision for any feature payload: the evaluated data a feature builds
+/// from (`Document::feature_values`) hashes the same while it is the same.
+pub fn data_revision(data: &serde_json::Value) -> u64 {
     use std::hash::{Hash, Hasher};
-    let bytes = serde_json::to_vec(&node.data).unwrap_or_default();
+    let bytes = serde_json::to_vec(data).unwrap_or_default();
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     bytes.hash(&mut hasher);
     hasher.finish()

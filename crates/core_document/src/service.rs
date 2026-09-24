@@ -195,11 +195,29 @@ impl DocumentService {
     /// Work out the document's formulas when it changed since they last
     /// were; features whose values moved are marked for rebuilding.
     pub fn evaluate(&self, document: &mut Document) {
-        if document.needs_evaluation() {
-            let evaluation =
-                crate::evaluate::evaluate_document(document, &|node| self.parameters(node));
-            document.apply_evaluation(evaluation);
+        if !document.needs_evaluation() {
+            return;
         }
+        let mut evaluation =
+            crate::evaluate::evaluate_document(document, &|node| self.parameters(node));
+        let ids: Vec<FeatureId> = evaluation.data.keys().copied().collect();
+        for id in ids {
+            let data = evaluation.data.get_mut(&id).expect("listed");
+            // The same values as last time settle the same way.
+            if let Some(settled) = document.settled_values(id, data) {
+                *data = settled.clone();
+                evaluation.unsettled.insert(id, data.clone());
+                continue;
+            }
+            let unsettled = data.clone();
+            if let Some(node) = document.get_feature_meta(id)
+                && let Some(owner) = self.owner_of(&node.workbench_id)
+            {
+                owner.settle(node, data);
+            }
+            evaluation.unsettled.insert(id, unsettled);
+        }
+        document.apply_evaluation(evaluation);
     }
 
     /// Every bench's rebuilds, after the formulas are worked out.
