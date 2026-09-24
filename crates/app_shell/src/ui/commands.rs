@@ -160,6 +160,8 @@ pub enum UiCommand {
     RunConsole(String),
     /// Run a Lua script file.
     RunScriptFile(std::path::PathBuf),
+    /// Stop the running script.
+    StopScript,
     /// Make a new script in the scripts folder and open it for editing.
     NewScript,
     /// Write what the console ran as a new script in the scripts folder.

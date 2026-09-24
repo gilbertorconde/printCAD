@@ -84,18 +84,19 @@ so neither reaches into a workbench:
 Built: Lua 5.4 (the `scripting` crate) over every command, the console
 (completion, several lines, history kept), script files and the scripts
 folder in the Scripts menu, toolbar, palette and keymap, Save as script,
-one undo step per run, and runs without a window. See
-[Scripting](SCRIPTING.md).
+one undo step per run, scripts on a thread of their own with Stop, and
+runs without a window. See [Scripting](SCRIPTING.md). Workbenches stay
+Rust.
 
-Later:
+Next:
 
-- A workbench written as a script: tools, task panel and features from
-  the same API.
-- Recording clicks in the viewport as a script. Tools act on clicks
-  rather than through commands, so this waits on tools that end in a
-  command.
-- Running a script off the UI thread, so a long one can be cancelled
-  while the window stays live.
+- Tools that end in a command: each tool turns its clicks into the
+  arguments of the command it stands for (snapped points, typed lengths,
+  picked faces as a point and a direction) and calls it, so a click and a
+  script run the same code.
+- Recording: with every tool ending in a command, a macro is the list of
+  commands a session called, results bound to variables so later calls
+  refer to them rather than to this session's ids.
 
 ### AI
 

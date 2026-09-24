@@ -11,7 +11,12 @@
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+
+mod thread;
+pub use thread::{Event, Job, ScriptThread};
 
 use core_document::{CommandArgs, CommandError, CommandResult, CommandSpec};
 use mlua::serde::SerializeOptions;
@@ -34,19 +39,27 @@ pub struct RunOutput {
     pub error: Option<String>,
 }
 
-/// How long a run may take before it is stopped: the window does not
-/// redraw while a script runs.
+/// How long a run may take before it is stopped, unless the caller sets
+/// another limit.
 const DEFAULT_TIME_LIMIT: Duration = Duration::from_secs(10);
+
+/// What a run stopped from outside says.
+pub const STOPPED: &str = "stopped";
 
 /// Lua code every run starts with: the `pc` namespace, `print` into the
 /// run's output, `show` and `help`.
 const PRELUDE: &str = include_str!("prelude.lua");
 
+/// Where printed lines go as they are printed, besides the run's output.
+type PrintSink = Rc<RefCell<Option<Box<dyn Fn(&str)>>>>;
+
 pub struct ScriptEngine {
     lua: Lua,
     printed: Rc<RefCell<Vec<String>>>,
+    on_print: PrintSink,
     started: Rc<Cell<Instant>>,
     time_limit: Rc<Cell<Duration>>,
+    stop: Rc<RefCell<Option<Arc<AtomicBool>>>>,
 }
 
 impl Default for ScriptEngine {
@@ -63,8 +76,13 @@ impl ScriptEngine {
         let time_limit = Rc::new(Cell::new(DEFAULT_TIME_LIMIT));
 
         let sink = printed.clone();
+        let on_print: PrintSink = Rc::new(RefCell::new(None));
+        let stream = on_print.clone();
         let print = lua
             .create_function(move |_, line: String| {
+                if let Some(f) = stream.borrow().as_ref() {
+                    f(&line);
+                }
                 sink.borrow_mut().push(line);
                 Ok(())
             })
@@ -74,10 +92,18 @@ impl ScriptEngine {
             .expect("print global");
 
         let (since, limit) = (started.clone(), time_limit.clone());
+        let stop: Rc<RefCell<Option<Arc<AtomicBool>>>> = Rc::new(RefCell::new(None));
+        let stopped = stop.clone();
         lua.set_hook(
             HookTriggers::new().every_nth_instruction(10_000),
             move |_, _| {
-                if since.get().elapsed() > limit.get() {
+                if stopped
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|flag| flag.load(Ordering::Relaxed))
+                {
+                    Err(mlua::Error::runtime(STOPPED))
+                } else if since.get().elapsed() > limit.get() {
                     Err(mlua::Error::runtime(format!(
                         "stopped after {} s",
                         limit.get().as_secs_f32()
@@ -96,9 +122,23 @@ impl ScriptEngine {
         Self {
             lua,
             printed,
+            on_print,
             started,
             time_limit,
+            stop,
         }
+    }
+
+    /// Hand every printed line to `f` as it is printed, as well as keeping
+    /// it for the run's output.
+    pub fn on_print(&mut self, f: impl Fn(&str) + 'static) {
+        *self.on_print.borrow_mut() = Some(Box::new(f));
+    }
+
+    /// Stop the running script once `flag` is set, at its next instruction
+    /// check.
+    pub fn stop_on(&mut self, flag: Arc<AtomicBool>) {
+        *self.stop.borrow_mut() = Some(flag);
     }
 
     /// Give scripts `arg`, the list of words they were run with, as Lua's

@@ -46,15 +46,18 @@ pc.part.set{feature = pad, length = 20}
 - A command that fails raises a Lua error with the reason, which stops the
   script. `pcall(pc.part.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
-  or a script run is one undo step.
+  or a script run is one undo step, and so is anything you edit by hand
+  while it runs.
 - Solids rebuild after a script, as they do after a click. To read a solid
   in the same script, call `pc.doc.rebuild()` first: it waits and answers
   the features that failed.
 - `pc.doc.faces{body = b}` lists a solid's faces with a point on each and
   a flat face's normal or a round face's axis. Assembly joints take those
   faces as they are listed.
-- A run stops after 10 seconds in the application, and after an hour on
-  the command line.
+- Scripts run on a thread of their own, so the window stays live while
+  one runs. The status bar and the console show it with a Stop button.
+  Lines and scripts started meanwhile wait their turn. On the command line
+  a run stops after an hour.
 
 ## Examples
 

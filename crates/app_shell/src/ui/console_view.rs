@@ -147,6 +147,7 @@ pub fn draw_console(
     ui: &mut egui::Ui,
     state: &mut ConsoleState,
     command_ids: &[String],
+    running: Option<&str>,
     commands: &mut Vec<UiCommand>,
 ) {
     if !state.open {
@@ -179,6 +180,17 @@ pub fn draw_console(
                 });
                 if save.inner.clicked() {
                     commands.push(UiCommand::SaveRunsAsScript(state.session_runs.clone()));
+                }
+                if let Some(script) = running {
+                    ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
+                    ui.label(
+                        RichText::new(format!("Running {script}"))
+                            .font(sans(FONT_XS))
+                            .color(TEXT2),
+                    );
+                    if small_secondary_button(ui, "Stop").clicked() {
+                        commands.push(UiCommand::StopScript);
+                    }
                 }
                 ui.label(
                     RichText::new(
@@ -336,7 +348,7 @@ mod tests {
                 ..Default::default()
             };
             let mut output = ctx.run_ui(raw, |ui| {
-                draw_console(ui, &mut state, &[], &mut Vec::new());
+                draw_console(ui, &mut state, &[], None, &mut Vec::new());
                 left.push(ui.available_rect_before_wrap().height());
             });
             output.textures_delta.clear();
@@ -410,7 +422,7 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let mut output = ctx.run_ui(raw, |ui| draw_console(ui, state, &ids, &mut out));
+            let mut output = ctx.run_ui(raw, |ui| draw_console(ui, state, &ids, None, &mut out));
             output.textures_delta.clear();
         }
         out

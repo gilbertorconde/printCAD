@@ -112,6 +112,8 @@ pub struct UiFrameInputs<'a> {
     pub console_attention: bool,
     /// Every command's id, for the console's completion.
     pub command_ids: &'a [String],
+    /// The script running, by name, while one is.
+    pub script_running: Option<&'a str>,
 }
 
 /// A body's measure as the property panel shows it.

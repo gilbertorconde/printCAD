@@ -220,87 +220,60 @@ pub(crate) fn reference(commands: &[CommandSpec]) -> String {
     out
 }
 
-/// What scripts run against: the application, for the length of one run.
-struct AppHost<'a> {
-    app: &'a mut PrintCadApp,
-    event_loop: &'a ActiveEventLoop,
-}
-
-impl scripting::Host for AppHost<'_> {
-    fn commands(&self) -> Vec<CommandSpec> {
-        all_commands(self.app)
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
+impl PrintCadApp {
+    /// Run command `id` for a script, its arguments checked against its
+    /// spec: the application's own here, a workbench's in the workbench.
+    fn execute_command(
+        &mut self,
+        id: &str,
+        args: CommandArgs,
+        event_loop: &ActiveEventLoop,
+    ) -> CommandResult {
         if let Some(spec) = doc_commands().into_iter().find(|c| c.id == id) {
             spec.check(&args)?;
-            return self.app.run_doc_command(id, &args, self.event_loop);
+            return self.run_doc_command(id, &args, event_loop);
         }
         if let Some(spec) = app_commands().into_iter().find(|c| c.id == id) {
             spec.check(&args)?;
-            return self.app.run_app_command(id, &args);
+            return self.run_app_command(id, &args);
         }
         if let Some((spec, action)) = key_commands().find(|(c, _)| c.id == id) {
             spec.check(&args)?;
             if Args(&args).has("path") {
-                return self.app.run_file_command(action, &args);
+                return self.run_file_command(action, &args);
             }
-            return self.app.run_key_command(action, self.event_loop);
+            return self.run_key_command(action, event_loop);
         }
-        let Some((bench, spec)) = self.app.registry.command(id) else {
+        let Some((bench, spec)) = self.registry.command(id) else {
             return Err(CommandError::Unknown(id.to_string()));
         };
         spec.check(&args)?;
-        let params = self.app.interaction_ctx_params();
+        let params = self.interaction_ctx_params();
         let (result, outcome) = self
-            .app
             .with_workbench_ctx(&bench, params, |wb, ctx| wb.run_command(id, &args, ctx))
             .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        self.app.apply_hook_outcome(outcome, HookSite::Interaction);
+        self.apply_hook_outcome(outcome, HookSite::Interaction);
         result
     }
-}
 
-impl PrintCadApp {
-    /// Run one line typed in the console and show it with what it printed
-    /// and came to.
-    pub(crate) fn run_console_line(&mut self, line: &str, event_loop: &ActiveEventLoop) {
+    /// Run one line typed in the console on the script thread.
+    pub(crate) fn run_console_line(&mut self, line: &str) {
         console::push(LineKind::Input, line);
-        let mut engine = self.scripts.take().unwrap_or_default();
-        self.begin_script_step("Console");
-        let out = engine.eval_line(
-            line,
-            &mut AppHost {
-                app: self,
-                event_loop,
+        self.submit_script(scripting::Job::Line(line.to_string()), false);
+    }
+
+    fn submit_script(&mut self, job: scripting::Job, from_file: bool) {
+        let commands = command_specs(&self.registry);
+        self.script_runs.push_back(ScriptRun {
+            tab: self.session.tab,
+            from_file,
+            label: match &job {
+                scripting::Job::Line(_) => "a console line".to_string(),
+                scripting::Job::Script { name, .. } => name.clone(),
             },
-        );
-        self.end_script_step();
-        self.scripts = Some(engine);
-        for printed in out.printed {
-            console::push(LineKind::Printed, printed);
-        }
-        if let Some(value) = out.value {
-            console::push(LineKind::Value, value);
-        }
-        if let Some(error) = out.error {
-            console::push(LineKind::Error, error);
-        }
+        });
+        self.script_thread.submit(job, commands);
         self.redraw_needed = true;
-    }
-
-    /// Everything a script run changes is one undo step, named `label`,
-    /// whatever the commands it calls do: the edits before it close first,
-    /// and no boundary closes until [`Self::end_script_step`].
-    fn begin_script_step(&mut self, label: &str) {
-        self.session.journal.note(&mut self.session.document);
-        self.session.journal.label_next(label);
-        self.session.journal.hold(true);
-    }
-
-    fn end_script_step(&mut self) {
-        self.session.journal.hold(false);
-        self.session.journal.note(&mut self.session.document);
     }
 
     fn run_app_command(&mut self, id: &str, args: &CommandArgs) -> CommandResult {
@@ -436,48 +409,190 @@ impl PrintCadApp {
         }
     }
 
-    /// Run a script file, with what it printed and any error in the
-    /// console, which opens when there is something to show.
-    pub(crate) fn run_script_file(&mut self, path: &std::path::Path, event_loop: &ActiveEventLoop) {
+    /// Run a script file on the script thread. What it prints and the error
+    /// that stops it open the console.
+    pub(crate) fn run_script_file(&mut self, path: &std::path::Path) {
         let name = path
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_else(|| path.display().to_string());
-        let source = match std::fs::read_to_string(path) {
-            Ok(source) => source,
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                console::push(LineKind::Input, format!("run {name}"));
+                self.submit_script(scripting::Job::Script { source, name }, true);
+            }
             Err(err) => {
                 console::push(LineKind::Error, format!("{name}: {err}"));
                 self.console_attention = true;
+            }
+        }
+    }
+
+    /// Stop the running script: at its next instruction, or at once when
+    /// it waits on a rebuild.
+    pub(crate) fn stop_script(&mut self) {
+        self.script_thread.stop();
+        if let Some(wait) = self.script_rebuild.take() {
+            let _ = wait
+                .reply
+                .send(Err(CommandError::failed(scripting::STOPPED)));
+        }
+    }
+
+    /// Answer the script thread: run the commands it asks for, show what it
+    /// prints, and close a run's undo step when it ends. Commands keep
+    /// coming within a few milliseconds a frame, so a script runs at speed
+    /// while the window keeps drawing.
+    pub(crate) fn drive_scripts(&mut self, event_loop: &ActiveEventLoop) {
+        const BUDGET: std::time::Duration = std::time::Duration::from_millis(8);
+        let started = std::time::Instant::now();
+        loop {
+            if self.script_rebuild.is_some() {
+                self.answer_rebuild();
+                if self.script_rebuild.is_some() {
+                    return;
+                }
+            }
+            let wait = if self.script_thread.busy() && started.elapsed() < BUDGET {
+                std::time::Duration::from_millis(1)
+            } else {
+                std::time::Duration::ZERO
+            };
+            let Some(event) = self.script_thread.next_event(wait) else {
+                return;
+            };
+            self.script_event(event, event_loop);
+            if started.elapsed() > BUDGET {
+                self.redraw_needed = true;
                 return;
             }
-        };
-        console::push(LineKind::Input, format!("run {name}"));
-        let mut engine = self.scripts.take().unwrap_or_default();
-        self.begin_script_step(&format!("Run {name}"));
-        let out = engine.run_script(
-            &source,
-            &name,
-            &mut AppHost {
-                app: self,
-                event_loop,
-            },
-        );
-        self.end_script_step();
-        self.scripts = Some(engine);
-        if !out.printed.is_empty() || out.error.is_some() {
-            self.console_attention = true;
         }
-        for printed in out.printed {
-            console::push(LineKind::Printed, printed);
-        }
-        match out.error {
-            Some(error) => {
-                console::push(LineKind::Error, error.clone());
-                crate::app_log::warn(format!("Script {name} stopped: {error}"));
+    }
+
+    fn script_event(&mut self, event: scripting::Event, event_loop: &ActiveEventLoop) {
+        use scripting::Event;
+        let from_file = self.script_runs.front().is_some_and(|r| r.from_file);
+        match event {
+            Event::Started { label } => {
+                let step = if from_file {
+                    format!("Run {label}")
+                } else {
+                    "Console".to_string()
+                };
+                self.in_script_tab(|app| {
+                    app.session.journal.note(&mut app.session.document);
+                    app.session.journal.label_next(step);
+                    app.session.journal.hold(true);
+                });
             }
-            None => crate::app_log::info(format!("Ran {name}")),
+            Event::Printed(line) => {
+                console::push(LineKind::Printed, line);
+                if from_file {
+                    self.console_attention = true;
+                }
+            }
+            Event::Call { id, args, reply } => {
+                if id == "doc.rebuild" {
+                    self.start_rebuild(args, reply);
+                    return;
+                }
+                let answer = self
+                    .in_script_tab(|app| app.execute_command(&id, args, event_loop))
+                    .unwrap_or_else(|| {
+                        Err(CommandError::failed("the script's document was closed"))
+                    });
+                let _ = reply.send(answer);
+            }
+            Event::Finished { label, output } => {
+                self.in_script_tab(|app| {
+                    app.session.journal.hold(false);
+                    app.session.journal.note(&mut app.session.document);
+                });
+                self.script_runs.pop_front();
+                if let Some(value) = output.value {
+                    console::push(LineKind::Value, value);
+                }
+                match output.error {
+                    Some(error) => {
+                        console::push(LineKind::Error, error.clone());
+                        if from_file {
+                            self.console_attention = true;
+                            crate::app_log::warn(format!("Script {label} stopped: {error}"));
+                        }
+                    }
+                    None if from_file => crate::app_log::info(format!("Ran {label}")),
+                    None => {}
+                }
+                self.redraw_needed = true;
+            }
         }
-        self.redraw_needed = true;
+    }
+
+    /// Run `f` with the tab the running script started in on screen, for
+    /// as long as `f` takes. `None` when that tab has closed.
+    fn in_script_tab<R>(&mut self, f: impl FnOnce(&mut Self) -> R) -> Option<R> {
+        let tab = self.script_runs.front().map(|r| r.tab)?;
+        if tab == self.session.tab {
+            return Some(f(self));
+        }
+        let index = self.tab_index_of(tab)?;
+        Some(self.with_tab(index, f))
+    }
+
+    /// `doc.rebuild`: send every changed body to the kernel now, and answer
+    /// once the kernel has nothing left to do.
+    fn start_rebuild(&mut self, args: CommandArgs, reply: std::sync::mpsc::Sender<CommandResult>) {
+        let spec = doc_commands().into_iter().find(|c| c.id == "doc.rebuild");
+        if let Some(Err(err)) = spec.map(|s| s.check(&args)) {
+            let _ = reply.send(Err(err));
+            return;
+        }
+        let timeout = Args(&args)
+            .opt_number("timeout")
+            .ok()
+            .flatten()
+            .unwrap_or(60.0);
+        self.in_script_tab(|app| {
+            app.drive_part_recompute();
+            app.drive_shape_repairs();
+        });
+        self.script_rebuild = Some(RebuildWait {
+            reply,
+            deadline: std::time::Instant::now()
+                + std::time::Duration::from_secs_f64(timeout.max(0.0)),
+        });
+    }
+
+    /// Answer the waiting `doc.rebuild` once the kernel is idle: the
+    /// features that failed.
+    fn answer_rebuild(&mut self) {
+        let Some(wait) = &self.script_rebuild else {
+            return;
+        };
+        let answer = if self.kernel_worker.in_flight() == 0 {
+            let errors = self
+                .in_script_tab(|app| {
+                    features_in_order(&app.session.document, None)
+                        .into_iter()
+                        .filter_map(|n| {
+                            n.error.as_ref().map(|e| {
+                                json!({"feature": n.id.0.to_string(), "name": n.name, "error": e})
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Ok(Value::Array(errors))
+        } else if std::time::Instant::now() > wait.deadline {
+            Err(CommandError::failed(
+                "the kernel was still working at the timeout",
+            ))
+        } else {
+            return;
+        };
+        if let Some(wait) = self.script_rebuild.take() {
+            let _ = wait.reply.send(answer);
+        }
     }
 
     /// Every command's id, for the console's completion.
@@ -621,46 +736,25 @@ impl PrintCadApp {
                 );
                 Ok(Value::Null)
             }
-            "doc.rebuild" => {
-                let timeout = a.opt_number("timeout")?.unwrap_or(60.0);
-                self.rebuild_and_wait(std::time::Duration::from_secs_f64(timeout.max(0.0)))
-            }
             _ => Err(CommandError::Unknown(id.to_string())),
         }
     }
+}
 
-    /// Send every changed body to the kernel, as a frame would, and wait
-    /// for the answers: again while answers leave more to rebuild.
-    fn rebuild_and_wait(&mut self, timeout: std::time::Duration) -> CommandResult {
-        let started = std::time::Instant::now();
-        loop {
-            self.drive_part_recompute();
-            self.drive_shape_repairs();
-            if self.kernel_worker.in_flight() == 0 {
-                break;
-            }
-            let left = timeout.saturating_sub(started.elapsed());
-            if left.is_zero() {
-                return Err(CommandError::failed(format!(
-                    "the kernel was still working after {} s",
-                    timeout.as_secs_f32()
-                )));
-            }
-            if self.kernel_worker.wait(left) {
-                self.drain_kernel_responses();
-            }
-        }
-        self.redraw_needed = true;
-        let errors: Vec<Value> = features_in_order(&self.session.document, None)
-            .into_iter()
-            .filter_map(|n| {
-                n.error
-                    .as_ref()
-                    .map(|e| json!({"feature": n.id.0.to_string(), "name": n.name, "error": e}))
-            })
-            .collect();
-        Ok(Value::Array(errors))
-    }
+/// A script run submitted to the script thread: the tab it runs against
+/// and whether it is a file (whose output opens the console).
+#[derive(Debug, Clone)]
+pub(crate) struct ScriptRun {
+    pub tab: Uuid,
+    pub from_file: bool,
+    /// The script's name, or the console line.
+    pub label: String,
+}
+
+/// A `doc.rebuild` waiting on the kernel.
+pub(crate) struct RebuildWait {
+    reply: std::sync::mpsc::Sender<CommandResult>,
+    deadline: std::time::Instant,
 }
 
 /// The commands every host of a document answers the same way, with or

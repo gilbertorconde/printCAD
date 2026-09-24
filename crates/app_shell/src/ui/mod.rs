@@ -240,6 +240,7 @@ impl UiLayer {
             scripts,
             console_attention,
             command_ids,
+            script_running,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -494,7 +495,7 @@ impl UiLayer {
             }
 
             // Bottom bars before the side panels so they span the width.
-            let cancel = status_bar::draw_status_bar(
+            let status = status_bar::draw_status_bar(
                 ui,
                 &status_bar::StatusBarInputs {
                     fps,
@@ -515,13 +516,23 @@ impl UiLayer {
                     items: status_items.as_ref(),
                     preselect: hover_card.as_ref().map(|h| h.title.as_str()),
                     dimensions: dimensions.as_deref(),
+                    script_running,
                 },
             );
-            if cancel {
+            if status.cancel_kernel {
                 commands.push(UiCommand::CancelKernelJob);
             }
+            if status.stop_script {
+                commands.push(UiCommand::StopScript);
+            }
             log_view::draw_log_panel(ui, settings.rendering.show_log_panel);
-            console_view::draw_console(ui, &mut self.console, command_ids, &mut commands);
+            console_view::draw_console(
+                ui,
+                &mut self.console,
+                command_ids,
+                script_running,
+                &mut commands,
+            );
 
             let combo = combo_view::draw_combo_view(
                 ui,

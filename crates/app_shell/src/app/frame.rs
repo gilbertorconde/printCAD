@@ -187,6 +187,7 @@ impl PrintCadApp {
             || self.file_dialog_rx.is_some()
             || self.export_rx.is_some()
             || !self.nav_device.motion().is_idle()
+            || self.script_thread.busy()
     }
 
     /// What the 6-DoF mouse's buttons ask for, as commands. The device
@@ -542,6 +543,7 @@ impl PrintCadApp {
             app.drive_mesh_solids();
         });
         self.drive_measurement();
+        self.drive_scripts(event_loop);
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
@@ -682,6 +684,7 @@ impl PrintCadApp {
                         scripts: &self.script_library,
                         console_attention: std::mem::take(&mut self.console_attention),
                         command_ids: &self.command_ids,
+                        script_running: self.script_runs.front().map(|r| r.label.as_str()),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
@@ -751,7 +754,8 @@ impl PrintCadApp {
                 || crate::app::tabs::tabs_busy(&self.session, &self.tabs)
                 || self.file_dialog_rx.is_some()
                 || self.export_rx.is_some()
-                || !self.nav_device.motion().is_idle();
+                || !self.nav_device.motion().is_idle()
+                || self.script_thread.busy();
             let animating = self.session.camera.is_animating()
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()

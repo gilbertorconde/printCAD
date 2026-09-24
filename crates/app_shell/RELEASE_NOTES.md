@@ -50,6 +50,7 @@ version first.
 - The console completes command names with Tab, takes several lines, and keeps its history; Save as script turns a session into a script.
 - Every `.lua` file in the scripts folder shows in the Scripts menu, the toolbar and the palette, and takes a key.
 - `printcad --script build.lua` runs a script without a window, for batch work.
+- Scripts run on a thread of their own: the window stays live and the status bar shows the running script with a Stop button.
 - A script run is one undo step. See docs/SCRIPTING.md.
 
 ### Keyboard

@@ -283,9 +283,15 @@ command (`app/scripts.rs`). The `scripting` crate is Lua 5.4 (mlua,
 vendored) and knows no command: a `scripting::Host` lists and runs them,
 the prelude (`prelude.lua`) builds the `pc` namespace, `print`, `show`
 and `help`. The console (`ui/console_view.rs`, output in the `console`
-store) sends `UiCommand::RunConsole`; the line runs synchronously inside
-`apply_ui_commands` with the engine taken off `PrintCadApp.scripts`, the
-journal held (`OpJournal::hold`) so a run is one undo step. The app's own
+store) sends `UiCommand::RunConsole`, which queues it on the script thread
+(`scripting::ScriptThread`, owning the engine; `PrintCadApp.script_thread`).
+Each command the script calls comes back as `Event::Call` and runs on the
+UI thread in `drive_scripts` (8 ms a frame, in the tab the run started in,
+`in_script_tab`); `doc.rebuild` answers once the kernel is idle
+(`script_rebuild`) rather than blocking a frame. The journal is held
+(`OpJournal::hold`) from `Started` to `Finished`, so a run is one undo
+step. The thread wakes the loop through `AppEvent::Script` and a busy
+thread counts as async work. Stop sets the engine's stop flag. The app's own
 commands: `doc.*` (the pure ones in `scripts::document_command`, shared
 with `headless.rs`), `app.*`, and every keymap command, the file ones
 taking a `path` to skip their dialog. Script files: `script_library.rs`

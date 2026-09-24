@@ -146,6 +146,8 @@ fn main() -> Result<()> {
 pub enum AppEvent {
     /// The 6-DoF mouse moved or a button changed.
     DeviceInput,
+    /// The script thread asked for something or printed.
+    Script,
 }
 
 /// Where a re-derived remote import's meshes belong.
@@ -271,9 +273,13 @@ struct PrintCadApp {
     print_bed: Option<(u64, std::sync::Arc<kernel_api::TriMesh>)>,
     /// The title the window currently shows; rewritten only on change.
     window_title: String,
-    /// The Lua engine the console and scripts run in, made on first use;
-    /// the console's globals live in it between lines.
-    scripts: Option<scripting::ScriptEngine>,
+    /// The thread the console and scripts run on; its engine keeps the
+    /// console's globals between lines.
+    script_thread: scripting::ScriptThread,
+    /// Runs submitted and not finished, oldest (the running one) first.
+    script_runs: std::collections::VecDeque<app::scripts::ScriptRun>,
+    /// The running script's `doc.rebuild`, waiting on the kernel.
+    script_rebuild: Option<app::scripts::RebuildWait>,
     /// Script files picked in a dialog, to run once it answers.
     scripts_to_run: Vec<PathBuf>,
     /// The scripts folder's scripts, and when it was last read.
@@ -353,9 +359,22 @@ impl PrintCadApp {
             export_rx: None,
             last_export: Default::default(),
             kernel_worker: KernelWorker::spawn(),
-            nav_device: app::sixdof::SixDofWorker::spawn(move || {
-                let _ = proxy.send_event(AppEvent::DeviceInput);
+            nav_device: app::sixdof::SixDofWorker::spawn({
+                let proxy = proxy.clone();
+                move || {
+                    let _ = proxy.send_event(AppEvent::DeviceInput);
+                }
             }),
+            script_thread: {
+                let proxy = std::sync::Mutex::new(proxy);
+                scripting::ScriptThread::spawn(move || {
+                    if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(AppEvent::Script);
+                    }
+                })
+            },
+            script_runs: Default::default(),
+            script_rebuild: None,
             bench_open_fired: false,
             bench_select_fired: false,
             bench_repair_fired: false,
@@ -370,7 +389,6 @@ impl PrintCadApp {
             last_input_time: None,
             last_wake_reason: (false, false, false, false),
             redraw_needed: true,
-            scripts: None,
             scripts_to_run: Vec::new(),
             script_library: Vec::new(),
             script_library_read: None,
@@ -455,7 +473,7 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
             // The device thread only knocks when the puck starts or stops
             // moving, or a button changes; while it is deflected the frame
             // loop keeps itself awake.
-            AppEvent::DeviceInput => self.redraw_needed = true,
+            AppEvent::DeviceInput | AppEvent::Script => self.redraw_needed = true,
         }
     }
 

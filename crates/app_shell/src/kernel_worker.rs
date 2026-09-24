@@ -170,8 +170,6 @@ fn lock(activity: &Mutex<Activity>) -> std::sync::MutexGuard<'_, Activity> {
 pub struct KernelWorker {
     tx: Sender<KernelRequest>,
     rx: Receiver<KernelResponse>,
-    /// Responses [`Self::wait`] took off the channel, for the next drain.
-    held: Vec<KernelResponse>,
     in_flight: u32,
     activity: Arc<Mutex<Activity>>,
 }
@@ -195,7 +193,6 @@ impl KernelWorker {
         Self {
             tx: req_tx,
             rx: resp_rx,
-            held: Vec::new(),
             in_flight: 0,
             activity,
         }
@@ -298,25 +295,12 @@ impl KernelWorker {
     /// Pop every response that has arrived since the last call. The caller
     /// is responsible for any document/UI bookkeeping the responses imply.
     pub fn drain(&mut self) -> Vec<KernelResponse> {
-        let mut out = std::mem::take(&mut self.held);
+        let mut out = Vec::new();
         while let Ok(resp) = self.rx.try_recv() {
             self.in_flight = self.in_flight.saturating_sub(1);
             out.push(resp);
         }
         out
-    }
-
-    /// Block until a response arrives or `timeout` passes; whether one did.
-    /// It waits for the next [`Self::drain`].
-    pub fn wait(&mut self, timeout: std::time::Duration) -> bool {
-        match self.rx.recv_timeout(timeout) {
-            Ok(resp) => {
-                self.in_flight = self.in_flight.saturating_sub(1);
-                self.held.push(resp);
-                true
-            }
-            Err(_) => false,
-        }
     }
 
     /// Number of imports the worker is currently processing or has queued.

@@ -35,6 +35,17 @@ pub struct StatusBarInputs<'a> {
     pub preselect: Option<&'a str>,
     /// "w × h × d" of the selection, already formatted.
     pub dimensions: Option<&'a str>,
+    /// The script running, by name, while one is.
+    pub script_running: Option<&'a str>,
+}
+
+/// What the status bar's buttons asked for.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StatusBarResult {
+    /// Stop the running kernel job.
+    pub cancel_kernel: bool,
+    /// Stop the running script.
+    pub stop_script: bool,
 }
 
 fn progress_bar(ui: &mut egui::Ui, done: u64, total: u64) {
@@ -50,8 +61,9 @@ fn megabytes(bytes: u64) -> f64 {
 }
 
 /// Returns true when the user asked to stop the running kernel job.
-pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> bool {
+pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
     let mut cancel_requested = false;
+    let mut stop_script = false;
     egui::Panel::bottom("status_bar")
         .exact_size(STATUS_BAR)
         .frame(
@@ -67,6 +79,20 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> bool 
             ui.horizontal_centered(|ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_4;
                 draw_activity(ui, inputs, &mut cancel_requested);
+                if let Some(script) = inputs.script_running {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_2;
+                        ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
+                        ui.label(
+                            RichText::new(format!("Running {script}"))
+                                .font(sans(FONT_XS))
+                                .color(TEXT1),
+                        );
+                        if small_secondary_button(ui, "Stop").clicked() {
+                            stop_script = true;
+                        }
+                    });
+                }
 
                 if let Some(sel) = inputs.items.and_then(|i| i.selection.as_deref()) {
                     ui.horizontal(|ui| {
@@ -129,7 +155,10 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> bool 
                 });
             });
         });
-    cancel_requested
+    StatusBarResult {
+        cancel_kernel: cancel_requested,
+        stop_script,
+    }
 }
 
 fn coords_text(inputs: &StatusBarInputs<'_>) -> String {

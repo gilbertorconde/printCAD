@@ -195,8 +195,9 @@ impl PrintCadApp {
                     intents.workbench_switch = Some((from, to));
                 }
                 UiCommand::Undo => intents.undo = true,
-                UiCommand::RunConsole(line) => self.run_console_line(&line, event_loop),
-                UiCommand::RunScriptFile(path) => self.run_script_file(&path, event_loop),
+                UiCommand::RunConsole(line) => self.run_console_line(&line),
+                UiCommand::RunScriptFile(path) => self.run_script_file(&path),
+                UiCommand::StopScript => self.stop_script(),
                 UiCommand::NewScript => self.new_script(None),
                 UiCommand::SaveRunsAsScript(runs) => self.new_script(Some(runs)),
                 UiCommand::EditScript(path) => self.edit_script(path),
@@ -510,7 +511,7 @@ impl PrintCadApp {
 
         self.poll_file_dialog();
         for path in std::mem::take(&mut self.scripts_to_run) {
-            self.run_script_file(&path, event_loop);
+            self.run_script_file(&path);
         }
         self.poll_export();
         self.open_export_when_ready();
