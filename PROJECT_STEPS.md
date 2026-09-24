@@ -54,11 +54,12 @@ What is built, by area. The plan for what comes next is in
 
 - Bodies have a placement; their own geometry stays in their own frame.
 - Joints between bodies: mate two flat faces (with a gap, or facing the same
-  way) and align two round faces on one axis, solved into placements.
+  way), align two round faces on one axis, and hold two faces at an angle,
+  solved into placements.
 - Move a body by numbers.
 
 ## Not built yet
 
 - Sketch external geometry, waiting on the kernel
   ([ogeom-rs#52](https://github.com/gilbertorconde/ogeom-rs/issues/52)).
-- More joint kinds: angles, gears, limits.
+- More joint kinds: gears, limits.

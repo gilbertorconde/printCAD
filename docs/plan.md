@@ -58,6 +58,6 @@ Next:
 
 - Sketch external geometry, which waits on the kernel's projection of an
   edge onto a plane
-- More joint kinds: an angle between faces, gears, limits on a slide
+- More joint kinds: gears, limits on a slide or a turn
 - Stable face and edge identity across rebuilds, so references do not have
   to be matched by geometry

@@ -164,7 +164,9 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
     // First turn the body so its first joint's directions agree: where two
     // faces start facing the same way and must face each other, the least
     // squares below would sit on the half-turn's flat top and never start.
-    if let Some(joint) = joints.first() {
+    // An angle names no single direction, so the first joint that does
+    // sets the turn.
+    let first_turn = joints.iter().find_map(|joint| {
         let (_, dm) = joint.feature.moving.placed(&current);
         let (_, df) = joint
             .feature
@@ -181,10 +183,37 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
                     df
                 }
             }
+            JointKind::Angle { .. } => return None,
         };
-        if dm.length_squared() > 0.0 && target.length_squared() > 0.0 {
-            current = turned(current, DQuat::from_rotation_arc(dm, target));
-        }
+        (dm.length_squared() > 0.0 && target.length_squared() > 0.0)
+            .then(|| DQuat::from_rotation_arc(dm, target))
+    });
+    // With only angles, the first one turns the body to its angle, in the
+    // plane of the two normals (or about any line square to them when they
+    // start parallel, where the angle has no slope to follow).
+    let first_turn = first_turn.or_else(|| {
+        joints.iter().find_map(|joint| {
+            let JointKind::Angle { degrees } = joint.feature.kind else {
+                return None;
+            };
+            let (_, dm) = joint.feature.moving.placed(&current);
+            let (_, df) = joint
+                .feature
+                .fixed
+                .placed(&others[&joint.feature.other_body]);
+            let now = dm.cross(df).length().atan2(dm.dot(df));
+            let axis = df
+                .cross(dm)
+                .try_normalize()
+                .unwrap_or_else(|| dm.any_orthonormal_vector());
+            Some(DQuat::from_axis_angle(
+                axis,
+                f64::from(degrees).to_radians() - now,
+            ))
+        })
+    });
+    if let Some(turn) = first_turn {
+        current = turned(current, turn);
     }
     let step_to = |at: Rigid, x: &[f64; 6]| {
         let moved = turned(at, DQuat::from_scaled_axis(DVec3::new(x[0], x[1], x[2])));
@@ -295,7 +324,7 @@ fn solve6(mut m: [[f64; 6]; 6], mut b: [f64; 6]) -> Option<[f64; 6]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::joint::{Anchor, JointKind};
+    use crate::joint::{Anchor, JointKind, Rigid};
     use core_document::Document;
     use glam::{Quat, Vec3};
 
@@ -449,6 +478,90 @@ mod tests {
         // a on c closes a ring.
         add_joint(&mut doc, a, mate(c));
         assert!(matches!(solve(&doc), Err(SolveError::Loop(_))));
+    }
+
+    #[test]
+    fn an_angle_turns_a_face_to_the_angle_asked_and_leaves_where_it_sits() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let flap = doc.create_body(None);
+        doc.set_body_placement(
+            flap,
+            BodyPlacement::new(Quat::IDENTITY, Vec3::new(10.0, 20.0, 30.0)),
+        );
+        let up = Anchor::Plane {
+            point: [0.0; 3],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let joint = JointFeature {
+            kind: JointKind::Angle { degrees: 90.0 },
+            moving: up,
+            other_body: base,
+            fixed: up,
+        };
+        add_joint(&mut doc, flap, joint.clone());
+        apply(&mut doc);
+        let placed = Rigid::from(doc.body_placement(flap));
+        let angle = up.angle_to(&placed, &up, &Rigid::from(BodyPlacement::IDENTITY));
+        assert!((angle - 90.0).abs() < 1e-3, "{angle}");
+        // Only the turn is held: the flap is still about where it was.
+        assert!((doc.body_placement(flap).offset() - Vec3::new(10.0, 20.0, 30.0)).length() < 1.0);
+    }
+
+    #[test]
+    fn an_angle_with_a_mate_holds_both() {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        doc.set_body_placement(
+            part,
+            BodyPlacement::new(Quat::from_rotation_z(0.2), Vec3::new(5.0, 5.0, 10.0)),
+        );
+        // The part's underside on the base's top.
+        add_joint(
+            &mut doc,
+            part,
+            JointFeature {
+                kind: JointKind::Mate {
+                    flip: false,
+                    offset: 0.0,
+                },
+                moving: Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, -1.0],
+                },
+                other_body: base,
+                fixed: Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+            },
+        );
+        // Its +X side at 30 degrees to the base's +X side.
+        let side = Anchor::Plane {
+            point: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+        };
+        add_joint(
+            &mut doc,
+            part,
+            JointFeature {
+                kind: JointKind::Angle { degrees: 30.0 },
+                moving: side,
+                other_body: base,
+                fixed: side,
+            },
+        );
+        apply(&mut doc);
+        let placed = Rigid::from(doc.body_placement(part));
+        let origin = Rigid::from(BodyPlacement::IDENTITY);
+        assert!((side.angle_to(&placed, &side, &origin) - 30.0).abs() < 1e-3);
+        let under = Anchor::Plane {
+            point: [0.0; 3],
+            normal: [0.0, 0.0, -1.0],
+        };
+        let (point, normal) = under.placed(&placed);
+        assert!(point.z.abs() < 1e-3 && (normal.z + 1.0).abs() < 1e-6);
     }
 
     #[test]

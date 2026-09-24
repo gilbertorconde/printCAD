@@ -131,10 +131,12 @@ cargo fmt --all                   # CI enforces --check
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature
   for error attribution).
 - `workbenches/wb_assembly`: joints between bodies (`joint.rs`: Mate of two
-  planar anchors with offset/flip, Align of two axes; anchors kept in each
+  planar anchors with offset/flip, Align of two axes, Angle between two
+  planar anchors, starting at the angle they make; anchors kept in each
   body's own frame), the solver (`solve.rs`: bodies in dependency order,
   each by damped least squares in double precision from where it sits,
-  after turning its first joint's directions into agreement; rings and
+  after turning its first joint's directions into agreement, or its first
+  angle to its value; rings and
   conflicting joints are reported), and task panels for picking,
   joint settings and moving a body by numbers. Solves run inside the
   gesture that made or edited a joint and record ordinary

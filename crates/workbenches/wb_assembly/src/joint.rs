@@ -23,6 +23,10 @@ pub enum JointKind {
     /// Two round faces on one axis: a pin in a hole, a shaft in a bearing.
     /// The moving body may still turn about the axis and slide along it.
     Align,
+    /// Two flat faces at `degrees` between their outward normals: 180
+    /// faces them at each other, 90 stands one square to the other. Only
+    /// the turn is held; where the faces sit is left free.
+    Angle { degrees: f32 },
 }
 
 impl JointKind {
@@ -30,6 +34,7 @@ impl JointKind {
         match self {
             JointKind::Mate { .. } => "Mate",
             JointKind::Align => "Align",
+            JointKind::Angle { .. } => "Angle",
         }
     }
 
@@ -37,6 +42,7 @@ impl JointKind {
         match self {
             JointKind::Mate { .. } => "joint-mate",
             JointKind::Align => "joint-align",
+            JointKind::Angle { .. } => "constraint-angle",
         }
     }
 }
@@ -54,6 +60,14 @@ pub enum Anchor {
 }
 
 impl Anchor {
+    /// The angle between the directions of two anchors where two bodies sit,
+    /// in degrees.
+    pub fn angle_to(&self, at: &Rigid, other: &Anchor, other_at: &Rigid) -> f32 {
+        let (_, a) = self.placed(at);
+        let (_, b) = other.placed(other_at);
+        a.cross(b).length().atan2(a.dot(b)).to_degrees() as f32
+    }
+
     /// The flat face a pick landed on, when it is flat.
     pub fn plane_of(face: &FaceRef) -> Option<Anchor> {
         match face.surface {
@@ -174,6 +188,10 @@ impl JointFeature {
             JointKind::Align => {
                 out.extend(dm.cross(df).to_array().map(|c| c * ARM_MM));
                 out.extend((pm - pf).cross(df).to_array());
+            }
+            JointKind::Angle { degrees } => {
+                let between = dm.cross(df).length().atan2(dm.dot(df));
+                out.push((between - f64::from(degrees).to_radians()) * ARM_MM);
             }
         }
     }

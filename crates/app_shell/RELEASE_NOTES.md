@@ -29,7 +29,7 @@ version first.
 
 ### Assembly
 - Bodies can be moved and turned, and keep their own geometry as it was made.
-- Joints place one body against another: mate two flat faces, with a gap or facing the same way, or line up a pin with a hole on one axis.
+- Joints place one body against another: mate two flat faces, with a gap or facing the same way, line up a pin with a hole on one axis, or hold two faces at an angle.
 - Joints solve when made or edited and when a body moves, and undo as one step with the moves they cause.
 - Export writes each body where it sits.
 

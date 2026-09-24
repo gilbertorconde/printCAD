@@ -166,6 +166,29 @@ impl AssemblyWorkbench {
                         .on_hover_text("The faces point the same way instead of at each other")
                         .changed();
                 }
+                JointKind::Angle { degrees } => {
+                    ui.horizontal(|ui| {
+                        ui.add_sized(
+                            [90.0, INPUT],
+                            egui::Label::new(
+                                RichText::new("Angle").font(sans(FONT_SM)).color(TEXT2),
+                            ),
+                        );
+                        changed |= QtyField::degrees(degrees).range(0.0..=180.0).show(ui);
+                    })
+                    .response
+                    .on_hover_text(
+                        "Between the faces' outward normals: 180 faces them at each other",
+                    );
+                    ui.label(
+                        RichText::new(
+                            "Only the turn is held: pair it with a mate or an alignment to \
+                             say where the body sits.",
+                        )
+                        .font(sans(FONT_SM))
+                        .color(TEXT2),
+                    );
+                }
                 JointKind::Align => {
                     ui.label(
                         RichText::new(

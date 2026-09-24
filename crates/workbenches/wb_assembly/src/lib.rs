@@ -26,6 +26,7 @@ pub use solve::{HOLDS_MM, Joint, SolveError, joints, solve};
 enum PickKind {
     Mate,
     Align,
+    Angle,
 }
 
 impl PickKind {
@@ -33,6 +34,7 @@ impl PickKind {
         match self {
             PickKind::Mate => "Mate faces",
             PickKind::Align => "Align axes",
+            PickKind::Angle => "Angle between faces",
         }
     }
 
@@ -40,6 +42,7 @@ impl PickKind {
         match self {
             PickKind::Mate => "joint-mate",
             PickKind::Align => "joint-align",
+            PickKind::Angle => "constraint-angle",
         }
     }
 
@@ -50,6 +53,8 @@ impl PickKind {
             (PickKind::Mate, true) => "Click the face it goes against, on another body",
             (PickKind::Align, false) => "Click a round face on the body to move",
             (PickKind::Align, true) => "Click the round face it lines up with, on another body",
+            (PickKind::Angle, false) => "Click a flat face on the body to turn",
+            (PickKind::Angle, true) => "Click the face it keeps its angle to, on another body",
         }
     }
 }
@@ -161,12 +166,12 @@ impl AssemblyWorkbench {
         let body = BodyId(body);
         let local: FaceRef = face.moved(&ctx.document.body_placement(body).inverse());
         let anchor = match picking.kind {
-            PickKind::Mate => Anchor::plane_of(&local),
+            PickKind::Mate | PickKind::Angle => Anchor::plane_of(&local),
             PickKind::Align => Anchor::axis_of(&local),
         };
         let Some(anchor) = anchor else {
             ctx.log_warn(match picking.kind {
-                PickKind::Mate => "A mate takes flat faces",
+                PickKind::Mate | PickKind::Angle => "This joint takes flat faces",
                 PickKind::Align => "An alignment takes round faces: a hole, a pin, a boss",
             });
             return;
@@ -189,6 +194,15 @@ impl AssemblyWorkbench {
                         offset: 0.0,
                     },
                     PickKind::Align => JointKind::Align,
+                    // It starts at the angle the faces make now, so making
+                    // it moves nothing until the angle is set.
+                    PickKind::Angle => JointKind::Angle {
+                        degrees: first_anchor.angle_to(
+                            &ctx.document.body_placement(first_body).into(),
+                            &anchor,
+                            &ctx.document.body_placement(body).into(),
+                        ),
+                    },
                 };
                 self.make_joint(
                     ctx,
@@ -277,6 +291,7 @@ impl Workbench for AssemblyWorkbench {
         };
         context.register_tool(tool("asm.mate", "Mate faces", "joint-mate").shortcut("M"));
         context.register_tool(tool("asm.align", "Align axes", "joint-align").shortcut("A"));
+        context.register_tool(tool("asm.angle", "Angle between faces", "constraint-angle"));
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh"));
     }
@@ -293,7 +308,7 @@ impl Workbench for AssemblyWorkbench {
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
-            "asm.mate" | "asm.align" => ctx.document.bodies().len() >= 2,
+            "asm.mate" | "asm.align" | "asm.angle" => ctx.document.bodies().len() >= 2,
             "asm.move" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
             _ => false,
@@ -310,11 +325,11 @@ impl Workbench for AssemblyWorkbench {
             return InputResult::ignored();
         }
         match tool {
-            Some(id @ ("asm.mate" | "asm.align")) => {
-                let kind = if id == "asm.mate" {
-                    PickKind::Mate
-                } else {
-                    PickKind::Align
+            Some(id @ ("asm.mate" | "asm.align" | "asm.angle")) => {
+                let kind = match id {
+                    "asm.mate" => PickKind::Mate,
+                    "asm.align" => PickKind::Align,
+                    _ => PickKind::Angle,
                 };
                 self.task = None;
                 self.seen = None;
@@ -560,6 +575,7 @@ mod icon_coverage {
                 offset: 0.0,
             },
             JointKind::Align,
+            JointKind::Angle { degrees: 90.0 },
         ] {
             assert!(ui_kit::icon::exists(kind.icon()), "{}", kind.icon());
         }

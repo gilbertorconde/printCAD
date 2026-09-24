@@ -16,7 +16,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
 - **Part Design:** pad, pocket, revolve, loft, pipe, helix, holes, fillets,
   chamfers, patterns and booleans, all editable in a feature tree.
 - **Assembly:** place bodies against each other with joints: mate two flat
-  faces, or line up two round ones on one axis.
+  faces, line up two round ones on one axis, or hold two faces at an angle.
 - **Import:** STEP and IGES as solids; STL, OBJ and 3MF as meshes that can
   be converted to solids.
 - **Export:** STEP, STL and 3MF, or straight to your slicer.
@@ -127,7 +127,7 @@ More detail in [docs](docs/):
 
 ## Roadmap
 
-- More joint kinds: angles, gears, limits
+- More joint kinds: gears, limits on a slide or a turn
 - Sketch external geometry, once the kernel projects edges onto planes
 
 ## License
