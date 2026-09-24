@@ -299,7 +299,16 @@ impl PartDesignWorkbench {
         }
 
         let deps_before = feature.dependencies();
-        let changed = editors::feature_editor(ui, ctx, body, feature_id, &mut feature);
+        let (changed, formula_edits) = {
+            let shown: &WorkbenchRuntimeContext = ctx;
+            let mut fx = editors::Formulas::of(shown.document, feature_id);
+            let changed =
+                editors::feature_editor(ui, shown, &mut fx, body, feature_id, &mut feature);
+            (changed, std::mem::take(&mut fx.edits))
+        };
+        for (key, formula) in formula_edits {
+            let _ = ctx.document.set_feature_formula(feature_id, key, formula);
+        }
         if changed {
             let deps_after = feature.dependencies();
             if ctx
@@ -355,7 +364,16 @@ impl PartDesignWorkbench {
         let icon = crate::datum_icon(&datum);
         Self::card_header(ui, icon, &format!("{} parameters", datum.shape.label()));
         Self::name_row(ui, ctx, datum_id, &node.name);
-        if editors::datum_editor(ui, ctx, datum_id, &mut datum) {
+        let (changed, formula_edits) = {
+            let shown: &WorkbenchRuntimeContext = ctx;
+            let mut fx = editors::Formulas::of(shown.document, datum_id);
+            let changed = editors::datum_editor(ui, shown, &mut fx, datum_id, &mut datum);
+            (changed, std::mem::take(&mut fx.edits))
+        };
+        for (key, formula) in formula_edits {
+            let _ = ctx.document.set_feature_formula(datum_id, key, formula);
+        }
+        if changed {
             let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
             // Sketches attached to this datum re-derive their plane from it
             // on their next edit; solids are unaffected.

@@ -180,6 +180,29 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
     out
 }
 
+/// Every name the tables give a number, for checks.
+#[cfg(test)]
+pub(crate) fn every_name() -> Vec<&'static str> {
+    [
+        "Pad",
+        "Pocket",
+        "Revolution",
+        "Groove",
+        "Helix",
+        "Hole",
+        "Fillet",
+        "Chamfer",
+        "Draft",
+        "Thickness",
+        "LinearPattern",
+        "PolarPattern",
+    ]
+    .iter()
+    .flat_map(|v| fields(v).iter().map(|(_, name, _, _)| *name))
+    .chain(["x", "y", "z", "radius", "height", "length", "angle"])
+    .collect()
+}
+
 /// The numbers of a datum: its offset from what it is attached to.
 pub fn datum_parameters() -> Vec<Parameter> {
     vec![

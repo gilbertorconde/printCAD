@@ -40,23 +40,164 @@ fn field(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui) -> bool) -> bool {
     .inner
 }
 
-fn mm_drag(ui: &mut Ui, value: &mut f32, label: &str) -> bool {
+/// The parameter each editor field shows, by the field's label.
+const LABEL_PARAMETERS: &[(&str, &str)] = &[
+    ("Length", "length"),
+    ("Second length", "length2"),
+    ("Depth", "depth"),
+    ("Second depth", "depth2"),
+    ("Taper", "taper"),
+    ("Offset", "offset"),
+    ("Angle", "angle"),
+    ("Angle 2", "angle2"),
+    ("Pitch", "pitch"),
+    ("Height", "height"),
+    ("Cone angle", "cone_angle"),
+    ("Diameter", "diameter"),
+    ("Bore Ø", "counterbore_diameter"),
+    ("Bore depth", "counterbore_depth"),
+    ("Sink Ø", "countersink_diameter"),
+    ("Sink angle", "countersink_angle"),
+    ("Radius", "radius"),
+    ("Size", "size"),
+    ("Size 2", "size2"),
+    ("Thickness", "thickness"),
+    ("Occurrences", "occurrences"),
+];
+
+/// What a feature's fields know of formulas: the feature's parameters,
+/// which of them a formula sets, and the formula edits made this frame, for
+/// the task to apply (`(key, formula)`, `None` taking one away).
+pub(crate) struct Formulas<'a> {
+    document: &'a core_document::Document,
+    feature: FeatureId,
+    params: Vec<core_document::Parameter>,
+    pub edits: Vec<(String, Option<String>)>,
+}
+
+impl<'a> Formulas<'a> {
+    pub(crate) fn of(document: &'a core_document::Document, feature: FeatureId) -> Self {
+        let params = document
+            .get_feature_meta(feature)
+            .map(|node| {
+                if node.workbench_id.as_str() == "core.datum" {
+                    crate::params::datum_parameters()
+                } else {
+                    crate::params::feature_parameters(node)
+                }
+            })
+            .unwrap_or_default();
+        Self {
+            document,
+            feature,
+            params,
+            edits: Vec::new(),
+        }
+    }
+
+    /// The parameter an editor field labelled `label` shows.
+    fn find(&self, label: &str) -> Option<core_document::Parameter> {
+        let wanted = label.trim_end_matches(':');
+        let name = LABEL_PARAMETERS
+            .iter()
+            .find(|(l, _)| *l == wanted)
+            .map(|(_, name)| *name)?;
+        let node = self.document.get_feature_meta(self.feature)?;
+        self.params
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name) && node.data.pointer(&p.pointer).is_some())
+            .cloned()
+    }
+
+    /// The field for `label` as a formula field, if it has a parameter:
+    /// `Some(changed)` when it did, the value set by hand going into
+    /// `value` and a formula into `edits`.
+    fn show(&mut self, ui: &mut Ui, label: &str, value: f64) -> Option<(bool, f64)> {
+        let p = self.find(label)?;
+        let formula = self.document.feature_formula(self.feature, &p.key);
+        let slot = self
+            .document
+            .evaluated_slots(self.feature)
+            .iter()
+            .find(|s| s.key == p.key);
+        let shown = match (formula, slot.map(|s| &s.result)) {
+            (Some(_), Some(Ok(q))) => q.value,
+            _ => value,
+        };
+        let error = slot
+            .and_then(|s| s.result.as_ref().err())
+            .map(String::as_str);
+        let host = core_document::DocumentFormulas {
+            document: self.document,
+            dim: p.dim,
+        };
+        let edit = ui
+            .horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = SPACE_2;
+                label_cell(ui, label);
+                ui_kit::widgets::FormulaField::new(
+                    egui::Id::new(("part_field", self.feature, &p.key)),
+                    shown,
+                    &host,
+                )
+                .formula(formula)
+                .error(error)
+                .unit(match p.dim {
+                    core_document::expr::Dim::LENGTH => "mm",
+                    core_document::expr::Dim::ANGLE => "°",
+                    _ => "",
+                })
+                .decimals(if p.integer { 0 } else { 2 })
+                .speed(if p.integer { 0.05 } else { 0.5 })
+                .show(ui)
+            })
+            .inner;
+        Some(match edit {
+            Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
+                if formula.is_some() {
+                    self.edits.push((p.key, None));
+                }
+                (true, v)
+            }
+            Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
+                self.edits.push((p.key, Some(text)));
+                (false, value)
+            }
+            None => (false, value),
+        })
+    }
+}
+
+fn mm_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
+    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
+        *value = v as f32;
+        return changed;
+    }
     field(ui, label, |ui| QtyField::mm(value).speed(0.5).show(ui))
 }
 
 fn deg_drag(
     ui: &mut Ui,
+    fx: &mut Formulas,
     value: &mut f32,
     label: &str,
     range: std::ops::RangeInclusive<f32>,
 ) -> bool {
+    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
+        *value = (v as f32).clamp(*range.start(), *range.end());
+        return changed;
+    }
     let range = (*range.start() as f64)..=(*range.end() as f64);
     field(ui, label, |ui| {
         QtyField::degrees(value).speed(1.0).range(range).show(ui)
     })
 }
 
-fn count_drag(ui: &mut Ui, value: &mut u32, label: &str) -> bool {
+fn count_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut u32, label: &str) -> bool {
+    if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
+        *value = v.round().clamp(2.0, 1000.0) as u32;
+        return changed;
+    }
     field(ui, label, |ui| {
         let mut v = *value as f32;
         let changed = QtyField::new(&mut v)
@@ -766,6 +907,7 @@ fn placement_editor(ui: &mut Ui, placement: &mut kernel_api::Placement) -> bool 
 pub fn datum_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
     feature_id: FeatureId,
     datum: &mut core_document::DatumFeature,
 ) -> bool {
@@ -773,9 +915,9 @@ pub fn datum_editor(
     let mut changed = false;
 
     match &mut datum.shape {
-        DatumShape::Plane { size } => changed |= mm_drag(ui, size, "Display size:"),
-        DatumShape::Line { length } => changed |= mm_drag(ui, length, "Display length:"),
-        DatumShape::CoordinateSystem { size } => changed |= mm_drag(ui, size, "Display size:"),
+        DatumShape::Plane { size } => changed |= mm_drag(ui, fx, size, "Display size:"),
+        DatumShape::Line { length } => changed |= mm_drag(ui, fx, length, "Display length:"),
+        DatumShape::CoordinateSystem { size } => changed |= mm_drag(ui, fx, size, "Display size:"),
         DatumShape::Point => {}
     }
 
@@ -840,6 +982,7 @@ pub fn datum_editor(
     });
     changed |= deg_drag(
         ui,
+        fx,
         &mut datum.offset.rotation_deg,
         "Rotation:",
         -180.0..=180.0,
@@ -853,6 +996,7 @@ pub fn datum_editor(
 pub fn feature_editor(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
+    fx: &mut Formulas,
     body: BodyId,
     feature_id: FeatureId,
     feature: &mut PartFeature,
@@ -885,21 +1029,21 @@ pub fn feature_editor(
             changed |= extrude_mode_combo(ui, ("pad_mode", feature_id), mode, false);
             match mode {
                 ExtrudeMode::Dimension => {
-                    changed |= mm_drag(ui, length, "Length:");
+                    changed |= mm_drag(ui, fx, length, "Length:");
                     changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
                 }
                 ExtrudeMode::TwoLengths => {
-                    changed |= mm_drag(ui, length, "Length:");
-                    changed |= mm_drag(ui, length2, "Second length:");
+                    changed |= mm_drag(ui, fx, length, "Length:");
+                    changed |= mm_drag(ui, fx, length2, "Second length:");
                 }
                 ExtrudeMode::UpToFace => {
                     changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
-                    changed |= mm_drag(ui, up_to_offset, "Offset:");
+                    changed |= mm_drag(ui, fx, up_to_offset, "Offset:");
                 }
                 _ => {}
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
-            changed |= deg_drag(ui, taper_deg, "Taper:", -85.0..=85.0);
+            changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
         }
         PartFeature::Pocket {
             refine: _,
@@ -932,21 +1076,21 @@ pub fn feature_editor(
             }
             changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, false);
             match mode {
-                ExtrudeMode::Dimension => changed |= mm_drag(ui, depth, "Depth:"),
+                ExtrudeMode::Dimension => changed |= mm_drag(ui, fx, depth, "Depth:"),
                 ExtrudeMode::TwoLengths => {
-                    changed |= mm_drag(ui, depth, "Depth:");
-                    changed |= mm_drag(ui, depth2, "Second depth:");
+                    changed |= mm_drag(ui, fx, depth, "Depth:");
+                    changed |= mm_drag(ui, fx, depth2, "Second depth:");
                 }
                 ExtrudeMode::UpToFace => {
                     changed |= face_pick_row(ui, ctx, up_to_face, "Target face:");
-                    changed |= mm_drag(ui, up_to_offset, "Offset:");
+                    changed |= mm_drag(ui, fx, up_to_offset, "Offset:");
                 }
                 _ => {}
             }
             changed |= check_row(ui, reversed, "Reversed")
                 .on_hover_text("Cut along the sketch normal instead of against it")
                 .changed();
-            changed |= deg_drag(ui, taper_deg, "Taper:", -85.0..=85.0);
+            changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
         }
         PartFeature::Revolution {
             refine: _,
@@ -977,7 +1121,7 @@ pub fn feature_editor(
                 *sketch = new;
                 changed = true;
             }
-            changed |= deg_drag(ui, angle_deg, "Angle:", 0.1..=360.0);
+            changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=360.0);
             changed |= revolve_axis_editor(ui, axis, ("rev_axis", feature_id));
             changed |= check_row(ui, midplane, "Midplane").changed();
             let mut two_sided = second_angle_deg.is_some();
@@ -986,7 +1130,7 @@ pub fn feature_editor(
                 changed = true;
             }
             if let Some(second) = second_angle_deg {
-                changed |= deg_drag(ui, second, "Angle 2:", 0.1..=360.0);
+                changed |= deg_drag(ui, fx, second, "Angle 2:", 0.1..=360.0);
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
@@ -1110,11 +1254,11 @@ pub fn feature_editor(
             });
             match mode {
                 HelixMode::PitchHeight => {
-                    changed |= mm_drag(ui, pitch, "Pitch:");
-                    changed |= mm_drag(ui, height, "Height:");
+                    changed |= mm_drag(ui, fx, pitch, "Pitch:");
+                    changed |= mm_drag(ui, fx, height, "Height:");
                 }
                 HelixMode::PitchTurns => {
-                    changed |= mm_drag(ui, pitch, "Pitch:");
+                    changed |= mm_drag(ui, fx, pitch, "Pitch:");
                     ui.horizontal(|ui| {
                         label_cell(ui, "Turns");
                         changed |= ui
@@ -1123,7 +1267,7 @@ pub fn feature_editor(
                     });
                 }
                 HelixMode::HeightTurns => {
-                    changed |= mm_drag(ui, height, "Height:");
+                    changed |= mm_drag(ui, fx, height, "Height:");
                     ui.horizontal(|ui| {
                         label_cell(ui, "Turns");
                         changed |= ui
@@ -1132,7 +1276,7 @@ pub fn feature_editor(
                     });
                 }
             }
-            changed |= deg_drag(ui, cone_angle_deg, "Cone angle:", -85.0..=85.0);
+            changed |= deg_drag(ui, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
             changed |= check_row(ui, left_handed, "Left handed").changed();
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= check_row(ui, subtractive, "Subtractive").changed();
@@ -1242,11 +1386,11 @@ pub fn feature_editor(
                     TEXT2,
                 );
             } else {
-                changed |= mm_drag(ui, diameter, "Diameter:");
+                changed |= mm_drag(ui, fx, diameter, "Diameter:");
             }
             changed |= check_row(ui, through_all, "Through all").changed();
             if !*through_all {
-                changed |= mm_drag(ui, depth, "Depth:");
+                changed |= mm_drag(ui, fx, depth, "Depth:");
             }
             ui.horizontal(|ui| {
                 label_cell(ui, "Hole cut");
@@ -1279,21 +1423,21 @@ pub fn feature_editor(
             match cut {
                 HoleCut::None => {}
                 HoleCut::Counterbore { diameter, depth } => {
-                    changed |= mm_drag(ui, diameter, "Bore Ø:");
-                    changed |= mm_drag(ui, depth, "Bore depth:");
+                    changed |= mm_drag(ui, fx, diameter, "Bore Ø:");
+                    changed |= mm_drag(ui, fx, depth, "Bore depth:");
                 }
                 HoleCut::Countersink {
                     diameter,
                     angle_deg,
                 } => {
-                    changed |= mm_drag(ui, diameter, "Sink Ø:");
-                    changed |= deg_drag(ui, angle_deg, "Sink angle:", 10.0..=170.0);
+                    changed |= mm_drag(ui, fx, diameter, "Sink Ø:");
+                    changed |= deg_drag(ui, fx, angle_deg, "Sink angle:", 10.0..=170.0);
                 }
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::Fillet { radius, edges } => {
-            changed |= mm_drag(ui, radius, "Radius:");
+            changed |= mm_drag(ui, fx, radius, "Radius:");
             changed |= edge_sel_editor(ui, ctx, edges, ("fillet_edges", feature_id));
         }
         PartFeature::Chamfer {
@@ -1321,15 +1465,15 @@ pub fn feature_editor(
                         }
                     });
             });
-            changed |= mm_drag(ui, size, "Size:");
+            changed |= mm_drag(ui, fx, size, "Size:");
             match mode {
                 ChamferMode::EqualDistance => {}
                 ChamferMode::TwoDistances => {
-                    changed |= mm_drag(ui, size2, "Size 2:");
+                    changed |= mm_drag(ui, fx, size2, "Size 2:");
                     changed |= check_row(ui, flip, "Flip direction").changed();
                 }
                 ChamferMode::DistanceAngle => {
-                    changed |= deg_drag(ui, angle_deg, "Angle:", 1.0..=89.0);
+                    changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=89.0);
                     changed |= check_row(ui, flip, "Flip direction").changed();
                 }
             }
@@ -1341,7 +1485,7 @@ pub fn feature_editor(
             faces,
             reversed,
         } => {
-            changed |= deg_drag(ui, angle_deg, "Angle:", 0.1..=45.0);
+            changed |= deg_drag(ui, fx, angle_deg, "Angle:", 0.1..=45.0);
             let mut neutral_opt = Some(*neutral);
             if face_pick_row(ui, ctx, &mut neutral_opt, "Neutral plane:")
                 && let Some(pick) = neutral_opt
@@ -1357,7 +1501,7 @@ pub fn feature_editor(
             faces,
             inward,
         } => {
-            changed |= mm_drag(ui, value, "Thickness:");
+            changed |= mm_drag(ui, fx, value, "Thickness:");
             changed |= face_list_editor(ui, ctx, faces, "Faces to open:");
             changed |= check_row(ui, inward, "Inward").changed();
         }
@@ -1380,11 +1524,11 @@ pub fn feature_editor(
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(ui, axis, ("linear_axis", feature_id));
-            changed |= count_drag(ui, occurrences, "Occurrences:");
+            changed |= count_drag(ui, fx, occurrences, "Occurrences:");
             changed |= check_row(ui, spacing_mode, "Length is spacing")
                 .on_hover_text("Off: length is the overall span")
                 .changed();
-            changed |= mm_drag(ui, length, "Length:");
+            changed |= mm_drag(ui, fx, length, "Length:");
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::PolarPattern {
@@ -1397,8 +1541,8 @@ pub fn feature_editor(
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(ui, axis, ("polar_axis", feature_id));
-            changed |= count_drag(ui, occurrences, "Occurrences:");
-            changed |= deg_drag(ui, angle_deg, "Angle:", 1.0..=360.0);
+            changed |= count_drag(ui, fx, occurrences, "Occurrences:");
+            changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=360.0);
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         PartFeature::MultiTransform {
@@ -1429,8 +1573,8 @@ pub fn feature_editor(
                         occurrences,
                     } => {
                         changed |= pattern_axis_editor(ui, axis, ("mt_lin", feature_id, i));
-                        changed |= mm_drag(ui, length, "Length:");
-                        changed |= count_drag(ui, occurrences, "Occurrences:");
+                        changed |= mm_drag(ui, fx, length, "Length:");
+                        changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }
                     TransformStep::Polar {
                         axis,
@@ -1438,8 +1582,8 @@ pub fn feature_editor(
                         occurrences,
                     } => {
                         changed |= pattern_axis_editor(ui, axis, ("mt_pol", feature_id, i));
-                        changed |= deg_drag(ui, angle_deg, "Angle:", 1.0..=360.0);
-                        changed |= count_drag(ui, occurrences, "Occurrences:");
+                        changed |= deg_drag(ui, fx, angle_deg, "Angle:", 1.0..=360.0);
+                        changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }
                     TransformStep::Mirror { plane } => {
                         changed |= mirror_plane_editor(ui, ctx, plane, ("mt_mir", feature_id, i));
@@ -1461,7 +1605,7 @@ pub fn feature_editor(
                                 changed |= ui.add(egui::DragValue::new(v).speed(0.5)).changed();
                             }
                         });
-                        changed |= count_drag(ui, occurrences, "Occurrences:");
+                        changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }
                 }
             }
@@ -1611,5 +1755,21 @@ fn picked_edges(ctx: &WorkbenchRuntimeContext) -> Vec<core_document::EdgeRef> {
     match edited_body(ctx) {
         Some(body) => ctx.selected_edges_in(body),
         None => ctx.selected_edges.clone(),
+    }
+}
+
+#[cfg(test)]
+mod formula_fields {
+    use super::LABEL_PARAMETERS;
+
+    #[test]
+    fn every_field_label_names_a_parameter_part_design_lists() {
+        let listed = crate::params::every_name();
+        for (label, name) in LABEL_PARAMETERS {
+            assert!(
+                listed.contains(name),
+                "{label} maps to {name}, which no feature lists"
+            );
+        }
     }
 }

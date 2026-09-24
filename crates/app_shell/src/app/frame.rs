@@ -542,6 +542,9 @@ impl PrintCadApp {
             app.drive_shape_repairs();
             app.drive_mesh_solids();
         });
+        // What formulas moved is followed within the gesture that moved
+        // it: a joint an open panel binds re-solves on the next frame.
+        self.settle_formulas();
         self.drive_measurement();
         self.drive_scripts(event_loop);
         self.drive_agent_tools();

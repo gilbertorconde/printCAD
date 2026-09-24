@@ -150,6 +150,8 @@ impl AssemblyWorkbench {
         row(ui, "Against", &body_name(ctx, joint.other_body));
         ui.add_space(SPACE_2);
         let mut changed = false;
+        let mut formula_edits: Vec<(String, Option<String>)> = Vec::new();
+        let document: &core_document::Document = ctx.document;
         Card::new().padding(SPACE_3).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match &mut joint.kind {
@@ -159,7 +161,15 @@ impl AssemblyWorkbench {
                             [90.0, INPUT],
                             egui::Label::new(RichText::new("Gap").font(sans(FONT_SM)).color(TEXT2)),
                         );
-                        changed |= QtyField::mm(offset).range(-1000.0..=1000.0).show(ui);
+                        changed |= formula_field(
+                            ui,
+                            document,
+                            id,
+                            "/kind/Mate/offset",
+                            core_document::expr::Dim::LENGTH,
+                            offset,
+                            &mut formula_edits,
+                        );
                     })
                     .response
                     .on_hover_text("How far apart the two faces sit");
@@ -175,7 +185,15 @@ impl AssemblyWorkbench {
                                 RichText::new("Angle").font(sans(FONT_SM)).color(TEXT2),
                             ),
                         );
-                        changed |= QtyField::degrees(degrees).range(0.0..=180.0).show(ui);
+                        changed |= formula_field(
+                            ui,
+                            document,
+                            id,
+                            "/kind/Angle/degrees",
+                            core_document::expr::Dim::ANGLE,
+                            degrees,
+                            &mut formula_edits,
+                        );
                     })
                     .response
                     .on_hover_text(
@@ -331,5 +349,64 @@ impl AssemblyWorkbench {
         }
         self.verdict_card(ui);
         TaskOutcome::Open
+    }
+}
+
+/// A joint's number as a formula field: a value typed or dragged goes into
+/// `value`; a formula goes into `edits` and what it comes to into `value`,
+/// so the body moves while the panel is open.
+fn formula_field(
+    ui: &mut egui::Ui,
+    document: &core_document::Document,
+    joint: core_document::FeatureId,
+    key: &str,
+    dim: core_document::expr::Dim,
+    value: &mut f32,
+    edits: &mut Vec<(String, Option<String>)>,
+) -> bool {
+    let formula = document.feature_formula(joint, key);
+    let slot = document
+        .evaluated_slots(joint)
+        .iter()
+        .find(|s| s.key == key);
+    let shown = match (formula, slot.map(|s| &s.result)) {
+        (Some(_), Some(Ok(q))) => q.value,
+        _ => f64::from(*value),
+    };
+    let host = core_document::DocumentFormulas { document, dim };
+    let angle = dim == core_document::expr::Dim::ANGLE;
+    let edit = ui_kit::widgets::FormulaField::new(
+        egui::Id::new(("joint_field", joint, key)),
+        shown,
+        &host,
+    )
+    .formula(formula)
+    .error(
+        slot.and_then(|s| s.result.as_ref().err())
+            .map(String::as_str),
+    )
+    .unit(if angle { "°" } else { "mm" })
+    .speed(if angle { 1.0 } else { 0.1 })
+    .show(ui);
+    match edit {
+        Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
+            if formula.is_some() {
+                edits.push((key.to_string(), None));
+            }
+            *value = v as f32;
+            true
+        }
+        Some(ui_kit::widgets::FormulaEdit::Formula(text)) => {
+            let now = document.evaluate_formula(&text, Some(dim));
+            edits.push((key.to_string(), Some(text)));
+            match now {
+                Ok(q) => {
+                    *value = q.value as f32;
+                    true
+                }
+                Err(_) => false,
+            }
+        }
+        None => false,
     }
 }
