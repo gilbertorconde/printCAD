@@ -9,8 +9,10 @@
 
 use egui::RichText;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Card, primary_button, secondary_button, small_secondary_button, toggle};
-use ui_kit::{mono, sans, sans_medium, sans_semibold};
+use ui_kit::widgets::{
+    Card, Tab, primary_button, secondary_button, small_secondary_button, tab_plus, toggle,
+};
+use ui_kit::{mono, sans, sans_medium};
 
 use super::UiCommand;
 use crate::app::chats::{Chat, ChatEntry, ChatStatus};
@@ -140,6 +142,8 @@ pub fn draw_assistant(
     result
 }
 
+const CHAT_TAB_MIN: f32 = 80.0;
+const CHAT_TAB_MAX: f32 = 160.0;
 const MIN_PANEL_WIDTH: f32 = 320.0;
 const MAX_PANEL_WIDTH: f32 = 720.0;
 /// What the panel always leaves the viewport.
@@ -192,23 +196,27 @@ fn tab_strip(
     commands: &mut Vec<UiCommand>,
     result: &mut AssistantResult,
 ) {
+    // The same tabs as the open documents'.
     ui.horizontal_wrapped(|ui| {
-        ui.label(
-            RichText::new("Assistant")
-                .font(sans_semibold(FONT_SM))
-                .color(TEXT1),
-        );
-        ui.add_space(SPACE_2);
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let available = ui.available_width() - 32.0;
+        let width = (available / chats.len().max(1) as f32).clamp(CHAT_TAB_MIN, CHAT_TAB_MAX);
         for chat in chats {
             let on = state.active.as_deref() == Some(chat.id.as_str());
-            let response = ui
-                .selectable_label(on, RichText::new(&chat.title).font(sans(FONT_SM)))
-                .on_hover_text(&chat.agent);
-            if response.clicked() {
+            let tab = Tab::new(&chat.title, on)
+                .width(width)
+                .closable("Close the chat and its agent")
+                .show(ui);
+            if tab.closed {
+                commands.push(UiCommand::CloseChat(chat.id.clone()));
+            } else if tab.selected {
                 state.active = Some(chat.id.clone());
             }
+            tab.response.on_hover_text(&chat.agent);
         }
-        ui.menu_button(RichText::new("+ New chat").font(sans(FONT_SM)), |ui| {
+        let plus = tab_plus(ui, TAB_BAR - 8.0).on_hover_text("New chat");
+        egui::Popup::menu(&plus).show(|ui| {
+            ui.set_min_width(180.0);
             new_chat_items(ui, agents, commands, result);
         });
     });
@@ -349,12 +357,6 @@ fn chat_header(ui: &mut egui::Ui, chat: &Chat, commands: &mut Vec<UiCommand>) {
             row,
             egui::Layout::right_to_left(egui::Align::Center),
             |ui| {
-                if small_secondary_button(ui, "Close")
-                    .on_hover_text("End the chat and its agent")
-                    .clicked()
-                {
-                    commands.push(UiCommand::CloseChat(chat.id.clone()));
-                }
                 let mut ask = chat.ask;
                 if ui
                     .checkbox(

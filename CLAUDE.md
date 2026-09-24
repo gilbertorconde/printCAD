@@ -97,7 +97,9 @@ cargo fmt --all                   # CI enforces --check
   `scripts/vendor-fonts.sh`; `sans/sans_medium/sans_semibold/mono` font
   helpers), `widgets` (Card, overline, badge, key chip, toggle, check row,
   note card, the button set, `tool_button`, `section_header`, `QtyField`,
-  `select_field`, `PrefRow` + `pref_group`, `planned`), `icon` (the SVG
+  `select_field`, `PrefRow` + `pref_group`, `planned`, and `Tab` +
+  `tab_plus`, the one tab every strip draws: documents, chats, the property
+  panel's pages, Preferences), `icon` (the SVG
   set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a
   generated `icon_table.rs`; `icon::texture/draw` rasterize with a
   font-free usvg, since the system-font scan is far too slow for 200 icons;

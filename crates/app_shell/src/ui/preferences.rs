@@ -489,26 +489,13 @@ fn draw_content(
         tabs.shrink2(vec2(16.0, 0.0)),
         Layout::left_to_right(Align::Center),
     );
-    strip.spacing_mut().item_spacing.x = SPACE_4;
+    strip.spacing_mut().item_spacing.x = 2.0;
     for (i, tab) in state.group.tabs().iter().enumerate() {
-        let active = state.tab == i;
-        let galley = strip.painter().layout_no_wrap(
-            tab.to_string(),
-            sans_medium(FONT_SM),
-            if active { TEXT1 } else { TEXT2 },
-        );
-        let (r, resp) = strip.allocate_exact_size(vec2(galley.size().x, TABS), Sense::click());
-        strip.painter().galley(
-            pos2(r.left(), r.center().y - galley.size().y / 2.0),
-            galley,
-            if active { TEXT1 } else { TEXT2 },
-        );
-        if active {
-            strip
-                .painter()
-                .hline(r.x_range(), r.bottom() - 1.0, Stroke::new(2.0, ACCENT));
-        }
-        if resp.clicked() {
+        if ui_kit::widgets::Tab::new(tab, state.tab == i)
+            .height(TAB_BAR - 4.0)
+            .show(&mut strip)
+            .selected
+        {
             state.tab = i;
         }
     }

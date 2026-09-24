@@ -924,3 +924,161 @@ pub fn pref_group(ui: &mut Ui, title: &str, rows: Vec<PrefRow<'_>>, filter: &str
     ui.add_space(SPACE_4);
     changed
 }
+
+/// One tab of a strip: the open documents, a panel's pages, the chats.
+/// The active tab is filled and underlined in the accent; a closable tab
+/// shows its close while hovered or active, and a middle click closes it
+/// too.
+pub struct Tab<'a> {
+    label: &'a str,
+    active: bool,
+    /// Fixed width; `None` fits the label.
+    width: Option<f32>,
+    height: f32,
+    /// A dot for unsaved edits.
+    dirty: bool,
+    /// Closable, with this hover text on its close.
+    close: Option<&'a str>,
+}
+
+/// What a click on a tab asked for.
+pub struct TabResponse {
+    /// The tab itself, for hover text.
+    pub response: Response,
+    /// Clicked while not active.
+    pub selected: bool,
+    /// Its close was clicked, or it was middle-clicked.
+    pub closed: bool,
+}
+
+const TAB_CLOSE: f32 = 16.0;
+const TAB_PAD: f32 = 10.0;
+
+impl<'a> Tab<'a> {
+    pub fn new(label: &'a str, active: bool) -> Self {
+        Self {
+            label,
+            active,
+            width: None,
+            height: TAB_BAR - 4.0,
+            dirty: false,
+            close: None,
+        }
+    }
+
+    pub fn width(mut self, width: f32) -> Self {
+        self.width = Some(width);
+        self
+    }
+
+    pub fn height(mut self, height: f32) -> Self {
+        self.height = height;
+        self
+    }
+
+    pub fn dirty(mut self, dirty: bool) -> Self {
+        self.dirty = dirty;
+        self
+    }
+
+    pub fn closable(mut self, hint: &'a str) -> Self {
+        self.close = Some(hint);
+        self
+    }
+
+    pub fn show(self, ui: &mut Ui) -> TabResponse {
+        let font = if self.active {
+            crate::theme::sans_medium(FONT_SM)
+        } else {
+            sans(FONT_SM)
+        };
+        let text_color = if self.active { TEXT1 } else { TEXT2 };
+        // Room right of the label: the close, and the dot before it.
+        let trailing =
+            self.close.map_or(0.0, |_| TAB_CLOSE + 4.0) + if self.dirty { 12.0 } else { 0.0 };
+        let width = self.width.unwrap_or_else(|| {
+            let text =
+                ui.painter()
+                    .layout_no_wrap(self.label.to_string(), font.clone(), text_color);
+            text.size().x + 2.0 * TAB_PAD + trailing
+        });
+        let (rect, response) =
+            ui.allocate_exact_size(Vec2::new(width, self.height), Sense::click());
+        let hovered = response.hovered();
+        let painter = ui.painter();
+        if self.active {
+            painter.rect_filled(rect, RADIUS_SM, BG0);
+            painter.hline(
+                rect.x_range(),
+                rect.bottom() - 1.0,
+                Stroke::new(2.0, ACCENT),
+            );
+        } else if hovered {
+            painter.rect_filled(rect, RADIUS_SM, BG2);
+        }
+
+        let close_rect = egui::Rect::from_center_size(
+            egui::pos2(rect.right() - 6.0 - TAB_CLOSE / 2.0, rect.center().y),
+            Vec2::splat(TAB_CLOSE),
+        );
+        let mut text_right = if self.close.is_some() {
+            close_rect.left() - 4.0
+        } else {
+            rect.right() - TAB_PAD
+        };
+        if self.dirty {
+            painter.circle_filled(egui::pos2(text_right - 4.0, rect.center().y), 3.0, WARNING);
+            text_right -= 12.0;
+        }
+        let max_width = (text_right - rect.left() - TAB_PAD).max(0.0);
+        let galley = painter.layout(self.label.to_string(), font, text_color, max_width);
+        let clip = egui::Rect::from_min_max(rect.min, egui::pos2(text_right, rect.max.y));
+        painter.with_clip_rect(clip).galley(
+            egui::pos2(
+                rect.left() + TAB_PAD,
+                rect.center().y - galley.size().y / 2.0,
+            ),
+            galley,
+            text_color,
+        );
+
+        let mut closed = false;
+        if let Some(hint) = self.close {
+            let close = ui.interact(close_rect, response.id.with("close"), Sense::click());
+            if hovered || self.active || close.hovered() {
+                if close.hovered() {
+                    ui.painter().rect_filled(close_rect, RADIUS_SM, BG2);
+                }
+                ui.painter().text(
+                    close_rect.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "×",
+                    sans(FONT_MD),
+                    if close.hovered() { TEXT1 } else { TEXT3 },
+                );
+            }
+            closed = close.on_hover_text(hint).clicked() || response.middle_clicked();
+        }
+        TabResponse {
+            selected: !closed && response.clicked() && !self.active,
+            closed,
+            response,
+        }
+    }
+}
+
+/// The "+" at the end of a tab strip.
+pub fn tab_plus(ui: &mut Ui, height: f32) -> Response {
+    let (rect, plus) = ui.allocate_exact_size(Vec2::new(26.0, height), Sense::click());
+    if plus.hovered() {
+        ui.painter().rect_filled(rect, RADIUS_SM, BG2);
+    }
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "+",
+        crate::theme::sans_medium(FONT_MD),
+        if plus.hovered() { TEXT1 } else { TEXT2 },
+    );
+    plus
+}

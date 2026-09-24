@@ -404,7 +404,7 @@ pub fn draw_property_panel(
         egui::Vec2::new(ui.available_width(), 28.0),
         egui::Sense::hover(),
     );
-    ui.painter().rect_filled(strip, 0.0, BG2);
+    ui.painter().rect_filled(strip, 0.0, BG1);
     ui.painter().hline(
         strip.x_range(),
         strip.top() + 0.5,
@@ -422,22 +422,10 @@ pub fn draw_property_panel(
     );
     h.spacing_mut().item_spacing.x = 2.0;
     for (value, label) in [(PropertyTab::View, "View"), (PropertyTab::Data, "Data")] {
-        let on = *tab == value;
-        let text = RichText::new(label)
-            .font(if on {
-                ui_kit::sans_medium(FONT_XS)
-            } else {
-                sans(FONT_XS)
-            })
-            .color(if on { TEXT1 } else { TEXT2 });
-        let r = egui::Frame::new()
-            .fill(if on { BG3 } else { egui::Color32::TRANSPARENT })
-            .corner_radius(3)
-            .inner_margin(egui::Margin::symmetric(8, 3))
-            .show(&mut h, |ui| ui.label(text))
-            .response;
-        if h.interact(r.rect, h.id().with(label), egui::Sense::click())
-            .clicked()
+        if ui_kit::widgets::Tab::new(label, *tab == value)
+            .height(strip.height() - 4.0)
+            .show(&mut h)
+            .selected
         {
             *tab = value;
         }
