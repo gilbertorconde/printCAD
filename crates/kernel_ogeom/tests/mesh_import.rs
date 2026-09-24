@@ -158,3 +158,90 @@ fn an_open_mesh_converts_to_a_shell_and_says_why() {
         shell.summary
     );
 }
+
+/// A closed cylinder as an STL has it: `sides` facets round, caps fanned
+/// from their centres, wound outward.
+fn cylinder(radius: f64, height: f64, sides: usize) -> Triangulation {
+    let mut mesh = Triangulation::new();
+    let at = |i: usize, z: f64| {
+        let t = std::f64::consts::TAU * i as f64 / sides as f64;
+        Point::new(radius * t.cos(), radius * t.sin(), z)
+    };
+    let mut push = |tri: [Point; 3]| {
+        let base = mesh.positions.len() as u32;
+        let n = (tri[1] - tri[0]).cross(tri[2] - tri[0]);
+        let n = n / n.magnitude();
+        for p in tri {
+            mesh.positions.push(p);
+            mesh.normals.push(Vector::new(n.x, n.y, n.z));
+            mesh.parameters.push((0.0, 0.0));
+        }
+        mesh.triangles.push([base, base + 1, base + 2]);
+    };
+    for i in 0..sides {
+        let j = (i + 1) % sides;
+        push([at(i, 0.0), at(j, 0.0), at(j, height)]);
+        push([at(i, 0.0), at(j, height), at(i, height)]);
+        push([Point::new(0.0, 0.0, 0.0), at(j, 0.0), at(i, 0.0)]);
+        push([Point::new(0.0, 0.0, height), at(i, height), at(j, height)]);
+    }
+    mesh
+}
+
+/// A converted part takes features: a hole drilled through it cuts, and
+/// what is left is measured.
+#[test]
+fn a_converted_mesh_is_drilled_and_measured() {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let mut kernel = OgeomKernel::new();
+    let detail = TessellationSettings::default();
+    for (name, mesh, drill, whole) in [
+        ("cube.stl", cube(false), [5.0, 5.0, -5.0], 1000.0),
+        (
+            "rod.stl",
+            cylinder(10.0, 20.0, 64),
+            [4.0, 0.0, -5.0],
+            // The 64-gon's own area, whatever the converter makes of it.
+            0.5 * 64.0 * 100.0 * (std::f64::consts::TAU / 64.0).sin() * 20.0,
+        ),
+    ] {
+        let bytes = ogeom::io::stl::write(&mesh, ogeom::io::Encoding::Binary).expect("writes");
+        let model = import(&staged(name, &bytes));
+        let solid = kernel
+            .mesh_to_solid(&model.bodies[0].mesh, &detail)
+            .expect("converts");
+        assert!(solid.closed, "{name}: {:?}", solid.summary);
+        let height = if name == "cube.stl" { 10.0 } else { 20.0 };
+        let ops = [
+            SolidOp::Shape {
+                brep: solid.brep_blob.clone(),
+            },
+            SolidOp::Primitive {
+                kind: PrimitiveKind::Cylinder {
+                    radius: 2.0,
+                    height: height + 10.0,
+                    angle_deg: 360.0,
+                },
+                placement: Placement {
+                    origin: drill,
+                    ..Placement::default()
+                },
+                op: BooleanOp::Cut,
+            },
+        ];
+        let drilled = kernel
+            .execute_solid_chain(&ops, &detail)
+            .unwrap_or_else(|e| panic!("{name}: the drill cuts: {e}"));
+        let volume = kernel
+            .physical_properties(&drilled.brep_blob)
+            .expect("measures")
+            .volume_mm3
+            .unwrap_or_else(|| panic!("{name}: the drilled part has a volume"));
+        let hole = std::f64::consts::PI * 4.0 * height;
+        let want = whole - hole;
+        assert!(
+            (volume - want).abs() < 0.01 * want,
+            "{name}: volume {volume}, want about {want}"
+        );
+    }
+}
