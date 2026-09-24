@@ -81,6 +81,9 @@ impl AssemblyWorkbench {
             Some(Task::Move { body, placements }) => {
                 self.move_panel(ui, ctx, request, body, &placements)
             }
+            Some(Task::Interference { found, seq }) => {
+                self.interference_panel(ui, ctx, request, &found, seq)
+            }
             None => TaskOutcome::Open,
         }
     }
@@ -95,6 +98,85 @@ impl AssemblyWorkbench {
             }
             None => {}
         }
+    }
+
+    /// What an interference check found: each clash, a click selecting
+    /// the first of its bodies.
+    fn interference_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        found: &crate::Interference,
+        seq: u64,
+    ) -> TaskOutcome {
+        if request.accept || request.cancel {
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        header(ui, "check-geometry", "Interference");
+        ui.add_space(SPACE_2);
+        let bodies = format!(
+            "{} bod{}",
+            found.checked,
+            if found.checked == 1 { "y" } else { "ies" }
+        );
+        match found.clashes.len() {
+            0 => note_card(
+                ui,
+                Note::Success,
+                None,
+                &format!("No interference among {bodies}"),
+            ),
+            n => note_card(
+                ui,
+                Note::Error,
+                Some(&format!("{n} clash{}", if n == 1 { "" } else { "es" })),
+                &format!("Among {bodies}; click one to select its first body"),
+            ),
+        };
+        ui.add_space(SPACE_2);
+        for clash in &found.clashes {
+            let text = format!(
+                "{} and {}: {:.2} mm³",
+                body_name(ctx, clash.a),
+                body_name(ctx, clash.b),
+                clash.volume_mm3
+            );
+            let row = ui.add(
+                egui::Button::new(RichText::new(text).font(sans(FONT_SM)).color(TEXT1))
+                    .frame(false),
+            );
+            if row.clicked() {
+                ctx.request(core_document::HostRequest::SelectBody(clash.a));
+            }
+        }
+        if found.skipped > 0 {
+            ui.add_space(SPACE_1);
+            ui.label(
+                RichText::new(format!(
+                    "{} visible bod{} without a solid (a mesh, or not built yet) left out",
+                    found.skipped,
+                    if found.skipped == 1 { "y" } else { "ies" }
+                ))
+                .font(sans(FONT_XS))
+                .color(TEXT3),
+            );
+        }
+        if ctx.document.mutation_seq() != seq {
+            ui.add_space(SPACE_1);
+            note_card(
+                ui,
+                Note::Warning,
+                None,
+                "The assembly has changed since this check",
+            );
+        }
+        ui.add_space(SPACE_2);
+        if ui_kit::widgets::secondary_button(ui, "Check again").clicked() {
+            self.check_interference(ctx);
+        }
+        TaskOutcome::Open
     }
 
     /// End a sweep, the drive back at the value it started from.

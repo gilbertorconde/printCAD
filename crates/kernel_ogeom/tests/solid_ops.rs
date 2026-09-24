@@ -1275,3 +1275,49 @@ fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
         .expect("the seam projects");
     assert!(matches!(seam, ProjectedEdge::Point(_)), "{seam:?}");
 }
+
+/// Two boxes where they overlap share a solid of the overlap's volume, in
+/// the first box's frame; flush or apart, they share none.
+#[test]
+fn two_solids_overlap_by_the_volume_they_share() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let cube = [SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 10.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let solid = kernel
+        .execute_solid_chain(&cube, &TessellationSettings::default())
+        .expect("a box builds");
+    let shifted = |x: f64, y: f64, z: f64| {
+        [
+            [1.0, 0.0, 0.0, x],
+            [0.0, 1.0, 0.0, y],
+            [0.0, 0.0, 1.0, z],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+    let blob = &solid.brep_blob;
+    let shared = kernel_ogeom::QUERIES
+        .overlap(blob, blob, &shifted(6.0, 5.0, 0.0))
+        .unwrap()
+        .expect("they overlap");
+    assert!(
+        (shared.volume_mm3 - 4.0 * 5.0 * 10.0).abs() < 1e-6,
+        "{shared:?}"
+    );
+    let centre = shared.centre_mm;
+    assert!(
+        (centre[0] - 8.0).abs() < 1e-6 && (centre[1] - 7.5).abs() < 1e-6,
+        "{centre:?}"
+    );
+    for apart in [shifted(10.0, 0.0, 0.0), shifted(30.0, 0.0, 0.0)] {
+        let none = kernel_ogeom::QUERIES.overlap(blob, blob, &apart).unwrap();
+        assert_eq!(none, None, "{apart:?}");
+    }
+}

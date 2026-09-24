@@ -11,6 +11,7 @@
 //! one step and reach every copy of the document the same way.
 
 mod commands;
+mod interference;
 mod joint;
 #[cfg(feature = "egui")]
 mod panel;
@@ -22,6 +23,7 @@ use core_document::{
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
+pub use interference::{Clash, Interference, interference};
 pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
 pub use solve::{HOLDS_MM, Joint, Motion, SolveError, freedom, joints, solve};
 
@@ -48,6 +50,8 @@ enum Task {
         body: BodyId,
         placements: Vec<(BodyId, BodyPlacement)>,
     },
+    /// Where bodies clash, as found at edit `seq` of the document.
+    Interference { found: Interference, seq: u64 },
 }
 
 #[derive(Default)]
@@ -124,6 +128,48 @@ fn drive_parameters(
         }
     }
     out
+}
+
+impl AssemblyWorkbench {
+    /// Look for clashes among the visible solid bodies and show them.
+    pub(crate) fn check_interference(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(kernel) = ctx.kernel else {
+            ctx.log_warn("No kernel to check interference with");
+            return;
+        };
+        match interference(ctx.document, kernel, None) {
+            Ok(found) => {
+                ctx.log_info(match found.clashes.len() {
+                    0 => format!("No interference among {} bodies", found.checked),
+                    n => format!(
+                        "{n} clash{} among {} bodies",
+                        if n == 1 { "" } else { "es" },
+                        found.checked
+                    ),
+                });
+                self.task = Some(Task::Interference {
+                    found,
+                    seq: ctx.document.mutation_seq(),
+                });
+            }
+            Err(why) => ctx.log_warn(format!("The interference check failed: {why}")),
+        }
+    }
+
+    /// The clashes shown, each where it sits on screen.
+    fn clashes_on_screen<'a>(
+        &'a self,
+        ctx: &'a WorkbenchRuntimeContext,
+    ) -> impl Iterator<Item = ([f32; 2], &'a Clash)> + 'a {
+        let clashes = match &self.task {
+            Some(Task::Interference { found, .. }) => found.clashes.as_slice(),
+            _ => &[],
+        };
+        clashes.iter().filter_map(|clash| {
+            let (x, y) = ctx.world_to_viewport(clash.centre)?;
+            Some(([x, y], clash))
+        })
+    }
 }
 
 /// Every body's placement, to put back when a task is cancelled.
@@ -403,6 +449,9 @@ impl Workbench for AssemblyWorkbench {
             );
         }
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
+        context.register_tool(
+            tool("asm.interference", "Check interference", "check-geometry").shortcut("I"),
+        );
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
@@ -470,6 +519,7 @@ impl Workbench for AssemblyWorkbench {
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
             id if JointTool::of_command(id).is_some() => ctx.document.bodies().len() >= 2,
+            "asm.interference" => ctx.document.bodies().len() >= 2,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
             _ => false,
@@ -493,6 +543,10 @@ impl Workbench for AssemblyWorkbench {
                 self.picking = Some(Picking { kind, first: None });
                 // A face already selected is the first pick.
                 self.take_pick(ctx);
+            }
+            Some("asm.interference") => {
+                self.picking = None;
+                self.check_interference(ctx);
             }
             Some("asm.move") => match Self::body_to_move(ctx) {
                 Some(body) => {
@@ -560,7 +614,7 @@ impl Workbench for AssemblyWorkbench {
         let selected = Self::selected_joint(ctx);
         match (&self.task, selected) {
             (Some(Task::Joint { id, .. }), Some(joint)) if *id == joint => {}
-            (Some(Task::Move { .. }), _) => {}
+            (Some(Task::Move { .. } | Task::Interference { .. }), _) => {}
             (_, Some(joint)) => {
                 self.task = Some(Task::Joint {
                     id: joint,
@@ -600,7 +654,50 @@ impl Workbench for AssemblyWorkbench {
                 icon: "move-geometry",
                 confirmable: true,
             }),
+            Task::Interference { .. } => Some(core_document::TaskInfo {
+                title: "Interference".to_string(),
+                icon: "check-geometry",
+                confirmable: false,
+            }),
         }
+    }
+
+    /// Each clash found, marked where it is.
+    fn get_screen_space_marks(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceMark> {
+        self.clashes_on_screen(ctx)
+            .map(|(pos, _)| {
+                core_document::ScreenSpaceMark::icon(
+                    pos,
+                    "warning",
+                    18.0,
+                    ctx.sketch_palette.conflict,
+                )
+            })
+            .collect()
+    }
+
+    /// How much each clash shares, beside its mark.
+    fn get_screen_space_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceLabel> {
+        self.clashes_on_screen(ctx)
+            .map(|([x, y], clash)| {
+                core_document::ScreenSpaceLabel::new(
+                    [x, y + 20.0],
+                    format!("{:.1} mm³", clash.volume_mm3),
+                    ctx.sketch_palette.conflict,
+                    12.0,
+                )
+                .pill()
+                .mono()
+            })
+            .collect()
     }
 
     #[cfg(feature = "egui")]

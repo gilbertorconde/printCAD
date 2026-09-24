@@ -197,17 +197,24 @@ pub fn combine_solids(
             wrap_pieces(model, out)
         }
         BoolKind::Common => {
-            let mut out = Vec::new();
-            for b in &bases {
-                for t in &tools {
-                    if !bounds_overlap(model, b, t) {
-                        continue;
-                    }
-                    let piece = bool_once(model, b, t, BoolKind::Common)?;
-                    out.extend(solids_of(model, &piece));
-                }
-            }
+            let out = common_pieces(model, base, tool)?;
             wrap_pieces(model, out)
         }
     }
+}
+
+/// The solids `a` and `b` share, piece by piece: none when they are apart.
+pub fn common_pieces(model: &mut Model, a: &Shape, b: &Shape) -> Result<Vec<Shape>, String> {
+    let tools = solids_of(model, b);
+    let mut out = Vec::new();
+    for piece in solids_of(model, a) {
+        for t in &tools {
+            if !bounds_overlap(model, &piece, t) {
+                continue;
+            }
+            let shared = bool_once(model, &piece, t, kernel_api::BoolKind::Common)?;
+            out.extend(solids_of(model, &shared));
+        }
+    }
+    Ok(out)
 }

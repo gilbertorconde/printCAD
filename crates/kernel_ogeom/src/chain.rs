@@ -267,7 +267,7 @@ fn combine(
 
 /// Boolean against an external body's serialized snapshot.
 /// A native-format snapshot read into the model: the shape it holds.
-fn absorb_shape(model: &mut Model, brep: &[u8]) -> Result<Shape, String> {
+pub(crate) fn absorb_shape(model: &mut Model, brep: &[u8]) -> Result<Shape, String> {
     let text =
         std::str::from_utf8(brep).map_err(|_| "solid snapshot is not valid UTF-8".to_string())?;
     let absorbed = ogeom::io::native::read_into(model, text)

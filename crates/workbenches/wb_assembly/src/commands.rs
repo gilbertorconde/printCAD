@@ -139,6 +139,23 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.interference",
+            "Where solid bodies share material: each pair that clashes, how much \
+             and where",
+        )
+        .optional(
+            "bodies",
+            ParamKind::List,
+            "Only these bodies; every visible one when left out",
+        )
+        .returns(
+            "{checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; \
+             skipped counts visible bodies with no solid",
+        )
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.travel",
             "Where a hinge or a slider has got to: the hinge's angle in degrees, \
              the slider's position in mm",
@@ -261,6 +278,45 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(|e| CommandError::failed(e.to_string()))?;
             ctx.document.clear_feature_dirty(joint);
             solved(ctx, Value::Null)
+        }
+        "asm.interference" => {
+            let kernel = ctx
+                .kernel
+                .ok_or_else(|| CommandError::failed("no kernel to check with"))?;
+            let among = match a.0.get("bodies") {
+                None | Some(Value::Null) => None,
+                Some(list) => Some(
+                    list.as_array()
+                        .ok_or_else(|| CommandError::bad("bodies", "must be a list of ids"))?
+                        .iter()
+                        .map(|v| {
+                            v.as_str()
+                                .and_then(|t| uuid::Uuid::parse_str(t).ok())
+                                .map(BodyId)
+                                .ok_or_else(|| CommandError::bad("bodies", "must be a list of ids"))
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+            };
+            let found = crate::interference(ctx.document, kernel, among.as_deref())
+                .map_err(CommandError::failed)?;
+            let clashes: Vec<Value> = found
+                .clashes
+                .iter()
+                .map(|c| {
+                    json!({
+                        "a": c.a.0.to_string(),
+                        "b": c.b.0.to_string(),
+                        "volume": c.volume_mm3,
+                        "centre": c.centre,
+                    })
+                })
+                .collect();
+            Ok(json!({
+                "checked": found.checked,
+                "skipped": found.skipped,
+                "clashes": clashes,
+            }))
         }
         "asm.travel" => {
             let joint = FeatureId(a.id("joint")?);

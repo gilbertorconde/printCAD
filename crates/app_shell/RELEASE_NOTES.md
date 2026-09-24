@@ -33,6 +33,7 @@ version first.
 - Joints place one body against another: mate two flat faces, with a gap or facing the same way, line up a pin with a hole on one axis, or hold two faces at an angle.
 - More joints: a hinge that leaves only the turn about an axis, a slider that leaves only the slide along one, a fixed joint that carries a body with another, parallel, perpendicular and distance between flat faces, and a round face resting on a flat one.
 - Joints that ask for an axis take a round face or an edge: a hole's rim gives the hole's axis.
+- Check interference (I) finds every pair of visible solids that share material, with how much and where, marked in the view.
 - A hinge's angle and a slider's position can be driven, by a number or a formula, or kept within limits; Play sweeps a driven joint through its range to show the motion.
 - Grounding keeps a body where it is; the whole assembly solves together, rings of joints included, and the status bar says what each body may still do.
 - Joints solve when made or edited and when a body moves, and undo as one step with the moves they cause.

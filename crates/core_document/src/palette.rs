@@ -37,6 +37,8 @@ pub struct SketchPalette {
     pub trim: Rgb,
     /// Label pill background.
     pub pill_fill: Rgb,
+    /// Something wrong in the scene: bodies that clash.
+    pub conflict: Rgb,
 }
 
 impl Default for SketchPalette {
@@ -57,6 +59,7 @@ impl Default for SketchPalette {
             preview: hex(0x7CC4F5),
             trim: hex(0xE86E6E),
             pill_fill: hex(0x0F1216),
+            conflict: hex(0xE86E6E),
         }
     }
 }

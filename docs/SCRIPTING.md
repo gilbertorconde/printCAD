@@ -944,6 +944,11 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `drive` (any, optional): A hinge's angle (degrees from where it was made) or a slider's position (mm) to hold it at; false lets it move again
 - `limits` (any, optional): {low, high}: the range a hinge's angle or a slider's position stays in while not driven; false takes the limits away
 
+`pc.asm.interference`: Where solid bodies share material: each pair that clashes, how much and where.
+
+- `bodies` (list, optional): Only these bodies; every visible one when left out
+- Returns {checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid
+
 `pc.asm.travel`: Where a hinge or a slider has got to: the hinge's angle in degrees, the slider's position in mm.
 
 - `joint` (id)

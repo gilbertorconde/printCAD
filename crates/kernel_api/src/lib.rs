@@ -960,7 +960,27 @@ pub enum ProjectedEdge {
 
 /// Geometry questions a workbench may ask while it runs, answered by the
 /// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
+/// The solid two shapes share: its volume and its centre, in the first
+/// shape's frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Overlap {
+    pub volume_mm3: f64,
+    pub centre_mm: [f64; 3],
+}
+
 pub trait KernelQueries: Send + Sync {
+    /// What `a` and `b` share when `b` sits where `b_in_a` (a rigid
+    /// row-major 4×4 matrix) puts it in `a`'s frame; `None` when they only
+    /// touch or are apart.
+    fn overlap(
+        &self,
+        _a: &[u8],
+        _b: &[u8],
+        _b_in_a: &[[f64; 4]; 4],
+    ) -> KernelResult<Option<Overlap>> {
+        Err(KernelError::Unsupported("overlap".into()))
+    }
+
     /// The edge of `brep` nearest `near`, projected orthogonally onto
     /// `plane`. Both are in the shape's own frame.
     fn project_edge(

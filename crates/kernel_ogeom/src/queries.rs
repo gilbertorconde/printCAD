@@ -1,10 +1,12 @@
 //! The kernel's answers to the questions a workbench asks while it runs
 //! (`kernel_api::KernelQueries`).
 
-use kernel_api::{KernelError, KernelQueries, KernelResult, ProfilePlane, ProjectedEdge};
+use kernel_api::{KernelError, KernelQueries, KernelResult, Overlap, ProfilePlane, ProjectedEdge};
+use ogeom::algo::volume_properties;
 use ogeom::algo::{ProjectedCurve, project_edge_onto_plane};
 use ogeom::geom::Curve2d as _;
 use ogeom::math::{Direction, Frame, Plane, Point, Vector};
+use ogeom::mesh::Deflection;
 use ogeom::topo::ShapeType;
 
 use crate::ops::dressup::nearest_of;
@@ -23,7 +25,34 @@ fn other(message: impl std::fmt::Display) -> KernelError {
     KernelError::Other(anyhow::anyhow!("{message}"))
 }
 
+/// A shared solid smaller than this, in mm³, is taken for two faces that
+/// touch: what a boolean of flush faces leaves behind.
+const TOUCHING_MM3: f64 = 1e-6;
+
 impl KernelQueries for OgeomQueries {
+    fn overlap(&self, a: &[u8], b: &[u8], b_in_a: &[[f64; 4]; 4]) -> KernelResult<Option<Overlap>> {
+        let tol = tess::tolerances();
+        let (mut model, first) = tess::read_blob(a)?;
+        let second = crate::chain::absorb_shape(&mut model, b).map_err(other)?;
+        let second = crate::ops::pattern::moved(&mut model, &second, b_in_a).map_err(other)?;
+        let pieces = crate::ops::common_pieces(&mut model, &first, &second).map_err(other)?;
+        let (mut volume, mut moment) = (0.0, Vector::new(0.0, 0.0, 0.0));
+        for piece in &pieces {
+            let measured = volume_properties(&model, piece, Deflection::default(), tol)
+                .map_err(|e| other(format!("measuring the shared solid failed: {e}")))?;
+            let mass = measured.mass.abs();
+            volume += mass;
+            moment += Vector::new(measured.centre.x, measured.centre.y, measured.centre.z) * mass;
+        }
+        Ok((volume > TOUCHING_MM3).then(|| {
+            let centre = moment / volume;
+            Overlap {
+                volume_mm3: volume,
+                centre_mm: [centre.x, centre.y, centre.z],
+            }
+        }))
+    }
+
     fn project_edge(
         &self,
         brep: &[u8],

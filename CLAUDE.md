@@ -147,7 +147,9 @@ cargo fmt --all                   # CI enforces --check
   mm along the axis) held at a value or kept within limits, which
   `freedom` ignores. Anchors are kept in each body's own frame; an
   axis comes from a round face or an edge, a circular edge's axis from
-  `EdgeRef::circle`, which the host fits to the outline), the solver
+  `EdgeRef::circle`, which the host fits to the outline), interference
+  (`interference.rs`: visible solids whose placed bounds meet go to
+  `KernelQueries::overlap`, the kernel's common of the two, measured), the solver
   (`solve.rs`: each free body placed on its own against the bodies placed
   before it, turning its first joint's directions into agreement, rings
   taking their turn once most of their joints have something to hold to;
