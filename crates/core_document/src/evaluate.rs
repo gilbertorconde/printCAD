@@ -216,6 +216,63 @@ pub fn evaluate_document(
     document: &Document,
     parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>,
 ) -> Evaluation {
+    let graph = graph(document, parameters);
+    let mut out = Evaluation::default();
+    for i in 0..graph.slots.len() {
+        let result = graph.value(i);
+        let slot = &graph.slots[i];
+        let formula = match &slot.source {
+            Source::Formula(text) => Some(text.clone()),
+            Source::Literal(_) => None,
+        };
+        if let (Some(pointer), Some(_), Ok(q)) = (&slot.pointer, &formula, &result) {
+            let data = out.data.entry(slot.feature).or_insert_with(|| {
+                document
+                    .get_feature_data(slot.feature)
+                    .cloned()
+                    .unwrap_or_default()
+            });
+            if let Some(target) = data.pointer_mut(pointer) {
+                *target = if slot.integer {
+                    serde_json::json!((q.value * slot.scale).round() as i64)
+                } else {
+                    serde_json::json!(q.value * slot.scale)
+                };
+            }
+        }
+        out.slots.entry(slot.feature).or_default().push(SlotValue {
+            key: slot.key.clone(),
+            name: slot.name.clone(),
+            label: slot.label.clone(),
+            formula,
+            result,
+        });
+    }
+    out
+}
+
+/// What `text` comes to in `document`, as a field holding `want` would
+/// take it, or as it is.
+pub fn evaluate_formula(
+    document: &Document,
+    parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>,
+    text: &str,
+    want: Option<Dim>,
+) -> Result<Quantity, String> {
+    let graph = graph(document, parameters);
+    let ctx = Context {
+        length_unit: graph.unit,
+        resolve: &graph,
+    };
+    match want {
+        Some(dim) => expr::evaluate_as(text, dim, &ctx).map(|v| Quantity::new(v, dim)),
+        None => expr::evaluate(text, &ctx),
+    }
+    .map_err(|e| e.message)
+}
+
+/// Every slot of `document`, ready to be worked out.
+fn graph(document: &Document, parameters: &dyn Fn(&FeatureNode) -> Vec<Parameter>) -> Graph {
     let mut slots = Vec::new();
     let mut objects: HashMap<String, Vec<FeatureId>> = HashMap::new();
     let mut nodes: Vec<(&FeatureId, &FeatureNode)> = document.feature_tree().all_nodes().collect();
@@ -267,46 +324,13 @@ pub fn evaluate_document(
         .enumerate()
         .filter_map(|(i, s)| Some(((s.feature, s.name.clone()?), i)))
         .collect();
-    let graph = Graph {
+    Graph {
         state: RefCell::new(vec![State::Pending; slots.len()]),
         slots,
         objects,
         index,
         unit: document.display_unit(),
-    };
-
-    let mut out = Evaluation::default();
-    for i in 0..graph.slots.len() {
-        let result = graph.value(i);
-        let slot = &graph.slots[i];
-        let formula = match &slot.source {
-            Source::Formula(text) => Some(text.clone()),
-            Source::Literal(_) => None,
-        };
-        if let (Some(pointer), Some(_), Ok(q)) = (&slot.pointer, &formula, &result) {
-            let data = out.data.entry(slot.feature).or_insert_with(|| {
-                document
-                    .get_feature_data(slot.feature)
-                    .cloned()
-                    .unwrap_or_default()
-            });
-            if let Some(target) = data.pointer_mut(pointer) {
-                *target = if slot.integer {
-                    serde_json::json!((q.value * slot.scale).round() as i64)
-                } else {
-                    serde_json::json!(q.value * slot.scale)
-                };
-            }
-        }
-        out.slots.entry(slot.feature).or_default().push(SlotValue {
-            key: slot.key.clone(),
-            name: slot.name.clone(),
-            label: slot.label.clone(),
-            formula,
-            result,
-        });
     }
-    out
 }
 
 #[cfg(test)]

@@ -109,7 +109,139 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .param("body", ParamKind::Id, "")
         .returns("{volume, area, centre, min, max, approximate}")
         .read_only(),
+        CommandSpec::new(
+            "doc.parameters",
+            "A feature's numbers that formulas set and read",
+        )
+        .param("id", ParamKind::Id, "The feature")
+        .returns(
+            "a list of {name, key, label, kind, value, text, formula, error}: name is what \
+             formulas call it (nil when they cannot), value in mm or degrees",
+        )
+        .read_only(),
+        CommandSpec::new(
+            "doc.set_formula",
+            "Set one of a feature's numbers by a formula, or take the formula away",
+        )
+        .param("id", ParamKind::Id, "The feature")
+        .param(
+            "parameter",
+            ParamKind::String,
+            "Its name or key, as doc.parameters lists them",
+        )
+        .optional(
+            "formula",
+            ParamKind::String,
+            "Such as \"Printer.wall * 2\"; nil takes it away",
+        )
+        .returns("{value, text, error}: what it comes to"),
+        CommandSpec::new("var.new", "Make a variable set")
+            .param(
+                "name",
+                ParamKind::String,
+                "What formulas call it: Printer.nozzle",
+            )
+            .returns("the set's id"),
+        CommandSpec::new("var.set", "Set a variable to a formula, adding it when new")
+            .param("set", ParamKind::String, "The set, by name or id")
+            .param("name", ParamKind::String, "")
+            .param(
+                "formula",
+                ParamKind::String,
+                "Such as \"0.4 mm\" or \"3 * Printer.nozzle\"",
+            )
+            .optional("comment", ParamKind::String, "")
+            .returns("{value, text, error}: what it comes to"),
+        CommandSpec::new("var.remove", "Take a variable out of its set")
+            .param("set", ParamKind::String, "The set, by name or id")
+            .param("name", ParamKind::String, ""),
+        CommandSpec::new(
+            "var.rename",
+            "Rename a variable, and every formula that reads it",
+        )
+        .param("set", ParamKind::String, "The set, by name or id")
+        .param("name", ParamKind::String, "")
+        .param("to", ParamKind::String, ""),
+        CommandSpec::new(
+            "var.list",
+            "The variable sets and what each variable comes to",
+        )
+        .optional("set", ParamKind::String, "Only this set, by name or id")
+        .returns(
+            "a list of {id, name, variables}, each variable {name, formula, value, text, \
+                 kind, error, comment}",
+        )
+        .read_only(),
+        CommandSpec::new("var.eval", "What a formula comes to in this document")
+            .param("formula", ParamKind::String, "")
+            .returns("{value, kind, text}: value in mm or degrees")
+            .read_only(),
     ]
+}
+
+/// What a quantity is called in a command's answer.
+fn kind_name(dim: core_document::expr::Dim) -> String {
+    use core_document::expr::Dim;
+    match dim {
+        Dim::LENGTH => "length".into(),
+        Dim::ANGLE => "angle".into(),
+        Dim::NUMBER => "number".into(),
+        Dim::AREA => "area".into(),
+        Dim::VOLUME => "volume".into(),
+        other => other.unit_text("mm"),
+    }
+}
+
+/// A slot's value as a command answers it.
+fn slot_json(
+    result: &Result<core_document::expr::Quantity, String>,
+    unit: core_document::Unit,
+) -> Value {
+    match result {
+        Ok(q) => json!({
+            "value": q.value,
+            "kind": kind_name(q.dim),
+            "text": q.display(unit, 4),
+            "error": Value::Null,
+        }),
+        Err(why) => json!({"value": Value::Null, "text": Value::Null, "error": why}),
+    }
+}
+
+/// A variable set named or given by id.
+fn set_arg(document: &core_document::Document, a: &Args) -> Result<FeatureId, CommandError> {
+    let given = a.string("set")?;
+    let by_id = Uuid::parse_str(given).ok().map(FeatureId).filter(|id| {
+        document
+            .get_feature_meta(*id)
+            .is_some_and(|n| n.workbench_id.as_str() == core_document::VARIABLES_KIND)
+    });
+    by_id
+        .or_else(|| {
+            document.object_named(given).filter(|id| {
+                document
+                    .get_feature_meta(*id)
+                    .is_some_and(|n| n.workbench_id.as_str() == core_document::VARIABLES_KIND)
+            })
+        })
+        .ok_or_else(|| CommandError::failed(format!("no variable set is called {given}")))
+}
+
+/// What slot `key` of feature `id` comes to now.
+fn slot_answer(
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    id: FeatureId,
+    key: &str,
+) -> Value {
+    registry.evaluate(document);
+    let unit = document.display_unit();
+    document
+        .evaluated_slots(id)
+        .iter()
+        .find(|s| s.key == key)
+        .map(|s| slot_json(&s.result, unit))
+        .unwrap_or(Value::Null)
 }
 
 /// The commands a key can run that make sense without a key: all but
@@ -1123,6 +1255,137 @@ pub(crate) fn document_command(
                 "min": min,
                 "max": max,
                 "approximate": props.approximate,
+            }))
+        }
+        "doc.parameters" => {
+            let feature = FeatureId(a.id("id")?);
+            let node = document
+                .get_feature_meta(feature)
+                .ok_or_else(|| CommandError::failed("no such feature"))?
+                .clone();
+            registry.evaluate(document);
+            let unit = document.display_unit();
+            let slots = document.evaluated_slots(feature);
+            Ok(Value::Array(
+                registry
+                    .parameters(&node)
+                    .into_iter()
+                    .map(|p| {
+                        let mut row = slots
+                            .iter()
+                            .find(|s| s.key == p.key)
+                            .map(|s| slot_json(&s.result, unit))
+                            .unwrap_or_else(|| json!({}));
+                        row["name"] = json!(p.name);
+                        row["key"] = json!(p.key);
+                        row["label"] = json!(p.label);
+                        row["kind"] = json!(kind_name(p.dim));
+                        row["formula"] = json!(node.formulas.get(&p.key));
+                        row
+                    })
+                    .collect(),
+            ))
+        }
+        "doc.set_formula" => {
+            let feature = FeatureId(a.id("id")?);
+            let node = document
+                .get_feature_meta(feature)
+                .ok_or_else(|| CommandError::failed("no such feature"))?
+                .clone();
+            let wanted = a.string("parameter")?;
+            let params = registry.parameters(&node);
+            let parameter = params
+                .iter()
+                .find(|p| p.name.as_deref() == Some(wanted) || p.key == wanted)
+                .ok_or_else(|| {
+                    let names: Vec<String> = params
+                        .iter()
+                        .map(|p| p.name.clone().unwrap_or_else(|| p.key.clone()))
+                        .collect();
+                    CommandError::failed(format!(
+                        "{} has no number {wanted}; it has {}",
+                        node.name,
+                        names.join(", ")
+                    ))
+                })?;
+            let formula = a.opt_string("formula")?.map(str::to_string);
+            if let Some(text) = &formula {
+                core_document::expr::check_syntax(text)
+                    .map_err(|e| CommandError::failed(e.message))?;
+            }
+            document
+                .set_feature_formula(feature, parameter.key.clone(), formula)
+                .map_err(|e| CommandError::failed(e.to_string()))?;
+            Ok(slot_answer(document, registry, feature, &parameter.key))
+        }
+        "var.new" => document
+            .add_variable_set(a.string("name")?)
+            .map(|id| json!(id.0.to_string()))
+            .map_err(CommandError::failed),
+        "var.set" => {
+            let set = set_arg(document, &a)?;
+            let name = a.string("name")?.to_string();
+            document
+                .set_variable(set, &name, a.string("formula")?, a.opt_string("comment")?)
+                .map_err(CommandError::failed)?;
+            Ok(slot_answer(document, registry, set, &name))
+        }
+        "var.remove" => {
+            let set = set_arg(document, &a)?;
+            document
+                .remove_variable(set, a.string("name")?)
+                .map(|()| Value::Null)
+                .map_err(CommandError::failed)
+        }
+        "var.rename" => {
+            let set = set_arg(document, &a)?;
+            document
+                .rename_variable(set, a.string("name")?, a.string("to")?)
+                .map(|()| Value::Null)
+                .map_err(CommandError::failed)
+        }
+        "var.list" => {
+            let only = match a.opt_string("set")? {
+                Some(_) => Some(set_arg(document, &a)?),
+                None => None,
+            };
+            registry.evaluate(document);
+            let unit = document.display_unit();
+            Ok(Value::Array(
+                document
+                    .variable_sets()
+                    .into_iter()
+                    .filter(|(id, ..)| only.is_none_or(|o| o == *id))
+                    .map(|(id, name, set)| {
+                        let slots = document.evaluated_slots(id);
+                        let variables: Vec<Value> = set
+                            .variables
+                            .iter()
+                            .map(|v| {
+                                let mut row = slots
+                                    .iter()
+                                    .find(|s| s.key == v.name)
+                                    .map(|s| slot_json(&s.result, unit))
+                                    .unwrap_or_else(|| json!({}));
+                                row["name"] = json!(v.name);
+                                row["formula"] = json!(v.formula);
+                                row["comment"] = json!(v.comment);
+                                row
+                            })
+                            .collect();
+                        json!({"id": id.0.to_string(), "name": name, "variables": variables})
+                    })
+                    .collect(),
+            ))
+        }
+        "var.eval" => {
+            let q = registry
+                .evaluate_formula(document, a.string("formula")?, None)
+                .map_err(CommandError::failed)?;
+            Ok(json!({
+                "value": q.value,
+                "kind": kind_name(q.dim),
+                "text": q.display(document.display_unit(), 4),
             }))
         }
         _ => Err(CommandError::Unknown(id.to_string())),

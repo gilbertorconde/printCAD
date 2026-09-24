@@ -999,10 +999,13 @@ impl Document {
             && node.name != name
             && !name.trim().is_empty()
         {
+            let old = node.name.clone();
             self.record_and_apply(op::DocumentOp::RenameFeature {
                 id: feature_id,
-                name,
+                name: name.clone(),
             });
+            // Formulas that named it name it still.
+            self.rewrite_formulas(|text| expr::rename_object(text, &old, &name));
         }
     }
 

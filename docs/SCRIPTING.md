@@ -97,6 +97,24 @@ stands for, and the recording is the list of those commands.
 - Undo and Redo are not recorded; what they take back stays in the
   recording. Nor are the view, the selection or a script run meanwhile.
 
+## Variables and formulas
+
+Any number of a feature can be set by a formula over variables and other
+objects' dimensions, and follows when they change:
+
+```lua
+pc.var.new{name = "Printer"}
+pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
+pc.var.set{set = "Printer", name = "wall", formula = "3 * Printer.nozzle"}
+local pad = pc.part.pad{sketch = s, length = 5}
+pc.doc.set_formula{id = pad, parameter = "length", formula = "Printer.wall * 10"}
+print(pc.var.eval{formula = "Pad.length"}.text)  -- 12 mm
+```
+
+`pc.doc.parameters{id = ...}` lists a feature's numbers and what formulas
+call them. See [Variables and formulas](VARIABLES.md) for what a formula
+can say.
+
 ## Examples
 
 A plate with a centred hole, sized from the command line, written as 3MF:
@@ -232,6 +250,54 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `body` (id)
 - Returns {volume, area, centre, min, max, approximate}
+
+`pc.doc.parameters`: A feature's numbers that formulas set and read.
+
+- `id` (id): The feature
+- Returns a list of {name, key, label, kind, value, text, formula, error}: name is what formulas call it (nil when they cannot), value in mm or degrees
+
+`pc.doc.set_formula`: Set one of a feature's numbers by a formula, or take the formula away.
+
+- `id` (id): The feature
+- `parameter` (string): Its name or key, as doc.parameters lists them
+- `formula` (string, optional): Such as "Printer.wall * 2"; nil takes it away
+- Returns {value, text, error}: what it comes to
+
+### var
+
+`pc.var.new`: Make a variable set.
+
+- `name` (string): What formulas call it: Printer.nozzle
+- Returns the set's id
+
+`pc.var.set`: Set a variable to a formula, adding it when new.
+
+- `set` (string): The set, by name or id
+- `name` (string)
+- `formula` (string): Such as "0.4 mm" or "3 * Printer.nozzle"
+- `comment` (string, optional)
+- Returns {value, text, error}: what it comes to
+
+`pc.var.remove`: Take a variable out of its set.
+
+- `set` (string): The set, by name or id
+- `name` (string)
+
+`pc.var.rename`: Rename a variable, and every formula that reads it.
+
+- `set` (string): The set, by name or id
+- `name` (string)
+- `to` (string)
+
+`pc.var.list`: The variable sets and what each variable comes to.
+
+- `set` (string, optional): Only this set, by name or id
+- Returns a list of {id, name, variables}, each variable {name, formula, value, text, kind, error, comment}
+
+`pc.var.eval`: What a formula comes to in this document.
+
+- `formula` (string)
+- Returns {value, kind, text}: value in mm or degrees
 
 ### app
 

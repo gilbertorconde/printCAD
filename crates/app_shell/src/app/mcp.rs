@@ -152,6 +152,9 @@ printCAD is parametric CAD for 3D printing. Everything it can do is a command: \
 Lua script in which each command is pc.<id>{name = value, ...} and returns what it \
 makes (help() lists them there too). Ids of bodies, features and sketch elements \
 are strings. Lengths are millimetres; sketch coordinates are the sketch's own. \
+Numbers can be formulas over variables (var.new, var.set, var.list) and other \
+objects' dimensions (doc.parameters lists them, doc.set_formula sets one): \
+`3 * Printer.nozzle`, `Pad.length / 2`, with units such as mm, in and deg. \
 Solids rebuild after a change: call doc.rebuild before reading them with doc.faces \
 or doc.measure. `view` shows the scene as the user sees it, `log` the application's \
 recent messages. The user may be asked to allow each change, and can undo any of \

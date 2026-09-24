@@ -124,6 +124,14 @@ struct Headless {
 
 /// The document commands a window-less run answers.
 const DOC_COMMANDS: &[&str] = &[
+    "doc.parameters",
+    "doc.set_formula",
+    "var.new",
+    "var.set",
+    "var.remove",
+    "var.rename",
+    "var.list",
+    "var.eval",
     "doc.info",
     "doc.bodies",
     "doc.features",
@@ -459,6 +467,64 @@ mod tests {
         );
         let reopened = Document::load_from_file(&saved).unwrap();
         assert_eq!(reopened.bodies().len(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+    #[test]
+    fn variables_drive_a_pad_and_their_formulas_are_saved() {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let dir = std::env::temp_dir().join(format!("printcad-vars-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let script = dir.join("vars.lua");
+        std::fs::write(
+            &script,
+            r#"
+            pc.var.new{name = "Printer"}
+            pc.var.set{set = "Printer", name = "nozzle", formula = "0.4 mm"}
+            local wall = pc.var.set{set = "Printer", name = "wall", formula = "3 * Printer.nozzle"}
+            assert(math.abs(wall.value - 1.2) < 1e-9, wall.text)
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.part.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            pc.doc.set_formula{id = pad, parameter = "length", formula = "Printer.wall * 10"}
+            local height = function()
+              assert(#pc.doc.rebuild() == 0, "it builds")
+              local m = pc.doc.measure{body = body}
+              return m.max[3] - m.min[3]
+            end
+            assert(math.abs(height() - 12) < 1e-3, "12 mm")
+            pc.var.set{set = "Printer", name = "nozzle", formula = "0.6 mm"}
+            assert(math.abs(height() - 18) < 1e-3, "18 mm")
+            local bad = pc.var.set{set = "Printer", name = "bad", formula = "Printer.wall + 30 deg"}
+            assert(bad.error:find("a length and an angle"), bad.error)
+            pc.var.remove{set = "Printer", name = "bad"}
+            pc.var.rename{set = "Printer", name = "nozzle", to = "bore"}
+            assert(pc.var.eval{formula = "Pad.length / Printer.bore"}.value == 30)
+            "#,
+        )
+        .unwrap();
+        let saved = dir.join("vars.prtcad");
+        let ok = run(
+            &Invocation {
+                script,
+                open: None,
+                save: Some(saved.clone()),
+                args: Vec::new(),
+            },
+            registry,
+        )
+        .unwrap();
+        assert!(ok, "the script's checks hold");
+        let reopened = Document::load_from_file(&saved).unwrap();
+        let sets = reopened.variable_sets();
+        assert_eq!(sets[0].1, "Printer");
+        assert_eq!(sets[0].2.variables[1].formula, "3 * Printer.bore");
+        let pad = reopened.object_named("Pad").expect("the pad");
+        assert_eq!(
+            reopened.feature_formula(pad, "/Pad/length"),
+            Some("Printer.wall * 10")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

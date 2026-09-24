@@ -220,6 +220,17 @@ impl DocumentService {
         document.apply_evaluation(evaluation);
     }
 
+    /// What `text` comes to in `document`: for a field holding `want`, or
+    /// as it is.
+    pub fn evaluate_formula(
+        &self,
+        document: &Document,
+        text: &str,
+        want: Option<crate::expr::Dim>,
+    ) -> Result<crate::expr::Quantity, String> {
+        crate::evaluate::evaluate_formula(document, &|node| self.parameters(node), text, want)
+    }
+
     /// Every bench's rebuilds, after the formulas are worked out.
     pub fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
         self.evaluate(document);
