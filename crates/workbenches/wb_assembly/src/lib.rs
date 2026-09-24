@@ -370,6 +370,12 @@ impl Workbench for AssemblyWorkbench {
                 self.solve_and_apply(ctx);
                 if let Some(Ok(message)) = &self.verdict {
                     ctx.log_info(message.clone());
+                    // A solve that left joints apart would stop a replay.
+                    ctx.record(
+                        "asm.solve",
+                        core_document::CommandArgs::new(),
+                        serde_json::json!(message),
+                    );
                 }
                 ctx.request(HostRequest::JournalLabel("Solve joints".into()));
             }

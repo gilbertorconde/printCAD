@@ -319,3 +319,101 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
     );
     assert_replays(&s.recorded, before, id, &done);
 }
+
+impl Session {
+    /// A menu command of the bench, as the Edit menu runs it.
+    fn edit_menu(&mut self, id: &str) {
+        let active = self.active;
+        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        ctx.view_proj = Some(view_proj());
+        ctx.active_document_object = active;
+        self.wb
+            .on_command(id, &core_document::MenuScope::EditMenu, &mut ctx);
+        self.recorded.extend(HookOutcome::take(&mut ctx).recorded);
+    }
+}
+
+/// What a sketch comes to: see [`summary`].
+type Summary = (Vec<(i64, i64)>, Vec<&'static str>, Vec<String>);
+
+/// Every sketch of a document by name, with its plane and what it holds.
+fn all_sketches(doc: &Document) -> Vec<(String, [i64; 9], Summary)> {
+    let r = |v: f32| (v * 1000.0).round() as i64;
+    let mut out: Vec<_> = doc
+        .feature_tree()
+        .all_nodes()
+        .filter_map(|(_, n)| {
+            let f = SketchFeature::from_json(&n.data).ok()?;
+            let p = f.plane;
+            let plane = [
+                r(p.origin[0]),
+                r(p.origin[1]),
+                r(p.origin[2]),
+                r(p.normal[0]),
+                r(p.normal[1]),
+                r(p.normal[2]),
+                r(p.x_axis[0]),
+                r(p.x_axis[1]),
+                r(p.x_axis[2]),
+            ];
+            Some((n.name.clone(), plane, summary(&f.sketch)))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+#[test]
+fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
+    let (mut s, _, before) = session_on_a_sketch();
+    s.click(2.0, 2.0, "sketch.rect");
+    s.click(10.0, 8.0, "sketch.rect");
+    s.click(-8.0, 6.0, "sketch.circle");
+    s.click(-5.5, 6.0, "sketch.circle");
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    // The circle, repeated in a two by two array.
+    s.click(-5.5, 6.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.array"));
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    // The rectangle's bottom edge cut, and pasted where the cursor is.
+    s.click(6.0, 2.0, "sketch.select");
+    s.edit_menu("edit.cut");
+    s.move_to(-12.0, -10.0, "sketch.select");
+    s.edit_menu("edit.paste");
+    s.key(KeyCode::Escape, Some("sketch.select"));
+    // A mirrored copy as a sketch of its own, then this one's plane
+    // flipped and every constraint cleared.
+    s.key(KeyCode::A, Some("sketch.mirror_sketch"));
+    s.key(KeyCode::A, Some("sketch.reorient"));
+    s.key(KeyCode::A, Some("sketch.delete_all_constraints"));
+    s.key(KeyCode::A, None);
+
+    let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
+    for kind in [
+        "sketch.array",
+        "sketch.delete",
+        "sketch.paste",
+        "sketch.mirror_sketch",
+        "sketch.set_plane",
+    ] {
+        assert!(kinds.contains(&kind), "{kind} in {kinds:?}");
+    }
+    let done = all_sketches(&s.doc);
+    assert_eq!(done.len(), 2, "the sketch and its mirror");
+
+    let mut recorder = scripting::Recorder::default();
+    for call in &s.recorded {
+        recorder.push(call);
+    }
+    let script = recorder.script("Recorded in a test");
+    let mut context = WorkbenchContext::default();
+    SketchWorkbench::default().configure(&mut context);
+    let mut replay = Replay {
+        doc: before,
+        wb: SketchWorkbench::default(),
+        specs: context.commands().to_vec(),
+    };
+    let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
+    assert_eq!(out.error, None, "{script}");
+    assert_eq!(all_sketches(&replay.doc), done, "{script}");
+}

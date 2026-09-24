@@ -2168,12 +2168,8 @@ impl Workbench for SketchWorkbench {
                     return self.open_sketch_picker(SketchPickerMode::CarbonCopy);
                 }
                 "sketch.merge" => return self.open_sketch_picker(SketchPickerMode::Merge),
-                "sketch.toggle_driving" => {
-                    return self.edit_selected_constraints(ctx, |c| c.driving = !c.driving);
-                }
-                "sketch.toggle_active" => {
-                    return self.edit_selected_constraints(ctx, |c| c.active = !c.active);
-                }
+                "sketch.toggle_driving" => return self.toggle_constraint_flag(ctx, true),
+                "sketch.toggle_active" => return self.toggle_constraint_flag(ctx, false),
                 "sketch.select_conflicting" => return self.select_offenders(ctx, true),
                 "sketch.select_redundant" => return self.select_offenders(ctx, false),
                 "sketch.delete_all_geometry" => return self.delete_all(ctx, true),
@@ -2796,25 +2792,52 @@ impl SketchWorkbench {
     }
 
     /// Apply `edit` to every selected constraint and re-solve.
-    fn edit_selected_constraints(
+    /// Flip the selected constraints' driving flag (`driving`) or active
+    /// flag, each for itself, through `sketch.set_constraint`'s code.
+    fn toggle_constraint_flag(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
-        edit: impl Fn(&mut Constraint),
+        driving: bool,
     ) -> InputResult {
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
+        let (Some(mut feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id)
+        else {
             return InputResult::ignored();
         };
-        let mut changed = false;
-        for c in &mut feature.sketch.constraints {
+        // The selected constraints, split by the flag each ends with.
+        let mut to: [Vec<Uuid>; 2] = [Vec::new(), Vec::new()];
+        for c in &feature.sketch.constraints {
             if self.selected_constraints.contains(&c.id) {
-                edit(c);
-                changed = true;
+                let now = if driving { c.driving } else { c.active };
+                to[usize::from(!now)].push(c.id);
             }
         }
-        if changed {
-            self.solve(ctx, &mut feature);
-            self.store_sketch(ctx, feature);
+        if to.iter().all(Vec::is_empty) {
+            return InputResult::consumed();
         }
+        for (flag, mut items) in [(false, to[0].clone()), (true, to[1].clone())] {
+            if items.is_empty() {
+                continue;
+            }
+            items.sort();
+            let (d, a) = if driving {
+                (Some(flag), None)
+            } else {
+                (None, Some(flag))
+            };
+            commands::set_constraints(&mut feature.sketch, &items, d, a);
+            let mut args = serde_json::json!({
+                "sketch": id.0.to_string(),
+                "items": ids_json(&items),
+            });
+            args[if driving { "driving" } else { "active" }] = serde_json::json!(flag);
+            ctx.record(
+                "sketch.set_constraint",
+                commands::args(args),
+                serde_json::Value::Null,
+            );
+        }
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
 
@@ -3097,6 +3120,20 @@ impl SketchWorkbench {
         feature.plane = plane;
         feature.sketch.plane = plane;
         self.store_sketch(ctx, feature.clone());
+        if let Some(id) = self.active_sketch_id
+            && let Some(stored) = stored_sketch(ctx.document, id)
+        {
+            ctx.record(
+                "sketch.set_plane",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "normal": stored.plane.normal,
+                    "origin": stored.plane.origin,
+                    "x_axis": stored.plane.x_axis,
+                })),
+                serde_json::Value::Null,
+            );
+        }
         ctx.request(HostRequest::OrientCamera(
             core_document::CameraOrientRequest {
                 plane_origin: plane.origin,
@@ -3112,6 +3149,15 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let p = self.tool_params;
+        let before = (
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            feature.sketch.constraints.iter().map(|c| c.id).collect(),
+        );
         let effect = tools::array(
             &mut feature.sketch,
             &self.selected,
@@ -3123,6 +3169,22 @@ impl SketchWorkbench {
         if effect.changed {
             if let Some(log) = effect.log {
                 ctx.log_info(log);
+            }
+            if let Some(id) = self.active_sketch_id {
+                let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
+                items.sort();
+                ctx.record(
+                    "sketch.array",
+                    commands::args(serde_json::json!({
+                        "sketch": id.0.to_string(),
+                        "items": ids_json(&items),
+                        "rows": p.array_rows,
+                        "cols": p.array_cols,
+                        "dx": p.array_dx,
+                        "dy": p.array_dy,
+                    })),
+                    commands::made_since(&feature.sketch, &before),
+                );
             }
             self.solve(ctx, &mut feature);
             self.store_sketch(ctx, feature);
@@ -3150,19 +3212,55 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return;
         };
-        let mut added = 0;
-        for edge in fresh {
-            let body = BodyId(edge.body);
-            let local = edge.moved(&ctx.document.body_placement(body).inverse());
-            let source = sketch::ExternalSource {
-                body: edge.body,
-                point: local.point,
-                direction: local.direction,
-            };
-            match project_source(ctx, &feature.plane, &source) {
-                Ok(projected) => added += external::add(&mut feature.sketch, &projected, source),
-                Err(why) => ctx.log_warn(format!("Could not bring that edge in: {why}")),
+        let sources: Vec<sketch::ExternalSource> = fresh
+            .iter()
+            .map(|edge| {
+                let local = edge.moved(&ctx.document.body_placement(BodyId(edge.body)).inverse());
+                sketch::ExternalSource {
+                    body: edge.body,
+                    point: local.point,
+                    direction: local.direction,
+                }
+            })
+            .collect();
+        let before = (
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            feature.sketch.constraints.iter().map(|c| c.id).collect(),
+        );
+        let added = match commands::add_external(ctx, &feature.plane, &mut feature.sketch, &sources)
+        {
+            Ok(added) => added,
+            Err(why) => {
+                ctx.log_warn(format!("Could not bring that edge in: {why}"));
+                0
             }
+        };
+        if added > 0
+            && let Some(id) = self.active_sketch_id
+        {
+            let edges: Vec<serde_json::Value> = sources
+                .iter()
+                .map(|s| {
+                    serde_json::json!({
+                        "body": s.body.to_string(),
+                        "point": s.point,
+                        "direction": s.direction,
+                    })
+                })
+                .collect();
+            ctx.record(
+                "sketch.external",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "edges": edges,
+                })),
+                commands::made_since(&feature.sketch, &before),
+            );
         }
         if added > 0 {
             self.solve(ctx, &mut feature);
@@ -3254,21 +3352,39 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return;
         };
-        let Some((_, name, from)) = self
-            .other_sketches(ctx)
-            .into_iter()
-            .find(|(id, _, _)| *id == source)
-        else {
+        let (Some(target), Some(name)) = (
+            self.active_sketch_id,
+            ctx.document
+                .get_feature_meta(source)
+                .map(|n| n.name.clone()),
+        ) else {
             return;
         };
-        let xf = match plane_map(&from.plane, &feature.plane) {
-            Ok(xf) => xf,
-            Err(why) => {
-                ctx.log_warn(format!("Carbon copy of {name}: {why}"));
-                return;
-            }
-        };
-        let (count, constraints) = copy_sketch_into(&from.sketch, &mut feature.sketch, &xf);
+        let before = (
+            feature
+                .sketch
+                .geometry
+                .iter()
+                .map(GeometryElement::id)
+                .collect(),
+            feature.sketch.constraints.iter().map(|c| c.id).collect(),
+        );
+        let (count, constraints, xf) =
+            match commands::carbon_copy(ctx.document, target, &mut feature.sketch, source) {
+                Ok(done) => done,
+                Err(why) => {
+                    ctx.log_warn(format!("Carbon copy of {name}: {why}"));
+                    return;
+                }
+            };
+        ctx.record(
+            "sketch.carbon_copy",
+            commands::args(serde_json::json!({
+                "sketch": target.0.to_string(),
+                "from": source.0.to_string(),
+            })),
+            commands::made_since(&feature.sketch, &before),
+        );
         self.sketch_picker = None;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
@@ -3281,77 +3397,57 @@ impl SketchWorkbench {
         let Some(picker) = self.sketch_picker.take() else {
             return;
         };
-        let (Some(feature), Some(active)) = (self.get_active_sketch(ctx), self.active_sketch_id)
-        else {
+        let Some(active) = self.active_sketch_id else {
             return;
         };
-        let mut merged = Sketch::new(format!("{} merged", feature.sketch.name));
-        merged.plane = feature.plane;
-        let (mut count, mut constraints) = copy_sketch_into(
-            &feature.sketch,
-            &mut merged,
-            &tools::Similarity::translation(glam::Vec2::ZERO),
-        );
-        let mut skipped = Vec::new();
-        for (id, name, from) in self.other_sketches(ctx) {
-            if !picker.checked.contains(&id) {
-                continue;
+        // In history order, as the list shows them.
+        let with: Vec<FeatureId> = self
+            .other_sketches(ctx)
+            .into_iter()
+            .map(|(id, _, _)| id)
+            .filter(|id| picker.checked.contains(id))
+            .collect();
+        match commands::merge(ctx.document, active, &with) {
+            Ok(made) => {
+                let name = ctx
+                    .document
+                    .get_feature_meta(made)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_default();
+                ctx.log_info(format!("Created {name}"));
+                ctx.record(
+                    "sketch.merge",
+                    commands::args(serde_json::json!({
+                        "sketch": active.0.to_string(),
+                        "with": with.iter().map(|id| id.0.to_string()).collect::<Vec<_>>(),
+                    })),
+                    serde_json::json!(made.0.to_string()),
+                );
             }
-            match plane_map(&from.plane, &feature.plane) {
-                Ok(xf) => {
-                    let (n, c) = copy_sketch_into(&from.sketch, &mut merged, &xf);
-                    count += n;
-                    constraints += c;
-                }
-                Err(why) => skipped.push(format!("{name} ({why})")),
-            }
-        }
-        let body = ctx.document.get_feature_meta(active).and_then(|n| n.body);
-        let name = merged.name.clone();
-        // The new sketch shares this one's body, so its stored plane too.
-        let plane = stored_sketch(ctx.document, active).map_or(feature.plane, |s| s.plane);
-        merged.plane = plane;
-        match ctx.document.add_feature_in_body(
-            SketchFeature::new(merged, plane),
-            name.clone(),
-            body,
-        ) {
-            Ok(_) => ctx.log_info(format!(
-                "Created {name}: {count} elements, {constraints} constraints"
-            )),
-            Err(err) => ctx.log_error(format!("Could not create the merged sketch: {err}")),
-        }
-        if !skipped.is_empty() {
-            ctx.log_warn(format!("Left out of the merge: {}", skipped.join(", ")));
+            Err(err) => ctx.log_warn(format!("Could not merge: {err}")),
         }
     }
 
     /// A new sketch on the same plane and body: this one's geometry
     /// mirrored across the sketch's Y axis.
     fn mirror_sketch(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        let (Some(feature), Some(id)) = (self.get_active_sketch(ctx), self.active_sketch_id) else {
+        let Some(id) = self.active_sketch_id else {
             return InputResult::ignored();
         };
-        let body = ctx.document.get_feature_meta(id).and_then(|n| n.body);
-        let name = format!("{} mirror", feature.sketch.name);
-        let mut mirrored = Sketch::new(name.clone());
-        mirrored.plane = feature.plane;
-        let all: HashSet<Uuid> = feature
-            .sketch
-            .geometry
-            .iter()
-            .map(GeometryElement::id)
-            .collect();
-        let xf = tools::Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
-        let count = tools::copy_from(&feature.sketch, &mut mirrored, &all, &xf);
-        let plane = stored_sketch(ctx.document, id).map_or(feature.plane, |s| s.plane);
-        mirrored.plane = plane;
-        match ctx.document.add_feature_in_body(
-            SketchFeature::new(mirrored, plane),
-            name.clone(),
-            body,
-        ) {
-            Ok(_) => ctx.log_info(format!("Created {name} ({count} elements)")),
+        match commands::mirror_sketch(ctx.document, id) {
+            Ok(made) => {
+                let name = ctx
+                    .document
+                    .get_feature_meta(made)
+                    .map(|n| n.name.clone())
+                    .unwrap_or_default();
+                ctx.log_info(format!("Created {name}"));
+                ctx.record(
+                    "sketch.mirror_sketch",
+                    commands::args(serde_json::json!({"sketch": id.0.to_string()})),
+                    serde_json::json!(made.0.to_string()),
+                );
+            }
             Err(err) => ctx.log_error(format!("Could not create the mirrored sketch: {err}")),
         }
         InputResult::consumed()
@@ -3375,8 +3471,19 @@ impl SketchWorkbench {
         );
         self.clipboard = Some(clip);
         if cut {
-            let ids: Vec<Uuid> = self.selected.iter().copied().collect();
-            feature.sketch.remove_geometry_cascade(&ids);
+            let mut ids: Vec<Uuid> = self.selected.iter().copied().collect();
+            ids.sort();
+            commands::delete_items(&mut feature.sketch, &ids);
+            if let Some(id) = self.active_sketch_id {
+                ctx.record(
+                    "sketch.delete",
+                    commands::args(serde_json::json!({
+                        "sketch": id.0.to_string(),
+                        "items": ids_json(&ids),
+                    })),
+                    serde_json::Value::Null,
+                );
+            }
             self.selected.clear();
             self.solve(ctx, &mut feature);
             self.store_sketch(ctx, feature);
@@ -3398,7 +3505,6 @@ impl SketchWorkbench {
             ctx.log_warn("The clipboard is empty");
             return true;
         };
-        let all: HashSet<Uuid> = clip.geometry.iter().map(GeometryElement::id).collect();
         let delta = match self.cursor {
             Some(cursor) => {
                 let anchor = clip
@@ -3419,12 +3525,26 @@ impl SketchWorkbench {
             .iter()
             .map(GeometryElement::id)
             .collect();
-        let count = tools::copy_from(
-            &clip,
-            &mut feature.sketch,
-            &all,
-            &tools::Similarity::translation(delta),
-        );
+        let by = Vec2D::new(delta.x, delta.y);
+        let count = commands::paste(&mut feature.sketch, &clip, by);
+        if let Some(id) = self.active_sketch_id {
+            let made = commands::made_since(
+                &feature.sketch,
+                &(
+                    before.clone(),
+                    feature.sketch.constraints.iter().map(|c| c.id).collect(),
+                ),
+            );
+            ctx.record(
+                "sketch.paste",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "clipboard": serde_json::to_value(&clip).unwrap_or_default(),
+                    "by": [by.x, by.y],
+                })),
+                made,
+            );
+        }
         self.selected = feature
             .sketch
             .geometry
@@ -3476,19 +3596,27 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        if geometry {
-            let ids: Vec<Uuid> = feature
+        let ids: Vec<Uuid> = if geometry {
+            feature
                 .sketch
                 .geometry
                 .iter()
                 .map(GeometryElement::id)
-                .collect();
-            let removed = feature.sketch.remove_geometry_cascade(&ids);
-            ctx.log_info(format!("Deleted {} sketch element(s)", removed.len()));
+                .collect()
         } else {
-            let n = feature.sketch.constraints.len();
-            feature.sketch.constraints.clear();
-            ctx.log_info(format!("Deleted {n} constraint(s)"));
+            feature.sketch.constraints.iter().map(|c| c.id).collect()
+        };
+        let removed = commands::delete_items(&mut feature.sketch, &ids);
+        ctx.log_info(format!("Deleted {removed} item(s)"));
+        if let (Some(id), false) = (self.active_sketch_id, ids.is_empty()) {
+            ctx.record(
+                "sketch.delete",
+                commands::args(serde_json::json!({
+                    "sketch": id.0.to_string(),
+                    "items": ids_json(&ids),
+                })),
+                serde_json::Value::Null,
+            );
         }
         self.selected.clear();
         self.selected_constraints.clear();
@@ -3608,7 +3736,7 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
 
 /// The edge `source` names, projected onto the sketch plane `plane` (as
 /// the scene has it), in the sketch's own coordinates.
-fn project_source(
+pub(crate) fn project_source(
     ctx: &WorkbenchRuntimeContext,
     plane: &SketchPlane,
     source: &sketch::ExternalSource,
@@ -3638,14 +3766,17 @@ fn project_source(
 }
 
 /// A sketch as the document stores it, its plane in its body's frame.
-fn stored_sketch(document: &core_document::Document, id: FeatureId) -> Option<SketchFeature> {
+pub(crate) fn stored_sketch(
+    document: &core_document::Document,
+    id: FeatureId,
+) -> Option<SketchFeature> {
     document
         .get_feature_data(id)
         .and_then(|data| SketchFeature::from_json(data).ok())
 }
 
 /// Where the body a sketch belongs to sits.
-fn sketch_placement(
+pub(crate) fn sketch_placement(
     document: &core_document::Document,
     id: FeatureId,
 ) -> core_document::BodyPlacement {
@@ -3657,7 +3788,10 @@ fn sketch_placement(
 }
 
 /// A plane moved by a body's placement.
-fn placed_plane(plane: &SketchPlane, placement: &core_document::BodyPlacement) -> SketchPlane {
+pub(crate) fn placed_plane(
+    plane: &SketchPlane,
+    placement: &core_document::BodyPlacement,
+) -> SketchPlane {
     SketchPlane {
         origin: placement.point(plane.origin),
         normal: placement.direction(plane.normal),
@@ -3714,7 +3848,7 @@ pub(crate) fn plane_map(
 /// `xf` only moves (under a turn or a mirror, a constraint stated against
 /// the sketch axes would no longer hold). Returns the elements and the
 /// constraints copied.
-fn copy_sketch_into(
+pub(crate) fn copy_sketch_into(
     source: &Sketch,
     target: &mut Sketch,
     xf: &tools::Similarity,
@@ -3729,7 +3863,12 @@ fn copy_sketch_into(
     (map.len(), constraints)
 }
 
-fn carbon_copy_log(name: &str, count: usize, constraints: usize, xf: &tools::Similarity) -> String {
+pub(crate) fn carbon_copy_log(
+    name: &str,
+    count: usize,
+    constraints: usize,
+    xf: &tools::Similarity,
+) -> String {
     if xf.is_translation() {
         format!("Carbon copy of {name}: {count} elements, {constraints} constraints")
     } else {

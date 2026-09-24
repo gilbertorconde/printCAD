@@ -983,6 +983,16 @@ impl Workbench for PartDesignWorkbench {
                     Ok(()) => {
                         ctx.document.mark_feature_dirty(sketch_id);
                         ctx.log_info("Sketch mapped to the picked face");
+                        ctx.record(
+                            "sketch.set_plane",
+                            commands::object(serde_json::json!({
+                                "sketch": sketch_id.0.to_string(),
+                                "normal": plane.normal,
+                                "origin": plane.origin,
+                                "x_axis": plane.x_axis,
+                            })),
+                            serde_json::Value::Null,
+                        );
                     }
                     Err(err) => ctx.log_error(format!("Could not move the sketch: {err}")),
                 }

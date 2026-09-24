@@ -850,10 +850,7 @@ impl PrintCadApp {
             .and_then(|n| n.body);
         match command {
             TreeFeatureCommand::Suppress(suppressed) => {
-                self.session
-                    .document
-                    .set_feature_suppressed(feature, suppressed);
-                self.session.document.mark_feature_dirty(feature);
+                crate::app::scripts::suppress(&mut self.session.document, feature, suppressed);
                 self.session.journal.label_next("Suppress feature");
                 self.session.journal.note(&mut self.session.document);
             }
@@ -898,7 +895,7 @@ impl PrintCadApp {
             }
             TreeFeatureCommand::MoveUp | TreeFeatureCommand::MoveDown => {
                 let up = command == TreeFeatureCommand::MoveUp;
-                if self.session.document.move_feature_in_history(feature, up) {
+                if crate::app::scripts::move_in_history(&mut self.session.document, feature, up) {
                     self.session.journal.label_next("Reorder history");
                     self.session.journal.note(&mut self.session.document);
                     app_log::info("Reordered build history");
@@ -909,14 +906,20 @@ impl PrintCadApp {
                 }
             }
             TreeFeatureCommand::SetTip | TreeFeatureCommand::ClearTip => {
-                let Some(body) = body else {
+                if body.is_none() {
                     return;
-                };
+                }
                 let tip = (command == TreeFeatureCommand::SetTip).then_some(feature);
-                self.session.document.set_body_tip(body, tip);
-                // The chain changes shape: rebuild from the first feature.
-                self.registry
-                    .invalidate_body(&mut self.session.document, body);
+                if crate::app::scripts::set_tip(
+                    &mut self.session.document,
+                    &self.registry,
+                    feature,
+                    tip,
+                )
+                .is_err()
+                {
+                    return;
+                }
                 self.session.journal.label_next("Move tip");
                 self.session.journal.note(&mut self.session.document);
             }

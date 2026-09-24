@@ -92,6 +92,16 @@ impl ScriptEngine {
         lua.globals()
             .set("__pc_print", print)
             .expect("print global");
+        // `array(...)`: a table that is a list even when it is empty, which a
+        // plain `{}` is not once a command reads it.
+        let array = lua
+            .create_function(|lua, values: mlua::Variadic<mlua::Value>| {
+                let list = lua.create_sequence_from(values)?;
+                list.set_metatable(Some(lua.array_metatable()))?;
+                Ok(list)
+            })
+            .expect("array function");
+        lua.globals().set("array", array).expect("array global");
 
         let (since, limit) = (started.clone(), time_limit.clone());
         let stop: Rc<RefCell<Option<Arc<AtomicBool>>>> = Rc::new(RefCell::new(None));
@@ -392,6 +402,18 @@ mod tests {
             &mut Recorder::default(),
         );
         assert_eq!(out.value.as_deref(), Some("\"out.stl:40\""));
+    }
+
+    #[test]
+    fn an_empty_array_reaches_a_command_as_a_list() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        engine.eval_line(
+            "pc.part.pad{sketch = \"s\", items = array(), more = array(1, 2)}",
+            &mut host,
+        );
+        assert_eq!(host.calls[0].1["items"], json!([]));
+        assert_eq!(host.calls[0].1["more"], json!([1, 2]));
     }
 
     #[test]

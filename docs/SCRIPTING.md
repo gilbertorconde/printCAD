@@ -43,6 +43,8 @@ pc.part.set{feature = pad, length = 20}
   `sketch`. `show(value)` prints a table.
 - Ids of bodies, features, sketch elements and constraints are strings.
   Commands that make something answer its id.
+- An empty list is `array()`: a plain `{}` reaches a command as an empty
+  table of names. `array(1, 2)` is the same as `{1, 2}`.
 - A command that fails raises a Lua error with the reason, which stops the
   script. `pcall(pc.part.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
@@ -81,7 +83,11 @@ stands for, and the recording is the list of those commands.
   makes on its own. An edit records as `part.set` with the fields changed.
 - A joint records with its faces where the bodies were before it moved
   them; a move records the placement it ended at.
-- Renaming, showing or hiding and deleting tree rows record as `doc.*`.
+- The sketcher's other actions record too: arrays, cut and paste (the
+  pasted geometry goes into the script), mirrored and merged sketches,
+  carbon copies, external geometry, a new plane, driving and active flags.
+- Renaming, showing or hiding, suppressing, reordering, moving the tip of
+  and deleting tree rows record as `doc.*`; the Solve button as `asm.solve`.
 - What a recording makes is named (`pad1`, `rect2.elements[3]`), and later
   lines use the name, so a replay works on the things it makes. Things
   that were there before the recording started are named by their id: the
@@ -183,6 +189,22 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.doc.delete`: Delete a body or a feature.
 
 - `id` (id)
+
+`pc.doc.suppress`: Leave a feature out of its body's solid, or back in.
+
+- `id` (id): The feature
+- `suppressed` (boolean, optional): true (the default) or false
+
+`pc.doc.move`: Move a feature one step in its body's history.
+
+- `id` (id): The feature
+- `up` (boolean): true: earlier, false: later
+- Returns whether it moved: not at the end of the history, nor past a feature it needs
+
+`pc.doc.set_tip`: Build a body only up to a feature, or all of it again.
+
+- `id` (id): A feature of the body
+- `clear` (boolean, optional): true: build the whole history again
 
 `pc.doc.rebuild`: Rebuild every solid that changed and wait for it.
 
@@ -413,6 +435,60 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id): The sketch to draw in
 - `items` (list): The elements to drag
 - `by` (list): The step, {x, y}
+
+`pc.sketch.set_plane`: Move the sketch onto another plane, its geometry kept in its own coordinates.
+
+- `sketch` (id): The sketch to draw in
+- `normal` (list): The plane's normal, {x, y, z}
+- `origin` (list, optional): Its origin, {x, y, z}
+- `x_axis` (list, optional): The sketch's X direction, {x, y, z}
+
+`pc.sketch.array`: Repeat elements in rows and columns.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The elements to repeat
+- `rows` (integer)
+- `cols` (integer)
+- `dx` (number): The step between columns, mm
+- `dy` (number): The step between rows, mm
+- Returns {elements}: what it made
+
+`pc.sketch.set_constraint`: Make constraints driving or reference, active or not.
+
+- `sketch` (id): The sketch to draw in
+- `items` (list): The constraints
+- `driving` (boolean, optional): false: a reference dimension that only measures
+- `active` (boolean, optional): false: kept but not solved
+
+`pc.sketch.mirror_sketch`: A new sketch on the same plane: this one's geometry mirrored across its Y axis.
+
+- `sketch` (id): The sketch to draw in
+- Returns the new sketch's id
+
+`pc.sketch.merge`: A new sketch holding this one's geometry and other sketches', mapped onto its plane.
+
+- `sketch` (id): The sketch to draw in
+- `with` (list): The other sketches
+- Returns the new sketch's id
+
+`pc.sketch.carbon_copy`: Copy another sketch's geometry into this one, mapped onto its plane.
+
+- `sketch` (id): The sketch to draw in
+- `from` (id): The sketch to copy
+- Returns {elements, constraints}: what it made
+
+`pc.sketch.paste`: Add geometry held as a sketch of its own, moved by a step.
+
+- `sketch` (id): The sketch to draw in
+- `clipboard` (any): The geometry, as a sketch's fields (what copying in the sketcher holds)
+- `by` (list): The step, {x, y}
+- Returns {elements}: what it made
+
+`pc.sketch.external`: Project edges of solids into the sketch as fixed references.
+
+- `sketch` (id): The sketch to draw in
+- `edges` (list): Each {body, point, direction}: a point on the edge and its direction, in the body's own frame
+- Returns {elements}: what it made
 
 `pc.sketch.constraints`: List the sketch's constraints.
 

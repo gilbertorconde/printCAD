@@ -220,6 +220,93 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.set_plane",
+            "Move the sketch onto another plane, its geometry kept in its own coordinates",
+        ))
+        .param("normal", ParamKind::List, "The plane's normal, {x, y, z}")
+        .optional("origin", ParamKind::List, "Its origin, {x, y, z}")
+        .optional(
+            "x_axis",
+            ParamKind::List,
+            "The sketch's X direction, {x, y, z}",
+        ),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.array",
+            "Repeat elements in rows and columns",
+        ))
+        .param("items", ParamKind::List, "The elements to repeat")
+        .param("rows", ParamKind::Integer, "")
+        .param("cols", ParamKind::Integer, "")
+        .param("dx", ParamKind::Number, "The step between columns, mm")
+        .param("dy", ParamKind::Number, "The step between rows, mm")
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.set_constraint",
+            "Make constraints driving or reference, active or not",
+        ))
+        .param("items", ParamKind::List, "The constraints")
+        .optional(
+            "driving",
+            ParamKind::Bool,
+            "false: a reference dimension that only measures",
+        )
+        .optional("active", ParamKind::Bool, "false: kept but not solved"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.mirror_sketch",
+            "A new sketch on the same plane: this one's geometry mirrored across its Y axis",
+        ))
+        .returns("the new sketch's id"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.merge",
+            "A new sketch holding this one's geometry and other sketches', mapped onto its plane",
+        ))
+        .param("with", ParamKind::List, "The other sketches")
+        .returns("the new sketch's id"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.carbon_copy",
+            "Copy another sketch's geometry into this one, mapped onto its plane",
+        ))
+        .param("from", ParamKind::Id, "The sketch to copy")
+        .returns("{elements, constraints}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.paste",
+            "Add geometry held as a sketch of its own, moved by a step",
+        ))
+        .param(
+            "clipboard",
+            ParamKind::Any,
+            "The geometry, as a sketch's fields (what copying in the sketcher holds)",
+        )
+        .param("by", ParamKind::List, "The step, {x, y}")
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
+            "sketch.external",
+            "Project edges of solids into the sketch as fixed references",
+        ))
+        .param(
+            "edges",
+            ParamKind::List,
+            "Each {body, point, direction}: a point on the edge and its direction, \
+             in the body's own frame",
+        )
+        .returns("{elements}: what it made"),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.constraints",
             "List the sketch's constraints",
         ))
@@ -257,6 +344,45 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     }
     let sketch_id = FeatureId(a.id("sketch")?);
     let mut feature = load(ctx, sketch_id)?;
+    match id {
+        "sketch.mirror_sketch" => {
+            return mirror_sketch(ctx.document, sketch_id).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.merge" => {
+            let with = feature_ids(args.get("with"), "with")?;
+            return merge(ctx.document, sketch_id, &with).map(|id| json!(id.0.to_string()));
+        }
+        "sketch.set_plane" => {
+            let plane = custom_plane(&a)?;
+            feature.plane = plane;
+            feature.sketch.plane = plane;
+            return save(ctx, sketch_id, feature, Value::Null);
+        }
+        "sketch.carbon_copy" => {
+            let from = FeatureId(a.id("from")?);
+            let before = ids_of(&feature.sketch);
+            carbon_copy(ctx.document, sketch_id, &mut feature.sketch, from)
+                .map_err(CommandError::failed)?;
+            let made = made_since(&feature.sketch, &before);
+            return save(ctx, sketch_id, feature, made);
+        }
+        "sketch.external" => {
+            let edges = external_sources(args.get("edges"))?;
+            let before = ids_of(&feature.sketch);
+            let placed = crate::placed_plane(
+                &feature.plane,
+                &crate::sketch_placement(ctx.document, sketch_id),
+            );
+            let added = add_external(ctx, &placed, &mut feature.sketch, &edges)
+                .map_err(CommandError::failed)?;
+            if added == 0 {
+                return Err(CommandError::failed("no edge could be projected"));
+            }
+            let made = made_since(&feature.sketch, &before);
+            return save(ctx, sketch_id, feature, made);
+        }
+        _ => {}
+    }
     let sketch = &mut feature.sketch;
     let answer = match id {
         "sketch.point" => {
@@ -341,6 +467,53 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         "sketch.draw" => {
             let (elements, constraints) = draw(sketch, &a, args)?;
             json!({"elements": elements, "constraints": constraints})
+        }
+        "sketch.array" => {
+            let items: std::collections::HashSet<Uuid> = ids(args.get("items"), "items", sketch)?
+                .into_iter()
+                .collect();
+            let count = |name: &str| -> Result<u32, CommandError> {
+                let n = a.number(name)?;
+                if n >= 1.0 {
+                    Ok(n as u32)
+                } else {
+                    Err(CommandError::bad(name, "must be at least 1"))
+                }
+            };
+            let before = ids_of(sketch);
+            let effect = crate::tools::array(
+                sketch,
+                &items,
+                count("rows")?,
+                count("cols")?,
+                a.number("dx")? as f32,
+                a.number("dy")? as f32,
+            );
+            if !effect.changed {
+                return Err(CommandError::failed(
+                    "an array needs elements and at least two rows or columns",
+                ));
+            }
+            made_since(sketch, &before)
+        }
+        "sketch.set_constraint" => {
+            let items = ids(args.get("items"), "items", sketch)?;
+            let (driving, active) = (a.opt_bool("driving")?, a.opt_bool("active")?);
+            set_constraints(sketch, &items, driving, active);
+            Value::Null
+        }
+        "sketch.paste" => {
+            let clip: Sketch =
+                serde_json::from_value(args.get("clipboard").cloned().unwrap_or(Value::Null))
+                    .map_err(|e| CommandError::bad("clipboard", e.to_string()))?;
+            let by = points(Some(&json!([args
+                .get("by")
+                .cloned()
+                .unwrap_or(Value::Null)])))
+            .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
+            let before = ids_of(sketch);
+            paste(sketch, &clip, by);
+            made_since(sketch, &before)
         }
         "sketch.drag" => {
             let items = ids(args.get("items"), "items", sketch)?;
@@ -618,6 +791,239 @@ fn ids(value: Option<&Value>, name: &str, sketch: &Sketch) -> Result<Vec<Uuid>, 
 }
 
 /// Add the constraints `kind` makes for `items`, at `value` when given.
+/// Store an edited sketch and answer `answer`.
+fn save(
+    ctx: &mut WorkbenchRuntimeContext,
+    id: FeatureId,
+    mut feature: SketchFeature,
+    answer: Value,
+) -> CommandResult {
+    crate::solver::solve(&mut feature.sketch);
+    ctx.document
+        .update_feature_data(id, feature.to_json())
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    ctx.document.mark_feature_dirty(id);
+    Ok(answer)
+}
+
+fn ids_of(
+    sketch: &Sketch,
+) -> (
+    std::collections::HashSet<Uuid>,
+    std::collections::HashSet<Uuid>,
+) {
+    (
+        sketch.geometry.iter().map(GeometryElement::id).collect(),
+        sketch.constraints.iter().map(|c| c.id).collect(),
+    )
+}
+
+/// `{elements, constraints}`: what the sketch gained since `before`.
+pub(crate) fn made_since(
+    sketch: &Sketch,
+    before: &(
+        std::collections::HashSet<Uuid>,
+        std::collections::HashSet<Uuid>,
+    ),
+) -> Value {
+    let elements: Vec<String> = sketch
+        .geometry
+        .iter()
+        .map(GeometryElement::id)
+        .filter(|id| !before.0.contains(id))
+        .map(|id| id.to_string())
+        .collect();
+    let constraints: Vec<String> = sketch
+        .constraints
+        .iter()
+        .map(|c| c.id)
+        .filter(|id| !before.1.contains(id))
+        .map(|id| id.to_string())
+        .collect();
+    json!({"elements": elements, "constraints": constraints})
+}
+
+/// Sketch ids named in a list.
+fn feature_ids(value: Option<&Value>, name: &str) -> Result<Vec<FeatureId>, CommandError> {
+    value
+        .and_then(Value::as_array)
+        .ok_or_else(|| CommandError::bad(name, "must be a list of sketch ids"))?
+        .iter()
+        .map(|v| {
+            v.as_str()
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .map(FeatureId)
+                .ok_or_else(|| CommandError::bad(name, "must be a list of sketch ids"))
+        })
+        .collect()
+}
+
+/// Set the driving and active flags of `items`, where given.
+pub(crate) fn set_constraints(
+    sketch: &mut Sketch,
+    items: &[Uuid],
+    driving: Option<bool>,
+    active: Option<bool>,
+) {
+    for c in &mut sketch.constraints {
+        if items.contains(&c.id) {
+            if let Some(driving) = driving {
+                c.driving = driving;
+            }
+            if let Some(active) = active {
+                c.active = active;
+            }
+        }
+    }
+}
+
+/// Add `clip`'s geometry to `sketch`, moved by `by`.
+pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
+    let all: std::collections::HashSet<Uuid> =
+        clip.geometry.iter().map(GeometryElement::id).collect();
+    crate::tools::copy_from(
+        clip,
+        sketch,
+        &all,
+        &crate::tools::Similarity::translation(glam::Vec2::new(by.x, by.y)),
+    )
+}
+
+/// Every sketch's plane where its body sits.
+fn placed(document: &core_document::Document, id: FeatureId) -> Option<SketchFeature> {
+    let mut feature = crate::stored_sketch(document, id)?;
+    let placement = crate::sketch_placement(document, id);
+    feature.plane = crate::placed_plane(&feature.plane, &placement);
+    Some(feature)
+}
+
+/// Copy sketch `from`'s geometry into `target`, the geometry of sketch
+/// `target_id`, mapped from its plane onto the target's (both where their
+/// bodies sit). How many elements and constraints came, and the map.
+pub(crate) fn carbon_copy(
+    document: &core_document::Document,
+    target_id: FeatureId,
+    target: &mut Sketch,
+    from: FeatureId,
+) -> Result<(usize, usize, crate::tools::Similarity), String> {
+    let onto = placed(document, target_id).ok_or("the sketch is not in this document")?;
+    let source = placed(document, from).ok_or("`from` is not a sketch of this document")?;
+    if from == target_id {
+        return Err("a sketch cannot copy itself".to_string());
+    }
+    let xf = crate::plane_map(&source.plane, &onto.plane)?;
+    let (count, constraints) = crate::copy_sketch_into(&source.sketch, target, &xf);
+    Ok((count, constraints, xf))
+}
+
+/// A new sketch on `sketch`'s plane and body holding its geometry and
+/// `with`'s, each mapped onto the plane.
+pub(crate) fn merge(
+    document: &mut core_document::Document,
+    sketch: FeatureId,
+    with: &[FeatureId],
+) -> Result<FeatureId, CommandError> {
+    let base =
+        placed(document, sketch).ok_or_else(|| CommandError::bad("sketch", "is not a sketch"))?;
+    let mut merged = Sketch::new(format!("{} merged", base.sketch.name));
+    crate::copy_sketch_into(
+        &base.sketch,
+        &mut merged,
+        &crate::tools::Similarity::translation(glam::Vec2::ZERO),
+    );
+    for other in with {
+        let from = placed(document, *other)
+            .ok_or_else(|| CommandError::bad("with", "holds something that is not a sketch"))?;
+        let xf = crate::plane_map(&from.plane, &base.plane).map_err(CommandError::failed)?;
+        crate::copy_sketch_into(&from.sketch, &mut merged, &xf);
+    }
+    new_beside(document, sketch, merged)
+}
+
+/// A new sketch on `sketch`'s plane and body: its geometry mirrored across
+/// the sketch's Y axis.
+pub(crate) fn mirror_sketch(
+    document: &mut core_document::Document,
+    sketch: FeatureId,
+) -> Result<FeatureId, CommandError> {
+    let base = crate::stored_sketch(document, sketch)
+        .ok_or_else(|| CommandError::bad("sketch", "is not a sketch"))?;
+    let mut mirrored = Sketch::new(format!("{} mirror", base.sketch.name));
+    let all: std::collections::HashSet<Uuid> = base
+        .sketch
+        .geometry
+        .iter()
+        .map(GeometryElement::id)
+        .collect();
+    let xf = crate::tools::Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+    crate::tools::copy_from(&base.sketch, &mut mirrored, &all, &xf);
+    new_beside(document, sketch, mirrored)
+}
+
+/// Add `made` as a new sketch on `beside`'s stored plane and in its body.
+fn new_beside(
+    document: &mut core_document::Document,
+    beside: FeatureId,
+    mut made: Sketch,
+) -> Result<FeatureId, CommandError> {
+    let stored = crate::stored_sketch(document, beside)
+        .ok_or_else(|| CommandError::bad("sketch", "is not a sketch"))?;
+    let body = document.get_feature_meta(beside).and_then(|n| n.body);
+    made.plane = stored.plane;
+    let name = made.name.clone();
+    document
+        .add_feature_in_body(SketchFeature::new(made, stored.plane), name, body)
+        .map_err(|e| CommandError::failed(e.to_string()))
+}
+
+/// Edges named as `{body, point, direction}`, in each body's own frame.
+fn external_sources(
+    value: Option<&Value>,
+) -> Result<Vec<crate::sketch::ExternalSource>, CommandError> {
+    let bad = || CommandError::bad("edges", "must be a list of {body, point, direction}");
+    let list = value.and_then(Value::as_array).ok_or_else(bad)?;
+    list.iter()
+        .map(|edge| {
+            let body = edge
+                .get("body")
+                .and_then(Value::as_str)
+                .and_then(|s| Uuid::parse_str(s).ok())
+                .ok_or_else(bad)?;
+            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+                let v = vector3(edge.get(name), "edges")?;
+                Ok(v.map(|c| c as f32))
+            };
+            Ok(crate::sketch::ExternalSource {
+                body,
+                point: v("point")?,
+                direction: v("direction")?,
+            })
+        })
+        .collect()
+}
+
+/// Project `edges` onto `plane` (the sketch's, where its body sits) and add
+/// what they come to as external geometry. How many elements came.
+pub(crate) fn add_external(
+    ctx: &WorkbenchRuntimeContext,
+    plane: &SketchPlane,
+    sketch: &mut Sketch,
+    edges: &[crate::sketch::ExternalSource],
+) -> Result<usize, String> {
+    let mut added = 0;
+    let mut last_error = None;
+    for source in edges {
+        match crate::project_source(ctx, plane, source) {
+            Ok(projected) => added += crate::external::add(sketch, &projected, *source),
+            Err(why) => last_error = Some(why),
+        }
+    }
+    match (added, last_error) {
+        (0, Some(why)) => Err(why),
+        _ => Ok(added),
+    }
+}
+
 /// Named arguments from a JSON object.
 pub(crate) fn args(value: Value) -> CommandArgs {
     match value {

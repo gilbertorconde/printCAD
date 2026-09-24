@@ -52,6 +52,28 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("visible", ParamKind::Bool, ""),
         CommandSpec::new("doc.delete", "Delete a body or a feature").param("id", ParamKind::Id, ""),
         CommandSpec::new(
+            "doc.suppress",
+            "Leave a feature out of its body's solid, or back in",
+        )
+        .param("id", ParamKind::Id, "The feature")
+        .optional("suppressed", ParamKind::Bool, "true (the default) or false"),
+        CommandSpec::new("doc.move", "Move a feature one step in its body's history")
+            .param("id", ParamKind::Id, "The feature")
+            .param("up", ParamKind::Bool, "true: earlier, false: later")
+            .returns(
+                "whether it moved: not at the end of the history, nor past a feature it needs",
+            ),
+        CommandSpec::new(
+            "doc.set_tip",
+            "Build a body only up to a feature, or all of it again",
+        )
+        .param("id", ParamKind::Id, "A feature of the body")
+        .optional(
+            "clear",
+            ParamKind::Bool,
+            "true: build the whole history again",
+        ),
+        CommandSpec::new(
             "doc.rebuild",
             "Rebuild every solid that changed and wait for it",
         )
@@ -832,6 +854,24 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
             let id = item_id(*item)?;
             Some(call("doc.delete", json!({"id": id.to_string()})))
         }
+        UiCommand::TreeFeature { feature, command } => {
+            let id = feature.0.to_string();
+            match command {
+                TreeFeatureCommand::Suppress(on) => {
+                    Some(call("doc.suppress", json!({"id": id, "suppressed": on})))
+                }
+                TreeFeatureCommand::Delete => Some(call("doc.delete", json!({"id": id}))),
+                TreeFeatureCommand::MoveUp => Some(call("doc.move", json!({"id": id, "up": true}))),
+                TreeFeatureCommand::MoveDown => {
+                    Some(call("doc.move", json!({"id": id, "up": false})))
+                }
+                TreeFeatureCommand::SetTip => Some(call("doc.set_tip", json!({"id": id}))),
+                TreeFeatureCommand::ClearTip => {
+                    Some(call("doc.set_tip", json!({"id": id, "clear": true})))
+                }
+                TreeFeatureCommand::SetVisible(_) => None,
+            }
+        }
         _ => None,
     }
 }
@@ -920,6 +960,22 @@ pub(crate) fn document_command(
                 "fields": node.data,
             }))
         }
+        "doc.suppress" => {
+            let feature = feature_arg(document, &a)?;
+            suppress(document, feature, a.opt_bool("suppressed")?.unwrap_or(true));
+            Ok(Value::Null)
+        }
+        "doc.move" => {
+            let feature = feature_arg(document, &a)?;
+            let up = a.opt_bool("up")?.unwrap_or(true);
+            Ok(json!(move_in_history(document, feature, up)))
+        }
+        "doc.set_tip" => {
+            let feature = feature_arg(document, &a)?;
+            let tip = (!a.opt_bool("clear")?.unwrap_or(false)).then_some(feature);
+            set_tip(document, registry, feature, tip).map_err(CommandError::failed)?;
+            Ok(Value::Null)
+        }
         "doc.new_body" => {
             let body = document.create_body(None);
             if let Some(name) = a.opt_string("name")? {
@@ -972,6 +1028,47 @@ pub(crate) fn document_command(
         Err(CommandError::Unknown(_)) => None,
         answer => Some(answer),
     }
+}
+
+fn feature_arg(document: &core_document::Document, a: &Args) -> Result<FeatureId, CommandError> {
+    let feature = FeatureId(a.id("id")?);
+    if document.get_feature_meta(feature).is_some() {
+        Ok(feature)
+    } else {
+        Err(CommandError::bad("id", "is not a feature of this document"))
+    }
+}
+
+/// Leave `feature` out of its body's solid, or put it back.
+pub(crate) fn suppress(document: &mut core_document::Document, feature: FeatureId, on: bool) {
+    document.set_feature_suppressed(feature, on);
+    document.mark_feature_dirty(feature);
+}
+
+/// Move `feature` a step in its body's history; whether it could.
+pub(crate) fn move_in_history(
+    document: &mut core_document::Document,
+    feature: FeatureId,
+    up: bool,
+) -> bool {
+    document.move_feature_in_history(feature, up)
+}
+
+/// Build the body of `of` only up to `tip`, or all of it when `None`.
+pub(crate) fn set_tip(
+    document: &mut core_document::Document,
+    registry: &core_document::DocumentService,
+    of: FeatureId,
+    tip: Option<FeatureId>,
+) -> Result<(), &'static str> {
+    let body = document
+        .get_feature_meta(of)
+        .and_then(|n| n.body)
+        .ok_or("the feature belongs to no body")?;
+    document.set_body_tip(body, tip);
+    // The chain changes shape: rebuild from the first feature.
+    registry.invalidate_body(document, body);
+    Ok(())
 }
 
 fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {
@@ -1242,8 +1339,20 @@ mod tests {
         let delete = recorded_of(&UiCommand::DeleteTreeItem(TreeItemId::Feature(feature))).unwrap();
         assert_eq!(delete.args["id"], json!(feature.0.to_string()));
         assert!(recorded_of(&UiCommand::FitView).is_none());
+        let mut more = Vec::new();
+        for command in [
+            TreeFeatureCommand::Suppress(true),
+            TreeFeatureCommand::MoveUp,
+            TreeFeatureCommand::ClearTip,
+        ] {
+            more.push(recorded_of(&UiCommand::TreeFeature { feature, command }).unwrap());
+        }
+        assert_eq!(
+            more.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(),
+            ["doc.suppress", "doc.move", "doc.set_tip"]
+        );
         // Every call a recording can hold is a command a script can call.
-        for call in [rename, hide, delete] {
+        for call in [rename, hide, delete].into_iter().chain(more) {
             assert!(doc_commands().iter().any(|c| c.id == call.id));
             let spec = doc_commands()
                 .into_iter()
@@ -1251,6 +1360,66 @@ mod tests {
                 .unwrap();
             spec.check(&call.args).unwrap();
         }
+    }
+
+    #[test]
+    fn the_tree_s_history_edits_work_on_the_document_as_commands() {
+        let mut registry = core_document::DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let datum = |doc: &mut core_document::Document, name: &str| {
+            doc.add_feature_in_body(
+                core_document::DatumFeature {
+                    shape: core_document::DatumShape::Point,
+                    attachment: core_document::DatumAttachment::BasePlane(
+                        core_document::BasePlane::XY,
+                    ),
+                    offset: Default::default(),
+                },
+                name.to_string(),
+                Some(body),
+            )
+            .unwrap()
+        };
+        let (a, b) = (datum(&mut doc, "a"), datum(&mut doc, "b"));
+        let run = |doc: &mut core_document::Document, id: &str, args: Value| {
+            let args = match args {
+                Value::Object(map) => map,
+                _ => CommandArgs::new(),
+            };
+            document_command(id, &args, doc, &registry, None).unwrap()
+        };
+        run(&mut doc, "doc.suppress", json!({"id": a.0.to_string()})).unwrap();
+        assert!(doc.get_feature_meta(a).unwrap().suppressed);
+        let moved = run(
+            &mut doc,
+            "doc.move",
+            json!({"id": b.0.to_string(), "up": true}),
+        )
+        .unwrap();
+        assert_eq!(moved, json!(true));
+        let order: Vec<String> = features_in_order(&doc, Some(body))
+            .iter()
+            .map(|n| n.name.clone())
+            .collect();
+        assert_eq!(order, ["b", "a"]);
+        let stuck = run(
+            &mut doc,
+            "doc.move",
+            json!({"id": b.0.to_string(), "up": true}),
+        )
+        .unwrap();
+        assert_eq!(stuck, json!(false), "the first can go no earlier");
+        run(&mut doc, "doc.set_tip", json!({"id": b.0.to_string()})).unwrap();
+        assert_eq!(doc.bodies()[0].tip, Some(b));
+        run(
+            &mut doc,
+            "doc.set_tip",
+            json!({"id": b.0.to_string(), "clear": true}),
+        )
+        .unwrap();
+        assert_eq!(doc.bodies()[0].tip, None);
     }
 
     #[test]
