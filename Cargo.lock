@@ -2786,6 +2786,7 @@ dependencies = [
  "core_document",
  "mlua",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -3853,6 +3854,7 @@ dependencies = [
  "egui",
  "glam 0.33.7",
  "kernel_api",
+ "scripting",
  "serde",
  "serde_json",
  "ui_kit",
