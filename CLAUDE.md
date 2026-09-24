@@ -153,7 +153,10 @@ cargo fmt --all                   # CI enforces --check
   dragging (a left press on a body the solver moves takes hold of it
   without consuming the press; moves solve `solve::drag`, the joints plus
   a light pull of the grabbed point toward the cursor on a view-facing
-  plane, then the joints alone; the release records `asm.place`), the solver
+  plane, then the joints alone; the release records `asm.place`), the
+  exploded view (a task that moves bodies and puts them back on close,
+  recording nothing), the parts list (`parts.rs`: bodies grouped by
+  identical shape snapshot), the solver
   (`solve.rs`: each free body placed on its own against the bodies placed
   before it, turning its first joint's directions into agreement, rings
   taking their turn once most of their joints have something to hold to;
@@ -377,7 +380,7 @@ overtaken is dropped, and the choice is kept per agent in
 images, small UTF-8 files embedded, the rest as `resource_link`s. They
 come from the "+" menu (`FileDialogKind::Attach`, `attach_view` over
 `view_png`), a paste of file paths, or a drop on the panel (winit delivers
-drops on X11 only). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
+drops on X11 only). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide. `docs/ASSEMBLY.md` is the Assembly user guide.
 
 **Variables and formulas.** Any number a bench lists
 (`Workbench::parameters`: a `Parameter` with a stable key, a JSON pointer

@@ -949,6 +949,10 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `bodies` (list, optional): Only these bodies; every visible one when left out
 - Returns {checked, skipped, clashes}, each clash {a, b, volume (mm³), centre}; skipped counts visible bodies with no solid
 
+`pc.asm.parts`: Every part: bodies of the same shape counted together.
+
+- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh}, in name order
+
 `pc.asm.travel`: Where a hinge or a slider has got to: the hinge's angle in degrees, the slider's position in mm.
 
 - `joint` (id)

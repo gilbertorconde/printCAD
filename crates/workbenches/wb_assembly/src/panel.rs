@@ -84,6 +84,10 @@ impl AssemblyWorkbench {
             Some(Task::Interference { found, seq }) => {
                 self.interference_panel(ui, ctx, request, &found, seq)
             }
+            Some(Task::Explode { placements, spread }) => {
+                self.explode_panel(ui, ctx, request, placements, spread)
+            }
+            Some(Task::Parts) => self.parts_panel(ui, ctx, request),
             None => TaskOutcome::Open,
         }
     }
@@ -175,6 +179,120 @@ impl AssemblyWorkbench {
         ui.add_space(SPACE_2);
         if ui_kit::widgets::secondary_button(ui, "Check again").clicked() {
             self.check_interference(ctx);
+        }
+        TaskOutcome::Open
+    }
+
+    /// The exploded view's spread; closing puts every body back.
+    fn explode_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+        placements: Vec<(BodyId, BodyPlacement)>,
+        mut spread: f32,
+    ) -> TaskOutcome {
+        if request.accept || request.cancel {
+            self.put_back_explosion(ctx);
+            return TaskOutcome::Cancelled;
+        }
+        header(ui, "scale-geometry", "Exploded view");
+        ui.add_space(SPACE_2);
+        let changed = ui
+            .horizontal(|ui| {
+                ui.add_sized(
+                    [90.0, INPUT],
+                    egui::Label::new(RichText::new("Spread").font(sans(FONT_SM)).color(TEXT2)),
+                );
+                ui.add(egui::Slider::new(&mut spread, 0.0..=3.0).fixed_decimals(2))
+                    .on_hover_text(
+                        "How far each body moves out, as a share of its distance from the middle",
+                    )
+                    .changed()
+            })
+            .inner;
+        if changed {
+            crate::explode(ctx, &placements, spread);
+            self.task = Some(Task::Explode { placements, spread });
+        }
+        ui.add_space(SPACE_2);
+        ui.label(
+            RichText::new(
+                "Each body moves straight out from the middle of the assembly. \
+                 Nothing is kept: the bodies go back when this closes.",
+            )
+            .font(sans(FONT_XS))
+            .color(TEXT3),
+        );
+        TaskOutcome::Open
+    }
+
+    /// Every part, how many of it and its size, with a copy for a
+    /// spreadsheet.
+    fn parts_panel(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &mut WorkbenchRuntimeContext,
+        request: TaskRequest,
+    ) -> TaskOutcome {
+        if request.accept || request.cancel {
+            self.task = None;
+            return TaskOutcome::Cancelled;
+        }
+        header(ui, "file-document", "Parts list");
+        ui.add_space(SPACE_2);
+        let parts = crate::parts_list(ctx.document);
+        let total: usize = parts.iter().map(|p| p.bodies.len()).sum();
+        ui.label(
+            RichText::new(format!(
+                "{} part{}, {total} bod{}",
+                parts.len(),
+                if parts.len() == 1 { "" } else { "s" },
+                if total == 1 { "y" } else { "ies" }
+            ))
+            .font(sans(FONT_SM))
+            .color(TEXT2),
+        );
+        ui.add_space(SPACE_1);
+        egui::Grid::new("assembly_parts")
+            .num_columns(3)
+            .striped(true)
+            .spacing([SPACE_3, SPACE_1])
+            .show(ui, |ui| {
+                for heading in ["Part", "Qty", "Size (mm)"] {
+                    ui.label(RichText::new(heading).font(sans(FONT_XS)).color(TEXT3));
+                }
+                ui.end_row();
+                for part in &parts {
+                    let name = ui.add(
+                        egui::Button::new(
+                            RichText::new(&part.name).font(sans(FONT_SM)).color(TEXT1),
+                        )
+                        .frame(false),
+                    );
+                    if name.clicked() {
+                        ctx.request(core_document::HostRequest::SelectBody(part.bodies[0]));
+                    }
+                    ui.label(
+                        RichText::new(part.bodies.len().to_string())
+                            .font(ui_kit::mono(FONT_SM))
+                            .color(TEXT1),
+                    );
+                    let size = part.size_mm.map_or_else(
+                        || "-".to_string(),
+                        |s| format!("{:.1} × {:.1} × {:.1}", s[0], s[1], s[2]),
+                    );
+                    ui.label(RichText::new(size).font(ui_kit::mono(FONT_SM)).color(TEXT1));
+                    ui.end_row();
+                }
+            });
+        ui.add_space(SPACE_2);
+        if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
+            .on_hover_text("For a spreadsheet: part, quantity, size and kind")
+            .clicked()
+        {
+            ui.ctx().copy_text(crate::parts_csv(&parts));
+            ctx.log_info("Parts list copied");
         }
         TaskOutcome::Open
     }

@@ -15,6 +15,7 @@ mod interference;
 mod joint;
 #[cfg(feature = "egui")]
 mod panel;
+mod parts;
 mod solve;
 
 use core_document::{
@@ -25,6 +26,7 @@ use core_document::{
 
 pub use interference::{Clash, Interference, interference};
 pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
+pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{HOLDS_MM, Joint, Motion, SolveError, drag, draggable, freedom, joints, solve};
 
 /// A joint being made: the kind, and the first face once picked.
@@ -52,6 +54,14 @@ enum Task {
     },
     /// Where bodies clash, as found at edit `seq` of the document.
     Interference { found: Interference, seq: u64 },
+    /// The bodies spread apart to show how they go together; they go back
+    /// to `placements` when it closes.
+    Explode {
+        placements: Vec<(BodyId, BodyPlacement)>,
+        spread: f32,
+    },
+    /// Every part and how many of it.
+    Parts,
 }
 
 #[derive(Default)]
@@ -190,11 +200,21 @@ impl AssemblyWorkbench {
 }
 
 impl AssemblyWorkbench {
+    /// An exploded view open: the bodies back where they were.
+    pub(crate) fn put_back_explosion(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        if let Some(Task::Explode { placements, .. }) = &self.task {
+            restore_placements(ctx, placements);
+            self.task = None;
+        }
+    }
+
     /// A press on a body its joints move takes hold of it; the press still
     /// goes on to the host, which selects on a click.
     fn take_hold(&mut self, ctx: &WorkbenchRuntimeContext, at: (f32, f32)) {
         self.grab = None;
-        if self.picking.is_some() || matches!(self.task, Some(Task::Move { .. })) {
+        if self.picking.is_some()
+            || matches!(self.task, Some(Task::Move { .. } | Task::Explode { .. }))
+        {
             return;
         }
         let (Some(body), Some(point)) = (ctx.hovered_body_id, ctx.hovered_world_pos) else {
@@ -265,6 +285,38 @@ impl AssemblyWorkbench {
         }
         ctx.request(HostRequest::JournalLabel("Drag body".into()));
         InputResult::redraw_only()
+    }
+}
+
+/// Every visible body moved out from the middle of the assembly by
+/// `spread` times its own distance from it, from where `placements` put
+/// them.
+pub(crate) fn explode(
+    ctx: &mut WorkbenchRuntimeContext,
+    placements: &[(BodyId, BodyPlacement)],
+    spread: f32,
+) {
+    let centres: Vec<(BodyId, BodyPlacement, glam::Vec3)> = placements
+        .iter()
+        .filter(|(body, _)| ctx.document.imported_body_effective_visible(*body))
+        .filter_map(|(body, placement)| {
+            let (mesh, bounds) = ctx.document.local_geometry(*body)?;
+            let (lo, hi) = bounds.or_else(|| mesh.bounds())?;
+            let middle = (glam::Vec3::from_array(lo) + glam::Vec3::from_array(hi)) * 0.5;
+            let centre = glam::Vec3::from_array(placement.point(middle.to_array()));
+            Some((*body, *placement, centre))
+        })
+        .collect();
+    if centres.is_empty() {
+        return;
+    }
+    let middle = centres.iter().map(|(_, _, c)| *c).sum::<glam::Vec3>() / centres.len() as f32;
+    for (body, placement, centre) in centres {
+        let out = (centre - middle) * spread;
+        ctx.document.set_body_placement(
+            body,
+            BodyPlacement::new(placement.quat(), placement.offset() + out),
+        );
     }
 }
 
@@ -548,6 +600,8 @@ impl Workbench for AssemblyWorkbench {
         context.register_tool(
             tool("asm.interference", "Check interference", "check-geometry").shortcut("I"),
         );
+        context.register_tool(tool("asm.explode", "Exploded view", "scale-geometry").shortcut("E"));
+        context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
@@ -615,7 +669,8 @@ impl Workbench for AssemblyWorkbench {
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
             id if JointTool::of_command(id).is_some() => ctx.document.bodies().len() >= 2,
-            "asm.interference" => ctx.document.bodies().len() >= 2,
+            "asm.interference" | "asm.explode" => ctx.document.bodies().len() >= 2,
+            "asm.parts" => !ctx.document.bodies().is_empty(),
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
             _ => false,
@@ -658,6 +713,19 @@ impl Workbench for AssemblyWorkbench {
             Some("asm.interference") => {
                 self.picking = None;
                 self.check_interference(ctx);
+            }
+            Some("asm.explode") => {
+                self.picking = None;
+                let placements = all_placements(ctx);
+                explode(ctx, &placements, 1.0);
+                self.task = Some(Task::Explode {
+                    placements,
+                    spread: 1.0,
+                });
+            }
+            Some("asm.parts") => {
+                self.picking = None;
+                self.task = Some(Task::Parts);
             }
             Some("asm.move") => match Self::body_to_move(ctx) {
                 Some(body) => {
@@ -725,7 +793,15 @@ impl Workbench for AssemblyWorkbench {
         let selected = Self::selected_joint(ctx);
         match (&self.task, selected) {
             (Some(Task::Joint { id, .. }), Some(joint)) if *id == joint => {}
-            (Some(Task::Move { .. } | Task::Interference { .. }), _) => {}
+            (
+                Some(
+                    Task::Move { .. }
+                    | Task::Interference { .. }
+                    | Task::Explode { .. }
+                    | Task::Parts,
+                ),
+                _,
+            ) => {}
             (_, Some(joint)) => {
                 self.task = Some(Task::Joint {
                     id: joint,
@@ -768,6 +844,16 @@ impl Workbench for AssemblyWorkbench {
             Task::Interference { .. } => Some(core_document::TaskInfo {
                 title: "Interference".to_string(),
                 icon: "check-geometry",
+                confirmable: false,
+            }),
+            Task::Explode { .. } => Some(core_document::TaskInfo {
+                title: "Exploded view".to_string(),
+                icon: "scale-geometry",
+                confirmable: false,
+            }),
+            Task::Parts => Some(core_document::TaskInfo {
+                title: "Parts list".to_string(),
+                icon: "file-document",
                 confirmable: false,
             }),
         }
@@ -834,13 +920,15 @@ impl Workbench for AssemblyWorkbench {
         })
     }
 
-    fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+    fn finish_editing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.picking = None;
+        self.put_back_explosion(ctx);
         self.task = None;
     }
 
-    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+    fn on_deactivate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
         self.picking = None;
+        self.put_back_explosion(ctx);
         self.task = None;
     }
 }
@@ -1078,6 +1166,29 @@ mod tests {
         assert_eq!(recorded.len(), 1);
         assert_eq!(recorded[0].id, "asm.place");
         assert!(requests.contains(&HostRequest::JournalLabel("Drag body".into())));
+    }
+
+    #[test]
+    fn an_exploded_view_spreads_the_bodies_and_puts_them_back() {
+        let (mut doc, base, part) = scene();
+        let before = [base, part].map(|b| doc.body_placement(b));
+        let mut wb = AssemblyWorkbench::default();
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("asm.explode"),
+            &mut ctx,
+        );
+        let apart = |ctx: &WorkbenchRuntimeContext| {
+            let [a, b] = [base, part]
+                .map(|body| glam::Vec3::from_array(ctx.document.body_placement(body).translation));
+            a.distance(b)
+        };
+        let was = glam::Vec3::from_array(before[0].translation)
+            .distance(glam::Vec3::from_array(before[1].translation));
+        assert!((apart(&ctx) - 2.0 * was).abs() < 1e-3, "twice as far apart");
+        wb.finish_editing(&mut ctx);
+        assert_eq!([base, part].map(|b| ctx.document.body_placement(b)), before);
     }
 
     #[test]

@@ -156,6 +156,17 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.parts",
+            "Every part: bodies of the same shape counted together",
+        )
+        .returns(
+            "a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh}, \
+             in name order",
+        )
+        .read_only(),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.travel",
             "Where a hinge or a slider has got to: the hinge's angle in degrees, \
              the slider's position in mm",
@@ -318,6 +329,20 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 "clashes": clashes,
             }))
         }
+        "asm.parts" => Ok(Value::Array(
+            crate::parts_list(ctx.document)
+                .into_iter()
+                .map(|part| {
+                    json!({
+                        "name": part.name,
+                        "quantity": part.bodies.len(),
+                        "bodies": part.bodies.iter().map(|b| b.0.to_string()).collect::<Vec<_>>(),
+                        "size": part.size_mm,
+                        "mesh": part.mesh,
+                    })
+                })
+                .collect(),
+        )),
         "asm.travel" => {
             let joint = FeatureId(a.id("joint")?);
             let found = joints(ctx.document).into_iter().find(|j| j.id == joint);
