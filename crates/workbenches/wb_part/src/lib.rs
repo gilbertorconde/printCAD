@@ -600,6 +600,34 @@ impl PartDesignWorkbench {
     }
 }
 
+/// Default keys of the tools; the user can rebind them in Preferences.
+/// Shift and a letter makes the subtractive form of what the letter adds.
+const TOOL_KEYS: &[(&str, &str)] = &[
+    ("part.new_body", "B"),
+    ("part.new_sketch", "S"),
+    ("part.pad", "E"),
+    ("part.pocket", "Shift+E"),
+    ("part.revolve", "R"),
+    ("part.groove", "Shift+R"),
+    ("part.loft", "L"),
+    ("part.subtractive_loft", "Shift+L"),
+    ("part.pipe", "W"),
+    ("part.subtractive_pipe", "Shift+W"),
+    ("part.hole", "Shift+H"),
+    ("part.fillet", "U"),
+    ("part.chamfer", "C"),
+    ("part.mirror", "M"),
+];
+
+/// Register `tool` with its default key, if it has one.
+fn register(context: &mut WorkbenchContext, tool: ToolDescriptor) {
+    let key = TOOL_KEYS.iter().find(|(id, _)| *id == tool.id);
+    context.register_tool(match key {
+        Some((_, key)) => tool.shortcut(key),
+        None => tool,
+    });
+}
+
 impl Workbench for PartDesignWorkbench {
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
@@ -650,78 +678,80 @@ impl Workbench for PartDesignWorkbench {
             ToolDescriptor::new_action(id, label, Some(category)).icon(icon)
         };
         // Structure and sketches.
-        context.register_tool(action("part.new_body", "Create body", "body", "structure"));
-        context.register_tool(action(
-            "part.new_sketch",
-            "Create sketch",
-            "sketch-new",
-            "structure",
-        ));
-        context.register_tool(action(
-            "part.edit_sketch",
-            "Edit sketch",
-            "sketch-edit",
-            "structure",
-        ));
-        context.register_tool(action(
-            "part.map_sketch",
-            "Map sketch to face",
-            "sketch-map",
-            "structure",
-        ));
+        register(
+            context,
+            action("part.new_body", "Create body", "body", "structure"),
+        );
+        register(
+            context,
+            action(
+                "part.new_sketch",
+                "Create sketch",
+                "sketch-new",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
+                "part.edit_sketch",
+                "Edit sketch",
+                "sketch-edit",
+                "structure",
+            ),
+        );
+        register(
+            context,
+            action(
+                "part.map_sketch",
+                "Map sketch to face",
+                "sketch-map",
+                "structure",
+            ),
+        );
         // Datums.
-        context.register_tool(action(
-            "part.datum_point",
-            "Datum point",
-            "datum-point",
-            "datum",
-        ));
-        context.register_tool(action(
-            "part.datum_line",
-            "Datum line",
-            "datum-line",
-            "datum",
-        ));
-        context.register_tool(action(
-            "part.datum_plane",
-            "Datum plane",
-            "datum-plane",
-            "datum",
-        ));
-        context.register_tool(action(
-            "part.coordinate_system",
-            "Local coordinate system",
-            "coordinate-system",
-            "datum",
-        ));
-        context.register_tool(action("part.clone", "Clone", "clone", "datum"));
+        register(
+            context,
+            action("part.datum_point", "Datum point", "datum-point", "datum"),
+        );
+        register(
+            context,
+            action("part.datum_line", "Datum line", "datum-line", "datum"),
+        );
+        register(
+            context,
+            action("part.datum_plane", "Datum plane", "datum-plane", "datum"),
+        );
+        register(
+            context,
+            action(
+                "part.coordinate_system",
+                "Local coordinate system",
+                "coordinate-system",
+                "datum",
+            ),
+        );
+        register(context, action("part.clone", "Clone", "clone", "datum"));
         // Additive.
-        context.register_tool(action("part.pad", "Pad", "pad", "additive"));
-        context.register_tool(action(
-            "part.revolve",
-            "Revolution",
-            "revolution",
-            "additive",
-        ));
-        context.register_tool(action(
-            "part.loft",
-            "Additive loft",
-            "additive-loft",
-            "additive",
-        ));
-        context.register_tool(action(
-            "part.pipe",
-            "Additive pipe",
-            "additive-pipe",
-            "additive",
-        ));
-        context.register_tool(action(
-            "part.helix",
-            "Additive helix",
-            "additive-helix",
-            "additive",
-        ));
-        context.register_tool(
+        register(context, action("part.pad", "Pad", "pad", "additive"));
+        register(
+            context,
+            action("part.revolve", "Revolution", "revolution", "additive"),
+        );
+        register(
+            context,
+            action("part.loft", "Additive loft", "additive-loft", "additive"),
+        );
+        register(
+            context,
+            action("part.pipe", "Additive pipe", "additive-pipe", "additive"),
+        );
+        register(
+            context,
+            action("part.helix", "Additive helix", "additive-helix", "additive"),
+        );
+        register(
+            context,
             action(
                 "part.primitive",
                 "Additive primitive",
@@ -731,28 +761,44 @@ impl Workbench for PartDesignWorkbench {
             .variants(primitive_variants(false)),
         );
         // Subtractive.
-        context.register_tool(action("part.pocket", "Pocket", "pocket", "subtractive"));
-        context.register_tool(action("part.hole", "Hole", "hole", "subtractive"));
-        context.register_tool(action("part.groove", "Groove", "groove", "subtractive"));
-        context.register_tool(action(
-            "part.subtractive_loft",
-            "Subtractive loft",
-            "subtractive-loft",
-            "subtractive",
-        ));
-        context.register_tool(action(
-            "part.subtractive_pipe",
-            "Subtractive pipe",
-            "subtractive-pipe",
-            "subtractive",
-        ));
-        context.register_tool(action(
-            "part.subtractive_helix",
-            "Subtractive helix",
-            "subtractive-helix",
-            "subtractive",
-        ));
-        context.register_tool(
+        register(
+            context,
+            action("part.pocket", "Pocket", "pocket", "subtractive"),
+        );
+        register(context, action("part.hole", "Hole", "hole", "subtractive"));
+        register(
+            context,
+            action("part.groove", "Groove", "groove", "subtractive"),
+        );
+        register(
+            context,
+            action(
+                "part.subtractive_loft",
+                "Subtractive loft",
+                "subtractive-loft",
+                "subtractive",
+            ),
+        );
+        register(
+            context,
+            action(
+                "part.subtractive_pipe",
+                "Subtractive pipe",
+                "subtractive-pipe",
+                "subtractive",
+            ),
+        );
+        register(
+            context,
+            action(
+                "part.subtractive_helix",
+                "Subtractive helix",
+                "subtractive-helix",
+                "subtractive",
+            ),
+        );
+        register(
+            context,
             action(
                 "part.subtractive_primitive",
                 "Subtractive primitive",
@@ -762,38 +808,60 @@ impl Workbench for PartDesignWorkbench {
             .variants(primitive_variants(true)),
         );
         // Transformations.
-        context.register_tool(action("part.mirror", "Mirrored", "mirrored", "transform"));
-        context.register_tool(action(
-            "part.linear_pattern",
-            "Linear pattern",
-            "linear-pattern",
-            "transform",
-        ));
-        context.register_tool(action(
-            "part.polar_pattern",
-            "Polar pattern",
-            "polar-pattern",
-            "transform",
-        ));
-        context.register_tool(action(
-            "part.multi_transform",
-            "Multi-transform",
-            "multi-transform",
-            "transform",
-        ));
-        context.register_tool(action("part.scaled", "Scaled", "scaled", "transform"));
+        register(
+            context,
+            action("part.mirror", "Mirrored", "mirrored", "transform"),
+        );
+        register(
+            context,
+            action(
+                "part.linear_pattern",
+                "Linear pattern",
+                "linear-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "part.polar_pattern",
+                "Polar pattern",
+                "polar-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "part.multi_transform",
+                "Multi-transform",
+                "multi-transform",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action("part.scaled", "Scaled", "scaled", "transform"),
+        );
         // Dress-up.
-        context.register_tool(action("part.fillet", "Fillet", "fillet", "dressup"));
-        context.register_tool(action("part.chamfer", "Chamfer", "chamfer", "dressup"));
-        context.register_tool(action("part.draft", "Draft", "draft", "dressup"));
-        context.register_tool(action(
-            "part.thickness",
-            "Thickness",
-            "thickness",
-            "dressup",
-        ));
+        register(
+            context,
+            action("part.fillet", "Fillet", "fillet", "dressup"),
+        );
+        register(
+            context,
+            action("part.chamfer", "Chamfer", "chamfer", "dressup"),
+        );
+        register(context, action("part.draft", "Draft", "draft", "dressup"));
+        register(
+            context,
+            action("part.thickness", "Thickness", "thickness", "dressup"),
+        );
         // Boolean.
-        context.register_tool(action("part.boolean", "Boolean", "boolean", "boolean"));
+        register(
+            context,
+            action("part.boolean", "Boolean", "boolean", "boolean"),
+        );
     }
 
     fn on_activate(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -1304,6 +1372,28 @@ mod icon_coverage {
         );
         assert_eq!(info.kind_label, "Pad");
         assert!(info.builds_solid);
+    }
+
+    #[test]
+    fn every_default_key_lands_on_a_tool_and_no_two_share_one() {
+        let mut ctx = WorkbenchContext::default();
+        PartDesignWorkbench::default().configure(&mut ctx);
+        for (id, _) in TOOL_KEYS {
+            assert!(ctx.tools().iter().any(|t| t.id == *id), "no tool {id}");
+        }
+        let mut seen = std::collections::HashMap::new();
+        let keyed = ctx
+            .tools()
+            .iter()
+            .map(|t| (&t.id, &t.shortcuts))
+            .chain(ctx.actions().iter().map(|a| (&a.id, &a.shortcuts)));
+        for (id, keys) in keyed {
+            for key in keys {
+                if let Some(other) = seen.insert(*key, id.clone()) {
+                    panic!("{id} and {other} share {key}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -53,6 +53,8 @@ pub struct ComboViewInputs<'a> {
     pub rename_buffer: &'a mut Option<(TreeItemId, String)>,
     /// The measure of the body the property panel shows.
     pub physical: Option<&'a super::Physical>,
+    /// The keys the tree's menus name.
+    pub keymap: &'a super::keymap::Keymap,
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -69,6 +71,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         property_tab,
         rename_buffer,
         physical,
+        keymap,
     } = inputs;
     let mut result = ComboViewResult::default();
 
@@ -173,7 +176,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                             filter.trim(),
                         )
                         .revealing(reveal_body)
-                        .with_bench_menus(document, registry),
+                        .with_bench_menus(document, registry)
+                        .with_keys(keymap),
                     );
                     result.bench_command = tree_ui.bench_command;
                     result.tree_selection = tree_ui.selection;
@@ -192,20 +196,6 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .and_then(|id| tree_model.detail_for(id))
                         .or_else(|| tree_model.detail_for(selected_id));
                 });
-
-            // The tree owns Delete whenever nothing is being typed and no
-            // sketch is open — an open sketch keeps it for its geometry.
-            let deletable = matches!(
-                selected_id,
-                TreeItemId::Feature(_) | TreeItemId::Body(_) | TreeItemId::ImportedObject(_)
-            );
-            if deletable
-                && editing_feature.is_none()
-                && !ui.ctx().egui_wants_keyboard_input()
-                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete))
-            {
-                result.delete_item = Some(selected_id);
-            }
 
             let props = property_panel::draw_property_panel(
                 ui,

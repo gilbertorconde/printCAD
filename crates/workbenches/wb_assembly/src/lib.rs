@@ -291,9 +291,11 @@ impl Workbench for AssemblyWorkbench {
         };
         context.register_tool(tool("asm.mate", "Mate faces", "joint-mate").shortcut("M"));
         context.register_tool(tool("asm.align", "Align axes", "joint-align").shortcut("A"));
-        context.register_tool(tool("asm.angle", "Angle between faces", "constraint-angle"));
+        context.register_tool(
+            tool("asm.angle", "Angle between faces", "constraint-angle").shortcut("N"),
+        );
         context.register_tool(tool("asm.move", "Move body", "move-geometry").shortcut("G"));
-        context.register_tool(tool("asm.solve", "Solve joints", "refresh"));
+        context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
     }
 
     fn feature_info(&self, node: &FeatureNode) -> FeatureInfo {

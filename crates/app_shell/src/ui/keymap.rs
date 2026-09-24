@@ -10,6 +10,7 @@
 use core_document::{Chord, DocumentService, KeyCode, WorkbenchId};
 use settings::KeyboardSettings;
 
+use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 use super::{EditCommand, FileCommand, UiCommand};
 use crate::orientation_cube::CameraSnapView;
 
@@ -52,6 +53,11 @@ pub enum HostAction {
     PrintBed,
     Recompute,
     LogPanel,
+    Delete,
+    ToggleVisibility,
+    ShadedWithEdges,
+    Shaded,
+    Wireframe,
 }
 
 struct HostSpec {
@@ -123,14 +129,34 @@ const HOST: &[HostSpec] = {
         text_owned(spec(Cut, "edit.cut", "Cut", "Edit", &["Ctrl+X"])),
         text_owned(spec(Copy, "edit.copy", "Copy", "Edit", &["Ctrl+C"])),
         text_owned(spec(Paste, "edit.paste", "Paste", "Edit", &["Ctrl+V"])),
-        spec(Recompute, "edit.recompute", "Recompute all", "Edit", &[]),
+        spec(
+            Delete,
+            "edit.delete",
+            "Delete the selected item",
+            "Edit",
+            &["Delete"],
+        ),
+        spec(
+            Recompute,
+            "edit.recompute",
+            "Recompute all",
+            "Edit",
+            &["Ctrl+R"],
+        ),
         spec(FitAll, "view.fit_all", "Fit all", "View", &["F"]),
         spec(
             FitSelection,
             "view.fit_selection",
             "Fit selection",
             "View",
-            &[],
+            &["Shift+F"],
+        ),
+        spec(
+            ToggleVisibility,
+            "view.toggle_visibility",
+            "Show or hide the selected item",
+            "View",
+            &["Space"],
         ),
         spec(
             PivotAtCursor,
@@ -139,21 +165,42 @@ const HOST: &[HostSpec] = {
             "View",
             &["H"],
         ),
-        spec(Isometric, "view.isometric", "Isometric view", "View", &[]),
-        spec(Front, "view.front", "Front view", "View", &[]),
-        spec(Top, "view.top", "Top view", "View", &[]),
-        spec(Right, "view.right", "Right view", "View", &[]),
-        spec(Rear, "view.rear", "Rear view", "View", &[]),
-        spec(Bottom, "view.bottom", "Bottom view", "View", &[]),
-        spec(Left, "view.left", "Left view", "View", &[]),
+        spec(
+            Isometric,
+            "view.isometric",
+            "Isometric view",
+            "View",
+            &["0"],
+        ),
+        spec(Front, "view.front", "Front view", "View", &["1"]),
+        spec(Top, "view.top", "Top view", "View", &["2"]),
+        spec(Right, "view.right", "Right view", "View", &["3"]),
+        spec(Rear, "view.rear", "Rear view", "View", &["4"]),
+        spec(Bottom, "view.bottom", "Bottom view", "View", &["5"]),
+        spec(Left, "view.left", "Left view", "View", &["6"]),
         spec(
             Orthographic,
             "view.orthographic",
             "Orthographic",
             "View",
+            &["O"],
+        ),
+        spec(
+            Perspective,
+            "view.perspective",
+            "Perspective",
+            "View",
+            &["P"],
+        ),
+        spec(
+            ShadedWithEdges,
+            "view.shaded_edges",
+            "Shaded with edges",
+            "View",
             &[],
         ),
-        spec(Perspective, "view.perspective", "Perspective", "View", &[]),
+        spec(Shaded, "view.shaded", "Shaded", "View", &[]),
+        spec(Wireframe, "view.wireframe", "Wireframe", "View", &[]),
         spec(
             ClippingPlane,
             "view.clipping_plane",
@@ -509,16 +556,53 @@ pub fn take_any_chord(ctx: &egui::Context) -> Option<Chord> {
     })
 }
 
+/// Where the keyboard's input is going this frame.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct KeyFocus {
+    /// A text field has focus.
+    pub typing: bool,
+    /// The active workbench is taking a typed number.
+    pub numeric: bool,
+    /// A document is on screen.
+    pub have_document: bool,
+}
+
+/// Whether `chord` is a key that types a number.
+fn types_number(chord: Chord) -> bool {
+    use KeyCode::*;
+    !chord.ctrl
+        && !chord.alt
+        && !chord.shift
+        && matches!(
+            chord.key,
+            Key0 | Key1
+                | Key2
+                | Key3
+                | Key4
+                | Key5
+                | Key6
+                | Key7
+                | Key8
+                | Key9
+                | Period
+                | Comma
+                | Minus
+        )
+}
+
 /// The bindings whose keys were pressed this frame, taken out of the input
-/// so no widget acts on them too. `typing` is whether a text field has
-/// focus; `have_document` whether one is on screen.
+/// so no widget acts on them too.
 pub fn take_pressed(
     ctx: &egui::Context,
     keymap: &Keymap,
     active: &WorkbenchId,
-    typing: bool,
-    have_document: bool,
+    focus: KeyFocus,
 ) -> Vec<Binding> {
+    let KeyFocus {
+        typing,
+        numeric,
+        have_document,
+    } = focus;
     ctx.input_mut(|i| {
         let mut hits = Vec::new();
         i.events.retain(|event| {
@@ -541,6 +625,9 @@ pub fn take_pressed(
             if typing && (chord.types_text() || binding.text_owned) {
                 return true;
             }
+            if numeric && types_number(chord) {
+                return true;
+            }
             if binding.needs_document && !have_document {
                 return true;
             }
@@ -561,15 +648,27 @@ pub enum HostOutcome {
     Nothing,
 }
 
-/// The command an application binding runs. `section_on` says whether the
-/// clipping plane is showing, so its key toggles it.
-pub fn host_outcome(
-    action: HostAction,
-    active_tab: Option<uuid::Uuid>,
-    section_on: bool,
-) -> HostOutcome {
+/// What an application binding reads of the moment it runs in.
+pub struct HostState<'a> {
+    pub active_tab: Option<uuid::Uuid>,
+    /// The clipping plane is showing, so its key puts it away.
+    pub section_on: bool,
+    pub document: &'a core_document::Document,
+    /// The tree's selected row, which Delete and Space act on.
+    pub tree_selection: Option<TreeItemId>,
+    /// A workbench is editing a feature, which keeps Delete for itself.
+    pub editing: bool,
+}
+
+/// The command an application binding runs.
+pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
     use HostAction::*;
     use HostOutcome::Command as C;
+    let HostState {
+        active_tab,
+        section_on,
+        ..
+    } = *state;
     match action {
         New => C(UiCommand::File(FileCommand::New)),
         Open => C(UiCommand::File(FileCommand::Open)),
@@ -616,6 +715,49 @@ pub fn host_outcome(
         PrintBed => C(UiCommand::TogglePrintBed),
         Recompute => C(UiCommand::RecomputeAll),
         LogPanel => C(UiCommand::ToggleLogPanel),
+        Delete => match state.tree_selection {
+            Some(
+                item @ (TreeItemId::Feature(_)
+                | TreeItemId::Body(_)
+                | TreeItemId::ImportedObject(_)),
+            ) if !state.editing => C(UiCommand::DeleteTreeItem(item)),
+            _ => HostOutcome::Nothing,
+        },
+        ToggleVisibility => state
+            .tree_selection
+            .and_then(|item| toggle_visibility(state.document, item))
+            .map_or(HostOutcome::Nothing, C),
+        ShadedWithEdges => C(UiCommand::SetDrawStyle(settings::DrawStyle::ShadedEdges)),
+        Shaded => C(UiCommand::SetDrawStyle(settings::DrawStyle::Shaded)),
+        Wireframe => C(UiCommand::SetDrawStyle(settings::DrawStyle::Wireframe)),
+    }
+}
+
+/// The command that shows `item` if it is hidden and hides it if not.
+fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Option<UiCommand> {
+    match item {
+        TreeItemId::Feature(feature) => {
+            let visible = document.get_feature_meta(feature)?.visible;
+            Some(UiCommand::TreeFeature {
+                feature,
+                command: TreeFeatureCommand::SetVisible(!visible),
+            })
+        }
+        TreeItemId::Body(body) => {
+            let hidden = document.bodies().iter().find(|b| b.id == body)?.hidden;
+            Some(UiCommand::SetBodyVisible {
+                body,
+                visible: hidden,
+            })
+        }
+        TreeItemId::ImportedObject(node) => {
+            let visible = document.imported_object(node)?.visible;
+            Some(UiCommand::SetImportedVisibility {
+                node,
+                visible: !visible,
+            })
+        }
+        TreeItemId::DocumentRoot => None,
     }
 }
 
@@ -727,6 +869,19 @@ mod tests {
         typing: bool,
         have_document: bool,
     ) -> (Vec<String>, usize) {
+        let focus = KeyFocus {
+            typing,
+            numeric: false,
+            have_document,
+        };
+        press_in(keymap, keys, focus)
+    }
+
+    fn press_in(
+        keymap: &Keymap,
+        keys: &[(egui::Key, egui::Modifiers, bool)],
+        focus: KeyFocus,
+    ) -> (Vec<String>, usize) {
         let ctx = egui::Context::default();
         let mut raw = egui::RawInput::default();
         for (key, modifiers, repeat) in keys {
@@ -741,16 +896,10 @@ mod tests {
         let mut hits = Vec::new();
         let mut left = 0;
         let mut output = ctx.run_ui(raw, |ui| {
-            hits = take_pressed(
-                ui.ctx(),
-                keymap,
-                &WorkbenchId::from("wb.two"),
-                typing,
-                have_document,
-            )
-            .into_iter()
-            .map(|b| b.id)
-            .collect();
+            hits = take_pressed(ui.ctx(), keymap, &WorkbenchId::from("wb.two"), focus)
+                .into_iter()
+                .map(|b| b.id)
+                .collect();
             left = ui.ctx().input(|i| i.events.len());
         });
         output.textures_delta.clear();
@@ -798,6 +947,61 @@ mod tests {
         let (hits, left) = press(&keymap, &keys, true, true);
         assert_eq!(hits, ["file.save"], "only the chord a field has no use for");
         assert_eq!(left, 2);
+    }
+
+    #[test]
+    fn a_workbench_taking_a_number_keeps_the_number_keys() {
+        use egui::{Key, Modifiers};
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default());
+        let keys = [
+            (Key::Num1, Modifiers::NONE, false),
+            (Key::Minus, Modifiers::NONE, false),
+            (Key::L, Modifiers::NONE, false),
+        ];
+        let numeric = KeyFocus {
+            typing: false,
+            numeric: true,
+            have_document: true,
+        };
+        let (hits, left) = press_in(&keymap, &keys, numeric);
+        assert_eq!(hits, ["wb.two.tool"], "letters still switch tools");
+        assert_eq!(left, 2);
+        let (hits, _) = press(&keymap, &keys[..1], false, true);
+        assert_eq!(hits, ["view.front"]);
+    }
+
+    #[test]
+    fn delete_and_space_act_on_the_tree_selection() {
+        let mut document = core_document::Document::new("t");
+        let body = document.create_body(None);
+        let mut state = HostState {
+            active_tab: None,
+            section_on: false,
+            document: &document,
+            tree_selection: Some(TreeItemId::Body(body)),
+            editing: false,
+        };
+        assert!(matches!(
+            host_outcome(HostAction::ToggleVisibility, &state),
+            HostOutcome::Command(UiCommand::SetBodyVisible { visible: false, .. })
+        ));
+        assert!(matches!(
+            host_outcome(HostAction::Delete, &state),
+            HostOutcome::Command(UiCommand::DeleteTreeItem(TreeItemId::Body(_)))
+        ));
+        state.editing = true;
+        assert!(
+            matches!(
+                host_outcome(HostAction::Delete, &state),
+                HostOutcome::Nothing
+            ),
+            "an open edit keeps Delete"
+        );
+        state.tree_selection = None;
+        assert!(matches!(
+            host_outcome(HostAction::ToggleVisibility, &state),
+            HostOutcome::Nothing
+        ));
     }
 
     #[test]

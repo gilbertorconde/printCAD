@@ -9,6 +9,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::{QtyField, ToolButtonState, tool_button, vseparator};
 
 use super::UiCommand;
+use super::keymap::Keymap;
 use crate::camera::FOV_RANGE_DEG;
 use crate::camera::section::{SectionAxis, SectionPlane, SectionToggle};
 use crate::orientation_cube::CameraSnapView;
@@ -19,6 +20,8 @@ enum Item {
     Button {
         icon: &'static str,
         label: &'static str,
+        /// The keymap id whose key the tooltip names.
+        binding: &'static str,
         on: bool,
         planned: Option<&'static str>,
         command: Option<UiCommand>,
@@ -26,20 +29,33 @@ enum Item {
     Sep,
 }
 
-fn button(icon: &'static str, label: &'static str, command: UiCommand) -> Item {
+fn button(
+    icon: &'static str,
+    label: &'static str,
+    binding: &'static str,
+    command: UiCommand,
+) -> Item {
     Item::Button {
         icon,
         label,
+        binding,
         on: false,
         planned: None,
         command: Some(command),
     }
 }
 
-fn toggled(icon: &'static str, label: &'static str, on: bool, command: UiCommand) -> Item {
+fn toggled(
+    icon: &'static str,
+    label: &'static str,
+    binding: &'static str,
+    on: bool,
+    command: UiCommand,
+) -> Item {
     Item::Button {
         icon,
         label,
+        binding,
         on,
         planned: None,
         command: Some(command),
@@ -61,8 +77,13 @@ pub fn draw_view_toolbar(
     ctx: &Context,
     viewport: egui::Rect,
     state: &ViewToolbarState,
+    keymap: &Keymap,
     commands: &mut Vec<UiCommand>,
 ) {
+    let with_key = |label: &str, binding: &str| match keymap.text(binding) {
+        Some(key) => format!("{label} ({key})"),
+        None => label.to_string(),
+    };
     let ViewToolbarState {
         projection,
         field_of_view_deg,
@@ -72,66 +93,82 @@ pub fn draw_view_toolbar(
     } = *state;
     let ortho = projection == ProjectionMode::Orthographic;
     let items = [
-        button("fit-all", "Fit all", UiCommand::FitView),
-        button("fit-selection", "Fit selection", UiCommand::FitSelection),
+        button("fit-all", "Fit all", "view.fit_all", UiCommand::FitView),
+        button(
+            "fit-selection",
+            "Fit selection",
+            "view.fit_selection",
+            UiCommand::FitSelection,
+        ),
         Item::Sep,
         button(
             "view-iso",
             "Isometric",
+            "view.isometric",
             UiCommand::CameraSnap(CameraSnapView::FrontTopRight),
         ),
         button(
             "view-front",
             "Front",
+            "view.front",
             UiCommand::CameraSnap(CameraSnapView::Front),
         ),
         button(
             "view-top",
             "Top",
+            "view.top",
             UiCommand::CameraSnap(CameraSnapView::Top),
         ),
         button(
             "view-right",
             "Right",
+            "view.right",
             UiCommand::CameraSnap(CameraSnapView::Right),
         ),
         button(
             "view-rear",
             "Rear",
+            "view.rear",
             UiCommand::CameraSnap(CameraSnapView::Rear),
         ),
         button(
             "view-bottom",
             "Bottom",
+            "view.bottom",
             UiCommand::CameraSnap(CameraSnapView::Bottom),
         ),
         button(
             "view-left",
             "Left",
+            "view.left",
             UiCommand::CameraSnap(CameraSnapView::Left),
         ),
         Item::Sep,
         toggled(
             "draw-style-shaded",
             "Shaded with edges",
+            "view.shaded_edges",
             draw_style == DrawStyle::ShadedEdges,
             UiCommand::SetDrawStyle(DrawStyle::ShadedEdges),
         ),
         toggled(
             "draw-style-flat",
             "Shaded",
+            "view.shaded",
             draw_style == DrawStyle::Shaded,
             UiCommand::SetDrawStyle(DrawStyle::Shaded),
         ),
         toggled(
             "draw-style-wireframe",
             "Wireframe",
+            "view.wireframe",
             draw_style == DrawStyle::Wireframe,
             UiCommand::SetDrawStyle(DrawStyle::Wireframe),
         ),
         toggled(
             "clipping-plane",
             "Clipping plane",
+            "view.clipping_plane",
             section.is_some(),
             UiCommand::SetSection(match section {
                 Some(_) => None,
@@ -142,12 +179,14 @@ pub fn draw_view_toolbar(
         toggled(
             "view-orthographic",
             "Orthographic",
+            "view.orthographic",
             ortho,
             UiCommand::SetProjection(ProjectionMode::Orthographic),
         ),
         toggled(
             "view-perspective",
             "Perspective",
+            "view.perspective",
             !ortho,
             UiCommand::SetProjection(ProjectionMode::Perspective),
         ),
@@ -176,6 +215,7 @@ pub fn draw_view_toolbar(
                                 Item::Button {
                                     icon,
                                     label,
+                                    binding,
                                     on,
                                     planned,
                                     command,
@@ -186,7 +226,14 @@ pub fn draw_view_toolbar(
                                         planned,
                                         menu: false,
                                     };
-                                    if tool_button(ui, icon, label, BUTTON, state).clicked()
+                                    if tool_button(
+                                        ui,
+                                        icon,
+                                        &with_key(label, binding),
+                                        BUTTON,
+                                        state,
+                                    )
+                                    .clicked()
                                         && let Some(command) = command
                                     {
                                         commands.push(command);

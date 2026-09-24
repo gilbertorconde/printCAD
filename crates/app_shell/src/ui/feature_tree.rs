@@ -9,6 +9,8 @@ use ui_kit::sans;
 use ui_kit::tokens::*;
 use uuid::Uuid;
 
+use super::keymap::Keymap;
+
 /// Identifier for selectable items in the tree panel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum TreeItemId {
@@ -543,6 +545,8 @@ pub struct TreeDrawOptions<'a> {
     scroll_to: Option<TreeItemId>,
     /// The document and registry the row menus ask for bench entries.
     bench_menus: Option<(&'a Document, &'a DocumentService)>,
+    /// The keys the row menus name beside their entries.
+    keymap: Option<&'a Keymap>,
 }
 
 impl<'a> TreeDrawOptions<'a> {
@@ -554,7 +558,19 @@ impl<'a> TreeDrawOptions<'a> {
             filter,
             scroll_to: None,
             bench_menus: None,
+            keymap: None,
         }
+    }
+
+    /// Name each menu entry's key beside it.
+    pub fn with_keys(mut self, keymap: &'a Keymap) -> Self {
+        self.keymap = Some(keymap);
+        self
+    }
+
+    /// The key of the command `id`, as a menu names it.
+    fn key(&self, id: &str) -> Option<String> {
+        self.keymap.and_then(|k| k.text(id))
     }
 
     /// Let the benches add their own entries to the row menus.
@@ -969,7 +985,7 @@ fn attach_feature_menu(
             ui.close();
         }
         let visible_label = if node.visible { "Hide" } else { "Show" };
-        if ui.button(visible_label).clicked() {
+        if menu_entry(ui, visible_label, options.key("view.toggle_visibility")).clicked() {
             command = Some(TreeFeatureCommand::SetVisible(!node.visible));
             ui.close();
         }
@@ -1008,7 +1024,7 @@ fn attach_feature_menu(
             ui.close();
         }
         ui.separator();
-        if ui.button("Delete").clicked() {
+        if menu_entry(ui, "Delete", options.key("edit.delete")).clicked() {
             delete = true;
             ui.close();
         }
@@ -1024,6 +1040,15 @@ fn attach_feature_menu(
         result.bench_command = bench_command;
     }
     response
+}
+
+/// A menu entry with its key, if it has one, beside it.
+fn menu_entry(ui: &mut Ui, label: &str, key: Option<String>) -> Response {
+    let mut button = egui::Button::new(label);
+    if let Some(key) = key {
+        button = button.shortcut_text(key);
+    }
+    ui.add(button)
 }
 
 /// The benches' entries for `scope`, after a separator when there are
@@ -1044,7 +1069,11 @@ fn bench_menu_entries(
         if item.separator_before {
             ui.separator();
         }
-        let button = ui.add_enabled(item.enabled, egui::Button::new(&item.label));
+        let mut button = egui::Button::new(&item.label);
+        if let Some(key) = options.key(&item.id) {
+            button = button.shortcut_text(key);
+        }
+        let button = ui.add_enabled(item.enabled, button);
         let button = match &item.hint {
             Some(hint) => button.on_hover_text(hint),
             None => button,
@@ -1122,8 +1151,7 @@ fn attach_body_menu(
             }
             ui.separator();
         }
-        if ui
-            .button("Delete")
+        if menu_entry(ui, "Delete", options.key("edit.delete"))
             .on_hover_text("Remove this body, its features and its geometry")
             .clicked()
         {

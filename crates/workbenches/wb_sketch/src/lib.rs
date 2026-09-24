@@ -324,20 +324,51 @@ const GEOMETRY_TOOLS: &[(&str, &str, &str)] = &[
 /// The polyline's switch between a straight and a tangent-arc segment.
 const POLYLINE_ARC_ACTION: &str = "sketch.polyline_arc";
 
-/// Default keys of the drawing tools; the user can rebind them in
-/// Preferences.
+/// Default keys of the tools; the user can rebind them in Preferences.
+/// A plain letter draws or edits, Shift and a letter constrains.
 const TOOL_KEYS: &[(&str, &str)] = &[
+    ("sketch.point", "O"),
     ("sketch.line", "L"),
     ("sketch.polyline", "P"),
     ("sketch.arc", "A"),
     ("sketch.circle", "C"),
+    ("sketch.ellipse", "E"),
+    ("sketch.bspline", "B"),
     ("sketch.rect", "R"),
+    ("sketch.polygon", "G"),
+    ("sketch.slot", "S"),
     ("sketch.trim", "T"),
+    ("sketch.external", "X"),
+    ("sketch.construction", "N"),
+    ("sketch.constrain.coincident", "Shift+C"),
+    ("sketch.constrain.point_on_object", "Shift+O"),
+    ("sketch.constrain.vertical", "Shift+V"),
+    ("sketch.constrain.horizontal", "Shift+H"),
+    ("sketch.constrain.parallel", "Shift+P"),
+    ("sketch.constrain.perpendicular", "Shift+N"),
+    ("sketch.constrain.tangent", "Shift+T"),
+    ("sketch.constrain.equal", "Shift+E"),
+    ("sketch.constrain.symmetric", "Shift+S"),
+    ("sketch.constrain.block", "Shift+B"),
+    ("sketch.constrain.dimension", "Shift+D"),
+    ("sketch.constrain.lock", "Shift+K"),
+    ("sketch.constrain.distance_x", "Shift+L"),
+    ("sketch.constrain.distance_y", "Shift+I"),
+    ("sketch.constrain.radius", "Shift+R"),
+    ("sketch.constrain.angle", "Shift+A"),
 ];
 
 /// The default key of a tool, if it has one.
 fn tool_key(id: &str) -> Option<&'static str> {
     TOOL_KEYS.iter().find(|(t, _)| *t == id).map(|(_, k)| *k)
+}
+
+/// `tool` with its default key, if it has one.
+fn keyed(tool: ToolDescriptor) -> ToolDescriptor {
+    match tool_key(&tool.id) {
+        Some(key) => tool.shortcut(key),
+        None => tool,
+    }
 }
 
 /// The points a drag of `id` moves: the point itself, or every point the
@@ -1384,6 +1415,10 @@ impl Workbench for SketchWorkbench {
         true
     }
 
+    fn takes_numeric_input(&self) -> bool {
+        !ovp::fields_for(&self.tool_state).is_empty()
+    }
+
     fn settings_json(&self) -> Option<serde_json::Value> {
         serde_json::to_value(self.options).ok()
     }
@@ -1608,17 +1643,16 @@ impl Workbench for SketchWorkbench {
             }
         };
         for (id, label, icon) in GEOMETRY_TOOLS {
-            let mut tool = ToolDescriptor::new(*id, *label, Some(category(id)))
-                .icon(icon)
-                .variants(variants(id));
-            if let Some(key) = tool_key(id) {
-                tool = tool.shortcut(key);
-            }
+            let mut tool = keyed(
+                ToolDescriptor::new(*id, *label, Some(category(id)))
+                    .icon(icon)
+                    .variants(variants(id)),
+            );
             tool.row = 1;
             if *id == "sketch.split" {
                 // The row's planned entries sit after split.
                 context.register_tool(tool);
-                context.register_tool(
+                context.register_tool(keyed(
                     ToolDescriptor::new(
                         "sketch.external",
                         "External geometry",
@@ -1626,7 +1660,7 @@ impl Workbench for SketchWorkbench {
                     )
                     .icon("external-geometry")
                     .row(1),
-                );
+                ));
                 context.register_tool(
                     ToolDescriptor::new_action(
                         "sketch.carbon_copy",
@@ -1636,7 +1670,7 @@ impl Workbench for SketchWorkbench {
                     .icon("carbon-copy")
                     .row(1),
                 );
-                context.register_tool(
+                context.register_tool(keyed(
                     ToolDescriptor::new_action(
                         "sketch.construction",
                         "Toggle construction",
@@ -1644,19 +1678,16 @@ impl Workbench for SketchWorkbench {
                     )
                     .icon("construction-mode")
                     .row(1),
-                );
+                ));
                 continue;
             }
             if *id == "sketch.point" {
                 context.register_tool(tool);
-                let mut polyline =
+                context.register_tool(keyed(
                     ToolDescriptor::new("sketch.polyline", "Polyline", Some("geometry.basic"))
                         .icon("polyline")
-                        .row(1);
-                if let Some(key) = tool_key("sketch.polyline") {
-                    polyline = polyline.shortcut(key);
-                }
-                context.register_tool(polyline);
+                        .row(1),
+                ));
                 continue;
             }
             context.register_tool(tool);
@@ -1691,9 +1722,11 @@ impl Workbench for SketchWorkbench {
 
         // Row 2: constraints, enabled by the shape of the selection.
         let constraint = |id: &str, label: &str, icon: &'static str, category: &str| {
-            ToolDescriptor::new_action(format!("sketch.constrain.{id}"), label, Some(category))
-                .icon(icon)
-                .row(2)
+            keyed(
+                ToolDescriptor::new_action(format!("sketch.constrain.{id}"), label, Some(category))
+                    .icon(icon)
+                    .row(2),
+            )
         };
         for (id, label, icon) in [
             ("coincident", "Coincident", "constraint-coincident"),
@@ -3497,6 +3530,28 @@ mod icon_coverage {
             &SketchFeature::new(Sketch::new("s"), SketchPlane::default()),
         );
         assert!(ui_kit::icon::exists(wb.feature_info(&node).icon));
+    }
+
+    #[test]
+    fn every_default_key_lands_on_a_tool_and_no_two_share_one() {
+        let mut ctx = WorkbenchContext::default();
+        SketchWorkbench::default().configure(&mut ctx);
+        for (id, _) in TOOL_KEYS {
+            assert!(ctx.tools().iter().any(|t| t.id == *id), "no tool {id}");
+        }
+        let mut seen = std::collections::HashMap::new();
+        let keyed = ctx
+            .tools()
+            .iter()
+            .map(|t| (&t.id, &t.shortcuts))
+            .chain(ctx.actions().iter().map(|a| (&a.id, &a.shortcuts)));
+        for (id, keys) in keyed {
+            for key in keys {
+                if let Some(other) = seen.insert(*key, id.clone()) {
+                    panic!("{id} and {other} share {key}");
+                }
+            }
+        }
     }
 
     #[test]

@@ -47,5 +47,6 @@ version first.
 
 ### Keyboard
 - Every shortcut can be changed in Preferences › Keyboard, which also warns when two commands share a key.
-- Sketch tools have keys of their own: L, P, A, C, R and T, and M switches a polyline between lines and arcs.
-- Menus, tooltips and the command palette show the keys in effect.
+- Every workbench has default keys: a letter picks a tool, Shift and a letter its partner (a sketch constraint, or the subtractive form of a Part Design feature).
+- 0 to 6 give the standard views, O and P the projection, Shift+F fits the selection, Ctrl+R recomputes, and Space shows or hides the selected tree row.
+- Menus, context menus, toolbar tooltips and the command palette show the keys in effect.

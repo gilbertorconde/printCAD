@@ -53,6 +53,19 @@ fn item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> bool {
     clicked
 }
 
+/// One of a set of choices, the current one marked, with its key.
+fn choice(ui: &mut egui::Ui, on: bool, label: &str, shortcut: Option<String>) -> bool {
+    let mut button = egui::Button::selectable(on, RichText::new(label).font(sans(FONT_SM)));
+    if let Some(sc) = shortcut {
+        button = button.shortcut_text(sc);
+    }
+    let clicked = ui.add(button).clicked();
+    if clicked {
+        ui.close();
+    }
+    clicked
+}
+
 /// A row that needs a document on screen. Disabled rows say what they are
 /// waiting for rather than doing nothing when clicked.
 fn item_needing_document(
@@ -256,32 +269,22 @@ pub fn draw_menu_bar(
                             }
                         });
                         let ortho = inputs.projection == ProjectionMode::Orthographic;
-                        if ui
-                            .radio(ortho, RichText::new("Orthographic").font(sans(FONT_SM)))
-                            .clicked()
-                        {
+                        if choice(ui, ortho, "Orthographic", key("view.orthographic")) {
                             commands.push(UiCommand::SetProjection(ProjectionMode::Orthographic));
-                            ui.close();
                         }
-                        if ui
-                            .radio(!ortho, RichText::new("Perspective").font(sans(FONT_SM)))
-                            .clicked()
-                        {
+                        if choice(ui, !ortho, "Perspective", key("view.perspective")) {
                             commands.push(UiCommand::SetProjection(ProjectionMode::Perspective));
-                            ui.close();
                         }
                         ui.separator();
                         ui.menu_button(RichText::new("Draw style").font(sans(FONT_SM)), |ui| {
                             for style in settings::DrawStyle::ALL {
-                                if ui
-                                    .radio(
-                                        inputs.draw_style == style,
-                                        RichText::new(style.label()).font(sans(FONT_SM)),
-                                    )
-                                    .clicked()
-                                {
+                                let id = match style {
+                                    settings::DrawStyle::ShadedEdges => "view.shaded_edges",
+                                    settings::DrawStyle::Shaded => "view.shaded",
+                                    settings::DrawStyle::Wireframe => "view.wireframe",
+                                };
+                                if choice(ui, inputs.draw_style == style, style.label(), key(id)) {
                                     commands.push(UiCommand::SetDrawStyle(style));
-                                    ui.close();
                                 }
                             }
                         });

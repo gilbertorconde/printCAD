@@ -287,19 +287,25 @@ impl UiLayer {
             // their fire while a dialog of their own has the keyboard.
             let mut key_tools: Vec<String> = Vec::new();
             if !self.preferences.open && !self.palette.open {
-                let typing = ui.ctx().egui_wants_keyboard_input();
-                let have_document = screen == Screen::Workspace;
+                let focus = keymap::KeyFocus {
+                    typing: ui.ctx().egui_wants_keyboard_input(),
+                    numeric: registry
+                        .workbench(&active_workbench.0)
+                        .is_ok_and(|wb| wb.takes_numeric_input()),
+                    have_document: screen == Screen::Workspace,
+                };
                 let active_tab = tabs.iter().find(|t| t.active).map(|t| t.tab);
-                for hit in keymap::take_pressed(
-                    ui.ctx(),
-                    &keymap,
-                    &active_workbench.0,
-                    typing,
-                    have_document,
-                ) {
+                for hit in keymap::take_pressed(ui.ctx(), &keymap, &active_workbench.0, focus) {
                     match hit.target {
                         keymap::Target::Host(action) => {
-                            match keymap::host_outcome(action, active_tab, section.is_some()) {
+                            let state = keymap::HostState {
+                                active_tab,
+                                section_on: section.is_some(),
+                                document,
+                                tree_selection: active_tree_selection,
+                                editing: editing_feature.is_some(),
+                            };
+                            match keymap::host_outcome(action, &state) {
                                 keymap::HostOutcome::Command(command) => commands.push(command),
                                 keymap::HostOutcome::OpenPalette => self.palette.open(),
                                 keymap::HostOutcome::OpenPreferences => {
@@ -502,6 +508,7 @@ impl UiLayer {
                     property_tab: &mut self.property_tab,
                     rename_buffer: &mut self.rename_buffer,
                     physical: physical.as_ref(),
+                    keymap: &keymap,
                 },
             );
             apply_writeback(&combo.writeback, &mut commands, &mut tree_selection);
@@ -602,7 +609,7 @@ impl UiLayer {
                 &footer,
             );
             if let Some(menu) = &viewport_menu {
-                context_menu::draw(ui.ctx(), menu, document, registry, &mut commands);
+                context_menu::draw(ui.ctx(), menu, document, registry, &keymap, &mut commands);
             }
             if let Some(card) = &hover_card {
                 hud::draw_hover_card(
@@ -622,6 +629,7 @@ impl UiLayer {
                     section,
                     scene_bounds,
                 },
+                &keymap,
                 &mut commands,
             );
             hud::draw_toasts(ui.ctx(), viewport_rect_logical);

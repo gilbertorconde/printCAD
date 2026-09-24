@@ -260,7 +260,13 @@ tools and registered actions, each with default keys
 `take_pressed` runs at the start of each UI frame and removes the keys it
 uses from egui's input: the active bench's keys win over the
 application's, keys without Ctrl or Alt stay with a focused text field,
-and nothing fires while Preferences or the palette is open. A tool key
+nothing fires while Preferences or the palette is open, and bare
+number keys stay with a bench whose `takes_numeric_input` is true (the
+sketcher while a length is typed). Shortcuts are single chords, never
+sequences. Defaults: a plain letter picks a bench tool, Shift and a
+letter its partner (a sketch constraint, a subtractive feature); 0 to 6
+are the standard views, O/P the projection, Space and Delete act on the
+tree selection (`HostState`). A tool key
 activates the tool as a click would; an action key reaches the bench as
 `WorkbenchInputEvent::Action`. Benches learn their keys in effect through
 `Workbench::shortcuts_changed`. Contextual keys (Escape, Enter, Delete in

@@ -106,6 +106,12 @@ context.register_action(
 - A workbench's keys work only while it is active, and win over the
   application's keys there.
 - Keys without Ctrl or Alt are left to text fields while one has focus.
+- The application uses 0 to 6, O, P, F, Shift+F, H, Space and Delete
+  without modifiers. A workbench key on one of them hides it while the
+  workbench is active.
+- A workbench that takes typed numbers from the viewport returns `true`
+  from `takes_numeric_input` meanwhile, so the digit keys, `.`, `,` and
+  `-` reach it rather than their shortcuts.
 - To name a key in a hint, implement `shortcuts_changed`. It receives the
   keys in effect by id at start and after every change.
 

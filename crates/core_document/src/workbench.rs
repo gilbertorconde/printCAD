@@ -490,6 +490,13 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Whether the bench is taking a typed number from the keyboard right
+    /// now (a length while drawing). Bare digits, `.`, `,` and `-` stay
+    /// with it rather than running their shortcuts.
+    fn takes_numeric_input(&self) -> bool {
+        false
+    }
+
     /// What the scene draws for an owned feature that is visible and not
     /// under edit. Called on the owner whichever bench is active; the host
     /// colours it and skips the feature under edit.

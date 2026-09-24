@@ -11,6 +11,7 @@ use ui_kit::tokens::*;
 use ui_kit::widgets::Card;
 
 use super::UiCommand;
+use super::keymap::Keymap;
 
 const MENU_WIDTH: f32 = 150.0;
 
@@ -26,6 +27,7 @@ pub fn draw(
     menu: &ViewportMenu,
     document: &Document,
     registry: &core_document::DocumentService,
+    keymap: &Keymap,
     commands: &mut Vec<UiCommand>,
 ) {
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -107,12 +109,15 @@ pub fn draw(
                     if entry.separator_before {
                         ui.separator();
                     }
-                    let button = ui.add_enabled(
-                        entry.enabled,
+                    let mut button =
                         egui::Button::new(RichText::new(&entry.label).font(sans(FONT_SM)))
                             .frame(false)
-                            .min_size(egui::vec2(MENU_WIDTH, 22.0)),
-                    );
+                            .min_size(egui::vec2(MENU_WIDTH, 22.0));
+                    if let Some(key) = keymap.text(&entry.id) {
+                        button = button
+                            .shortcut_text(RichText::new(key).font(sans(FONT_SM)).color(TEXT3));
+                    }
+                    let button = ui.add_enabled(entry.enabled, button);
                     let button = match &entry.hint {
                         Some(hint) => button.on_hover_text(hint),
                         None => button,

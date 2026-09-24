@@ -64,7 +64,7 @@ its own.
 | Body menu | Right click on a body |
 | Box select in a sketch | Left drag |
 | Fit the model | **F** |
-| Standard views | Click the orientation cube |
+| Standard views | Click the orientation cube, or **0** to **6** |
 
 ### Keyboard
 
@@ -81,9 +81,51 @@ Every shortcut can be changed in Preferences › Keyboard. The defaults:
 | Next, Previous tab | Ctrl+Tab, Ctrl+Shift+Tab |
 | Cut, Copy, Paste in a sketch | Ctrl+X, Ctrl+C, Ctrl+V |
 | Preferences | Ctrl+, |
+| Recompute all | Ctrl+R |
 | Delete the selected tree row | Delete |
-| Sketch line, polyline, arc, circle, rectangle, trim | L, P, A, C, R, T |
+| Show or hide the selected tree row | Space |
+
+View keys:
+
+| Action | Keys |
+| --- | --- |
+| Fit all, fit the selection | F, Shift+F |
+| Isometric, front, top, right | 0, 1, 2, 3 |
+| Rear, bottom, left | 4, 5, 6 |
+| Orthographic, perspective | O, P |
+
+A workbench's keys apply while it is active and win over the view keys.
+A plain letter picks a tool; Shift and a letter picks its partner.
+
+| Sketcher | Keys |
+| --- | --- |
+| Point, line, polyline, arc, circle | O, L, P, A, C |
+| Ellipse, B-spline, rectangle, polygon, slot | E, B, R, G, S |
+| Trim, external geometry, construction | T, X, N |
 | Switch a polyline between lines and arcs | M |
+| Coincident, point on object | Shift+C, Shift+O |
+| Horizontal, vertical | Shift+H, Shift+V |
+| Parallel, perpendicular, tangent | Shift+P, Shift+N, Shift+T |
+| Equal, symmetric, block, lock | Shift+E, Shift+S, Shift+B, Shift+K |
+| Dimension, radius, angle | Shift+D, Shift+R, Shift+A |
+| Horizontal, vertical distance | Shift+L, Shift+I |
+
+While a length is being typed, number keys go to the length.
+
+| Part Design | Keys |
+| --- | --- |
+| Body, sketch | B, S |
+| Pad, pocket | E, Shift+E |
+| Revolution, groove | R, Shift+R |
+| Loft, subtractive loft | L, Shift+L |
+| Pipe, subtractive pipe | W, Shift+W |
+| Hole | Shift+H |
+| Fillet, chamfer, mirrored | U, C, M |
+
+| Assembly | Keys |
+| --- | --- |
+| Mate, align, angle | M, A, N |
+| Move a body, solve | G, S |
 
 ## Settings
 
