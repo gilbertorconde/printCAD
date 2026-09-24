@@ -333,7 +333,10 @@ tab pinning, one undo step per call and Stop come from the script path.
 A change waits in `PrintCadApp.approvals` while its chat asks
 (`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
 registers the command) is what never waits. `app/chats.rs` keeps
-`PrintCadApp.chats`, each started with the relay as its MCP server;
+`PrintCadApp.chats`, each started with the relay as its MCP server
+(every tool `always_load`, sent as `_meta."anthropic/alwaysLoad"`, so a
+client that defers tools behind a search has them in its first turn;
+`read_only` becomes `readOnlyHint`);
 `ui/assistant.rs` draws them and answers with `UiCommand`s. The agent's
 session options (`acp::SessionOption`: `configOptions`, or the older
 `modes`/`models`) draw as the bar under the input; a change shows at once

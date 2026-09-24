@@ -72,6 +72,11 @@ While the application runs it listens on a local socket,
 | `view` | A picture of the scene from the current view |
 | `log` | The application's recent messages |
 
+Every tool is marked to load from the start, so an agent that defers
+tools until it searches for them (Claude Code does, once many are
+installed) has printCAD's at hand in its first turn. `commands`, `log` and
+`view` are marked read-only.
+
 `printcad --mcp` relays standard input and output to that socket, so any
 MCP client can use the running application as a server:
 

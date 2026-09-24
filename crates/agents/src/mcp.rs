@@ -15,11 +15,34 @@ use crate::rpc::{Connection, Incoming, RpcError};
 pub const PROTOCOL_VERSIONS: &[&str] = &["2025-06-18", "2025-03-26", "2024-11-05"];
 
 /// A tool: its name, what it does, and its arguments as a JSON Schema.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Tool {
     pub name: String,
     pub description: String,
     pub input_schema: Value,
+    /// It only reads: a client may run it without asking, and alongside
+    /// others (`readOnlyHint`).
+    pub read_only: bool,
+    /// A client that defers tools until it searches for them loads this
+    /// one from the start (`anthropic/alwaysLoad`, which Claude Code
+    /// reads).
+    pub always_load: bool,
+}
+
+impl Tool {
+    /// The tool as `tools/list` lists it.
+    fn to_json(&self) -> Value {
+        let mut tool = json!({
+            "name": self.name,
+            "description": self.description,
+            "inputSchema": self.input_schema,
+            "annotations": {"readOnlyHint": self.read_only},
+        });
+        if self.always_load {
+            tool["_meta"] = json!({"anthropic/alwaysLoad": true});
+        }
+        tool
+    }
 }
 
 /// One piece of what a tool answers.
@@ -96,11 +119,7 @@ pub fn answer(
         }
         "ping" => Ok(json!({})),
         "tools/list" => Ok(json!({
-            "tools": host.tools().iter().map(|t| json!({
-                "name": t.name,
-                "description": t.description,
-                "inputSchema": t.input_schema,
-            })).collect::<Vec<_>>(),
+            "tools": host.tools().iter().map(Tool::to_json).collect::<Vec<_>>(),
         })),
         "tools/call" => {
             let name = params.get("name").and_then(Value::as_str).ok_or_else(|| {
@@ -170,6 +189,8 @@ mod tests {
                 name: "add".into(),
                 description: "Add two numbers".into(),
                 input_schema: json!({"type": "object"}),
+                read_only: true,
+                always_load: true,
             }]
         }
 
@@ -206,6 +227,8 @@ mod tests {
         assert_eq!(init["serverInfo"]["name"], "test");
         let listed = wait(client.request("tools/list", json!({}))).unwrap();
         assert_eq!(listed["tools"][0]["name"], "add");
+        assert_eq!(listed["tools"][0]["annotations"]["readOnlyHint"], true);
+        assert_eq!(listed["tools"][0]["_meta"]["anthropic/alwaysLoad"], true);
         let sum = wait(client.request(
             "tools/call",
             json!({"name": "add", "arguments": {"a": 2, "b": 3.5}}),

@@ -187,6 +187,8 @@ impl ToolHost for Relay {
     }
 }
 
+/// The tools, every one loaded by the agent from the start: they are few,
+/// and an agent that has to search for them first loses turns doing it.
 pub(crate) fn tools() -> Vec<Tool> {
     vec![
         Tool {
@@ -203,6 +205,8 @@ pub(crate) fn tools() -> Vec<Tool> {
                     }
                 }
             }),
+            read_only: true,
+            always_load: true,
         },
         Tool {
             name: "call".into(),
@@ -217,6 +221,8 @@ pub(crate) fn tools() -> Vec<Tool> {
                 },
                 "required": ["command"]
             }),
+            read_only: false,
+            always_load: true,
         },
         Tool {
             name: "lua".into(),
@@ -229,6 +235,8 @@ pub(crate) fn tools() -> Vec<Tool> {
                 "properties": {"source": {"type": "string"}},
                 "required": ["source"]
             }),
+            read_only: false,
+            always_load: true,
         },
         Tool {
             name: "log".into(),
@@ -237,6 +245,8 @@ pub(crate) fn tools() -> Vec<Tool> {
                 "type": "object",
                 "properties": {"lines": {"type": "integer", "description": "How many (50)"}}
             }),
+            read_only: true,
+            always_load: true,
         },
         Tool {
             name: "view".into(),
@@ -244,6 +254,8 @@ pub(crate) fn tools() -> Vec<Tool> {
                           looks, as a PNG."
                 .into(),
             input_schema: json!({"type": "object", "properties": {}}),
+            read_only: true,
+            always_load: true,
         },
     ]
 }
@@ -493,7 +505,18 @@ mod tests {
         for tool in tools() {
             assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
             assert!(!tool.description.is_empty());
+            assert!(tool.always_load, "{} loads from the start", tool.name);
         }
+        let changes: Vec<String> = tools()
+            .into_iter()
+            .filter(|t| !t.read_only)
+            .map(|t| t.name)
+            .collect();
+        assert_eq!(
+            changes,
+            ["call", "lua"],
+            "only these may change the document"
+        );
         assert!(!INSTRUCTIONS.contains('\u{2014}'));
     }
 }
