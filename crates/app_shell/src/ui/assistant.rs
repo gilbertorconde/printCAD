@@ -79,10 +79,13 @@ pub fn draw_assistant(
         state.active = chats.last().map(|c| c.id.clone());
     }
 
+    // The viewport keeps its room whatever the window's size: the panel
+    // never takes more than this, and its content never widens it.
+    let room = (ui.available_width() - MIN_VIEWPORT_WIDTH).max(MIN_PANEL_WIDTH);
     egui::Panel::right("assistant_panel")
         .resizable(true)
-        .default_size(380.0)
-        .size_range(300.0..=720.0)
+        .default_size(380.0f32.min(room))
+        .size_range(MIN_PANEL_WIDTH..=MAX_PANEL_WIDTH.min(room))
         .frame(
             egui::Frame::new()
                 .fill(BG1)
@@ -109,32 +112,40 @@ pub fn draw_assistant(
             chat_header(ui, chat, commands);
             ui.add_space(SPACE_1);
             let draft = state.drafts.entry(chat.id.clone()).or_default();
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
-                input(ui, chat, draft, commands);
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                            ui.set_width(ui.available_width());
+            // The box to write in keeps the bottom; the conversation
+            // scrolls in what is left above it.
+            egui::Panel::bottom(egui::Id::new(("assistant_composer", &chat.id)))
+                .resizable(false)
+                .show_separator_line(false)
+                .frame(egui::Frame::NONE.inner_margin(egui::Margin {
+                    top: 6,
+                    ..Default::default()
+                }))
+                .show(ui, |ui| input(ui, chat, draft, commands));
+            egui::CentralPanel::default()
+                .frame(egui::Frame::NONE)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
                             ui.spacing_mut().item_spacing.y = SPACE_2;
                             for (index, entry) in chat.entries.iter().enumerate() {
                                 draw_entry(ui, chat, index, entry, commands);
                             }
-                            if chat.status == ChatStatus::Busy {
-                                ui.horizontal(|ui| {
-                                    ui.add(egui::Spinner::new().size(12.0).color(ACCENT));
-                                    ui.label(
-                                        RichText::new("Working").font(sans(FONT_XS)).color(TEXT3),
-                                    );
-                                });
-                            }
                         });
-                    });
-            });
+                });
         });
     result
 }
+
+const MIN_PANEL_WIDTH: f32 = 320.0;
+const MAX_PANEL_WIDTH: f32 = 720.0;
+/// What the panel always leaves the viewport.
+const MIN_VIEWPORT_WIDTH: f32 = 360.0;
+/// The most of a tool's output a chat shows.
+const OUTPUT_SHOWN: usize = 4000;
 
 /// Files dropped on the panel go with the chat's next prompt; while
 /// files hover over it, it says so.
@@ -333,28 +344,33 @@ fn chat_header(ui: &mut egui::Ui, chat: &Chat, commands: &mut Vec<UiCommand>) {
             ChatStatus::Failed(_) => ("stopped", DANGER),
         };
         ui.label(RichText::new(text).font(sans(FONT_XS)).color(color));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if small_secondary_button(ui, "Close")
-                .on_hover_text("End the chat and its agent")
-                .clicked()
-            {
-                commands.push(UiCommand::CloseChat(chat.id.clone()));
-            }
-            let mut ask = chat.ask;
-            if ui
-                .checkbox(
-                    &mut ask,
-                    RichText::new("Ask before changes").font(sans(FONT_XS)),
-                )
-                .on_hover_text("Hold each change the agent makes for your OK")
-                .changed()
-            {
-                commands.push(UiCommand::SetChatAsk {
-                    chat: chat.id.clone(),
-                    ask,
-                });
-            }
-        });
+        let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+        ui.allocate_ui_with_layout(
+            row,
+            egui::Layout::right_to_left(egui::Align::Center),
+            |ui| {
+                if small_secondary_button(ui, "Close")
+                    .on_hover_text("End the chat and its agent")
+                    .clicked()
+                {
+                    commands.push(UiCommand::CloseChat(chat.id.clone()));
+                }
+                let mut ask = chat.ask;
+                if ui
+                    .checkbox(
+                        &mut ask,
+                        RichText::new("Ask before changes").font(sans(FONT_XS)),
+                    )
+                    .on_hover_text("Hold each change the agent makes for your OK")
+                    .changed()
+                {
+                    commands.push(UiCommand::SetChatAsk {
+                        chat: chat.id.clone(),
+                        ask,
+                    });
+                }
+            },
+        );
     });
     if let ChatStatus::Failed(why) = &chat.status {
         ui.add(
@@ -430,25 +446,37 @@ fn draw_entry(
                 "failed" => ("×", DANGER),
                 _ => ("…", TEXT3),
             };
-            let header = RichText::new(format!("{mark} {title}"))
-                .font(mono(FONT_XS))
-                .color(color);
+            // A title can be a whole command line: it is cut to the
+            // panel's width, and shown whole on hover.
+            let header = egui::Label::new(
+                RichText::new(format!("{mark} {title}"))
+                    .font(mono(FONT_XS))
+                    .color(color),
+            )
+            .truncate();
             match output {
                 Some(output) => {
-                    egui::CollapsingHeader::new(header)
-                        .id_salt((&chat.id, index))
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    RichText::new(output).font(mono(FONT_XS)).color(TEXT2),
-                                )
+                    let id = ui.make_persistent_id((&chat.id, index));
+                    egui::collapsing_header::CollapsingState::load_with_default_open(
+                        ui.ctx(),
+                        id,
+                        false,
+                    )
+                    .show_header(ui, |ui| ui.add(header).on_hover_text(title))
+                    .body(|ui| {
+                        let shown = match output.char_indices().nth(OUTPUT_SHOWN) {
+                            Some((cut, _)) => format!("{}\n…", &output[..cut]),
+                            None => output.clone(),
+                        };
+                        ui.add(
+                            egui::Label::new(RichText::new(shown).font(mono(FONT_XS)).color(TEXT2))
                                 .selectable(true)
                                 .wrap(),
-                            );
-                        });
+                        );
+                    });
                 }
                 None => {
-                    ui.label(header);
+                    ui.add(header).on_hover_text(title);
                 }
             }
         }
@@ -574,7 +602,7 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
         .corner_radius(RADIUS_MD as u8)
         .inner_margin(egui::Margin::symmetric(8, 6))
         .show(ui, |ui| {
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+            ui.vertical(|ui| {
                 if !chat.attachments.is_empty() {
                     ui.horizontal_wrapped(|ui| {
                         for (index, attachment) in chat.attachments.iter().enumerate() {
@@ -604,28 +632,33 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
                 );
                 ui.horizontal(|ui| {
                     attach_menu(ui, chat, open, commands);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if busy {
-                            if stop_button(ui).on_hover_text("Stop the agent").clicked() {
-                                commands.push(UiCommand::CancelChat(chat.id.clone()));
+                    let row = egui::vec2(ui.available_width(), ui.spacing().interact_size.y);
+                    ui.allocate_ui_with_layout(
+                        row,
+                        egui::Layout::right_to_left(egui::Align::Center),
+                        |ui| {
+                            if busy {
+                                if stop_button(ui).on_hover_text("Stop the agent").clicked() {
+                                    commands.push(UiCommand::CancelChat(chat.id.clone()));
+                                }
+                            } else if ui
+                                .add_enabled(
+                                    open && sendable,
+                                    egui::Button::new(RichText::new("Send").font(sans(FONT_XS))),
+                                )
+                                .clicked()
+                            {
+                                send = true;
                             }
-                        } else if ui
-                            .add_enabled(
-                                open && sendable,
-                                egui::Button::new(RichText::new("Send").font(sans(FONT_XS))),
-                            )
-                            .clicked()
-                        {
-                            send = true;
-                        }
-                        // Laid out from the right: the last option first.
-                        for option in ordered(&chat.options).into_iter().rev() {
-                            option_control(ui, chat, option, commands);
-                        }
-                        if busy {
-                            ui.add(egui::Spinner::new().size(12.0).color(TEXT3));
-                        }
-                    });
+                            // Laid out from the right: the last option first.
+                            for option in ordered(&chat.options).into_iter().rev() {
+                                option_control(ui, chat, option, commands);
+                            }
+                            if busy {
+                                ui.add(egui::Spinner::new().size(12.0).color(TEXT3));
+                            }
+                        },
+                    );
                 });
             });
         });
@@ -811,6 +844,91 @@ fn stop_button(ui: &mut egui::Ui) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The panel in a window `width` wide with a busy chat whose tool
+    /// title is one very long line: the input's rect, and what is left for
+    /// the viewport.
+    fn lay_out(width: f32) -> (egui::Rect, egui::Rect) {
+        let long = format!(
+            "jq -r '.[0].text' {}",
+            "/home/someone/a/long/path".repeat(12)
+        );
+        let chats = [Chat::for_test(
+            "c",
+            ChatStatus::Busy,
+            vec![
+                ChatEntry::User {
+                    text: "make a box".into(),
+                    attachments: Vec::new(),
+                },
+                ChatEntry::Tool {
+                    id: "t".into(),
+                    title: long.clone(),
+                    kind: "execute".into(),
+                    status: "pending".into(),
+                    output: Some(long),
+                },
+            ],
+        )];
+        let ctx = egui::Context::default();
+        ui_kit::apply_theme(&ctx);
+        let mut state = AssistantState {
+            open: true,
+            ..Default::default()
+        };
+        let mut viewport = egui::Rect::NOTHING;
+        for _ in 0..3 {
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(width, 860.0),
+                )),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                draw_assistant(
+                    ui,
+                    &mut state,
+                    AssistantInputs {
+                        chats: &chats,
+                        approvals: &[],
+                        agents: vec!["Test".into()],
+                    },
+                    &mut Vec::new(),
+                );
+                viewport = ui.available_rect_before_wrap();
+            });
+            output.textures_delta.clear();
+        }
+        let input = ctx
+            .read_response(egui::Id::new(("assistant_input", "c")))
+            .expect("the input is drawn")
+            .rect;
+        (input, viewport)
+    }
+
+    #[test]
+    fn a_long_line_neither_widens_the_panel_nor_moves_the_input_off_the_bottom() {
+        for width in [780.0, 1600.0] {
+            let (input, viewport) = lay_out(width);
+            assert!(
+                viewport.width() >= MIN_VIEWPORT_WIDTH - 1.0,
+                "at {width}: the viewport keeps its room: {viewport:?}"
+            );
+            assert!(
+                width - viewport.width() <= 380.0 + 1.0,
+                "at {width}: the panel stays at its width: {viewport:?}"
+            );
+            assert!(
+                input.left() >= viewport.right() && input.right() <= width,
+                "at {width}: the panel's content stays in the panel: {input:?}, {viewport:?}"
+            );
+            assert!(
+                input.bottom() > 860.0 - 110.0 && input.height() < 120.0,
+                "at {width}: the input sits at the bottom, a few lines tall: {input:?}"
+            );
+        }
+    }
 
     #[test]
     fn a_paste_of_copied_files_names_them_and_other_text_stays_text() {

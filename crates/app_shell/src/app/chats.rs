@@ -352,6 +352,35 @@ impl PrintCadApp {
     }
 }
 
+#[cfg(test)]
+impl Chat {
+    /// A chat with these entries whose agent never answers.
+    pub(crate) fn for_test(id: &str, status: ChatStatus, entries: Vec<ChatEntry>) -> Self {
+        let (ours, _theirs) = std::os::unix::net::UnixStream::pair().unwrap();
+        Chat {
+            id: id.into(),
+            title: "Chat 1".into(),
+            agent: "Test".into(),
+            status,
+            ask: true,
+            entries,
+            options: Vec::new(),
+            attachments: Vec::new(),
+            chose: true,
+            choices_left: Vec::new(),
+            stderr: Vec::new(),
+            prompts: 1,
+            session: AgentChat::over(
+                ours.try_clone().unwrap(),
+                ours,
+                PathBuf::from("/"),
+                Vec::new(),
+                std::sync::Arc::new(|| {}),
+            ),
+        }
+    }
+}
+
 /// Put the remembered choices the agent's options can take now to it;
 /// the rest wait for an update that makes them possible.
 fn put_choices(chat: &mut Chat) {
