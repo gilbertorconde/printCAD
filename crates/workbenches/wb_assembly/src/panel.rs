@@ -12,6 +12,9 @@ use ui_kit::{sans, sans_semibold};
 
 use crate::{AssemblyWorkbench, JointFeature, JointKind, Task, body_name, restore_placements};
 
+/// Frames in a recorded sweep: there and back in four seconds.
+const SWEEP_FRAMES: usize = 60;
+
 fn header(ui: &mut egui::Ui, icon: &str, title: &str) {
     egui::Frame::new()
         .fill(BG2)
@@ -323,13 +326,26 @@ impl AssemblyWorkbench {
                 }
             });
         ui.add_space(SPACE_2);
-        if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
-            .on_hover_text("For a spreadsheet: part, quantity, size and kind")
-            .clicked()
-        {
-            ui.ctx().copy_text(crate::parts_csv(&parts));
-            ctx.log_info("Parts list copied");
-        }
+        ui.horizontal(|ui| {
+            if ui_kit::widgets::secondary_button(ui, "Copy as CSV")
+                .on_hover_text("For a spreadsheet: part, quantity, size and kind")
+                .clicked()
+            {
+                ui.ctx().copy_text(crate::parts_csv(&parts));
+                ctx.log_info("Parts list copied");
+            }
+            if ui_kit::widgets::secondary_button(ui, "Save as CSV")
+                .on_hover_text("Write the list to a file a spreadsheet opens")
+                .clicked()
+            {
+                ctx.request(core_document::HostRequest::SaveFile {
+                    name: "parts.csv".into(),
+                    kind: "Comma-separated values".into(),
+                    extension: "csv".into(),
+                    contents: crate::parts_csv(&parts).into_bytes(),
+                });
+            }
+        });
         TaskOutcome::Open
     }
 
@@ -417,6 +433,7 @@ impl AssemblyWorkbench {
             .and_then(|b| joint.travel(&placed(b), &placed(joint.other_body)));
         let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
         let playing = &mut self.playing;
+        let mut record = None;
         Card::new().padding(SPACE_3).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match &mut joint.kind {
@@ -512,6 +529,7 @@ impl AssemblyWorkbench {
                         drive,
                         (now, dt),
                         playing,
+                        &mut record,
                     );
                     note(
                         ui,
@@ -557,6 +575,7 @@ impl AssemblyWorkbench {
                         drive,
                         (now, dt),
                         playing,
+                        &mut record,
                     );
                     note(
                         ui,
@@ -585,6 +604,18 @@ impl AssemblyWorkbench {
             let _ = ctx.document.update_feature_data(id, joint.to_json());
             ctx.document.clear_feature_dirty(id);
             self.solve_and_apply(ctx);
+        }
+        if let Some((low, high)) = record {
+            let frames = crate::sweep_frames(ctx.document, id, low, high, SWEEP_FRAMES);
+            if frames.is_empty() {
+                ctx.log_warn("Nothing moves through this joint's range");
+            } else {
+                ctx.request(core_document::HostRequest::RecordAnimation {
+                    name: node.name.clone(),
+                    frames,
+                    frame_ms: 4000 / SWEEP_FRAMES as u32,
+                });
+            }
         }
         ui.add_space(SPACE_2);
         self.verdict_card(ui);
@@ -733,6 +764,7 @@ fn drive_rows(
     drive: &mut crate::Drive,
     (now, dt): (Option<f64>, f64),
     playing: &mut Option<crate::Play>,
+    record: &mut Option<(f32, f32)>,
 ) -> bool {
     use core_document::expr::Dim;
     let angular = variant == "Hinge";
@@ -828,6 +860,12 @@ fn drive_rows(
         None => (centre - 25.0, centre + 25.0),
     };
     let label = if mine.is_some() { "Stop" } else { "Play" };
+    if ui_kit::widgets::secondary_button(ui, "Record")
+        .on_hover_text("Save the sweep through its range as an animation")
+        .clicked()
+    {
+        *record = Some((low as f32, high as f32));
+    }
     if document.feature_formula(joint, &to_key).is_some() {
         // A formula holds the value; a sweep would fight it every frame.
         *playing = playing.filter(|p| p.joint != joint);

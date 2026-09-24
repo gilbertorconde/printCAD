@@ -33,7 +33,8 @@ version first.
 - Joints place one body against another: mate two flat faces, with a gap or facing the same way, line up a pin with a hole on one axis, or hold two faces at an angle.
 - More joints: a hinge that leaves only the turn about an axis, a slider that leaves only the slide along one, a fixed joint that carries a body with another, parallel, perpendicular and distance between flat faces, and a round face resting on a flat one.
 - Joints that ask for an axis take a round face or an edge: a hole's rim gives the hole's axis.
-- Drag a jointed body with the mouse: it follows as far as its joints let it, a door swinging on its hinge, and the drag undoes as one step.
+- Drag a jointed body with the mouse: it follows as far as its joints let it, a door swinging on its hinge, stops where it would run into another body, and undoes as one step.
+- Record saves a driven joint's sweep as an animated PNG, and the parts list saves as a CSV file.
 - Check interference (I) finds every pair of visible solids that share material, with how much, and draws what they share over the scene; it runs beside the window, with progress and Stop.
 - Exploded view (E) spreads the bodies out from the middle of the assembly, and the parts list (B) counts every part with its size, ready to copy for a spreadsheet.
 - A hinge's angle and a slider's position can be driven, by a number or a formula, or kept within limits; Play sweeps a driven joint through its range to show the motion.

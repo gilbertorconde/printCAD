@@ -72,6 +72,20 @@ pub fn rasterize_at(
     width: u32,
     height: u32,
 ) -> Option<Vec<u8>> {
+    rasterize_framed(shapes, shapes, forward, up, width, height)
+}
+
+/// Straight RGBA, `width` × `height`, framed to fit `framing` with a
+/// margin rather than `shapes` themselves: the frames of an animation
+/// share one framing, so the view holds still while the model moves.
+pub fn rasterize_framed(
+    shapes: &[Shape],
+    framing: &[Shape],
+    forward: Vec3,
+    up: Vec3,
+    width: u32,
+    height: u32,
+) -> Option<Vec<u8>> {
     let forward = forward.try_normalize()?;
     let right = forward.cross(up).try_normalize()?;
     let up = right.cross(forward);
@@ -85,10 +99,12 @@ pub fn rasterize_at(
     let mut hi = Vec3::splat(f32::NEG_INFINITY);
     let mut triangles = 0usize;
     for shape in shapes {
+        triangles += shape.mesh.indices.len() / 3;
+    }
+    for shape in framing {
         if shape.mesh.indices.len() < 3 {
             continue;
         }
-        triangles += shape.mesh.indices.len() / 3;
         for p in &shape.mesh.positions {
             let q = project(*p);
             lo = lo.min(q);

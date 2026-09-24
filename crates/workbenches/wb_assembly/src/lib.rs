@@ -10,6 +10,7 @@
 //! placements are ordinary edits, so a joint and the move it causes undo as
 //! one step and reach every copy of the document the same way.
 
+mod collide;
 mod commands;
 mod interference;
 mod joint;
@@ -81,6 +82,8 @@ pub struct AssemblyWorkbench {
     freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
     /// A body held by the mouse, dragged with its joints holding.
     grab: Option<Grab>,
+    /// Drags go through other bodies rather than stopping at them.
+    collisions_off: bool,
     /// An interference check running on its own thread.
     checking: Option<Checking>,
     /// A driven hinge or slider swept through its range to show it move.
@@ -98,6 +101,10 @@ struct Grab {
     press: (f32, f32),
     dragging: bool,
     placements: Vec<(BodyId, BodyPlacement)>,
+    /// Where the pull last went without a collision.
+    reached: Option<[f32; 3]>,
+    /// What bodies shared when the drag began.
+    baseline: collide::Baseline,
 }
 
 /// An interference check under way: its answer to come, the pairs asked
@@ -332,7 +339,9 @@ impl AssemblyWorkbench {
             plane: (point, facing),
             press: at,
             dragging: false,
+            baseline: collide::Baseline::new(&all_placements(ctx)),
             placements: all_placements(ctx),
+            reached: None,
         });
     }
 
@@ -352,7 +361,71 @@ impl AssemblyWorkbench {
         let Some(target) = ctx.viewport_to_plane(at, origin, normal) else {
             return InputResult::ignored();
         };
-        for (body, placement) in drag(ctx.document, grab.body, grab.point, target) {
+        let kernel = ctx.kernel.filter(|_| !self.collisions_off);
+        let proposed = drag(ctx.document, grab.body, grab.point, target);
+        let moves = match kernel {
+            None => Some(proposed),
+            Some(kernel) => {
+                let mut clear = |moves: &[(BodyId, BodyPlacement)]| {
+                    collide::collides(ctx.document, kernel, moves, &mut grab.baseline)
+                        .map(|hit| !hit)
+                        .unwrap_or(true)
+                };
+                let from = glam::Vec3::from_array(grab.reached.unwrap_or(origin));
+                let to = glam::Vec3::from_array(target);
+                // The way there in steps short enough that nothing passes
+                // through another body between two of them.
+                let mut good = 0.0f32;
+                let mut blocked = None;
+                for t in collide::checkpoints(ctx.document, &proposed) {
+                    let tried = if t >= 1.0 {
+                        proposed.clone()
+                    } else {
+                        drag(
+                            ctx.document,
+                            grab.body,
+                            grab.point,
+                            from.lerp(to, t).to_array(),
+                        )
+                    };
+                    if clear(&tried) {
+                        good = t;
+                    } else {
+                        blocked = Some(t);
+                        break;
+                    }
+                }
+                if let Some(bad) = blocked {
+                    // Between the last clear step and the first blocked one,
+                    // halving, to the last pose that collides with nothing:
+                    // the body stops at contact.
+                    let (mut good, mut bad, mut best) = (good, bad, None);
+                    for _ in 0..5 {
+                        let mid = (good + bad) * 0.5;
+                        let pull = from.lerp(to, mid).to_array();
+                        let tried = drag(ctx.document, grab.body, grab.point, pull);
+                        if clear(&tried) {
+                            good = mid;
+                            best = Some((tried, pull));
+                        } else {
+                            bad = mid;
+                        }
+                    }
+                    if best.is_none() && good > 0.0 {
+                        let pull = from.lerp(to, good).to_array();
+                        best = Some((drag(ctx.document, grab.body, grab.point, pull), pull));
+                    }
+                    best.map(|(moves, pull)| {
+                        grab.reached = Some(pull);
+                        moves
+                    })
+                } else {
+                    grab.reached = Some(target);
+                    Some(proposed)
+                }
+            }
+        };
+        for (body, placement) in moves.into_iter().flatten() {
             ctx.document.set_body_placement(body, placement);
         }
         InputResult::redraw_only()
@@ -417,6 +490,49 @@ pub(crate) fn explode(
             BodyPlacement::new(placement.quat(), placement.offset() + out),
         );
     }
+}
+
+/// A hinge's or a slider's drive swept from `low` to `high` and back in
+/// `count` frames, on a copy of the document: each frame, every body the
+/// joints moved and where. Nothing changes in `document`.
+pub fn sweep_frames(
+    document: &core_document::Document,
+    joint: FeatureId,
+    low: f32,
+    high: f32,
+    count: usize,
+) -> Vec<Vec<(BodyId, BodyPlacement)>> {
+    let Some(mut feature) = document
+        .get_feature_data(joint)
+        .and_then(|d| JointFeature::from_json(d).ok())
+    else {
+        return Vec::new();
+    };
+    let mut copy = document.clone();
+    let mut frames = Vec::with_capacity(count);
+    let mut moved_any = false;
+    for i in 0..count {
+        let t = i as f64 / count as f64;
+        let value = f64::from(low)
+            + f64::from(high - low) * (0.5 - 0.5 * (std::f64::consts::TAU * t).cos());
+        match &mut feature.kind {
+            JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } => {
+                drive.to = Some(value as f32);
+            }
+            _ => return Vec::new(),
+        }
+        if copy.update_feature_data(joint, feature.to_json()).is_err() {
+            return Vec::new();
+        }
+        if let Ok(moves) = solve(&copy) {
+            moved_any |= !moves.is_empty();
+            for (body, placement) in moves {
+                copy.set_body_placement(body, placement);
+            }
+        }
+        frames.push(copy.bodies().iter().map(|b| (b.id, b.placement)).collect());
+    }
+    if moved_any { frames } else { Vec::new() }
 }
 
 /// Every body's placement, to put back when a task is cancelled.
@@ -700,6 +816,9 @@ impl Workbench for AssemblyWorkbench {
             tool("asm.interference", "Check interference", "check-geometry").shortcut("I"),
         );
         context.register_tool(tool("asm.explode", "Exploded view", "scale-geometry").shortcut("E"));
+        context.register_tool(
+            tool("asm.collisions", "Stop drags at collisions", "boolean").shortcut("C"),
+        );
         context.register_tool(tool("asm.parts", "Parts list", "file-document").shortcut("B"));
         context.register_tool(tool("asm.ground", "Ground body", "constraint-lock").shortcut("F"));
         context.register_tool(tool("asm.solve", "Solve joints", "refresh").shortcut("S"));
@@ -765,11 +884,16 @@ impl Workbench for AssemblyWorkbench {
         })
     }
 
+    fn tool_toggled(&self, tool_id: &str) -> bool {
+        tool_id == "asm.collisions" && !self.collisions_off
+    }
+
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
         match tool_id {
             id if JointTool::of_command(id).is_some() => ctx.document.bodies().len() >= 2,
             "asm.interference" | "asm.explode" => ctx.document.bodies().len() >= 2,
             "asm.parts" => !ctx.document.bodies().is_empty(),
+            "asm.collisions" => true,
             "asm.move" | "asm.ground" => Self::body_to_move(ctx).is_some(),
             "asm.solve" => !joints(ctx.document).is_empty(),
             _ => false,
@@ -820,6 +944,14 @@ impl Workbench for AssemblyWorkbench {
                 self.task = Some(Task::Explode {
                     placements,
                     spread: 1.0,
+                });
+            }
+            Some("asm.collisions") => {
+                self.collisions_off = !self.collisions_off;
+                ctx.log_info(if self.collisions_off {
+                    "Drags go through other bodies"
+                } else {
+                    "Drags stop where bodies would collide"
                 });
             }
             Some("asm.parts") => {
@@ -1366,6 +1498,206 @@ mod tests {
         assert!(drawn[0].on_top && drawn[0].opacity < 1.0);
         wb.finish_editing(&mut ctx);
         assert!(wb.get_overlay_meshes(&ctx, None).is_empty());
+    }
+
+    /// A kernel for 10 mm cubes that are never turned: what two share is
+    /// where their boxes overlap.
+    struct Cubes;
+
+    impl kernel_api::KernelQueries for Cubes {
+        fn project_edge(
+            &self,
+            _: &[u8],
+            _: [f64; 3],
+            _: &kernel_api::ProfilePlane,
+        ) -> kernel_api::KernelResult<kernel_api::ProjectedEdge> {
+            Err(kernel_api::KernelError::Unsupported("projection".into()))
+        }
+
+        fn overlap(
+            &self,
+            _: &[u8],
+            _: &[u8],
+            b_in_a: &[[f64; 4]; 4],
+        ) -> kernel_api::KernelResult<Option<kernel_api::Overlap>> {
+            let span = |k: usize| (10.0 - b_in_a[k][3].abs()).max(0.0);
+            let volume = span(0) * span(1) * span(2);
+            Ok((volume > 1e-6).then(|| kernel_api::Overlap {
+                volume_mm3: volume,
+                centre_mm: [0.0; 3],
+                mesh: TriMesh::default(),
+            }))
+        }
+    }
+
+    static CUBES: Cubes = Cubes;
+
+    /// Two 10 mm cubes, the second on a slider along X, 20 mm along; the
+    /// second dragged from its middle to `to`, and where it ends up.
+    fn slide_cube_to(to: [f32; 3], collisions_off: bool) -> f32 {
+        use glam::{Mat4, Vec3};
+        let mut doc = Document::new("t");
+        let cube = || TriMesh {
+            positions: vec![[0.0; 3], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            ..TriMesh::default()
+        };
+        let [base, part] = [doc.create_body(None), doc.create_body(None)];
+        for body in [base, part] {
+            doc.set_imported_geometry(
+                body,
+                ImportedGeometry {
+                    mesh: Arc::new(cube()),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: Some(([0.0; 3], [10.0; 3])),
+                    brep_blob_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+            doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
+        }
+        doc.set_body_placement(
+            part,
+            BodyPlacement::new(glam::Quat::IDENTITY, Vec3::new(20.0, 0.0, 0.0)),
+        );
+        let rail = Anchor::Axis {
+            point: [0.0, 5.0, 5.0],
+            direction: [1.0, 0.0, 0.0],
+        };
+        let at = |b: BodyId| Rigid::from(doc.body_placement(b));
+        let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
+        doc.add_feature_in_body(
+            JointFeature {
+                kind,
+                moving: rail,
+                other_body: base,
+                fixed: rail,
+            },
+            "Slider 1".into(),
+            Some(part),
+        )
+        .unwrap();
+        let proj = glam::camera::rh::proj::directx::perspective(
+            60f32.to_radians(),
+            800.0 / 600.0,
+            0.1,
+            1000.0,
+        );
+        let view = glam::camera::rh::view::look_at_mat4(
+            Vec3::new(10.0, 5.0, 100.0),
+            Vec3::new(10.0, 5.0, 0.0),
+            Vec3::Y,
+        );
+        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+        let screen = |p: [f32; 3]| {
+            core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p).unwrap()
+        };
+        let mut wb = AssemblyWorkbench {
+            collisions_off,
+            ..AssemblyWorkbench::default()
+        };
+        let grab = [25.0, 5.0, 10.0];
+        let mut send = |doc: &mut Document, event: WorkbenchInputEvent| {
+            let mut ctx = WorkbenchRuntimeContext::new(
+                doc,
+                [10.0, 5.0, 100.0],
+                [10.0, 5.0, 0.0],
+                (0, 0, 800, 600),
+            );
+            ctx.view_proj = Some(vp);
+            ctx.kernel = Some(&CUBES);
+            ctx.hovered_body_id = Some(part.0);
+            ctx.hovered_world_pos = Some(grab);
+            wb.on_input(&event, None, &mut ctx);
+        };
+        send(
+            &mut doc,
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos: screen(grab),
+            },
+        );
+        for step in 1..=8 {
+            let t = step as f32 / 8.0;
+            let p = glam::Vec3::from_array(grab).lerp(glam::Vec3::from_array(to), t);
+            send(
+                &mut doc,
+                WorkbenchInputEvent::MouseMove {
+                    viewport_pos: screen(p.to_array()),
+                },
+            );
+        }
+        send(
+            &mut doc,
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                viewport_pos: screen(to),
+            },
+        );
+        doc.body_placement(part).translation[0]
+    }
+
+    #[test]
+    fn a_dragged_body_stops_where_it_would_collide() {
+        let stopped = slide_cube_to([-5.0, 5.0, 10.0], false);
+        assert!(
+            (10.0..10.5).contains(&stopped),
+            "against the other cube's face: {stopped}"
+        );
+        let through = slide_cube_to([-5.0, 5.0, 10.0], true);
+        assert!(
+            through < 0.0,
+            "with collisions off it goes through: {through}"
+        );
+        let clear = slide_cube_to([40.0, 5.0, 10.0], false);
+        assert!(clear > 30.0, "away from it nothing stops it: {clear}");
+    }
+
+    #[test]
+    fn a_sweep_is_recorded_frame_by_frame_without_touching_the_document() {
+        let mut doc = Document::new("t");
+        let frame = doc.create_body(None);
+        let door = doc.create_body(None);
+        let pin = Anchor::Axis {
+            point: [0.0; 3],
+            direction: [0.0, 0.0, 1.0],
+        };
+        let at = Rigid::from(BodyPlacement::default());
+        let hinge = doc
+            .add_feature_in_body(
+                JointFeature {
+                    kind: JointTool::Hinge.joint(&pin, &at, &pin, &at, 0.0),
+                    moving: pin,
+                    other_body: frame,
+                    fixed: pin,
+                },
+                "Hinge 1".into(),
+                Some(door),
+            )
+            .unwrap();
+        let seq = doc.mutation_seq();
+        let frames = sweep_frames(&doc, hinge, -90.0, 90.0, 8);
+        assert_eq!(frames.len(), 8);
+        let angle = |frame: &Vec<(BodyId, BodyPlacement)>| {
+            let (_, placed) = frame.iter().find(|(b, _)| *b == door).unwrap();
+            let x = placed.direction([1.0, 0.0, 0.0]);
+            x[1].atan2(x[0]).to_degrees()
+        };
+        assert!(
+            (angle(&frames[0]) + 90.0).abs() < 0.1,
+            "{}",
+            angle(&frames[0])
+        );
+        assert!(
+            (angle(&frames[4]) - 90.0).abs() < 0.1,
+            "{}",
+            angle(&frames[4])
+        );
+        assert_eq!(doc.mutation_seq(), seq, "the document is left alone");
+        assert!(doc.body_placement(door).is_identity());
     }
 
     #[test]

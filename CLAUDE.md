@@ -158,7 +158,15 @@ cargo fmt --all                   # CI enforces --check
   dragging (a left press on a body the solver moves takes hold of it
   without consuming the press; moves solve `solve::drag`, the joints plus
   a light pull of the grabbed point toward the cursor on a view-facing
-  plane, then the joints alone; the release records `asm.place`), the
+  plane, then the joints alone; with collisions on, `collide.rs` checks
+  the way there in steps no longer than half the moved body, a step that
+  makes a pair share more material than at the drag's start is refused
+  and the pull halved back to contact; the release records `asm.place`),
+  recording (`sweep_frames` solves a drive's sweep on a document copy;
+  the host's `HostRequest::RecordAnimation` draws each frame with the CPU
+  preview renderer, framed alike, into an animated PNG, `app/animation.rs`;
+  `HostRequest::SaveFile` writes any bytes a bench makes where the user
+  picks), the
   exploded view (a task that moves bodies and puts them back on close,
   recording nothing), the parts list (`parts.rs`: bodies grouped by
   identical shape snapshot), the solver

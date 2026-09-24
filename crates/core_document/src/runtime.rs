@@ -252,6 +252,24 @@ pub enum HostRequest {
     /// End the active bench's edit session; the host also returns to the
     /// bench the session was started from.
     FinishEditing,
+    /// Ask where to save `contents` (a file the bench made: a parts list)
+    /// and write it there. `name` is the suggested file name, `kind` the
+    /// dialog's filter label and `extension` its extension.
+    SaveFile {
+        name: String,
+        kind: String,
+        extension: String,
+        contents: Vec<u8>,
+    },
+    /// Ask where to save an animation and write it there: the scene drawn
+    /// as the camera sees it, once per frame with the bodies at that
+    /// frame's placements (bodies left out stay where they are),
+    /// `frame_ms` apart.
+    RecordAnimation {
+        name: String,
+        frames: Vec<Vec<(crate::BodyId, crate::BodyPlacement)>>,
+        frame_ms: u32,
+    },
 }
 
 impl HostRequest {
@@ -263,6 +281,7 @@ impl HostRequest {
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,
             HostRequest::OrientCamera(_) => 3,
             HostRequest::FinishEditing => 4,
+            HostRequest::SaveFile { .. } | HostRequest::RecordAnimation { .. } => 5,
         }
     }
 }

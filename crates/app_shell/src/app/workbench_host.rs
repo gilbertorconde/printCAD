@@ -10,6 +10,7 @@ use core_document::{
 use uuid::Uuid;
 
 use crate::PrintCadApp;
+use crate::app::doc_io::{FileDialogKind, FileToSave};
 use crate::log_panel as app_log;
 use crate::ui::TreeItemId;
 
@@ -225,6 +226,25 @@ impl PrintCadApp {
                 );
             }
             HostRequest::FinishEditing => self.finish_active_workbench_editing(),
+            HostRequest::SaveFile {
+                name,
+                kind,
+                extension,
+                contents,
+            } => self.start_file_dialog(FileDialogKind::SaveFile(Box::new(FileToSave {
+                name,
+                kind,
+                extension,
+                contents,
+            }))),
+            HostRequest::RecordAnimation {
+                name,
+                frames,
+                frame_ms,
+            } => {
+                let animation = self.animation(name, &frames, frame_ms);
+                self.start_file_dialog(FileDialogKind::SaveAnimation(Box::new(animation)));
+            }
         }
     }
 

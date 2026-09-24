@@ -41,7 +41,8 @@ A hinge's angle counts from where it sat when the joint was made. Limits
 keep the motion within a range while it is not driven; a joint resting
 on a limit shows its motion as "one way, at its limit". Play sweeps a
 driven joint through its limits (or a whole turn, or 25 mm either way) to
-show the motion, and puts it back when stopped.
+show the motion, and puts it back when stopped. Record saves the same
+sweep, there and back, as an animated PNG seen from the current view.
 
 ## Dragging
 
@@ -49,6 +50,12 @@ Drag a jointed body with the left mouse button: it follows the mouse as
 far as its joints let it, so a door swings on its hinge rather than
 sliding off it. A grounded body, or one with no joints of its own, does
 not drag; use Move body (G) for those. A drag is one undo step.
+
+A drag stops where the body would run into another: it comes to rest
+against it. Faces that only touch, as mated faces do, never stop it, and
+bodies that already overlapped when the drag began may move as long as
+they overlap no further. Stop drags at collisions (C) in the toolbar turns
+this off.
 
 ## Checking interference
 
@@ -68,7 +75,8 @@ it closes.
 
 Parts list (B) lists every part with how many there are, bodies of the
 same shape counted together, and the size of each along its own axes.
-Copy as CSV puts it on the clipboard for a spreadsheet.
+Copy as CSV puts it on the clipboard for a spreadsheet; Save as CSV
+writes it to a file.
 
 ## From a script
 

@@ -81,6 +81,19 @@ pub(crate) enum FileDialogKind {
     RunScript,
     /// Files to go with a chat's next prompt, by chat id.
     Attach(String),
+    /// A file a bench made, written where the user says.
+    SaveFile(Box<FileToSave>),
+    /// A bench's animation, rendered and written where the user says.
+    SaveAnimation(Box<crate::app::animation::Animation>),
+}
+
+/// A file a bench asked to save: its suggested name, the dialog's filter
+/// and its bytes.
+pub(crate) struct FileToSave {
+    pub name: String,
+    pub kind: String,
+    pub extension: String,
+    pub contents: Vec<u8>,
 }
 
 pub(crate) struct FileDialogResult {
@@ -664,27 +677,7 @@ impl PrintCadApp {
         document
             .imported_geometries()
             .filter(|(id, _)| document.imported_body_effective_visible(**id))
-            .map(|(id, geometry)| {
-                let display = document
-                    .bodies()
-                    .iter()
-                    .find(|b| b.id == *id)
-                    .and_then(|b| b.display);
-                let mesh = &geometry.mesh;
-                let vertex_colours = display.is_none()
-                    && mesh.colors.len() == mesh.positions.len()
-                    && !mesh.colors.is_empty();
-                let color = match display {
-                    Some(display) => display.color,
-                    None if vertex_colours => [1.0; 3],
-                    None => core_document::BodyDisplay::default().color,
-                };
-                crate::thumbnail::Shape {
-                    mesh: Arc::clone(mesh),
-                    color,
-                    vertex_colours,
-                }
-            })
+            .map(|(id, geometry)| preview_shape(document, *id, Arc::clone(&geometry.mesh)))
             .collect()
     }
 
@@ -788,6 +781,21 @@ impl PrintCadApp {
                 }
             }
             FileDialogKind::Attach(chat) => self.attach_files(&chat, result.paths),
+            FileDialogKind::SaveFile(file) => {
+                if let Some(path) = path {
+                    match std::fs::write(&path, &file.contents) {
+                        Ok(()) => app_log::info(format!("Saved {}", path.display())),
+                        Err(err) => {
+                            app_log::error(format!("Could not save {}: {err}", path.display()))
+                        }
+                    }
+                }
+            }
+            FileDialogKind::SaveAnimation(animation) => {
+                if let Some(path) = path {
+                    crate::app::animation::write_in_background(*animation, path);
+                }
+            }
         }
         self.file_dialog_rx = None;
     }
@@ -827,6 +835,12 @@ impl PrintCadApp {
                     }
                 }
                 FileDialogKind::Attach(_) => rfd::FileDialog::new().set_title("Attach files"),
+                FileDialogKind::SaveFile(ref file) => rfd::FileDialog::new()
+                    .add_filter(file.kind.as_str(), &[file.extension.as_str()])
+                    .set_file_name(file.name.as_str()),
+                FileDialogKind::SaveAnimation(ref animation) => rfd::FileDialog::new()
+                    .add_filter("Animated PNG", &["png"])
+                    .set_file_name(format!("{}.png", animation.name)),
                 FileDialogKind::Export(format) => rfd::FileDialog::new()
                     .add_filter(format!("{} file", format.label()), &[format.extension()])
                     .set_file_name(format!("{stem}.{}", format.extension())),
@@ -852,7 +866,9 @@ impl PrintCadApp {
                         }
                     }
                     FileDialogKind::SaveAs => dialog.set_file_name("untitled.prtcad").save_file(),
-                    FileDialogKind::Export(_) => dialog.save_file(),
+                    FileDialogKind::Export(_)
+                    | FileDialogKind::SaveFile(_)
+                    | FileDialogKind::SaveAnimation(_) => dialog.save_file(),
                     FileDialogKind::RunScript => dialog.pick_file(),
                     FileDialogKind::Attach(_) => None,
                 }),
@@ -860,6 +876,32 @@ impl PrintCadApp {
 
             let _ = tx.send(FileDialogResult { kind, paths });
         });
+    }
+}
+
+/// A body's mesh as a preview draws it: in its display colour, or its
+/// faces' own colours when it has them and no display colour.
+pub(crate) fn preview_shape(
+    document: &core_document::Document,
+    body: core_document::BodyId,
+    mesh: Arc<kernel_api::TriMesh>,
+) -> crate::thumbnail::Shape {
+    let display = document
+        .bodies()
+        .iter()
+        .find(|b| b.id == body)
+        .and_then(|b| b.display);
+    let vertex_colours =
+        display.is_none() && mesh.colors.len() == mesh.positions.len() && !mesh.colors.is_empty();
+    let color = match display {
+        Some(display) => display.color,
+        None if vertex_colours => [1.0; 3],
+        None => core_document::BodyDisplay::default().color,
+    };
+    crate::thumbnail::Shape {
+        mesh,
+        color,
+        vertex_colours,
     }
 }
 
