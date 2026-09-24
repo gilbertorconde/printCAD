@@ -7,7 +7,6 @@ pub mod feature;
 pub mod history;
 pub mod op;
 pub mod palette;
-pub mod param;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
@@ -45,7 +44,6 @@ pub use feature::{
 };
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
-pub use param::Param;
 pub use placement::BodyPlacement;
 pub use rebuild::{BuildError, BuildPlan, RebuildJob};
 pub use runtime::{
@@ -422,6 +420,11 @@ impl Document {
                 id: *id,
                 name: self.feature_tree.get_node(*id)?.name.clone(),
             },
+            Op::SetFeatureFormula { id, key, .. } => Op::SetFeatureFormula {
+                id: *id,
+                key: key.clone(),
+                formula: self.feature_tree.get_node(*id)?.formulas.get(key).cloned(),
+            },
             Op::SetFeatureVisible { id, .. } => Op::SetFeatureVisible {
                 id: *id,
                 visible: self.feature_tree.get_node(*id)?.visible,
@@ -446,6 +449,7 @@ impl Document {
                     data: node.data.clone(),
                     seq: node.seq,
                     created_at: node.created_at,
+                    formulas: node.formulas.clone(),
                 }
             }
             Op::SetImportedObjectVisibility { id, .. } => Op::SetImportedObjectVisibility {
@@ -578,6 +582,7 @@ impl Document {
                 data,
                 seq,
                 created_at,
+                formulas,
             } => {
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
@@ -591,6 +596,7 @@ impl Document {
                     seq: *seq,
                     error: None,
                     data: data.clone(),
+                    formulas: formulas.clone(),
                 });
                 for dep in deps {
                     self.feature_tree.add_dependency(*id, *dep);
@@ -604,6 +610,18 @@ impl Document {
             Op::RenameFeature { id, name } => {
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
                     node.name.clone_from(name);
+                }
+            }
+            Op::SetFeatureFormula { id, key, formula } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    match formula {
+                        Some(formula) => {
+                            node.formulas.insert(key.clone(), formula.clone());
+                        }
+                        None => {
+                            node.formulas.remove(key);
+                        }
+                    }
                 }
             }
             Op::SetFeatureVisible { id, visible } => {
@@ -800,6 +818,7 @@ impl Document {
             data: feature.to_json(),
             seq: self.feature_tree.next_seq(),
             created_at: epoch_ms_now(),
+            formulas: Default::default(),
         });
         Ok(id)
     }
@@ -909,6 +928,39 @@ impl Document {
             id: feature_id,
             deps,
         });
+    }
+
+    /// Set the formula behind the feature's number `key` (its bench's key,
+    /// `Workbench::parameters`), or take it away so the number stands as
+    /// it is.
+    pub fn set_feature_formula(
+        &mut self,
+        feature_id: FeatureId,
+        key: impl Into<String>,
+        formula: Option<String>,
+    ) -> DocumentResult<()> {
+        let key = key.into();
+        let node = self
+            .feature_tree
+            .get_node(feature_id)
+            .ok_or(DocumentError::FeatureNotFound(feature_id))?;
+        if node.formulas.get(&key) != formula.as_ref() {
+            self.record_and_apply(op::DocumentOp::SetFeatureFormula {
+                id: feature_id,
+                key,
+                formula,
+            });
+        }
+        Ok(())
+    }
+
+    /// The formula behind the feature's number `key`, if one sets it.
+    pub fn feature_formula(&self, feature_id: FeatureId, key: &str) -> Option<&str> {
+        self.feature_tree
+            .get_node(feature_id)?
+            .formulas
+            .get(key)
+            .map(String::as_str)
     }
 
     /// Rename a feature (user-facing name in the tree and panels).

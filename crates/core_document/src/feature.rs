@@ -93,6 +93,12 @@ pub struct FeatureNode {
     pub error: Option<String>,
     /// Type-erased feature data (serialized JSON)
     pub data: serde_json::Value,
+    /// The formulas that set its numbers, by the key its bench gives each
+    /// (`Workbench::parameters`). The number in `data` is what the user
+    /// last set; what a formula comes to now is derived
+    /// (`Document::feature_values`).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub formulas: std::collections::BTreeMap<String, String>,
 }
 
 /// A revision for a node's payload: the same JSON hashes the same, so a
@@ -122,6 +128,7 @@ impl FeatureNode {
             seq: 0,
             error: None,
             data: feature.to_json(),
+            formulas: Default::default(),
         }
     }
 }
@@ -343,6 +350,7 @@ mod tests {
             seq: 0,
             error: None,
             data: serde_json::Value::Null,
+            formulas: Default::default(),
         }
     }
 

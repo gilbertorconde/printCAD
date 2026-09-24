@@ -1,8 +1,10 @@
 //! Working out every formula in a document.
 //!
 //! The slots are the variables of every variable set and the numeric
-//! properties each bench lists for its features ([`Parameter`], found in
-//! the feature's JSON by pointer, so this needs no bench's types). Each
+//! properties each bench lists for its features ([`Parameter`]: a key, and
+//! where the number is in the feature's JSON, so this needs no bench's
+//! types). A property is set by the formula its feature keeps under its
+//! key (`FeatureNode::formulas`), or else stands as its number. Each
 //! slot is worked out once, the ones it reads first; a slot that comes
 //! back to itself is a loop, reported on every slot in it. The result is
 //! derived state: each feature with a formula gets a copy of its data with
@@ -16,7 +18,6 @@ use serde_json::Value;
 
 use crate::expr::{self, Context, Dim, Quantity, Resolve};
 use crate::feature::{FeatureId, FeatureNode};
-use crate::param;
 use crate::units::Unit;
 use crate::variables::{VARIABLES_KIND, VariableSet};
 use crate::{Document, WorkbenchFeature};
@@ -25,6 +26,9 @@ use crate::{Document, WorkbenchFeature};
 /// read when it has a name.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
+    /// What its formula is kept under: stable while the feature is edited
+    /// (a field's path, a sketch constraint's id).
+    pub key: String,
     /// What formulas call it (`length`, a named sketch dimension); `None`
     /// when formulas cannot refer to it.
     pub name: Option<String>,
@@ -39,14 +43,22 @@ pub struct Parameter {
 }
 
 impl Parameter {
+    /// A property whose key is its pointer: a field that never moves.
     pub fn new(name: &str, label: &str, dim: Dim, pointer: impl Into<String>) -> Self {
+        let pointer = pointer.into();
         Self {
+            key: pointer.clone(),
             name: Some(name.to_string()),
             label: label.to_string(),
             dim,
-            pointer: pointer.into(),
+            pointer,
             scale: 1.0,
         }
+    }
+
+    pub fn keyed(mut self, key: impl Into<String>) -> Self {
+        self.key = key.into();
+        self
     }
 
     pub fn scaled(mut self, scale: f64) -> Self {
@@ -63,6 +75,8 @@ impl Parameter {
 /// What one slot came to.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SlotValue {
+    /// The key its formula is kept under; for a variable, its name.
+    pub key: String,
     pub name: Option<String>,
     pub label: String,
     /// Its formula, when it has one.
@@ -86,6 +100,7 @@ enum Source {
 
 struct Slot {
     feature: FeatureId,
+    key: String,
     name: Option<String>,
     label: String,
     /// `None` for a variable: it is whatever its formula gives.
@@ -199,6 +214,7 @@ pub fn evaluate_document(
             for variable in set.variables {
                 slots.push(Slot {
                     feature: *id,
+                    key: variable.name.clone(),
                     name: Some(variable.name.clone()),
                     label: variable.name,
                     dim: None,
@@ -210,11 +226,13 @@ pub fn evaluate_document(
             continue;
         }
         for p in parameters(node) {
-            let Some((value, formula)) = node.data.pointer(&p.pointer).and_then(param::read) else {
+            let Some(value) = node.data.pointer(&p.pointer).and_then(Value::as_f64) else {
                 continue;
             };
+            let formula = node.formulas.get(&p.key);
             slots.push(Slot {
                 feature: *id,
+                key: p.key,
                 name: p.name,
                 label: p.label,
                 dim: Some(p.dim),
@@ -256,10 +274,11 @@ pub fn evaluate_document(
                     .unwrap_or_default()
             });
             if let Some(target) = data.pointer_mut(pointer) {
-                param::write_value(target, q.value * slot.scale);
+                *target = serde_json::json!(q.value * slot.scale);
             }
         }
         out.slots.entry(slot.feature).or_default().push(SlotValue {
+            key: slot.key.clone(),
             name: slot.name.clone(),
             label: slot.label.clone(),
             formula,
@@ -323,8 +342,28 @@ mod tests {
         document.add_feature(set, name.to_string()).unwrap()
     }
 
-    fn block(document: &mut Document, name: &str, data: Value) -> FeatureId {
-        document.add_feature(Block(data), name.to_string()).unwrap()
+    /// A block with a length of 10 and a turn of 0, and these formulas on
+    /// its `length` and `turn`.
+    fn block(
+        document: &mut Document,
+        name: &str,
+        length: Option<&str>,
+        turn: Option<&str>,
+    ) -> FeatureId {
+        let id = document
+            .add_feature(
+                Block(json!({"length": 10.0, "turn": 0.0})),
+                name.to_string(),
+            )
+            .unwrap();
+        for (key, formula) in [("/length", length), ("/turn", turn)] {
+            if let Some(formula) = formula {
+                document
+                    .set_feature_formula(id, key, Some(formula.to_string()))
+                    .unwrap();
+            }
+        }
+        id
     }
 
     fn slot<'a>(e: &'a Evaluation, id: FeatureId, name: &str) -> &'a SlotValue {
@@ -332,6 +371,10 @@ mod tests {
             .iter()
             .find(|s| s.name.as_deref() == Some(name))
             .unwrap()
+    }
+
+    fn close(a: f64, b: f64) -> bool {
+        (a - b).abs() < 1e-9
     }
 
     #[test]
@@ -346,48 +389,38 @@ mod tests {
                 ("walls", "3"),
             ],
         );
-        let base = block(&mut doc, "Base", json!({"length": 10.0, "turn": 0.0}));
+        let base = block(&mut doc, "Base", None, None);
         let top = block(
             &mut doc,
             "Top plate",
-            json!({
-                "length": {"formula": "Base.length + Printer.wall", "value": 0.0},
-                "turn": {"formula": "atan2(Printer.nozzle, Printer.nozzle)", "value": 0.0},
-            }),
+            Some("Base.length + Printer.wall"),
+            Some("atan2(Printer.nozzle, Printer.nozzle)"),
+        );
+        let probe = block(
+            &mut doc,
+            "Probe",
+            Some("`Top plate`.turn * 1 mm / 1 deg"),
+            None,
         );
         let e = evaluate_document(&doc, &parameters);
-        assert_eq!(
-            slot(&e, printer, "wall").result,
-            Ok(Quantity::length(1.2000000000000002))
-        );
+        assert!(close(
+            slot(&e, printer, "wall").result.clone().unwrap().value,
+            1.2
+        ));
         assert_eq!(slot(&e, printer, "walls").result, Ok(Quantity::number(3.0)));
         let data = &e.data[&top];
-        assert!((data["length"]["value"].as_f64().unwrap() - 11.2).abs() < 1e-9);
-        assert_eq!(data["length"]["formula"], "Base.length + Printer.wall");
-        assert!(
-            (data["turn"]["value"].as_f64().unwrap() - std::f64::consts::FRAC_PI_4).abs() < 1e-9
-        );
+        assert!(close(data["length"].as_f64().unwrap(), 11.2));
+        assert!(close(
+            data["turn"].as_f64().unwrap(),
+            std::f64::consts::FRAC_PI_4
+        ));
         assert!(!e.data.contains_key(&base), "no formula, no copy");
-        // Its degrees read back from radians.
-        let e2 = {
-            let mut doc2 = doc.clone();
-            block(
-                &mut doc2,
-                "Probe",
-                json!({"length": {"formula": "`Top plate`.turn * 1 mm / 1 deg", "value": 0}, "turn": 0}),
-            );
-            evaluate_document(&doc2, &parameters)
-        };
-        let probe = e2
-            .slots
-            .iter()
-            .find(|(_, s)| {
-                s.iter()
-                    .any(|v| v.formula.as_deref().is_some_and(|f| f.starts_with("`Top")))
-            })
-            .map(|(id, _)| *id)
-            .unwrap();
-        assert!((slot(&e2, probe, "length").result.clone().unwrap().value - 45.0).abs() < 1e-9);
+        // The turn kept in radians reads back in degrees.
+        assert!(close(
+            slot(&e, probe, "length").result.clone().unwrap().value,
+            45.0
+        ));
+        assert_eq!(slot(&e, top, "length").key, "/length");
     }
 
     #[test]
@@ -404,11 +437,7 @@ mod tests {
                 ("e", "S.c * 2"),
             ],
         );
-        let blk = block(
-            &mut doc,
-            "B",
-            json!({"length": {"formula": "30 deg", "value": 5.0}, "turn": 0}),
-        );
+        let blk = block(&mut doc, "B", Some("30 deg"), None);
         let e = evaluate_document(&doc, &parameters);
         let err = |name: &str| slot(&e, s, name).result.clone().unwrap_err();
         assert!(err("a").contains("loop"), "{}", err("a"));
@@ -429,11 +458,7 @@ mod tests {
         let mut doc = Document::new("t");
         set(&mut doc, "Dup", &[("x", "1 mm")]);
         set(&mut doc, "Dup", &[("x", "2 mm")]);
-        let b = block(
-            &mut doc,
-            "B",
-            json!({"length": {"formula": "Dup.x", "value": 0}, "turn": 0}),
-        );
+        let b = block(&mut doc, "B", Some("Dup.x"), None);
         let e = evaluate_document(&doc, &parameters);
         let why = slot(&e, b, "length").result.clone().unwrap_err();
         assert!(why.contains("2 objects are called Dup"), "{why}");
@@ -442,12 +467,8 @@ mod tests {
     fn settle(doc: &mut Document) -> Vec<FeatureId> {
         let e = evaluate_document(doc, &parameters);
         let marked = doc.apply_evaluation(e);
-        for (id, _) in doc
-            .feature_tree()
-            .all_nodes()
-            .map(|(i, n)| (*i, n.dirty))
-            .collect::<Vec<_>>()
-        {
+        let ids: Vec<FeatureId> = doc.feature_tree().all_nodes().map(|(i, _)| *i).collect();
+        for id in ids {
             doc.clear_feature_dirty(id);
         }
         marked
@@ -457,59 +478,71 @@ mod tests {
     fn a_changed_variable_marks_only_what_reads_it_and_leaves_the_document_unedited() {
         let mut doc = Document::new("t");
         let s = set(&mut doc, "S", &[("a", "2 mm"), ("b", "5 mm")]);
-        let reads_a = block(
-            &mut doc,
-            "A",
-            json!({"length": {"formula": "S.a * 2", "value": 0}, "turn": 0}),
-        );
-        let reads_b = block(
-            &mut doc,
-            "B",
-            json!({"length": {"formula": "S.b", "value": 0}, "turn": 0}),
-        );
-        let plain = block(&mut doc, "C", json!({"length": 3, "turn": 0}));
+        let reads_a = block(&mut doc, "A", Some("S.a * 2"), None);
+        let reads_b = block(&mut doc, "B", Some("S.b"), None);
+        let plain = block(&mut doc, "C", None, None);
         let first = settle(&mut doc);
         assert!(first.contains(&reads_a) && first.contains(&reads_b));
         assert!(!first.contains(&plain));
-        assert_eq!(doc.feature_values(reads_a).unwrap()["length"]["value"], 4.0);
+        assert_eq!(doc.feature_values(reads_a).unwrap()["length"], 4.0);
         assert_eq!(
             doc.feature_values(plain).unwrap()["length"],
-            3.0,
+            10.0,
             "raw data"
         );
         assert!(!doc.needs_evaluation());
 
         // Change `a`: only A moves.
-        let mut data: VariableSet =
-            VariableSet::from_json(doc.get_feature_data(s).unwrap()).unwrap();
+        let mut data = VariableSet::from_json(doc.get_feature_data(s).unwrap()).unwrap();
         data.variables[0].formula = "3 mm".into();
         doc.update_feature_data(s, data.to_json()).unwrap();
         doc.mark_clean();
         assert!(doc.needs_evaluation());
         assert_eq!(settle(&mut doc), [reads_a]);
-        assert_eq!(doc.feature_values(reads_a).unwrap()["length"]["value"], 6.0);
+        assert_eq!(doc.feature_values(reads_a).unwrap()["length"], 6.0);
         assert!(!doc.metadata().dirty(), "evaluating is not an edit");
         assert_eq!(settle(&mut doc), [], "nothing moved since");
 
         // A snapshot carries what was worked out.
         let copy = doc.clone();
-        assert_eq!(
-            copy.feature_values(reads_a).unwrap()["length"]["value"],
-            6.0
-        );
+        assert_eq!(copy.feature_values(reads_a).unwrap()["length"], 6.0);
         assert!(!copy.needs_evaluation());
+
+        // Taking the formula away leaves the number as set.
+        doc.set_feature_formula(reads_a, "/length", None).unwrap();
+        assert_eq!(settle(&mut doc), [reads_a]);
+        assert_eq!(doc.feature_values(reads_a).unwrap()["length"], 10.0);
     }
 
     #[test]
     fn a_bare_number_in_a_length_takes_the_documents_unit() {
         let mut doc = Document::new("t");
         doc.set_display_unit(Unit::In);
-        let b = block(
-            &mut doc,
-            "B",
-            json!({"length": {"formula": "2", "value": 0}, "turn": 0}),
-        );
+        let b = block(&mut doc, "B", Some("2"), None);
         let e = evaluate_document(&doc, &parameters);
         assert_eq!(slot(&e, b, "length").result, Ok(Quantity::length(50.8)));
+    }
+
+    #[test]
+    fn formulas_undo_and_come_back_with_a_deleted_feature() {
+        let mut doc = Document::new("t");
+        let b = block(&mut doc, "B", Some("2 mm"), None);
+        assert_eq!(doc.feature_formula(b, "/length"), Some("2 mm"));
+        let set_op = crate::op::DocumentOp::SetFeatureFormula {
+            id: b,
+            key: "/length".into(),
+            formula: Some("3 mm".into()),
+        };
+        let undo = doc.invert_op(&set_op).unwrap();
+        doc.apply_op(&set_op);
+        assert_eq!(doc.feature_formula(b, "/length"), Some("3 mm"));
+        doc.apply_op(&undo);
+        assert_eq!(doc.feature_formula(b, "/length"), Some("2 mm"));
+
+        let remove = crate::op::DocumentOp::RemoveFeature { id: b };
+        let restore = doc.invert_op(&remove).unwrap();
+        doc.apply_op(&remove);
+        doc.apply_op(&restore);
+        assert_eq!(doc.feature_formula(b, "/length"), Some("2 mm"));
     }
 }

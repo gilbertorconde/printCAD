@@ -138,6 +138,8 @@ pub enum DocumentOp {
         data: serde_json::Value,
         seq: u64,
         created_at: i64,
+        #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+        formulas: std::collections::BTreeMap<String, String>,
     },
     /// Whole-payload feature write (sketch edits, panel editors). Consecutive
     /// updates to the same feature coalesce in the outbox — nothing observes
@@ -200,6 +202,12 @@ pub enum DocumentOp {
         visible: bool,
     },
     ClearImportedObjectGraph,
+    /// Set the formula behind a feature's number `key`, or take it away.
+    SetFeatureFormula {
+        id: FeatureId,
+        key: String,
+        formula: Option<String>,
+    },
 }
 
 /// The document's outbox of captured-but-undrained ops.
