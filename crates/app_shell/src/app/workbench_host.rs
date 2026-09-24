@@ -48,6 +48,32 @@ pub(crate) enum HookSite {
 impl PrintCadApp {
     /// Context params for activate/deactivate/input hooks: camera-derived
     /// viewport plus the live hover/selection state.
+    /// Close the current undo step, after working out the formulas and
+    /// letting every bench follow values they moved, so an edit and what
+    /// it moves are one step.
+    pub(crate) fn close_gesture(&mut self) {
+        self.settle_formulas();
+        self.session.journal.note(&mut self.session.document);
+    }
+
+    /// Work out the document's formulas and hand the features whose values
+    /// moved to every bench (`Workbench::values_moved`).
+    pub(crate) fn settle_formulas(&mut self) {
+        self.registry.evaluate(&mut self.session.document);
+        let moved = self.session.document.take_moved_values();
+        if moved.is_empty() {
+            return;
+        }
+        for id in self.registry.ids().to_vec() {
+            let params = self.interaction_ctx_params();
+            if let Some(((), outcome)) =
+                self.with_workbench_ctx(&id, params, |wb, ctx| wb.values_moved(ctx, &moved))
+            {
+                self.apply_hook_outcome(outcome, HookSite::Interaction);
+            }
+        }
+    }
+
     pub(crate) fn interaction_ctx_params(&self) -> WbCtxParams {
         let vp = self.session.camera.viewport_info();
         WbCtxParams {

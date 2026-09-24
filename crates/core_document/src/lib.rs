@@ -166,6 +166,8 @@ struct Evaluated {
     evaluation: evaluate::Evaluation,
     /// The `mutation_seq` it was worked out at.
     at: Option<u64>,
+    /// Features whose values moved since the host last took them.
+    moved: Vec<FeatureId>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -885,11 +887,24 @@ impl Document {
         for id in &changed {
             self.feature_tree.mark_dirty(*id);
         }
+        let mut moved = std::mem::take(&mut self.evaluated.moved);
+        for id in &changed {
+            if !moved.contains(id) {
+                moved.push(*id);
+            }
+        }
         self.evaluated = Evaluated {
             evaluation,
             at: Some(self.mutation_seq),
+            moved,
         };
         changed
+    }
+
+    /// The features whose values formulas moved since this was last
+    /// asked, for `Workbench::values_moved`.
+    pub fn take_moved_values(&mut self) -> Vec<FeatureId> {
+        std::mem::take(&mut self.evaluated.moved)
     }
 
     /// Get feature metadata (id, name, dirty, etc.).

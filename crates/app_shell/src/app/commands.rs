@@ -178,7 +178,7 @@ impl PrintCadApp {
                     } else {
                         "Hide body"
                     });
-                    self.session.journal.note(&mut self.session.document);
+                    self.close_gesture();
                 }
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
@@ -276,7 +276,7 @@ impl PrintCadApp {
                         .count();
                     if asked > 0 {
                         self.session.journal.label_next("Convert to solid");
-                        self.session.journal.note(&mut self.session.document);
+                        self.close_gesture();
                         app_log::info(format!(
                             "Conversion to a solid asked for {asked} mesh(es); undo history cleared"
                         ));
@@ -290,7 +290,7 @@ impl PrintCadApp {
                         .count();
                     if asked > 0 {
                         self.session.journal.label_next("Repair shape");
-                        self.session.journal.note(&mut self.session.document);
+                        self.close_gesture();
                         app_log::info(format!(
                             "Repair asked for {asked} shape(s); undo history cleared"
                         ));
@@ -347,7 +347,7 @@ impl PrintCadApp {
             if let core_document::TaskOutcome::Accepted { label } = &outcome {
                 self.session.journal.label_next(label.clone());
             }
-            self.session.journal.note(&mut self.session.document);
+            self.close_gesture();
             match outcome {
                 core_document::TaskOutcome::Accepted { label } => app_log::info(label),
                 core_document::TaskOutcome::Cancelled => app_log::info("Edit cancelled"),
@@ -605,7 +605,7 @@ impl PrintCadApp {
         self.session.tree_selection = Some(TreeItemId::Body(body_id));
         self.session.selected_body = Some(body_id.0);
         self.session.journal.label_next("Create body");
-        self.session.journal.note(&mut self.session.document);
+        self.close_gesture();
     }
 
     /// End the active workbench's editing session (e.g. Exit Sketch Mode)
@@ -804,7 +804,7 @@ impl PrintCadApp {
         self.session.tree_selection = Some(TreeItemId::DocumentRoot);
         // Deleting a body has no inverse: the entry closes the history.
         self.session.journal.label_next("Delete body");
-        self.session.journal.note(&mut self.session.document);
+        self.close_gesture();
         app_log::info(format!("Deleted `{name}` and everything on it"));
     }
 
@@ -872,7 +872,7 @@ impl PrintCadApp {
             TreeFeatureCommand::Suppress(suppressed) => {
                 crate::app::scripts::suppress(&mut self.session.document, feature, suppressed);
                 self.session.journal.label_next("Suppress feature");
-                self.session.journal.note(&mut self.session.document);
+                self.close_gesture();
             }
             TreeFeatureCommand::SetVisible(visible) => {
                 self.session.document.set_feature_visible(feature, visible);
@@ -909,7 +909,7 @@ impl PrintCadApp {
                         self.session.active_document_object = None;
                     }
                     self.session.journal.label_next("Delete feature");
-                    self.session.journal.note(&mut self.session.document);
+                    self.close_gesture();
                     app_log::info("Deleted feature");
                 }
             }
@@ -917,7 +917,7 @@ impl PrintCadApp {
                 let up = command == TreeFeatureCommand::MoveUp;
                 if crate::app::scripts::move_in_history(&mut self.session.document, feature, up) {
                     self.session.journal.label_next("Reorder history");
-                    self.session.journal.note(&mut self.session.document);
+                    self.close_gesture();
                     app_log::info("Reordered build history");
                 } else {
                     app_log::warn(
@@ -941,7 +941,7 @@ impl PrintCadApp {
                     return;
                 }
                 self.session.journal.label_next("Move tip");
-                self.session.journal.note(&mut self.session.document);
+                self.close_gesture();
             }
         }
     }

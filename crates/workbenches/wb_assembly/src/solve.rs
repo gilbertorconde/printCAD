@@ -32,7 +32,8 @@ pub fn joints(document: &Document) -> Vec<Joint> {
         .all_nodes()
         .filter(|(_, node)| node.workbench_id.as_str() == JOINT_KIND && !node.suppressed)
         .filter_map(|(id, node)| {
-            let feature = serde_json::from_value(node.data.clone()).ok()?;
+            // With its formulas' values in.
+            let feature = serde_json::from_value(document.feature_values(*id)?.clone()).ok()?;
             Some((
                 node.seq,
                 Joint {

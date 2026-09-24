@@ -535,7 +535,7 @@ impl PrintCadApp {
                     _ => "Console".to_string(),
                 };
                 self.in_script_tab(|app| {
-                    app.session.journal.note(&mut app.session.document);
+                    app.close_gesture();
                     app.session.journal.label_next(step);
                     app.session.journal.hold(true);
                 });
@@ -566,7 +566,7 @@ impl PrintCadApp {
             Event::Finished { label, output } => {
                 self.in_script_tab(|app| {
                     app.session.journal.hold(false);
-                    app.session.journal.note(&mut app.session.document);
+                    app.close_gesture();
                 });
                 self.script_runs.pop_front();
                 if let Some(RunKind::Agent { reply }) = kind {

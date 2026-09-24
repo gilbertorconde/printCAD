@@ -280,6 +280,42 @@ impl AssemblyWorkbench {
 }
 
 impl Workbench for AssemblyWorkbench {
+    fn parameters(&self, node: &core_document::FeatureNode) -> Vec<core_document::Parameter> {
+        use core_document::Parameter;
+        use core_document::expr::Dim;
+        match JointFeature::from_json(&node.data).map(|j| j.kind) {
+            Ok(JointKind::Mate { .. }) => {
+                vec![Parameter::new(
+                    "offset",
+                    "Offset",
+                    Dim::LENGTH,
+                    "/kind/Mate/offset",
+                )]
+            }
+            Ok(JointKind::Angle { .. }) => {
+                vec![Parameter::new(
+                    "angle",
+                    "Angle",
+                    Dim::ANGLE,
+                    "/kind/Angle/degrees",
+                )]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// A joint whose offset or angle a formula moved: the bodies follow.
+    fn values_moved(&mut self, ctx: &mut WorkbenchRuntimeContext, moved: &[FeatureId]) {
+        let joint_moved = moved.iter().any(|id| {
+            ctx.document
+                .get_feature_meta(*id)
+                .is_some_and(|n| n.workbench_id.as_str() == JOINT_KIND)
+        });
+        if joint_moved {
+            self.solve_and_apply(ctx);
+        }
+    }
+
     fn descriptor(&self) -> WorkbenchDescriptor {
         WorkbenchDescriptor::new(
             JOINT_KIND,

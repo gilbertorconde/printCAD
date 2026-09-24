@@ -837,7 +837,7 @@ impl PrintCadApp {
         // an entire drag interaction coalesces into one step.
         // A task panel's edits stay one gesture until it closes.
         if self.mouse_buttons_down == 0 && !self.session.task_open {
-            self.session.journal.note(&mut self.session.document);
+            self.close_gesture();
         }
     }
 

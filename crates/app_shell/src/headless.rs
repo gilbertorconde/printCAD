@@ -179,9 +179,31 @@ impl scripting::Host for Headless {
         out
     }
 
+    /// Each command, then the formulas settled: what a value moved has
+    /// followed before the next command reads it.
     fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let spec = self
-            .commands()
+        let answer = self.call_one(id, args);
+        self.settle_formulas();
+        answer
+    }
+}
+
+impl Headless {
+    fn settle_formulas(&mut self) {
+        self.registry.evaluate(&mut self.document);
+        let moved = self.document.take_moved_values();
+        if moved.is_empty() {
+            return;
+        }
+        for bench in self.registry.ids().to_vec() {
+            if let Ok(wb) = self.registry.workbench_mut(&bench) {
+                wb.values_moved(&mut context(&mut self.document), &moved);
+            }
+        }
+    }
+
+    fn call_one(&mut self, id: &str, args: CommandArgs) -> CommandResult {
+        let spec = scripting::Host::commands(self)
             .into_iter()
             .find(|c| c.id == id)
             .ok_or_else(|| match doc_commands().iter().any(|c| c.id == id) {

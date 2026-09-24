@@ -597,7 +597,7 @@ impl PrintCadApp {
         ));
 
         // ImportModel is a history barrier; closing the boundary clears undo.
-        self.session.journal.note(&mut self.session.document);
+        self.close_gesture();
 
         Ok(())
     }
