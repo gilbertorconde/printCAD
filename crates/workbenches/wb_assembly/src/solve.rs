@@ -405,7 +405,18 @@ impl Motion {
 /// joints leave open, the bodies around it held still. A body with none
 /// is fully placed.
 pub fn freedom(document: &Document) -> Vec<(BodyId, Vec<Motion>)> {
-    let all = usable(document);
+    // A limit stops a motion only at its ends: the motion is still there.
+    let all: Vec<Joint> = usable(document)
+        .into_iter()
+        .map(|mut j| {
+            if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } =
+                &mut j.feature.kind
+            {
+                drive.limits = None;
+            }
+            j
+        })
+        .collect();
     let free = free_bodies(&all);
     let holding: Vec<&Joint> = all
         .iter()
@@ -594,7 +605,7 @@ fn place(start: Rigid, joints: &[&Joint], others: &HashMap<BodyId, Rigid>) -> Ri
                 if dm.dot(df) < 0.0 { -df } else { df }
             }
             // A held turn is the whole rotation, not only a direction.
-            JointKind::Slider { turn } | JointKind::Fixed { turn, .. } => {
+            JointKind::Slider { turn, .. } | JointKind::Fixed { turn, .. } => {
                 let fixed = &others[&joint.feature.other_body];
                 let want = (fixed.rotation * crate::joint::quat(turn)).normalize();
                 return Some((want * current.rotation.inverse()).normalize());
@@ -1263,7 +1274,11 @@ mod tests {
             &mut doc,
             part,
             JointFeature {
-                kind: JointKind::Hinge { offset: 5.0 },
+                kind: JointKind::Hinge {
+                    offset: 5.0,
+                    zero: DQuat::IDENTITY.to_array(),
+                    drive: Default::default(),
+                },
                 moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
                 other_body: base,
                 fixed: axis([20.0, 3.0, 0.0], [0.0, 0.0, 1.0]),

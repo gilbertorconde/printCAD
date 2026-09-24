@@ -97,6 +97,27 @@ impl AssemblyWorkbench {
         }
     }
 
+    /// End a sweep, the drive back at the value it started from.
+    fn stop_playing(&mut self, ctx: &mut WorkbenchRuntimeContext) {
+        let Some(play) = self.playing.take() else {
+            return;
+        };
+        let Some(node) = ctx.document.get_feature_meta(play.joint) else {
+            return;
+        };
+        let Ok(mut joint) = JointFeature::from_json(&node.data) else {
+            return;
+        };
+        if let JointKind::Hinge { drive, .. } | JointKind::Slider { drive, .. } = &mut joint.kind {
+            drive.to = drive.to.map(|_| play.start);
+        }
+        let _ = ctx
+            .document
+            .update_feature_data(play.joint, joint.to_json());
+        ctx.document.clear_feature_dirty(play.joint);
+        self.solve_and_apply(ctx);
+    }
+
     fn joint_panel(
         &mut self,
         ui: &mut egui::Ui,
@@ -108,6 +129,7 @@ impl AssemblyWorkbench {
     ) -> TaskOutcome {
         let created = before.is_none();
         if request.cancel {
+            self.playing = None;
             match &before {
                 Some(data) => {
                     let _ = ctx.document.update_feature_data(id, data.clone());
@@ -123,6 +145,7 @@ impl AssemblyWorkbench {
             return TaskOutcome::Cancelled;
         }
         if request.accept {
+            self.stop_playing(ctx);
             crate::commands::record_joint(ctx, id, before.as_ref(), placements);
             self.task = None;
             ctx.active_document_object = None;
@@ -152,6 +175,12 @@ impl AssemblyWorkbench {
         let mut changed = false;
         let mut formula_edits: Vec<(String, Option<String>)> = Vec::new();
         let document: &core_document::Document = ctx.document;
+        let placed = |b: BodyId| -> crate::Rigid { document.body_placement(b).into() };
+        let now = node
+            .body
+            .and_then(|b| joint.travel(&placed(b), &placed(joint.other_body)));
+        let dt = f64::from(ui.input(|i| i.stable_dt).min(0.1));
+        let playing = &mut self.playing;
         Card::new().padding(SPACE_3).show(ui, |ui| {
             ui.set_width(ui.available_width());
             match &mut joint.kind {
@@ -228,7 +257,7 @@ impl AssemblyWorkbench {
                         .color(TEXT2),
                     );
                 }
-                JointKind::Hinge { offset } => {
+                JointKind::Hinge { offset, drive, .. } => {
                     changed |= number_row(
                         ui,
                         (document, id, &mut formula_edits),
@@ -240,7 +269,19 @@ impl AssemblyWorkbench {
                         core_document::expr::Dim::LENGTH,
                         offset,
                     );
-                    note(ui, "The body can only turn about the axis.");
+                    changed |= drive_rows(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        "Hinge",
+                        drive,
+                        (now, dt),
+                        playing,
+                    );
+                    note(
+                        ui,
+                        "The body can only turn about the axis. Its angle counts from \
+                         where it sat when the joint was made.",
+                    );
                 }
                 JointKind::Distance { offset } => {
                     changed |= number_row(
@@ -272,11 +313,21 @@ impl AssemblyWorkbench {
                          slide along it.",
                     );
                 }
-                JointKind::Slider { .. } => note(
-                    ui,
-                    "The body can only slide along the axis, turned as it was when the \
-                     joint was made.",
-                ),
+                JointKind::Slider { drive, .. } => {
+                    changed |= drive_rows(
+                        ui,
+                        (document, id, &mut formula_edits),
+                        "Slider",
+                        drive,
+                        (now, dt),
+                        playing,
+                    );
+                    note(
+                        ui,
+                        "The body can only slide along the axis, turned as it was when \
+                         the joint was made.",
+                    );
+                }
                 JointKind::Fixed { .. } => note(
                     ui,
                     "The body is held to the other as it sat when the joint was made; \
@@ -310,6 +361,7 @@ impl AssemblyWorkbench {
             .clicked()
             && ctx.document.remove_feature(id).is_ok()
         {
+            self.playing = None;
             // A joint the task made has nothing to undo in a recording.
             if !created {
                 ctx.record(
@@ -432,6 +484,147 @@ impl AssemblyWorkbench {
 /// A joint's number as a formula field: a value typed or dragged goes into
 /// `value`; a formula goes into `edits` and what it comes to into `value`,
 /// so the body moves while the panel is open.
+/// A hinge's or a slider's drive: held at a value, kept within limits,
+/// and, while held, swept through its range to show the motion.
+fn drive_rows(
+    ui: &mut egui::Ui,
+    (document, joint, edits): (
+        &core_document::Document,
+        core_document::FeatureId,
+        &mut Vec<(String, Option<String>)>,
+    ),
+    variant: &str,
+    drive: &mut crate::Drive,
+    (now, dt): (Option<f64>, f64),
+    playing: &mut Option<crate::Play>,
+) -> bool {
+    use core_document::expr::Dim;
+    let angular = variant == "Hinge";
+    let (dim, unit) = if angular {
+        (Dim::ANGLE, "°")
+    } else {
+        (Dim::LENGTH, " mm")
+    };
+    let mut changed = false;
+    if let Some(now) = now {
+        row(
+            ui,
+            if angular { "Angle now" } else { "Position now" },
+            &format!("{now:.2}{unit}"),
+        );
+    }
+    let to_key = format!("/kind/{variant}/drive/to");
+    let mut driven = drive.to.is_some();
+    if check_row(ui, &mut driven, "Drive")
+        .on_hover_text(if angular {
+            "Hold the hinge at an angle"
+        } else {
+            "Hold the slider at a position"
+        })
+        .changed()
+    {
+        drive.to = driven.then(|| now.unwrap_or(0.0) as f32);
+        if !driven {
+            edits.push((to_key.clone(), None));
+            *playing = None;
+        }
+        changed = true;
+    }
+    if let Some(to) = &mut drive.to {
+        changed |= number_row(
+            ui,
+            (document, joint, edits),
+            (
+                if angular { "Angle" } else { "Position" },
+                "Where the drive holds it",
+            ),
+            &to_key,
+            dim,
+            to,
+        );
+    }
+    let mut limited = drive.limits.is_some();
+    if check_row(ui, &mut limited, "Limits")
+        .on_hover_text("Keep the motion within a range while it is not driven")
+        .changed()
+    {
+        let at = now.unwrap_or(0.0) as f32;
+        drive.limits = limited.then(|| {
+            if angular {
+                [(at - 45.0).max(-180.0), (at + 45.0).min(180.0)]
+            } else {
+                [at - 10.0, at + 10.0]
+            }
+        });
+        if !limited {
+            for end in 0..2 {
+                edits.push((format!("/kind/{variant}/drive/limits/{end}"), None));
+            }
+        }
+        changed = true;
+    }
+    if let Some([low, high]) = &mut drive.limits {
+        for (end, value, label) in [(0, &mut *low, "Lowest"), (1, &mut *high, "Highest")] {
+            changed |= number_row(
+                ui,
+                (document, joint, edits),
+                (label, "An end of the range the motion stays in"),
+                &format!("/kind/{variant}/drive/limits/{end}"),
+                dim,
+                value,
+            );
+        }
+        if *low > *high {
+            std::mem::swap(low, high);
+        }
+    }
+    let limits = drive.limits;
+    let Some(to) = &mut drive.to else {
+        return changed;
+    };
+    // The sweep: through the limits, or a whole turn, or 25 mm either side
+    // of where it started.
+    let mine = playing.filter(|p| p.joint == joint);
+    let centre = f64::from(mine.map_or(*to, |p| p.start));
+    let (low, high) = match limits {
+        Some([low, high]) => (f64::from(low), f64::from(high)),
+        None if angular => (-179.0, 179.0),
+        None => (centre - 25.0, centre + 25.0),
+    };
+    let label = if mine.is_some() { "Stop" } else { "Play" };
+    if document.feature_formula(joint, &to_key).is_some() {
+        // A formula holds the value; a sweep would fight it every frame.
+        *playing = playing.filter(|p| p.joint != joint);
+    } else if ui_kit::widgets::secondary_button(ui, label)
+        .on_hover_text("Sweep the drive through its range; stopping puts it back")
+        .clicked()
+    {
+        match mine {
+            Some(p) => {
+                *to = p.start;
+                *playing = None;
+            }
+            None => {
+                let span = (high - low).max(1e-6);
+                let from = ((f64::from(*to) - low) / span).clamp(0.0, 1.0);
+                *playing = Some(crate::Play {
+                    joint,
+                    start: *to,
+                    phase: (1.0 - 2.0 * from).acos(),
+                });
+            }
+        }
+        changed = true;
+    } else if let Some(play) = playing.as_mut().filter(|p| p.joint == joint) {
+        // Back and forth every four seconds.
+        play.phase += dt * std::f64::consts::TAU / 4.0;
+        *to = (low + (high - low) * (0.5 - 0.5 * play.phase.cos())) as f32;
+        changed = true;
+        ui.ctx().request_repaint();
+    }
+    changed
+}
+
 /// A labelled number a formula can set, in a joint's settings.
 fn number_row(
     ui: &mut egui::Ui,

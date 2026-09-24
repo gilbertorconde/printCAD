@@ -13,8 +13,42 @@ use core_document::{
 use glam::{Quat, Vec3};
 use serde_json::{Value, json};
 
-use crate::joint::{Anchor, JOINT_KIND, JointFeature, JointKind, JointTool, Takes};
+use crate::joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Takes};
 use crate::solve::joints;
+
+const DRIVE: &str = "A hinge's angle (degrees from where it was made) or a slider's \
+    position (mm) to hold it at; false lets it move again";
+const LIMITS: &str = "{low, high}: the range a hinge's angle or a slider's position stays \
+    in while not driven; false takes the limits away";
+
+/// Read `drive` and `limits` into a hinge's or a slider's drive.
+fn drive_args(a: &Args, drive: &mut Drive) -> Result<(), CommandError> {
+    match a.0.get("drive") {
+        None => {}
+        Some(Value::Bool(false)) | Some(Value::Null) => drive.to = None,
+        Some(v) => {
+            let to = v
+                .as_f64()
+                .ok_or_else(|| CommandError::bad("drive", "must be a number or false"))?;
+            drive.to = Some(to as f32);
+        }
+    }
+    match a.0.get("limits") {
+        None => {}
+        Some(Value::Bool(false)) | Some(Value::Null) => drive.limits = None,
+        Some(v) => {
+            let bad = || CommandError::bad("limits", "must be {low, high} or false");
+            let pair = v.as_array().filter(|l| l.len() == 2).ok_or_else(bad)?;
+            let low = pair[0].as_f64().ok_or_else(bad)? as f32;
+            let high = pair[1].as_f64().ok_or_else(bad)? as f32;
+            if low > high {
+                return Err(CommandError::bad("limits", "low must not be above high"));
+            }
+            drive.limits = Some([low, high]);
+        }
+    }
+    Ok(())
+}
 
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
@@ -62,10 +96,18 @@ pub fn register(context: &mut WorkbenchContext) {
                 ParamKind::Number,
                 "Between their outward normals; the angle they make now when left out",
             ),
-            JointTool::Hinge => spec.optional(
-                "offset",
-                ParamKind::Number,
-                "How far along the axis the first sits from the second, mm",
+            JointTool::Hinge => spec
+                .optional(
+                    "offset",
+                    ParamKind::Number,
+                    "How far along the axis the first sits from the second, mm",
+                )
+                .optional("drive", ParamKind::Any, DRIVE)
+                .optional("limits", ParamKind::Any, LIMITS),
+            JointTool::Slider => spec.optional("drive", ParamKind::Any, DRIVE).optional(
+                "limits",
+                ParamKind::Any,
+                LIMITS,
             ),
             JointTool::Distance => spec.optional(
                 "offset",
@@ -91,7 +133,19 @@ pub fn register(context: &mut WorkbenchContext) {
             )
             .optional("flip", ParamKind::Bool, "A mate's side")
             .optional("degrees", ParamKind::Number, "An angle joint's angle")
-            .optional("radius", ParamKind::Number, "A tangent's radius, mm"),
+            .optional("radius", ParamKind::Number, "A tangent's radius, mm")
+            .optional("drive", ParamKind::Any, DRIVE)
+            .optional("limits", ParamKind::Any, LIMITS),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.travel",
+            "Where a hinge or a slider has got to: the hinge's angle in degrees, \
+             the slider's position in mm",
+        )
+        .param("joint", ParamKind::Id, "")
+        .returns("a number")
+        .read_only(),
     );
     context.register_command(
         CommandSpec::new(
@@ -177,7 +231,14 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         *degrees = v as f32;
                     }
                 }
-                JointKind::Hinge { offset } | JointKind::Distance { offset } => {
+                JointKind::Hinge { offset, drive, .. } => {
+                    if let Some(v) = a.opt_number("offset")? {
+                        *offset = v as f32;
+                    }
+                    drive_args(&a, drive)?;
+                }
+                JointKind::Slider { drive, .. } => drive_args(&a, drive)?,
+                JointKind::Distance { offset } => {
                     if let Some(v) = a.opt_number("offset")? {
                         *offset = v as f32;
                     }
@@ -189,7 +250,6 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 }
                 JointKind::Align
                 | JointKind::Ground
-                | JointKind::Slider { .. }
                 | JointKind::Fixed { .. }
                 | JointKind::Parallel
                 | JointKind::Perpendicular => {}
@@ -201,6 +261,17 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map_err(|e| CommandError::failed(e.to_string()))?;
             ctx.document.clear_feature_dirty(joint);
             solved(ctx, Value::Null)
+        }
+        "asm.travel" => {
+            let joint = FeatureId(a.id("joint")?);
+            let found = joints(ctx.document).into_iter().find(|j| j.id == joint);
+            let found = found.ok_or_else(|| CommandError::bad("joint", "is not a joint"))?;
+            let at = |b: BodyId| -> crate::Rigid { ctx.document.body_placement(b).into() };
+            let travel = found
+                .feature
+                .travel(&at(found.body), &at(found.feature.other_body))
+                .ok_or_else(|| CommandError::bad("joint", "is not a hinge or a slider"))?;
+            Ok(json!(travel))
         }
         "asm.ground" => {
             let body = BodyId(a.id("body")?);
@@ -345,7 +416,14 @@ fn make_joint(id: &str, a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandR
                 *degrees = d as f32;
             }
         }
-        JointKind::Hinge { offset } | JointKind::Distance { offset } => {
+        JointKind::Hinge { offset, drive, .. } => {
+            if let Some(v) = a.opt_number("offset")? {
+                *offset = v as f32;
+            }
+            drive_args(a, drive)?;
+        }
+        JointKind::Slider { drive, .. } => drive_args(a, drive)?,
+        JointKind::Distance { offset } => {
             if let Some(v) = a.opt_number("offset")? {
                 *offset = v as f32;
             }
@@ -399,11 +477,19 @@ pub(crate) fn record_joint(
     let settings = |kind: &JointKind| match *kind {
         JointKind::Mate { flip, offset } => json!({"offset": offset, "flip": flip}),
         JointKind::Angle { degrees } => json!({"degrees": degrees}),
-        JointKind::Hinge { offset } | JointKind::Distance { offset } => json!({"offset": offset}),
+        JointKind::Hinge { offset, drive, .. } => json!({
+            "offset": offset,
+            "drive": drive.to.map_or(json!(false), |v| json!(v)),
+            "limits": drive.limits.map_or(json!(false), |l| json!(l)),
+        }),
+        JointKind::Slider { drive, .. } => json!({
+            "drive": drive.to.map_or(json!(false), |v| json!(v)),
+            "limits": drive.limits.map_or(json!(false), |l| json!(l)),
+        }),
+        JointKind::Distance { offset } => json!({"offset": offset}),
         JointKind::Tangent { radius } => json!({"radius": radius}),
         JointKind::Align
         | JointKind::Ground
-        | JointKind::Slider { .. }
         | JointKind::Fixed { .. }
         | JointKind::Parallel
         | JointKind::Perpendicular => json!({}),
@@ -670,6 +756,64 @@ mod tests {
             json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
         );
         assert!(both_flat.is_err(), "one face of each");
+    }
+
+    #[test]
+    fn a_hinge_is_driven_to_an_angle_and_kept_within_its_limits() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        let joint = call(
+            &mut doc,
+            "asm.hinge",
+            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin}),
+        )
+        .unwrap();
+        let travel = |doc: &mut Document| {
+            call(doc, "asm.travel", json!({"joint": joint}))
+                .unwrap()
+                .as_f64()
+                .unwrap()
+        };
+        assert!(travel(&mut doc).abs() < 1e-6, "made where it sits");
+        call(&mut doc, "asm.set", json!({"joint": joint, "drive": 30})).unwrap();
+        assert!((travel(&mut doc) - 30.0).abs() < 1e-3);
+        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+        assert!((x[1].atan2(x[0]).to_degrees() - 30.0).abs() < 1e-2, "{x:?}");
+        // Let go and limited below where it is: it turns back to the limit.
+        call(
+            &mut doc,
+            "asm.set",
+            json!({"joint": joint, "drive": false, "limits": [-10, 10]}),
+        )
+        .unwrap();
+        assert!((travel(&mut doc) - 10.0).abs() < 1e-2);
+        // Within its limits it is still free to turn.
+        assert_eq!(crate::freedom(&doc)[0].1.len(), 1);
+        let bad = call(
+            &mut doc,
+            "asm.set",
+            json!({"joint": joint, "limits": [5, -5]}),
+        );
+        assert!(bad.is_err());
+    }
+
+    #[test]
+    fn a_slider_is_driven_along_its_axis() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let rail = json!({"axis": {"point": [0, 0, 0], "direction": [1, 0, 0]}});
+        let joint = call(
+            &mut doc,
+            "asm.slider",
+            json!({"body": a.0.to_string(), "face": rail, "other": b.0.to_string(),
+                   "other_face": rail, "drive": 12.5}),
+        )
+        .unwrap();
+        assert!((doc.body_placement(a).translation[0] - 12.5).abs() < 1e-3);
+        assert!(crate::freedom(&doc)[0].1.is_empty(), "driven: nothing left");
+        let travel = call(&mut doc, "asm.travel", json!({"joint": joint})).unwrap();
+        assert!((travel.as_f64().unwrap() - 12.5).abs() < 1e-3);
     }
 
     #[test]

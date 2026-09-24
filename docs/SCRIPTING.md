@@ -872,6 +872,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
 - `name` (string, optional): Its name in the tree
 - `offset` (number, optional): How far along the axis the first sits from the second, mm
+- `drive` (any, optional): A hinge's angle (degrees from where it was made) or a slider's position (mm) to hold it at; false lets it move again
+- `limits` (any, optional): {low, high}: the range a hinge's angle or a slider's position stays in while not driven; false takes the limits away
 - Returns the joint's id
 
 `pc.asm.slider`: Put two axes on one line without turning: the body can only slide along it.
@@ -881,6 +883,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `other` (id): The body it is held against
 - `other_face` (any): A round face, {axis = {point, direction}}, as pc.doc.faces lists it; an edge's line or circle axis goes the same way
 - `name` (string, optional): Its name in the tree
+- `drive` (any, optional): A hinge's angle (degrees from where it was made) or a slider's position (mm) to hold it at; false lets it move again
+- `limits` (any, optional): {low, high}: the range a hinge's angle or a slider's position stays in while not driven; false takes the limits away
 - Returns the joint's id
 
 `pc.asm.fix`: Hold a body to another where it sits.
@@ -937,6 +941,13 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `flip` (boolean, optional): A mate's side
 - `degrees` (number, optional): An angle joint's angle
 - `radius` (number, optional): A tangent's radius, mm
+- `drive` (any, optional): A hinge's angle (degrees from where it was made) or a slider's position (mm) to hold it at; false lets it move again
+- `limits` (any, optional): {low, high}: the range a hinge's angle or a slider's position stays in while not driven; false takes the limits away
+
+`pc.asm.travel`: Where a hinge or a slider has got to: the hinge's angle in degrees, the slider's position in mm.
+
+- `joint` (id)
+- Returns a number
 
 `pc.asm.ground`: Keep a body where it is: the bodies joined to it are placed against it.
 

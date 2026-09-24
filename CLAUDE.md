@@ -142,7 +142,10 @@ cargo fmt --all                   # CI enforces --check
   where it is. `JointTool` is the one table of what each tool takes, its
   command, icon and key, and how a joint starts from where the bodies sit:
   an angle or distance at what they make, a slider's or fixed joint's
-  relative turn recorded. Anchors are kept in each body's own frame; an
+  relative turn recorded. A hinge or slider carries a `Drive`: its one
+  motion (`JointFeature::travel`, degrees from the turn it was made at, or
+  mm along the axis) held at a value or kept within limits, which
+  `freedom` ignores. Anchors are kept in each body's own frame; an
   axis comes from a round face or an edge, a circular edge's axis from
   `EdgeRef::circle`, which the host fits to the outline), the solver
   (`solve.rs`: each free body placed on its own against the bodies placed

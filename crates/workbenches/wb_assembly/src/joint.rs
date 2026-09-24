@@ -31,11 +31,27 @@ pub enum JointKind {
     /// It names no other body and holds no anchors.
     Ground,
     /// Two axes as one, `offset` millimetres apart along them: a hinge's
-    /// pin in its knuckle. Only the turn about the axis is left.
-    Hinge { offset: f32 },
+    /// pin in its knuckle. Only the turn about the axis is left, which
+    /// `drive` can hold or keep within limits: its angle, in degrees, is
+    /// the turn from `zero`, the body's turn in the other's frame when the
+    /// joint was made.
+    Hinge {
+        offset: f32,
+        #[serde(default = "unturned")]
+        zero: [f64; 4],
+        #[serde(default)]
+        drive: Drive,
+    },
     /// Two axes as one, the turn about them held as it was made: a
-    /// drawer's runner. Only the slide along the axis is left.
-    Slider { turn: [f64; 4] },
+    /// drawer's runner. Only the slide along the axis is left, which
+    /// `drive` can hold or keep within limits: its position, in
+    /// millimetres, is how far along the axis the first sits from the
+    /// second.
+    Slider {
+        turn: [f64; 4],
+        #[serde(default)]
+        drive: Drive,
+    },
     /// The body held to the other exactly as it sat when the joint was
     /// made (`turn` and `shift` in the other body's frame).
     Fixed { turn: [f64; 4], shift: [f64; 3] },
@@ -49,6 +65,52 @@ pub enum JointKind {
     /// A flat face against a round one of `radius`: the round face's axis
     /// parallel to the flat face, a radius off it, on its outer side.
     Tangent { radius: f32 },
+}
+
+/// What is done with the one motion a hinge or a slider leaves: held at
+/// `to`, or kept between `limits` (low, high), or left free.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+pub struct Drive {
+    #[serde(default)]
+    pub to: Option<f32>,
+    #[serde(default)]
+    pub limits: Option<[f32; 2]>,
+}
+
+impl Drive {
+    /// Its residual, when it holds anything, for a motion at `now`;
+    /// `angular` motions are in degrees and wrap round.
+    fn residual(&self, now: f64, angular: bool, out: &mut Vec<f64>) {
+        let apart = |target: f32| {
+            let d = now - f64::from(target);
+            if angular {
+                (d + 180.0).rem_euclid(360.0) - 180.0
+            } else {
+                d
+            }
+        };
+        let scale = if angular {
+            ARM_MM * std::f64::consts::PI / 180.0
+        } else {
+            1.0
+        };
+        if let Some(to) = self.to {
+            out.push(apart(to) * scale);
+        } else if let Some([low, high]) = self.limits {
+            let (below, above) = (apart(low), apart(high));
+            out.push(if below < 0.0 {
+                below * scale
+            } else if above > 0.0 {
+                above * scale
+            } else {
+                0.0
+            });
+        }
+    }
+}
+
+fn unturned() -> [f64; 4] {
+    DQuat::IDENTITY.to_array()
 }
 
 /// A body's turn and shift in another body's frame.
@@ -257,6 +319,31 @@ const ARM_MM: f64 = 50.0;
 impl JointFeature {
     /// How far the joint is from holding with the two bodies placed so: a
     /// list of mismatches, each zero when it holds, in millimetres.
+    /// Where a hinge or a slider has got to: the hinge's angle in degrees
+    /// (-180 to 180) or the slider's position in millimetres.
+    pub fn travel(&self, moving: &Rigid, fixed: &Rigid) -> Option<f64> {
+        match self.kind {
+            JointKind::Hinge { zero, .. } => {
+                // The turn since the joint was made, in the other body's
+                // frame, and how much of it is about the axis there.
+                let (now, _) = relative(moving, fixed);
+                let mut d = (now * quat(zero).inverse()).normalize();
+                if d.w < 0.0 {
+                    d = -d;
+                }
+                let (_, axis) = self.fixed.parts();
+                let along = DVec3::new(d.x, d.y, d.z).dot(axis.normalize_or_zero());
+                Some((2.0 * along.atan2(d.w)).to_degrees())
+            }
+            JointKind::Slider { .. } => {
+                let (pm, _) = self.moving.placed(moving);
+                let (pf, df) = self.fixed.placed(fixed);
+                Some((pm - pf).dot(df))
+            }
+            _ => None,
+        }
+    }
+
     pub fn residuals(&self, moving: &Rigid, fixed: &Rigid, out: &mut Vec<f64>) {
         let (pm, dm) = self.moving.placed(moving);
         let (pf, df) = self.fixed.placed(fixed);
@@ -277,12 +364,16 @@ impl JointFeature {
             }
             // Grounding fixes the body rather than asking anything of it.
             JointKind::Ground => {}
-            JointKind::Hinge { offset } => {
+            JointKind::Hinge { offset, drive, .. } => {
                 out.extend(dm.cross(df).to_array().map(|c| c * ARM_MM));
                 out.extend((pm - pf).cross(df).to_array());
                 out.push((pm - pf).dot(df) - f64::from(offset));
+                if let Some(angle) = self.travel(moving, fixed) {
+                    drive.residual(angle, true, out);
+                }
             }
-            JointKind::Slider { turn } => {
+            JointKind::Slider { turn, drive } => {
+                drive.residual((pm - pf).dot(df), false, out);
                 out.extend((pm - pf).cross(df).to_array());
                 let (now, _) = relative(moving, fixed);
                 out.extend(turn_between(quat(turn), now).to_array().map(|c| c * ARM_MM));
@@ -540,9 +631,14 @@ impl JointTool {
             JointTool::Angle => JointKind::Angle {
                 degrees: moving.angle_to(at, fixed, fixed_at),
             },
-            JointTool::Hinge => JointKind::Hinge { offset: 0.0 },
+            JointTool::Hinge => JointKind::Hinge {
+                offset: 0.0,
+                zero: turn.to_array(),
+                drive: Drive::default(),
+            },
             JointTool::Slider => JointKind::Slider {
                 turn: turn.to_array(),
+                drive: Drive::default(),
             },
             JointTool::Fixed => JointKind::Fixed {
                 turn: turn.to_array(),

@@ -22,7 +22,7 @@ use core_document::{
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
 
-pub use joint::{Anchor, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
+pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
 pub use solve::{HOLDS_MM, Joint, Motion, SolveError, freedom, joints, solve};
 
 /// A joint being made: the kind, and the first face once picked.
@@ -61,6 +61,19 @@ pub struct AssemblyWorkbench {
     /// What each jointed body may still do, and at which edit of the
     /// document that was worked out: the status bar asks every frame.
     freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
+    /// A driven hinge or slider swept through its range to show it move.
+    #[cfg(feature = "egui")]
+    playing: Option<Play>,
+}
+
+/// A joint's drive being swept: the value it held before, to go back to,
+/// and how far round the sweep is (radians of a cosine).
+#[cfg(feature = "egui")]
+#[derive(Debug, Clone, Copy)]
+struct Play {
+    joint: FeatureId,
+    start: f32,
+    phase: f64,
 }
 
 /// Each jointed body and the motions its joints leave it.
@@ -81,6 +94,36 @@ impl AssemblyWorkbench {
             }
         }
     }
+}
+
+/// A drive's numbers, those it has: what it holds the motion at and its
+/// limits.
+fn drive_parameters(
+    variant: &str,
+    drive: &Drive,
+    dim: core_document::expr::Dim,
+) -> Vec<core_document::Parameter> {
+    use core_document::Parameter;
+    let mut out = Vec::new();
+    if drive.to.is_some() {
+        out.push(Parameter::new(
+            "drive",
+            "Drive",
+            dim,
+            format!("/kind/{variant}/drive/to"),
+        ));
+    }
+    if drive.limits.is_some() {
+        for (end, name, label) in [(0, "lowest", "Lowest"), (1, "highest", "Highest")] {
+            out.push(Parameter::new(
+                name,
+                label,
+                dim,
+                format!("/kind/{variant}/drive/limits/{end}"),
+            ));
+        }
+    }
+    out
 }
 
 /// Every body's placement, to put back when a task is cancelled.
@@ -294,14 +337,17 @@ impl Workbench for AssemblyWorkbench {
                     "/kind/Angle/degrees",
                 )]
             }
-            Ok(JointKind::Hinge { .. }) => {
-                vec![Parameter::new(
+            Ok(JointKind::Hinge { drive, .. }) => {
+                let mut out = vec![Parameter::new(
                     "offset",
                     "Height",
                     Dim::LENGTH,
                     "/kind/Hinge/offset",
-                )]
+                )];
+                out.extend(drive_parameters("Hinge", &drive, Dim::ANGLE));
+                out
             }
+            Ok(JointKind::Slider { drive, .. }) => drive_parameters("Slider", &drive, Dim::LENGTH),
             Ok(JointKind::Distance { .. }) => {
                 vec![Parameter::new(
                     "offset",
