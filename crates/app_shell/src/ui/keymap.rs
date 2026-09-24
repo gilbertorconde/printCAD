@@ -61,6 +61,7 @@ pub enum HostAction {
     Console,
     RunScript,
     Record,
+    Assistant,
 }
 
 struct HostSpec {
@@ -258,6 +259,13 @@ const HOST: &[HostSpec] = {
             &["Ctrl+,"],
         )),
         anywhere(spec(LogPanel, "app.log", "Log panel", "Application", &[])),
+        anywhere(spec(
+            Assistant,
+            "app.assistant",
+            "Assistant",
+            "Application",
+            &[],
+        )),
         anywhere(spec(
             Console,
             "app.console",
@@ -695,6 +703,7 @@ pub enum HostOutcome {
     OpenPalette,
     OpenPreferences,
     ToggleConsole,
+    ToggleAssistant,
     Nothing,
 }
 
@@ -781,6 +790,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Shaded => C(UiCommand::SetDrawStyle(settings::DrawStyle::Shaded)),
         Wireframe => C(UiCommand::SetDrawStyle(settings::DrawStyle::Wireframe)),
         Console => HostOutcome::ToggleConsole,
+        Assistant => HostOutcome::ToggleAssistant,
         RunScript => C(UiCommand::File(FileCommand::RunScript)),
         Record => C(UiCommand::ToggleRecording),
     }

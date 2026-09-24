@@ -81,6 +81,9 @@ pub struct CommandSpec {
     /// It takes named arguments beyond `params` (such as any field of a
     /// feature), described here.
     pub extra_args: Option<String>,
+    /// It only reads: it changes neither the document nor the files, so an
+    /// agent may run it without asking.
+    pub read_only: bool,
 }
 
 impl CommandSpec {
@@ -91,7 +94,14 @@ impl CommandSpec {
             params: Vec::new(),
             returns: "nothing".to_string(),
             extra_args: None,
+            read_only: false,
         }
+    }
+
+    /// Say that it only reads.
+    pub fn read_only(mut self) -> Self {
+        self.read_only = true;
+        self
     }
 
     /// A required argument.
@@ -177,6 +187,7 @@ impl CommandSpec {
             "summary": self.summary,
             "params": params,
             "returns": self.returns,
+            "read_only": self.read_only,
         });
         if let Some(extra) = &self.extra_args {
             out["extra_args"] = Value::String(extra.clone());

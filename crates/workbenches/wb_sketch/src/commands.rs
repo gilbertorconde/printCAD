@@ -123,7 +123,8 @@ pub fn register(context: &mut WorkbenchContext) {
             "sketch.geometry",
             "List the sketch's elements with their points",
         ))
-        .returns("a list of {id, kind, points, radius?, construction}"),
+        .returns("a list of {id, kind, points, radius?, construction}")
+        .read_only(),
     );
     context.register_command(
         sketch(CommandSpec::new(
@@ -310,14 +311,16 @@ pub fn register(context: &mut WorkbenchContext) {
             "sketch.constraints",
             "List the sketch's constraints",
         ))
-        .returns("a list of {id, kind, items, value?}"),
+        .returns("a list of {id, kind, items, value?}")
+        .read_only(),
     );
     context.register_command(
         sketch(CommandSpec::new(
             "sketch.status",
             "How constrained the sketch is, and what conflicts",
         ))
-        .returns("{dof, solved, redundant, conflicting}"),
+        .returns("{dof, solved, redundant, conflicting}")
+        .read_only(),
     );
     context.register_command(
         sketch(CommandSpec::new(

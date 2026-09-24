@@ -23,6 +23,11 @@ pub enum Job {
     Line(String),
     /// A whole script; `name` names it in messages.
     Script { source: String, name: String },
+    /// One command: the output's value is its answer as JSON.
+    Command {
+        id: String,
+        args: core_document::CommandArgs,
+    },
 }
 
 impl Job {
@@ -32,6 +37,7 @@ impl Job {
         match self {
             Job::Line(line) => line.clone(),
             Job::Script { name, .. } => name.clone(),
+            Job::Command { id, .. } => id.clone(),
         }
     }
 }
@@ -157,6 +163,19 @@ fn run_jobs(
         let output = match &job {
             Job::Line(line) => engine.eval_line(line, &mut host),
             Job::Script { source, name } => engine.run_script(source, name, &mut host),
+            Job::Command { id, args } => match host.call(id, args.clone()) {
+                Ok(answer) => RunOutput {
+                    value: Some(
+                        serde_json::to_string_pretty(&answer)
+                            .unwrap_or_else(|_| answer.to_string()),
+                    ),
+                    ..RunOutput::default()
+                },
+                Err(err) => RunOutput {
+                    error: Some(format!("{id}: {err}")),
+                    ..RunOutput::default()
+                },
+            },
         };
         send(Event::Finished { label, output });
     }
@@ -239,6 +258,28 @@ mod tests {
         serve(&mut thread);
         thread.submit(Job::Line("x + 1".into()), Vec::new());
         assert_eq!(serve(&mut thread).1.value.as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn a_single_command_answers_json() {
+        let mut thread = ScriptThread::spawn(|| {});
+        let args = json!({"length": 2}).as_object().unwrap().clone();
+        thread.submit(
+            Job::Command {
+                id: "part.pad".into(),
+                args,
+            },
+            Vec::new(),
+        );
+        assert_eq!(serve(&mut thread).1.value.as_deref(), Some("\"pad-1\""));
+        thread.submit(
+            Job::Command {
+                id: "no.such".into(),
+                args: Default::default(),
+            },
+            Vec::new(),
+        );
+        assert!(serve(&mut thread).1.error.unwrap().contains("no command"));
     }
 
     #[test]

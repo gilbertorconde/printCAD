@@ -54,6 +54,39 @@ pub struct UserSettings {
     /// Keyboard shortcuts the user changed.
     #[serde(default)]
     pub keyboard: KeyboardSettings,
+    /// The AI agents chats can talk to.
+    #[serde(default)]
+    pub ai: AiSettings,
+}
+
+/// The AI agents a chat can talk to, and how their changes are allowed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiSettings {
+    pub agents: Vec<AgentSettings>,
+    /// A new chat holds each change an agent makes for the user's OK.
+    pub ask_before_changes: bool,
+}
+
+impl Default for AiSettings {
+    fn default() -> Self {
+        Self {
+            agents: Vec::new(),
+            ask_before_changes: true,
+        }
+    }
+}
+
+/// An agent that speaks the Agent Client Protocol: the program to start,
+/// its arguments and its environment.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentSettings {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    /// `NAME=value` pairs added to its environment.
+    pub env: Vec<(String, String)>,
 }
 
 /// The user's keyboard shortcuts, as changes to the defaults: an action
@@ -120,6 +153,7 @@ impl Default for UserSettings {
             printing: PrintingSettings::default(),
             workbenches: std::collections::HashMap::new(),
             keyboard: KeyboardSettings::default(),
+            ai: AiSettings::default(),
         }
     }
 }

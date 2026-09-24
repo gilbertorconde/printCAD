@@ -25,17 +25,22 @@ use crate::ui::keymap::{self, HostOutcome, HostState};
 pub(crate) fn doc_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("doc.info", "The document's name, file and unit")
-            .returns("{name, file, unit, modified}"),
+            .returns("{name, file, unit, modified}")
+            .read_only(),
         CommandSpec::new("doc.bodies", "List the bodies")
-            .returns("a list of {id, name, visible, features}"),
+            .returns("a list of {id, name, visible, features}")
+            .read_only(),
         CommandSpec::new("doc.features", "List the features in build order")
             .optional("body", ParamKind::Id, "Only this body's")
-            .returns("a list of {id, name, kind, body, visible, suppressed, error}"),
+            .returns("a list of {id, name, kind, body, visible, suppressed, error}")
+            .read_only(),
         CommandSpec::new("doc.feature", "A feature with its fields")
             .param("id", ParamKind::Id, "")
-            .returns("{id, name, kind, body, visible, fields}"),
+            .returns("{id, name, kind, body, visible, fields}")
+            .read_only(),
         CommandSpec::new("doc.selection", "What is selected")
-            .returns("{item, body, feature}, each an id or nil"),
+            .returns("{item, body, feature}, each an id or nil")
+            .read_only(),
         CommandSpec::new(
             "doc.select",
             "Select a body or a feature, as a click on its row",
@@ -87,20 +92,23 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "Rebuild every solid that changed, repair or convert what was asked, and wait",
         )
         .optional("timeout", ParamKind::Number, "Seconds to wait at most (60)")
-        .returns("a list of {feature, error} for every feature that failed"),
+        .returns("a list of {feature, error} for every feature that failed")
+        .read_only(),
         CommandSpec::new("doc.faces", "The faces of a body's solid, where it sits")
             .param("body", ParamKind::Id, "")
             .returns(
                 "a list of {index, kind, point, area, normal?, axis?, radius?}: \
                  point lies on the face, normal is a flat face's outward one, \
                  axis a turned face's {point, direction}",
-            ),
+            )
+            .read_only(),
         CommandSpec::new(
             "doc.measure",
             "A body's volume, surface area, centre and bounds",
         )
         .param("body", ParamKind::Id, "")
-        .returns("{volume, area, centre, min, max, approximate}"),
+        .returns("{volume, area, centre, min, max, approximate}")
+        .read_only(),
     ]
 }
 
@@ -115,6 +123,7 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
                 Palette
                     | Preferences
                     | Console
+                    | Assistant
                     | RunScript
                     | Record
                     | Delete
@@ -122,7 +131,16 @@ fn key_commands() -> impl Iterator<Item = (CommandSpec, keymap::HostAction)> {
                     | PivotAtCursor
             )
         })
-        .map(|(id, label, action)| (with_file_args(CommandSpec::new(id, label), action), action))
+        .map(|(id, label, action)| {
+            let spec = with_file_args(CommandSpec::new(id, label), action);
+            // The view's commands move the camera, not the document.
+            let spec = if id.starts_with("view.") {
+                spec.read_only()
+            } else {
+                spec
+            };
+            (spec, action)
+        })
 }
 
 /// A file command takes the file by name, to run without its dialog.
@@ -163,7 +181,8 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
 fn app_commands() -> Vec<CommandSpec> {
     vec![
         CommandSpec::new("app.workbenches", "The workbenches, in the order they load")
-            .returns("a list of {id, label, active}"),
+            .returns("a list of {id, label, active}")
+            .read_only(),
         CommandSpec::new("app.workbench", "Switch to a workbench").param(
             "id",
             ParamKind::String,
@@ -180,7 +199,8 @@ fn app_commands() -> Vec<CommandSpec> {
                 ParamKind::String,
                 "The active one when left out",
             )
-            .returns("a list of {id, label, keys}"),
+            .returns("a list of {id, label, keys}")
+            .read_only(),
     ]
 }
 
@@ -291,17 +311,18 @@ impl PrintCadApp {
     /// Run one line typed in the console on the script thread.
     pub(crate) fn run_console_line(&mut self, line: &str) {
         console::push(LineKind::Input, line);
-        self.submit_script(scripting::Job::Line(line.to_string()), false);
+        self.submit_script(scripting::Job::Line(line.to_string()), RunKind::Console);
     }
 
-    fn submit_script(&mut self, job: scripting::Job, from_file: bool) {
+    pub(crate) fn submit_script(&mut self, job: scripting::Job, kind: RunKind) {
         let commands = command_specs(&self.registry);
         self.script_runs.push_back(ScriptRun {
             tab: self.session.tab,
-            from_file,
+            kind,
             label: match &job {
                 scripting::Job::Line(_) => "a console line".to_string(),
                 scripting::Job::Script { name, .. } => name.clone(),
+                scripting::Job::Command { id, .. } => id.clone(),
             },
         });
         self.script_thread.submit(job, commands);
@@ -451,7 +472,7 @@ impl PrintCadApp {
         match std::fs::read_to_string(path) {
             Ok(source) => {
                 console::push(LineKind::Input, format!("run {name}"));
-                self.submit_script(scripting::Job::Script { source, name }, true);
+                self.submit_script(scripting::Job::Script { source, name }, RunKind::File);
             }
             Err(err) => {
                 console::push(LineKind::Error, format!("{name}: {err}"));
@@ -503,13 +524,15 @@ impl PrintCadApp {
 
     fn script_event(&mut self, event: scripting::Event, event_loop: &ActiveEventLoop) {
         use scripting::Event;
-        let from_file = self.script_runs.front().is_some_and(|r| r.from_file);
+        let kind = self.script_runs.front().map(|r| r.kind.clone());
+        let from_file = matches!(kind, Some(RunKind::File));
+        let agent = matches!(kind, Some(RunKind::Agent { .. }));
         match event {
             Event::Started { label } => {
-                let step = if from_file {
-                    format!("Run {label}")
-                } else {
-                    "Console".to_string()
+                let step = match kind {
+                    Some(RunKind::File) => format!("Run {label}"),
+                    Some(RunKind::Agent { .. }) => format!("Agent: {label}"),
+                    _ => "Console".to_string(),
                 };
                 self.in_script_tab(|app| {
                     app.session.journal.note(&mut app.session.document);
@@ -518,6 +541,11 @@ impl PrintCadApp {
                 });
             }
             Event::Printed(line) => {
+                // An agent's script answers the agent: its output goes back
+                // with it when it ends.
+                if agent {
+                    return;
+                }
                 console::push(LineKind::Printed, line);
                 if from_file {
                     self.console_attention = true;
@@ -541,6 +569,11 @@ impl PrintCadApp {
                     app.session.journal.note(&mut app.session.document);
                 });
                 self.script_runs.pop_front();
+                if let Some(RunKind::Agent { reply }) = kind {
+                    let _ = reply.send(agent_answer(output));
+                    self.redraw_needed = true;
+                    return;
+                }
                 if let Some(value) = output.value {
                     console::push(LineKind::Value, value);
                 }
@@ -906,13 +939,54 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
 }
 
 /// A script run submitted to the script thread: the tab it runs against
-/// and whether it is a file (whose output opens the console).
+/// and who asked for it.
 #[derive(Debug, Clone)]
 pub(crate) struct ScriptRun {
     pub tab: Uuid,
-    pub from_file: bool,
-    /// The script's name, or the console line.
+    pub kind: RunKind,
+    /// The script's name, the console line, or the command.
     pub label: String,
+}
+
+/// Who asked for a script run, and where its output goes.
+#[derive(Debug, Clone)]
+pub(crate) enum RunKind {
+    /// A console line: its output shows there.
+    Console,
+    /// A script file: its output shows in the console, which opens for it.
+    File,
+    /// An agent's tool call: its output is the answer.
+    Agent {
+        reply: std::sync::mpsc::Sender<agents::mcp::ToolAnswer>,
+    },
+}
+
+/// What an agent's run answers: what it printed and came to, or why it
+/// stopped.
+fn agent_answer(output: scripting::RunOutput) -> agents::mcp::ToolAnswer {
+    let mut text = output.printed.join("\n");
+    let mut add = |part: &str| {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(part);
+    };
+    match (&output.error, &output.value) {
+        (Some(error), _) => {
+            add(error);
+            agents::mcp::ToolAnswer::error(text)
+        }
+        (None, Some(value)) => {
+            add(value);
+            agents::mcp::ToolAnswer::text(text)
+        }
+        (None, None) => {
+            if text.is_empty() {
+                text = "done".to_string();
+            }
+            agents::mcp::ToolAnswer::text(text)
+        }
+    }
 }
 
 /// A `doc.rebuild` waiting on the kernel.

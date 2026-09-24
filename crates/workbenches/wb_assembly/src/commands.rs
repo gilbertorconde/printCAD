@@ -68,7 +68,8 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new("asm.placement", "Where a body sits")
             .param("body", ParamKind::Id, "")
-            .returns("{translation, rotation}, rotation a quaternion {x, y, z, w}"),
+            .returns("{translation, rotation}, rotation a quaternion {x, y, z, w}")
+            .read_only(),
     );
     context.register_command(
         CommandSpec::new("asm.place", "Put a body at a placement")

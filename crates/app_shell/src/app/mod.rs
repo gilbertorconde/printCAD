@@ -1,5 +1,6 @@
 //! Application-shell internals split out of `main.rs`.
 
+pub(crate) mod chats;
 pub(crate) mod commands;
 pub(crate) mod doc_io;
 pub(crate) mod edges;
@@ -8,6 +9,7 @@ pub(crate) mod frame;
 pub(crate) mod gfx;
 pub(crate) mod import_report;
 pub(crate) mod input;
+pub(crate) mod mcp;
 pub(crate) mod recompute;
 pub(crate) mod scripts;
 #[cfg(test)]

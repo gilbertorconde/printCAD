@@ -1,3 +1,4 @@
+mod assistant;
 mod combo_view;
 mod command_palette;
 mod context_menu;
@@ -105,6 +106,7 @@ pub struct UiLayer {
     /// act on them (Tab would move focus, Enter would accept the task).
     swallowed_keys: Vec<egui::Key>,
     console: console_view::ConsoleState,
+    assistant: assistant::AssistantState,
 }
 
 impl UiLayer {
@@ -138,6 +140,7 @@ impl UiLayer {
             recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
             console: console_view::ConsoleState::load(),
+            assistant: Default::default(),
         }
     }
 
@@ -242,6 +245,9 @@ impl UiLayer {
             command_ids,
             script_running,
             recording,
+            chats,
+            approvals,
+            assistant_attention,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -285,6 +291,9 @@ impl UiLayer {
         if console_attention {
             self.console.open = true;
         }
+        if assistant_attention {
+            self.assistant.open = true;
+        }
         // The workbenches hear of their keys at the start and after every
         // change, not every frame.
         let workbench_keys = keymap.workbench_keys();
@@ -320,6 +329,7 @@ impl UiLayer {
                                 keymap::HostOutcome::Command(command) => commands.push(command),
                                 keymap::HostOutcome::OpenPalette => self.palette.open(),
                                 keymap::HostOutcome::ToggleConsole => self.console.toggle(),
+                                keymap::HostOutcome::ToggleAssistant => self.assistant.toggle(),
                                 keymap::HostOutcome::OpenPreferences => {
                                     let (group, tab) =
                                         (self.preferences.group, self.preferences.tab);
@@ -355,6 +365,7 @@ impl UiLayer {
                     breadcrumb: breadcrumb.as_deref(),
                     show_log_panel: settings.rendering.show_log_panel,
                     show_console: self.console.open,
+                    show_assistant: self.assistant.open,
                     projection,
                     draw_style: settings.rendering.draw_style,
                     recent,
@@ -375,6 +386,9 @@ impl UiLayer {
             let unit = document.display_unit();
             if menu.toggle_console {
                 self.console.toggle();
+            }
+            if menu.toggle_assistant {
+                self.assistant.toggle();
             }
             if menu.show_about {
                 self.preferences
@@ -600,6 +614,25 @@ impl UiLayer {
                     id,
                     scope,
                 });
+            }
+
+            let assistant = assistant::draw_assistant(
+                ui,
+                &mut self.assistant,
+                assistant::AssistantInputs {
+                    chats,
+                    approvals,
+                    agents: settings.ai.agents.iter().map(|a| a.name.clone()).collect(),
+                },
+                &mut commands,
+            );
+            if assistant.open_agent_settings {
+                self.preferences.open_at(
+                    settings,
+                    document.display_unit(),
+                    preferences::PrefGroup::Ai,
+                    0,
+                );
             }
 
             let task_result = task_panel::draw_task_panel(

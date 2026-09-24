@@ -95,16 +95,20 @@ recording, which writes a session as the list of those commands.
 
 ### AI
 
+Built (the `agents` crate and the Assistant panel, see [AI agents](AI.md)):
+
 - Agent registry: agents that speak the Agent Client Protocol (ACP),
   configured in Preferences with the command that starts each, its
   arguments and environment.
-- An MCP server inside the app that offers the command API as tools and
-  the document as resources, to the ACP agents and to any MCP client.
-- A chat panel that talks to a configured agent: several chats, each in
-  its own tab with its own agent and history, the tool calls it makes
-  shown inline with their results.
-- Every change an agent makes goes through the command API, so it lands
-  in undo and can be reverted as one step. Changes can wait for the
-  user's approval, per chat or per command.
-- An agent can attach the selection, a screenshot of the viewport and the
-  log to its context.
+- An MCP server inside the app that offers the command API as tools
+  (`commands`, `call`, `lua`, `view`, `log`), to the ACP agents and, through
+  `printcad --mcp`, to any MCP client.
+- A chat panel: several chats, each in its own tab with its own agent and
+  history, the thinking, tool calls, plan and permission requests shown
+  inline.
+- Every change an agent makes goes through the command API, one undo step
+  per call. Changes wait for the user's approval unless the chat says
+  otherwise; commands declared read-only never wait.
+
+Next: attaching the selection or a picture of the view to a prompt by
+hand, and the document as MCP resources.

@@ -54,6 +54,12 @@ version first.
 - Scripts › Record… writes what you do as a script that does it again: every tool ends in the command it stands for, so the recording is the list of those commands, with what it makes named for later lines.
 - A script run is one undo step. See docs/SCRIPTING.md.
 
+### AI agents
+- The Assistant panel (Windows › Assistant) chats with AI agents that speak the Agent Client Protocol, set up in Preferences › AI agents; several chats run at once, each in its own tab.
+- Agents work the document through the same commands scripts use, and see the view and the log.
+- Every change an agent asks for waits for your OK unless you allow the chat; each is one undo step.
+- `printcad --mcp` serves the running application to any MCP client. See docs/AI.md.
+
 ### Keyboard
 - Every shortcut can be changed in Preferences › Keyboard, which also warns when two commands share a key.
 - Every workbench has default keys: a letter picks a tool, Shift and a letter its partner (a sketch constraint, or the subtractive form of a Part Design feature).

@@ -318,6 +318,23 @@ Commands never open a task; Part Design's make features through
 feature's JSON. `kernel_ogeom/tests/scripted_part.rs` runs a script through
 the real benches to a solid.
 
+**AI agents.** The `agents` crate knows no command either: `rpc`
+(newline-delimited JSON-RPC), `acp` (`AgentChat`, a worker thread per
+agent process speaking the Agent Client Protocol: `ChatCommand` in,
+`ChatEvent` out), `mcp` (the server core over a `ToolHost`) and `bridge`
+(`printcad --mcp`, relaying stdio to the app's socket with a header naming
+the chat). `app/mcp.rs` listens on `$XDG_RUNTIME_DIR/printcad/mcp-<pid>.sock`,
+one thread per client handing each tool call to the UI thread
+(`drive_agent_tools`); `call` and `lua` run as script-thread jobs
+(`Job::Command`/`Job::Script`, `RunKind::Agent` answering the tool), so
+tab pinning, one undo step per call and Stop come from the script path.
+A change waits in `PrintCadApp.approvals` while its chat asks
+(`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
+registers the command) is what never waits. `app/chats.rs` keeps
+`PrintCadApp.chats`, each started with the relay as its MCP server;
+`ui/assistant.rs` draws them and answers with `UiCommand`s. Agents are
+configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
+
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the
 feature the tool just created). `frame.rs` skips the per-frame

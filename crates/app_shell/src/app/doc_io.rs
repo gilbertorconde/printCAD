@@ -652,7 +652,7 @@ impl PrintCadApp {
 
     /// The visible bodies in the colours they show in, for the preview a
     /// save carries.
-    fn thumbnail_shapes(&self) -> Vec<crate::thumbnail::Shape> {
+    pub(crate) fn thumbnail_shapes(&self) -> Vec<crate::thumbnail::Shape> {
         let document = &self.session.document;
         document
             .imported_geometries()

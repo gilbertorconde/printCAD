@@ -12,7 +12,9 @@ use settings::{
     NavigationStyle, OrbitYawAxis, ProjectionMode, SixDofMotion, SlicerFormat, UserSettings,
 };
 use ui_kit::tokens::*;
-use ui_kit::widgets::{PrefRow, QtyField, overline, pref_group, primary_button, secondary_button};
+use ui_kit::widgets::{
+    Card, PrefRow, QtyField, overline, pref_group, primary_button, secondary_button,
+};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -28,6 +30,7 @@ pub enum PrefGroup {
     Units,
     ImportExport,
     Printing,
+    Ai,
     Updates,
 }
 
@@ -46,6 +49,7 @@ impl PrefGroup {
             PrefGroup::Units,
             PrefGroup::ImportExport,
             PrefGroup::Printing,
+            PrefGroup::Ai,
             PrefGroup::Updates,
         ]);
         groups
@@ -66,6 +70,7 @@ impl PrefGroup {
             PrefGroup::Units => "Units".to_string(),
             PrefGroup::ImportExport => "Import / Export".to_string(),
             PrefGroup::Printing => "3D printing".to_string(),
+            PrefGroup::Ai => "AI agents".to_string(),
             PrefGroup::Updates => "Updates".to_string(),
         }
     }
@@ -80,6 +85,7 @@ impl PrefGroup {
             PrefGroup::Units => &["Units"],
             PrefGroup::ImportExport => &["STEP", "IGES"],
             PrefGroup::Printing => &["Printer"],
+            PrefGroup::Ai => &["Agents"],
             PrefGroup::Updates => &["Updates"],
         }
     }
@@ -538,6 +544,7 @@ fn draw_content(
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
                         PrefGroup::Printing => printing_page(ui, state, &filter),
+                        PrefGroup::Ai => ai_page(ui, state, &filter),
                         PrefGroup::Updates => updates_page(ui),
                     }
                 });
@@ -640,6 +647,7 @@ fn reset_group(state: &mut PreferencesState) {
         PrefGroup::Units => state.draft_unit = Unit::Mm,
         PrefGroup::ImportExport => state.draft.import = defaults.import,
         PrefGroup::Printing => state.draft.printing = defaults.printing,
+        PrefGroup::Ai => state.draft.ai.ask_before_changes = defaults.ai.ask_before_changes,
         PrefGroup::Workbench(_) | PrefGroup::Updates => {}
     }
 }
@@ -1149,6 +1157,7 @@ fn search_results(
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),
                 PrefGroup::Printing => printing_page(ui, state, filter),
+                PrefGroup::Ai => ai_page(ui, state, filter),
                 PrefGroup::Updates => {}
             }
         }
@@ -1218,6 +1227,165 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
         ],
         filter,
     );
+}
+
+/// Agents that speak the Agent Client Protocol, known to work with it.
+const AGENT_PRESETS: &[(&str, &str, &[&str])] = &[
+    ("Claude Code", "claude-code-acp", &[]),
+    ("Gemini CLI", "gemini", &["--experimental-acp"]),
+];
+
+/// The agents chats can talk to, and whether their changes wait for an OK.
+fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
+    let ai = &mut state.draft.ai;
+    pref_group(
+        ui,
+        "Changes",
+        vec![
+            PrefRow::toggle(
+                "Ask before an agent changes the document",
+                &mut ai.ask_before_changes,
+            )
+            .hint("New chats start this way; each chat has its own switch"),
+        ],
+        filter,
+    );
+    if !filter.is_empty() && !"agents ai command chat".contains(filter) {
+        return;
+    }
+    ui.add_space(SPACE_2);
+    ui.label(
+        RichText::new("Agents")
+            .font(sans_semibold(FONT_SM))
+            .color(TEXT1),
+    );
+    ui.label(
+        RichText::new(
+            "Programs that speak the Agent Client Protocol. A chat starts one and gives it \
+             printCAD's tools, which reach the document through `printcad --mcp`; any MCP \
+             client can use that command too.",
+        )
+        .font(sans(FONT_XS))
+        .color(TEXT3),
+    );
+    ui.add_space(SPACE_1);
+    let mut remove = None;
+    for (i, agent) in ai.agents.iter_mut().enumerate() {
+        Card::new().padding(10.0).show(ui, |ui| {
+            egui::Grid::new(("agent_row", i))
+                .num_columns(2)
+                .spacing([SPACE_3, SPACE_2])
+                .show(ui, |ui| {
+                    let field = |ui: &mut Ui, label: &str, text: &mut String, hint: &str| {
+                        ui.label(RichText::new(label).font(sans(FONT_SM)).color(TEXT2));
+                        let changed = ui
+                            .add(
+                                egui::TextEdit::singleline(text)
+                                    .hint_text(hint)
+                                    .desired_width(300.0)
+                                    .font(mono(FONT_SM)),
+                            )
+                            .changed();
+                        ui.end_row();
+                        changed
+                    };
+                    field(ui, "Name", &mut agent.name, "What the chat shows");
+                    field(ui, "Command", &mut agent.command, "The program to start");
+                    let mut args = join_words(&agent.args);
+                    if field(ui, "Arguments", &mut args, "Words after the command") {
+                        agent.args = split_words(&args);
+                    }
+                    let mut env = join_words(
+                        &agent
+                            .env
+                            .iter()
+                            .map(|(k, v)| format!("{k}={v}"))
+                            .collect::<Vec<_>>(),
+                    );
+                    if field(ui, "Environment", &mut env, "NAME=value ...") {
+                        agent.env = split_words(&env)
+                            .into_iter()
+                            .filter_map(|pair| {
+                                let (k, v) = pair.split_once('=')?;
+                                Some((k.to_string(), v.to_string()))
+                            })
+                            .collect();
+                    }
+                });
+            ui.add_space(SPACE_1);
+            if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                remove = Some(i);
+            }
+        });
+        ui.add_space(SPACE_2);
+    }
+    if let Some(i) = remove {
+        ai.agents.remove(i);
+    }
+    ui.horizontal_wrapped(|ui| {
+        for (name, command, args) in AGENT_PRESETS {
+            if ui_kit::widgets::small_secondary_button(ui, &format!("Add {name}")).clicked() {
+                ai.agents.push(settings::AgentSettings {
+                    name: name.to_string(),
+                    command: command.to_string(),
+                    args: args.iter().map(|a| a.to_string()).collect(),
+                    env: Vec::new(),
+                });
+            }
+        }
+        if ui_kit::widgets::small_secondary_button(ui, "Add another").clicked() {
+            ai.agents.push(settings::AgentSettings {
+                name: "Agent".to_string(),
+                ..Default::default()
+            });
+        }
+    });
+}
+
+/// Words joined with spaces, a word with a space in it quoted.
+fn join_words(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|w| {
+            if w.contains(char::is_whitespace) || w.is_empty() {
+                format!("\"{}\"", w.replace('"', "\\\""))
+            } else {
+                w.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Words split at spaces, a quoted run kept as one word.
+fn split_words(text: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let (mut quoted, mut escaped, mut any) = (false, false, false);
+    for c in text.chars() {
+        match c {
+            _ if escaped => {
+                word.push(c);
+                escaped = false;
+            }
+            '\\' if quoted => escaped = true,
+            '"' => {
+                quoted = !quoted;
+                any = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if any || !word.is_empty() {
+                    words.push(std::mem::take(&mut word));
+                }
+                any = false;
+            }
+            c => word.push(c),
+        }
+    }
+    if any || !word.is_empty() {
+        words.push(word);
+    }
+    words
 }
 
 /// The running version and where releases are published.

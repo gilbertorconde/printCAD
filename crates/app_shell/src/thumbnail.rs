@@ -28,8 +28,19 @@ pub struct Shape {
 
 /// The PNG, or `None` when there is nothing to draw.
 pub fn render(shapes: &[Shape], forward: Vec3, up: Vec3) -> Option<Vec<u8>> {
-    let rgba = rasterize(shapes, forward, up)?;
-    let mut pixmap = tiny_skia::Pixmap::new(WIDTH, HEIGHT)?;
+    render_at(shapes, forward, up, WIDTH, HEIGHT)
+}
+
+/// The PNG at `width` × `height`, or `None` when there is nothing to draw.
+pub fn render_at(
+    shapes: &[Shape],
+    forward: Vec3,
+    up: Vec3,
+    width: u32,
+    height: u32,
+) -> Option<Vec<u8>> {
+    let rgba = rasterize_at(shapes, forward, up, width, height)?;
+    let mut pixmap = tiny_skia::Pixmap::new(width, height)?;
     // tiny-skia holds premultiplied colour.
     for (dst, src) in pixmap
         .data_mut()
@@ -48,7 +59,19 @@ pub fn render(shapes: &[Shape], forward: Vec3, up: Vec3) -> Option<Vec<u8>> {
 }
 
 /// Straight RGBA, `WIDTH` × `HEIGHT`, the model fitted with a margin.
+#[cfg(test)]
 pub fn rasterize(shapes: &[Shape], forward: Vec3, up: Vec3) -> Option<Vec<u8>> {
+    rasterize_at(shapes, forward, up, WIDTH, HEIGHT)
+}
+
+/// Straight RGBA, `width` × `height`, the model fitted with a margin.
+pub fn rasterize_at(
+    shapes: &[Shape],
+    forward: Vec3,
+    up: Vec3,
+    width: u32,
+    height: u32,
+) -> Option<Vec<u8>> {
     let forward = forward.try_normalize()?;
     let right = forward.cross(up).try_normalize()?;
     let up = right.cross(forward);
@@ -75,7 +98,7 @@ pub fn rasterize(shapes: &[Shape], forward: Vec3, up: Vec3) -> Option<Vec<u8>> {
     if triangles == 0 || lo.x > hi.x {
         return None;
     }
-    let (w, h) = (WIDTH * SUPERSAMPLE, HEIGHT * SUPERSAMPLE);
+    let (w, h) = (width * SUPERSAMPLE, height * SUPERSAMPLE);
     let margin = 0.08;
     let span_x = (hi.x - lo.x).max(1e-6);
     let span_y = (hi.y - lo.y).max(1e-6);
@@ -120,10 +143,10 @@ pub fn rasterize(shapes: &[Shape], forward: Vec3, up: Vec3) -> Option<Vec<u8>> {
     }
 
     // Average each block of samples into one pixel.
-    let mut out = vec![0u8; (WIDTH * HEIGHT * 4) as usize];
+    let mut out = vec![0u8; (width * height * 4) as usize];
     let n = (SUPERSAMPLE * SUPERSAMPLE) as f32;
-    for y in 0..HEIGHT {
-        for x in 0..WIDTH {
+    for y in 0..height {
+        for x in 0..width {
             let mut sum = [0.0f32; 4];
             for sy in 0..SUPERSAMPLE {
                 for sx in 0..SUPERSAMPLE {
@@ -138,7 +161,7 @@ pub fn rasterize(shapes: &[Shape], forward: Vec3, up: Vec3) -> Option<Vec<u8>> {
                 }
             }
             let a = sum[3] / n;
-            let o = ((y * WIDTH + x) * 4) as usize;
+            let o = ((y * width + x) * 4) as usize;
             for c in 0..3 {
                 let straight = if sum[3] > 0.0 { sum[c] / sum[3] } else { 0.0 };
                 out[o + c] = (straight * 255.0).round() as u8;

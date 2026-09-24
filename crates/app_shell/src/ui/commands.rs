@@ -167,6 +167,30 @@ pub enum UiCommand {
     ToggleRecording,
     /// What a panel hook recorded.
     Recorded(Vec<core_document::Recorded>),
+    /// Start a chat with agent number `.0` of the Preferences.
+    NewChat(usize),
+    SendChat {
+        chat: String,
+        text: String,
+    },
+    /// Ask a chat's agent to stop its turn.
+    CancelChat(String),
+    CloseChat(String),
+    /// Answer an agent's request for permission, entry `entry` of `chat`.
+    AnswerPermission {
+        chat: String,
+        entry: usize,
+        option: Option<String>,
+    },
+    SetChatAsk {
+        chat: String,
+        ask: bool,
+    },
+    /// Run the change held at `index`, or tell its agent no.
+    SettleApproval {
+        index: usize,
+        allow: bool,
+    },
     /// Make a new script in the scripts folder and open it for editing.
     NewScript,
     /// Write what the console ran as a new script in the scripts folder.

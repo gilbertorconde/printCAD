@@ -26,6 +26,8 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
   support.
 - **Scripting:** a Lua console that reaches every command of the
   application and the workbenches.
+- **AI agents:** chat with ACP agents that work the document through the
+  same commands, and an MCP server for any other client.
 
 The geometry kernel, [ogeom](https://github.com/gilbertorconde/ogeom-rs), is
 pure Rust. No system CAD libraries are needed.
@@ -178,6 +180,7 @@ Preferences (Ctrl+,).
 | `workbenches/wb_part` | Part Design |
 | `workbenches/wb_assembly` | Assembly: joints between bodies |
 | `scripting` | The Lua engine scripts and the console run in |
+| `agents` | Agent Client Protocol client and MCP server core |
 
 More detail in [docs](docs/):
 
@@ -186,6 +189,7 @@ More detail in [docs](docs/):
 - [Document model](docs/DOCUMENT_MODEL.md)
 - [Writing a workbench](docs/WORKBENCH_GUIDE.md)
 - [Scripting](docs/SCRIPTING.md)
+- [AI agents](docs/AI.md)
 - [Camera](camera_system.md)
 - [Project status](PROJECT_STEPS.md)
 

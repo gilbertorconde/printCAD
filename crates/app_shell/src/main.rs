@@ -107,6 +107,14 @@ fn main() -> Result<()> {
 
     // A script run from the command line needs no window.
     let words: Vec<String> = std::env::args().skip(1).collect();
+    // `printcad --mcp`: an agent's MCP server, relayed to the running app.
+    if let Some(relayed) = app::mcp::relay_from_args(&words) {
+        if let Err(err) = relayed {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     match headless::parse(&words) {
         Ok(Some(invocation)) => {
             let finished = headless::run(&invocation, registry)?;
@@ -134,6 +142,7 @@ fn main() -> Result<()> {
         registry,
         event_loop.create_proxy(),
     );
+    app.start_agent_server();
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())
 }
@@ -148,6 +157,8 @@ pub enum AppEvent {
     DeviceInput,
     /// The script thread asked for something or printed.
     Script,
+    /// An agent called a tool, or a chat has news.
+    Agent,
 }
 
 /// Where a re-derived remote import's meshes belong.
@@ -282,6 +293,18 @@ struct PrintCadApp {
     script_rebuild: Option<app::scripts::RebuildWait>,
     /// A recording of what is done through the UI, while one is on.
     recording: Option<scripting::Recorder>,
+    /// The MCP server agents reach the document through.
+    mcp: Option<app::mcp::McpServer>,
+    /// Changes agents asked for, waiting for the user's OK.
+    approvals: Vec<app::mcp::Approval>,
+    /// An agent needs the user: the assistant panel opens.
+    assistant_attention: bool,
+    /// The chats with agents, in the order they were opened.
+    chats: Vec<app::chats::Chat>,
+    /// How many chats this session has opened, for the next one's name.
+    chats_made: usize,
+    /// Wakes the loop from another thread.
+    waker: std::sync::Arc<dyn Fn() + Send + Sync>,
     /// Script files picked in a dialog, to run once it answers.
     scripts_to_run: Vec<PathBuf>,
     /// The scripts folder's scripts, and when it was last read.
@@ -368,7 +391,7 @@ impl PrintCadApp {
                 }
             }),
             script_thread: {
-                let proxy = std::sync::Mutex::new(proxy);
+                let proxy = std::sync::Mutex::new(proxy.clone());
                 scripting::ScriptThread::spawn(move || {
                     if let Ok(proxy) = proxy.lock() {
                         let _ = proxy.send_event(AppEvent::Script);
@@ -378,6 +401,19 @@ impl PrintCadApp {
             script_runs: Default::default(),
             script_rebuild: None,
             recording: None,
+            mcp: None,
+            approvals: Vec::new(),
+            assistant_attention: false,
+            chats: Vec::new(),
+            chats_made: 0,
+            waker: {
+                let proxy = std::sync::Mutex::new(proxy.clone());
+                std::sync::Arc::new(move || {
+                    if let Ok(proxy) = proxy.lock() {
+                        let _ = proxy.send_event(AppEvent::Agent);
+                    }
+                })
+            },
             bench_open_fired: false,
             bench_select_fired: false,
             bench_repair_fired: false,
@@ -476,7 +512,9 @@ impl ApplicationHandler<AppEvent> for PrintCadApp {
             // The device thread only knocks when the puck starts or stops
             // moving, or a button changes; while it is deflected the frame
             // loop keeps itself awake.
-            AppEvent::DeviceInput | AppEvent::Script => self.redraw_needed = true,
+            AppEvent::DeviceInput | AppEvent::Script | AppEvent::Agent => {
+                self.redraw_needed = true;
+            }
         }
     }
 

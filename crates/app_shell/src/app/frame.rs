@@ -544,6 +544,8 @@ impl PrintCadApp {
         });
         self.drive_measurement();
         self.drive_scripts(event_loop);
+        self.drive_agent_tools();
+        self.drive_chats();
         self.refresh_script_library();
         if self.command_ids.is_empty() {
             self.command_ids = self.script_command_ids();
@@ -686,6 +688,9 @@ impl PrintCadApp {
                         command_ids: &self.command_ids,
                         script_running: self.script_runs.front().map(|r| r.label.as_str()),
                         recording: self.recording.is_some(),
+                        chats: &self.chats,
+                        approvals: &self.approvals,
+                        assistant_attention: std::mem::take(&mut self.assistant_attention),
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;
