@@ -58,6 +58,7 @@ version first.
 - The Assistant panel (Windows › Assistant) chats with AI agents that speak the Agent Client Protocol, set up in Preferences › AI agents; several chats run at once, each in its own tab.
 - Agents work the document through the same commands scripts use, and see the view and the log.
 - Every change an agent asks for waits for your OK unless you allow the chat; each is one undo step.
+- The bar under a chat's box sets what the agent offers, such as its permission mode, model and effort, and new chats with that agent keep the choice.
 - `printcad --mcp` serves the running application to any MCP client. See docs/AI.md.
 
 ### Keyboard

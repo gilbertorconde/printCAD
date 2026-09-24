@@ -9,12 +9,13 @@
 
 use egui::RichText;
 use ui_kit::tokens::*;
-use ui_kit::widgets::{Card, primary_button, secondary_button, small_secondary_button};
+use ui_kit::widgets::{Card, primary_button, secondary_button, small_secondary_button, toggle};
 use ui_kit::{mono, sans, sans_medium, sans_semibold};
 
 use super::UiCommand;
 use crate::app::chats::{Chat, ChatEntry, ChatStatus};
 use crate::app::mcp::Approval;
+use agents::acp::{OptionValue, SessionOption};
 
 /// The panel's own state: whether it shows, the chat on screen and what
 /// is being written in each chat.
@@ -298,9 +299,6 @@ fn chat_header(ui: &mut egui::Ui, chat: &Chat, commands: &mut Vec<UiCommand>) {
             {
                 commands.push(UiCommand::CloseChat(chat.id.clone()));
             }
-            if chat.status == ChatStatus::Busy && small_secondary_button(ui, "Stop").clicked() {
-                commands.push(UiCommand::CancelChat(chat.id.clone()));
-            }
             let mut ask = chat.ask;
             if ui
                 .checkbox(
@@ -379,7 +377,7 @@ fn draw_entry(
         } => {
             let (mark, color) = match status.as_str() {
                 "completed" => ("✓", SUCCESS),
-                "failed" => ("✕", DANGER),
+                "failed" => ("×", DANGER),
                 _ => ("…", TEXT3),
             };
             let header = RichText::new(format!("{mark} {title}"))
@@ -414,8 +412,8 @@ fn draw_entry(
                 for step in entries {
                     let (mark, color) = match step.status.as_str() {
                         "completed" => ("✓", SUCCESS),
-                        "in_progress" => ("●", ACCENT),
-                        _ => ("○", TEXT3),
+                        "in_progress" => ("•", ACCENT),
+                        _ => ("–", TEXT3),
                     };
                     ui.label(
                         RichText::new(format!("{mark} {}", step.content))
@@ -478,8 +476,12 @@ fn draw_entry(
     }
 }
 
+/// The box to write in, and under it the bar with the agent's session
+/// options (permission mode, model, effort ...), its working spinner and
+/// Send, or Stop while it works.
 fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<UiCommand>) {
     let open = matches!(chat.status, ChatStatus::Ready | ChatStatus::Busy);
+    let busy = chat.status == ChatStatus::Busy;
     let id = egui::Id::new(("assistant_input", &chat.id));
     let mut send = false;
     if open && ui.memory(|m| m.has_focus(id)) {
@@ -497,32 +499,149 @@ fn input(ui: &mut egui::Ui, chat: &Chat, draft: &mut String, commands: &mut Vec<
             hit
         });
     }
-    ui.horizontal(|ui| {
-        let hint = match chat.status {
-            ChatStatus::Starting => "The agent is starting…",
-            ChatStatus::Failed(_) => "The chat has stopped",
-            _ => "Ask the agent (Enter sends, Shift+Enter for a new line)",
-        };
-        ui.add_enabled(
-            open,
-            egui::TextEdit::multiline(draft)
-                .id(id)
-                .font(sans(FONT_SM))
-                .desired_rows(2)
-                .desired_width(ui.available_width() - 60.0)
-                .hint_text(hint),
-        );
-        if ui
-            .add_enabled(open && !draft.trim().is_empty(), egui::Button::new("Send"))
-            .clicked()
-        {
-            send = true;
-        }
-    });
+    egui::Frame::new()
+        .fill(BG2)
+        .stroke(egui::Stroke::new(1.0, BORDER))
+        .corner_radius(RADIUS_MD as u8)
+        .inner_margin(egui::Margin::symmetric(8, 6))
+        .show(ui, |ui| {
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                let hint = match chat.status {
+                    ChatStatus::Starting => "The agent is starting…",
+                    ChatStatus::Failed(_) => "The chat has stopped",
+                    _ => "Ask the agent (Enter sends, Shift+Enter for a new line)",
+                };
+                ui.add_enabled(
+                    open,
+                    egui::TextEdit::multiline(draft)
+                        .id(id)
+                        .frame(egui::Frame::NONE)
+                        .font(sans(FONT_SM))
+                        .desired_rows(2)
+                        .desired_width(ui.available_width())
+                        .hint_text(hint),
+                );
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if busy {
+                            if stop_button(ui).on_hover_text("Stop the agent").clicked() {
+                                commands.push(UiCommand::CancelChat(chat.id.clone()));
+                            }
+                        } else if ui
+                            .add_enabled(
+                                open && !draft.trim().is_empty(),
+                                egui::Button::new(RichText::new("Send").font(sans(FONT_XS))),
+                            )
+                            .clicked()
+                        {
+                            send = true;
+                        }
+                        // Laid out from the right: the last option first.
+                        for option in ordered(&chat.options).into_iter().rev() {
+                            option_control(ui, chat, option, commands);
+                        }
+                        if busy {
+                            ui.add(egui::Spinner::new().size(12.0).color(TEXT3));
+                        }
+                    });
+                });
+            });
+        });
     if send && !draft.trim().is_empty() {
         commands.push(UiCommand::SendChat {
             chat: chat.id.clone(),
             text: std::mem::take(draft),
         });
     }
+}
+
+/// The options in the order the bar shows them: the permission mode, the
+/// model, the effort, then the rest as the agent lists them.
+fn ordered(options: &[SessionOption]) -> Vec<&SessionOption> {
+    let rank = |o: &SessionOption| match o.category.as_str() {
+        "mode" => 0,
+        "model" => 1,
+        "thought_level" => 2,
+        _ => 3,
+    };
+    let mut out: Vec<&SessionOption> = options.iter().collect();
+    out.sort_by_key(|o| rank(o));
+    out
+}
+
+/// One session option: a dropdown of its choices, or a switch.
+fn option_control(
+    ui: &mut egui::Ui,
+    chat: &Chat,
+    option: &SessionOption,
+    commands: &mut Vec<UiCommand>,
+) {
+    let mut set = |value: serde_json::Value| {
+        commands.push(UiCommand::SetChatOption {
+            chat: chat.id.clone(),
+            id: option.id.clone(),
+            value,
+        })
+    };
+    let hover = if option.description.is_empty() {
+        option.name.clone()
+    } else {
+        format!("{}: {}", option.name, option.description)
+    };
+    match &option.value {
+        OptionValue::Toggle(on) => {
+            let mut on = *on;
+            if toggle(ui, &mut on).on_hover_text(&hover).changed() {
+                set(serde_json::Value::Bool(on));
+            }
+            ui.label(RichText::new(&option.name).font(sans(FONT_XS)).color(TEXT2));
+        }
+        OptionValue::Select { current, choices } => {
+            let label = RichText::new(option.current_name())
+                .font(sans(FONT_XS))
+                .color(TEXT2);
+            let button = match ui_kit::icon::image(ui.ctx(), "chevron-down", 12.0, TEXT3) {
+                Some(chevron) => egui::containers::menu::MenuButton::new((label, chevron)),
+                None => egui::containers::menu::MenuButton::new(label),
+            };
+            let response = button
+                .config(
+                    egui::containers::menu::MenuConfig::new()
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClick),
+                )
+                .ui(ui, |ui| {
+                    ui.set_min_width(220.0);
+                    ui.label(
+                        RichText::new(&option.name)
+                            .font(sans_medium(FONT_XS))
+                            .color(TEXT3),
+                    );
+                    for choice in choices {
+                        let on = &choice.value == current;
+                        let text = RichText::new(&choice.name).font(sans(FONT_SM));
+                        let mut row = ui.selectable_label(on, text);
+                        if !choice.description.is_empty() {
+                            row = row.on_hover_text(&choice.description);
+                        }
+                        if row.clicked() && !on {
+                            set(serde_json::Value::String(choice.value.clone()));
+                        }
+                    }
+                })
+                .0;
+            response.on_hover_text(hover);
+        }
+    }
+}
+
+/// A small square in the danger colour: stops the agent's turn.
+fn stop_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    let fill = if response.hovered() {
+        DANGER
+    } else {
+        DANGER.gamma_multiply(0.85)
+    };
+    ui.painter().rect_filled(rect.shrink(5.0), 2.0, fill);
+    response
 }

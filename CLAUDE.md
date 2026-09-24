@@ -332,8 +332,13 @@ A change waits in `PrintCadApp.approvals` while its chat asks
 (`asks_before_changes`); `CommandSpec::read_only` (declared by whoever
 registers the command) is what never waits. `app/chats.rs` keeps
 `PrintCadApp.chats`, each started with the relay as its MCP server;
-`ui/assistant.rs` draws them and answers with `UiCommand`s. Agents are
-configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
+`ui/assistant.rs` draws them and answers with `UiCommand`s. The agent's
+session options (`acp::SessionOption`: `configOptions`, or the older
+`modes`/`models`) draw as the bar under the input; a change shows at once
+and is put back if the agent refuses, an answer an agent-side update has
+overtaken is dropped, and the choice is kept per agent in
+`AgentSettings.choices`, put to each new chat in the agent's own order
+(`put_choices`). Agents are configured in `UserSettings.ai`. `docs/AI.md` is the user guide.
 
 **Tasks and undo.** A feature edit is a task in the right panel: edits apply
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the

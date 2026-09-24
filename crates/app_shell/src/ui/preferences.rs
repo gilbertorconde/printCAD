@@ -1231,7 +1231,7 @@ fn printing_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
 
 /// Agents that speak the Agent Client Protocol, known to work with it.
 const AGENT_PRESETS: &[(&str, &str, &[&str])] = &[
-    ("Claude Code", "claude-code-acp", &[]),
+    ("Claude", "claude-agent-acp", &[]),
     ("Gemini CLI", "gemini", &["--experimental-acp"]),
 ];
 
@@ -1329,7 +1329,7 @@ fn ai_page(ui: &mut Ui, state: &mut PreferencesState, filter: &str) {
                     name: name.to_string(),
                     command: command.to_string(),
                     args: args.iter().map(|a| a.to_string()).collect(),
-                    env: Vec::new(),
+                    ..Default::default()
                 });
             }
         }

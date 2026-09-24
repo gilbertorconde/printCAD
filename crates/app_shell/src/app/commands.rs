@@ -218,6 +218,9 @@ impl PrintCadApp {
                     option,
                 } => self.answer_permission(&chat, entry, option),
                 UiCommand::SetChatAsk { chat, ask } => self.set_chat_asks(&chat, ask),
+                UiCommand::SetChatOption { chat, id, value } => {
+                    self.set_chat_option(&chat, id, value)
+                }
                 UiCommand::SettleApproval { index, allow } => self.settle_approval(index, allow),
                 UiCommand::NewScript => self.new_script(None),
                 UiCommand::SaveRunsAsScript(runs) => self.new_script(Some(runs)),

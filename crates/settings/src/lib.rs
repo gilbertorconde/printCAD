@@ -87,6 +87,9 @@ pub struct AgentSettings {
     pub args: Vec<String>,
     /// `NAME=value` pairs added to its environment.
     pub env: Vec<(String, String)>,
+    /// The session options last chosen in its chats (mode, model, effort
+    /// ...), by the agent's option id, applied to each new chat.
+    pub choices: std::collections::BTreeMap<String, serde_json::Value>,
 }
 
 /// The user's keyboard shortcuts, as changes to the defaults: an action

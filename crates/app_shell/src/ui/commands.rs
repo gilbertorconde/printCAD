@@ -186,6 +186,12 @@ pub enum UiCommand {
         chat: String,
         ask: bool,
     },
+    /// Change one of the agent's session options (mode, model ...).
+    SetChatOption {
+        chat: String,
+        id: String,
+        value: serde_json::Value,
+    },
     /// Run the change held at `index`, or tell its agent no.
     SettleApproval {
         index: usize,

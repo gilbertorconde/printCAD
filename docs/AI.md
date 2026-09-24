@@ -17,7 +17,7 @@ presets fill these in:
 
 | Agent | Command | Arguments |
 | --- | --- | --- |
-| Claude Code | `claude-code-acp` | |
+| Claude | `claude-agent-acp` | |
 | Gemini CLI | `gemini` | `--experimental-acp` |
 
 Any program that speaks ACP over its standard input and output works the
@@ -30,8 +30,13 @@ Windows › Assistant opens the panel on the right.
 New chat starts one with a configured agent; each chat is a tab with its
 own agent and history, and several can run at once.
 
-- Enter sends, Shift+Enter starts a new line. Stop ends the agent's
-  turn; Close ends the chat and its agent.
+- Enter sends, Shift+Enter starts a new line. While the agent works, the
+  red square under the box stops its turn; Close ends the chat and its
+  agent.
+- The bar under the box has the settings the agent offers, as it names
+  them: for Claude, the permission mode (Manual, Accept edits, Plan, Auto,
+  Bypass permissions), the model and the effort. A change applies to the
+  chat at once, and the agent's next chats start with it.
 - The agent's thinking, the tools it calls and their results, and its
   plan show in the chat as it works.
 - When the agent asks for permission to do something outside printCAD

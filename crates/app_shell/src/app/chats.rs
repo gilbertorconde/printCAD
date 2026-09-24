@@ -10,6 +10,7 @@ use std::path::PathBuf;
 
 use agents::acp::{
     AgentChat, ChatCommand, ChatEvent, McpServer, PermissionOption, PlanEntry, Program,
+    SessionOption,
 };
 use serde_json::Value;
 
@@ -65,6 +66,14 @@ pub(crate) struct Chat {
     /// A change the agent asks for waits for the user's OK.
     pub ask: bool,
     pub entries: Vec<ChatEntry>,
+    /// The session options the agent offers, as they stand.
+    pub options: Vec<SessionOption>,
+    /// The agent's remembered choices have been read.
+    chose: bool,
+    /// Remembered choices not yet put to the agent, in the order it lists
+    /// its options: one may only become possible once another lands (an
+    /// effort level the chosen model has).
+    choices_left: Vec<(String, Value)>,
     /// The last lines the agent wrote on stderr, to say why it failed.
     stderr: Vec<String>,
     /// Prompts sent: the first carries a word on where the agent is.
@@ -127,6 +136,9 @@ impl PrintCadApp {
             status: ChatStatus::Starting,
             ask: self.user_settings.ai.ask_before_changes,
             entries: Vec::new(),
+            options: Vec::new(),
+            chose: false,
+            choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 0,
             session,
@@ -148,6 +160,7 @@ impl PrintCadApp {
         if text.trim().is_empty() || matches!(chat.status, ChatStatus::Failed(_)) {
             return;
         }
+        chat.choices_left.clear();
         chat.entries.push(ChatEntry::User(text.clone()));
         let prompt = if chat.prompts == 0 {
             format!("{PREAMBLE}\n\n{text}")
@@ -217,6 +230,32 @@ impl PrintCadApp {
         }
     }
 
+    /// Change a session option of the chat's agent, and remember the
+    /// choice for the agent's next chats.
+    pub(crate) fn set_chat_option(&mut self, id: &str, option: String, value: Value) {
+        let Some(chat) = self.chat_mut(id) else {
+            return;
+        };
+        let agent = chat.agent.clone();
+        chat.choices_left.clear();
+        chat.session.send(ChatCommand::SetOption {
+            id: option.clone(),
+            value: value.clone(),
+        });
+        if let Some(config) = self
+            .user_settings
+            .ai
+            .agents
+            .iter_mut()
+            .find(|a| a.name == agent)
+        {
+            config.choices.insert(option, value);
+            if let Err(err) = self.settings_store.save(&self.user_settings) {
+                crate::app_log::warn(format!("Could not save the agent's choice: {err}"));
+            }
+        }
+    }
+
     /// Fold what every chat's agent sent since the last frame into the
     /// chat.
     pub(crate) fn drive_chats(&mut self) {
@@ -226,6 +265,23 @@ impl PrintCadApp {
                 attention |= matches!(event, ChatEvent::Permission { .. });
                 apply(chat, event);
             }
+            if !chat.chose && !chat.options.is_empty() {
+                chat.chose = true;
+                if let Some(config) = self
+                    .user_settings
+                    .ai
+                    .agents
+                    .iter()
+                    .find(|a| a.name == chat.agent)
+                {
+                    chat.choices_left = chat
+                        .options
+                        .iter()
+                        .filter_map(|o| Some((o.id.clone(), config.choices.get(&o.id)?.clone())))
+                        .collect();
+                }
+            }
+            put_choices(chat);
         }
         if attention {
             self.assistant_attention = true;
@@ -233,10 +289,34 @@ impl PrintCadApp {
     }
 }
 
+/// Put the remembered choices the agent's options can take now to it;
+/// the rest wait for an update that makes them possible.
+fn put_choices(chat: &mut Chat) {
+    let options = &chat.options;
+    let session = &chat.session;
+    chat.choices_left.retain(|(id, value)| {
+        let Some(option) = options.iter().find(|o| &o.id == id) else {
+            return true;
+        };
+        if option.current() == *value {
+            return false;
+        }
+        if !option.accepts(value) {
+            return true;
+        }
+        session.send(ChatCommand::SetOption {
+            id: id.clone(),
+            value: value.clone(),
+        });
+        false
+    });
+}
+
 /// Fold one event into a chat.
 fn apply(chat: &mut Chat, event: ChatEvent) {
     match event {
         ChatEvent::Ready => chat.status = ChatStatus::Ready,
+        ChatEvent::Options(options) => chat.options = options,
         ChatEvent::Failed(why) => {
             let tail = chat.stderr.join("\n");
             chat.status = ChatStatus::Failed(if tail.is_empty() {
@@ -357,6 +437,9 @@ mod tests {
             status: ChatStatus::Busy,
             ask: true,
             entries: Vec::new(),
+            options: Vec::new(),
+            chose: false,
+            choices_left: Vec::new(),
             stderr: Vec::new(),
             prompts: 1,
             session: AgentChat::over(
@@ -367,6 +450,59 @@ mod tests {
                 std::sync::Arc::new(|| {}),
             ),
         }
+    }
+
+    fn select(id: &str, category: &str, current: &str, values: &[&str]) -> SessionOption {
+        SessionOption {
+            id: id.into(),
+            name: id.into(),
+            description: String::new(),
+            category: category.into(),
+            value: agents::acp::OptionValue::Select {
+                current: current.into(),
+                choices: values
+                    .iter()
+                    .map(|v| agents::acp::OptionChoice {
+                        value: v.to_string(),
+                        name: v.to_string(),
+                        description: String::new(),
+                    })
+                    .collect(),
+            },
+            via: agents::acp::OptionVia::Config,
+        }
+    }
+
+    #[test]
+    fn remembered_choices_go_in_order_and_wait_until_the_agent_can_take_them() {
+        let mut c = chat();
+        apply(
+            &mut c,
+            ChatEvent::Options(vec![
+                select("mode", "mode", "ask", &["ask", "plan"]),
+                select("model", "model", "small", &["small", "large"]),
+                select("effort", "thought_level", "low", &["low"]),
+            ]),
+        );
+        c.choices_left = vec![
+            ("mode".into(), Value::from("ask")),
+            ("model".into(), Value::from("large")),
+            ("effort".into(), Value::from("max")),
+        ];
+        put_choices(&mut c);
+        // The mode is as remembered and the model goes out; the small
+        // model has no "max", so the effort waits.
+        assert_eq!(c.choices_left, [("effort".to_string(), Value::from("max"))]);
+        apply(
+            &mut c,
+            ChatEvent::Options(vec![
+                select("mode", "mode", "ask", &["ask", "plan"]),
+                select("model", "model", "large", &["small", "large"]),
+                select("effort", "thought_level", "low", &["low", "max"]),
+            ]),
+        );
+        put_choices(&mut c);
+        assert!(c.choices_left.is_empty(), "the large model takes it");
     }
 
     #[test]
