@@ -183,6 +183,56 @@ pub fn solve(document: &Document) -> Result<Vec<(BodyId, BodyPlacement)>, SolveE
     Ok(moved)
 }
 
+/// Whether dragging `body` moves it: it has joints and is not grounded.
+pub fn draggable(document: &Document, body: BodyId) -> bool {
+    free_bodies(&usable(document)).contains(&body)
+}
+
+/// `body` dragged so its `point` (in its own frame) follows `target` (in
+/// the world) as far as its joints let it, every joint holding; the bodies
+/// that moved and where. A body the solver does not move (grounded, or
+/// with no joints of its own) is not dragged.
+pub fn drag(
+    document: &Document,
+    body: BodyId,
+    point: [f32; 3],
+    target: [f32; 3],
+) -> Vec<(BodyId, BodyPlacement)> {
+    let all = usable(document);
+    let free = free_bodies(&all);
+    if !free.contains(&body) {
+        return Vec::new();
+    }
+    let holding: Vec<&Joint> = all
+        .iter()
+        .filter(|j| {
+            j.feature.kind != JointKind::Ground
+                && (free.contains(&j.body) || free.contains(&j.feature.other_body))
+        })
+        .collect();
+    let starts: HashMap<BodyId, Rigid> = document
+        .bodies()
+        .iter()
+        .map(|b| (b.id, Rigid::from(b.placement)))
+        .collect();
+    let mut placements = starts.clone();
+    let pull = Pull {
+        body,
+        point: DVec3::from_array(point.map(f64::from)),
+        target: DVec3::from_array(target.map(f64::from)),
+    };
+    refine_pulled(&mut placements, &free, &holding, Some(&pull));
+    // The pull traded a little of each joint for reach; let them close.
+    refine(&mut placements, &free, &holding);
+    free.iter()
+        .filter_map(|b| {
+            let before = BodyPlacement::from(starts[b]);
+            let after = BodyPlacement::from(placements[b]);
+            (!after.after(&before.inverse()).is_identity()).then_some((*b, after))
+        })
+        .collect()
+}
+
 /// How closely a joint must hold, in millimetres (and the equivalent turn).
 pub const HOLDS_MM: f64 = 1e-3;
 
@@ -248,8 +298,47 @@ fn residuals_of(placements: &HashMap<BodyId, Rigid>, joints: &[&Joint]) -> Vec<f
     r
 }
 
+/// A point of a body pulled toward a target, gently: joints give way to it
+/// only where they leave the body free to follow.
+#[derive(Debug, Clone, Copy)]
+struct Pull {
+    body: BodyId,
+    /// The point, in the body's own frame.
+    point: DVec3,
+    target: DVec3,
+}
+
+/// How much a pull counts against a joint.
+const PULL_WEIGHT: f64 = 0.1;
+
+/// Every joint's residuals, and the pull's, with the bodies at
+/// `placements`.
+fn residuals_with(
+    placements: &HashMap<BodyId, Rigid>,
+    joints: &[&Joint],
+    pull: Option<&Pull>,
+) -> Vec<f64> {
+    let mut r = residuals_of(placements, joints);
+    if let Some(pull) = pull {
+        let at = &placements[&pull.body];
+        let apart = at.rotation * pull.point + at.translation - pull.target;
+        r.extend(apart.to_array().map(|c| c * PULL_WEIGHT));
+    }
+    r
+}
+
 /// Damped least squares over every free body's six freedoms at once.
 fn refine(placements: &mut HashMap<BodyId, Rigid>, free: &BTreeSet<BodyId>, joints: &[&Joint]) {
+    refine_pulled(placements, free, joints, None);
+}
+
+/// [`refine`], with a body's point pulled toward a target as well.
+fn refine_pulled(
+    placements: &mut HashMap<BodyId, Rigid>,
+    free: &BTreeSet<BodyId>,
+    joints: &[&Joint],
+    pull: Option<&Pull>,
+) {
     let bodies: Vec<BodyId> = free.iter().copied().collect();
     let n = bodies.len() * 6;
     if n == 0 || joints.is_empty() {
@@ -272,7 +361,7 @@ fn refine(placements: &mut HashMap<BodyId, Rigid>, free: &BTreeSet<BodyId>, join
         out
     };
     let cost = |r: &[f64]| r.iter().map(|v| v * v).sum::<f64>();
-    let mut r0 = residuals_of(placements, joints);
+    let mut r0 = residuals_with(placements, joints, pull);
     let mut c0 = cost(&r0);
     let mut damping = 1e-3;
     for _ in 0..200 {
@@ -286,9 +375,9 @@ fn refine(placements: &mut HashMap<BodyId, Rigid>, free: &BTreeSet<BodyId>, join
         let mut x = vec![0.0; n];
         for k in 0..n {
             x[k] = h;
-            let rp = residuals_of(&apply(placements, &pivots, &x), joints);
+            let rp = residuals_with(&apply(placements, &pivots, &x), joints, pull);
             x[k] = -h;
-            let rm = residuals_of(&apply(placements, &pivots, &x), joints);
+            let rm = residuals_with(&apply(placements, &pivots, &x), joints, pull);
             x[k] = 0.0;
             for row in 0..r0.len() {
                 jac[row * n + k] = (rp[row] - rm[row]) / (2.0 * h);
@@ -321,7 +410,7 @@ fn refine(placements: &mut HashMap<BodyId, Rigid>, free: &BTreeSet<BodyId>, join
                 continue;
             };
             let trial = apply(placements, &pivots, &step);
-            let rt = residuals_of(&trial, joints);
+            let rt = residuals_with(&trial, joints, pull);
             let ct = cost(&rt);
             if ct < c0 {
                 *placements = trial;
@@ -1413,5 +1502,45 @@ mod tests {
         let placed = doc.body_placement(part);
         assert!((placed.point([0.0; 3])[2] - 14.0).abs() < 1e-3);
         assert!(placed.direction([1.0, 0.0, 0.0])[2].abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_dragged_door_swings_on_its_hinge_toward_the_mouse() {
+        let mut doc = Document::new("t");
+        let frame = doc.create_body(None);
+        let door = doc.create_body(None);
+        add_joint(
+            &mut doc,
+            door,
+            JointFeature {
+                kind: JointKind::Hinge {
+                    offset: 0.0,
+                    zero: DQuat::IDENTITY.to_array(),
+                    drive: Default::default(),
+                },
+                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
+                other_body: frame,
+                fixed: axis([0.0; 3], [0.0, 0.0, 1.0]),
+            },
+        );
+        // The handle, 10 mm out along X, pulled round to Y.
+        for (body, placement) in drag(&doc, door, [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]) {
+            doc.set_body_placement(body, placement);
+        }
+        assert!(holds(&doc), "the hinge holds");
+        let handle = doc.body_placement(door).point([10.0, 0.0, 0.0]);
+        assert!(
+            close(handle, [0.0, 10.0, 0.0]),
+            "swung round, not slid: {handle:?}"
+        );
+        // Pulled out of reach, it goes only as far as the hinge lets it.
+        for (body, placement) in drag(&doc, door, [10.0, 0.0, 0.0], [-40.0, 0.0, 25.0]) {
+            doc.set_body_placement(body, placement);
+        }
+        assert!(holds(&doc));
+        let handle = doc.body_placement(door).point([10.0, 0.0, 0.0]);
+        assert!(close(handle, [-10.0, 0.0, 0.0]), "{handle:?}");
+        // The frame has no joints of its own: nothing drags it.
+        assert!(drag(&doc, frame, [0.0; 3], [5.0, 5.0, 5.0]).is_empty());
     }
 }

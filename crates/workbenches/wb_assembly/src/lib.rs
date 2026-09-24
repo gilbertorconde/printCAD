@@ -25,7 +25,7 @@ use core_document::{
 
 pub use interference::{Clash, Interference, interference};
 pub use joint::{Anchor, Drive, JOINT_KIND, JointFeature, JointKind, JointTool, Rigid, Takes};
-pub use solve::{HOLDS_MM, Joint, Motion, SolveError, freedom, joints, solve};
+pub use solve::{HOLDS_MM, Joint, Motion, SolveError, drag, draggable, freedom, joints, solve};
 
 /// A joint being made: the kind, and the first face once picked.
 #[derive(Debug, Clone)]
@@ -65,10 +65,27 @@ pub struct AssemblyWorkbench {
     /// What each jointed body may still do, and at which edit of the
     /// document that was worked out: the status bar asks every frame.
     freedom: std::sync::Mutex<Option<(u64, Freedom)>>,
+    /// A body held by the mouse, dragged with its joints holding.
+    grab: Option<Grab>,
     /// A driven hinge or slider swept through its range to show it move.
     #[cfg(feature = "egui")]
     playing: Option<Play>,
 }
+
+/// A body taken by the mouse: the point taken, in the body's own frame,
+/// and the plane facing the view it is dragged across.
+#[derive(Debug, Clone)]
+struct Grab {
+    body: BodyId,
+    point: [f32; 3],
+    plane: ([f32; 3], [f32; 3]),
+    press: (f32, f32),
+    dragging: bool,
+    placements: Vec<(BodyId, BodyPlacement)>,
+}
+
+/// How far, in pixels, the mouse goes before a press is a drag.
+const DRAG_PX: f32 = 4.0;
 
 /// A joint's drive being swept: the value it held before, to go back to,
 /// and how far round the sweep is (radians of a cosine).
@@ -169,6 +186,85 @@ impl AssemblyWorkbench {
             let (x, y) = ctx.world_to_viewport(clash.centre)?;
             Some(([x, y], clash))
         })
+    }
+}
+
+impl AssemblyWorkbench {
+    /// A press on a body its joints move takes hold of it; the press still
+    /// goes on to the host, which selects on a click.
+    fn take_hold(&mut self, ctx: &WorkbenchRuntimeContext, at: (f32, f32)) {
+        self.grab = None;
+        if self.picking.is_some() || matches!(self.task, Some(Task::Move { .. })) {
+            return;
+        }
+        let (Some(body), Some(point)) = (ctx.hovered_body_id, ctx.hovered_world_pos) else {
+            return;
+        };
+        let body = BodyId(body);
+        let Some((_, facing)) = ctx.viewport_to_ray(at) else {
+            return;
+        };
+        if !draggable(ctx.document, body) {
+            return;
+        }
+        self.grab = Some(Grab {
+            body,
+            point: ctx.document.body_placement(body).inverse().point(point),
+            plane: (point, facing),
+            press: at,
+            dragging: false,
+            placements: all_placements(ctx),
+        });
+    }
+
+    /// The held body follows the mouse across the plane it was taken in,
+    /// as far as its joints let it. The moves still reach the host, so a
+    /// drag is never taken for a click.
+    fn drag_to(&mut self, ctx: &mut WorkbenchRuntimeContext, at: (f32, f32)) -> InputResult {
+        let Some(grab) = self.grab.as_mut() else {
+            return InputResult::ignored();
+        };
+        let moved = (at.0 - grab.press.0).hypot(at.1 - grab.press.1);
+        if !grab.dragging && moved < DRAG_PX {
+            return InputResult::ignored();
+        }
+        grab.dragging = true;
+        let (origin, normal) = grab.plane;
+        let Some(target) = ctx.viewport_to_plane(at, origin, normal) else {
+            return InputResult::ignored();
+        };
+        for (body, placement) in drag(ctx.document, grab.body, grab.point, target) {
+            ctx.document.set_body_placement(body, placement);
+        }
+        InputResult::redraw_only()
+    }
+
+    /// The drag ends: the bodies stay where it left them, recorded as
+    /// placements.
+    fn let_go(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
+        let Some(grab) = self.grab.take() else {
+            return InputResult::ignored();
+        };
+        if !grab.dragging {
+            return InputResult::ignored();
+        }
+        for (body, before) in grab.placements {
+            let now = ctx.document.body_placement(body);
+            if now.after(&before.inverse()).is_identity() {
+                continue;
+            }
+            ctx.record(
+                "asm.place",
+                commands::object(serde_json::json!({
+                    "body": body.0.to_string(),
+                    "translation": now.translation,
+                    "rotation": now.rotation,
+                })),
+                serde_json::Value::Null,
+            );
+        }
+        ctx.request(HostRequest::JournalLabel("Drag body".into()));
+        InputResult::redraw_only()
     }
 }
 
@@ -532,8 +628,23 @@ impl Workbench for AssemblyWorkbench {
         tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        if !matches!(event, WorkbenchInputEvent::ToolActivated) {
-            return InputResult::ignored();
+        match event {
+            WorkbenchInputEvent::ToolActivated => {}
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos,
+            } if tool.is_none() => {
+                self.take_hold(ctx, *viewport_pos);
+                return InputResult::ignored();
+            }
+            WorkbenchInputEvent::MouseMove { viewport_pos } => {
+                return self.drag_to(ctx, *viewport_pos);
+            }
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                ..
+            } => return self.let_go(ctx),
+            _ => return InputResult::ignored(),
         }
         match tool {
             Some(id) if JointTool::of_command(id).is_some() => {
@@ -882,6 +993,91 @@ mod tests {
         for i in 0..4 {
             assert!((a.rotation[i] - b.rotation[i]).abs() < 1e-4, "{a:?} {b:?}");
         }
+    }
+
+    #[test]
+    fn a_body_dragged_by_the_mouse_turns_on_its_hinge_and_is_recorded() {
+        use glam::{Mat4, Vec3};
+        let mut doc = Document::new("t");
+        let frame = doc.create_body(None);
+        let door = doc.create_body(None);
+        let pin = Anchor::Axis {
+            point: [0.0; 3],
+            direction: [0.0, 0.0, 1.0],
+        };
+        doc.add_feature_in_body(
+            JointFeature {
+                kind: JointTool::Hinge.joint(
+                    &pin,
+                    &Rigid::from(BodyPlacement::default()),
+                    &pin,
+                    &Rigid::from(BodyPlacement::default()),
+                    0.0,
+                ),
+                moving: pin,
+                other_body: frame,
+                fixed: pin,
+            },
+            "Hinge 1".into(),
+            Some(door),
+        )
+        .unwrap();
+        let proj = glam::camera::rh::proj::directx::perspective(
+            60f32.to_radians(),
+            800.0 / 600.0,
+            0.1,
+            1000.0,
+        );
+        let view =
+            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 100.0), Vec3::ZERO, Vec3::Y);
+        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+        let mut wb = AssemblyWorkbench::default();
+        let mut send = |doc: &mut Document, event: WorkbenchInputEvent| {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+            ctx.view_proj = Some(vp);
+            ctx.hovered_body_id = Some(door.0);
+            ctx.hovered_world_pos = Some([10.0, 0.0, 0.0]);
+            let result = wb.on_input(&event, None, &mut ctx);
+            let outcome = core_document::HookOutcome::take(&mut ctx);
+            (result, outcome.requests, outcome.recorded)
+        };
+        let screen = |p: [f32; 3]| {
+            core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p).unwrap()
+        };
+        let press = screen([10.0, 0.0, 0.0]);
+        let (result, ..) = send(
+            &mut doc,
+            WorkbenchInputEvent::MousePress {
+                button: core_document::MouseButton::Left,
+                viewport_pos: press,
+            },
+        );
+        assert!(!result.consumed, "the host still sees the press");
+        for step in 1..=10 {
+            let turn = step as f32 * 9f32.to_radians();
+            let at = screen([10.0 * turn.cos(), 10.0 * turn.sin(), 0.0]);
+            send(
+                &mut doc,
+                WorkbenchInputEvent::MouseMove { viewport_pos: at },
+            );
+        }
+        let (_, requests, recorded) = send(
+            &mut doc,
+            WorkbenchInputEvent::MouseRelease {
+                button: core_document::MouseButton::Left,
+                viewport_pos: screen([0.0, 10.0, 0.0]),
+            },
+        );
+        let x = doc.body_placement(door).direction([1.0, 0.0, 0.0]);
+        assert!(
+            (x[1].atan2(x[0]).to_degrees() - 90.0).abs() < 2.0,
+            "a quarter turn: {x:?}"
+        );
+        assert!(doc.body_placement(door).translation[2].abs() < 1e-3);
+        assert_eq!(recorded.len(), 1);
+        assert_eq!(recorded[0].id, "asm.place");
+        assert!(requests.contains(&HostRequest::JournalLabel("Drag body".into())));
     }
 
     #[test]

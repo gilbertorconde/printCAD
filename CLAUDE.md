@@ -149,7 +149,11 @@ cargo fmt --all                   # CI enforces --check
   axis comes from a round face or an edge, a circular edge's axis from
   `EdgeRef::circle`, which the host fits to the outline), interference
   (`interference.rs`: visible solids whose placed bounds meet go to
-  `KernelQueries::overlap`, the kernel's common of the two, measured), the solver
+  `KernelQueries::overlap`, the kernel's common of the two, measured),
+  dragging (a left press on a body the solver moves takes hold of it
+  without consuming the press; moves solve `solve::drag`, the joints plus
+  a light pull of the grabbed point toward the cursor on a view-facing
+  plane, then the joints alone; the release records `asm.place`), the solver
   (`solve.rs`: each free body placed on its own against the bodies placed
   before it, turning its first joint's directions into agreement, rings
   taking their turn once most of their joints have something to hold to;
