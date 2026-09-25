@@ -209,13 +209,10 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
         {
             continue;
         }
-        let feature_name = document
-            .get_feature_meta(feature_id)
-            .map(|n| n.name.clone())
-            .unwrap_or_else(|| feature.kind_label().to_string());
+        // The error sits on its feature, which names it wherever it shows.
         let fail = |message: String| BuildError {
             feature: Some(feature_id),
-            message: format!("{feature_name}: {message}"),
+            message,
         };
 
         if (feature.is_subtractive() || feature.is_modifier()) && plan.ops.is_empty() {
@@ -2361,7 +2358,7 @@ mod tests {
     }
 
     #[test]
-    fn open_profile_reports_feature_name() {
+    fn an_open_profile_fails_on_its_feature() {
         let (mut doc, body, _) = doc_with_body_sketch();
         let mut sketch = Sketch::new("open");
         let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
@@ -2371,10 +2368,12 @@ mod tests {
         let open_id = doc
             .add_feature_in_body(SketchFeature::new(sketch, plane), "open".into(), Some(body))
             .unwrap();
-        doc.add_feature_in_body(pad(open_id, 7.0), "BadPad".into(), Some(body))
+        let bad = doc
+            .add_feature_in_body(pad(open_id, 7.0), "BadPad".into(), Some(body))
             .unwrap();
         let err = body_build_ops(&doc, body).unwrap_err();
-        assert!(err.message.contains("BadPad"), "{}", err.message);
-        assert!(err.feature.is_some());
+        assert_eq!(err.feature, Some(bad));
+        // The feature names itself wherever the error shows.
+        assert!(!err.message.contains("BadPad"), "{}", err.message);
     }
 }

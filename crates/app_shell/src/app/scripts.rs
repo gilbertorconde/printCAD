@@ -36,7 +36,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .read_only(),
         CommandSpec::new("doc.feature", "A feature with its fields")
             .param("id", ParamKind::Id, "")
-            .returns("{id, name, kind, body, visible, fields}")
+            .returns(
+                "{id, name, kind, body, visible, suppressed, error, fields, unset}: unset \
+                 names the fields holding no value, which fields leaves out",
+            )
             .read_only(),
         CommandSpec::new("doc.selection", "What is selected")
             .returns("{item, body, feature}, each an id or nil")
@@ -1306,7 +1309,10 @@ pub(crate) fn document_command(
                 "kind": kind_of(registry, node),
                 "body": node.body.map(|b| b.0.to_string()),
                 "visible": node.visible,
+                "suppressed": node.suppressed,
+                "error": node.error,
                 "fields": node.data,
+                "unset": unset_fields(&node.data),
             }))
         }
         "doc.suppress" => {
@@ -1590,6 +1596,24 @@ fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, Comm
     } else {
         Err(CommandError::bad("body", "is not a body of this document"))
     }
+}
+
+/// The names of a feature's fields that hold no value, which a script's
+/// table cannot show (a nil is no entry): at the top of the data or inside
+/// its one variant, as a Part Design feature keeps it.
+fn unset_fields(data: &Value) -> Vec<String> {
+    let Value::Object(top) = data else {
+        return Vec::new();
+    };
+    let fields = match top.values().next() {
+        Some(Value::Object(inner)) if top.len() == 1 => inner,
+        _ => top,
+    };
+    fields
+        .iter()
+        .filter(|(_, v)| v.is_null())
+        .map(|(k, _)| k.clone())
+        .collect()
 }
 
 /// What kind of feature `node` is, as its workbench names it.

@@ -1867,3 +1867,40 @@ fn a_two_sided_pocket_from_the_top_face_cuts() {
     ];
     assert_volume(&ops, 4000.0 - 100.0 * 4.0, "pocketed box");
 }
+
+/// A turned body's bounds reach its full radius on every side, not the
+/// corners of the mesh that draws it.
+#[test]
+#[ignore = "kernel: shape_bounds keeps a revolution surface's whole carrier, and there is no tight bound to take the body's size from (ogeom-rs#65)"]
+fn a_revolved_body_measures_its_full_radius() {
+    let mut kernel = new_kernel();
+    let result = kernel
+        .execute_solid_chain(
+            &[SolidOp::Sweep {
+                profile: Profile {
+                    plane: xy_plane(),
+                    wires: vec![rect_wire(4.0, 0.0, 6.0, 10.0)],
+                },
+                kind: SweepKind::Revolve {
+                    axis_origin: [0.0, 0.0],
+                    axis_dir: [0.0, 1.0],
+                    angle_deg: 360.0,
+                    second_angle_deg: None,
+                    midplane: false,
+                    reversed: false,
+                },
+                op: BooleanOp::NewSolid,
+            }],
+            &TessellationSettings::default(),
+        )
+        .expect("a tube");
+    let (lo, hi) = result.bounds_mm.expect("bounds");
+    for axis in [0, 2] {
+        assert!((hi[axis] - 6.0).abs() < 1e-5, "{hi:?}");
+        assert!((lo[axis] + 6.0).abs() < 1e-5, "{lo:?}");
+    }
+    assert!(
+        (hi[1] - 10.0).abs() < 1e-5 && lo[1].abs() < 1e-5,
+        "{lo:?} {hi:?}"
+    );
+}

@@ -106,7 +106,10 @@ pub fn register(context: &mut WorkbenchContext) {
             "Change fields of a Part Design feature or a datum",
         )
         .param("feature", ParamKind::Id, "The feature to change")
-        .extra_args("The fields to change, such as length = 25")
+        .extra_args(
+            "The fields to change, such as length = 25; a datum takes offset {x, y, z}, \
+             rotation and flip as part.datum does",
+        )
         .returns("nothing"),
     );
     context.register_command(
@@ -238,6 +241,7 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
         apply_fields(&mut feature, &fields).map_err(CommandError::failed)?;
         feature.to_json()
     } else if let Ok(datum) = DatumFeature::from_json(data) {
+        let fields = datum_fields(&datum, fields)?;
         let mut value = datum.to_json();
         merge_fields("Datum", &mut value, &fields).map_err(CommandError::failed)?;
         DatumFeature::from_json(&value)
@@ -251,6 +255,40 @@ fn set(a: &Args, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> Comma
         .map_err(|e| CommandError::failed(e.to_string()))?;
     ctx.document.mark_feature_dirty(id);
     Ok(Value::Null)
+}
+
+/// A datum's fields as `part.set` takes them: `offset` as `part.datum`
+/// gives it, {x, y, z}, with `rotation` and `flip` beside it, or whole as
+/// the datum keeps it, {translation, rotation_deg, flip}.
+fn datum_fields(
+    datum: &DatumFeature,
+    mut fields: Map<String, Value>,
+) -> Result<Map<String, Value>, CommandError> {
+    let mut offset = datum.offset;
+    let mut moved = false;
+    if let Some(given) = fields.get("offset")
+        && given.get("translation").is_none()
+    {
+        offset.translation = vector3(Some(given), "offset")?;
+        moved = true;
+    }
+    if let Some(rotation) = fields.remove("rotation") {
+        offset.rotation_deg = rotation
+            .as_f64()
+            .ok_or_else(|| CommandError::bad("rotation", "must be a number"))?
+            as f32;
+        moved = true;
+    }
+    if let Some(flip) = fields.remove("flip") {
+        offset.flip = flip
+            .as_bool()
+            .ok_or_else(|| CommandError::bad("flip", "must be true or false"))?;
+        moved = true;
+    }
+    if moved {
+        fields.insert("offset".into(), json!(offset));
+    }
+    Ok(fields)
 }
 
 fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
@@ -497,9 +535,18 @@ fn merge_fields(kind: &str, value: &mut Value, fields: &Map<String, Value>) -> R
                 known.join(", ")
             ));
         }
-        own.insert(name.clone(), field.clone());
+        own.insert(name.clone(), as_field(&own[name], field));
     }
     Ok(())
+}
+
+/// `given` for a field holding `current`: an empty table set on a list is
+/// the empty list, since a script's `{}` cannot say which it means.
+fn as_field(current: &Value, given: &Value) -> Value {
+    match (current, given) {
+        (Value::Array(_), Value::Object(map)) if map.is_empty() => Value::Array(Vec::new()),
+        _ => given.clone(),
+    }
 }
 
 /// Replace fields of `feature` with `fields`, refusing a name the feature
@@ -522,7 +569,8 @@ fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Resul
                 known.join(", ")
             ));
         }
-        own.insert(name.clone(), field.clone());
+        let value = as_field(&own[name], field);
+        own.insert(name.clone(), value);
     }
     let kind = kind.clone();
     *feature = serde_json::from_value(value).map_err(|e| format!("{kind}: {e}"))?;
@@ -633,6 +681,67 @@ mod tests {
             data["BodyBoolean"]["tool_body"],
             json!(latest.0.to_string())
         );
+    }
+
+    /// A datum moves by the same arguments whether it is made or set.
+    #[test]
+    fn a_datum_is_set_by_the_offset_it_was_made_with() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut bench = PartDesignWorkbench::default();
+        let datum = call(
+            &mut bench,
+            &mut doc,
+            "part.datum",
+            json!({"body": body.0.to_string(), "kind": "plane", "offset": [0, 0, 5]}),
+        )
+        .unwrap();
+        call(
+            &mut bench,
+            &mut doc,
+            "part.set",
+            json!({"feature": datum, "offset": {"x": 1, "y": 2, "z": 8}, "rotation": 30}),
+        )
+        .unwrap();
+        let offset = &fields(&doc, &datum)["offset"];
+        assert_eq!(offset["translation"], json!([1.0, 2.0, 8.0]));
+        assert_eq!(offset["rotation_deg"], json!(30.0));
+
+        call(
+            &mut bench,
+            &mut doc,
+            "part.set",
+            json!({"feature": datum, "offset":
+                {"translation": [0, 0, 3], "rotation_deg": 0, "flip": true}}),
+        )
+        .unwrap();
+        let offset = &fields(&doc, &datum)["offset"];
+        assert_eq!(offset["translation"], json!([0.0, 0.0, 3.0]));
+        assert_eq!(offset["flip"], json!(true));
+    }
+
+    /// A script's `{}` cannot say it is a list; set on a list field, it is
+    /// the empty one.
+    #[test]
+    fn an_empty_table_empties_a_list_field() {
+        let mut doc = Document::new("t");
+        let (body, sketch) = sketch_in(&mut doc);
+        let mut bench = PartDesignWorkbench::default();
+        call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string()}),
+        )
+        .unwrap();
+        let mirror = call(
+            &mut bench,
+            &mut doc,
+            "part.mirror",
+            json!({"body": body.0.to_string(), "originals": {}}),
+        )
+        .unwrap();
+        assert_eq!(fields(&doc, &mirror)["Mirrored"]["originals"], json!([]));
     }
 
     /// `through_all` and the ThroughAll mode are one setting; either way

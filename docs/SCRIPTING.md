@@ -45,6 +45,14 @@ pc.part.set{feature = pad, length = 20}
   Commands that make something answer its id.
 - An empty list is `array()`: a plain `{}` reaches a command as an empty
   table of names. `array(1, 2)` is the same as `{1, 2}`.
+- A feature's fields are what `pc.doc.feature{id = f}.fields` shows, set
+  by name (`pc.part.set{feature = f, length = 25}`). A field holding no
+  value is nil in Lua, so `fields` leaves it out and `unset` names it. A
+  choice is its name as a string (`axis = "SketchY"`); a choice that
+  carries values is a table under its name:
+  `axis = {Custom = {origin = {0, 5}, dir = {0, 1}}}` turns a revolution
+  about the line through (0, 5) along the sketch's Y, in sketch
+  coordinates.
 - A command that fails raises a Lua error with the reason, which stops the
   script. `pcall(pc.part.pad, {sketch = s})` catches it instead.
 - Every change is an ordinary edit, so Undo takes it back. A console line
@@ -181,7 +189,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.doc.feature`: A feature with its fields.
 
 - `id` (id)
-- Returns {id, name, kind, body, visible, fields}
+- Returns {id, name, kind, body, visible, suppressed, error, fields, unset}: unset names the fields holding no value, which fields leaves out
 
 `pc.doc.selection`: What is selected.
 
@@ -860,7 +868,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.part.set`: Change fields of a Part Design feature or a datum.
 
 - `feature` (id): The feature to change
-- Other arguments: The fields to change, such as length = 25
+- Other arguments: The fields to change, such as length = 25; a datum takes offset {x, y, z}, rotation and flip as part.datum does
 
 `pc.part.datum`: Add a datum plane, line, point or coordinate system.
 

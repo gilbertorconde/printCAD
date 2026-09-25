@@ -32,12 +32,17 @@ impl PrintCadApp {
                     );
                 }
                 Err(err) => {
+                    let name = err
+                        .feature
+                        .and_then(|f| self.session.document.get_feature_meta(f))
+                        .map(|n| format!("`{}`: ", n.name))
+                        .unwrap_or_default();
                     if let Some(feature) = err.feature {
                         self.session
                             .document
                             .set_feature_error(feature, Some(err.message.clone()));
                     }
-                    app_log::warn(format!("Recompute skipped: {err}"));
+                    app_log::warn(format!("Recompute skipped: {name}{err}"));
                 }
             }
         }
