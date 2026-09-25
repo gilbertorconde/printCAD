@@ -248,6 +248,9 @@ pub struct SketchWorkbench {
     /// Most recent sketch tool seen in `on_input`; used by the left panel to
     /// show the matching tool settings.
     last_tool: Option<String>,
+    /// The tool id as it was activated, variant and all: a change of it is
+    /// a change of tool.
+    activated_tool: Option<String>,
     /// While on, every newly created element (from any drawing tool) is
     /// flagged as construction geometry. Toggled by the
     /// `sketch.construction` action when nothing is selected.
@@ -1020,6 +1023,10 @@ impl SketchWorkbench {
         feature: &SketchFeature,
         viewport_pos: (f32, f32),
     ) -> Option<GlyphHit> {
+        // Hidden glyphs take no clicks.
+        if self.options.constraints_hidden {
+            return None;
+        }
         let proj = SketchProjector::new(ctx, feature.plane);
         let glyphs = glyphs::build(
             &feature.sketch,
@@ -1314,7 +1321,7 @@ impl SketchWorkbench {
     /// B-spline; anything else stays with the camera (right-drag pans).
     fn handle_finish_gesture(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         match &self.tool_state {
-            ToolState::LineFrom { chain: true, .. } => {
+            ToolState::LineFrom { chain: true, .. } | ToolState::PolylineFrom { .. } => {
                 self.tool_state = ToolState::Idle;
                 InputResult::consumed()
             }
@@ -1514,6 +1521,10 @@ impl SketchWorkbench {
         match key {
             KeyCode::Escape => self.handle_escape(ctx),
             KeyCode::Enter => self.handle_finish_gesture(ctx),
+            // A shape half drawn: the keys belong to it, not the selection.
+            KeyCode::Delete | KeyCode::Backspace if !self.tool_state.is_idle() => {
+                InputResult::consumed()
+            }
             KeyCode::Delete | KeyCode::Backspace => {
                 if self.selected_constraints.is_empty() {
                     self.delete_selected(ctx)
@@ -2311,7 +2322,23 @@ impl Workbench for SketchWorkbench {
         // Every remaining interaction needs an editing sketch. `None`
         // active tool behaves as select mode. Variants fold into the tool
         // they specialise.
-        let canonical = active_tool.and_then(|t| self.canonical_tool(t));
+        // A different tool starts fresh: what the last one had begun is
+        // put away (a shape half drawn, typed values), and a variant's own
+        // settings (a polygon's sides) apply once, as it is picked, so the
+        // panel can change them afterwards.
+        if active_tool.map(str::to_string) != self.activated_tool {
+            self.activated_tool = active_tool.map(str::to_string);
+            if !self.tool_state.is_idle() {
+                self.tool_state = ToolState::Idle;
+            }
+            self.dim_capture.clear_buffers();
+            self.dim_capture.sync(&self.tool_state);
+            self.flush_draw_record(ctx);
+            if let Some(tool) = active_tool {
+                self.apply_variant_settings(tool);
+            }
+        }
+        let canonical = active_tool.and_then(canonical_tool);
         let tool = canonical.as_deref();
         self.copy_mode = base == Some("sketch.copy");
         // Remember the tool so the task panel can surface its settings
@@ -2343,9 +2370,17 @@ impl Workbench for SketchWorkbench {
                 // camera's (right-drag pans) and the release tells a click
                 // from a pan.
                 let result = self.handle_finish_gesture(ctx);
-                if !result.consumed {
-                    self.right_press = Some(*viewport_pos);
+                if result.consumed {
+                    return result;
                 }
+                // Anything else half drawn is dropped, as Escape drops it.
+                if !self.tool_state.is_idle() {
+                    self.tool_state = ToolState::Idle;
+                    self.dim_capture.clear_buffers();
+                    ctx.log_info("Sketch: cancelled current tool operation");
+                    return InputResult::consumed();
+                }
+                self.right_press = Some(*viewport_pos);
                 result
             }
             WorkbenchInputEvent::MouseRelease {
@@ -2779,6 +2814,15 @@ impl SketchWorkbench {
                 selected.extend(sketch::constraint_refs(&c.kind));
             }
         }
+        // Typed values place the preview where they will place the click.
+        let typed = self.dim_capture.typed();
+        let preview_cursor = self.cursor.map(|cursor| {
+            if typed.is_empty() {
+                cursor
+            } else {
+                ovp::override_cursor(&self.tool_state, &feature.sketch, cursor, &typed)
+            }
+        });
         overlay::build_overlays(
             proj,
             pal,
@@ -2786,7 +2830,7 @@ impl SketchWorkbench {
             &selected,
             self.hovered,
             &self.tool_state,
-            self.cursor,
+            preview_cursor,
             &self.tool_params,
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),
             self.last_tool.as_deref(),
@@ -2864,35 +2908,46 @@ impl SketchWorkbench {
     /// Fold a variant into the tool it specialises, applying the variant's
     /// parameters (polygon sides, spline periodicity). Non-sketch tools
     /// yield `None`.
-    fn canonical_tool(&mut self, tool: &str) -> Option<String> {
-        let base = base_tool_id(tool);
-        if !base.starts_with("sketch.") {
-            return None;
-        }
-        Some(match (base, tool_variant(tool)) {
-            ("sketch.arc", Some("3pt")) => "sketch.arc3".to_string(),
-            ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
-            ("sketch.ellipse", Some("3pt")) => "sketch.ellipse3".to_string(),
-            ("sketch.ellipse", Some("arc")) => "sketch.ellipse_arc".to_string(),
-            ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
-            ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
-            ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
-            ("sketch.fillet", Some("chamfer")) => "sketch.chamfer".to_string(),
+    /// The settings a tool variant carries (a hexagon's six sides, a
+    /// periodic spline), put in the panel when it is picked.
+    fn apply_variant_settings(&mut self, tool: &str) {
+        match (base_tool_id(tool), tool_variant(tool)) {
             ("sketch.polygon", Some(sides)) => {
                 if let Ok(n) = sides.parse::<u32>() {
                     self.tool_params.polygon_sides = n.clamp(3, 12);
                 }
-                "sketch.polygon".to_string()
             }
             ("sketch.bspline", Some(variant)) => {
                 self.tool_params.bspline_periodic = variant == "periodic";
-                "sketch.bspline".to_string()
             }
-            ("sketch.copy", _) => "sketch.translate".to_string(),
-            (base, _) => base.to_string(),
-        })
+            _ => {}
+        }
     }
+}
 
+/// The tool a variant specialises, as the tool state machine knows it.
+fn canonical_tool(tool: &str) -> Option<String> {
+    let base = base_tool_id(tool);
+    if !base.starts_with("sketch.") {
+        return None;
+    }
+    Some(match (base, tool_variant(tool)) {
+        ("sketch.arc", Some("3pt")) => "sketch.arc3".to_string(),
+        ("sketch.circle", Some("3pt")) => "sketch.circle3".to_string(),
+        ("sketch.ellipse", Some("3pt")) => "sketch.ellipse3".to_string(),
+        ("sketch.ellipse", Some("arc")) => "sketch.ellipse_arc".to_string(),
+        ("sketch.rect", Some("center")) => "sketch.rect_center".to_string(),
+        ("sketch.rect", Some("rounded")) => "sketch.rect_rounded".to_string(),
+        ("sketch.slot", Some("arc")) => "sketch.arc_slot".to_string(),
+        ("sketch.fillet", Some("chamfer")) => "sketch.chamfer".to_string(),
+        ("sketch.polygon", Some(_)) => "sketch.polygon".to_string(),
+        ("sketch.bspline", Some(_)) => "sketch.bspline".to_string(),
+        ("sketch.copy", _) => "sketch.translate".to_string(),
+        (base, _) => base.to_string(),
+    })
+}
+
+impl SketchWorkbench {
     /// A constraint tool on the current selection: every kind it maps to
     /// is added, dimensional ones at their measured value.
     fn apply_constraint_tool(

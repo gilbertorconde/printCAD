@@ -128,13 +128,11 @@ impl DimCapture {
         }
         let buffer = &mut self.buffers[self.focus];
         match key {
+            // An empty field keeps the key: it never falls through to
+            // deleting the selection.
             KeyCode::Backspace => {
-                if buffer.is_empty() {
-                    false
-                } else {
-                    buffer.pop();
-                    true
-                }
+                buffer.pop();
+                true
             }
             KeyCode::Minus => {
                 if let Some(rest) = buffer.strip_prefix('-') {

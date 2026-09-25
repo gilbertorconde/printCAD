@@ -13,7 +13,7 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 use crate::ovp::{self, DimCapture, FieldKind};
-use crate::sketch::{GeometryElement, Sketch, Vec2D};
+use crate::sketch::{ConstraintKind, GeometryElement, Sketch, Vec2D};
 use crate::tools::{self, ToolParams, ToolState};
 
 /// How a click behaves beyond the tool itself.
@@ -70,33 +70,15 @@ pub(crate) fn click(
     } else {
         settings.tol
     };
-    // Which geometry existed, so construction mode flags everything the
-    // tool made (an id set: the fillet tool also removes a point).
-    let before: Option<HashSet<Uuid>> = settings
-        .construction
+    // Which geometry existed, so construction mode flags everything a
+    // drawing tool made (an id set: a tool may also remove a point). What
+    // an edit makes of existing geometry (a fillet's arc, a trim's halves,
+    // a copy) keeps its own kind.
+    let before: Option<HashSet<Uuid>> = (settings.construction && crate::is_draw_tool(tool))
         .then(|| sketch.geometry.iter().map(GeometryElement::id).collect());
     let state_before = state.clone();
     let constraints_before: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
     let effect = tools::handle_click(state, tool, sketch, cursor, tol, &settings.params, selected);
-    let mut skipped = 0;
-    // An auto constraint the solver would call redundant adds nothing the
-    // sketch does not already enforce; it goes before it lands.
-    if settings.avoid_redundant
-        && sketch
-            .constraints
-            .iter()
-            .any(|c| !constraints_before.contains(&c.id))
-    {
-        let diagnosis = crate::solver::diagnose(sketch);
-        let redundant: Vec<Uuid> = sketch
-            .constraints
-            .iter()
-            .filter(|c| !constraints_before.contains(&c.id) && diagnosis.redundant.contains(&c.id))
-            .map(|c| c.id)
-            .collect();
-        skipped = redundant.len();
-        sketch.constraints.retain(|c| !redundant.contains(&c.id));
-    }
     if let Some(before) = before {
         let made: Vec<Uuid> = sketch
             .geometry
@@ -108,6 +90,18 @@ pub(crate) fn click(
             sketch.set_construction(id, true);
         }
     }
+    // A typed angle says what the segment's slant is: an auto horizontal
+    // or vertical from the same click would only repeat it.
+    if constrain && typed.iter().any(|(kind, _)| *kind == FieldKind::Angle) {
+        sketch.constraints.retain(|c| {
+            constraints_before.contains(&c.id)
+                || !matches!(
+                    c.kind,
+                    ConstraintKind::Horizontal { .. } | ConstraintKind::Vertical { .. }
+                )
+        });
+    }
+    let before_typed: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
     let added = ovp::apply_typed_constraints(
         capture,
         sketch,
@@ -117,6 +111,25 @@ pub(crate) fn click(
         typed,
         constrain,
     );
+    // An auto constraint the solver calls redundant, typed values
+    // included, adds nothing the sketch does not already enforce: it goes
+    // before it lands. Typed values are what was asked for and always stay.
+    let mut skipped = 0;
+    let autos: Vec<Uuid> = sketch
+        .constraints
+        .iter()
+        .map(|c| c.id)
+        .filter(|id| !constraints_before.contains(id) && before_typed.contains(id))
+        .collect();
+    if settings.avoid_redundant && !autos.is_empty() {
+        let diagnosis = crate::solver::diagnose(sketch);
+        let redundant: Vec<Uuid> = autos
+            .into_iter()
+            .filter(|id| diagnosis.redundant.contains(id))
+            .collect();
+        skipped = redundant.len();
+        sketch.constraints.retain(|c| !redundant.contains(&c.id));
+    }
     StepOutcome {
         changed: effect.changed,
         added,

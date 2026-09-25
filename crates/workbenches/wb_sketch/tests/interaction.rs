@@ -763,8 +763,10 @@ fn construction_toggle_with_empty_selection_flips_mode() {
     assert_eq!(sketch.geometry.len(), 6);
 }
 
+/// Construction mode is for what is drawn: a fillet on a normal profile
+/// stays normal, or the profile would open.
 #[test]
-fn construction_mode_flags_fillet_arcs_too() {
+fn construction_mode_leaves_a_fillet_on_a_profile_normal() {
     let mut h = Harness::new();
     h.create_sketch();
     h.click(0.0, 0.0, "sketch.rect");
@@ -791,8 +793,8 @@ fn construction_mode_flags_fillet_arcs_too() {
     );
     assert!(!new_flagged.is_empty(), "fillet added geometry");
     assert!(
-        new_flagged.iter().all(|&c| c),
-        "fillet arc + points are construction"
+        new_flagged.iter().all(|&c| !c),
+        "the fillet's arc and points stay part of the profile"
     );
     assert!(
         old_flagged.iter().all(|&c| !c),
@@ -2844,4 +2846,83 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     };
     assert!(near(8.3, 4.0), "the foot, straight below the start");
     assert!(near(34.84, 11.25), "the touching point");
+}
+
+/// Switching tools puts away what the last one had begun: a rectangle's
+/// first corner is not finished by the rounded rectangle's first click.
+#[test]
+fn a_new_tool_starts_fresh() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.rect");
+    h.click(20.0, 20.0, "sketch.rect:rounded");
+    assert_eq!(h.counts().1, 0, "no rectangle came of the stale corner");
+    // The polygon variant's sides apply as it is picked, not on every
+    // move: the panel's value holds afterwards.
+    h.mouse_move(5.0, 5.0, "sketch.polygon:6");
+    h.wb.tool_params_mut().polygon_sides = 9;
+    h.mouse_move(6.0, 6.0, "sketch.polygon:6");
+    assert_eq!(h.wb.tool_params_mut().polygon_sides, 9);
+}
+
+/// Right-click finishes a polyline as it finishes a line chain, and drops
+/// any other shape half drawn.
+#[test]
+fn right_click_finishes_a_polyline_and_drops_a_half_drawn_shape() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 3.0, "sketch.polyline");
+    h.click(13.0, 3.0, "sketch.polyline");
+    h.right_click(13.0, 3.0, "sketch.polyline");
+    h.click(30.0, 30.0, "sketch.polyline");
+    h.click(40.0, 30.0, "sketch.polyline");
+    let lines = h.counts().1;
+    assert_eq!(lines, 2, "a fresh polyline, not one joined to the first");
+
+    h.click(50.0, 50.0, "sketch.rect");
+    h.right_click(60.0, 60.0, "sketch.rect");
+    h.click(70.0, 70.0, "sketch.rect");
+    assert_eq!(h.counts().1, lines, "the half-drawn rectangle was dropped");
+}
+
+/// Backspace in an empty typed field stays with the field: the selection
+/// is not deleted.
+#[test]
+fn backspace_while_typing_never_deletes_the_selection() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 3.0, "sketch.line");
+    h.click(13.0, 3.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(8.0, 3.0, "sketch.select");
+    h.click(30.0, 30.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    for _ in 0..3 {
+        h.key(KeyCode::Backspace, Some("sketch.line"));
+    }
+    assert_eq!(h.counts().1, 1, "the selected line is still there");
+}
+
+/// A typed angle of 0 constrains the slant once: the auto horizontal the
+/// same click would add is left out, not doubled into a redundancy.
+#[test]
+fn a_typed_level_angle_is_not_repeated_by_an_auto_horizontal() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 3.0, "sketch.line");
+    h.key(KeyCode::Key1, Some("sketch.line"));
+    h.key(KeyCode::Key0, Some("sketch.line"));
+    h.key(KeyCode::Tab, Some("sketch.line"));
+    h.key(KeyCode::Key0, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    let has = |f: fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
+    assert!(has(|k| matches!(k, ConstraintKind::AngleToAxis { .. })));
+    assert!(
+        !has(|k| matches!(k, ConstraintKind::Horizontal { .. })),
+        "{:?}",
+        sketch.constraints
+    );
 }
