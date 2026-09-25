@@ -61,6 +61,7 @@ pub(super) fn line(
                 *state = ToolState::Idle;
                 return ToolEffect::none();
             };
+            let snapped = super::snap_at(state, sketch, cursor, snap_tol);
             // Snap priority: existing point (id reuse) > curve (projected,
             // auto on-curve constraint) > axis alignment.
             let (axis_pos, mut axis) = snap::snap_axis(from_pos, cursor, snap_tol);
@@ -106,6 +107,9 @@ pub(super) fn line(
                     }
                     None => {}
                 }
+            }
+            if auto_constraints && let Some(held) = square_or_touching(sketch, line_id, &snapped) {
+                log.push_str(held);
             }
 
             // Chain: continue from the end point.
@@ -156,6 +160,7 @@ pub(super) fn polyline(
         *state = ToolState::Idle;
         return ToolEffect::none();
     };
+    let snapped = super::snap_at(state, sketch, cursor, snap_tol);
     let exclude = match from {
         SnapTarget::Existing(id) => vec![id],
         SnapTarget::New(_) => vec![],
@@ -213,6 +218,9 @@ pub(super) fn polyline(
         }
         None => {
             let id = sketch.add_geometry(GeometryElement::Line(Line::new(start_id, end_id)));
+            if auto_constraints {
+                square_or_touching(sketch, id, &snapped);
+            }
             if auto_constraints && matches!(end, SnapTarget::New(_)) {
                 match axis {
                     Some(AxisSnap::Horizontal) => {
@@ -240,6 +248,38 @@ pub(super) fn polyline(
         arc,
     };
     ToolEffect::changed(log)
+}
+
+/// A segment drawn to a perpendicular or tangent snap, held square to or
+/// touching the curve it landed on; what was added, for the log.
+fn square_or_touching(
+    sketch: &mut Sketch,
+    line: Uuid,
+    snapped: &snap::Snap,
+) -> Option<&'static str> {
+    let curve = snapped.curve?;
+    let kind = match (snapped.kind?, sketch.get_geometry(curve)?) {
+        (snap::SnapKind::Perpendicular, GeometryElement::Line(_)) => {
+            ConstraintKind::Perpendicular {
+                line1: line,
+                line2: curve,
+            }
+        }
+        (snap::SnapKind::Tangent, GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
+            ConstraintKind::Tangent {
+                line_or_circle1: line,
+                item2: curve,
+            }
+        }
+        _ => return None,
+    };
+    let said = if matches!(kind, ConstraintKind::Perpendicular { .. }) {
+        " [auto: perpendicular]"
+    } else {
+        " [auto: tangent]"
+    };
+    sketch.add_constraint(kind);
+    Some(said)
 }
 
 /// Four counter-clockwise corner positions → 4 shared-vertex lines plus the

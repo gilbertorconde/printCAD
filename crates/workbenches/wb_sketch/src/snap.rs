@@ -42,6 +42,10 @@ pub enum SnapKind {
     Intersection,
     /// The middle of a line.
     Midpoint,
+    /// On a line, square to it from the point being drawn from.
+    Perpendicular,
+    /// On a circle or an arc, touching it from the point being drawn from.
+    Tangent,
     /// Somewhere on a curve.
     OnCurve,
     /// Somewhere on one of the sketch's axes.
@@ -61,6 +65,8 @@ impl SnapKind {
             SnapKind::Origin => "Origin",
             SnapKind::Intersection => "Intersection",
             SnapKind::Midpoint => "Midpoint",
+            SnapKind::Perpendicular => "Perpendicular",
+            SnapKind::Tangent => "Tangent",
             SnapKind::OnCurve => "On curve",
             SnapKind::OnAxis => "On axis",
             SnapKind::Horizontal => "Horizontal",
@@ -76,6 +82,9 @@ pub struct Snap {
     pub target: SnapTarget,
     pub pos: Vec2D,
     pub kind: Option<SnapKind>,
+    /// The curve a perpendicular or tangent snap landed on: the new
+    /// segment is held square to it, or touching it.
+    pub curve: Option<Uuid>,
 }
 
 /// What a snap knows of the drawing in progress: the point a segment is
@@ -97,6 +106,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Sn
         target: SnapTarget::New(cursor),
         pos: cursor,
         kind: None,
+        curve: None,
     };
     if tol <= 0.0 {
         return bare;
@@ -105,6 +115,7 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Sn
         target,
         pos,
         kind: Some(kind),
+        curve: None,
     };
     if let SnapTarget::Existing(id) = snap_to_point(sketch, cursor, tol, &cx.exclude)
         && let Some(pos) = sketch.point_position(id)
@@ -146,6 +157,14 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Sn
     if let Some(m) = middle {
         return at(SnapTarget::New(m), m, SnapKind::Midpoint);
     }
+    if let Some(from) = cx.from
+        && let Some((id, pos, kind)) = square_or_touching(sketch, from, cursor, tol)
+    {
+        return Snap {
+            curve: Some(id),
+            ..at(SnapTarget::New(pos), pos, kind)
+        };
+    }
     if let Some((id, proj)) = snap_to_curve(sketch, cursor, tol, &cx.exclude) {
         let kind = if id == X_AXIS_ID || id == Y_AXIS_ID {
             SnapKind::OnAxis
@@ -168,6 +187,66 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Sn
         }
     }
     bare
+}
+
+/// From `from`, the foot of the perpendicular on a line, or a point where
+/// a line would touch a circle or an arc, nearest `cursor` within `tol`.
+fn square_or_touching(
+    sketch: &Sketch,
+    from: Vec2D,
+    cursor: Vec2D,
+    tol: f32,
+) -> Option<(Uuid, Vec2D, SnapKind)> {
+    use crate::geom2d::{Prim, prim_of, within};
+    let (f, c) = (from.to_glam(), cursor.to_glam());
+    let mut best: Option<(Uuid, glam::Vec2, SnapKind, f32)> = None;
+    let mut offer = |id: Uuid, p: glam::Vec2, kind: SnapKind| {
+        let d = (p - c).length();
+        // A foot or a touch at the start itself draws nothing.
+        if d <= tol && (p - f).length() > tol && best.is_none_or(|(.., bd)| d < bd) {
+            best = Some((id, p, kind, d));
+        }
+    };
+    for geom in &sketch.geometry {
+        if matches!(geom, GeometryElement::Point(_))
+            || !distance_to_element(sketch, geom, cursor).is_some_and(|d| d <= tol)
+        {
+            continue;
+        }
+        let Some(prim) = prim_of(sketch, geom) else {
+            continue;
+        };
+        match prim {
+            Prim::Seg { a, b } => {
+                let along = b - a;
+                if along.length_squared() > 0.0 {
+                    let t = (f - a).dot(along) / along.length_squared();
+                    let foot = a + along * t;
+                    if within(&prim, foot) {
+                        offer(geom.id(), foot, SnapKind::Perpendicular);
+                    }
+                }
+            }
+            Prim::Arc { c: centre, r, .. } | Prim::Circle { c: centre, r } => {
+                let away = f - centre;
+                let d = away.length();
+                if d > r {
+                    // The touching points, where the radius is square to
+                    // the line from `from`.
+                    let angle = (r / d).acos();
+                    let base = away.y.atan2(away.x);
+                    for side in [-1.0f32, 1.0] {
+                        let t = base + side * angle;
+                        let p = centre + glam::Vec2::new(t.cos(), t.sin()) * r;
+                        if within(&prim, p) {
+                            offer(geom.id(), p, SnapKind::Tangent);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(id, p, kind, _)| (id, Vec2D::from_glam(p), kind))
 }
 
 /// How far the axes reach when crossed with other curves.

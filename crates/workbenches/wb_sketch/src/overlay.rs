@@ -207,7 +207,9 @@ const SNAP_MARK_PX: f32 = POINT_RADIUS_PX + 3.0;
 
 /// The cue for where a click will land: a mark shaped for what it snapped
 /// to (a square on an endpoint, a ring on a centre, a ringed cross on the
-/// origin, an X on a crossing, a triangle on a midpoint, a diamond on a
+/// origin, an X on a crossing, a triangle on a midpoint, a square corner
+/// at a perpendicular's foot, a ring and a touching line at a tangent
+/// point, a diamond on a
 /// curve or an axis, a dashed guide back to the point being drawn from
 /// when level or plumb with it), and its name beside it.
 fn push_snap_marker(
@@ -265,6 +267,21 @@ fn push_snap_marker(
             [x - h, y + h * 0.8],
             [x, y - h],
         ]),
+        // A square corner: the foot of a perpendicular.
+        SnapKind::Perpendicular => {
+            path(&[[x - h, y + h], [x + h, y + h]]);
+            path(&[[x, y + h], [x, y - h]]);
+            path(&[
+                [x, y + h * 0.4],
+                [x + h * 0.6, y + h * 0.4],
+                [x + h * 0.6, y + h],
+            ]);
+        }
+        // A ring with a line touching its top.
+        SnapKind::Tangent => {
+            path(&ring(h * 0.7));
+            path(&[[x - h * 1.3, y - h * 0.7], [x + h * 1.3, y - h * 0.7]]);
+        }
         SnapKind::OnCurve | SnapKind::OnAxis => {
             path(&[[x - h, y], [x, y - h], [x + h, y], [x, y + h], [x - h, y]]);
         }

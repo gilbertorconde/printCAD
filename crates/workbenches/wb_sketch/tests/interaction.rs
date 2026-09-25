@@ -2803,3 +2803,45 @@ fn with_snapping_off_there_is_no_cue_and_no_snap() {
         "the point stays where it was clicked"
     );
 }
+
+/// Drawing from a point toward a line lands on the foot of the
+/// perpendicular, and toward a circle on the point where a line touches
+/// it; each segment is held that way.
+#[test]
+fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
+    use wb_sketch::sketch::{ConstraintKind, GeometryElement};
+
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 4.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(30.0, 10.0, "sketch.circle");
+    h.click(35.0, 10.0, "sketch.circle");
+
+    h.click(8.3, 12.0, "sketch.line");
+    h.mouse_move(8.6, 4.3, "sketch.line");
+    assert!(h.labels().iter().any(|l| l.text == "Perpendicular"));
+    h.click(8.6, 4.3, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    h.click(30.0, 30.0, "sketch.line");
+    // Touching at about (34.84, 11.25).
+    h.mouse_move(35.0, 11.5, "sketch.line");
+    assert!(h.labels().iter().any(|l| l.text == "Tangent"));
+    h.click(35.0, 11.5, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    let has = |f: &dyn Fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
+    assert!(has(&|k| matches!(k, ConstraintKind::Perpendicular { .. })));
+    assert!(has(&|k| matches!(k, ConstraintKind::Tangent { .. })));
+    let near = |x: f32, y: f32| {
+        sketch.geometry.iter().any(|g| {
+            matches!(g, GeometryElement::Point(p)
+                if (p.position.x - x).abs() < 0.02 && (p.position.y - y).abs() < 0.02)
+        })
+    };
+    assert!(near(8.3, 4.0), "the foot, straight below the start");
+    assert!(near(34.84, 11.25), "the touching point");
+}
