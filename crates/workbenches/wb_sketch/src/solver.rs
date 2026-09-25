@@ -58,6 +58,29 @@ pub enum SolveOutcome {
 /// still written back. Also updates `sketch.is_fully_constrained`.
 pub fn solve(sketch: &mut Sketch) -> SolveOutcome {
     let sys = build_system(sketch);
+    solve_system(sketch, sys)
+}
+
+/// [`solve`], with the points `held` staying where they are (points being
+/// dragged: the rest of the sketch gives way to them). When the constraints
+/// cannot hold them there, the plain solve decides, from where they were
+/// put.
+pub fn solve_holding(sketch: &mut Sketch, held: &[Uuid]) -> SolveOutcome {
+    if held.is_empty() {
+        return solve(sketch);
+    }
+    let before = sketch.geometry.clone();
+    let sys = build_system_holding(sketch, None, held);
+    match solve_system(sketch, sys) {
+        SolveOutcome::NotConverged { .. } => {
+            sketch.geometry = before;
+            solve(sketch)
+        }
+        outcome => outcome,
+    }
+}
+
+fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     if sys.specs.is_empty() || sys.vars.is_empty() {
         sketch.is_fully_constrained = false;
         return SolveOutcome::NothingToSolve;
@@ -531,6 +554,11 @@ fn build_system(sketch: &Sketch) -> System {
 /// `build_system` minus the constraint with id `exclude` (diagnostics probe
 /// the system with individual constraints removed).
 fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
+    build_system_holding(sketch, exclude, &[])
+}
+
+/// `build_system_excluding` with the points `held` pinned where they are.
+fn build_system_holding(sketch: &Sketch, exclude: Option<Uuid>, held: &[Uuid]) -> System {
     let mut vars = Vec::new();
     let mut point_vars = HashMap::new();
     let mut radius_vars = HashMap::new();
@@ -591,6 +619,11 @@ fn build_system_excluding(sketch: &Sketch, exclude: Option<Uuid>) -> System {
         }
         if let Some(&r) = radius_vars.get(&id) {
             pinned.push(r);
+        }
+    }
+    for id in held {
+        if let Some(&v) = point_vars.get(id) {
+            pinned.extend([v, v + 1]);
         }
     }
 
@@ -1168,6 +1201,47 @@ mod tests {
             (actual - expected).abs() <= tol,
             "expected {expected}, got {actual} (tol {tol})"
         );
+    }
+
+    #[test]
+    fn a_held_point_stays_where_it_was_put_and_the_rest_gives_way() {
+        let mut sketch = Sketch::new("held");
+        let a = add_point(&mut sketch, 0.0, 0.0);
+        let b = add_point(&mut sketch, 10.0, 0.0);
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        sketch.add_constraint(ConstraintKind::Length { line, length: 10.0 });
+        // The end dragged up and in.
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(b) {
+            p.position = Vec2D::new(5.0, 5.0);
+        }
+        let outcome = solve_holding(&mut sketch, &[b]);
+        assert!(
+            matches!(outcome, SolveOutcome::Converged { .. }),
+            "{outcome:?}"
+        );
+        let (pa, pb) = (
+            sketch.point_position(a).unwrap(),
+            sketch.point_position(b).unwrap(),
+        );
+        assert_near(pb.x, 5.0, 1e-6);
+        assert_near(pb.y, 5.0, 1e-6);
+        assert_near((pb - pa).to_glam().length(), 10.0, 1e-4);
+
+        // Held where the constraints cannot reach: the plain solve decides.
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: a,
+            position: Vec2D::new(0.0, 0.0),
+        });
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(b) {
+            p.position = Vec2D::new(40.0, 0.0);
+        }
+        let outcome = solve_holding(&mut sketch, &[b]);
+        assert!(
+            matches!(outcome, SolveOutcome::Converged { .. }),
+            "{outcome:?}"
+        );
+        let pb = sketch.point_position(b).unwrap();
+        assert_near(pb.to_glam().length(), 10.0, 1e-4);
     }
 
     #[test]

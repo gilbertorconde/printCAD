@@ -556,6 +556,30 @@ fn push_ghost(
 }
 
 /// Preview of the in-progress tool shape from its anchors to `cursor`.
+/// The outline of the rectangle from `a` to `c` with its corners rounded
+/// at `radius` (no more than half its shorter side, as the fillet can).
+fn rounded_rect_points(a: Vec2D, c: Vec2D, radius: f32) -> Vec<Vec2D> {
+    let (x0, x1) = (a.x.min(c.x), a.x.max(c.x));
+    let (y0, y1) = (a.y.min(c.y), a.y.max(c.y));
+    let r = radius.min((x1 - x0) * 0.5).min((y1 - y0) * 0.5).max(0.0);
+    let mut out = Vec::new();
+    // Counter-clockwise from the bottom right corner's arc.
+    let corners = [
+        (x1 - r, y0 + r, -90.0f32),
+        (x1 - r, y1 - r, 0.0),
+        (x0 + r, y1 - r, 90.0),
+        (x0 + r, y0 + r, 180.0),
+    ];
+    for (cx, cy, start) in corners {
+        for step in 0..=8 {
+            let t = (start + step as f32 * 90.0 / 8.0).to_radians();
+            out.push(Vec2D::new(cx + r * t.cos(), cy + r * t.sin()));
+        }
+    }
+    out.push(out[0]);
+    out
+}
+
 #[allow(clippy::too_many_arguments)]
 fn push_preview(
     out: &mut Overlays,
@@ -566,6 +590,7 @@ fn push_preview(
     cursor: Vec2D,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
+    active_tool: Option<&str>,
 ) {
     let pos = |t: &SnapTarget| t.position(sketch);
     match state {
@@ -621,12 +646,18 @@ fn push_preview(
         }
         ToolState::RectFrom { corner } => {
             if let Some(a) = pos(corner) {
-                let b = Vec2D::new(cursor.x, a.y);
-                let d = Vec2D::new(a.x, cursor.y);
+                let rounded = active_tool == Some("sketch.rect_rounded");
+                let outline = if rounded {
+                    rounded_rect_points(a, cursor, params.fillet_radius)
+                } else {
+                    let b = Vec2D::new(cursor.x, a.y);
+                    let d = Vec2D::new(a.x, cursor.y);
+                    vec![a, b, cursor, d, a]
+                };
                 push_polyline(
                     &mut out.lines,
                     proj,
-                    [a, b, cursor, d, a].into_iter(),
+                    outline.into_iter(),
                     pal.preview,
                     1.5,
                     false,
@@ -1040,7 +1071,12 @@ fn push_preview(
                     1.5,
                     false,
                 );
-                push_point_marker(out, proj, *start, pal.preview);
+                // Where the commit puts the start: on the rim at its angle.
+                let on_rim = geom2d::ellipse_arc_points(c, *major, *ratio, t0, t0, 1)
+                    .first()
+                    .copied()
+                    .unwrap_or(*start);
+                push_point_marker(out, proj, on_rim, pal.preview);
             }
         }
         ToolState::BSplineDraw { points } => {
@@ -1073,15 +1109,19 @@ fn push_preview(
                 1.0,
                 true,
             );
+            // One ghost per copy, as the click makes them (the moved
+            // selection itself when there are none).
             let delta = (cursor - *base).to_glam();
-            push_ghost(
-                out,
-                proj,
-                pal,
-                sketch,
-                selected,
-                &Similarity::translation(delta),
-            );
+            for k in 1..=params.copies.max(1) {
+                push_ghost(
+                    out,
+                    proj,
+                    pal,
+                    sketch,
+                    selected,
+                    &Similarity::translation(delta * k as f32),
+                );
+            }
         }
         ToolState::RotateCenter { center } => {
             push_point_marker(out, proj, *center, pal.preview);
@@ -1107,14 +1147,16 @@ fn push_preview(
             );
             if to.length() > 1e-6 && (reference.to_glam() - c).length() > 1e-6 {
                 let angle = (reference.to_glam() - c).angle_to(to);
-                push_ghost(
-                    out,
-                    proj,
-                    pal,
-                    sketch,
-                    selected,
-                    &Similarity::rotation_about(c, angle),
-                );
+                for k in 1..=params.copies.max(1) {
+                    push_ghost(
+                        out,
+                        proj,
+                        pal,
+                        sketch,
+                        selected,
+                        &Similarity::rotation_about(c, angle * k as f32),
+                    );
+                }
             }
         }
         ToolState::ScaleBase { base } => {
@@ -1247,7 +1289,15 @@ pub fn build_overlays(
         // The preview runs to where the click would land.
         let cursor = snap.map_or(raw, |s| s.pos);
         push_preview(
-            &mut out, proj, pal, sketch, tool_state, cursor, params, selected,
+            &mut out,
+            proj,
+            pal,
+            sketch,
+            tool_state,
+            cursor,
+            params,
+            selected,
+            active_tool,
         );
         if active_tool == Some("sketch.trim")
             && let Some(span) = tools::trim_preview(sketch, cursor, snap_tol)

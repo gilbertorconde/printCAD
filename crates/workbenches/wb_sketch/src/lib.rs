@@ -115,6 +115,9 @@ struct DrawRecord {
 /// In-progress drag of a dimension label (select mode).
 struct LabelDrag {
     constraint: Uuid,
+    /// The label has moved: a press that stays within the pick tolerance
+    /// is a click that selects, and leaves the label where it was.
+    moved: bool,
     /// Cursor position (sketch coords) at press time.
     grab: Vec2D,
     /// `label_offset` at press time, restored on Escape.
@@ -515,7 +518,22 @@ impl SketchWorkbench {
     /// dirty for recompute. Its plane goes back into the body's frame; a
     /// plane the edit did not move keeps its stored value exactly, so
     /// repeated edits never drift it.
-    fn store_sketch(&self, ctx: &mut WorkbenchRuntimeContext, mut feature: SketchFeature) -> bool {
+    fn store_sketch(&self, ctx: &mut WorkbenchRuntimeContext, feature: SketchFeature) -> bool {
+        let stored = self.store_sketch_data(ctx, feature);
+        if stored && let Some(id) = self.active_sketch_id {
+            ctx.document.mark_feature_dirty(id);
+        }
+        stored
+    }
+
+    /// [`Self::store_sketch`] for a change nothing is built from (where a
+    /// dimension's label sits): the solids that use the sketch stay as
+    /// they are.
+    fn store_sketch_data(
+        &self,
+        ctx: &mut WorkbenchRuntimeContext,
+        mut feature: SketchFeature,
+    ) -> bool {
         let Some(id) = self.active_sketch_id else {
             return false;
         };
@@ -529,7 +547,6 @@ impl SketchWorkbench {
             ctx.log_error(format!("Failed to update sketch: {e}"));
             return false;
         }
-        ctx.document.mark_feature_dirty(id);
         true
     }
 
@@ -1106,6 +1123,7 @@ impl SketchWorkbench {
             let original = constraint.and_then(|c| c.label_offset);
             self.label_drag = Some(LabelDrag {
                 constraint: hit.constraint,
+                moved: false,
                 grab: cursor,
                 original,
                 base: original.unwrap_or(base),
@@ -1127,13 +1145,17 @@ impl SketchWorkbench {
         self.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
 
         // Dimension label drag: purely cosmetic, no solver run needed.
-        if let Some(ld) = &self.label_drag {
-            if let Some(cursor) = self.cursor {
+        let tol = Self::snap_tolerance(ctx, &plane);
+        if let Some(ld) = self.label_drag.as_mut() {
+            if let Some(cursor) = self.cursor
+                && (ld.moved || (cursor - ld.grab).to_glam().length() > tol)
+            {
+                ld.moved = true;
                 let offset = ld.base + (cursor - ld.grab);
                 let id = ld.constraint;
                 if let Some(c) = feature.sketch.constraints.iter_mut().find(|c| c.id == id) {
                     c.label_offset = Some(offset);
-                    self.store_sketch(ctx, feature);
+                    self.store_sketch_data(ctx, feature);
                 }
             }
             return InputResult::consumed();
@@ -1155,7 +1177,11 @@ impl SketchWorkbench {
             drag.moved = true;
             drag.delta = delta;
             step::drag(&mut feature.sketch, &drag.points, delta);
-            self.solve(ctx, &mut feature);
+            // The dragged points stay under the cursor and the rest gives
+            // way; constraints hold during a drag whatever auto update says.
+            let held: Vec<Uuid> = drag.points.iter().map(|(id, _)| *id).collect();
+            self.last_solve = Some(solver::solve_holding(&mut feature.sketch, &held));
+            self.last_diagnosis = None;
             self.store_sketch(ctx, feature);
             return InputResult::consumed();
         }
@@ -1413,7 +1439,7 @@ impl SketchWorkbench {
                     .find(|c| c.id == ld.constraint)
             {
                 c.label_offset = ld.original;
-                self.store_sketch(ctx, feature);
+                self.store_sketch_data(ctx, feature);
             }
             return InputResult::consumed();
         }
@@ -2856,7 +2882,15 @@ impl SketchWorkbench {
             self.hovered,
             &self.tool_state,
             preview_cursor,
-            &self.tool_params,
+            &ToolParams {
+                // The copy tool makes one copy at least.
+                copies: if self.copy_mode {
+                    self.tool_params.copies.max(1)
+                } else {
+                    self.tool_params.copies
+                },
+                ..self.tool_params
+            },
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),
             self.last_tool.as_deref(),
             snap_tol,

@@ -527,6 +527,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             .map_err(|_| CommandError::bad("by", "must be {x, y}"))?[0];
             let targets = crate::step::drag_targets(sketch, &items);
             crate::step::drag(sketch, &targets, by);
+            let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+            crate::solver::solve_holding(sketch, &held);
             Value::Null
         }
         "sketch.construction" => {
