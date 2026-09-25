@@ -3790,16 +3790,23 @@ impl SketchWorkbench {
             return true;
         };
         let delta = match self.cursor {
+            // The middle of what was copied lands under the cursor.
             Some(cursor) => {
-                let anchor = clip
-                    .geometry
-                    .iter()
-                    .find_map(|g| match g {
-                        GeometryElement::Point(p) => Some(p.position),
-                        _ => None,
-                    })
-                    .unwrap_or(Vec2D::new(0.0, 0.0));
-                glam::Vec2::new(cursor.x - anchor.x, cursor.y - anchor.y)
+                let (lo, hi) = clip.geometry.iter().fold(
+                    (glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN)),
+                    |(lo, hi), g| match g {
+                        GeometryElement::Point(p) => {
+                            (lo.min(p.position.to_glam()), hi.max(p.position.to_glam()))
+                        }
+                        _ => (lo, hi),
+                    },
+                );
+                let anchor = if lo.x <= hi.x {
+                    (lo + hi) * 0.5
+                } else {
+                    glam::Vec2::ZERO
+                };
+                cursor.to_glam() - anchor
             }
             None => glam::Vec2::new(5.0, 5.0),
         };
@@ -3809,16 +3816,14 @@ impl SketchWorkbench {
             .iter()
             .map(GeometryElement::id)
             .collect();
+        let constraints_before: HashSet<Uuid> =
+            feature.sketch.constraints.iter().map(|c| c.id).collect();
         let by = Vec2D::new(delta.x, delta.y);
         let count = commands::paste(&mut feature.sketch, &clip, by);
         if let Some(id) = self.active_sketch_id {
-            let made = commands::made_since(
-                &feature.sketch,
-                &(
-                    before.clone(),
-                    feature.sketch.constraints.iter().map(|c| c.id).collect(),
-                ),
-            );
+            // What the paste made, its constraints among it, so a replay
+            // can name them.
+            let made = commands::made_since(&feature.sketch, &(before.clone(), constraints_before));
             ctx.record(
                 "sketch.paste",
                 commands::args(serde_json::json!({

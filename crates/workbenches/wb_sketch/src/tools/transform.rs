@@ -135,7 +135,116 @@ pub(super) fn apply_to_selection(
             _ => {}
         }
     }
+    let moved: HashSet<Uuid> = pts.iter().chain(selected.iter()).copied().collect();
+    adapt_constraints(sketch, &moved, xf);
     pts.len()
+}
+
+/// After the geometry in `moved` (points and elements) went through `xf`,
+/// the constraints that bind nothing else say what the shape now is, so
+/// the solver keeps the move rather than undoing it: a dimension takes the
+/// value it measures after the move, a fixed point is fixed where it has
+/// gone, and
+/// horizontal and vertical follow the turn. They stay as they are when the
+/// axes do, swap on a quarter turn, and at any other angle become parallel
+/// or perpendicular to one of the lines, which keeps a rectangle a
+/// rectangle at any angle.
+pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: &Similarity) {
+    use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID, measured_value, with_dimension_value};
+    let bound = |kind: &ConstraintKind| {
+        let refs = crate::sketch::constraint_refs(kind);
+        refs.iter().any(|r| moved.contains(r))
+            && refs
+                .iter()
+                .all(|r| moved.contains(r) || [ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID].contains(r))
+    };
+    // Where the x axis goes: along x, along y, or elsewhere.
+    let x_image = xf
+        .apply_vec(Vec2D::new(1.0, 0.0))
+        .to_glam()
+        .normalize_or_zero();
+    let keeps_axes = x_image.y.abs() < 1e-4;
+    let swaps_axes = x_image.x.abs() < 1e-4;
+    let mut reference: Option<(Uuid, bool)> = None;
+    let mut dropped: Vec<Uuid> = Vec::new();
+    let snapshot = sketch.clone();
+    for constraint in &mut sketch.constraints {
+        if !bound(&constraint.kind) {
+            continue;
+        }
+        match constraint.kind {
+            ConstraintKind::FixedPoint { point, .. } => {
+                if let Some(position) = snapshot.point_position(point) {
+                    constraint.kind = ConstraintKind::FixedPoint { point, position };
+                }
+            }
+            ConstraintKind::Horizontal { element } | ConstraintKind::Vertical { element } => {
+                let horizontal = matches!(constraint.kind, ConstraintKind::Horizontal { .. });
+                if keeps_axes {
+                    continue;
+                }
+                if swaps_axes {
+                    constraint.kind = if horizontal {
+                        ConstraintKind::Vertical { element }
+                    } else {
+                        ConstraintKind::Horizontal { element }
+                    };
+                    continue;
+                }
+                // The first such line keeps the turn free; the rest hold to
+                // it as they held to the axes.
+                match reference {
+                    None => {
+                        reference = Some((element, horizontal));
+                        // Its own axis constraint has no counterpart.
+                        dropped.push(constraint.id);
+                    }
+                    Some((line, line_horizontal)) => {
+                        constraint.kind = if horizontal == line_horizontal {
+                            ConstraintKind::Parallel {
+                                line1: element,
+                                line2: line,
+                            }
+                        } else {
+                            ConstraintKind::Perpendicular {
+                                line1: element,
+                                line2: line,
+                            }
+                        };
+                    }
+                }
+            }
+            // A pin to the origin or an axis the move took the point off
+            // would pull it back: it goes.
+            ConstraintKind::Coincident { point1, point2 }
+                if point1 == ORIGIN_ID || point2 == ORIGIN_ID =>
+            {
+                let point = if point1 == ORIGIN_ID { point2 } else { point1 };
+                if snapshot
+                    .point_position(point)
+                    .is_none_or(|p| p.to_glam().length() > 1e-4)
+                {
+                    dropped.push(constraint.id);
+                }
+            }
+            ConstraintKind::PointOnLine { point, line }
+                if line == X_AXIS_ID || line == Y_AXIS_ID =>
+            {
+                let off = snapshot
+                    .point_position(point)
+                    .map(|p| if line == X_AXIS_ID { p.y } else { p.x });
+                if off.is_none_or(|o| o.abs() > 1e-4) {
+                    dropped.push(constraint.id);
+                }
+            }
+            ref kind => {
+                if let Some(now) = measured_value(&snapshot, kind) {
+                    constraint.kind = with_dimension_value(kind, now);
+                }
+            }
+        }
+    }
+    sketch.constraints.retain(|c| !dropped.contains(&c.id));
 }
 
 /// Add a transformed deep copy of the selection: fresh point ids, sharing
@@ -187,7 +296,12 @@ pub fn copy_from(
     selected: &HashSet<Uuid>,
     xf: &Similarity,
 ) -> usize {
-    copy_mapped(source, sketch, selected, xf).len()
+    let map = copy_mapped(source, sketch, selected, xf);
+    // The copy holds its shape as the original does.
+    copy_constraints(source, sketch, &map, xf);
+    let copied: HashSet<Uuid> = map.values().copied().collect();
+    adapt_constraints(sketch, &copied, xf);
+    map.len()
 }
 
 /// Copy as [`copy_from`] does, and return the old → new id of every copied

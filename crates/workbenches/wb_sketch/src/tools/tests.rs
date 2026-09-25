@@ -2003,3 +2003,209 @@ fn a_transform_with_nothing_selected_says_so_at_its_first_click() {
         assert!(state.is_idle(), "{tool} did not start");
     }
 }
+
+/// Rotating a rectangle keeps it rotated and square: its horizontal and
+/// vertical constraints turn with it instead of pulling it back.
+#[test]
+fn a_rotated_rectangle_stays_rotated_and_square() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::Idle;
+    handle_click(
+        &mut state,
+        "sketch.rect",
+        &mut sketch,
+        Vec2D::new(0.0, 0.0),
+        0.5,
+    );
+    handle_click(
+        &mut state,
+        "sketch.rect",
+        &mut sketch,
+        Vec2D::new(20.0, 10.0),
+        0.5,
+    );
+    let everything: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
+    let angle = 30f32.to_radians();
+    for p in [
+        Vec2D::new(0.0, 0.0),
+        Vec2D::new(10.0, 0.0),
+        Vec2D::new(10.0 * angle.cos(), 10.0 * angle.sin()),
+    ] {
+        click_sel(
+            &mut state,
+            "sketch.rotate",
+            &mut sketch,
+            p,
+            0.5,
+            &ToolParams::default(),
+            &everything,
+        );
+    }
+    crate::solver::solve(&mut sketch);
+    let lines: Vec<glam::Vec2> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => Some(
+                (sketch.point_position(l.end).unwrap() - sketch.point_position(l.start).unwrap())
+                    .to_glam(),
+            ),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(lines.len(), 4);
+    let bottom = lines[0];
+    assert!(
+        (bottom.y.atan2(bottom.x) - angle).abs() < 1e-3,
+        "still turned 30°: {bottom:?}"
+    );
+    for pair in lines.windows(2) {
+        assert!(
+            pair[0].normalize().dot(pair[1].normalize()).abs() < 1e-3,
+            "square corners"
+        );
+    }
+}
+
+/// A copy keeps the shape's constraints: a mirrored rectangle is still a
+/// rectangle to the solver.
+#[test]
+fn a_copy_carries_the_constraints_of_what_it_copies() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::Idle;
+    handle_click(
+        &mut state,
+        "sketch.rect",
+        &mut sketch,
+        Vec2D::new(0.0, 0.0),
+        0.5,
+    );
+    handle_click(
+        &mut state,
+        "sketch.rect",
+        &mut sketch,
+        Vec2D::new(20.0, 10.0),
+        0.5,
+    );
+    let shape = |sketch: &Sketch| {
+        sketch
+            .constraints
+            .iter()
+            .filter(|c| {
+                matches!(
+                    c.kind,
+                    ConstraintKind::Horizontal { .. } | ConstraintKind::Vertical { .. }
+                )
+            })
+            .count()
+    };
+    let before = shape(&sketch);
+    let everything: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
+    transform::copy_selection(
+        &mut sketch,
+        &everything,
+        &transform::Similarity::translation(glam::Vec2::new(40.0, 0.0)),
+    );
+    // The copy's own shape comes with it; a pin to the origin does not.
+    assert_eq!(shape(&sketch), 2 * before);
+}
+
+/// A fillet on a dimensioned rectangle holds: the dimension of the edge it
+/// shortened goes, so the solve does not stretch the edge back and tear
+/// the fillet.
+#[test]
+fn a_fillet_on_a_dimensioned_corner_survives_the_solve() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::Idle;
+    handle_click(
+        &mut state,
+        "sketch.rect",
+        &mut sketch,
+        Vec2D::new(3.0, 3.0),
+        0.5,
+    );
+    handle_click(
+        &mut state,
+        "sketch.rect",
+        &mut sketch,
+        Vec2D::new(23.0, 13.0),
+        0.5,
+    );
+    let bottom = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .unwrap();
+    sketch.add_constraint(ConstraintKind::Length {
+        line: bottom,
+        length: 20.0,
+    });
+    let params = ToolParams {
+        fillet_radius: 3.0,
+        ..ToolParams::default()
+    };
+    let effect = click_p(
+        &mut state,
+        "sketch.fillet",
+        &mut sketch,
+        Vec2D::new(23.0, 3.0),
+        0.5,
+        &params,
+    );
+    assert!(effect.changed);
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(
+        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+        "{outcome:?}"
+    );
+    let arc = sketch.geometry.iter().find_map(|g| match g {
+        GeometryElement::Arc(a) => Some(a.clone()),
+        _ => None,
+    });
+    let arc = arc.expect("the fillet's arc");
+    let (c, s) = (
+        sketch.point_position(arc.center).unwrap(),
+        sketch.point_position(arc.start).unwrap(),
+    );
+    assert!(
+        ((s - c).to_glam().length() - 3.0).abs() < 1e-3,
+        "radius kept"
+    );
+}
+
+/// A split line's halves stay on one level line.
+#[test]
+fn a_split_line_stays_one_line() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::Idle;
+    handle_click(
+        &mut state,
+        "sketch.line",
+        &mut sketch,
+        Vec2D::new(3.0, 4.0),
+        0.5,
+    );
+    handle_click(
+        &mut state,
+        "sketch.line",
+        &mut sketch,
+        Vec2D::new(23.0, 4.0),
+        0.5,
+    );
+    handle_click(
+        &mut state,
+        "sketch.split",
+        &mut sketch,
+        Vec2D::new(10.0, 4.0),
+        0.5,
+    );
+    let level = sketch
+        .constraints
+        .iter()
+        .filter(|c| matches!(c.kind, ConstraintKind::Horizontal { .. }))
+        .count();
+    assert_eq!(level, 2, "both halves level");
+}

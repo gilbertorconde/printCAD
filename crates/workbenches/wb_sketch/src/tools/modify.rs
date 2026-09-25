@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use super::ToolEffect;
 use crate::geom2d::{self, Prim, prim_of, raw_hits, within};
-use crate::sketch::{Arc, GeometryElement, Line, Point, Sketch, Vec2D};
+use crate::sketch::{Arc, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
 use crate::snap::{self, arc_angles};
 
 /// Relative slack in curve parameter space: intersections this close to a
@@ -81,9 +81,58 @@ fn corner_under_cursor(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Option<
     })
 }
 
+/// A line an edit made longer or shorter: a dimension of its length (or
+/// an equality of it with another) would pull it back, so it goes.
+fn line_resized(sketch: &mut Sketch, line: Uuid) {
+    sketch.constraints.retain(|c| match c.kind {
+        ConstraintKind::Length { line: l, .. } => l != line,
+        ConstraintKind::EqualLength { line1, line2 } => line1 != line && line2 != line,
+        _ => true,
+    });
+}
+
+/// `second` is the rest of `first`, cut from it: held on the same line, as
+/// level or plumb as `first` is when it is. `joined` when they share an
+/// end (a split), else the second is held on the first's line by its start
+/// (the far part of a trimmed middle).
+fn continues(sketch: &mut Sketch, first: Uuid, second: Uuid, joined: bool) {
+    let axis: Vec<ConstraintKind> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::Horizontal { element } if element == first => {
+                Some(ConstraintKind::Horizontal { element: second })
+            }
+            ConstraintKind::Vertical { element } if element == first => {
+                Some(ConstraintKind::Vertical { element: second })
+            }
+            _ => None,
+        })
+        .collect();
+    if axis.is_empty() {
+        sketch.add_constraint(ConstraintKind::Parallel {
+            line1: second,
+            line2: first,
+        });
+    } else {
+        for kind in axis {
+            sketch.add_constraint(kind);
+        }
+    }
+    if !joined && let Some(GeometryElement::Line(l)) = sketch.get_geometry(second) {
+        let start = l.start;
+        sketch.add_constraint(ConstraintKind::PointOnLine {
+            point: start,
+            line: first,
+        });
+    }
+}
+
 /// Shorten both corner lines to their new endpoints and remove the corner
 /// point together with every constraint that referenced it.
 fn replace_corner(sketch: &mut Sketch, ctx: &CornerCtx, t1_id: Uuid, t2_id: Uuid) {
+    line_resized(sketch, ctx.l1);
+    line_resized(sketch, ctx.l2);
     for (line_id, new_end) in [(ctx.l1, t1_id), (ctx.l2, t2_id)] {
         if let Some(GeometryElement::Line(l)) = sketch.get_geometry_mut(line_id) {
             if l.start == ctx.corner_id {
@@ -417,14 +466,17 @@ pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
                 (Some(lo), Some(hi)) => {
                     let p_lo = new_point(sketch, pos(lo));
                     let p_hi = new_point(sketch, pos(hi));
+                    line_resized(sketch, id);
                     if let Some(GeometryElement::Line(l)) = sketch.get_geometry_mut(id) {
                         l.end = p_lo;
                     }
-                    sketch.add_geometry(GeometryElement::Line(Line::new(p_hi, end_pid)));
+                    let rest = sketch.add_geometry(GeometryElement::Line(Line::new(p_hi, end_pid)));
+                    continues(sketch, id, rest, false);
                 }
                 // End-of-line span: shorten and clean up the freed endpoint.
                 (Some(lo), None) => {
                     let p_lo = new_point(sketch, pos(lo));
+                    line_resized(sketch, id);
                     if let Some(GeometryElement::Line(l)) = sketch.get_geometry_mut(id) {
                         l.end = p_lo;
                     }
@@ -432,6 +484,7 @@ pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
                 }
                 (None, Some(hi)) => {
                     let p_hi = new_point(sketch, pos(hi));
+                    line_resized(sketch, id);
                     if let Some(GeometryElement::Line(l)) = sketch.get_geometry_mut(id) {
                         l.start = p_hi;
                     }
@@ -557,6 +610,7 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect
             if let Some(GeometryElement::Point(pt)) = sketch.get_geometry_mut(pid) {
                 pt.position = Vec2D::from_glam(new_pos);
             }
+            line_resized(sketch, id);
             ToolEffect::changed("Extended line to intersection")
         }
         Prim::Arc { c, r, s, e } => {
@@ -623,7 +677,9 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect 
             };
             let old_end = l.end;
             l.end = m_id;
-            sketch.add_geometry(GeometryElement::Line(Line::new(m_id, old_end)));
+            line_resized(sketch, id);
+            let rest = sketch.add_geometry(GeometryElement::Line(Line::new(m_id, old_end)));
+            continues(sketch, id, rest, true);
             ToolEffect::changed("Split line")
         }
         Prim::Arc { c, r, s, e } => {
