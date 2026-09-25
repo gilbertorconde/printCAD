@@ -66,6 +66,6 @@ sixdof = { version = "0.1", features = ["magellan"] }
 mlua = { version = "0.12", features = ["lua54", "vendored", "serde"] }
 
 # Uncomment to build against a local checkout instead of the released crate:
-[patch.crates-io]
-ogeom = { path = "/home/gil/Development/personal/openGeometry/crates/ogeom" }
+#[patch.crates-io]
+#ogeom = { path = "../openGeometry/crates/ogeom" }
 #sixdof = { path = "../sixdof" }
