@@ -595,6 +595,47 @@ fn an_edge_pick_far_from_every_edge_fails() {
     );
 }
 
+/// A picked edge is the nearest one that runs the way the pick says: near
+/// a corner the direction tells the edges apart, and a pick whose
+/// direction no edge near it takes names none.
+#[test]
+fn an_edge_pick_takes_the_edge_running_its_way() {
+    use kernel_api::EdgeProbe;
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let mut fillet_at = |point: [f64; 3], direction: [f64; 3]| {
+        let result = kernel.execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                    10.0,
+                    BooleanOp::NewSolid,
+                ),
+                SolidOp::Fillet {
+                    radius: 2.0,
+                    edges: EdgeSelection::Picked(vec![EdgeProbe { point, direction }]),
+                },
+            ],
+            &detail,
+        )?;
+        let volume = kernel
+            .physical_properties(&result.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .unwrap();
+        Ok::<f64, kernel_api::ChainError>(volume)
+    };
+    // A rounded edge of length l takes (1 - pi/4) r^2 l away.
+    let taken = |l: f64| 4000.0 - (1.0 - std::f64::consts::FRAC_PI_4) * 4.0 * l;
+    let along_top = fillet_at([10.0, 0.5, 9.5], [1.0, 0.0, 0.0]).expect("the top edge rounds");
+    assert!((along_top - taken(20.0)).abs() < 0.05, "{along_top}");
+    // By the corner, nearer the top edge than the upright one.
+    let upright = fillet_at([0.4, 0.6, 9.8], [0.0, 0.0, 1.0]).expect("the upright edge rounds");
+    assert!((upright - taken(10.0)).abs() < 0.05, "{upright}");
+    let err = fillet_at([10.0, 0.5, 9.5], [0.0, 0.0, 1.0]).expect_err("no upright edge there");
+    assert!(err.message.contains("runs along"), "{}", err.message);
+}
+
 #[test]
 fn fillet_of_faces_selection_uses_nearest_face() {
     let mut kernel = new_kernel();
@@ -1903,4 +1944,106 @@ fn a_revolved_body_measures_its_full_radius() {
         (hi[1] - 10.0).abs() < 1e-5 && lo[1].abs() < 1e-5,
         "{lo:?} {hi:?}"
     );
+}
+
+/// A drafted solid measures: its tilted face is a plane like any other.
+#[test]
+#[ignore = "kernel: surface_properties fails on a face drafted 1.5 degrees, 'u parameter -4.35 outside [-1.83, 21.83]' (ogeom-rs#66)"]
+fn a_drafted_solid_measures() {
+    let mut kernel = new_kernel();
+    let result = kernel
+        .execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                    10.0,
+                    BooleanOp::NewSolid,
+                ),
+                SolidOp::Draft {
+                    angle_deg: 1.5,
+                    neutral_point: [10.0, 10.0, 0.0],
+                    neutral_normal: [0.0, 0.0, -1.0],
+                    pull_dir: None,
+                    faces: vec![[0.0, 10.0, 5.0]],
+                },
+            ],
+            &TessellationSettings::default(),
+        )
+        .expect("a drafted box");
+    let props = kernel
+        .physical_properties(&result.brep_blob)
+        .expect("the drafted box measures");
+    // One wall leans in by tan(1.5°) over its 10 mm: a wedge of that
+    // section comes off (or goes on) along the 20 mm wall.
+    let wedge = 0.5 * 10.0 * 10.0 * 1.5f64.to_radians().tan() * 20.0;
+    let volume = props.volume_mm3.expect("a volume");
+    assert!(
+        (volume - (4000.0 - wedge)).abs() < 1e-3 || (volume - (4000.0 + wedge)).abs() < 1e-3,
+        "{volume}"
+    );
+}
+
+/// A chamfer wider than a face it runs along would take the whole face
+/// and more: it is refused, not cut.
+#[test]
+#[ignore = "kernel: a chamfer wider than an adjacent face is cut through it instead of refused, 12 mm on a 10 mm face leaves 2600 mm3 (ogeom-rs#67)"]
+fn a_chamfer_wider_than_its_face_is_refused() {
+    let mut kernel = new_kernel();
+    let result = kernel.execute_solid_chain(
+        &[
+            blind_pad(
+                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                10.0,
+                BooleanOp::NewSolid,
+            ),
+            SolidOp::Chamfer {
+                spec: ChamferSpec::EqualDistance { distance: 12.0 },
+                flip: false,
+                edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+            },
+        ],
+        &TessellationSettings::default(),
+    );
+    assert!(
+        result.is_err(),
+        "a 12 mm chamfer on a 10 mm face is refused"
+    );
+}
+
+/// A square swept along straight legs has flat sides, which measure
+/// exactly.
+#[test]
+#[ignore = "kernel: make_pipe_shell gives a square's sides along straight legs as swept surfaces, not planes, so they measure only approximately (ogeom-rs#68)"]
+fn a_square_piped_along_straight_legs_has_flat_sides() {
+    let mut kernel = new_kernel();
+    let result = kernel
+        .execute_solid_chain(
+            &[pipe_along(
+                rect_wire(-2.0, -2.0, 2.0, 2.0),
+                vec![
+                    ProfileSegment::Line {
+                        start: [0.0, 0.0],
+                        end: [0.0, 20.0],
+                    },
+                    ProfileSegment::Line {
+                        start: [0.0, 20.0],
+                        end: [20.0, 20.0],
+                    },
+                ],
+            )],
+            &TessellationSettings::default(),
+        )
+        .expect("an L of square section");
+    assert!(
+        result
+            .mesh
+            .face_surfaces
+            .iter()
+            .all(|s| matches!(s, kernel_api::FaceSurface::Plane { .. })),
+        "{:?}",
+        result.mesh.face_surfaces
+    );
+    let props = kernel.physical_properties(&result.brep_blob).unwrap();
+    assert!(!props.approximate);
+    assert!((props.volume_mm3.unwrap() - 640.0).abs() < 1e-6);
 }

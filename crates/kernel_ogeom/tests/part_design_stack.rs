@@ -1232,3 +1232,154 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
     assert!((removed(false) - 100.0).abs() < 1e-6, "{}", removed(false));
     assert!((removed(true) - 50.0).abs() < 1e-6, "{}", removed(true));
 }
+
+/// Rebuild every body the way the host does, until nothing is left to
+/// rebuild: plan, build, store each solid.
+fn settle(doc: &mut Document, kernel: &mut OgeomKernel) {
+    for _ in 0..16 {
+        let jobs = wb_part::rebuild_jobs(doc);
+        if jobs.is_empty() {
+            return;
+        }
+        for job in jobs {
+            let Ok(plan) = job.plan else { continue };
+            if plan.ops.is_empty() {
+                continue;
+            }
+            if let Ok(result) =
+                kernel.execute_solid_chain(&plan.ops, &TessellationSettings::default())
+            {
+                doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
+                doc.set_imported_geometry(
+                    job.body,
+                    core_document::ImportedGeometry {
+                        mesh: std::sync::Arc::new(result.mesh),
+                        source_asset: None,
+                        revision: 0,
+                        bounds_mm: result.bounds_mm,
+                        brep_blob_path: None,
+                        face_colors_path: None,
+                        health: None,
+                    },
+                );
+            }
+        }
+    }
+    panic!("the rebuilds never settled");
+}
+
+fn volume_of_body(doc: &Document, kernel: &mut OgeomKernel, body: BodyId) -> f64 {
+    let blob = doc.imported_brep_blob_arc(body).expect("a solid");
+    kernel
+        .physical_properties(&blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a closed solid")
+}
+
+/// A Boolean follows its tool body: made before the tool is built, it
+/// waits for it, and a change to the tool rebuilds it.
+#[test]
+fn a_boolean_follows_its_tool_body() {
+    let (mut doc, target, base) = setup(20.0, 20.0);
+    doc.add_feature_in_body(
+        pad_feature(base, 10.0, false, false),
+        "Pad".into(),
+        Some(target),
+    )
+    .unwrap();
+    let tool = doc.create_body(Some("Tool".into()));
+    doc.add_feature_in_body(
+        PartFeature::BodyBoolean {
+            refine: false,
+            tool_body: tool,
+            kind: kernel_api::BoolKind::Cut,
+        },
+        "Boolean".into(),
+        Some(target),
+    )
+    .unwrap();
+    let circle = doc
+        .add_feature_in_body(
+            circle_sketch_on(wb_sketch::sketch::SketchPlane::default(), 10.0, 10.0, 5.0),
+            "circle".into(),
+            Some(tool),
+        )
+        .unwrap();
+    let cylinder = doc
+        .add_feature_in_body(
+            pad_feature(circle, 10.0, false, false),
+            "Cylinder".into(),
+            Some(tool),
+        )
+        .unwrap();
+
+    // As a document opens: everything to build.
+    wb_part::mark_all_part_features_dirty(&mut doc);
+    let mut kernel = OgeomKernel::new();
+    settle(&mut doc, &mut kernel);
+    let pi = std::f64::consts::PI;
+    let expect = |depth: f64| 4000.0 - pi * 25.0 * depth;
+    let got = volume_of_body(&doc, &mut kernel, target);
+    assert!((got - expect(10.0)).abs() < 1e-3, "{got}");
+    assert!(
+        doc.feature_tree()
+            .all_nodes()
+            .all(|(_, n)| n.error.is_none()),
+        "nothing failed on the way"
+    );
+
+    doc.update_feature_data(
+        cylinder,
+        core_document::WorkbenchFeature::to_json(&pad_feature(circle, 5.0, false, false)),
+    )
+    .unwrap();
+    doc.mark_feature_dirty(cylinder);
+    settle(&mut doc, &mut kernel);
+    let got = volume_of_body(&doc, &mut kernel, target);
+    assert!((got - expect(5.0)).abs() < 1e-3, "{got}");
+}
+
+/// Two bodies that take each other as tools can never be built: the
+/// Boolean says so rather than rebuilding them in turn forever.
+#[test]
+fn bodies_that_take_each_other_as_tools_fail_once() {
+    let (mut doc, a, base) = setup(20.0, 20.0);
+    doc.add_feature_in_body(pad_feature(base, 10.0, false, false), "Pad".into(), Some(a))
+        .unwrap();
+    let b = doc.create_body(Some("B".into()));
+    let circle = doc
+        .add_feature_in_body(
+            circle_sketch_on(wb_sketch::sketch::SketchPlane::default(), 10.0, 10.0, 5.0),
+            "circle".into(),
+            Some(b),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(circle, 10.0, false, false),
+        "Cylinder".into(),
+        Some(b),
+    )
+    .unwrap();
+    for (body, tool) in [(a, b), (b, a)] {
+        doc.add_feature_in_body(
+            PartFeature::BodyBoolean {
+                refine: false,
+                tool_body: tool,
+                kind: kernel_api::BoolKind::Fuse,
+            },
+            "Boolean".into(),
+            Some(body),
+        )
+        .unwrap();
+    }
+    wb_part::mark_all_part_features_dirty(&mut doc);
+    let mut kernel = OgeomKernel::new();
+    settle(&mut doc, &mut kernel);
+    let error = wb_part::body_build_ops(&doc, a).unwrap_err();
+    assert!(
+        error.message.contains("as a tool in turn"),
+        "{}",
+        error.message
+    );
+}

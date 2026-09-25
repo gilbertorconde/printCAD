@@ -209,6 +209,15 @@ pub fn run(
             surface: None,
         });
     }
+    // A thickness opens a face and a draft turns about one: in a script
+    // that face is an argument.
+    if matches!(id, "part.thickness" | "part.draft") && ctx.selected_face.is_none() {
+        return Err(CommandError::bad(
+            "face_point",
+            "is required with face_normal: a point on the face (the one to open, or the \
+             neutral plane) and its outward normal, in the body's own frame",
+        ));
+    }
     let tool = match a.opt_string("variant")? {
         Some(variant) => format!("{id}:{variant}"),
         None => id.to_string(),
@@ -574,14 +583,20 @@ fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Resul
     }
     let kind = kind.clone();
     *feature = serde_json::from_value(value).map_err(|e| format!("{kind}: {e}"))?;
-    // One setting, one spelling: the flag reads back as the mode it means.
+    // A Pocket's flag and its ThroughAll mode are one setting: a flag given
+    // moves the mode (true to ThroughAll, false back to a plain depth), and
+    // the flag then reads what the mode is.
     if let PartFeature::Pocket {
         through_all, mode, ..
     } = feature
-        && *through_all
     {
-        *mode = crate::feature::ExtrudeMode::ThroughAll;
-        *through_all = false;
+        use crate::feature::ExtrudeMode;
+        match fields.get("through_all").and_then(Value::as_bool) {
+            Some(true) => *mode = ExtrudeMode::ThroughAll,
+            Some(false) if *mode == ExtrudeMode::ThroughAll => *mode = ExtrudeMode::Dimension,
+            _ => {}
+        }
+        *through_all = *mode == ExtrudeMode::ThroughAll;
     }
     Ok(())
 }
@@ -744,8 +759,8 @@ mod tests {
         assert_eq!(fields(&doc, &mirror)["Mirrored"]["originals"], json!([]));
     }
 
-    /// `through_all` and the ThroughAll mode are one setting; either way
-    /// a script names it, the feature reads back as the mode.
+    /// `through_all` and the ThroughAll mode are one setting: either
+    /// spelling sets it, and each reads what the other says.
     #[test]
     fn a_pocket_through_all_reads_back_as_its_mode() {
         let mut doc = Document::new("t");
@@ -767,7 +782,26 @@ mod tests {
         .unwrap();
         let data = fields(&doc, &pocket);
         assert_eq!(data["Pocket"]["mode"], json!("ThroughAll"));
+        assert_eq!(data["Pocket"]["through_all"], json!(true));
+
+        call(
+            &mut bench,
+            &mut doc,
+            "part.set",
+            json!({"feature": pocket, "through_all": false}),
+        )
+        .unwrap();
+        let data = fields(&doc, &pocket);
+        assert_eq!(data["Pocket"]["mode"], json!("Dimension"));
         assert_eq!(data["Pocket"]["through_all"], json!(false));
+        call(
+            &mut bench,
+            &mut doc,
+            "part.set",
+            json!({"feature": pocket, "mode": "ThroughAll"}),
+        )
+        .unwrap();
+        assert_eq!(fields(&doc, &pocket)["Pocket"]["through_all"], json!(true));
 
         call(
             &mut bench,

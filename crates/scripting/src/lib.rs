@@ -270,11 +270,29 @@ fn to_args(lua: &Lua, args: Option<mlua::Value>) -> mlua::Result<CommandArgs> {
         return Ok(CommandArgs::new());
     }
     match lua.from_value::<serde_json::Value>(args)? {
-        serde_json::Value::Object(map) => Ok(map),
+        serde_json::Value::Object(mut map) => {
+            map.values_mut().for_each(empty_tables_as_lists);
+            Ok(map)
+        }
         serde_json::Value::Array(list) if list.is_empty() => Ok(CommandArgs::new()),
         _ => Err(mlua::Error::runtime(
             "a command takes a table of named arguments, like {length = 10}",
         )),
+    }
+}
+
+/// An empty Lua table cannot say whether it is a list or a table of
+/// names; inside a command's arguments it is taken as the empty list, the
+/// one a script means when it writes `{}` for a list of items. A command
+/// reading a table of names takes an empty list as none given.
+fn empty_tables_as_lists(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) if map.is_empty() => {
+            *value = serde_json::Value::Array(Vec::new());
+        }
+        serde_json::Value::Object(map) => map.values_mut().for_each(empty_tables_as_lists),
+        serde_json::Value::Array(items) => items.iter_mut().for_each(empty_tables_as_lists),
+        _ => {}
     }
 }
 
@@ -312,7 +330,8 @@ mod tests {
             vec![
                 CommandSpec::new("part.pad", "Pad a sketch")
                     .param("sketch", ParamKind::String, "")
-                    .optional("length", ParamKind::Number, ""),
+                    .optional("length", ParamKind::Number, "")
+                    .optional("items", ParamKind::List, ""),
                 CommandSpec::new("doc.bodies", "List the bodies"),
             ]
         }
@@ -345,6 +364,20 @@ mod tests {
         assert_eq!(host.calls[0].0, "part.pad");
         assert_eq!(host.calls[0].1["length"], json!(20));
         assert_eq!(host.calls[0].1["sketch"], json!("s-1"));
+    }
+
+    /// `{}` in a script's arguments is the empty list it is written for.
+    #[test]
+    fn an_empty_table_is_an_empty_list() {
+        let mut engine = ScriptEngine::new();
+        let mut host = Recorder::default();
+        let out = engine.run_script(
+            r#"pc.part.pad{sketch = "s-1", items = {}}"#,
+            "test",
+            &mut host,
+        );
+        assert_eq!(out.error, None);
+        assert_eq!(host.calls[0].1["items"], json!([]));
     }
 
     #[test]
@@ -421,7 +454,10 @@ mod tests {
         let mut engine = ScriptEngine::new();
         let mut host = Recorder::default();
         let out = engine.eval_line("help('part')", &mut host);
-        assert_eq!(out.printed, ["pc.part.pad{sketch, length?}  Pad a sketch"]);
+        assert_eq!(
+            out.printed,
+            ["pc.part.pad{sketch, length?, items?}  Pad a sketch"]
+        );
     }
 
     #[test]

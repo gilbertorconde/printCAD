@@ -85,22 +85,53 @@ fn edge_probe(model: &Model, edge: &Shape) -> Option<Point> {
     Some(Point::new(acc.x / n, acc.y / n, acc.z / n))
 }
 
-/// Probe points for every edge a selection names, resolved on `solid`, and
+/// A point that names an edge: the edge nearest it, and, when `along` is
+/// set, running that way there.
+struct Probe {
+    point: Point,
+    along: Option<Vector>,
+}
+
+impl Probe {
+    fn at(point: Point) -> Self {
+        Self { point, along: None }
+    }
+}
+
+/// Probes for every edge a selection names, resolved on `solid`, and
 /// whether they are picks, which must lie within reach of their edge (the
 /// others are read off the solid's own edges).
 fn selection_probes(
     model: &mut Model,
     solid: &Shape,
     edges: &EdgeSelection,
-) -> Result<(Vec<Point>, bool), String> {
+) -> Result<(Vec<Probe>, bool), String> {
     let probes = match edges {
         EdgeSelection::Near(points) => {
-            return Ok((points.iter().map(|p| point3(*p)).collect(), true));
+            return Ok((points.iter().map(|p| Probe::at(point3(*p))).collect(), true));
+        }
+        EdgeSelection::Picked(picks) => {
+            let probes = picks
+                .iter()
+                .map(|pick| {
+                    let [x, y, z] = pick.direction;
+                    let length = (x * x + y * y + z * z).sqrt();
+                    Probe {
+                        point: point3(pick.point),
+                        along: (length > 1e-9)
+                            .then(|| Vector::new(x / length, y / length, z / length)),
+                    }
+                })
+                .collect();
+            return Ok((probes, true));
         }
         EdgeSelection::All => {
             let all = explore_unique(model, solid, ShapeType::Edge)
                 .map_err(|e| format!("exploring edges failed: {e}"))?;
-            all.iter().filter_map(|e| edge_probe(model, e)).collect()
+            all.iter()
+                .filter_map(|e| edge_probe(model, e))
+                .map(Probe::at)
+                .collect()
         }
         EdgeSelection::OfFaces(points) => {
             let mut probes = Vec::new();
@@ -114,7 +145,7 @@ fn selection_probes(
                         continue;
                     }
                     if let Some(probe) = edge_probe(model, &edge) {
-                        probes.push(probe);
+                        probes.push(Probe::at(probe));
                     }
                     seen.push(edge);
                 }
@@ -123,6 +154,35 @@ fn selection_probes(
         }
     };
     Ok((probes, false))
+}
+
+/// How far `point` is from `shape`.
+fn distance_to(model: &mut Model, point: Point, shape: &Shape) -> Option<f64> {
+    let vertex = model.add_vertex(ogeom::topo::VertexData::new(point));
+    distance_between_shapes(
+        model,
+        &vertex,
+        shape,
+        ogeom::intersect::ExtremaOptions::default(),
+        tol(),
+    )
+    .ok()
+    .map(|d| d.distance)
+}
+
+/// Whether `edge`, `distance` from `point`, runs along `along` where it
+/// passes the point: a step that way, forward or back, leaves the
+/// distance to it nearly as it was (within 15 degrees), where a step
+/// across it changes the distance by most of the step. The step is long
+/// next to the distance, so a step past the edge's side does not pass for
+/// one along it.
+fn runs_along(model: &mut Model, edge: &Shape, point: Point, along: Vector, distance: f64) -> bool {
+    let step = (distance * 4.0).max(0.05);
+    let level = step * 15f64.to_radians().sin();
+    [1.0, -1.0].into_iter().any(|sign| {
+        distance_to(model, point + along * (step * sign), edge)
+            .is_some_and(|d| (d - distance).abs() <= level)
+    })
 }
 
 pub fn fillet(
@@ -141,27 +201,52 @@ pub fn fillet(
         .map_err(|e| format!("fillet failed: {e}"))
 }
 
-/// The edges of `solid` the probes name, each once; a pick with no edge
-/// within reach names none and fails the selection.
+/// The edges of `solid` the probes name, each once. A pick names the
+/// nearest edge within reach that runs its way; one with none fails the
+/// selection.
 fn chain_of(
     model: &mut Model,
     solid: &Shape,
-    (probes, picked): (Vec<Point>, bool),
+    (probes, picked): (Vec<Probe>, bool),
 ) -> Result<Vec<Shape>, String> {
     let reach = if picked {
         pick_reach(model, solid)
     } else {
         f64::INFINITY
     };
+    let edges = explore_unique(model, solid, ShapeType::Edge)
+        .map_err(|e| format!("exploring the solid failed: {e}"))?;
     let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());
     for probe in probes {
-        let (edge, distance) = nearest_with_distance(model, solid, ShapeType::Edge, probe)?;
-        if distance > reach {
+        let mut near: Vec<(f64, Shape)> = edges
+            .iter()
+            .filter_map(|e| distance_to(model, probe.point, e).map(|d| (d, e.clone())))
+            .collect();
+        near.sort_by(|a, b| a.0.total_cmp(&b.0));
+        let p = probe.point;
+        let Some((nearest, _)) = near.first() else {
+            return Err("the solid has no edges".into());
+        };
+        if *nearest > reach {
             return Err(format!(
-                "no edge near the pick at ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
-                probe.x, probe.y, probe.z
+                "no edge near the pick at ({:.3}, {:.3}, {:.3}): the nearest is {nearest:.3} mm away",
+                p.x, p.y, p.z
             ));
         }
+        let found = near
+            .into_iter()
+            .take_while(|(d, _)| *d <= reach)
+            .find(|(d, edge)| match probe.along {
+                Some(along) => runs_along(model, edge, p, along, *d),
+                None => true,
+            });
+        let Some((_, edge)) = found else {
+            let a = probe.along.unwrap_or(Vector::new(0.0, 0.0, 0.0));
+            return Err(format!(
+                "no edge near the pick at ({:.3}, {:.3}, {:.3}) runs along ({:.3}, {:.3}, {:.3})",
+                p.x, p.y, p.z, a.x, a.y, a.z
+            ));
+        };
         if !chain.iter().any(|e| e.is_same(&edge)) {
             chain.push(edge);
         }

@@ -43,8 +43,8 @@ pc.part.set{feature = pad, length = 20}
   `sketch`. `show(value)` prints a table.
 - Ids of bodies, features, sketch elements and constraints are strings.
   Commands that make something answer its id.
-- An empty list is `array()`: a plain `{}` reaches a command as an empty
-  table of names. `array(1, 2)` is the same as `{1, 2}`.
+- An empty `{}` in a command's arguments is the empty list. `array()`
+  says the same anywhere else, and `array(1, 2)` is the same as `{1, 2}`.
 - A feature's fields are what `pc.doc.feature{id = f}.fields` shows, set
   by name (`pc.part.set{feature = f, length = 25}`). A field holding no
   value is nil in Lua, so `fields` leaves it out and `unset` names it. A
@@ -237,7 +237,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 - `id` (id): The feature
 - `up` (boolean): true: earlier, false: later
-- Returns whether it moved: not at the end of the history, nor past a feature it needs
+- Returns true; a move past the end of the history, or past a feature one of the two is built from, fails saying so
 
 `pc.doc.set_tip`: Build a body only up to a feature, or all of it again.
 

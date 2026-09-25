@@ -772,6 +772,17 @@ pub enum EdgeSelection {
     All,
     OfFaces(Vec<[f64; 3]>),
     Near(Vec<[f64; 3]>),
+    /// Edges picked one by one: each the nearest edge to its point that
+    /// runs along its direction there.
+    Picked(Vec<EdgeProbe>),
+}
+
+/// A picked edge, as a point beside it and the way it runs there. A zero
+/// direction leaves the way open.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EdgeProbe {
+    pub point: [f64; 3],
+    pub direction: [f64; 3],
 }
 
 /// Chamfer sizing, mirroring the three standard input styles.

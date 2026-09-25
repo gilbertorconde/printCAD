@@ -969,14 +969,14 @@ impl PrintCadApp {
             }
             TreeFeatureCommand::MoveUp | TreeFeatureCommand::MoveDown => {
                 let up = command == TreeFeatureCommand::MoveUp;
-                if crate::app::scripts::move_in_history(&mut self.session.document, feature, up) {
-                    self.session.journal.label_next("Reorder history");
-                    self.close_gesture();
-                    app_log::info("Reordered build history");
-                } else {
-                    app_log::warn(
-                        "Cannot move: already at the end, or the move would break a dependency",
-                    );
+                match crate::app::scripts::move_in_history(&mut self.session.document, feature, up)
+                {
+                    Ok(()) => {
+                        self.session.journal.label_next("Reorder history");
+                        self.close_gesture();
+                        app_log::info("Reordered build history");
+                    }
+                    Err(why) => app_log::warn(format!("Cannot move: {why}")),
                 }
             }
             TreeFeatureCommand::SetTip | TreeFeatureCommand::ClearTip => {

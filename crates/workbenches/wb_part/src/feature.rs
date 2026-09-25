@@ -379,9 +379,9 @@ pub enum PartFeature {
         /// Cut half the depth to each side of the sketch plane.
         #[serde(default)]
         symmetric: bool,
-        /// Read from files and scripts only: `mode` ThroughAll says the
-        /// same, and a Pocket set through a command or its panel folds
-        /// this into it.
+        /// The same setting as `mode` ThroughAll, kept in step with it by
+        /// commands and the panel; a file with only this set cuts through
+        /// all.
         #[serde(default)]
         through_all: bool,
         #[serde(default)]

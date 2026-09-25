@@ -78,7 +78,8 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             .param("id", ParamKind::Id, "The feature")
             .param("up", ParamKind::Bool, "true: earlier, false: later")
             .returns(
-                "whether it moved: not at the end of the history, nor past a feature it needs",
+                "true; a move past the end of the history, or past a feature one of the two \
+                 is built from, fails saying so",
             ),
         CommandSpec::new(
             "doc.set_tip",
@@ -1323,7 +1324,8 @@ pub(crate) fn document_command(
         "doc.move" => {
             let feature = feature_arg(document, &a)?;
             let up = a.opt_bool("up")?.unwrap_or(true);
-            Ok(json!(move_in_history(document, feature, up)))
+            move_in_history(document, feature, up).map_err(CommandError::failed)?;
+            Ok(json!(true))
         }
         "doc.set_tip" => {
             let feature = feature_arg(document, &a)?;
@@ -1564,12 +1566,38 @@ pub(crate) fn suppress(document: &mut core_document::Document, feature: FeatureI
 }
 
 /// Move `feature` a step in its body's history; whether it could.
+/// Move `feature` a step earlier (`up`) or later, or say why it cannot go.
 pub(crate) fn move_in_history(
     document: &mut core_document::Document,
     feature: FeatureId,
     up: bool,
-) -> bool {
-    document.move_feature_in_history(feature, up)
+) -> Result<(), String> {
+    use core_document::MoveRefused;
+    let name = |document: &core_document::Document, id: FeatureId| {
+        document
+            .get_feature_meta(id)
+            .map(|n| n.name.clone())
+            .unwrap_or_default()
+    };
+    document
+        .try_move_feature_in_history(feature, up)
+        .map_err(|refused| match refused {
+            MoveRefused::NotFound => "no such feature".to_string(),
+            MoveRefused::AtEnd if up => {
+                format!("{} is already first in its body", name(document, feature))
+            }
+            MoveRefused::AtEnd => {
+                format!("{} is already last in its body", name(document, feature))
+            }
+            MoveRefused::Dependency { neighbour } => {
+                let (this, other) = (name(document, feature), name(document, neighbour));
+                if up {
+                    format!("{this} cannot go before {other}, which it is built from")
+                } else {
+                    format!("{this} cannot go after {other}, which is built from it")
+                }
+            }
+        })
 }
 
 /// Build the body of `of` only up to `tip`, or all of it when `None`.
@@ -1953,8 +1981,11 @@ mod tests {
             "doc.move",
             json!({"id": b.0.to_string(), "up": true}),
         )
-        .unwrap();
-        assert_eq!(stuck, json!(false), "the first can go no earlier");
+        .unwrap_err();
+        assert!(
+            stuck.to_string().contains("already first"),
+            "the first can go no earlier, and says so: {stuck}"
+        );
         run(&mut doc, "doc.set_tip", json!({"id": b.0.to_string()})).unwrap();
         assert_eq!(doc.bodies()[0].tip, Some(b));
         run(

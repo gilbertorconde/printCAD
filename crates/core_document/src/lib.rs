@@ -165,6 +165,27 @@ pub struct Document {
     /// worked out. Derived on each replica, never an op.
     #[serde(skip)]
     evaluated: Evaluated,
+    /// The next geometry revision handed out: revisions never repeat in a
+    /// document, even for a body whose geometry went and came back.
+    #[serde(skip)]
+    next_geometry_revision: u64,
+    /// What each feature was last built against from outside its own
+    /// history (another body's solid, where it sat), as its bench sums it
+    /// up. Derived on each replica, never an op.
+    #[serde(skip)]
+    built_against: HashMap<FeatureId, u64>,
+}
+
+/// Why a feature cannot move a step in its body's history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MoveRefused {
+    /// No such feature.
+    NotFound,
+    /// It is already first, or last.
+    AtEnd,
+    /// The step would put it past `neighbour`, which one of the two is
+    /// built from.
+    Dependency { neighbour: FeatureId },
 }
 
 /// The document's formulas, worked out.
@@ -313,6 +334,8 @@ impl Document {
             journal_pending: op::JournalBuffer::default(),
             history_suppressed: false,
             evaluated: Evaluated::default(),
+            next_geometry_revision: 0,
+            built_against: HashMap::new(),
         }
     }
 
@@ -1307,8 +1330,17 @@ impl Document {
     /// it uses (or after one that uses it). Returns whether the order
     /// changed.
     pub fn move_feature_in_history(&mut self, feature_id: FeatureId, up: bool) -> bool {
+        self.try_move_feature_in_history(feature_id, up).is_ok()
+    }
+
+    /// [`Self::move_feature_in_history`], saying why a move is refused.
+    pub fn try_move_feature_in_history(
+        &mut self,
+        feature_id: FeatureId,
+        up: bool,
+    ) -> Result<(), MoveRefused> {
         let Some(node) = self.feature_tree.get_node(feature_id) else {
-            return false;
+            return Err(MoveRefused::NotFound);
         };
         let (body, seq) = (node.body, node.seq);
 
@@ -1328,7 +1360,7 @@ impl Document {
             (position + 1 < peers.len()).then_some(position + 1)
         };
         let Some(neighbour_pos) = neighbour_pos else {
-            return false;
+            return Err(MoveRefused::AtEnd);
         };
         let (_, neighbour_id) = peers[neighbour_pos];
 
@@ -1342,7 +1374,9 @@ impl Document {
             deps_of(neighbour_id).contains(&feature_id)
         };
         if violates {
-            return false;
+            return Err(MoveRefused::Dependency {
+                neighbour: neighbour_id,
+            });
         }
 
         // The guard ran above; the op is the resolved swap, pure on replay.
@@ -1350,7 +1384,7 @@ impl Document {
             a: feature_id,
             b: neighbour_id,
         });
-        true
+        Ok(())
     }
 
     /// Record (or clear) a recompute error on a feature. Derived state: no
@@ -1522,7 +1556,9 @@ impl Document {
             .imported_meshes
             .get(&body)
             .map(|prev| prev.revision.saturating_add(1))
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .max(self.next_geometry_revision);
+        self.next_geometry_revision = next_revision.saturating_add(1);
         geometry.revision = next_revision;
         self.local_meshes.remove(&body);
         self.imported_meshes.insert(body, geometry);
@@ -1530,6 +1566,25 @@ impl Document {
             self.place_geometry(body);
         }
         self.mark_dirty();
+    }
+
+    /// What `feature` was last built against from outside its own history,
+    /// as noted by [`Self::note_built_against`].
+    pub fn built_against(&self, feature: FeatureId) -> Option<u64> {
+        self.built_against.get(&feature).copied()
+    }
+
+    /// Note what `feature` is being built against now (a summary its bench
+    /// computes, such as another body's geometry revision and placement),
+    /// so a later change to it can be told. Derived state: no op.
+    pub fn note_built_against(&mut self, feature: FeatureId, inputs: u64) {
+        self.built_against.insert(feature, inputs);
+    }
+
+    /// Mark `feature` for rebuilding because something it is built from
+    /// moved, without marking the document edited.
+    pub fn mark_feature_stale(&mut self, feature: FeatureId) {
+        self.feature_tree.mark_dirty(feature);
     }
 
     /// Drop a body's computed/imported geometry (mesh, BRep snapshot,

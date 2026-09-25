@@ -67,8 +67,31 @@ pub fn part_feature_ids(document: &Document, body: BodyId) -> Vec<FeatureId> {
 /// (their sketches, the originals of a pattern) are settled first: the
 /// rebuild is now scheduled, or has failed with an attributed error, and
 /// either way the same job must not come back next frame.
+///
+/// A Boolean follows its tool body: when the tool's solid is rebuilt, or
+/// either body moves, the Boolean is built again. A body waits while a
+/// tool body it takes is itself still to be planned, so it is built
+/// against the tool's new solid rather than its old one.
 pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
-    pending_body_rebuilds(document)
+    let bodies: Vec<BodyId> = document.bodies().iter().map(|b| b.id).collect();
+    for body in &bodies {
+        for (feature, tool) in boolean_tools(document, *body) {
+            if document.built_against(feature) != Some(tool_inputs(document, *body, tool)) {
+                document.mark_feature_stale(feature);
+            }
+        }
+    }
+    let pending = pending_body_rebuilds(document);
+    let ready: Vec<BodyId> = pending
+        .iter()
+        .copied()
+        .filter(|body| {
+            !boolean_tools(document, *body)
+                .iter()
+                .any(|(_, tool)| pending.contains(tool) && !tools_reach(document, *tool, *body))
+        })
+        .collect();
+    ready
         .into_iter()
         .map(|body| {
             let features = part_feature_ids(document, body);
@@ -80,12 +103,73 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             for id in features.iter().chain(&inputs) {
                 document.clear_feature_dirty(*id);
             }
+            for (feature, tool) in boolean_tools(document, body) {
+                let seen = tool_inputs(document, body, tool);
+                document.note_built_against(feature, seen);
+            }
             RebuildJob {
                 body,
                 plan: body_build_ops(document, body),
             }
         })
         .collect()
+}
+
+/// The Booleans of `body`'s history that are not suppressed, each with
+/// the body it takes as its tool.
+fn boolean_tools(document: &Document, body: BodyId) -> Vec<(FeatureId, BodyId)> {
+    part_features_of_body(document, body)
+        .into_iter()
+        .filter(|(id, _)| !document.get_feature_meta(*id).is_some_and(|n| n.suppressed))
+        .filter_map(|(id, feature)| match feature {
+            PartFeature::BodyBoolean { tool_body, .. } => Some((id, tool_body)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `to` is among the tool bodies `from` takes, or theirs, and so
+/// on: a body that reaches itself this way can never be built.
+fn tools_reach(document: &Document, from: BodyId, to: BodyId) -> bool {
+    let mut stack = vec![from];
+    let mut seen: Vec<BodyId> = Vec::new();
+    while let Some(body) = stack.pop() {
+        if body == to {
+            return true;
+        }
+        if seen.contains(&body) {
+            continue;
+        }
+        seen.push(body);
+        stack.extend(
+            boolean_tools(document, body)
+                .into_iter()
+                .map(|(_, tool)| tool),
+        );
+    }
+    false
+}
+
+/// What a Boolean of `body` is built against, summed up: the tool body's
+/// solid (its geometry revision, none before it has one) and where the
+/// tool sits relative to the body.
+fn tool_inputs(document: &Document, body: BodyId, tool: BodyId) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    document
+        .imported_geometry(tool)
+        .map(|g| g.revision)
+        .hash(&mut hasher);
+    let relative = document
+        .body_placement(body)
+        .inverse()
+        .after(&document.body_placement(tool));
+    for row in relative.rows() {
+        for value in row {
+            value.to_bits().hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 /// Remove a feature and settle what depended on it: the sketches it
@@ -147,10 +231,13 @@ fn edge_selection(edges: &crate::feature::EdgeSel) -> EdgeSelection {
     match edges {
         crate::feature::EdgeSel::All => EdgeSelection::All,
         crate::feature::EdgeSel::Faces(picks) => EdgeSelection::OfFaces(face_points(picks)),
-        crate::feature::EdgeSel::Edges(picks) => EdgeSelection::Near(
+        crate::feature::EdgeSel::Edges(picks) => EdgeSelection::Picked(
             picks
                 .iter()
-                .map(|p| [p.point[0] as f64, p.point[1] as f64, p.point[2] as f64])
+                .map(|p| kernel_api::EdgeProbe {
+                    point: p.point.map(f64::from),
+                    direction: p.direction.map(f64::from),
+                })
                 .collect(),
         ),
     }
@@ -476,7 +563,11 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 reversed,
             } => {
                 if faces.is_empty() {
-                    return Err(fail("select at least one face to draft".into()));
+                    return Err(fail(
+                        "no faces to tilt: pick them in the Draft's panel, or set its faces, \
+                         each {point, normal} in the body's own frame"
+                            .into(),
+                    ));
                 }
                 let (neutral_point, neutral_normal) = face_pick_plane(neutral);
                 let pull = if *reversed {
@@ -531,10 +622,12 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 let transforms =
                     linear_transforms(axis, *length, *occurrences, *spacing_mode, *reversed)
                         .map_err(&fail)?;
-                plan.ops.push(SolidOp::Transform {
-                    transforms,
-                    originals,
-                });
+                if !transforms.is_empty() {
+                    plan.ops.push(SolidOp::Transform {
+                        transforms,
+                        originals,
+                    });
+                }
             }
             PartFeature::PolarPattern {
                 refine: _,
@@ -547,10 +640,12 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
                 let transforms =
                     polar_transforms(axis, *angle_deg, *occurrences, *reversed).map_err(&fail)?;
-                plan.ops.push(SolidOp::Transform {
-                    transforms,
-                    originals,
-                });
+                if !transforms.is_empty() {
+                    plan.ops.push(SolidOp::Transform {
+                        transforms,
+                        originals,
+                    });
+                }
             }
             PartFeature::MultiTransform {
                 originals,
@@ -559,10 +654,12 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
             } => {
                 let originals = original_ops(&feature_ops, originals).map_err(&fail)?;
                 let transforms = multi_transforms(steps).map_err(&fail)?;
-                plan.ops.push(SolidOp::Transform {
-                    transforms,
-                    originals,
-                });
+                if !transforms.is_empty() {
+                    plan.ops.push(SolidOp::Transform {
+                        transforms,
+                        originals,
+                    });
+                }
             }
             PartFeature::Clone { source } => {
                 if !plan.ops.is_empty() {
@@ -584,6 +681,13 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 if *tool_body == body {
                     return Err(fail(
                         "a body cannot be its own tool; pick another body".into(),
+                    ));
+                }
+                if tools_reach(document, *tool_body, body) {
+                    return Err(fail(
+                        "the tool body takes this body as a tool in turn; one of the two \
+                         has to go"
+                            .into(),
                     ));
                 }
                 if !document.bodies().iter().any(|b| b.id == *tool_body) {
@@ -1246,8 +1350,12 @@ fn linear_transforms(
     spacing_mode: bool,
     reversed: bool,
 ) -> Result<Vec<Mat4>, String> {
-    if occurrences < 2 {
-        return Err("a linear pattern needs at least 2 occurrences".into());
+    // One occurrence is the original alone: nothing to copy.
+    if occurrences == 0 {
+        return Err("a linear pattern needs at least 1 occurrence".into());
+    }
+    if occurrences == 1 {
+        return Ok(Vec::new());
     }
     let dir = normalize(axis.dir())?;
     let sign = if reversed { -1.0 } else { 1.0 };
@@ -1273,8 +1381,11 @@ fn polar_transforms(
     occurrences: u32,
     reversed: bool,
 ) -> Result<Vec<Mat4>, String> {
-    if occurrences < 2 {
-        return Err("a polar pattern needs at least 2 occurrences".into());
+    if occurrences == 0 {
+        return Err("a polar pattern needs at least 1 occurrence".into());
+    }
+    if occurrences == 1 {
+        return Ok(Vec::new());
     }
     let full_circle = (f64::from(angle_deg) - 360.0).abs() < 1e-6;
     let step = if full_circle {
@@ -1692,6 +1803,33 @@ mod tests {
         assert!(rebuild_jobs(&mut doc).is_empty(), "nothing comes back");
     }
 
+    /// A pattern of one occurrence is the original alone: it builds, and
+    /// adds nothing. None at all is refused.
+    #[test]
+    fn a_pattern_of_one_occurrence_adds_nothing() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
+            .unwrap();
+        let before = body_build_ops(&doc, body).unwrap().ops.len();
+        let pattern = |occurrences| PartFeature::LinearPattern {
+            refine: false,
+            originals: vec![pad_id],
+            axis: PatternAxis::X,
+            length: 30.0,
+            occurrences,
+            spacing_mode: false,
+            reversed: false,
+        };
+        let id = doc
+            .add_feature_in_body(pattern(1), "Pattern".into(), Some(body))
+            .unwrap();
+        assert_eq!(body_build_ops(&doc, body).unwrap().ops.len(), before);
+        doc.update_feature_data(id, pattern(0).to_json()).unwrap();
+        let error = body_build_ops(&doc, body).unwrap_err();
+        assert!(error.message.contains("at least 1"), "{}", error.message);
+    }
+
     /// A refined feature is followed by a Refine op that answers to it,
     /// and a pattern of that feature re-runs its tool, not the refine.
     #[test]
@@ -1752,10 +1890,12 @@ mod tests {
             },
         ];
         match edge_selection(&crate::feature::EdgeSel::Edges(picks)) {
-            EdgeSelection::Near(points) => {
+            EdgeSelection::Picked(probes) => {
+                let points: Vec<[f64; 3]> = probes.iter().map(|p| p.point).collect();
                 assert_eq!(points, vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]]);
+                assert_eq!(probes[1].direction, [0.0, 1.0, 0.0]);
             }
-            other => panic!("picked edges map to probe points, not {other:?}"),
+            other => panic!("picked edges map to probes, not {other:?}"),
         }
     }
 
@@ -2332,9 +2472,12 @@ mod tests {
             nodes.sort();
             nodes.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
         };
-        assert!(
-            !doc.move_feature_in_history(pocket, true),
-            "the pocket stays after its sketch"
+        assert_eq!(
+            doc.try_move_feature_in_history(pocket, true),
+            Err(core_document::MoveRefused::Dependency {
+                neighbour: cut_sketch
+            }),
+            "the pocket stays after its sketch, and names it"
         );
         assert_eq!(order(&doc), vec![base, pad_id, cut_sketch, pocket]);
         assert!(doc.move_feature_in_history(cut_sketch, true));

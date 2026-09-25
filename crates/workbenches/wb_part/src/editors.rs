@@ -272,7 +272,7 @@ fn deg_drag(
 
 fn count_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut u32, label: &str) -> bool {
     if let Some((changed, v)) = fx.show(ui, label, f64::from(*value)) {
-        *value = v.round().clamp(2.0, 1000.0) as u32;
+        *value = v.round().clamp(1.0, 1000.0) as u32;
         return changed;
     }
     field(ui, label, |ui| {
@@ -280,7 +280,7 @@ fn count_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut u32, label: &str) -> b
         let changed = QtyField::new(&mut v)
             .decimals(0)
             .speed(0.1)
-            .range(2.0..=1000.0)
+            .range(1.0..=1000.0)
             .show(ui);
         if changed {
             *value = v.round() as u32;
@@ -1147,13 +1147,15 @@ pub fn feature_editor(
                 *sketch = new;
                 changed = true;
             }
-            // Legacy flag folds into the mode picker.
-            if *through_all {
+            // The flag and the ThroughAll mode are one setting: a file that
+            // has only the flag set opens in that mode, and the flag
+            // follows the mode picked.
+            if *through_all && *mode != ExtrudeMode::ThroughAll {
                 *mode = ExtrudeMode::ThroughAll;
-                *through_all = false;
                 changed = true;
             }
             changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, first_feature);
+            *through_all = *mode == ExtrudeMode::ThroughAll;
             match mode {
                 ExtrudeMode::Dimension => {
                     changed |= mm_drag(ui, fx, depth, "Depth:");
