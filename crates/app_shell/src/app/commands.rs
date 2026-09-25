@@ -31,6 +31,7 @@ struct FrameIntents {
     fit_selection: bool,
     set_draw_style: Option<settings::DrawStyle>,
     toggle_print_bed: bool,
+    toggle_annotations: bool,
     toggle_measure: bool,
     edit: Vec<crate::ui::EditCommand>,
     body_display: Vec<(core_document::BodyId, Option<core_document::BodyDisplay>)>,
@@ -122,6 +123,7 @@ impl PrintCadApp {
                 UiCommand::FitSelection => intents.fit_selection = true,
                 UiCommand::SetDrawStyle(style) => intents.set_draw_style = Some(style),
                 UiCommand::TogglePrintBed => intents.toggle_print_bed = true,
+                UiCommand::ToggleAnnotations => intents.toggle_annotations = true,
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {
@@ -362,6 +364,11 @@ impl PrintCadApp {
         }
         if intents.toggle_print_bed {
             self.user_settings.printing.show_bed = !self.user_settings.printing.show_bed;
+            intents.persist_settings = true;
+        }
+        if intents.toggle_annotations {
+            self.user_settings.rendering.show_annotations =
+                !self.user_settings.rendering.show_annotations;
             intents.persist_settings = true;
         }
         if let Some(style) = intents.set_draw_style

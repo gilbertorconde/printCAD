@@ -52,6 +52,7 @@ version first.
 - STEP and IGES import as bodies, assemblies placed as their files say.
 - STL, OBJ, 3MF, PLY, glTF and VRML import as meshes, and a mesh converts to a solid on request.
 - Every imported body is checked; a broken one shows red and the kernel repairs it on request.
+- The dimensions, tolerances, datums and notes a STEP or IGES file carries show over the model and in the tree, and each body lists the layers it is on; View › Annotations turns them off.
 
 ### View
 - Faces and edges select one by one; a double click takes the whole body.

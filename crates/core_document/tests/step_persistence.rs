@@ -170,6 +170,8 @@ fn imported_object_graph_and_visibility_roundtrip() {
             visible: true,
             body_id: None,
             local_transform: None,
+            annotation: None,
+            layers: Vec::new(),
         },
     );
     nodes.insert(
@@ -188,6 +190,8 @@ fn imported_object_graph_and_visibility_roundtrip() {
                 [0.0, 0.0, 1.0, 0.0],
                 [0.0, 0.0, 0.0, 1.0],
             ]),
+            annotation: None,
+            layers: vec!["level 7".into()],
         },
     );
     doc.set_imported_object_graph(vec![root_id], nodes);
@@ -210,6 +214,88 @@ fn imported_object_graph_and_visibility_roundtrip() {
     assert_eq!(loaded.imported_object_for_body(body_id), Some(child_id));
 
     let _ = std::fs::remove_file(&tmp);
+}
+
+/// An import's annotations and its bodies' layers come back from a save:
+/// they come from the file, so nothing re-derives them.
+#[test]
+fn imported_annotations_and_layers_roundtrip() {
+    let mut doc = Document::new("AnnotationPersistenceTest");
+    let body_id = doc.create_body(Some("Bracket".into()));
+    let part_id = Uuid::new_v4();
+    let group_id = Uuid::new_v4();
+    let dimension_id = Uuid::new_v4();
+    let node = |id, parent, children, kind, name: &str| core_document::ImportedObjectNode {
+        id,
+        parent_id: parent,
+        children,
+        kind,
+        name: name.into(),
+        visible: true,
+        body_id: None,
+        local_transform: None,
+        annotation: None,
+        layers: Vec::new(),
+    };
+    let mut part = node(
+        part_id,
+        None,
+        vec![group_id],
+        kernel_api::ImportedNodeKind::Part,
+        "Bracket",
+    );
+    part.body_id = Some(body_id);
+    part.layers = vec!["level 7".into(), "machined".into()];
+    let group = node(
+        group_id,
+        Some(part_id),
+        vec![dimension_id],
+        kernel_api::ImportedNodeKind::Annotations,
+        "Annotations",
+    );
+    let mut dimension = node(
+        dimension_id,
+        Some(group_id),
+        Vec::new(),
+        kernel_api::ImportedNodeKind::Annotation,
+        "Linear Size.1",
+    );
+    let drawn = core_document::Annotation {
+        kind: kernel_api::AnnotationKind::Dimension,
+        text: "Ø 35 ±0.2".into(),
+        polylines: vec![vec![[0.0, -10.0, 0.0], [40.0, -10.0, 0.0]]],
+        anchor: Some([20.0, -10.0, 0.0]),
+        body: Some(body_id),
+    };
+    dimension.annotation = Some(drawn.clone());
+    let nodes = [part, group, dimension]
+        .into_iter()
+        .map(|n| (n.id, n))
+        .collect();
+    doc.set_imported_object_graph(vec![part_id], nodes);
+    assert!(doc.set_imported_object_visibility(dimension_id, false));
+
+    let tmp = std::env::temp_dir().join(format!(
+        "printcad_annotation_persistence_{}.prtcad",
+        std::process::id()
+    ));
+    doc.save_to_file(&tmp, Compression::None)
+        .expect("save .prtcad");
+    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let _ = std::fs::remove_file(&tmp);
+
+    assert_eq!(
+        loaded.imported_object(part_id).expect("part").layers,
+        ["level 7", "machined"]
+    );
+    let annotations = loaded.imported_annotations();
+    let [(node, annotation)] = annotations.as_slice() else {
+        panic!("one annotation, found {}", annotations.len());
+    };
+    assert_eq!(node.id, dimension_id);
+    assert_eq!(node.name, "Linear Size.1");
+    assert_eq!(**annotation, drawn);
+    assert!(!loaded.imported_annotation_effective_visible(dimension_id));
 }
 
 /// A save must be safe to run from a worker thread on a cloned document.

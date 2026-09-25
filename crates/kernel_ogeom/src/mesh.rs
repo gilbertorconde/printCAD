@@ -148,6 +148,7 @@ pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
                 brep_blob: Vec::new(),
                 face_colors: Vec::new(),
                 health: None,
+                layers: Vec::new(),
             }
         })
         .filter(|b| !b.mesh.indices.is_empty())
@@ -161,6 +162,7 @@ pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
         },
         nodes: Vec::new(),
         source_unit: Some(LengthUnit::Millimetre),
+        annotations: Vec::new(),
     })
 }
 

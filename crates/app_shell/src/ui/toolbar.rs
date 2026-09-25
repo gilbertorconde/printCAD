@@ -65,7 +65,11 @@ fn with_key(label: &str, key: Option<&core_document::Chord>) -> String {
     }
 }
 
-fn standard_items(show_print_bed: bool, measuring: bool) -> Vec<Option<ShellItem>> {
+fn standard_items(
+    show_print_bed: bool,
+    show_annotations: bool,
+    measuring: bool,
+) -> Vec<Option<ShellItem>> {
     use super::{EditCommand, FileCommand};
     vec![
         Some(shell(
@@ -129,6 +133,13 @@ fn standard_items(show_print_bed: bool, measuring: bool) -> Vec<Option<ShellItem
             show_print_bed,
             UiCommand::TogglePrintBed,
         )),
+        Some(toggle(
+            "dimensional-constraint",
+            "Annotations",
+            "view.annotations",
+            show_annotations,
+            UiCommand::ToggleAnnotations,
+        )),
     ]
 }
 
@@ -140,6 +151,8 @@ pub struct ToolbarInputs<'a> {
     pub active_document_object: Option<core_document::FeatureId>,
     /// The print-bed button's state.
     pub show_print_bed: bool,
+    /// The annotations button's state.
+    pub show_annotations: bool,
     /// The measure button's state.
     pub measuring: bool,
     /// The keys buttons name in their tooltips.
@@ -490,6 +503,7 @@ pub fn draw_toolbars(
         host,
         active_document_object,
         show_print_bed,
+        show_annotations,
         measuring,
         keymap,
         scripts,
@@ -538,7 +552,7 @@ pub fn draw_toolbars(
             // Row 0: standard tools, the workbench switcher, the bench's
             // row-0 tools, then the tool search at the right.
             row(ui, 0, |ui| {
-                for item in standard_items(show_print_bed, measuring) {
+                for item in standard_items(show_print_bed, show_annotations, measuring) {
                     match item {
                         None => separator(ui),
                         Some(item) => {

@@ -71,6 +71,8 @@ pub enum UiCommand {
     SetDrawStyle(settings::DrawStyle),
     /// The print bed drawn around the model, or not.
     TogglePrintBed,
+    /// The annotations imported files carry drawn over the scene, or not.
+    ToggleAnnotations,
     /// Arm the measure tool, or put it away.
     ToggleMeasure,
     Edit(EditCommand),

@@ -51,6 +51,7 @@ pub enum HostAction {
     ClippingPlane,
     Measure,
     PrintBed,
+    Annotations,
     Recompute,
     LogPanel,
     Delete,
@@ -228,6 +229,7 @@ const HOST: &[HostSpec] = {
         ),
         spec(Measure, "view.measure", "Measure", "View", &[]),
         spec(PrintBed, "view.print_bed", "Print bed", "View", &[]),
+        spec(Annotations, "view.annotations", "Annotations", "View", &[]),
         anywhere(spec(NewTab, "tab.new", "New tab", "Tabs", &["Ctrl+T"])),
         anywhere(spec(
             CloseTab,
@@ -772,6 +774,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         )),
         Measure => C(UiCommand::ToggleMeasure),
         PrintBed => C(UiCommand::TogglePrintBed),
+        Annotations => C(UiCommand::ToggleAnnotations),
         Recompute => C(UiCommand::RecomputeAll),
         LogPanel => C(UiCommand::ToggleLogPanel),
         Delete => match state.tree_selection {

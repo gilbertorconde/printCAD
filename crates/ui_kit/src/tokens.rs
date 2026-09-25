@@ -50,6 +50,10 @@ pub const SKETCH_FULLY_CONSTRAINED: Color32 = rgb(0x4FD08F);
 pub const SKETCH_SELECTED: Color32 = rgb(0x7CC4F5);
 pub const SKETCH_PRESELECT: Color32 = rgb(0xF2D479);
 
+/// Annotations an imported file carries: dimensions, tolerances, datums
+/// and notes, drawn over the scene.
+pub const ANNOTATION: Color32 = rgb(0x7FD1E8);
+
 // Axes.
 pub const AXIS_X: Color32 = rgb(0xE86E6E);
 pub const AXIS_Y: Color32 = rgb(0x4FD08F);

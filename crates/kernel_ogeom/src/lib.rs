@@ -5,6 +5,7 @@
 //! all go through the `ogeom` kernel. Persisted shape blobs are ogeom
 //! native-format text bytes (`ogeom::io::native`).
 
+mod annotations;
 mod chain;
 pub mod export;
 mod health;

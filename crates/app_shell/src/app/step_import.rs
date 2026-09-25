@@ -315,6 +315,7 @@ impl PrintCadApp {
             report,
             nodes: imported_nodes,
             source_unit,
+            annotations,
         } = imported;
 
         // The reader's warnings never reach the terminal one by one: a
@@ -466,7 +467,14 @@ impl PrintCadApp {
                     kernel_api::ImportedNodeKind::Assembly => "Assembly".to_string(),
                     kernel_api::ImportedNodeKind::Part => "Part".to_string(),
                     kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),
+                    kernel_api::ImportedNodeKind::Annotations => "Annotations".to_string(),
+                    kernel_api::ImportedNodeKind::Annotation => "Annotation".to_string(),
                 });
+                let layers = body_id
+                    .and(src.body_index)
+                    .and_then(|idx| imported_bodies.get(idx))
+                    .map(|body| body.layers.clone())
+                    .unwrap_or_default();
                 let node = core_document::ImportedObjectNode {
                     id: doc_id,
                     parent_id,
@@ -476,6 +484,8 @@ impl PrintCadApp {
                     visible: src.visible,
                     body_id,
                     local_transform: src.local_transform,
+                    annotation: None,
+                    layers,
                 };
                 if let Some(parent) = parent_id {
                     parent_links_in_order.push((doc_id, parent));
@@ -488,6 +498,59 @@ impl PrintCadApp {
                 if let Some(parent_node) = nodes_map.get_mut(&parent) {
                     parent_node.children.push(child);
                 }
+            }
+        }
+        // The file's annotations, as one group under the model they came
+        // with, each tied to the body it describes.
+        if !annotations.is_empty() {
+            let group_id = Uuid::new_v4();
+            let parent_id = roots.first().copied();
+            let mut children = Vec::with_capacity(annotations.len());
+            for annotation in annotations {
+                let id = Uuid::new_v4();
+                children.push(id);
+                nodes_map.insert(
+                    id,
+                    core_document::ImportedObjectNode {
+                        id,
+                        parent_id: Some(group_id),
+                        children: Vec::new(),
+                        kind: kernel_api::ImportedNodeKind::Annotation,
+                        name: annotation.name,
+                        visible: true,
+                        body_id: None,
+                        local_transform: None,
+                        annotation: Some(core_document::Annotation {
+                            kind: annotation.kind,
+                            text: annotation.text,
+                            polylines: annotation.polylines,
+                            anchor: annotation.anchor,
+                            body: annotation
+                                .body_index
+                                .and_then(|idx| body_ids_by_import_index.get(idx).copied()),
+                        }),
+                        layers: Vec::new(),
+                    },
+                );
+            }
+            nodes_map.insert(
+                group_id,
+                core_document::ImportedObjectNode {
+                    id: group_id,
+                    parent_id,
+                    children,
+                    kind: kernel_api::ImportedNodeKind::Annotations,
+                    name: "Annotations".to_string(),
+                    visible: true,
+                    body_id: None,
+                    local_transform: None,
+                    annotation: None,
+                    layers: Vec::new(),
+                },
+            );
+            match parent_id.and_then(|parent| nodes_map.get_mut(&parent)) {
+                Some(parent) => parent.children.push(group_id),
+                None => roots.push(group_id),
             }
         }
         // On a fresh document the file's declared unit becomes the display

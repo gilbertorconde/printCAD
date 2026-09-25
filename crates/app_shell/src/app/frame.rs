@@ -1141,6 +1141,7 @@ impl PrintCadApp {
                 .pill(),
             );
         }
+        self.annotation_overlays(&mut data);
 
         // Combine sketch meshes, imported geometry, and overlay meshes.
         let mut all_meshes = sketch_meshes;

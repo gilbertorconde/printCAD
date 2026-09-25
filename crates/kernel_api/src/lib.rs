@@ -297,6 +297,9 @@ pub struct ImportedBody {
     /// What the kernel's checker found in the body's shape as read.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<ShapeHealth>,
+    /// The names of the layers the file puts the body on.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<String>,
 }
 
 /// What the kernel's checker found in a shape.
@@ -423,6 +426,68 @@ pub enum ImportedNodeKind {
     Assembly,
     Part,
     Instance,
+    /// The group holding an import's annotations.
+    Annotations,
+    /// One annotation the file carries: a dimension, a tolerance, a datum
+    /// or a note.
+    Annotation,
+}
+
+/// What an imported annotation states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AnnotationKind {
+    /// A size or a location, with its value.
+    Dimension,
+    /// A geometric tolerance: flatness, position, profile and their kin.
+    Tolerance,
+    /// A datum letter, or a target a datum is contacted at.
+    Datum,
+    /// Text with nothing measured behind it.
+    Note,
+    /// A drawn annotation the file does not say more about.
+    #[default]
+    Other,
+}
+
+impl AnnotationKind {
+    /// The kind as a word for the interface.
+    pub fn label(self) -> &'static str {
+        match self {
+            AnnotationKind::Dimension => "Dimension",
+            AnnotationKind::Tolerance => "Tolerance",
+            AnnotationKind::Datum => "Datum",
+            AnnotationKind::Note => "Note",
+            AnnotationKind::Other => "Annotation",
+        }
+    }
+}
+
+/// One annotation an imported file carries (a dimension, a tolerance, a
+/// datum or a note), with what it draws.
+///
+/// The polylines and the anchor are in document millimetres, placed where
+/// the file's bodies are placed, so an annotation drawn on an assembly's
+/// part sits on that part.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct ImportedAnnotation {
+    /// The name the file gives it (`Linear Size.3`, `Flatness.1`), or the
+    /// text it shows where the file names it by that.
+    pub name: String,
+    pub kind: AnnotationKind,
+    /// What a label shows: `Ø 35 ±0.2`, `Flatness 0.2`, `A`.
+    pub text: String,
+    /// The drawn geometry: leaders, frames, witness lines and whatever
+    /// strokes the file draws its text with.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polylines: Vec<Vec<[f32; 3]>>,
+    /// Where the label goes; `None` for an annotation that draws nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<[f32; 3]>,
+    /// The body the annotation describes, as an index into
+    /// [`ImportedModel::bodies`], where the file says which.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body_index: Option<usize>,
 }
 
 /// One hierarchy node from the imported STEP/XCAF structure.
@@ -490,6 +555,10 @@ pub struct ImportedModel {
     /// is purely informational and used by the UI to pick a display unit.
     #[serde(default)]
     pub source_unit: Option<LengthUnit>,
+    /// The file's annotations (dimensions, tolerances, datums and notes)
+    /// in file order, the drawn ones first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub annotations: Vec<ImportedAnnotation>,
 }
 
 /// What the reader had to say about a file.
