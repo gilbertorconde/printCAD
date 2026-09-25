@@ -31,11 +31,19 @@ pub(crate) struct PackageInfo {
     pub granted: Capabilities,
     /// `helpers/<os>-<arch>/` in the package.
     pub helpers: PathBuf,
+    /// Where the package is published (`owner/repo`), when it was
+    /// installed from there; written on the features it makes.
+    pub source: Option<String>,
 }
 
 impl PackageInfo {
     pub(crate) fn made_by(&self) -> String {
         format!("{} {}", self.id, self.version)
+    }
+
+    /// What features this package writes record of it.
+    pub(crate) fn origin(&self) -> core_document::FeatureOrigin {
+        core_document::FeatureOrigin::new(self.made_by(), self.source.clone())
     }
 
     pub(crate) fn owns(&self, kind: &str) -> bool {
@@ -191,7 +199,7 @@ impl State {
                     body,
                     deps,
                     data,
-                    Some(package.made_by()),
+                    package.origin(),
                 );
                 document.mark_feature_dirty(id);
                 Ok(json!(id.0.to_string()))
@@ -204,6 +212,10 @@ impl State {
                     .ok_or("argument `data` is required")?;
                 document
                     .update_feature_data(id, data)
+                    .map_err(|e| e.to_string())?;
+                // The data is in this version's form now.
+                document
+                    .set_feature_origin(id, package.origin())
                     .map_err(|e| e.to_string())?;
                 document.mark_feature_dirty(id);
                 Ok(Value::Null)

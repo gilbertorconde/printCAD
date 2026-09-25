@@ -42,9 +42,13 @@ Packages live in
 is the only part of the disk it sees (as `/data`).
 
 A document made with a package keeps its features when opened without it:
-the tree marks them "Needs <package> <version>", their bodies keep the
-shape they were saved with, and they cannot be deleted until the package is
-back.
+a notice says which package it needs, the tree marks them "Needs <package>
+<version>", their bodies keep the shape they were saved with, and they
+cannot be deleted until the package is back. A feature records the package
+and version that last wrote it and, for a package installed from GitHub,
+its repository, so the feature's menu in the tree offers "Install
+<package>". A package reads each feature with the version that wrote it
+(`Node::made_by`), which is what lets it read data an older version saved.
 
 ## Writing one
 

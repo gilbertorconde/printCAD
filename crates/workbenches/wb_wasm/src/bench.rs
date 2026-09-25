@@ -57,6 +57,7 @@ pub fn load(package: &Package, granted: &bench_api::Capabilities) -> Result<Wasm
         kinds: manifest.feature_kinds.clone(),
         granted: manifest.capabilities.and(granted),
         helpers: crate::jobs::helpers_dir(&package.dir),
+        source: crate::remote::source_of(package).map(|s| s.repo),
     });
     let loaded = Arc::new(Loaded::new(
         component,

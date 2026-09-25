@@ -46,6 +46,19 @@ fn scripted_session(doc: &mut Document) {
     doc.remove_feature(d1).expect("remove");
     doc.set_body_tip(body, Some(d2));
     assert!(doc.remove_body(other), "the second body goes away");
+    let op = doc.add_feature_of_kind(
+        core_document::WorkbenchId::new("acme.cam.op"),
+        "Pocket op".into(),
+        Some(body),
+        Vec::new(),
+        serde_json::json!({"depth": 2}),
+        core_document::FeatureOrigin::new("acme.cam 0.1.0", Some("acme/cam".into())),
+    );
+    doc.set_feature_origin(
+        op,
+        core_document::FeatureOrigin::new("acme.cam 0.2.0", Some("acme/cam".into())),
+    )
+    .expect("origin");
     doc.set_display_unit(Unit::In);
     doc.set_name("Replayed");
 }

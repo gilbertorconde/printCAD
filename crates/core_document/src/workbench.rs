@@ -486,11 +486,29 @@ impl FeatureInfo {
     /// package made it.
     pub fn missing_package(node: &FeatureNode) -> Option<String> {
         node.made_by.as_ref().map(|by| {
+            let get = match &node.package_source {
+                Some(repo) => {
+                    format!(" Install it from github.com/{repo} (the feature's menu offers to).")
+                }
+                None => String::new(),
+            };
             format!(
                 "Made by the workbench {by}, which is not installed. It keeps its data, \
-                 and its body keeps the shape it was saved with."
+                 and its body keeps the shape it was saved with.{get}"
             )
         })
+    }
+
+    /// The package a feature no loaded bench claims needs: its id, and
+    /// where it is published when that is known.
+    pub fn needed_package(node: &FeatureNode) -> Option<(String, Option<String>)> {
+        let id = node
+            .made_by
+            .as_ref()?
+            .split_whitespace()
+            .next()?
+            .to_string();
+        Some((id, node.package_source.clone()))
     }
 }
 

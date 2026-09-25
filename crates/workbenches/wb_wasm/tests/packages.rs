@@ -383,6 +383,45 @@ fn a_helper_runs_only_when_the_user_allowed_it() {
 }
 
 #[test]
+fn a_package_writing_a_feature_stamps_its_own_version_on_it() {
+    let package = installed("tests/rogue", "rogue.wasm", "rogue-stamp");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("rogue");
+    let id = run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.add",
+        json!({}),
+    )
+    .unwrap();
+    let feature = core_document::FeatureId(id.as_str().unwrap().parse().unwrap());
+    // As an older version of the package left it.
+    document
+        .set_feature_origin(
+            feature,
+            core_document::FeatureOrigin::new("test.rogue 0.0.9", None),
+        )
+        .unwrap();
+    run(
+        &mut registry,
+        &mut document,
+        "test.rogue",
+        "test.rogue.touch",
+        json!({ "id": id }),
+    )
+    .unwrap();
+    let node = document.get_feature_meta(feature).unwrap();
+    assert_eq!(node.data, json!({"touched": true}));
+    assert_eq!(
+        node.made_by.as_deref(),
+        Some("test.rogue 0.1.0"),
+        "the writer's version"
+    );
+    assert_eq!(node.package_source, None, "installed from a file");
+}
+
+#[test]
 fn a_feature_whose_package_is_missing_names_it_and_keeps_its_data() {
     let package = installed("tests/rogue", "rogue.wasm", "rogue-missing");
     let mut registry = registry_with(&package, Capabilities::default());
@@ -536,6 +575,30 @@ fn a_package_installs_from_a_github_release_and_takes_its_updates() {
         "the package's data stays"
     );
     assert_eq!(remote::check(&github, &updated), Ok(None));
+
+    // The features it makes say where to get it.
+    let mut registry = registry_with(&updated, Capabilities::default());
+    let mut document = Document::new("gears");
+    let made = run(
+        &mut registry,
+        &mut document,
+        "example.gear",
+        "example.gear.make",
+        json!({"teeth": 12, "module": 1.0}),
+    )
+    .unwrap();
+    let feature = core_document::FeatureId(made["feature"].as_str().unwrap().parse().unwrap());
+    let node = document.get_feature_meta(feature).unwrap();
+    assert_eq!(node.package_source.as_deref(), Some("acme/gears"));
+    assert_eq!(
+        FeatureInfo::needed_package(node),
+        Some(("example.gear".into(), Some("acme/gears".into())))
+    );
+    assert!(
+        FeatureInfo::missing_package(node)
+            .unwrap()
+            .contains("github.com/acme/gears")
+    );
 
     // A repository with no such release says so.
     let missing = remote::install_from_github(&github, "acme/other", &root).unwrap_err();

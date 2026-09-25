@@ -260,6 +260,7 @@ impl PrintCadApp {
             .server
             .send(core_document::server::ClientMessage::Rebase);
         app_log::info(format!("Opened document from {}", path.display()));
+        self.report_missing_packages();
     }
 
     /// Move the server connection to `socket` — the document's own daemon

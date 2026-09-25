@@ -346,6 +346,46 @@ impl PrintCadApp {
         self.redraw_needed = true;
     }
 
+    /// Say which packages the document on screen needs and does not have
+    /// running: not installed (and where to get it), or turned off.
+    pub(crate) fn report_missing_packages(&mut self) {
+        let mut needed: Vec<(String, Option<String>)> = Vec::new();
+        for (_, node) in self.session.document.feature_tree().all_nodes() {
+            if self.registry.feature_info(node).is_some() {
+                continue;
+            }
+            if let Some((id, repo)) = core_document::FeatureInfo::needed_package(node) {
+                match needed.iter_mut().find(|(n, _)| *n == id) {
+                    Some((_, known)) if known.is_none() => *known = repo,
+                    Some(_) => {}
+                    None => needed.push((id, repo)),
+                }
+            }
+        }
+        needed.sort();
+        for (id, repo) in needed {
+            let installed = self.packages.iter().find(|p| p.id == id);
+            let message = match (installed, repo) {
+                (Some(status), _) if status.state == PackageState::Disabled => format!(
+                    "This document uses {}, which is turned off in Preferences › Workbench packages",
+                    status.name
+                ),
+                (Some(status), _) => format!(
+                    "This document uses {}, which did not load: see Preferences › Workbench packages",
+                    status.name
+                ),
+                (None, Some(repo)) => format!(
+                    "This document uses the workbench package {id} (github.com/{repo}), which is \
+                     not installed: its features' menu in the tree installs it"
+                ),
+                (None, None) => {
+                    format!("This document uses the workbench package {id}, which is not installed")
+                }
+            };
+            app_log::warn(message);
+        }
+    }
+
     /// Remove the installed package `id`, unloading its workbench.
     pub(crate) fn remove_package(&mut self, id: &str) {
         let Some(root) = root() else {

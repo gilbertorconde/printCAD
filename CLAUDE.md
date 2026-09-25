@@ -50,9 +50,14 @@ cargo fmt --all                   # CI enforces --check
   keeps its settings, then `DocumentService::unregister_workbench`;
   `load_bench` registers the new one (`workbenches::register_prepared`)
   and `invalidate_all`s its kinds in every tab, so its features rebuild
-  with the version running. A feature carries `made_by` (package and version); one
-  whose kind no bench claims shows "Needs …" in the tree, keeps its data
-  and cannot be deleted.
+  with the version running. A feature carries `made_by` (the package and version that
+  last wrote it, restamped by `SetFeatureOrigin` whenever a package
+  writes its data) and `package_source` (its GitHub repository, when
+  installed from there); one whose kind no bench claims shows "Needs …"
+  in the tree, keeps its data, cannot be deleted, and its tree menu offers
+  to install the package from `package_source`; opening a document warns
+  of each package it needs and does not have running
+  (`report_missing_packages`).
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
   `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an

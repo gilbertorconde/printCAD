@@ -144,6 +144,10 @@ pub enum DocumentOp {
         /// package did.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         made_by: Option<String>,
+        /// Where that package is published, when it was installed from a
+        /// repository.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        package_source: Option<String>,
     },
     /// Whole-payload feature write (sketch edits, panel editors). Consecutive
     /// updates to the same feature coalesce in the outbox — nothing observes
@@ -155,6 +159,13 @@ pub enum DocumentOp {
     RenameFeature {
         id: FeatureId,
         name: String,
+    },
+    /// The package (and version) that last wrote the feature, and where
+    /// that package is published.
+    SetFeatureOrigin {
+        id: FeatureId,
+        made_by: Option<String>,
+        package_source: Option<String>,
     },
     SetFeatureVisible {
         id: FeatureId,

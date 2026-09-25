@@ -180,6 +180,42 @@ mod tests {
     }
 
     #[test]
+    fn a_package_writing_a_feature_again_is_undone_with_its_edit() {
+        let mut doc = Document::new("Package");
+        let mut journal = OpJournal::new(16);
+        let thing = doc.add_feature_of_kind(
+            crate::WorkbenchId::new("acme.cam.op"),
+            "Op".into(),
+            None,
+            Vec::new(),
+            serde_json::json!({"v": 1}),
+            crate::FeatureOrigin::new("acme.cam 0.1.0", Some("acme/cam".into())),
+        );
+        journal.note(&mut doc);
+
+        doc.update_feature_data(thing, serde_json::json!({"v": 2}))
+            .unwrap();
+        doc.set_feature_origin(
+            thing,
+            crate::FeatureOrigin::new("acme.cam 0.2.0", Some("acme/cam".into())),
+        )
+        .unwrap();
+        journal.note(&mut doc);
+        let node = doc.get_feature_meta(thing).unwrap();
+        assert_eq!(node.made_by.as_deref(), Some("acme.cam 0.2.0"));
+
+        journal.undo(&mut doc);
+        let node = doc.get_feature_meta(thing).unwrap();
+        assert_eq!(
+            node.made_by.as_deref(),
+            Some("acme.cam 0.1.0"),
+            "the older writer is back"
+        );
+        assert_eq!(node.data, serde_json::json!({"v": 1}));
+        assert_eq!(node.package_source.as_deref(), Some("acme/cam"));
+    }
+
+    #[test]
     fn a_held_journal_makes_everything_until_the_next_boundary_one_step() {
         let mut doc = Document::new("Script");
         let mut journal = OpJournal::new(16);

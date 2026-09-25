@@ -64,6 +64,9 @@ pub struct TreeUiResult {
     pub new_variable_set: bool,
     /// The document row's menu asked for the configurations table.
     pub new_configurations: bool,
+    /// A feature's menu asked to install the package it needs, from this
+    /// repository.
+    pub install_package: Option<String>,
 }
 
 /// View model describing the current document tree.
@@ -97,6 +100,9 @@ struct TreeNode {
     convertible: Vec<BodyId>,
     /// The row is a mesh body: its icon takes the mesh colour.
     mesh: bool,
+    /// A feature from a package that is not loaded: the package's id and
+    /// the repository its menu installs it from.
+    needs_package: Option<(String, String)>,
     /// Marks the body-tip feature / features past the tip (excluded from
     /// the build).
     is_tip: bool,
@@ -314,6 +320,12 @@ fn build_feature_node(
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        needs_package: registry
+            .feature_info(node)
+            .is_none()
+            .then(|| FeatureInfo::needed_package(node))
+            .flatten()
+            .and_then(|(id, repo)| Some((id, repo?))),
         mesh: false,
         is_tip,
         after_tip,
@@ -348,6 +360,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        needs_package: None,
         mesh: false,
         is_tip: false,
         after_tip: false,
@@ -520,6 +533,7 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
+        needs_package: None,
         mesh: false,
         is_tip: false,
         after_tip: false,
@@ -1005,7 +1019,19 @@ fn attach_feature_menu(
     let mut command = None;
     let mut delete = false;
     let mut bench_command = None;
+    let mut install = None;
     response.context_menu(|ui| {
+        if let Some((id, repo)) = &node.needs_package {
+            if ui
+                .button(format!("Install {id}"))
+                .on_hover_text(format!("From github.com/{repo}"))
+                .clicked()
+            {
+                install = Some(repo.clone());
+                ui.close();
+            }
+            ui.separator();
+        }
         let suppress_label = if node.suppressed {
             "Unsuppress"
         } else {
@@ -1069,6 +1095,9 @@ fn attach_feature_menu(
     }
     if bench_command.is_some() {
         result.bench_command = bench_command;
+    }
+    if install.is_some() {
+        result.install_package = install;
     }
     response
 }

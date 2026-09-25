@@ -104,6 +104,29 @@ pub struct FeatureNode {
     /// package names as missing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<String>,
+    /// Where that package is published (`owner/repo` on GitHub), when it
+    /// was installed from there: what a document opened without it offers
+    /// to install.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_source: Option<String>,
+}
+
+/// The workbench package that wrote a feature: `made_by` its id and
+/// version (`acme.cam 0.3.0`), `package_source` where it is published
+/// (`owner/repo` on GitHub) when it was installed from there.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FeatureOrigin {
+    pub made_by: Option<String>,
+    pub package_source: Option<String>,
+}
+
+impl FeatureOrigin {
+    pub fn new(made_by: impl Into<String>, package_source: Option<String>) -> Self {
+        Self {
+            made_by: Some(made_by.into()),
+            package_source,
+        }
+    }
 }
 
 /// A revision for a node's payload: the same JSON hashes the same, so a
@@ -141,6 +164,7 @@ impl FeatureNode {
             data: feature.to_json(),
             formulas: Default::default(),
             made_by: None,
+            package_source: None,
         }
     }
 }
@@ -364,6 +388,7 @@ mod tests {
             data: serde_json::Value::Null,
             formulas: Default::default(),
             made_by: None,
+            package_source: None,
         }
     }
 

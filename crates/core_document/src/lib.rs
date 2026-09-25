@@ -44,8 +44,8 @@ pub use datum::{
 };
 pub use evaluate::{Evaluation, Parameter, SlotValue};
 pub use feature::{
-    BodyId, FeatureError, FeatureId, FeatureNode, FeatureTree, WorkbenchFeature, data_revision,
-    node_revision,
+    BodyId, FeatureError, FeatureId, FeatureNode, FeatureOrigin, FeatureTree, WorkbenchFeature,
+    data_revision, node_revision,
 };
 pub use kernel_api::TriMesh;
 pub use palette::SketchPalette;
@@ -430,6 +430,14 @@ impl Document {
                 id: *id,
                 name: self.feature_tree.get_node(*id)?.name.clone(),
             },
+            Op::SetFeatureOrigin { id, .. } => {
+                let node = self.feature_tree.get_node(*id)?;
+                Op::SetFeatureOrigin {
+                    id: *id,
+                    made_by: node.made_by.clone(),
+                    package_source: node.package_source.clone(),
+                }
+            }
             Op::SetFeatureFormula { id, key, .. } => Op::SetFeatureFormula {
                 id: *id,
                 key: key.clone(),
@@ -461,6 +469,7 @@ impl Document {
                     created_at: node.created_at,
                     formulas: node.formulas.clone(),
                     made_by: node.made_by.clone(),
+                    package_source: node.package_source.clone(),
                 }
             }
             Op::SetImportedObjectVisibility { id, .. } => Op::SetImportedObjectVisibility {
@@ -595,6 +604,7 @@ impl Document {
                 created_at,
                 formulas,
                 made_by,
+                package_source,
             } => {
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
@@ -610,6 +620,7 @@ impl Document {
                     data: data.clone(),
                     formulas: formulas.clone(),
                     made_by: made_by.clone(),
+                    package_source: package_source.clone(),
                 });
                 for dep in deps {
                     self.feature_tree.add_dependency(*id, *dep);
@@ -623,6 +634,16 @@ impl Document {
             Op::RenameFeature { id, name } => {
                 if let Some(node) = self.feature_tree.get_node_mut(*id) {
                     node.name.clone_from(name);
+                }
+            }
+            Op::SetFeatureOrigin {
+                id,
+                made_by,
+                package_source,
+            } => {
+                if let Some(node) = self.feature_tree.get_node_mut(*id) {
+                    node.made_by.clone_from(made_by);
+                    node.package_source.clone_from(package_source);
                 }
             }
             Op::SetFeatureFormula { id, key, formula } => {
@@ -833,12 +854,14 @@ impl Document {
             created_at: epoch_ms_now(),
             formulas: Default::default(),
             made_by: None,
+            package_source: None,
         });
         Ok(id)
     }
 
     /// Add a feature of kind `kind` whose data a workbench package owns,
-    /// recording the package and version that made it.
+    /// recording the package and version that made it and where that
+    /// package is published.
     pub fn add_feature_of_kind(
         &mut self,
         kind: WorkbenchId,
@@ -846,8 +869,12 @@ impl Document {
         body: Option<BodyId>,
         deps: Vec<FeatureId>,
         data: serde_json::Value,
-        made_by: Option<String>,
+        origin: FeatureOrigin,
     ) -> FeatureId {
+        let FeatureOrigin {
+            made_by,
+            package_source,
+        } = origin;
         let id = FeatureId::new();
         self.record_and_apply(op::DocumentOp::AddFeature {
             id,
@@ -860,8 +887,34 @@ impl Document {
             created_at: epoch_ms_now(),
             formulas: Default::default(),
             made_by,
+            package_source,
         });
         id
+    }
+
+    /// Record that the package `origin` names last wrote the feature, when
+    /// that is news.
+    pub fn set_feature_origin(
+        &mut self,
+        id: FeatureId,
+        origin: FeatureOrigin,
+    ) -> DocumentResult<()> {
+        let FeatureOrigin {
+            made_by,
+            package_source,
+        } = origin;
+        let node = self
+            .feature_tree
+            .get_node(id)
+            .ok_or(DocumentError::FeatureNotFound(id))?;
+        if node.made_by != made_by || node.package_source != package_source {
+            self.record_and_apply(op::DocumentOp::SetFeatureOrigin {
+                id,
+                made_by,
+                package_source,
+            });
+        }
+        Ok(())
     }
 
     /// Get feature data (returns JSON, workbench must deserialize).
