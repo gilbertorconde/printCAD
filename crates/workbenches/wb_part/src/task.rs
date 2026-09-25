@@ -34,6 +34,13 @@ pub(crate) struct TaskState {
     /// The tool that made it and the body it was made for, when a tool
     /// did: OK records the command that makes it.
     pub made_by: Option<(String, core_document::BodyId)>,
+    /// The feature's name and formulas when the task opened, which Cancel
+    /// puts back with the data.
+    pub name: String,
+    pub formulas: std::collections::BTreeMap<String, String>,
+    /// Sketches the task showed or hid as the profile changed, with what
+    /// each was before: Cancel puts them back.
+    pub visibility: Vec<(FeatureId, bool)>,
 }
 
 /// The kind of task node `id` is, if it is one this workbench edits.
@@ -86,6 +93,9 @@ impl PartDesignWorkbench {
                 .map(|m| m.hidden.clone())
                 .unwrap_or_default(),
             made_by: created.map(|m| (m.tool, m.body)),
+            name: node.name.clone(),
+            formulas: node.formulas.clone(),
+            visibility: Vec::new(),
         });
     }
 
@@ -104,6 +114,7 @@ impl PartDesignWorkbench {
             return match self.task.take() {
                 Some(task) => {
                     crate::commands::record_task(self, ctx, &task);
+                    self.rebuild_accepted(ctx, task.feature);
                     TaskOutcome::Accepted {
                         label: "Edit feature".to_string(),
                     }
@@ -116,6 +127,7 @@ impl PartDesignWorkbench {
             let label = self.task_label(ctx);
             if let Some(task) = self.task.take() {
                 crate::commands::record_task(self, ctx, &task);
+                self.rebuild_accepted(ctx, task.feature);
             }
             self.open_task(ctx, target_id, target_kind.clone());
             return TaskOutcome::Accepted { label };
@@ -133,11 +145,7 @@ impl PartDesignWorkbench {
                 crate::commands::record_task(self, ctx, &task);
             }
             ctx.active_document_object = None;
-            // With the live preview off, the accepted edit is what
-            // rebuilds.
-            if !self.options.update_while_editing {
-                ctx.document.mark_feature_dirty(target_id);
-            }
+            self.rebuild_accepted(ctx, target_id);
             return TaskOutcome::Accepted { label };
         }
 
@@ -156,6 +164,14 @@ impl PartDesignWorkbench {
             TaskKind::Datum => self.datum_card(ui, ctx, target_id, &node),
         }
         TaskOutcome::Open
+    }
+
+    /// With the live preview off, the accepted edit is what rebuilds,
+    /// however the task was accepted (OK, deselecting, picking another).
+    fn rebuild_accepted(&self, ctx: &mut WorkbenchRuntimeContext, feature: FeatureId) {
+        if !self.options.update_while_editing {
+            ctx.document.mark_feature_dirty(feature);
+        }
     }
 
     fn task_label(&self, ctx: &WorkbenchRuntimeContext) -> String {
@@ -180,6 +196,9 @@ impl PartDesignWorkbench {
         let Some(task) = self.task.take() else {
             return TaskOutcome::Cancelled;
         };
+        for (sketch, was) in &task.visibility {
+            ctx.document.set_feature_visible(*sketch, *was);
+        }
         let body = ctx
             .document
             .get_feature_meta(task.feature)
@@ -210,6 +229,31 @@ impl PartDesignWorkbench {
             {
                 if !deps.is_empty() {
                     ctx.document.set_feature_dependencies(task.feature, deps);
+                }
+                // The formulas and the name as they were: a formula typed
+                // in the task would otherwise write its value back.
+                let now = ctx
+                    .document
+                    .get_feature_meta(task.feature)
+                    .map(|n| (n.name.clone(), n.formulas.clone()));
+                if let Some((name, formulas)) = now {
+                    for key in formulas.keys().filter(|k| !task.formulas.contains_key(*k)) {
+                        let _ = ctx
+                            .document
+                            .set_feature_formula(task.feature, key.clone(), None);
+                    }
+                    for (key, formula) in &task.formulas {
+                        if formulas.get(key) != Some(formula) {
+                            let _ = ctx.document.set_feature_formula(
+                                task.feature,
+                                key.clone(),
+                                Some(formula.clone()),
+                            );
+                        }
+                    }
+                    if name != task.name {
+                        ctx.document.rename_feature(task.feature, task.name.clone());
+                    }
                 }
                 ctx.document.mark_feature_dirty(task.feature);
                 ctx.log_info("Edit cancelled");
@@ -299,6 +343,7 @@ impl PartDesignWorkbench {
         }
 
         let deps_before = feature.dependencies();
+        let sketch_before = feature.sketch();
         let (changed, formula_edits) = {
             let shown: &WorkbenchRuntimeContext = ctx;
             let mut fx = editors::Formulas::of(shown.document, feature_id);
@@ -320,6 +365,22 @@ impl PartDesignWorkbench {
                     ctx.document
                         .set_feature_dependencies(feature_id, deps_after);
                 }
+                // A new profile is consumed like the first: it hides, and
+                // the one it replaced shows again.
+                if let (Some(old), Some(new)) = (sketch_before, feature.sketch())
+                    && old != new
+                {
+                    let swapped =
+                        crate::build::swap_consumed_sketch(ctx.document, feature_id, old, new);
+                    if let Some(task) = self.task.as_mut() {
+                        for (id, was) in swapped {
+                            // The first change of a sketch is what it was.
+                            if !task.visibility.iter().any(|(seen, _)| *seen == id) {
+                                task.visibility.push((id, was));
+                            }
+                        }
+                    }
+                }
                 if self.options.update_while_editing {
                     ctx.document.mark_feature_dirty(feature_id);
                 }
@@ -339,7 +400,11 @@ impl PartDesignWorkbench {
                     ui,
                     Note::Info,
                     None,
-                    "Preview updates live. Press Enter to accept, Esc to cancel.",
+                    if self.options.update_while_editing {
+                        "Preview updates live. Press Enter to accept, Esc to cancel."
+                    } else {
+                        "The solid rebuilds when you accept. Press Enter to accept, Esc to cancel."
+                    },
                 );
             }
         }
@@ -375,8 +440,7 @@ impl PartDesignWorkbench {
         }
         if changed {
             let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
-            // Sketches attached to this datum re-derive their plane from it
-            // on their next edit; solids are unaffected.
+            // A sketch made on this datum keeps the plane it was made on.
         }
         ui.add_space(SPACE_1);
         Card::new().padding(SPACE_2).show(ui, |ui| {

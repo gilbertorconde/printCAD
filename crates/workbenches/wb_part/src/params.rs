@@ -200,6 +200,12 @@ pub(crate) fn every_name() -> Vec<&'static str> {
     ]
     .iter()
     .flat_map(|v| fields(v).iter().map(|(_, name, _, _)| *name))
+    // A step's numbers, as its `step{n}_` prefix leaves them.
+    .chain(
+        ["Linear", "Polar", "Scale"]
+            .iter()
+            .flat_map(|k| step_fields(k).iter().map(|(_, name, _, _)| *name)),
+    )
     .chain(["x", "y", "z", "radius", "height", "length", "angle"])
     .chain(
         datum_parameters()

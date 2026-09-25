@@ -128,18 +128,16 @@ impl PartDesignWorkbench {
         !part_features_of_body(ctx.document, body).is_empty()
     }
 
+    /// `base` when no feature has that name, else `base_n` one past the
+    /// highest `n` in use: a name never comes back while another has it.
     pub(crate) fn next_feature_name(ctx: &WorkbenchRuntimeContext, base: &str) -> String {
-        let count = ctx
-            .document
-            .feature_tree()
-            .all_nodes()
-            .filter(|(_, n)| n.name.starts_with(base))
-            .count();
-        if count == 0 {
-            base.to_string()
-        } else {
-            format!("{base}_{count}")
-        }
+        next_name(
+            ctx.document
+                .feature_tree()
+                .all_nodes()
+                .map(|(_, n)| n.name.as_str()),
+            base,
+        )
     }
 
     /// The last non-modifier feature of a body (default pattern original).
@@ -295,11 +293,26 @@ impl PartDesignWorkbench {
                 if subtractive {
                     need_material(has_solid)?;
                 }
+                let profile = need_sketch(sketch)?;
+                // The path is another sketch of the body, the latest made:
+                // a pipe along its own profile builds nothing.
+                let spine = ctx
+                    .document
+                    .feature_tree()
+                    .all_nodes()
+                    .filter(|(id, n)| {
+                        n.workbench_id.as_str() == "wb.sketch"
+                            && n.body == Some(body)
+                            && **id != profile
+                    })
+                    .max_by_key(|(_, n)| n.seq)
+                    .map(|(id, _)| *id)
+                    .ok_or("A pipe needs a second sketch for its path; draw one first")?;
                 (
                     PartFeature::Pipe {
                         refine: false,
-                        profile: need_sketch(sketch)?,
-                        spine: need_sketch(sketch)?,
+                        profile,
+                        spine,
                         frenet: false,
                         subtractive,
                     },
@@ -451,10 +464,15 @@ impl PartDesignWorkbench {
                 let original = Self::selected_part_feature(ctx)
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
+                    // One step to start from, so it builds as it opens.
                     PartFeature::MultiTransform {
                         refine: false,
                         originals: original.into_iter().collect(),
-                        steps: Vec::new(),
+                        steps: vec![TransformStep::Linear {
+                            axis: PatternAxis::X,
+                            length: 20.0,
+                            occurrences: 2,
+                        }],
                     },
                     "MultiTransform",
                 )
@@ -1338,6 +1356,48 @@ fn datum_mesh(datum: &core_document::DatumFeature) -> kernel_api::TriMesh {
         }
     }
     mesh
+}
+
+/// `base` when none of `names` is it, else `base_n` one past the highest
+/// `n` among the names.
+fn next_name<'a>(names: impl Iterator<Item = &'a str>, base: &str) -> String {
+    let mut taken = false;
+    let mut highest = 0u32;
+    for name in names {
+        if name == base {
+            taken = true;
+        } else if let Some(n) = name
+            .strip_prefix(base)
+            .and_then(|rest| rest.strip_prefix('_'))
+            .and_then(|n| n.parse::<u32>().ok())
+        {
+            taken = true;
+            highest = highest.max(n);
+        }
+    }
+    if taken {
+        format!("{base}_{}", highest + 1)
+    } else {
+        base.to_string()
+    }
+}
+
+#[cfg(test)]
+mod naming {
+    use super::next_name;
+
+    #[test]
+    fn a_new_name_is_one_past_the_highest_in_use() {
+        assert_eq!(next_name([].into_iter(), "Pad"), "Pad");
+        assert_eq!(next_name(["Padding"].into_iter(), "Pad"), "Pad");
+        assert_eq!(next_name(["Pad"].into_iter(), "Pad"), "Pad_1");
+        // Pad deleted, Pad_1 kept: the next is Pad_2, not Pad_1 again.
+        assert_eq!(next_name(["Pad_1"].into_iter(), "Pad"), "Pad_2");
+        assert_eq!(
+            next_name(["Pad", "Pad_3", "Pocket"].into_iter(), "Pad"),
+            "Pad_4"
+        );
+    }
 }
 
 #[cfg(test)]

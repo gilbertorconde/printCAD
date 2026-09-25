@@ -1371,8 +1371,28 @@ pub fn retarget_feature_sketch(
         .update_feature_data(feature_id, feature.to_json())
         .map_err(|e| e.to_string())?;
     document.set_feature_dependencies(feature_id, feature.dependencies());
-    document.set_feature_visible(new_sketch, false);
-    // Reveal the old sketch only if no remaining part feature consumes it.
+    swap_consumed_sketch(document, feature_id, old_sketch, new_sketch);
+    Ok(())
+}
+
+/// `feature_id` now consumes `new_sketch` instead of `old_sketch`: the new
+/// one hides, the old one shows again when no other part feature consumes
+/// it. Each sketch whose visibility changed, with what it was before.
+pub fn swap_consumed_sketch(
+    document: &mut Document,
+    feature_id: FeatureId,
+    old_sketch: FeatureId,
+    new_sketch: FeatureId,
+) -> Vec<(FeatureId, bool)> {
+    let mut changed = Vec::new();
+    let mut set = |document: &mut Document, id: FeatureId, visible: bool| {
+        let was = document.get_feature_meta(id).map(|n| n.visible);
+        if was.is_some_and(|was| was != visible) {
+            changed.push((id, !visible));
+            document.set_feature_visible(id, visible);
+        }
+    };
+    set(document, new_sketch, false);
     let still_consumed = document
         .feature_tree()
         .all_nodes()
@@ -1380,9 +1400,9 @@ pub fn retarget_feature_sketch(
         .filter_map(|(_, n)| PartFeature::from_json(&n.data).ok())
         .any(|f| f.sketches().contains(&old_sketch));
     if !still_consumed {
-        document.set_feature_visible(old_sketch, true);
+        set(document, old_sketch, true);
     }
-    Ok(())
+    changed
 }
 
 /// Human description of the plane a feature's sketch sits on.

@@ -61,6 +61,8 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Sink Ø", "countersink_diameter"),
     ("Sink angle", "countersink_angle"),
     ("Thread depth", "thread_depth"),
+    ("Turns", "turns"),
+    ("Factor", "factor"),
     ("Radius", "radius"),
     ("Size", "size"),
     ("Size 2", "size2"),
@@ -80,6 +82,9 @@ pub(crate) struct Formulas<'a> {
     feature: FeatureId,
     params: Vec<core_document::Parameter>,
     pub edits: Vec<(String, Option<String>)>,
+    /// Put before each name looked up: a multi-transform step's fields
+    /// are `step2_length` and the like.
+    prefix: Option<String>,
 }
 
 impl<'a> Formulas<'a> {
@@ -99,6 +104,7 @@ impl<'a> Formulas<'a> {
             feature,
             params,
             edits: Vec::new(),
+            prefix: None,
         }
     }
 
@@ -109,10 +115,16 @@ impl<'a> Formulas<'a> {
             .iter()
             .find(|(l, _)| *l == wanted)
             .map(|(_, name)| *name)?;
+        let name = match &self.prefix {
+            Some(prefix) => format!("{prefix}{name}"),
+            None => name.to_string(),
+        };
         let node = self.document.get_feature_meta(self.feature)?;
         self.params
             .iter()
-            .find(|p| p.name.as_deref() == Some(name) && node.data.pointer(&p.pointer).is_some())
+            .find(|p| {
+                p.name.as_deref() == Some(name.as_str()) && node.data.pointer(&p.pointer).is_some()
+            })
             .cloned()
     }
 
@@ -121,6 +133,34 @@ impl<'a> Formulas<'a> {
     /// `value` and a formula into `edits`.
     fn show(&mut self, ui: &mut Ui, label: &str, value: f64) -> Option<(bool, f64)> {
         let p = self.find(label)?;
+        Some(self.show_param(ui, label, p, value))
+    }
+
+    /// As [`Self::show`], for the parameter formulas call `name` (a
+    /// primitive's `radius`, a step's `step2_length`) under `label`.
+    fn show_named(
+        &mut self,
+        ui: &mut Ui,
+        label: &str,
+        name: &str,
+        value: f64,
+    ) -> Option<(bool, f64)> {
+        let node = self.document.get_feature_meta(self.feature)?;
+        let p = self
+            .params
+            .iter()
+            .find(|p| p.name.as_deref() == Some(name) && node.data.pointer(&p.pointer).is_some())
+            .cloned()?;
+        Some(self.show_param(ui, label, p, value))
+    }
+
+    fn show_param(
+        &mut self,
+        ui: &mut Ui,
+        label: &str,
+        p: core_document::Parameter,
+        value: f64,
+    ) -> (bool, f64) {
         let formula = self.document.feature_formula(self.feature, &p.key);
         let slot = self
             .document
@@ -159,7 +199,7 @@ impl<'a> Formulas<'a> {
                 .show(ui)
             })
             .inner;
-        Some(match edit {
+        match edit {
             Some(ui_kit::widgets::FormulaEdit::Value(v)) => {
                 if formula.is_some() {
                     self.edits.push((p.key, None));
@@ -171,8 +211,38 @@ impl<'a> Formulas<'a> {
                 (false, value)
             }
             None => (false, value),
-        })
+        }
     }
+}
+
+/// A number formulas call `name`, as a formula field when the feature has
+/// that parameter, else as `fallback` draws it.
+fn named_f64(
+    ui: &mut Ui,
+    fx: &mut Formulas,
+    value: &mut f64,
+    (label, name): (&str, &str),
+    fallback: impl FnOnce(&mut Ui, &mut f64) -> bool,
+) -> bool {
+    if let Some((changed, v)) = fx.show_named(ui, label, name, *value) {
+        *value = v;
+        return changed;
+    }
+    fallback(ui, value)
+}
+
+/// A helix's turns, a formula field where it has the parameter.
+fn turns_field(ui: &mut Ui, fx: &mut Formulas, turns: &mut f32) -> bool {
+    if let Some((changed, v)) = fx.show(ui, "Turns:", f64::from(*turns)) {
+        *turns = (v as f32).clamp(0.1, 1000.0);
+        return changed;
+    }
+    ui.horizontal(|ui| {
+        label_cell(ui, "Turns");
+        ui.add(egui::DragValue::new(turns).speed(0.1).range(0.1..=1000.0))
+            .changed()
+    })
+    .inner
 }
 
 fn mm_drag(ui: &mut Ui, fx: &mut Formulas, value: &mut f32, label: &str) -> bool {
@@ -223,11 +293,19 @@ fn sketch_combo(
     ui: &mut Ui,
     ctx: &WorkbenchRuntimeContext,
     body: BodyId,
-    id_salt: impl egui::AsIdSalt,
+    id_salt: (&'static str, FeatureId),
     current: Option<FeatureId>,
     label: &str,
 ) -> Option<FeatureId> {
-    let sketches = sketches_of_body(ctx.document, body);
+    // Only the sketches made before the feature: one made after it would
+    // be built after the feature that reads it.
+    let tree = ctx.document.feature_tree();
+    let seq_of = |id: FeatureId| tree.get_node(id).map(|n| n.seq);
+    let limit = seq_of(id_salt.1).unwrap_or(u64::MAX);
+    let sketches: Vec<(FeatureId, String)> = sketches_of_body(ctx.document, body)
+        .into_iter()
+        .filter(|(id, _)| seq_of(*id).is_some_and(|seq| seq < limit))
+        .collect();
     let current_name = current
         .and_then(|id| {
             sketches
@@ -651,7 +729,7 @@ fn originals_editor(
     changed
 }
 
-fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
+fn primitive_editor(ui: &mut Ui, fx: &mut Formulas, kind: &mut kernel_api::PrimitiveKind) -> bool {
     use kernel_api::PrimitiveKind as P;
     let mut changed = false;
     let variants: [(&str, P); 8] = [
@@ -752,31 +830,32 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
             });
     });
 
-    let dim = |ui: &mut Ui, value: &mut f64, label: &str, min: f64| {
-        ui.horizontal(|ui| {
-            label_cell(ui, label);
-            ui.add(
-                egui::DragValue::new(value)
-                    .speed(0.5)
-                    .range(min..=1.0e6)
-                    .suffix(" mm"),
-            )
-            .changed()
-        })
-        .inner
+    // Each number is the parameter formulas call by its field's name (an
+    // angle's without `_deg`), a formula field where the feature has it.
+    let name_of = |label: &str| -> String {
+        label
+            .trim_end_matches(':')
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect::<String>()
+            .to_lowercase()
     };
-    let ang = |ui: &mut Ui, value: &mut f64, label: &str, lo: f64, hi: f64| {
-        ui.horizontal(|ui| {
-            label_cell(ui, label);
-            ui.add(
-                egui::DragValue::new(value)
-                    .speed(1.0)
-                    .range(lo..=hi)
-                    .suffix("°"),
-            )
-            .changed()
-        })
-        .inner
+    let mut num = |ui: &mut Ui, value: &mut f64, label: &str, angular: bool, lo: f64, hi: f64| {
+        let changed = named_f64(ui, fx, value, (label, &name_of(label)), |ui, value| {
+            ui.horizontal(|ui| {
+                label_cell(ui, label);
+                ui.add(
+                    egui::DragValue::new(value)
+                        .speed(if angular { 1.0 } else { 0.5 })
+                        .range(lo..=hi)
+                        .suffix(if angular { "°" } else { " mm" }),
+                )
+                .changed()
+            })
+            .inner
+        });
+        *value = value.clamp(lo, hi);
+        changed
     };
 
     match kind {
@@ -785,18 +864,18 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
             width,
             height,
         } => {
-            changed |= dim(ui, length, "Length:", 0.01);
-            changed |= dim(ui, width, "Width:", 0.01);
-            changed |= dim(ui, height, "Height:", 0.01);
+            changed |= num(ui, length, "Length:", false, 0.01, 1.0e6);
+            changed |= num(ui, width, "Width:", false, 0.01, 1.0e6);
+            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
         }
         P::Cylinder {
             radius,
             height,
             angle_deg,
         } => {
-            changed |= dim(ui, radius, "Radius:", 0.01);
-            changed |= dim(ui, height, "Height:", 0.01);
-            changed |= ang(ui, angle_deg, "Angle:", 1.0, 360.0);
+            changed |= num(ui, radius, "Radius:", false, 0.01, 1.0e6);
+            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+            changed |= num(ui, angle_deg, "Angle:", true, 1.0, 360.0);
         }
         P::Sphere {
             radius,
@@ -804,10 +883,10 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
             angle2_deg,
             angle3_deg,
         } => {
-            changed |= dim(ui, radius, "Radius:", 0.01);
-            changed |= ang(ui, angle1_deg, "Angle 1:", -90.0, 90.0);
-            changed |= ang(ui, angle2_deg, "Angle 2:", -90.0, 90.0);
-            changed |= ang(ui, angle3_deg, "Angle 3:", 1.0, 360.0);
+            changed |= num(ui, radius, "Radius:", false, 0.01, 1.0e6);
+            changed |= num(ui, angle1_deg, "Angle 1:", true, -90.0, 90.0);
+            changed |= num(ui, angle2_deg, "Angle 2:", true, -90.0, 90.0);
+            changed |= num(ui, angle3_deg, "Angle 3:", true, 1.0, 360.0);
         }
         P::Cone {
             radius1,
@@ -815,10 +894,10 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
             height,
             angle_deg,
         } => {
-            changed |= dim(ui, radius1, "Radius 1:", 0.0);
-            changed |= dim(ui, radius2, "Radius 2:", 0.0);
-            changed |= dim(ui, height, "Height:", 0.01);
-            changed |= ang(ui, angle_deg, "Angle:", 1.0, 360.0);
+            changed |= num(ui, radius1, "Radius 1:", false, 0.0, 1.0e6);
+            changed |= num(ui, radius2, "Radius 2:", false, 0.0, 1.0e6);
+            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
+            changed |= num(ui, angle_deg, "Angle:", true, 1.0, 360.0);
         }
         P::Torus {
             radius1,
@@ -827,20 +906,20 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
             angle2_deg,
             angle3_deg,
         } => {
-            changed |= dim(ui, radius1, "Radius 1:", 0.01);
-            changed |= dim(ui, radius2, "Radius 2:", 0.01);
-            changed |= ang(ui, angle1_deg, "Angle 1:", -180.0, 180.0);
-            changed |= ang(ui, angle2_deg, "Angle 2:", -180.0, 180.0);
-            changed |= ang(ui, angle3_deg, "Angle 3:", 1.0, 360.0);
+            changed |= num(ui, radius1, "Radius 1:", false, 0.01, 1.0e6);
+            changed |= num(ui, radius2, "Radius 2:", false, 0.01, 1.0e6);
+            changed |= num(ui, angle1_deg, "Angle 1:", true, -180.0, 180.0);
+            changed |= num(ui, angle2_deg, "Angle 2:", true, -180.0, 180.0);
+            changed |= num(ui, angle3_deg, "Angle 3:", true, 1.0, 360.0);
         }
         P::Ellipsoid {
             radius1,
             radius2,
             radius3,
         } => {
-            changed |= dim(ui, radius1, "Radius 1:", 0.01);
-            changed |= dim(ui, radius2, "Radius 2:", 0.01);
-            changed |= dim(ui, radius3, "Radius 3:", 0.01);
+            changed |= num(ui, radius1, "Radius 1:", false, 0.01, 1.0e6);
+            changed |= num(ui, radius2, "Radius 2:", false, 0.01, 1.0e6);
+            changed |= num(ui, radius3, "Radius 3:", false, 0.01, 1.0e6);
         }
         P::Prism {
             sides,
@@ -853,8 +932,8 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
                     .add(egui::DragValue::new(sides).speed(0.1).range(3..=64))
                     .changed();
             });
-            changed |= dim(ui, circumradius, "Circumradius:", 0.01);
-            changed |= dim(ui, height, "Height:", 0.01);
+            changed |= num(ui, circumradius, "Circumradius:", false, 0.01, 1.0e6);
+            changed |= num(ui, height, "Height:", false, 0.01, 1.0e6);
         }
         P::Wedge {
             xmin,
@@ -880,33 +959,29 @@ fn primitive_editor(ui: &mut Ui, kind: &mut kernel_api::PrimitiveKind) -> bool {
                 (z2min, "Z2 min:"),
                 (z2max, "Z2 max:"),
             ] {
-                ui.horizontal(|ui| {
-                    label_cell(ui, label);
-                    changed |= ui
-                        .add(
-                            egui::DragValue::new(value)
-                                .speed(0.5)
-                                .range(-1.0e6..=1.0e6)
-                                .suffix(" mm"),
-                        )
-                        .changed();
-                });
+                changed |= num(ui, value, label, false, -1.0e6, 1.0e6);
             }
         }
     }
     changed
 }
 
-fn placement_editor(ui: &mut Ui, placement: &mut kernel_api::Placement) -> bool {
+fn placement_editor(ui: &mut Ui, fx: &mut Formulas, placement: &mut kernel_api::Placement) -> bool {
     let mut changed = false;
-    ui.horizontal(|ui| {
-        label_cell(ui, "Position");
-        for v in placement.origin.iter_mut() {
-            changed |= ui
-                .add(egui::DragValue::new(v).speed(0.5).suffix(" mm"))
-                .changed();
-        }
-    });
+    for (value, (label, name)) in placement.origin.iter_mut().zip([
+        ("Position X", "x"),
+        ("Position Y", "y"),
+        ("Position Z", "z"),
+    ]) {
+        changed |= named_f64(ui, fx, value, (label, name), |ui, value| {
+            ui.horizontal(|ui| {
+                label_cell(ui, label);
+                ui.add(egui::DragValue::new(value).speed(0.5).suffix(" mm"))
+                    .changed()
+            })
+            .inner
+        });
+    }
     changed
 }
 
@@ -1006,6 +1081,13 @@ pub fn feature_editor(
     feature: &mut PartFeature,
 ) -> bool {
     let mut changed = false;
+    // No feature before this one: nothing yet for a mode that needs
+    // material to cut through or stop at.
+    let first_feature = crate::build::part_features_of_body(ctx.document, body)
+        .iter()
+        .take_while(|(id, _)| *id != feature_id)
+        .next()
+        .is_none();
     match feature {
         PartFeature::Pad {
             refine: _,
@@ -1030,7 +1112,7 @@ pub fn feature_editor(
                 *sketch = new;
                 changed = true;
             }
-            changed |= extrude_mode_combo(ui, ("pad_mode", feature_id), mode, false);
+            changed |= extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature);
             match mode {
                 ExtrudeMode::Dimension => {
                     changed |= mm_drag(ui, fx, length, "Length:");
@@ -1078,7 +1160,7 @@ pub fn feature_editor(
                 *through_all = false;
                 changed = true;
             }
-            changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, false);
+            changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, first_feature);
             match mode {
                 ExtrudeMode::Dimension => changed |= mm_drag(ui, fx, depth, "Depth:"),
                 ExtrudeMode::TwoLengths => {
@@ -1263,21 +1345,11 @@ pub fn feature_editor(
                 }
                 HelixMode::PitchTurns => {
                     changed |= mm_drag(ui, fx, pitch, "Pitch:");
-                    ui.horizontal(|ui| {
-                        label_cell(ui, "Turns");
-                        changed |= ui
-                            .add(egui::DragValue::new(turns).speed(0.1).range(0.1..=1000.0))
-                            .changed();
-                    });
+                    changed |= turns_field(ui, fx, turns);
                 }
                 HelixMode::HeightTurns => {
                     changed |= mm_drag(ui, fx, height, "Height:");
-                    ui.horizontal(|ui| {
-                        label_cell(ui, "Turns");
-                        changed |= ui
-                            .add(egui::DragValue::new(turns).speed(0.1).range(0.1..=1000.0))
-                            .changed();
-                    });
+                    changed |= turns_field(ui, fx, turns);
                 }
             }
             changed |= deg_drag(ui, fx, cone_angle_deg, "Cone angle:", -85.0..=85.0);
@@ -1291,8 +1363,8 @@ pub fn feature_editor(
             placement,
             subtractive,
         } => {
-            changed |= primitive_editor(ui, kind);
-            changed |= placement_editor(ui, placement);
+            changed |= primitive_editor(ui, fx, kind);
+            changed |= placement_editor(ui, fx, placement);
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         PartFeature::Hole {
@@ -1419,14 +1491,21 @@ pub fn feature_editor(
                 egui::ComboBox::from_id_salt(("hole_cut", feature_id))
                     .selected_text(cut.label())
                     .show_ui(ui, |ui| {
+                        // Sized from the diameter the hole is drilled at,
+                        // a standard size's as much as a custom one.
+                        let drilled = match metric_index.and_then(|i| METRIC_SIZES.get(i)) {
+                            Some((_, _, tap, clearance)) if *threaded => *tap,
+                            Some((_, _, _, clearance)) => clearance[*fit as usize],
+                            None => *diameter,
+                        };
                         let options = [
                             HoleCut::None,
                             HoleCut::Counterbore {
-                                diameter: *diameter * 2.0,
+                                diameter: drilled * 2.0,
                                 depth: 2.0,
                             },
                             HoleCut::Countersink {
-                                diameter: *diameter * 2.0,
+                                diameter: drilled * 2.0,
                                 angle_deg: 90.0,
                             },
                         ];
@@ -1592,6 +1671,8 @@ pub fn feature_editor(
                         remove = Some(i);
                     }
                 });
+                // This step's numbers are `step{n}_…` to formulas.
+                fx.prefix = Some(format!("step{}_", i + 1));
                 match step {
                     TransformStep::Linear {
                         axis,
@@ -1619,12 +1700,21 @@ pub fn feature_editor(
                         center,
                         occurrences,
                     } => {
-                        ui.horizontal(|ui| {
-                            label_cell(ui, "Factor");
-                            changed |= ui
-                                .add(egui::DragValue::new(factor).speed(0.05).range(0.01..=100.0))
-                                .changed();
-                        });
+                        if let Some((edited, v)) = fx.show(ui, "Factor:", f64::from(*factor)) {
+                            *factor = (v as f32).clamp(0.01, 100.0);
+                            changed |= edited;
+                        } else {
+                            ui.horizontal(|ui| {
+                                label_cell(ui, "Factor");
+                                changed |= ui
+                                    .add(
+                                        egui::DragValue::new(factor)
+                                            .speed(0.05)
+                                            .range(0.01..=100.0),
+                                    )
+                                    .changed();
+                            });
+                        }
                         ui.horizontal_wrapped(|ui| {
                             label_cell(ui, "Center");
                             for v in center.iter_mut() {
@@ -1635,6 +1725,7 @@ pub fn feature_editor(
                     }
                 }
             }
+            fx.prefix = None;
             if let Some(i) = remove {
                 steps.remove(i);
                 changed = true;
