@@ -7,6 +7,8 @@ use std::{
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Info,
+    /// Good news worth a moment's notice: shown like a warning, in green.
+    Success,
     Warn,
     Error,
 }
@@ -15,6 +17,7 @@ impl LogLevel {
     pub fn label(self) -> &'static str {
         match self {
             LogLevel::Info => "INFO",
+            LogLevel::Success => "OK",
             LogLevel::Warn => "WARN",
             LogLevel::Error => "ERROR",
         }
@@ -76,6 +79,14 @@ pub fn info(message: impl Into<String>) {
     let msg = message.into();
     tracing::info!("{msg}");
     push(LogLevel::Info, msg);
+}
+
+/// Log good news the user should see: it shows over the view for a few
+/// seconds, in green.
+pub fn success(message: impl Into<String>) {
+    let msg = message.into();
+    tracing::info!("{msg}");
+    push(LogLevel::Success, msg);
 }
 
 pub fn warn(message: impl Into<String>) {

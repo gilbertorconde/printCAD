@@ -444,6 +444,7 @@ impl UiLayer {
                 if let Some(request) = self.preferences.package_request.take() {
                     commands.push(request);
                 }
+                hud::draw_toasts(ui.ctx(), viewport_rect_logical);
                 return;
             }
 

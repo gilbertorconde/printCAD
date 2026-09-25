@@ -241,8 +241,9 @@ pub fn draw_hover_card(
         });
 }
 
-/// Warnings and errors from the last few seconds, as cards under the view
-/// toolbar, so a refused action is seen without reading the log.
+/// Good news, warnings and errors from the last few seconds, as cards under
+/// the view toolbar, so they are seen without reading the log. They draw
+/// over dialogs too: an install finishing in Preferences shows there.
 pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
     const SHOW_FOR_SECS: u64 = 6;
     let now = std::time::SystemTime::now()
@@ -264,7 +265,7 @@ pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
     // The card has to go away on its own, without waiting for input.
     ctx.request_repaint_after(std::time::Duration::from_millis(500));
     Area::new(egui::Id::new("hud_toasts"))
-        .order(Order::Foreground)
+        .order(Order::Tooltip)
         .fixed_pos(egui::pos2(viewport.center().x, viewport.top() + 52.0))
         .pivot(Align2::CENTER_TOP)
         .interactable(false)
@@ -272,6 +273,7 @@ pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
             ui.spacing_mut().item_spacing.y = SPACE_1;
             for entry in recent {
                 let (color, icon) = match entry.level {
+                    crate::log_panel::LogLevel::Success => (SUCCESS, "check"),
                     crate::log_panel::LogLevel::Warn => (WARNING, "warning"),
                     _ => (DANGER, "error"),
                 };
@@ -291,4 +293,29 @@ pub fn draw_toasts(ctx: &Context, viewport: egui::Rect) {
                     });
             }
         });
+}
+
+#[cfg(test)]
+mod toast_tests {
+    use super::*;
+
+    #[test]
+    fn good_news_draws_as_a_card_over_the_view() {
+        crate::log_panel::success("A package is ready");
+        let ctx = Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            draw_toasts(ui.ctx(), viewport);
+        });
+        output.textures_delta.clear();
+        let card = ctx.memory(|m| m.area_rect(egui::Id::new("hud_toasts")));
+        assert!(card.is_some(), "the notice is on screen");
+        let card = card.unwrap();
+        assert!(
+            card.center().x > 300.0 && card.center().x < 500.0,
+            "centred: {card:?}"
+        );
+        assert!(card.top() < 100.0, "at the top: {card:?}");
+    }
 }

@@ -53,6 +53,7 @@ pub fn draw_log_panel(ui: &mut egui::Ui, show: bool) {
                         );
                         let (label, color) = match entry.level {
                             log_panel::LogLevel::Info => ("INFO", INFO),
+                            log_panel::LogLevel::Success => ("OK", SUCCESS),
                             log_panel::LogLevel::Warn => ("WARN", WARNING),
                             log_panel::LogLevel::Error => ("ERROR", DANGER),
                         };

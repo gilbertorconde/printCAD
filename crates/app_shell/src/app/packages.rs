@@ -111,7 +111,10 @@ impl PrintCadApp {
             return;
         };
         let installed = workbenches::install_package(path, &root);
-        self.take_installed(installed.map_err(|e| format!("{}: {e}", path.display())));
+        self.take_installed(
+            installed.map_err(|e| format!("{}: {e}", path.display())),
+            "Installed",
+        );
     }
 
     /// Install what a GitHub repository or release address publishes.
@@ -155,15 +158,15 @@ impl PrintCadApp {
         while let Ok(news) = self.package_work.rx.try_recv() {
             self.package_work.pending = self.package_work.pending.saturating_sub(1);
             match news {
-                PackageNews::Installed(installed) => self.take_installed(installed),
+                PackageNews::Installed(installed) => self.take_installed(installed, "Installed"),
                 PackageNews::Checked(found) => {
                     for (id, result) in found {
                         match result {
                             Ok(Some(tag)) => {
                                 if let Some(status) = self.packages.iter_mut().find(|p| p.id == id)
                                 {
-                                    app_log::info(format!(
-                                        "{} {tag} is out (Preferences › Workbench packages)",
+                                    app_log::success(format!(
+                                        "{} {tag} is out: update it in Preferences › Workbench packages",
                                         status.name
                                     ));
                                     status.update = Some(tag);
@@ -180,19 +183,21 @@ impl PrintCadApp {
                     }
                 }
                 PackageNews::Updated(id, updated) => match updated {
-                    Ok(package) => self.take_installed(Ok(package)),
+                    Ok(package) => self.take_installed(Ok(package), "Updated"),
                     Err(e) => app_log::error(format!("Could not update {id}: {e}")),
                 },
             }
         }
     }
 
-    fn take_installed(&mut self, installed: Result<Package, String>) {
+    /// Show a package that `done` ("Installed", "Updated") as waiting for
+    /// the next start.
+    fn take_installed(&mut self, installed: Result<Package, String>, done: &str) {
         match installed {
             Ok(package) => {
                 let status = PackageStatus::of(&package, PackageState::Installed);
-                app_log::info(format!(
-                    "Installed {} {}; it loads when printCAD starts again",
+                app_log::success(format!(
+                    "{done} {} {}; it loads when printCAD starts again",
                     status.name, status.version
                 ));
                 self.packages.retain(|p| p.id != status.id);
