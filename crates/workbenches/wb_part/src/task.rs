@@ -41,6 +41,14 @@ pub(crate) struct TaskState {
     /// Sketches the task showed or hid as the profile changed, with what
     /// each was before: Cancel puts them back.
     pub visibility: Vec<(FeatureId, bool)>,
+    /// The name as typed in the Name field and not yet applied: it goes
+    /// in when the field is left or the task accepted, and Esc drops it.
+    pub name_draft: Option<String>,
+}
+
+/// The Name field of the task for `feature`.
+fn name_field_id(feature: FeatureId) -> egui::Id {
+    egui::Id::new(("part_task_name", feature))
 }
 
 /// The kind of task node `id` is, if it is one this workbench edits.
@@ -97,6 +105,7 @@ impl PartDesignWorkbench {
             name: node.name.clone(),
             formulas: node.formulas.clone(),
             visibility: Vec::new(),
+            name_draft: None,
         });
     }
 
@@ -114,6 +123,7 @@ impl PartDesignWorkbench {
             // Deselected: the edits so far stay.
             return match self.task.take() {
                 Some(task) => {
+                    Self::apply_name_draft(ctx, &task);
                     crate::commands::record_task(self, ctx, &task);
                     self.rebuild_accepted(ctx, task.feature);
                     TaskOutcome::Accepted {
@@ -125,6 +135,9 @@ impl PartDesignWorkbench {
         };
         // Selecting another feature accepts the open task implicitly.
         if self.task.as_ref().is_some_and(|t| t.feature != target_id) {
+            if let Some(task) = &self.task {
+                Self::apply_name_draft(ctx, task);
+            }
             let label = self.task_label(ctx);
             if let Some(task) = self.task.take() {
                 crate::commands::record_task(self, ctx, &task);
@@ -141,6 +154,9 @@ impl PartDesignWorkbench {
             return self.cancel_task(ctx);
         }
         if request.accept {
+            if let Some(task) = &self.task {
+                Self::apply_name_draft(ctx, task);
+            }
             let label = self.task_label(ctx);
             if let Some(task) = self.task.take() {
                 crate::commands::record_task(self, ctx, &task);
@@ -172,6 +188,15 @@ impl PartDesignWorkbench {
     fn rebuild_accepted(&self, ctx: &mut WorkbenchRuntimeContext, feature: FeatureId) {
         if !self.options.update_while_editing {
             ctx.document.mark_feature_dirty(feature);
+        }
+    }
+
+    /// A name typed and not yet applied goes in with the accepted task.
+    fn apply_name_draft(ctx: &mut WorkbenchRuntimeContext, task: &TaskState) {
+        if let Some(name) = &task.name_draft
+            && !name.trim().is_empty()
+        {
+            ctx.document.rename_feature(task.feature, name.clone());
         }
     }
 
@@ -284,23 +309,44 @@ impl PartDesignWorkbench {
             });
     }
 
+    /// The Name row. What is typed is held as the task's draft and
+    /// applied when the field is left; Esc leaves it with the name as it
+    /// was.
     fn name_row(
+        &mut self,
         ui: &mut egui::Ui,
         ctx: &mut WorkbenchRuntimeContext,
         feature_id: FeatureId,
         node_name: &str,
     ) {
+        let Some(task) = self.task.as_mut() else {
+            return;
+        };
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_2;
             editors::label_cell(ui, "Name");
-            let mut edited = node_name.to_owned();
+            let mut edited = task
+                .name_draft
+                .clone()
+                .unwrap_or_else(|| node_name.to_owned());
             let resp = ui.add(
                 egui::TextEdit::singleline(&mut edited)
+                    .id(name_field_id(feature_id))
                     .desired_width(160.0)
                     .font(sans(FONT_SM)),
             );
-            if resp.lost_focus() && edited != node_name && !edited.trim().is_empty() {
-                ctx.document.rename_feature(feature_id, edited);
+            if resp.changed() {
+                task.name_draft = Some(edited);
+            }
+            if resp.lost_focus() {
+                let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+                if let Some(name) = task.name_draft.take()
+                    && !escaped
+                    && name != node_name
+                    && !name.trim().is_empty()
+                {
+                    ctx.document.rename_feature(feature_id, name);
+                }
             }
         });
     }
@@ -329,7 +375,7 @@ impl PartDesignWorkbench {
             feature.icon(),
             &format!("{} parameters", feature.kind_label()),
         );
-        Self::name_row(ui, ctx, feature_id, &node.name);
+        self.name_row(ui, ctx, feature_id, &node.name);
         if let Some(sketch_id) = feature.sketch() {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = SPACE_2;
@@ -356,36 +402,7 @@ impl PartDesignWorkbench {
             let _ = ctx.document.set_feature_formula(feature_id, key, formula);
         }
         if changed {
-            let deps_after = feature.dependencies();
-            if ctx
-                .document
-                .update_feature_data(feature_id, feature.to_json())
-                .is_ok()
-            {
-                if deps_before != deps_after {
-                    ctx.document
-                        .set_feature_dependencies(feature_id, deps_after);
-                }
-                // A new profile is consumed like the first: it hides, and
-                // the one it replaced shows again.
-                if let (Some(old), Some(new)) = (sketch_before, feature.sketch())
-                    && old != new
-                {
-                    let swapped =
-                        crate::build::swap_consumed_sketch(ctx.document, feature_id, old, new);
-                    if let Some(task) = self.task.as_mut() {
-                        for (id, was) in swapped {
-                            // The first change of a sketch is what it was.
-                            if !task.visibility.iter().any(|(seen, _)| *seen == id) {
-                                task.visibility.push((id, was));
-                            }
-                        }
-                    }
-                }
-                if self.options.update_while_editing {
-                    ctx.document.mark_feature_dirty(feature_id);
-                }
-            }
+            self.apply_part_edit(ctx, feature_id, &deps_before, sketch_before, &feature);
         }
 
         ui.add_space(SPACE_1);
@@ -411,6 +428,49 @@ impl PartDesignWorkbench {
         }
     }
 
+    /// Write an edit the panel made to the feature: its data, the
+    /// dependencies it reads, and the sketches it consumes, remembering
+    /// each sketch's visibility before the task first touched it.
+    fn apply_part_edit(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        feature_id: FeatureId,
+        deps_before: &[FeatureId],
+        sketch_before: Option<FeatureId>,
+        feature: &PartFeature,
+    ) {
+        let deps_after = feature.dependencies();
+        if ctx
+            .document
+            .update_feature_data(feature_id, feature.to_json())
+            .is_ok()
+        {
+            if deps_before != deps_after.as_slice() {
+                ctx.document
+                    .set_feature_dependencies(feature_id, deps_after);
+            }
+            // A new profile is consumed like the first: it hides, and
+            // the one it replaced shows again.
+            if let (Some(old), Some(new)) = (sketch_before, feature.sketch())
+                && old != new
+            {
+                let swapped =
+                    crate::build::swap_consumed_sketch(ctx.document, feature_id, old, new);
+                if let Some(task) = self.task.as_mut() {
+                    for (id, was) in swapped {
+                        // The first change of a sketch is what it was.
+                        if !task.visibility.iter().any(|(seen, _)| *seen == id) {
+                            task.visibility.push((id, was));
+                        }
+                    }
+                }
+            }
+            if self.options.update_while_editing {
+                ctx.document.mark_feature_dirty(feature_id);
+            }
+        }
+    }
+
     fn datum_card(
         &mut self,
         ui: &mut egui::Ui,
@@ -429,7 +489,7 @@ impl PartDesignWorkbench {
         };
         let icon = crate::datum_icon(&datum);
         Self::card_header(ui, icon, &format!("{} parameters", datum.shape.label()));
-        Self::name_row(ui, ctx, datum_id, &node.name);
+        self.name_row(ui, ctx, datum_id, &node.name);
         let (changed, formula_edits) = {
             let shown: &WorkbenchRuntimeContext = ctx;
             let mut fx = editors::Formulas::of(shown.document, datum_id);
@@ -440,8 +500,9 @@ impl PartDesignWorkbench {
             let _ = ctx.document.set_feature_formula(datum_id, key, formula);
         }
         if changed {
+            // A sketch drawn on this datum follows it (`Workbench::derive`),
+            // and what stands on the sketch rebuilds.
             let _ = ctx.document.update_feature_data(datum_id, datum.to_json());
-            // A sketch made on this datum keeps the plane it was made on.
         }
         ui.add_space(SPACE_1);
         Card::new().padding(SPACE_2).show(ui, |ui| {
@@ -454,5 +515,245 @@ impl PartDesignWorkbench {
                 ctx.active_document_object = None;
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::feature::ExtrudeMode;
+    use core_document::Document;
+    use wb_sketch::SketchFeature;
+    use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+
+    fn rect_sketch() -> SketchFeature {
+        let mut sketch = Sketch::new("s");
+        let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)].map(|(x, y)| {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        });
+        for i in 0..4 {
+            sketch.add_geometry(GeometryElement::Line(Line::new(
+                corners[i],
+                corners[(i + 1) % 4],
+            )));
+        }
+        let plane = sketch.plane;
+        SketchFeature::new(sketch, plane)
+    }
+
+    fn pad(sketch: FeatureId, length: f32) -> PartFeature {
+        PartFeature::Pad {
+            refine: false,
+            sketch,
+            length,
+            reversed: false,
+            symmetric: false,
+            mode: ExtrudeMode::Dimension,
+            length2: 0.0,
+            taper_deg: 0.0,
+            up_to_face: None,
+            up_to_offset: 0.0,
+        }
+    }
+
+    /// A body with two sketches, a pad on each, the first sketch hidden
+    /// as its pad's tool leaves it.
+    struct Scene {
+        doc: Document,
+        first: FeatureId,
+        second: FeatureId,
+        pad: FeatureId,
+        other_pad: FeatureId,
+    }
+
+    fn scene() -> Scene {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let first = doc
+            .add_feature_in_body(rect_sketch(), "Sketch".into(), Some(body))
+            .unwrap();
+        let second = doc
+            .add_feature_in_body(rect_sketch(), "Sketch_1".into(), Some(body))
+            .unwrap();
+        let pad_id = doc
+            .add_feature_in_body(pad(first, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+        let other_pad = doc
+            .add_feature_in_body(pad(second, 3.0), "Pad_1".into(), Some(body))
+            .unwrap();
+        doc.set_feature_visible(first, false);
+        doc.clear_feature_dirty(pad_id);
+        doc.clear_feature_dirty(other_pad);
+        Scene {
+            doc,
+            first,
+            second,
+            pad: pad_id,
+            other_pad,
+        }
+    }
+
+    fn panel() -> egui::Context {
+        let panel = egui::Context::default();
+        ui_kit::apply_theme(&panel);
+        panel
+    }
+
+    /// One frame of the task panel with `active` selected.
+    fn frame(
+        wb: &mut PartDesignWorkbench,
+        panel: &egui::Context,
+        doc: &mut Document,
+        active: Option<FeatureId>,
+        request: TaskRequest,
+        events: Vec<egui::Event>,
+    ) -> TaskOutcome {
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        ctx.active_document_object = active;
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let mut outcome = TaskOutcome::Open;
+        let mut output = panel.run_ui(input, |ui| {
+            outcome = wb.draw_task_panel(ui, &mut ctx, request);
+        });
+        output.textures_delta.clear();
+        outcome
+    }
+
+    const OPEN: TaskRequest = TaskRequest {
+        accept: false,
+        cancel: false,
+    };
+    const OK: TaskRequest = TaskRequest {
+        accept: true,
+        cancel: false,
+    };
+    const CANCEL: TaskRequest = TaskRequest {
+        accept: false,
+        cancel: true,
+    };
+
+    fn key(key: egui::Key) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::NONE,
+        }
+    }
+
+    /// An edit the panel makes, written as its fields write it.
+    fn edit(wb: &mut PartDesignWorkbench, doc: &mut Document, id: FeatureId, to: PartFeature) {
+        let before = PartFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        wb.apply_part_edit(&mut ctx, id, &before.dependencies(), before.sketch(), &to);
+    }
+
+    /// Cancel puts back everything the task changed: the data and what it
+    /// depends on, the formulas, the name and the sketches it hid or showed.
+    #[test]
+    fn cancel_restores_formulas_name_and_sketch_visibility() {
+        let Scene {
+            mut doc,
+            first,
+            second,
+            pad: id,
+            ..
+        } = scene();
+        doc.set_feature_visible(second, true);
+        doc.set_feature_formula(id, "/Pad/length", Some("4 mm".into()))
+            .unwrap();
+        let mut wb = PartDesignWorkbench::default();
+        let panel = panel();
+        frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+
+        doc.rename_feature(id, "Renamed");
+        doc.set_feature_formula(id, "/Pad/length", None).unwrap();
+        doc.set_feature_formula(id, "/Pad/taper_deg", Some("2 deg".into()))
+            .unwrap();
+        edit(&mut wb, &mut doc, id, pad(second, 7.0));
+        assert!(doc.get_feature_meta(first).unwrap().visible);
+        assert!(!doc.get_feature_meta(second).unwrap().visible);
+
+        let outcome = frame(&mut wb, &panel, &mut doc, Some(id), CANCEL, vec![]);
+        assert_eq!(outcome, TaskOutcome::Cancelled);
+        let node = doc.get_feature_meta(id).unwrap();
+        assert_eq!(node.name, "Pad");
+        assert_eq!(
+            node.formulas.clone().into_iter().collect::<Vec<_>>(),
+            vec![("/Pad/length".to_string(), "4 mm".to_string())]
+        );
+        assert_eq!(
+            PartFeature::from_json(&node.data).unwrap().sketch(),
+            Some(first)
+        );
+        assert_eq!(doc.feature_tree().dependencies(id), vec![first]);
+        assert!(!doc.get_feature_meta(first).unwrap().visible);
+        assert!(doc.get_feature_meta(second).unwrap().visible);
+    }
+
+    /// With the live preview off an edit waits, and however the task is
+    /// accepted (OK, deselecting, selecting another feature) it rebuilds.
+    #[test]
+    fn every_accept_rebuilds_with_the_live_preview_off() {
+        for how in ["OK", "deselected", "another selected"] {
+            let Scene {
+                mut doc,
+                first,
+                pad: id,
+                other_pad,
+                ..
+            } = scene();
+            let mut wb = PartDesignWorkbench::default();
+            wb.options.update_while_editing = false;
+            let panel = panel();
+            frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+            edit(&mut wb, &mut doc, id, pad(first, 12.0));
+            assert!(!doc.get_feature_meta(id).unwrap().dirty, "{how}: waits");
+
+            let (active, request) = match how {
+                "OK" => (Some(id), OK),
+                "deselected" => (None, OPEN),
+                _ => (Some(other_pad), OPEN),
+            };
+            let outcome = frame(&mut wb, &panel, &mut doc, active, request, vec![]);
+            assert!(
+                matches!(outcome, TaskOutcome::Accepted { .. }),
+                "{how}: {outcome:?}"
+            );
+            assert!(doc.get_feature_meta(id).unwrap().dirty, "{how}: rebuilds");
+        }
+    }
+
+    /// The Name field keeps what is typed; leaving it with Enter or
+    /// accepting the task applies it, Esc drops it.
+    #[test]
+    fn a_typed_name_applies_on_enter_or_accept_and_esc_drops_it() {
+        let typed = |finish: Vec<egui::Event>, request: TaskRequest| {
+            let Scene {
+                mut doc, pad: id, ..
+            } = scene();
+            let mut wb = PartDesignWorkbench::default();
+            let panel = panel();
+            frame(&mut wb, &panel, &mut doc, Some(id), OPEN, vec![]);
+            panel.memory_mut(|m| m.request_focus(name_field_id(id)));
+            for text in ["X", "Y"] {
+                let events = vec![egui::Event::Text(text.into())];
+                frame(&mut wb, &panel, &mut doc, Some(id), OPEN, events);
+            }
+            assert_eq!(
+                doc.get_feature_meta(id).unwrap().name,
+                "Pad",
+                "nothing applies while typing"
+            );
+            frame(&mut wb, &panel, &mut doc, Some(id), request, finish);
+            doc.get_feature_meta(id).unwrap().name.clone()
+        };
+        assert_eq!(typed(vec![key(egui::Key::Enter)], OPEN), "PadXY");
+        assert_eq!(typed(vec![key(egui::Key::Escape)], OPEN), "Pad");
+        assert_eq!(typed(vec![], OK), "PadXY");
     }
 }
