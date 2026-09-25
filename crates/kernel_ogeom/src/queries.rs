@@ -371,7 +371,12 @@ fn medial_region(
                 }
             }
         }
-        paths.push(MedialPath { points, clearance });
+        let boundary = |end: usize| degree.get(end) == Some(&1);
+        paths.push(MedialPath {
+            points,
+            clearance,
+            boundary_ends: [boundary(branch.ends[0]), boundary(branch.ends[1])],
+        });
     }
     Ok(MedialRegion {
         wires,

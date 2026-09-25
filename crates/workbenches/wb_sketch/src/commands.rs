@@ -317,6 +317,22 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.wall_thickness",
+            "How thin the sketch's closed profile gets, for printing",
+        ))
+        .optional(
+            "minimum",
+            ParamKind::Number,
+            "The thinnest wall that prints, mm; the Sketcher preference when left out",
+        )
+        .returns(
+            "{thinnest, where = {x, y}, minimum, thin, regions}: the thinnest wall in mm, \
+             where it is, whether it is under the minimum, and each region's own",
+        )
+        .read_only(),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.status",
             "How constrained the sketch is, and what conflicts",
         ))

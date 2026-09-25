@@ -39,6 +39,13 @@ pub struct SketchPalette {
     pub pill_fill: Rgb,
     /// Something wrong in the scene: bodies that clash.
     pub conflict: Rgb,
+    /// A wall thickness check's medial axis where the walls are thick
+    /// enough to print.
+    pub wall: Rgb,
+    /// Where they are thinner than that.
+    pub wall_thin: Rgb,
+    /// A measured centre line.
+    pub centre_line: Rgb,
 }
 
 impl Default for SketchPalette {
@@ -60,6 +67,9 @@ impl Default for SketchPalette {
             trim: hex(0xE86E6E),
             pill_fill: hex(0x0F1216),
             conflict: hex(0xE86E6E),
+            wall: hex(0x4FD08F),
+            wall_thin: hex(0xE6A44F),
+            centre_line: hex(0x6FD3C9),
         }
     }
 }

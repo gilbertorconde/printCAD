@@ -1013,6 +1013,11 @@ pub struct MedialPath {
     pub points: Vec<[f64; 2]>,
     /// One per point, in millimetres.
     pub clearance: Vec<f64>,
+    /// Whether the first and the last point end the axis on the boundary
+    /// (a corner, or a rounded end's centre) rather than meet other
+    /// branches: towards such an end the clearance falls without the
+    /// region getting thinner.
+    pub boundary_ends: [bool; 2],
 }
 
 /// Where a region is narrowest, and how narrow: the smallest clearance on

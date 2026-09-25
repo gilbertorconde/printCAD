@@ -625,6 +625,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id): The sketch to draw in
 - Returns a list of {id, kind, items, value?}
 
+`pc.sketch.wall_thickness`: How thin the sketch's closed profile gets, for printing.
+
+- `sketch` (id): The sketch to draw in
+- `minimum` (number, optional): The thinnest wall that prints, mm; the Sketcher preference when left out
+- Returns {thinnest, where = {x, y}, minimum, thin, regions}: the thinnest wall in mm, where it is, whether it is under the minimum, and each region's own
+
 `pc.sketch.status`: How constrained the sketch is, and what conflicts.
 
 - `sketch` (id): The sketch to draw in
