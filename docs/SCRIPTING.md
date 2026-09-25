@@ -890,6 +890,16 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `name` (string, optional): Its name in the tree
 - Returns the datum's id
 
+`pc.part.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
+
+- `body` (id): The body whose solid it runs through
+- `from_point` (list): A point of the face it starts at, {x, y, z}, in the body's own frame
+- `from_normal` (list): That face's outward normal, {x, y, z}
+- `to_point` (list): A point of the face it ends at, {x, y, z}
+- `to_normal` (list): That face's outward normal, {x, y, z}
+- `tolerance` (number, optional): How closely it follows the sections' centres, mm (0.02 when left out)
+- Returns {length, points, deviation, straight}: its length in mm, points along it in the body's frame, the largest distance measured from a section's centre to it, and whether it is one straight segment
+
 ### asm
 
 `pc.asm.mate`: Put two flat faces against each other.

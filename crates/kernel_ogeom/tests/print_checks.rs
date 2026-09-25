@@ -96,3 +96,112 @@ fn a_script_measures_a_strip_and_an_l_by_their_thinnest_walls() {
     assert!((l_wall - 1.5).abs() < 1e-3, "{l_wall}");
     assert_eq!(l_thin, 1.0, "1.5 mm is under the 2 mm asked for");
 }
+
+/// A tube 20 long along Z: a ring of 3 and 2 mm padded, its solid built.
+fn padded_tube(host: &mut Benches) -> core_document::BodyId {
+    run(
+        host,
+        r#"
+        local s = pc.sketch.new{plane = "XY"}
+        pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 3}
+        pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 2}
+        pc.part.pad{sketch = s, length = 20}
+        "#,
+        &[],
+    );
+    let body = host.document.bodies()[0].id;
+    let ops = wb_part::body_build_ops(&host.document, body).unwrap().ops;
+    let built = kernel_ogeom::OgeomKernel::new()
+        .execute_solid_chain(&ops, &kernel_api::TessellationSettings::default())
+        .unwrap();
+    host.document
+        .set_imported_brep_data(body, built.brep_blob, Vec::new());
+    body
+}
+
+#[test]
+fn a_script_measures_a_padded_tubes_centre_line() {
+    let mut host = benches();
+    let body = padded_tube(&mut host);
+    let got = run(
+        &mut host,
+        &format!(
+            r#"
+            local c = pc.part.centre_line{{body = "{}",
+                from_point = {{2.5, 0, 0}}, from_normal = {{0, 0, -1}},
+                to_point = {{0, 2.5, 20}}, to_normal = {{0, 0, 1}}}}
+            length, straight, first_z = c.length, c.straight and 1 or 0, c.points[1][3]
+            "#,
+            body.0
+        ),
+        &["length", "straight", "first_z"],
+    );
+    assert!((got[0] - 20.0).abs() < 1e-3, "{got:?}");
+    assert_eq!(got[1], 1.0, "a pad's centre line is straight");
+    assert!(got[2].abs() < 1e-3, "it starts at the first face: {got:?}");
+}
+
+#[test]
+fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
+    use core_document::{FaceRef, HookOutcome, Workbench, WorkbenchInputEvent};
+
+    let mut host = benches();
+    let body = padded_tube(&mut host);
+    let mut bench = wb_part::PartDesignWorkbench::default();
+    // Looking down Z from above, a millimetre a fiftieth of the viewport.
+    let view_proj = [
+        [0.02, 0.0, 0.0, 0.0],
+        [0.0, -0.02, 0.0, 0.0],
+        [0.0, 0.0, -0.001, 0.0],
+        [0.0, 0.0, 0.5, 1.0],
+    ];
+    let mut ctx =
+        WorkbenchRuntimeContext::new(&mut host.document, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    ctx.view_proj = Some(view_proj);
+    ctx.selected_body_id = Some(body.0);
+    ctx.selected_face = Some(FaceRef {
+        point: [2.5, 0.0, 0.0],
+        normal: [0.0, 0.0, -1.0],
+        surface: None,
+    });
+    bench.on_input(
+        &WorkbenchInputEvent::ToolActivated,
+        Some("part.centre_line"),
+        &mut ctx,
+    );
+    assert_eq!(
+        bench.task(&ctx).map(|t| t.title),
+        Some("Centre line".to_string())
+    );
+    // The same pick seen again on the next frame is not a second face.
+    bench.on_frame(0.016, &mut ctx);
+    assert!(HookOutcome::take(&mut ctx).recorded.is_empty());
+
+    ctx.selected_face = Some(FaceRef {
+        point: [0.0, 2.5, 20.0],
+        normal: [0.0, 0.0, 1.0],
+        surface: None,
+    });
+    bench.on_frame(0.016, &mut ctx);
+    let recorded = HookOutcome::take(&mut ctx).recorded;
+    assert_eq!(recorded.len(), 1, "{:?}", ctx.drain_logs());
+    assert_eq!(recorded[0].id, "part.centre_line");
+    let length = recorded[0].result["length"].as_f64().unwrap();
+    assert!((length - 20.0).abs() < 1e-3, "{length}");
+
+    let labels: Vec<String> = bench
+        .get_screen_space_labels(&ctx, None)
+        .into_iter()
+        .map(|l| l.text)
+        .collect();
+    assert_eq!(labels, vec!["20.00 mm".to_string()]);
+    assert!(!bench.get_screen_space_overlays(&ctx, None).is_empty());
+    let footer = bench.viewport_hud(&ctx).unwrap().footer;
+    assert_eq!(footer, vec!["Centre line 20.00 mm".to_string()]);
+
+    // Closing the panel puts the tool away.
+    bench.finish_editing(&mut ctx);
+    assert!(bench.task(&ctx).is_none());
+    assert!(bench.get_screen_space_labels(&ctx, None).is_empty());
+}
