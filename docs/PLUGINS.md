@@ -8,7 +8,9 @@ on every system printCAD runs on, and it runs sandboxed: it reaches its own
 folder and nothing else unless the user allows more.
 
 The design is [RFC 0001](rfcs/0001-wasm-workbenches.md). The complete
-example is `sdk/examples/gear`, a spur gear workbench.
+example is `sdk/examples/gear`, a spur gear workbench. A repository to start
+a package from, with CI and releases on tags already set up, is
+[PrintCAD-example-wb](https://github.com/gilbertorconde/PrintCAD-example-wb).
 
 ## Installing one
 
