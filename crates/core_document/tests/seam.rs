@@ -377,3 +377,48 @@ fn a_bench_taken_out_leaves_its_kinds_free_for_the_next_to_claim() {
         .expect("the id and the kinds are free again");
     assert_eq!(registry.owner_id_of(&kind), Some(&WorkbenchId::from("pkg")));
 }
+
+/// A bench whose rebuild planning panics.
+struct Panicky;
+
+impl Workbench for Panicky {
+    fn descriptor(&self) -> WorkbenchDescriptor {
+        WorkbenchDescriptor::new("panicky", "Panicky", "").feature_kinds(["panicky.thing"])
+    }
+    fn configure(&self, _context: &mut core_document::WorkbenchContext) {}
+    fn rebuild_jobs(&self, _document: &mut Document) -> Vec<core_document::RebuildJob> {
+        let sizes: Vec<u32> = Vec::new();
+        vec![sizes[999] as usize; 0]
+            .into_iter()
+            .map(|_| unreachable!())
+            .collect()
+    }
+}
+
+#[test]
+fn a_bench_that_panics_planning_a_rebuild_marks_its_features_and_spares_the_app() {
+    let mut registry = registry(vec![FakeBench::new("a")]);
+    registry.register_workbench(Box::new(Panicky)).unwrap();
+    let mut doc = Document::new("t");
+    let thing = doc.add_feature_of_kind(
+        WorkbenchId::from("panicky.thing"),
+        "Thing".into(),
+        None,
+        Vec::new(),
+        serde_json::Value::Null,
+        Default::default(),
+    );
+    doc.mark_feature_dirty(thing);
+    let jobs = registry.rebuild_jobs(&mut doc);
+    assert!(jobs.is_empty());
+    let node = doc.get_feature_meta(thing).unwrap();
+    assert!(!node.dirty, "settled, so it does not panic every frame");
+    assert!(
+        node.error
+            .as_deref()
+            .unwrap_or("")
+            .contains("Panicky failed planning"),
+        "{:?}",
+        node.error
+    );
+}

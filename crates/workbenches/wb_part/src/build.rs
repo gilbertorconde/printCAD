@@ -790,6 +790,14 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
     else {
         return Err("not a hole feature".into());
     };
+    if let Some(index) = metric_index
+        && METRIC_SIZES.get(*index).is_none()
+    {
+        return Err(format!(
+            "there is no standard size number {index}; the sizes run from 0 to {}",
+            METRIC_SIZES.len() - 1
+        ));
+    }
     let sketch_feature = load_sketch(document, *sketch)?;
     let plane = profile::plane_of(&sketch_feature.plane);
     let centers = hole_centers(&sketch_feature.sketch);
@@ -890,7 +898,9 @@ fn hole_ops(document: &Document, feature: &PartFeature) -> Result<Vec<SolidOp>, 
     }
     if *threaded && *modeled_thread {
         let index = metric_index.ok_or("a modeled thread needs a standard size")?;
-        let (_, pitch, ..) = METRIC_SIZES[index];
+        let (_, pitch, ..) = *METRIC_SIZES
+            .get(index)
+            .ok_or_else(|| format!("there is no standard size number {index}"))?;
         let nominal = crate::feature::metric_nominal(index).ok_or("the size names no diameter")?;
         if *thread_depth <= 0.0 {
             return Err("give the modeled thread a depth".into());
@@ -1941,6 +1951,54 @@ mod tests {
                 panic!("hole ops are sweeps");
             };
             assert_eq!(profile.wires.len(), 2, "one wire per hole center");
+        }
+    }
+
+    /// A size the table does not have is an error on the hole, whatever
+    /// its thread settings, never a panic.
+    #[test]
+    fn a_hole_of_a_size_the_table_lacks_fails_cleanly() {
+        for (threaded, modeled_thread) in [(false, false), (true, false), (true, true)] {
+            let (mut doc, body, base_sketch) = doc_with_body_sketch();
+            doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
+                .unwrap();
+            let mut hole_sketch = Sketch::new("holes");
+            let center =
+                hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.5))));
+            hole_sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
+            let plane = hole_sketch.plane;
+            let hole_sketch_id = doc
+                .add_feature_in_body(
+                    SketchFeature::new(hole_sketch, plane),
+                    "holes".into(),
+                    Some(body),
+                )
+                .unwrap();
+            doc.add_feature_in_body(
+                PartFeature::Hole {
+                    refine: false,
+                    sketch: hole_sketch_id,
+                    diameter: 3.0,
+                    depth: 4.0,
+                    through_all: false,
+                    cut: HoleCut::None,
+                    metric_index: Some(999),
+                    threaded,
+                    modeled_thread,
+                    thread_depth: 3.0,
+                    fit: crate::feature::HoleFit::Normal,
+                    reversed: false,
+                },
+                "Hole".into(),
+                Some(body),
+            )
+            .unwrap();
+            let error = body_build_ops(&doc, body).unwrap_err();
+            assert!(
+                error.message.contains("no standard size number 999"),
+                "{}",
+                error.message
+            );
         }
     }
 

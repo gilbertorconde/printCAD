@@ -331,12 +331,48 @@ impl DocumentService {
         crate::evaluate::evaluate_formula(document, &|node| self.parameters(node), text, want)
     }
 
-    /// Every bench's rebuilds, after the formulas are worked out.
+    /// Every bench's rebuilds, after the formulas are worked out. A bench
+    /// that panics while planning costs only its own rebuilds: its dirty
+    /// features are settled, carrying the panic as their error, so it does
+    /// not panic again every frame and the app keeps running.
     pub fn rebuild_jobs(&self, document: &mut Document) -> Vec<RebuildJob> {
         self.evaluate(document);
-        self.benches()
-            .flat_map(|wb| wb.rebuild_jobs(document))
-            .collect()
+        let mut jobs = Vec::new();
+        for id in &self.order {
+            let Some(entry) = self.workbenches.get(id.as_str()) else {
+                continue;
+            };
+            let planned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                entry.workbench.rebuild_jobs(document)
+            }));
+            match planned {
+                Ok(planned) => jobs.extend(planned),
+                Err(panic) => {
+                    let why = panic
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .or_else(|| panic.downcast_ref::<String>().cloned())
+                        .unwrap_or_else(|| "an unknown failure".into());
+                    let message = format!(
+                        "{} failed planning this rebuild: {why}",
+                        entry.descriptor.label
+                    );
+                    tracing::error!(target: "printcad.bench", "{message}");
+                    let kinds = &entry.descriptor.feature_kinds;
+                    let dirty: Vec<FeatureId> = document
+                        .feature_tree()
+                        .all_nodes()
+                        .filter(|(_, n)| n.dirty && kinds.contains(&n.workbench_id))
+                        .map(|(id, _)| *id)
+                        .collect();
+                    for feature in dirty {
+                        document.clear_feature_dirty(feature);
+                        document.set_feature_error(feature, Some(message.clone()));
+                    }
+                }
+            }
+        }
+        jobs
     }
 
     pub fn invalidate_body(&self, document: &mut Document, body: BodyId) {
