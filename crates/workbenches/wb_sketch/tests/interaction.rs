@@ -656,7 +656,9 @@ fn polygon_tool_draws_closed_hexagon_end_to_end() {
     h.click(0.0, 0.0, "sketch.polygon");
     h.click(6.0, 0.0, "sketch.polygon");
     let (p, l, c, a) = h.counts();
-    assert_eq!((p, l, c, a), (6, 6, 0, 0), "default 6 sides");
+    // Six vertices and the centre, six sides, the construction circle
+    // that holds it regular.
+    assert_eq!((p, l, c, a), (7, 6, 1, 0), "default 6 sides");
     // Closed loop through shared vertices: the profile extractor accepts it.
     let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 1);
@@ -1446,8 +1448,13 @@ fn rect_center_tool_end_to_end() {
     h.click(5.0, 3.0, "sketch.rect_center");
     h.click(9.0, 5.0, "sketch.rect_center");
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 4));
-    assert_eq!(h.sketch().constraints.len(), 4, "H/V constraints as rect");
+    // Four corners and the centre they are symmetric about.
+    assert_eq!((p, l), (5, 4));
+    assert_eq!(
+        h.sketch().constraints.len(),
+        5,
+        "H/V constraints as rect, and the symmetry"
+    );
     let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 4);
@@ -2950,5 +2957,38 @@ fn a_boxed_line_is_selected_without_its_endpoints() {
         )),
         "the dimension tool took the boxed line as a line: {:?}",
         h.sketch().constraints
+    );
+}
+
+/// A 3-point circle takes a typed diameter: through the two rim points
+/// clicked, at the size typed.
+#[test]
+fn a_three_point_circle_takes_a_typed_diameter() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 3.0, "sketch.circle:3pt");
+    h.click(9.0, 3.0, "sketch.circle:3pt");
+    h.key(KeyCode::Key1, Some("sketch.circle:3pt"));
+    h.key(KeyCode::Key0, Some("sketch.circle:3pt"));
+    h.mouse_move(6.0, 8.0, "sketch.circle:3pt");
+    h.key(KeyCode::Enter, Some("sketch.circle:3pt"));
+    let sketch = h.sketch();
+    let circle = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Circle(c) => Some(c.clone()),
+            _ => None,
+        })
+        .expect("a circle");
+    assert!(
+        (circle.radius - 5.0).abs() < 1e-3,
+        "radius {}",
+        circle.radius
+    );
+    let center = sketch.point_position(circle.center).unwrap();
+    assert!(
+        center.y > 3.0,
+        "on the cursor's side of the chord: {center:?}"
     );
 }

@@ -22,6 +22,9 @@ version first.
 - Rendering order puts construction or normal geometry on top.
 - Drawing snaps to the origin and the two axes as it does to drawn geometry, and pins the new point there.
 - Undo inside a sketch takes back the last thing done, not the whole editing session.
+- Sketch edits keep the shape: moved, turned, scaled or mirrored geometry stays where it was put, copies keep their constraints, fillets stay tangent, trimmed and split lines keep their line, dragged points stay under the cursor.
+- Polygons, slots and centred rectangles are held in shape as they are drawn: a polygon regular on its circle, a slot's sides tangent to its caps, a centred rectangle symmetric about its centre.
+- Clicks that do nothing say why, overlapping constraint icons spread out to be clickable, and every preview matches what the click makes.
 - Snapping works the same in every drawing tool and every click: to endpoints, centres, the origin, crossings, the middles of lines, square to a line or touching a circle from the last point, curves and axes, and level or plumb with the last point. Each has its own marker and name at the cursor, the click lands exactly where the marker is, and the point stays there by a matching constraint.
 
 ### Part Design

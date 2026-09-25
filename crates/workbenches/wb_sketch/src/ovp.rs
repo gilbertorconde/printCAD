@@ -4,7 +4,7 @@
 use core_document::KeyCode;
 
 use crate::geom2d;
-use crate::sketch::{AxisDirection, Circle, ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
+use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2D};
 use crate::snap::SnapTarget;
 use crate::tools::ToolState;
 
@@ -314,6 +314,23 @@ pub fn override_cursor(
             (Some(c), Some(d)) => radial(c, cursor, 0.5 * d.abs()),
             _ => cursor,
         },
+        // Through the two rim points at the typed size: of the two such
+        // circles, the one on the cursor's side of them, the click where
+        // the cursor points on it.
+        ToolState::Circle3Two { a, b } => match get(FieldKind::Diameter) {
+            Some(d) => {
+                let (a, b) = (a.to_glam(), b.to_glam());
+                let half_chord = 0.5 * (b - a).length();
+                let r = (0.5 * d.abs()).max(half_chord);
+                let middle = (a + b) * 0.5;
+                let normal = (b - a).perp().normalize_or_zero();
+                let side = sign_or(normal.dot(cursor.to_glam() - middle), 1.0);
+                let rise = (r * r - half_chord * half_chord).max(0.0).sqrt();
+                let center = Vec2D::from_glam(middle + normal * side * rise);
+                radial(center, cursor, r)
+            }
+            None => cursor,
+        },
         ToolState::ArcCenter { center } | ToolState::PolygonCenter { center } => {
             match (pos(center), get(FieldKind::Radius)) {
                 (Some(c), Some(r)) => radial(c, cursor, r.abs()),
@@ -515,21 +532,13 @@ pub fn apply_typed_constraints(
                 }
             }
         }
-        ToolState::PolygonCenter { center } if changed => {
-            // A construction circumcircle carries the driving radius (the
-            // polygon tool itself has no circle element).
-            if let Some(r) = get(FieldKind::Radius) {
-                let center_id = match center {
-                    SnapTarget::Existing(id) => *id,
-                    SnapTarget::New(p) => {
-                        let id = sketch.add_geometry(GeometryElement::Point(Point::new(*p)));
-                        sketch.set_construction(id, true);
-                        id
-                    }
-                };
-                let circle =
-                    sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, r.abs())));
-                sketch.set_construction(circle, true);
+        ToolState::PolygonCenter { .. } if changed => {
+            // The polygon's own construction circle carries the radius.
+            let circle = sketch.geometry.iter().rev().find_map(|g| match g {
+                GeometryElement::Circle(c) => Some(c.id),
+                _ => None,
+            });
+            if let (Some(r), Some(circle)) = (get(FieldKind::Radius), circle) {
                 add(
                     sketch,
                     ConstraintKind::Radius {
@@ -661,7 +670,7 @@ pub fn readout_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sketch::{Line, Sketch};
+    use crate::sketch::{Line, Point, Sketch};
 
     fn sketch_with_point(pos: Vec2D) -> (Sketch, SnapTarget) {
         let sketch = Sketch::new("t");

@@ -393,6 +393,15 @@ pub(super) fn rect_center(
             let pc = derived(sketch, Vec2D::new(x1, y1), snap_tol);
             let pd = derived(sketch, Vec2D::new(x0, y1), snap_tol);
             close_rectangle(sketch, pa, pb, pc, pd);
+            // Centred where it was drawn from: a construction point there,
+            // the corners symmetric about it.
+            let middle = place(sketch, center, snap_tol);
+            sketch.set_construction(middle, true);
+            sketch.add_constraint(ConstraintKind::SymmetricAboutPoint {
+                point1: pa,
+                point2: pc,
+                center: middle,
+            });
 
             *state = ToolState::Idle;
             ToolEffect::changed(format!("Rectangle {:.2} × {:.2}", x1 - x0, y1 - y0))
@@ -842,16 +851,37 @@ pub(super) fn polygon(
             if radius < 1e-6 {
                 return ToolEffect::none(); // vertex on center: degenerate
             }
+            // Held regular: a construction circle through every vertex,
+            // and every side as long as the first. Its centre, size and turn
+            // are what is left free.
+            let center_id = materialize_on_curve(sketch, center, snap_tol);
+            let circle =
+                sketch.add_geometry(GeometryElement::Circle(Circle::new(center_id, radius)));
+            sketch.set_construction(circle, true);
             let vertex_ids: Vec<Uuid> = polygon_vertices(c, cursor, sides)
                 .into_iter()
                 .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(p))))
                 .collect();
+            for vertex in &vertex_ids {
+                sketch.add_constraint(ConstraintKind::PointOnCircle {
+                    point: *vertex,
+                    circle,
+                });
+            }
             let n = vertex_ids.len();
-            for i in 0..n {
-                sketch.add_geometry(GeometryElement::Line(Line::new(
-                    vertex_ids[i],
-                    vertex_ids[(i + 1) % n],
-                )));
+            let sides: Vec<Uuid> = (0..n)
+                .map(|i| {
+                    sketch.add_geometry(GeometryElement::Line(Line::new(
+                        vertex_ids[i],
+                        vertex_ids[(i + 1) % n],
+                    )))
+                })
+                .collect();
+            for side in &sides[1..] {
+                sketch.add_constraint(ConstraintKind::EqualLength {
+                    line1: sides[0],
+                    line2: *side,
+                });
             }
             *state = ToolState::Idle;
             ToolEffect::changed(format!(
@@ -914,13 +944,26 @@ pub(super) fn slot(
             let i3 = sketch.add_geometry(GeometryElement::Point(Point::new(p3)));
             let i4 = sketch.add_geometry(GeometryElement::Point(Point::new(p4)));
 
-            sketch.add_geometry(GeometryElement::Line(Line::new(i1, i2)));
-            sketch.add_geometry(GeometryElement::Line(Line::new(i3, i4)));
+            let rail_1 = sketch.add_geometry(GeometryElement::Line(Line::new(i1, i2)));
+            let rail_2 = sketch.add_geometry(GeometryElement::Line(Line::new(i3, i4)));
             // CCW semicircle caps bulging away from the slot body:
             // at `b` the CCW sweep p3 → p2 passes through b + dir·half;
             // at `a` the CCW sweep p1 → p4 passes through a − dir·half.
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(center_b, i3, i2, half)));
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(center_a, i1, i4, half)));
+            let cap_b = sketch.add_geometry(GeometryElement::Arc(Arc::new(center_b, i3, i2, half)));
+            let cap_a = sketch.add_geometry(GeometryElement::Arc(Arc::new(center_a, i1, i4, half)));
+            // Held a slot: each side tangent to both caps, the caps alike.
+            for rail in [rail_1, rail_2] {
+                for cap in [cap_a, cap_b] {
+                    sketch.add_constraint(ConstraintKind::Tangent {
+                        line_or_circle1: rail,
+                        item2: cap,
+                    });
+                }
+            }
+            sketch.add_constraint(ConstraintKind::EqualRadius {
+                circle1: cap_a,
+                circle2: cap_b,
+            });
 
             *state = ToolState::Idle;
             ToolEffect::changed(format!(

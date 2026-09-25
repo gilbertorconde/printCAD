@@ -186,10 +186,17 @@ pub(super) fn fillet(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f32, radius: 
     } else {
         (t2_id, t1_id)
     };
-    sketch.add_geometry(GeometryElement::Arc(Arc::new(
+    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(
         center_id, start_id, end_id, radius,
     )));
     replace_corner(sketch, &ctx, t1_id, t2_id);
+    // Tangent to both lines, so it stays a fillet when they move.
+    for line in [ctx.l1, ctx.l2] {
+        sketch.add_constraint(ConstraintKind::Tangent {
+            line_or_circle1: line,
+            item2: arc,
+        });
+    }
 
     ToolEffect::changed(format!("Fillet r={radius:.2} at corner"))
 }

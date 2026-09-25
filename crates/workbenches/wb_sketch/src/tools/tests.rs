@@ -286,14 +286,19 @@ fn rect_center_builds_symmetric_rectangle() {
     );
     assert!(fx.changed);
     assert!(state.is_idle());
-    assert_eq!((points(&sketch), lines(&sketch)), (4, 4));
-    assert_eq!(sketch.constraints.len(), 4, "2 horizontal + 2 vertical");
+    // Four corners and the centre they are symmetric about.
+    assert_eq!((points(&sketch), lines(&sketch)), (5, 4));
+    assert_eq!(
+        sketch.constraints.len(),
+        5,
+        "2 horizontal + 2 vertical + the symmetry"
+    );
     // Corners are mirrored through the center: (1,1) .. (9,5).
     let mut xs: Vec<f32> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.x),
+            GeometryElement::Point(p) if !sketch.is_construction(p.id) => Some(p.position.x),
             _ => None,
         })
         .collect();
@@ -687,18 +692,39 @@ fn polygon_two_clicks_builds_closed_ngon() {
         assert!(fx.changed);
         assert!(state.is_idle());
         let n = sides as usize;
-        assert_eq!((points(&sketch), lines(&sketch)), (n, n));
+        // The vertices and the centre; the sides.
+        assert_eq!((points(&sketch), lines(&sketch)), (n + 1, n));
         // Closed loop: every vertex used by exactly two lines.
+        // (The centre is used once, by the construction circle.)
         let uses = point_use_counts(&sketch);
-        assert_eq!(uses.len(), n);
-        assert!(uses.values().all(|&c| c == 2), "closed loop for n={n}");
-        // All vertices on the circumscribed circle of radius 5.
+        assert_eq!(uses.len(), n + 1);
+        assert_eq!(
+            uses.values().filter(|&&c| c == 2).count(),
+            n,
+            "closed loop for n={n}"
+        );
+        // All vertices on the circumscribed circle of radius 5, and held
+        // there, every side as long as the first.
+        let center = Vec2D::new(2.0, 1.0);
         for g in &sketch.geometry {
-            if let GeometryElement::Point(p) = g {
-                let r = (p.position - Vec2D::new(2.0, 1.0)).to_glam().length();
+            if let GeometryElement::Point(p) = g
+                && (p.position - center).to_glam().length() > 1e-4
+            {
+                let r = (p.position - center).to_glam().length();
                 assert!((r - 5.0).abs() < 1e-4, "vertex off circle: r={r}");
             }
         }
+        let count = |f: fn(&ConstraintKind) -> bool| {
+            sketch.constraints.iter().filter(|c| f(&c.kind)).count()
+        };
+        assert_eq!(
+            count(|k| matches!(k, ConstraintKind::PointOnCircle { .. })),
+            n
+        );
+        assert_eq!(
+            count(|k| matches!(k, ConstraintKind::EqualLength { .. })),
+            n - 1
+        );
     }
 }
 
@@ -1113,8 +1139,20 @@ fn fillet_drops_constraints_on_removed_corner() {
     );
     assert!(fx.changed);
     assert!(
-        sketch.constraints.is_empty(),
+        !sketch
+            .constraints
+            .iter()
+            .any(|con| crate::sketch::constraint_refs(&con.kind).contains(&c)),
         "constraint on the removed corner dropped"
+    );
+    assert_eq!(
+        sketch
+            .constraints
+            .iter()
+            .filter(|con| matches!(con.kind, ConstraintKind::Tangent { .. }))
+            .count(),
+        2,
+        "the arc held tangent to both lines"
     );
     assert!(sketch.get_geometry(c).is_none(), "corner point removed");
 }
@@ -2208,4 +2246,41 @@ fn a_split_line_stays_one_line() {
         .filter(|c| matches!(c.kind, ConstraintKind::Horizontal { .. }))
         .count();
     assert_eq!(level, 2, "both halves level");
+}
+
+/// The shapes a tool constrains as it draws them are held consistently:
+/// they solve, and nothing is redundant or in conflict.
+#[test]
+fn shape_tools_constrain_their_shapes_cleanly() {
+    for (tool, clicks) in [
+        (
+            "sketch.slot",
+            vec![Vec2D::new(2.0, 2.0), Vec2D::new(12.0, 5.0)],
+        ),
+        (
+            "sketch.polygon",
+            vec![Vec2D::new(2.0, 2.0), Vec2D::new(7.0, 3.0)],
+        ),
+        (
+            "sketch.rect_center",
+            vec![Vec2D::new(5.0, 3.0), Vec2D::new(9.0, 5.0)],
+        ),
+    ] {
+        let mut sketch = Sketch::new("t");
+        let mut state = ToolState::Idle;
+        for at in clicks {
+            handle_click(&mut state, tool, &mut sketch, at, 0.5);
+        }
+        let outcome = crate::solver::solve(&mut sketch);
+        assert!(
+            matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
+            "{tool}: {outcome:?}"
+        );
+        let diagnosis = crate::solver::diagnose(&sketch);
+        assert!(diagnosis.conflicting.is_empty(), "{tool} conflicts");
+        assert!(
+            diagnosis.redundant.is_empty(),
+            "{tool} has redundant constraints"
+        );
+    }
 }
