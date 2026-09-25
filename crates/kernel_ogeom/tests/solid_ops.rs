@@ -2047,3 +2047,76 @@ fn a_square_piped_along_straight_legs_has_flat_sides() {
     assert!(!props.approximate);
     assert!((props.volume_mm3.unwrap() - 640.0).abs() < 1e-6);
 }
+
+/// Asked for, a build carries what the edited feature does: an adding
+/// feature beside the body before it, a cutting one beside the body after
+/// it, each with its own tool.
+#[test]
+fn a_build_previews_the_feature_it_is_asked_for() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let base = blind_pad(
+        vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+        10.0,
+        BooleanOp::NewSolid,
+    );
+    let on_top = |op| SolidOp::Sweep {
+        profile: Profile {
+            plane: plane_at_z(10.0),
+            wires: vec![rect_wire(5.0, 5.0, 15.0, 15.0)],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance: 4.0 },
+            second_side: None,
+            symmetric: false,
+            reversed: op == BooleanOp::Cut,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op,
+    };
+    let z_range = |mesh: &kernel_api::TriMesh| {
+        let (lo, hi) = mesh.bounds().unwrap();
+        (lo[2], hi[2])
+    };
+
+    let pad = kernel
+        .execute_solid_chain_previewing(
+            &[base.clone(), on_top(BooleanOp::Fuse)],
+            &detail,
+            Some(1..2),
+        )
+        .expect("a boss");
+    let preview = pad.preview.expect("a preview");
+    assert!(!preview.cuts);
+    assert_eq!(z_range(&preview.tool), (10.0, 14.0), "the boss alone");
+    let shown = preview.shown.expect("the body before it");
+    assert_eq!(z_range(&shown.mesh), (0.0, 10.0));
+    assert_eq!(z_range(&pad.mesh), (0.0, 14.0), "the build itself is whole");
+
+    let pocket = kernel
+        .execute_solid_chain_previewing(
+            &[base.clone(), on_top(BooleanOp::Cut)],
+            &detail,
+            Some(1..2),
+        )
+        .expect("a pocket");
+    let preview = pocket.preview.expect("a preview");
+    assert!(preview.cuts);
+    assert_eq!(z_range(&preview.tool), (6.0, 10.0), "the cut alone");
+    let shown = preview.shown.expect("the body after it");
+    let volume = kernel
+        .physical_properties(&shown.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    assert!((volume - (4000.0 - 400.0)).abs() < 1e-6, "{volume}");
+
+    let first = kernel
+        .execute_solid_chain_previewing(&[base], &detail, Some(0..1))
+        .expect("a box");
+    assert!(
+        first.preview.expect("a preview").shown.is_none(),
+        "nothing before it"
+    );
+}

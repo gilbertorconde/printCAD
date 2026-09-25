@@ -257,6 +257,8 @@ pub(crate) fn highlight_submission(
         is_wireframe: false,
         pickable: false,
         on_top: false,
+        edge_color: None,
+        front_only: false,
     })
 }
 

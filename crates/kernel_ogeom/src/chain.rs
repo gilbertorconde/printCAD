@@ -4,7 +4,8 @@
 //! snapshots for patterns are in-model `Shape`s — no per-op serialization.
 
 use kernel_api::{
-    BoolKind, BooleanOp, ChainError, SolidBuildResult, SolidOp, TessellationSettings,
+    BoolKind, BooleanOp, ChainError, FeaturePreview, SolidBuildResult, SolidOp,
+    TessellationSettings,
 };
 use ogeom::topo::{Model, Shape};
 
@@ -19,6 +20,18 @@ struct ToolSnapshot {
 pub fn execute(
     ops_list: &[SolidOp],
     detail: &TessellationSettings,
+) -> Result<SolidBuildResult, ChainError> {
+    execute_previewing(ops_list, detail, None)
+}
+
+/// [`execute`], and with `preview` (the ops of the feature being edited)
+/// what that feature does: its tool solid and the body without it, in
+/// [`SolidBuildResult::preview`]. A feature with no tool of its own (a
+/// dress-up, a pattern) has no preview.
+pub fn execute_previewing(
+    ops_list: &[SolidOp],
+    detail: &TessellationSettings,
+    preview: Option<std::ops::Range<usize>>,
 ) -> Result<SolidBuildResult, ChainError> {
     let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
 
@@ -52,6 +65,12 @@ pub fn execute(
     let mut model = Model::with_tolerances(tess::tolerances());
     let mut current: Option<Shape> = None;
     let mut tools: Vec<Option<ToolSnapshot>> = Vec::with_capacity(ops_list.len());
+    // The previewed feature: the body before it, after it, and its tools.
+    let previewing = |index: usize| preview.as_ref().is_some_and(|r| r.contains(&index));
+    let mut before: Option<Shape> = None;
+    let mut after: Option<Shape> = None;
+    let mut preview_tools: Vec<Shape> = Vec::new();
+    let mut preview_cuts = false;
 
     for (index, solid_op) in ops_list.iter().enumerate() {
         progress::context(format_args!(
@@ -66,7 +85,17 @@ pub fn execute(
         };
         progress::checkpoint().map_err(&err)?;
         let base = current.clone();
+        if preview.as_ref().is_some_and(|r| r.start == index) {
+            before = base.clone();
+        }
         let mut tool_snapshot: Option<ToolSnapshot> = None;
+        // Keep a feature's tool when it is the one previewed.
+        let mut keep = |tool: &Shape, op: BooleanOp| {
+            if previewing(index) {
+                preview_tools.push(tool.clone());
+                preview_cuts |= op == BooleanOp::Cut;
+            }
+        };
 
         let next = match solid_op {
             SolidOp::Shape { brep } => absorb_shape(&mut model, brep).map_err(&err)?,
@@ -77,6 +106,8 @@ pub fn execute(
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
                 });
+                keep(&tool, *op);
+
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
             SolidOp::Primitive {
@@ -89,6 +120,8 @@ pub fn execute(
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
                 });
+                keep(&tool, *op);
+
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
             SolidOp::Loft {
@@ -103,6 +136,8 @@ pub fn execute(
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
                 });
+                keep(&tool, *op);
+
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
             SolidOp::Pipe {
@@ -117,6 +152,8 @@ pub fn execute(
                     op: solid_op.clone(),
                     subtractive: *op == BooleanOp::Cut,
                 });
+                keep(&tool, *op);
+
                 combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
             }
             SolidOp::Fillet { radius, edges } => {
@@ -197,18 +234,25 @@ pub fn execute(
                 tool_transform,
             } => {
                 let solid = base.ok_or_else(|| err("boolean needs an existing solid".into()))?;
-                external_boolean(
-                    &mut model,
-                    &solid,
-                    tool_brep,
-                    *kind,
-                    tool_transform.as_ref(),
-                )
-                .map_err(&err)?
+                let tool =
+                    external_tool(&mut model, tool_brep, tool_transform.as_ref()).map_err(&err)?;
+                let cuts = *kind == BoolKind::Cut;
+                keep(
+                    &tool,
+                    if cuts {
+                        BooleanOp::Cut
+                    } else {
+                        BooleanOp::Fuse
+                    },
+                );
+                ops::combine_solids(&mut model, &solid, &tool, *kind).map_err(&err)?
             }
         };
 
         current = Some(next);
+        if preview.as_ref().is_some_and(|r| r.end == index + 1) {
+            after = current.clone();
+        }
         tools.push(tool_snapshot);
     }
 
@@ -233,11 +277,51 @@ pub fn execute(
     })?;
 
     let bounds_mm = mesh.bounds();
+    // A preview that cannot be made leaves the build as it is.
+    let preview = (!preview_tools.is_empty())
+        .then(|| {
+            let shown = if preview_cuts { after } else { before };
+            feature_preview(&mut model, preview_tools, shown, preview_cuts, detail)
+        })
+        .flatten()
+        .map(Box::new);
     Ok(SolidBuildResult {
         brep_blob,
         mesh,
         bounds_mm,
+        preview,
     })
+}
+
+/// The preview of a feature: its tools meshed as one, and the body to show
+/// beside them.
+fn feature_preview(
+    model: &mut Model,
+    tools: Vec<Shape>,
+    shown: Option<Shape>,
+    cuts: bool,
+    detail: &TessellationSettings,
+) -> Option<FeaturePreview> {
+    let tool = match tools.as_slice() {
+        [one] => one.clone(),
+        many => model.add_compound(many).ok()?,
+    };
+    let tool = tess::mesh_shape(model, &tool, &[], detail).ok()?;
+    let shown = match shown {
+        Some(shape) => {
+            let mesh = tess::mesh_shape(model, &shape, &[], detail).ok()?;
+            let brep_blob = tess::write_blob(model, &shape).ok()?;
+            let bounds_mm = mesh.bounds();
+            Some(Box::new(SolidBuildResult {
+                brep_blob,
+                mesh,
+                bounds_mm,
+                preview: None,
+            }))
+        }
+        None => None,
+    };
+    Some(FeaturePreview { shown, tool, cuts })
 }
 
 /// Combine a freshly built tool with the running solid.
@@ -265,7 +349,6 @@ fn combine(
     }
 }
 
-/// Boolean against an external body's serialized snapshot.
 /// A native-format snapshot read into the model: the shape it holds.
 pub(crate) fn absorb_shape(model: &mut Model, brep: &[u8]) -> Result<Shape, String> {
     let text =
@@ -279,16 +362,16 @@ pub(crate) fn absorb_shape(model: &mut Model, brep: &[u8]) -> Result<Shape, Stri
         .ok_or_else(|| "solid snapshot holds no shape".to_string())
 }
 
-fn external_boolean(
+/// Another body's solid as a boolean's tool, where it sits relative to
+/// this one.
+fn external_tool(
     model: &mut Model,
-    solid: &Shape,
     tool_brep: &[u8],
-    kind: BoolKind,
     tool_transform: Option<&[[f64; 4]; 4]>,
 ) -> Result<Shape, String> {
     let mut tool = absorb_shape(model, tool_brep)?;
     if let Some(matrix) = tool_transform {
         tool = pattern::moved(model, &tool, matrix)?;
     }
-    ops::combine_solids(model, solid, &tool, kind)
+    Ok(tool)
 }

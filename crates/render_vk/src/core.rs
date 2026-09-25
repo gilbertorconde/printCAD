@@ -1600,6 +1600,11 @@ fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
         (body.highlight as u8).hash(&mut h);
         body.is_wireframe.hash(&mut h);
         body.on_top.hash(&mut h);
+        match &body.edge_color {
+            Some(color) => f32s(&mut h, color),
+            None => 0u8.hash(&mut h),
+        }
+        body.front_only.hash(&mut h);
     }
     h.finish()
 }

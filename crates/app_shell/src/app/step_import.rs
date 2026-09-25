@@ -146,11 +146,20 @@ impl PrintCadApp {
                         // Body deleted (e.g. undo) while the rebuild ran.
                         return;
                     }
-                    crate::app::recompute::store_built_solid(
-                        &mut self.session.document,
-                        bid,
-                        result,
-                    );
+                    let mut result = result;
+                    match result.preview.take() {
+                        Some(preview) if self.session.preview_feature.is_some() => {
+                            self.show_feature_preview(bid, result, *preview);
+                        }
+                        _ => {
+                            self.session.previews.remove(&bid);
+                            crate::app::recompute::store_built_solid(
+                                &mut self.session.document,
+                                bid,
+                                result,
+                            );
+                        }
+                    }
                     if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body_id) {
                         // The face sub-mesh belongs to the replaced solid.
                         self.session.face_highlight = None;

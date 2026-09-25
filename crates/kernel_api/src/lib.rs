@@ -917,6 +917,22 @@ pub struct SolidBuildResult {
     pub mesh: TriMesh,
     /// Axis-aligned bounds in millimetres.
     pub bounds_mm: Option<([f32; 3], [f32; 3])>,
+    /// What the feature being edited does, when the build was asked for it.
+    pub preview: Option<Box<FeaturePreview>>,
+}
+
+/// What a feature being edited does to its body, beside the body without
+/// it: the view while it is edited.
+#[derive(Debug, Clone, Default)]
+pub struct FeaturePreview {
+    /// The body to show meanwhile: as it stood before a feature that adds,
+    /// after one that cuts. None when an adding feature is the body's
+    /// first.
+    pub shown: Option<Box<SolidBuildResult>>,
+    /// The feature's own tool solid, meshed: the material it adds or takes.
+    pub tool: TriMesh,
+    /// The feature cuts.
+    pub cuts: bool,
 }
 
 /// Trait implemented by any geometry kernel that can serve the application.

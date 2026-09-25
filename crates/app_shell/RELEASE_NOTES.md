@@ -32,6 +32,7 @@ version first.
 - Holes to standard sizes, fillets and chamfers on picked edges, draft, thickness, and linear, polar and mirrored patterns.
 - Datum points, lines and planes, and local coordinate systems whose planes carry sketches.
 - A body's volume, surface area and centre of mass, exact wherever its faces have a closed form.
+- While a feature is edited, what it adds or cuts shows see-through in its own colour over the body without it, set in Preferences › Display.
 
 ### Assembly
 - Bodies can be moved and turned, and keep their own geometry as it was made.

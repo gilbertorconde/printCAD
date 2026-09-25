@@ -12,6 +12,7 @@ use crate::log_panel as app_log;
 
 impl PrintCadApp {
     pub(crate) fn drive_part_recompute(&mut self) {
+        self.sync_feature_preview();
         for job in self.registry.rebuild_jobs(&mut self.session.document) {
             let body_id = job.body;
             self.session.document.clear_body_feature_errors(body_id);
@@ -24,11 +25,17 @@ impl PrintCadApp {
                     }
                 }
                 Ok(plan) => {
+                    let preview = self
+                        .session
+                        .preview_feature
+                        .filter(|f| plan.op_features.contains(f))
+                        .map(|f| f.0);
                     self.kernel_worker.request_build_solid(
                         body_id.0,
                         plan.ops,
                         plan.op_features.iter().map(|id| id.0).collect(),
                         TessellationSettings::default(),
+                        preview,
                     );
                 }
                 Err(err) => {
@@ -50,6 +57,80 @@ impl PrintCadApp {
 }
 
 impl PrintCadApp {
+    /// Follow the feature the active bench edits: while a task edits one
+    /// that builds solid, its body is built with a preview of it, and when
+    /// the task closes the whole solids go back.
+    fn sync_feature_preview(&mut self) {
+        let document = &self.session.document;
+        let editing = self
+            .registry
+            .workbench(&self.session.active_workbench.0)
+            .ok()
+            .and_then(|wb| wb.editing_feature())
+            .filter(|feature| {
+                document.get_feature_meta(*feature).is_some_and(|node| {
+                    node.body.is_some()
+                        && self
+                            .registry
+                            .feature_info(node)
+                            .is_some_and(|info| info.builds_solid)
+                })
+            });
+        if editing == self.session.preview_feature {
+            return;
+        }
+        self.end_feature_previews();
+        self.session.preview_feature = editing;
+        if let Some(feature) = editing {
+            // Built again, this time with its preview.
+            self.session.document.mark_feature_stale(feature);
+        }
+    }
+
+    /// Put every body showing a preview back to its whole solid.
+    pub(crate) fn end_feature_previews(&mut self) {
+        for (body, preview) in std::mem::take(&mut self.session.previews) {
+            if self.session.document.bodies().iter().any(|b| b.id == body) {
+                store_built_solid(&mut self.session.document, body, preview.full);
+            }
+        }
+    }
+
+    /// A build that came with the edited feature's preview: the body stands
+    /// without the feature (before one that adds, after one that cuts) and
+    /// the feature's tool is drawn over it, the whole solid kept aside.
+    pub(crate) fn show_feature_preview(
+        &mut self,
+        body: core_document::BodyId,
+        full: kernel_api::SolidBuildResult,
+        preview: kernel_api::FeaturePreview,
+    ) {
+        let document = &mut self.session.document;
+        match preview.shown {
+            Some(shown) => store_built_solid(document, body, *shown),
+            None => document.remove_imported_geometry(body),
+        }
+        let placement = document.body_placement(body);
+        let tool = if placement.is_identity() {
+            preview.tool
+        } else {
+            placement.mesh(&preview.tool)
+        };
+        let (id, revision) = match self.session.previews.get(&body) {
+            Some(previous) => (previous.id, previous.revision.wrapping_add(1)),
+            None => (uuid::Uuid::new_v4(), 0),
+        };
+        self.session.previews.insert(
+            body,
+            crate::app::session::BodyPreview {
+                full,
+                tool: std::sync::Arc::new(tool),
+                id,
+                revision,
+            },
+        );
+    }
+
     /// Hand every body whose repair was asked for, and whose geometry is
     /// not yet the repaired shape, to the kernel worker. The request is an
     /// op, so this runs the same for a local request, a peer's, and a

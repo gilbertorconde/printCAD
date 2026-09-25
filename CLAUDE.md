@@ -494,6 +494,17 @@ feature the tool just created). `frame.rs` skips the per-frame
 sketcher's editing session) is the exception: each edit in it is an undo
 step of its own.
 
+**Feature preview.** While a bench's `editing_feature` is one that builds
+solid (Part Design's open task), `recompute.rs` asks its body's builds for a
+preview (`request_build_solid`'s `preview`, `execute_solid_chain_previewing`
+over the feature's op range): the chain keeps the feature's tool and the
+body before it (an adding feature) or after it (a cutting one) in
+`SolidBuildResult::preview`. The body's geometry is then that solid, so
+picks match what is drawn; `session.previews` keeps the whole solid, put
+back when the task closes (and in the save snapshot), and the tool, drawn
+`front_only` in `rendering.preview_color`/`preview_opacity` with its edges
+over its faces (the renderer's `TranslucentFront` pass, back faces culled).
+
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) asks every bench for
 its `rebuild_jobs` (a `BuildPlan` of `SolidOp`s per body, the bench settling

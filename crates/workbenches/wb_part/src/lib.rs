@@ -724,6 +724,10 @@ impl Workbench for PartDesignWorkbench {
         build::mark_all_part_features_dirty(document);
     }
 
+    fn editing_feature(&self) -> Option<FeatureId> {
+        self.task.as_ref().map(|task| task.feature)
+    }
+
     fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
         if node.workbench_id.as_str() == "core.datum" {
             let datum = core_document::DatumFeature::from_json(&node.data).ok();

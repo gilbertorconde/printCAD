@@ -38,6 +38,8 @@ pub enum KernelRequest {
         ops: Vec<SolidOp>,
         op_features: Vec<Uuid>,
         detail: TessellationSettings,
+        /// The feature being edited, whose preview the result carries.
+        preview: Option<Uuid>,
     },
     /// Measure a body's snapshot: volume, area, centre of mass.
     Measure {
@@ -211,12 +213,16 @@ impl KernelWorker {
     }
 
     /// Submit a Part Design solid rebuild. One response arrives per request.
+    /// Submit a body's chain. With `preview`, a feature being edited, the
+    /// result also carries what that feature does (its tool, and the body
+    /// without it).
     pub fn request_build_solid(
         &mut self,
         body_id: Uuid,
         ops: Vec<SolidOp>,
         op_features: Vec<Uuid>,
         detail: TessellationSettings,
+        preview: Option<Uuid>,
     ) {
         if self
             .tx
@@ -225,6 +231,7 @@ impl KernelWorker {
                 ops,
                 op_features,
                 detail,
+                preview,
             })
             .is_ok()
         {
@@ -432,9 +439,16 @@ fn worker_loop(
                 ops,
                 op_features,
                 detail,
+                preview,
             } => {
                 let started = Instant::now();
-                match kernel.execute_solid_chain(&ops, &detail) {
+                // The edited feature's ops, first to last.
+                let range = preview.and_then(|feature| {
+                    let first = op_features.iter().position(|f| *f == feature)?;
+                    let last = op_features.iter().rposition(|f| *f == feature)?;
+                    Some(first..last + 1)
+                });
+                match kernel.execute_solid_chain_previewing(&ops, &detail, range) {
                     Ok(result) => KernelResponse::SolidBuilt {
                         body_id,
                         result,

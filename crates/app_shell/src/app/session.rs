@@ -122,6 +122,12 @@ pub(crate) struct DocumentSession {
     pub physical: std::collections::HashMap<Uuid, (u64, crate::ui::Physical)>,
     /// Mesh bodies the kernel worker is turning into solids.
     pub solids_in_flight: std::collections::HashSet<Uuid>,
+    /// The feature an open task edits, which builds carry a preview of.
+    pub preview_feature: Option<core_document::FeatureId>,
+    /// Bodies showing that preview: the body without the feature stands in
+    /// the document, and this keeps the whole solid to put back and the
+    /// feature's tool drawn over it.
+    pub previews: std::collections::HashMap<core_document::BodyId, BodyPreview>,
     /// Bodies whose repair the kernel worker is running.
     pub repairs_in_flight: std::collections::HashSet<Uuid>,
     /// The depths the pick pass drew around the cursor, and the camera it
@@ -204,6 +210,8 @@ impl DocumentSession {
             pick_depths: None,
             repairs_in_flight: Default::default(),
             solids_in_flight: Default::default(),
+            preview_feature: None,
+            previews: Default::default(),
             physical: Default::default(),
             selected_edges: Vec::new(),
             bench_states: HashMap::new(),
@@ -239,4 +247,15 @@ impl DocumentSession {
 pub(crate) struct TabSlot {
     pub tab: Uuid,
     pub parked: Option<DocumentSession>,
+}
+
+/// A body showing the preview of the feature being edited.
+pub struct BodyPreview {
+    /// The whole solid, stored back when the preview ends.
+    pub full: kernel_api::SolidBuildResult,
+    /// The feature's tool, placed where the body sits.
+    pub tool: std::sync::Arc<kernel_api::TriMesh>,
+    /// The tool's id and revision for the renderer.
+    pub id: Uuid,
+    pub revision: u64,
 }

@@ -156,6 +156,21 @@ impl OgeomKernel {
         })?;
         chain::execute(ops, detail)
     }
+
+    /// [`Self::execute_solid_chain`], with the preview of the feature whose
+    /// ops are `preview`: its tool, and the body without it.
+    pub fn execute_solid_chain_previewing(
+        &mut self,
+        ops: &[SolidOp],
+        detail: &TessellationSettings,
+        preview: Option<std::ops::Range<usize>>,
+    ) -> Result<SolidBuildResult, ChainError> {
+        self.initialize().map_err(|e| ChainError {
+            op_index: 0,
+            message: e.to_string(),
+        })?;
+        chain::execute_previewing(ops, detail, preview)
+    }
 }
 
 impl Kernel for OgeomKernel {

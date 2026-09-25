@@ -444,6 +444,14 @@ pub struct RenderingSettings {
     /// always shows through.
     #[serde(default = "default_selection_opacity")]
     pub selection_opacity: f32,
+    /// The colour a feature being edited shows what it adds or takes in:
+    /// its faces in it at `preview_opacity`, its edges in it whole.
+    #[serde(default = "default_preview_color")]
+    pub preview_color: [f32; 3],
+    /// How much of that colour a preview's faces take, up to
+    /// [`MAX_SELECTION_OPACITY`]: what is behind them shows through.
+    #[serde(default = "default_preview_opacity")]
+    pub preview_opacity: f32,
     /// How every body in the scene is drawn.
     #[serde(default)]
     pub draw_style: DrawStyle,
@@ -490,6 +498,14 @@ fn default_selection_opacity() -> f32 {
     0.45
 }
 
+fn default_preview_color() -> [f32; 3] {
+    [0.10, 0.90, 0.60]
+}
+
+fn default_preview_opacity() -> f32 {
+    0.35
+}
+
 impl Default for RenderingSettings {
     fn default() -> Self {
         Self {
@@ -497,6 +513,8 @@ impl Default for RenderingSettings {
             show_log_panel: false,
             selection_color: default_selection_color(),
             selection_opacity: default_selection_opacity(),
+            preview_color: default_preview_color(),
+            preview_opacity: default_preview_opacity(),
             draw_style: DrawStyle::default(),
         }
     }

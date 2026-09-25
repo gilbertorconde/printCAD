@@ -920,6 +920,8 @@ impl PrintCadApp {
                     opacity: 1.0,
                     pickable: true,
                     on_top: false,
+                    edge_color: None,
+                    front_only: false,
                 }
             })
             .collect();
@@ -997,6 +999,8 @@ impl PrintCadApp {
                     is_wireframe: wireframe,
                     pickable: true,
                     on_top: false,
+                    edge_color: None,
+                    front_only: false,
                 }
             })
             .collect();
@@ -1035,6 +1039,8 @@ impl PrintCadApp {
                     // A guide is drawn, never picked.
                     pickable: false,
                     on_top: overlay.on_top,
+                    edge_color: None,
+                    front_only: false,
                 }
             })
             .collect();
@@ -1139,6 +1145,29 @@ impl PrintCadApp {
         // Combine sketch meshes, imported geometry, and overlay meshes.
         let mut all_meshes = sketch_meshes;
         all_meshes.extend(imported_meshes);
+        // What the feature being edited adds or takes: its tool in the
+        // preview colour, faces see-through and edges whole.
+        let rendering = &self.user_settings.rendering;
+        for (body, preview) in &self.session.previews {
+            if !self.session.document.imported_body_effective_visible(*body) {
+                continue;
+            }
+            all_meshes.push(BodySubmission {
+                id: preview.id,
+                revision: preview.revision,
+                mesh: Arc::clone(&preview.tool),
+                color: rendering.preview_color,
+                opacity: rendering
+                    .preview_opacity
+                    .clamp(0.05, settings::MAX_SELECTION_OPACITY),
+                highlight: HighlightState::None,
+                is_wireframe: wireframe,
+                pickable: false,
+                on_top: false,
+                edge_color: Some(rendering.preview_color),
+                front_only: true,
+            });
+        }
         all_meshes.append(&mut overlay_meshes);
 
         // The selection overlay, in the selection paint at the chosen
@@ -1162,12 +1191,22 @@ impl PrintCadApp {
                 is_wireframe: false,
                 pickable: false,
                 on_top: false,
+                edge_color: None,
+                front_only: false,
             });
         } else if let Some(geometry) = self
             .session
             .selected_body
             // Picked edges are the selection then, drawn as lines below.
             .filter(|_| self.session.selected_edges.is_empty())
+            // A body showing a feature's preview is not painted over: the
+            // preview is what it shows.
+            .filter(|id| {
+                !self
+                    .session
+                    .previews
+                    .contains_key(&core_document::BodyId(*id))
+            })
             .and_then(|id| {
                 self.session
                     .document
@@ -1187,6 +1226,8 @@ impl PrintCadApp {
                 is_wireframe: false,
                 pickable: false,
                 on_top: false,
+                edge_color: None,
+                front_only: false,
             });
         }
 
@@ -1211,6 +1252,8 @@ impl PrintCadApp {
                 is_wireframe: false,
                 pickable: false,
                 on_top: false,
+                edge_color: None,
+                front_only: false,
             });
         }
 
@@ -1279,6 +1322,8 @@ impl PrintCadApp {
                     is_wireframe: false,
                     pickable: false,
                     on_top: false,
+                    edge_color: None,
+                    front_only: false,
                 });
             }
         }

@@ -629,6 +629,8 @@ fn reset_group(state: &mut PreferencesState) {
             state.draft.rendering.msaa_samples = defaults.rendering.msaa_samples;
             state.draft.rendering.selection_color = defaults.rendering.selection_color;
             state.draft.rendering.selection_opacity = defaults.rendering.selection_opacity;
+            state.draft.rendering.preview_color = defaults.rendering.preview_color;
+            state.draft.rendering.preview_opacity = defaults.rendering.preview_opacity;
             state.draft.preferred_gpu = defaults.preferred_gpu;
         }
         PrefGroup::Input => {
@@ -1118,6 +1120,40 @@ fn display_page(
                             .decimals(2),
                     )
                     .hint("How much paint goes over a selected face or body"),
+                ],
+                filter,
+            );
+
+            let preview_color = &mut draft.rendering.preview_color;
+            pref_group(
+                ui,
+                "Feature preview",
+                vec![
+                    PrefRow::new("Colour", move |ui| {
+                        let mut color = egui::Color32::from_rgb(
+                            (preview_color[0] * 255.0) as u8,
+                            (preview_color[1] * 255.0) as u8,
+                            (preview_color[2] * 255.0) as u8,
+                        );
+                        let changed = ui.color_edit_button_srgba(&mut color).changed();
+                        if changed {
+                            *preview_color = [
+                                color.r() as f32 / 255.0,
+                                color.g() as f32 / 255.0,
+                                color.b() as f32 / 255.0,
+                            ];
+                        }
+                        changed
+                    })
+                    .hint("What a feature being edited adds or takes is drawn in"),
+                    PrefRow::qty(
+                        "Opacity",
+                        QtyField::new(&mut draft.rendering.preview_opacity)
+                            .range(0.05..=f64::from(settings::MAX_SELECTION_OPACITY))
+                            .speed(0.01)
+                            .decimals(2),
+                    )
+                    .hint("How solid its faces look; its edges are drawn whole"),
                 ],
                 filter,
             );

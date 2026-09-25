@@ -642,6 +642,10 @@ impl PrintCadApp {
     /// is done.
     fn start_document_save(&mut self, path: &Path, compression: core_document::Compression) {
         let mut document = self.session.document.clone();
+        // A body showing a feature's preview is saved whole.
+        for (body, preview) in &self.session.previews {
+            crate::app::recompute::store_built_solid(&mut document, *body, preview.full.clone());
+        }
         let at_seq = self.session.document.mutation_seq();
         let path = path.to_path_buf();
         let preview = self.thumbnail_shapes();

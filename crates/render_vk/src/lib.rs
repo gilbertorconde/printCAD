@@ -258,6 +258,11 @@ pub struct BodySubmission {
     /// Drawn last, blended at `opacity`, over everything whatever its
     /// depth: what the scene would hide and must show.
     pub on_top: bool,
+    /// Its face-boundary edges in this colour rather than the scene's.
+    pub edge_color: Option<[f32; 3]>,
+    /// See-through and one layer deep: its back faces are culled, which
+    /// takes winding it made itself, and its edges draw over its faces.
+    pub front_only: bool,
 }
 
 impl fmt::Debug for BodySubmission {
