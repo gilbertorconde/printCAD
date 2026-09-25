@@ -20,17 +20,28 @@ use crate::{progress, tess};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFormat {
     Step,
+    /// STEP with every surface and curve a NURBS: exact where one is, fitted
+    /// within [`NURBS_TOLERANCE`] where not, for a reader that takes no other.
+    StepNurbs,
     Stl,
     ThreeMf,
 }
 
+/// How far a surface fitted for a NURBS-only STEP may stray, in millimetres.
+pub const NURBS_TOLERANCE: f64 = 1e-3;
+
 impl ExportFormat {
-    pub const ALL: [ExportFormat; 3] =
-        [ExportFormat::Step, ExportFormat::Stl, ExportFormat::ThreeMf];
+    pub const ALL: [ExportFormat; 4] = [
+        ExportFormat::Step,
+        ExportFormat::StepNurbs,
+        ExportFormat::Stl,
+        ExportFormat::ThreeMf,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
             ExportFormat::Step => "STEP",
+            ExportFormat::StepNurbs => "STEP (NURBS)",
             ExportFormat::Stl => "STL",
             ExportFormat::ThreeMf => "3MF",
         }
@@ -38,7 +49,7 @@ impl ExportFormat {
 
     pub fn extension(self) -> &'static str {
         match self {
-            ExportFormat::Step => "step",
+            ExportFormat::Step | ExportFormat::StepNurbs => "step",
             ExportFormat::Stl => "stl",
             ExportFormat::ThreeMf => "3mf",
         }
@@ -46,7 +57,7 @@ impl ExportFormat {
 
     /// Whether the format carries triangles, and so a mesh tolerance.
     pub fn is_mesh(self) -> bool {
-        self != ExportFormat::Step
+        matches!(self, ExportFormat::Stl | ExportFormat::ThreeMf)
     }
 
     /// The format a file name asks for, by extension.
@@ -92,12 +103,13 @@ pub fn export(
     detail: &TessellationSettings,
 ) -> KernelResult<Exported> {
     match format {
-        ExportFormat::Step => export_step(bodies),
+        ExportFormat::Step => export_step(bodies, false),
+        ExportFormat::StepNurbs => export_step(bodies, true),
         ExportFormat::Stl | ExportFormat::ThreeMf => export_mesh(bodies, format, detail),
     }
 }
 
-fn export_step(bodies: &[ExportBody<'_>]) -> KernelResult<Exported> {
+fn export_step(bodies: &[ExportBody<'_>], nurbs: bool) -> KernelResult<Exported> {
     progress::context("Writing STEP");
     let mut model = Model::new();
     let mut parts = Vec::new();
@@ -120,6 +132,23 @@ fn export_step(bodies: &[ExportBody<'_>]) -> KernelResult<Exported> {
                 Some(matrix) => crate::ops::pattern::moved(&mut model, &shape, matrix)
                     .map_err(|e| KernelError::Other(anyhow::anyhow!("{}: {e}", body.name)))?,
                 None => shape,
+            };
+            let shape = if nurbs {
+                ogeom::algo::to_nurbs_within(
+                    &mut model,
+                    &shape,
+                    NURBS_TOLERANCE,
+                    tess::tolerances(),
+                )
+                .map(|built| built.shape)
+                .map_err(|e| {
+                    KernelError::Other(anyhow::anyhow!(
+                        "{}: converting to NURBS failed: {e}",
+                        body.name
+                    ))
+                })?
+            } else {
+                shape
             };
             parts.push((body.name.clone(), shape));
         }

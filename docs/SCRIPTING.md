@@ -397,7 +397,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 `pc.file.export`: Export.
 
 - `path` (string, optional): Where to write; the dialog when left out
-- `format` (string, optional): step, stl or 3mf; from the path's extension when left out
+- `format` (string, optional): step, step_nurbs (every surface a spline), stl or 3mf; from the path's extension when left out
 - `bodies` (list, optional): The bodies to write; every visible one when left out
 - `tolerance` (number, optional): The mesh formats' distance to the true surface, mm (0.01)
 - Returns {path, written, skipped, triangles}

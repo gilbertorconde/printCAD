@@ -62,6 +62,9 @@ pub fn draw_export_modal(
                             .map(|f| {
                                 (*f, match f {
                                     ExportFormat::Step => "STEP: exact shapes, for other CAD",
+                                    ExportFormat::StepNurbs => {
+                                        "STEP, NURBS only: for tools that read no other surface"
+                                    }
                                     ExportFormat::Stl => "STL: triangles, for any slicer",
                                     ExportFormat::ThreeMf => "3MF: named closed meshes, for slicers",
                                 })

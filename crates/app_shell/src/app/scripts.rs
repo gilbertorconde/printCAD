@@ -358,7 +358,8 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
             .optional(
                 "format",
                 ParamKind::String,
-                "step, stl or 3mf; from the path's extension when left out",
+                "step, step_nurbs (every surface a spline), stl or 3mf; from the path's \
+                 extension when left out",
             )
             .optional(
                 "bodies",
@@ -1677,9 +1678,13 @@ pub(crate) fn export_format(
     match name {
         Some(name) => match name.to_ascii_lowercase().as_str() {
             "step" | "stp" => Ok(ExportFormat::Step),
+            "step_nurbs" => Ok(ExportFormat::StepNurbs),
             "stl" => Ok(ExportFormat::Stl),
             "3mf" => Ok(ExportFormat::ThreeMf),
-            _ => Err(CommandError::bad("format", "must be step, stl or 3mf")),
+            _ => Err(CommandError::bad(
+                "format",
+                "must be step, step_nurbs, stl or 3mf",
+            )),
         },
         None => ExportFormat::of_path(path).ok_or_else(|| {
             CommandError::bad(

@@ -194,3 +194,59 @@ fn a_placed_body_is_written_where_it_sits() {
         assert!((blo[1] - lo[1]).abs() < 1e-2, "{}", format.label());
     }
 }
+
+/// A NURBS-only STEP writes a cylinder's walls and caps as splines, and it
+/// reads back as the same solid.
+#[test]
+fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
+    use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(
+            &[SolidOp::Primitive {
+                kind: PrimitiveKind::Cylinder {
+                    radius: 5.0,
+                    height: 10.0,
+                    angle_deg: 360.0,
+                },
+                placement: Placement::default(),
+                op: BooleanOp::NewSolid,
+            }],
+            &TessellationSettings::default(),
+        )
+        .expect("a cylinder");
+    let body = ExportBody {
+        name: "drum".into(),
+        brep: Some(&built.brep_blob),
+        transform: None,
+        mesh: &built.mesh,
+    };
+    let out = export(
+        &[body],
+        ExportFormat::StepNurbs,
+        &TessellationSettings::default(),
+    )
+    .expect("exports");
+    let text = String::from_utf8(out.bytes.clone()).unwrap();
+    assert!(text.contains("B_SPLINE_SURFACE"), "splines written");
+    assert!(
+        !text.contains("CYLINDRICAL_SURFACE") && !text.contains("PLANE("),
+        "no analytic surface left"
+    );
+    let dir = std::env::temp_dir().join(format!("printcad-nurbs-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("drum.step");
+    std::fs::write(&path, &out.bytes).unwrap();
+    let back = import(&path);
+    let _ = std::fs::remove_file(&path);
+    let volume = kernel
+        .physical_properties(&back.bodies[0].brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let want = std::f64::consts::PI * 25.0 * 10.0;
+    assert!(
+        (volume - want).abs() < want * 1e-4,
+        "{volume} against {want}"
+    );
+}

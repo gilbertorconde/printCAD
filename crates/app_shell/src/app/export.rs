@@ -65,7 +65,7 @@ pub(crate) struct ExportOutcome {
 /// `path` with the format's extension, unless it already names one the
 /// format answers to.
 pub(crate) fn with_extension(path: &Path, format: ExportFormat) -> PathBuf {
-    if ExportFormat::of_path(path) == Some(format) {
+    if ExportFormat::of_path(path).map(ExportFormat::extension) == Some(format.extension()) {
         path.to_path_buf()
     } else {
         let mut name = path.as_os_str().to_owned();
