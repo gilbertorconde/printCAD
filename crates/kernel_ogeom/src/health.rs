@@ -10,7 +10,7 @@ use kernel_api::{
 };
 use ogeom::algo::{Diagnosis, Severity, check, surface_properties, volume_properties};
 use ogeom::mesh::Deflection;
-use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
+use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
 use crate::tess;
 
@@ -57,18 +57,11 @@ pub fn repair_blob(
 ) -> KernelResult<RepairResult> {
     crate::progress::context("Repairing shape");
     let (mut model, root) = tess::read_blob(brep_blob)?;
-    let fixed = ogeom::heal::fix_shape(&mut model, &root, tess::tolerances())
+    let tol = tess::tolerances();
+    let fixed = ogeom::heal::fix_shape(&mut model, &root, tol)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("repair failed: {e}")))?;
-    let shape = fixed.shape;
+    let mut shape = fixed.shape;
     let report = fixed.report;
-
-    let faces = explore(&model, &shape, Filter::OfType(ShapeType::Face))
-        .map_err(|e| KernelError::Other(anyhow::anyhow!("exploring faces failed: {e}")))?;
-    let face_colors = if faces.len() == face_colors.len() {
-        face_colors.to_vec()
-    } else {
-        Vec::new()
-    };
 
     let mut mended = Vec::new();
     let mut note = |n: usize, what: &str| {
@@ -84,6 +77,54 @@ pub fn repair_blob(
     }
     note(report.tolerances_reduced, "tolerance(s) tightened");
 
+    // Then what the checker does not call broken but gets in the way: a
+    // swept line or circle that is a plane, drum, cone, ball or torus is
+    // named as one (a bore then brings its axis, and measures exactly),
+    // faces too small to matter collapse, and specks of solid go. Sizes
+    // are relative to the part; a pass the kernel refuses is left out.
+    let diagonal = tess::robust_bounds(&model, &shape)
+        .map(|(lo, hi)| (hi - lo).magnitude())
+        .unwrap_or(0.0);
+    let mut changed = false;
+    let swept = swept_faces(&model, &shape);
+    if swept > 0
+        && let Ok(named) = ogeom::heal::swept_to_elementary(&mut model, &shape, tol)
+    {
+        note(
+            swept.saturating_sub(swept_faces(&model, &named.shape)),
+            "swept face(s) named as the plane, drum, cone, ball or torus they are",
+        );
+        shape = named.shape;
+        changed = true;
+    }
+    if diagonal > 0.0 {
+        if let Ok(small) =
+            ogeom::heal::fix_small_faces(&mut model, &shape, (diagonal * 1e-4).max(1e-3), tol)
+            && small.spots + small.strips > 0
+        {
+            note(small.spots, "tiny face(s) collapsed to a point");
+            note(small.strips, "sliver face(s) collapsed to an edge");
+            shape = small.built.shape;
+            changed = true;
+        }
+        if let Ok((kept, dropped)) =
+            ogeom::heal::remove_small_solids(&mut model, &shape, (diagonal * 1e-3).powi(3), tol)
+            && dropped > 0
+        {
+            note(dropped, "speck solid(s) dropped");
+            shape = kept.shape;
+            changed = true;
+        }
+    }
+
+    let faces = explore(&model, &shape, Filter::OfType(ShapeType::Face))
+        .map_err(|e| KernelError::Other(anyhow::anyhow!("exploring faces failed: {e}")))?;
+    let face_colors = if faces.len() == face_colors.len() {
+        face_colors.to_vec()
+    } else {
+        Vec::new()
+    };
+
     crate::progress::context("Meshing the repaired shape");
     let mesh = tess::mesh_shape_with(&model, &shape, &face_colors, detail, tess::Faces::Wide)
         .map_err(|e| KernelError::Other(anyhow::anyhow!("tessellation failed: {e}")))?;
@@ -98,9 +139,37 @@ pub fn repair_blob(
         face_colors,
         mesh,
         bounds_mm,
-        health: health_of(&report.after, true),
+        health: if changed {
+            let after = check(&model, &shape, tol).map_err(|e| {
+                KernelError::Other(anyhow::anyhow!("checking the repair failed: {e}"))
+            })?;
+            health_of(&after, true)
+        } else {
+            health_of(&report.after, true)
+        },
         mended,
     })
+}
+
+/// How many faces of `shape` lie on a surface of extrusion or revolution.
+fn swept_faces(model: &Model, shape: &Shape) -> usize {
+    use ogeom::geom::SurfaceGeometry;
+    explore(model, shape, Filter::OfType(ShapeType::Face))
+        .unwrap_or_default()
+        .iter()
+        .filter(|face| {
+            let Some(node) = model.node(face) else {
+                return false;
+            };
+            let NodeData::Face(data) = node.data() else {
+                return false;
+            };
+            matches!(
+                model.geometry().surface(data.surface),
+                Some(SurfaceGeometry::Extrusion(_) | SurfaceGeometry::Revolution(_))
+            )
+        })
+        .count()
 }
 
 /// Volume, area and centre of mass of a snapshot. A shape that encloses no

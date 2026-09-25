@@ -351,7 +351,7 @@ fn with_file_args(spec: CommandSpec, action: keymap::HostAction) -> CommandSpec 
         SaveAs => path(spec, "Where to save; the dialog when left out"),
         Import => path(
             spec,
-            "The STEP, IGES, STL, OBJ or 3MF file; the dialog when left out",
+            "The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out",
         )
         .returns("nothing; pc.doc.rebuild() waits for the import"),
         Export => path(spec, "Where to write; the dialog when left out")

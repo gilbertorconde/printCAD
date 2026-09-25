@@ -191,3 +191,83 @@ fn a_body_meshes_within_its_own_extent() {
         assert!(size < 150.0, "the mesh spans {size} mm along axis {axis}");
     }
 }
+
+/// Repair names a swept face for what it is: a cylinder written as a
+/// revolved line comes back a drum, so a bore brings its axis and the
+/// solid measures exactly.
+#[test]
+fn repair_names_a_swept_drum_as_a_cylinder() {
+    use ogeom::core::{OgeomResult, Tolerances};
+    use ogeom::geom::{Curve, LineCurve, RevolutionSurface, Surface as _, SurfaceGeometry};
+    use ogeom::math::{Axis, Frame};
+    use ogeom::topo::Model;
+    const T: Tolerances = Tolerances::millimetres();
+
+    // A drum restated as the revolution of its ruling.
+    let as_revolution = |s: &SurfaceGeometry| -> OgeomResult<Option<(SurfaceGeometry, bool)>> {
+        let SurfaceGeometry::Cylinder(c) = s else {
+            return Ok(None);
+        };
+        let (lo, hi) = c.domain().1;
+        let f = c.cylinder().frame();
+        let ruling = Axis {
+            location: f.origin() + f.x().vector() * c.cylinder().radius(),
+            direction: f.z(),
+        };
+        let axis = Axis {
+            location: f.origin(),
+            direction: f.z(),
+        };
+        let revolved: SurfaceGeometry = RevolutionSurface::new(
+            LineCurve::over(ruling, lo, hi)?.into(),
+            axis,
+            core::f64::consts::TAU,
+        )?
+        .into();
+        Ok(Some((revolved, false)))
+    };
+    let keep = |_: &Curve, _: (f64, f64)| -> OgeomResult<Option<(Curve, (f64, f64))>> { Ok(None) };
+    let mut model = Model::new();
+    let drum = ogeom::algo::make_cylinder(&mut model, Frame::WORLD, 2.0, 5.0, T)
+        .unwrap()
+        .shape;
+    let swept = ogeom::algo::restate_geometry(&mut model, &drum, &as_revolution, &keep, T)
+        .unwrap()
+        .shape;
+    let blob = ogeom::io::native::write(
+        &model,
+        std::slice::from_ref(&swept),
+        ogeom::io::native::WriteOptions {
+            triangulations: false,
+        },
+    )
+    .unwrap()
+    .into_bytes();
+
+    let mut kernel = OgeomKernel::new();
+    let before = kernel.physical_properties(&blob).unwrap();
+    let repaired = kernel
+        .repair_brep(&blob, &[], &TessellationSettings::default())
+        .expect("the drum repairs");
+    assert!(
+        repaired.mended.iter().any(|m| m.contains("swept face")),
+        "{:?}",
+        repaired.mended
+    );
+    assert!(
+        repaired
+            .mesh
+            .face_surfaces
+            .iter()
+            .any(|s| matches!(s, kernel_api::FaceSurface::Cylinder { .. })),
+        "{:?}",
+        repaired.mesh.face_surfaces
+    );
+    let after = kernel.physical_properties(&repaired.brep_blob).unwrap();
+    let want = core::f64::consts::PI * 4.0 * 5.0;
+    assert!(!after.approximate);
+    assert!(
+        (after.volume_mm3.unwrap() - want).abs() < 1e-9,
+        "{after:?} (was {before:?})"
+    );
+}

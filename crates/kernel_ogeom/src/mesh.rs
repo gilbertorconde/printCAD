@@ -31,7 +31,10 @@ type Piece = (Option<String>, Triangulation, Option<[f32; 3]>);
 
 /// The mesh formats an import reads, by extension.
 pub fn is_mesh_file(path: &Path) -> bool {
-    matches!(extension(path).as_deref(), Some("stl" | "obj" | "3mf"))
+    matches!(
+        extension(path).as_deref(),
+        Some("stl" | "obj" | "3mf" | "ply" | "glb" | "gltf" | "wrl" | "vrml")
+    )
 }
 
 fn extension(path: &Path) -> Option<String> {
@@ -40,9 +43,11 @@ fn extension(path: &Path) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-/// Read a mesh file into bodies: one for an STL or OBJ, one per build item
-/// of a 3MF. Coordinates are taken as millimetres, as the formats' own
-/// conventions (and 3MF's unit, which the reader applies) have them.
+/// Read a mesh file into bodies: one for an STL, OBJ or PLY, one per build
+/// item of a 3MF, one per placed mesh of a glTF or VRML scene. Coordinates
+/// are taken as millimetres, as STL, OBJ and PLY conventionally have them
+/// (and 3MF's unit, which the reader applies); glTF and VRML are in metres
+/// by their standards, and are scaled.
 pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
     let bytes = std::fs::read(path)
         .map_err(|e| KernelError::Import(format!("failed to read {}: {e}", path.display())))?;
@@ -89,9 +94,44 @@ pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
                 .collect();
             (pieces, import.warnings)
         }
+        Some("ply") => (
+            vec![(
+                Some(stem),
+                ogeom::io::mesh_formats::read_ply(&String::from_utf8_lossy(&bytes))
+                    .map_err(|e| failed("PLY", e))?,
+                None,
+            )],
+            Vec::new(),
+        ),
+        Some("glb") => (
+            scene_pieces(
+                ogeom::io::read_glb(&bytes).map_err(|e| failed("glTF", e))?,
+                &stem,
+                false,
+            ),
+            Vec::new(),
+        ),
+        Some("gltf") => (
+            scene_pieces(
+                ogeom::io::read_gltf(&String::from_utf8_lossy(&bytes))
+                    .map_err(|e| failed("glTF", e))?,
+                &stem,
+                false,
+            ),
+            Vec::new(),
+        ),
+        Some("wrl" | "vrml") => (
+            scene_pieces(
+                ogeom::io::read_vrml(&String::from_utf8_lossy(&bytes))
+                    .map_err(|e| failed("VRML", e))?,
+                &stem,
+                true,
+            ),
+            Vec::new(),
+        ),
         _ => {
             return Err(KernelError::Import(format!(
-                "{} is not a mesh file this reads (STL, OBJ, 3MF)",
+                "{} is not a mesh file this reads (STL, OBJ, 3MF, PLY, glTF, VRML)",
                 path.display()
             )));
         }
@@ -122,6 +162,35 @@ pub fn import_mesh(path: &Path) -> KernelResult<ImportedModel> {
         nodes: Vec::new(),
         source_unit: Some(LengthUnit::Millimetre),
     })
+}
+
+/// The meshes of a scene in metres (glTF, VRML), each a piece in
+/// millimetres named after its node or the file. A VRML colour is sRGB and
+/// taken to linear; a glTF one is linear already.
+fn scene_pieces(meshes: Vec<ogeom::io::ImportedMesh>, stem: &str, srgb: bool) -> Vec<Piece> {
+    let count = meshes.len();
+    meshes
+        .into_iter()
+        .enumerate()
+        .map(|(i, scene)| {
+            let mut mesh = scene.mesh;
+            for p in &mut mesh.positions {
+                *p = ogeom::math::Point::new(p.x * 1000.0, p.y * 1000.0, p.z * 1000.0);
+            }
+            let name = scene.name.or_else(|| {
+                Some(if count == 1 {
+                    stem.to_string()
+                } else {
+                    format!("{stem} {}", i + 1)
+                })
+            });
+            let colour = scene.colour.map(|c| {
+                let rgb = [c[0] as f32, c[1] as f32, c[2] as f32];
+                if srgb { rgb.map(srgb_to_linear) } else { rgb }
+            });
+            (name, mesh, colour)
+        })
+        .collect()
 }
 
 /// The render mesh of a triangle mesh: every triangle flat-shaded and

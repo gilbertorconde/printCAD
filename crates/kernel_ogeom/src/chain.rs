@@ -276,7 +276,7 @@ pub fn execute_previewing(
         )
     })?;
 
-    let bounds_mm = mesh.bounds();
+    let bounds_mm = tess::solid_bounds(&model, &final_shape, &mesh);
     // A preview that cannot be made leaves the build as it is.
     let preview = (!preview_tools.is_empty())
         .then(|| {
@@ -311,7 +311,7 @@ fn feature_preview(
         Some(shape) => {
             let mesh = tess::mesh_shape(model, &shape, &[], detail).ok()?;
             let brep_blob = tess::write_blob(model, &shape).ok()?;
-            let bounds_mm = mesh.bounds();
+            let bounds_mm = tess::solid_bounds(model, &shape, &mesh);
             Some(Box::new(SolidBuildResult {
                 brep_blob,
                 mesh,

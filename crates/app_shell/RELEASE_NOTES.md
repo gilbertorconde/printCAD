@@ -50,7 +50,7 @@ version first.
 
 ### Import
 - STEP and IGES import as bodies, assemblies placed as their files say.
-- STL, OBJ and 3MF import as meshes, and a mesh converts to a solid on request.
+- STL, OBJ, 3MF, PLY, glTF and VRML import as meshes, and a mesh converts to a solid on request.
 - Every imported body is checked; a broken one shows red and the kernel repairs it on request.
 
 ### View

@@ -152,19 +152,20 @@ fn spine_start(model: &Model, wire: &Shape) -> Result<(Point, Vector), String> {
             let Some(geometry) = model.geometry().curve(*curve) else {
                 continue;
             };
+            // The exact tangent: the sweep reads the profile's lean
+            // against it, and a chord's direction is off on a curve.
             let t0 = range.0;
-            let dt = ((range.1 - range.0) * 1e-4).max(1e-9);
             let p0 = geometry
                 .point_at(t0, tol())
                 .map_err(|e| format!("pipe spine start: {e}"))?;
-            let p1 = geometry
-                .point_at(t0 + dt, tol())
+            let d1 = geometry
+                .d1_at(t0, tol())
                 .map_err(|e| format!("pipe spine tangent: {e}"))?;
             let placement = location
                 .composed(model.datums())
                 .map_err(|e| format!("pipe spine placement: {e}"))?;
             let start = placement.apply(p0);
-            let toward = placement.apply(p1) - start;
+            let toward = placement.apply(p0 + d1) - start;
             let len = toward.magnitude();
             if len <= 1e-12 {
                 return Err("pipe spine tangent is degenerate".into());

@@ -49,7 +49,7 @@ feature tree. It is derived:
 
 - A Part Design body is rebuilt from its features by the kernel.
 - An imported body keeps the kernel shape it was read with.
-- A mesh body (from STL, OBJ or 3MF) has triangles only, until it is
+- A mesh body (from STL, OBJ, 3MF, PLY, glTF or VRML) has triangles only, until it is
   converted to a solid.
 
 The result lands in `ImportedGeometry`: an `Arc<TriMesh>` for drawing, a

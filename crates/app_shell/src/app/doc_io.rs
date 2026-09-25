@@ -834,11 +834,17 @@ impl PrintCadApp {
                 FileDialogKind::ImportStep => rfd::FileDialog::new()
                     .add_filter(
                         "CAD or mesh file",
-                        &["step", "stp", "iges", "igs", "stl", "obj", "3mf"],
+                        &[
+                            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
+                            "gltf", "wrl", "vrml",
+                        ],
                     )
                     .add_filter("STEP file", &["step", "stp"])
                     .add_filter("IGES file", &["iges", "igs"])
-                    .add_filter("Mesh (STL, OBJ, 3MF)", &["stl", "obj", "3mf"]),
+                    .add_filter(
+                        "Mesh (STL, OBJ, 3MF, PLY, glTF, VRML)",
+                        &["stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml"],
+                    ),
                 FileDialogKind::RunScript => {
                     let dialog = rfd::FileDialog::new().add_filter("Lua script", &["lua"]);
                     match settings::scripts_dir().filter(|d| d.is_dir()) {

@@ -1647,7 +1647,6 @@ fn helix_of(profile: ProfileWire, cone_angle_deg: f64, pitch: f64, height: f64) 
 }
 
 #[test]
-#[ignore = "kernel: make_loft_skinned misses its tolerance on sections with corners (0.15 mm on squares) and on circles (0.003 mm where the skin is a cylinder) (ogeom-rs#57)"]
 fn a_smooth_loft_holds_its_sections_exactly() {
     let square = rect_wire(-5.0, -5.0, 5.0, 5.0);
     assert_volume(&[smooth_loft(square.clone(), square)], 1500.0, "squares");
@@ -1660,7 +1659,6 @@ fn a_smooth_loft_holds_its_sections_exactly() {
 }
 
 #[test]
-#[ignore = "kernel: make_pipe_shell and the helical sweep read a reversed ring edge's curve from its start, ignoring its sense (ogeom-rs#58)"]
 fn a_clockwise_profile_pipes_and_coils_as_a_counter_clockwise_one_does() {
     let square = rect_wire(-2.0, -2.0, 2.0, 2.0);
     let rise = vec![ProfileSegment::Line {
@@ -1680,7 +1678,6 @@ fn a_clockwise_profile_pipes_and_coils_as_a_counter_clockwise_one_does() {
 }
 
 #[test]
-#[ignore = "kernel: make_pipe_shell refuses a profile square to a curved spine's start as leaning (the station tangent against a 1e-9 test), and a conical helix likewise (ogeom-rs#59)"]
 fn a_profile_square_to_an_arc_spine_pipes_along_it() {
     // A quarter circle rising from the origin, square to the XY plane
     // where it starts: its centre 10 mm along X.
@@ -1701,7 +1698,6 @@ fn a_profile_square_to_an_arc_spine_pipes_along_it() {
 }
 
 #[test]
-#[ignore = "kernel: a circle piped along a straight line comes out 2.6% short of the cylinder it is (ogeom-rs#60)"]
 fn a_circle_piped_along_a_line_is_a_cylinder() {
     let rise = vec![ProfileSegment::Line {
         start: [0.0, 0.0],
@@ -1714,12 +1710,11 @@ fn a_circle_piped_along_a_line_is_a_cylinder() {
     );
 }
 
+/// A helical sweep reaches exactly as far as its profile does, and a
+/// close-pitched one measures.
 #[test]
-#[ignore = "kernel: the helical sweep is 0.68% light, overshoots its radius and height, and pitch 3 over 30 mm leaves a solid the mass properties refuse (ogeom-rs#61)"]
-fn a_helical_sweep_is_as_big_as_pappus_says() {
+fn a_helical_sweep_reaches_as_far_as_its_profile() {
     let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
-    let want = 4.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0;
-    assert_volume(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)], want, "4 turns");
     let mut kernel = new_kernel();
     let built = kernel
         .execute_solid_chain(
@@ -1731,6 +1726,16 @@ fn a_helical_sweep_is_as_big_as_pappus_says() {
     assert_close(max[0], 12.0, 1e-3, "outer radius");
     assert_close(min[1], 0.0, 1e-3, "starts on the profile");
     assert_close(max[1], 22.0, 1e-3, "height plus the profile");
+    volume_of(&[helix_of(coil, 0.0, 3.0, 30.0)]).expect("10 turns measure");
+}
+
+/// A helical sweep is as big as Pappus says, measured at the default
+/// deflection as the app measures.
+#[test]
+fn a_helical_sweep_is_as_big_as_pappus_says() {
+    let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
+    let want = 4.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0;
+    assert_volume(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)], want, "4 turns");
     assert_volume(
         &[helix_of(coil, 0.0, 3.0, 30.0)],
         10.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0,
@@ -1739,7 +1744,6 @@ fn a_helical_sweep_is_as_big_as_pappus_says() {
 }
 
 #[test]
-#[ignore = "kernel: a revolve through less than a full turn fails when the profile has an edge on the axis, 'wire 0 is open' (ogeom-rs#62)"]
 fn a_partial_revolve_of_a_profile_on_its_axis_builds() {
     use kernel_api::PrimitiveKind;
     let turn = |angle: f64| SolidOp::Sweep {
@@ -1787,7 +1791,6 @@ fn a_partial_revolve_of_a_profile_on_its_axis_builds() {
 }
 
 #[test]
-#[ignore = "kernel: a scaled copy that does not touch the solid fuses as a malformed solid, 208 mm3 where it is 280 (ogeom-rs#63)"]
 fn a_scaled_copy_standing_apart_is_whole() {
     let apart: [[f64; 4]; 4] = [
         [1.5, 0.0, 0.0, 10.0],
@@ -1843,7 +1846,6 @@ fn a_sphere_between_two_latitudes_is_a_flat_capped_band() {
 }
 
 #[test]
-#[ignore = "kernel: a face unify_same_domain merges loses the closed form the mass properties need, so a refined solid measures from its mesh (ogeom-rs#64)"]
 fn a_refined_solid_measures_exactly() {
     let ops = [
         blind_pad(
@@ -1912,7 +1914,6 @@ fn a_two_sided_pocket_from_the_top_face_cuts() {
 /// A turned body's bounds reach its full radius on every side, not the
 /// corners of the mesh that draws it.
 #[test]
-#[ignore = "kernel: shape_bounds keeps a revolution surface's whole carrier, and there is no tight bound to take the body's size from (ogeom-rs#65)"]
 fn a_revolved_body_measures_its_full_radius() {
     let mut kernel = new_kernel();
     let result = kernel
@@ -1948,7 +1949,6 @@ fn a_revolved_body_measures_its_full_radius() {
 
 /// A drafted solid measures: its tilted face is a plane like any other.
 #[test]
-#[ignore = "kernel: surface_properties fails on a face drafted 1.5 degrees, 'u parameter -4.35 outside [-1.83, 21.83]' (ogeom-rs#66)"]
 fn a_drafted_solid_measures() {
     let mut kernel = new_kernel();
     let result = kernel
@@ -1986,7 +1986,6 @@ fn a_drafted_solid_measures() {
 /// A chamfer wider than a face it runs along would take the whole face
 /// and more: it is refused, not cut.
 #[test]
-#[ignore = "kernel: a chamfer wider than an adjacent face is cut through it instead of refused, 12 mm on a 10 mm face leaves 2600 mm3 (ogeom-rs#67)"]
 fn a_chamfer_wider_than_its_face_is_refused() {
     let mut kernel = new_kernel();
     let result = kernel.execute_solid_chain(
@@ -2013,7 +2012,6 @@ fn a_chamfer_wider_than_its_face_is_refused() {
 /// A square swept along straight legs has flat sides, which measure
 /// exactly.
 #[test]
-#[ignore = "kernel: make_pipe_shell gives a square's sides along straight legs as swept surfaces, not planes, so they measure only approximately (ogeom-rs#68)"]
 fn a_square_piped_along_straight_legs_has_flat_sides() {
     let mut kernel = new_kernel();
     let result = kernel
@@ -2119,4 +2117,26 @@ fn a_build_previews_the_feature_it_is_asked_for() {
         first.preview.expect("a preview").shown.is_none(),
         "nothing before it"
     );
+}
+
+/// A fillet wider than a face it runs along would take the whole face and
+/// more: it is refused, not cut.
+#[test]
+fn a_fillet_wider_than_its_face_is_refused() {
+    let mut kernel = new_kernel();
+    let result = kernel.execute_solid_chain(
+        &[
+            blind_pad(
+                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                10.0,
+                BooleanOp::NewSolid,
+            ),
+            SolidOp::Fillet {
+                radius: 12.0,
+                edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
+            },
+        ],
+        &TessellationSettings::default(),
+    );
+    assert!(result.is_err(), "a 12 mm fillet on a 10 mm face is refused");
 }

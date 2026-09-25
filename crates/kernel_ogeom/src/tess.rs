@@ -107,6 +107,21 @@ pub fn robust_bounds(model: &Model, shape: &Shape) -> Option<(Point, Point)> {
         .and_then(|b| Some((b.low()?, b.high()?)))
 }
 
+/// A built solid's bounds: the smallest box holding it, where the mesh's
+/// stop at its chords. The mesh's when the kernel cannot tell.
+pub fn solid_bounds(model: &Model, shape: &Shape, mesh: &TriMesh) -> Option<([f32; 3], [f32; 3])> {
+    ogeom::algo::tight_bounds(model, shape, tolerances())
+        .ok()
+        .and_then(|b| Some((b.low()?, b.high()?)))
+        .map(|(lo, hi)| {
+            (
+                [lo.x as f32, lo.y as f32, lo.z as f32],
+                [hi.x as f32, hi.y as f32, hi.z as f32],
+            )
+        })
+        .or_else(|| mesh.bounds())
+}
+
 /// The absolute chord deflection for a shape under the current settings.
 ///
 /// Bbox-scaled mode replicates the previous kernel's formula —

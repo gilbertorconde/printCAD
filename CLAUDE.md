@@ -110,8 +110,8 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
 - `kernel_ogeom`: pure-Rust kernel adapter. STEP and IGES import share one
   path after the read (`import.rs`, reader chosen by extension, `is_iges`);
   IGES solids and closed surface groups become bodies, open sheets are left
-  out with a log line. STL, OBJ and 3MF (`mesh.rs`) import as **mesh
-  bodies**: triangles and no shape snapshot (`Document::is_mesh_body`),
+  out with a log line. STL, OBJ, 3MF, PLY, glTF and VRML (`mesh.rs`; glTF and VRML are in
+  metres and scaled) import as **mesh bodies**: triangles and no shape snapshot (`Document::is_mesh_body`),
   welded where normals agree within 30° and outlined at creases and holes;
   they draw, hide and pick and take no features. "Convert to solid" (tree
   and viewport menus) records `RequestMeshSolid`, a history barrier, and

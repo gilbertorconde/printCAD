@@ -391,7 +391,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.file.import`: Import.
 
-- `path` (string, optional): The STEP, IGES, STL, OBJ or 3MF file; the dialog when left out
+- `path` (string, optional): The STEP, IGES, STL, OBJ, 3MF, PLY, glTF or VRML file; the dialog when left out
 - Returns nothing; pc.doc.rebuild() waits for the import
 
 `pc.file.export`: Export.

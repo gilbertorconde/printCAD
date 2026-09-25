@@ -623,6 +623,9 @@ fn format_of(path: &Path) -> &'static str {
         Some("stl") => "STL",
         Some("obj") => "OBJ",
         Some("3mf") => "3MF",
+        Some("ply") => "PLY",
+        Some("glb" | "gltf") => "glTF",
+        Some("wrl" | "vrml") => "VRML",
         _ => "STEP",
     }
 }

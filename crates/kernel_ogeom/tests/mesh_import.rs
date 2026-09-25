@@ -249,3 +249,34 @@ fn a_converted_mesh_is_drilled_and_measured() {
         );
     }
 }
+
+/// A PLY is read as millimetres, as an STL is; a VRML scene is in metres
+/// and comes in scaled, one body per shape, in its colour.
+#[test]
+fn ply_and_vrml_scenes_import_as_mesh_bodies() {
+    let ply = "ply\nformat ascii 1.0\nelement vertex 4\nproperty float x\nproperty float y\nproperty float z\nelement face 4\nproperty list uchar int vertex_indices\nend_header\n0 0 0\n10 0 0\n0 10 0\n0 0 10\n3 0 2 1\n3 0 1 3\n3 0 3 2\n3 1 2 3\n";
+    let model = import(&staged("tetra.ply", ply.as_bytes()));
+    assert_eq!(model.bodies.len(), 1);
+    let (lo, hi) = model.bodies[0].mesh.bounds().unwrap();
+    assert_eq!((lo, hi), ([0.0; 3], [10.0; 3]));
+
+    let vrml = "#VRML V2.0 utf8\nShape {\n  appearance Appearance { material Material { diffuseColor 1 0 0 } }\n  geometry Box { size 0.02 0.01 0.03 }\n}\nTransform { translation 0.1 0 0 children [ Shape { geometry Sphere { radius 0.005 } } ] }\n";
+    let model = import(&staged("scene.wrl", vrml.as_bytes()));
+    assert_eq!(model.bodies.len(), 2, "a body per shape");
+    let (lo, hi) = model.bodies[0].mesh.bounds().unwrap();
+    for (axis, size) in [20.0, 10.0, 30.0].into_iter().enumerate() {
+        assert!((hi[axis] - lo[axis] - size).abs() < 1e-3, "{lo:?} {hi:?}");
+    }
+    let red = model.bodies[0]
+        .mesh
+        .colors
+        .first()
+        .copied()
+        .expect("its colour");
+    assert!(red[0] > 0.9 && red[1] < 0.05, "{red:?}");
+    let (lo, hi) = model.bodies[1].mesh.bounds().unwrap();
+    assert!(
+        ((lo[0] + hi[0]) / 2.0 - 100.0).abs() < 1e-3,
+        "placed 0.1 m along x"
+    );
+}

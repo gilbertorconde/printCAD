@@ -9,8 +9,8 @@
 
 use kernel_api::{ExtrudeTermination, Profile, SweepKind};
 use ogeom::algo::{make_natural_face, make_prism, make_prism_tapered, make_revolution};
-use ogeom::geom::{Curve, Curve3d, HelixCurve, PlaneSurface, SurfaceGeometry, Transformable};
-use ogeom::math::{Axis, Direction, Frame, Plane, Point, Transform, Vector};
+use ogeom::geom::{PlaneSurface, SurfaceGeometry, Transformable};
+use ogeom::math::{Axis, Direction, Plane, Point, Transform, Vector};
 use ogeom::mesh::{Deflection, triangulate_face};
 use ogeom::topo::{Filter, Model, NodeData, Shape, ShapeType, explore};
 
@@ -656,90 +656,36 @@ fn helix(
     }
     let axis = sketch_plane_axis(&prof.plane, axis_origin, axis_dir)?;
     let centroid = profile::profile_centroid(model, built)?;
-
     let to_start = centroid - axis.location;
     let along = axis.direction.vector() * to_start.dot(axis.direction.vector());
-    let radial = to_start - along;
-    let radius = radial.magnitude();
-    if radius <= 1e-9 {
+    if (to_start - along).magnitude() <= 1e-9 {
         return Err("the profile sits on the helix axis (zero radius)".into());
     }
-
-    let mut axis_z = axis.direction;
-    if reversed {
-        axis_z = axis_z.reversed();
-    }
-    let base_point = centroid - radial;
-    let radial_dir = Direction::new(radial, tol())
-        .map_err(|_| "helix radial direction is degenerate".to_string())?;
-
-    let frame = if left_handed {
-        // Left-handed winding: flip the frame's y so "counter-clockwise about
-        // z" turns the other way in world space.
-        let y = Direction::new(-axis_z.cross_vector(radial_dir), tol())
-            .map_err(|e| format!("helix frame: {e}"))?;
-        Frame::from_axes(base_point, radial_dir, y, axis_z, tol())
-            .map_err(|e| format!("helix frame: {e}"))?
+    let direction = if reversed {
+        axis.direction.reversed()
     } else {
-        Frame::new(base_point, axis_z, radial_dir, tol())
-            .map_err(|e| format!("helix frame: {e}"))?
+        axis.direction
     };
-
+    let axis = Axis::new(axis.location, direction);
+    // The profile lies in a plane through the axis, as a screw sweep takes
+    // it: every point of it runs its own helix, and a cone moves each one
+    // off the axis by tan(angle) of every pitch it climbs.
     let turns = height / pitch;
-    let curve = if cone_angle_deg.abs() > 1e-9 {
-        // Radial advance per turn from the cone's half-angle:
-        // tan(angle) = taper / pitch.
-        let taper = pitch * cone_angle_deg.to_radians().tan();
-        HelixCurve::conical(frame, radius, pitch, taper, 0.0, TAU * turns)
-            .map_err(|e| format!("helix spine: {e}"))?
-    } else {
-        HelixCurve::new(frame, radius, pitch, turns).map_err(|e| format!("helix spine: {e}"))?
-    };
-    let range = curve.domain();
-    let spine_edge = ogeom::algo::make_edge(model, Curve::Helix(curve), range, tol())
-        .map_err(|e| format!("helix spine edge: {e}"))?
-        .shape;
-    let spine = ogeom::algo::make_wire(model, std::slice::from_ref(&spine_edge), tol())
-        .map_err(|e| format!("helix spine wire: {e}"))?
-        .shape;
-
-    // The spine starts at the profile centroid; its tangent leans off the
-    // sketch-plane normal by the helix lead angle. Rotate the profile about
-    // the radial axis so it is square to the tangent, as the sweep requires.
-    let tangent = spine_tangent(frame, radius, pitch);
-    let normal = profile::plane_normal(&prof.plane).map_err(|e| format!("profile plane: {e}"))?;
-    let aligned = align_to_tangent(normal, tangent, radial_dir);
-    let rotate = Transform::rotation(Axis::new(centroid, radial_dir), aligned);
-
+    let taper = pitch * cone_angle_deg.to_radians().tan();
     let mut parts = Vec::with_capacity(built.faces.len());
     for face in &built.faces {
-        let squared = ogeom::algo::transformed(model, face, rotate)
-            .map_err(|e| format!("aligning the helix profile failed: {e}"))?
-            .shape;
-        let part = ogeom::offset::make_pipe_shell(model, &squared, &spine, false, 1e-3, tol())
-            .map_err(|e| format!("helix sweep failed: {e}"))?;
+        let part = ogeom::offset::make_helical_sweep(
+            model,
+            face,
+            axis,
+            pitch,
+            turns,
+            left_handed,
+            taper,
+            tol(),
+        )
+        .map_err(|e| format!("helix sweep failed: {e}"))?;
         parts.push(part.shape);
     }
     fuse_all(model, parts)
-}
-
-/// Unit tangent of the helix at its start (t = 0).
-fn spine_tangent(frame: Frame, radius: f64, pitch: f64) -> Vector {
-    // d/dt [r(cos t · x + sin t · y) + pitch·t/2π · z] at t=0.
-    let v = frame.y().vector() * radius + frame.z().vector() * (pitch / TAU);
-    v * (1.0 / v.magnitude())
-}
-
-/// Signed angle about `axis` that rotates `normal` onto whichever of
-/// ±`tangent` it is closer to.
-fn align_to_tangent(normal: Direction, tangent: Vector, axis: Direction) -> f64 {
-    let n = normal.vector();
-    let t = if n.dot(tangent) >= 0.0 {
-        tangent
-    } else {
-        -tangent
-    };
-    let sin = axis.vector().dot(n.cross(t));
-    let cos = n.dot(t);
-    sin.atan2(cos)
 }
