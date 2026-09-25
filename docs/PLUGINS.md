@@ -33,7 +33,11 @@ off, removes it, and says what each may reach beyond its own folder:
 | `helper` | run native programs the package ships, outside the sandbox |
 | `network` | open network connections |
 
-Changes take effect the next time printCAD starts. Packages live in
+An install, an update or a removal takes effect at once: the workbench
+appears in the workbench list (or leaves it), and features it owns in open
+documents rebuild with the version now running. Turning a package on or
+off, and what it may reach, take effect when you apply Preferences.
+Packages live in
 `~/.local/share/printcad/workbenches/<id>/`, each with a `data/` folder that
 is the only part of the disk it sees (as `/data`).
 

@@ -541,3 +541,48 @@ fn a_package_installs_from_a_github_release_and_takes_its_updates() {
     let missing = remote::install_from_github(&github, "acme/other", &root).unwrap_err();
     assert!(missing.contains("no published release"), "{missing}");
 }
+
+#[test]
+fn a_running_package_is_replaced_in_place_and_rebuilds_what_it_owns() {
+    let package = installed("examples/gear", "gear.wasm", "gear-reload");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let id = WorkbenchId::new("example.gear");
+    let mut document = Document::new("gears");
+    run(
+        &mut registry,
+        &mut document,
+        "example.gear",
+        "example.gear.make",
+        json!({"teeth": 12, "module": 2.0}),
+    )
+    .unwrap();
+    assert_eq!(registry.rebuild_jobs(&mut document).len(), 1);
+
+    // Taken out: its gear stays in the document, owned by nothing.
+    let old = registry.unregister_workbench(&id).expect("was registered");
+    drop(old);
+    let node = document
+        .feature_tree()
+        .all_nodes()
+        .next()
+        .unwrap()
+        .1
+        .clone();
+    assert!(registry.feature_info(&node).is_none());
+    assert!(registry.command("example.gear.make").is_none());
+    assert!(registry.rebuild_jobs(&mut document).is_empty());
+
+    // A fresh load takes its place, and rebuilds the gear it finds.
+    let bench = wb_wasm::load(&package, &Capabilities::default()).expect("loads again");
+    registry
+        .register_workbench(Box::new(bench))
+        .expect("registers again");
+    assert!(registry.command("example.gear.make").is_some());
+    registry
+        .workbench(&id)
+        .unwrap()
+        .invalidate_all(&mut document);
+    let jobs = registry.rebuild_jobs(&mut document);
+    assert_eq!(jobs.len(), 1, "the new instance plans the gear");
+    assert!(jobs[0].plan.is_ok());
+}

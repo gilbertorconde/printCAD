@@ -447,13 +447,20 @@ impl PrintCadApp {
             if settings.camera != self.user_settings.camera {
                 intents.apply_camera_settings = true;
             }
+            let packages_before = self.user_settings.packages.clone();
             if *settings != self.user_settings {
                 self.user_settings = *settings;
             }
             // A bench page applies to the bench as it is drawn; the commit
-            // writes what the benches hold now.
-            self.user_settings.workbenches = self.registry.collect_settings();
+            // writes what the benches hold now, keeping the settings of
+            // packages turned off.
+            self.user_settings
+                .workbenches
+                .extend(self.registry.collect_settings());
             intents.persist_settings = true;
+            if self.user_settings.packages != packages_before {
+                self.packages_changed(&packages_before);
+            }
             if display_unit != self.session.document.display_unit() {
                 self.session.document.set_display_unit(display_unit);
             }

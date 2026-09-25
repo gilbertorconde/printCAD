@@ -351,3 +351,29 @@ fn menu_entries_come_from_every_bench_in_registration_order_and_hints_merge() {
     assert!(a.on_command("a.two", &MenuScope::StartPage, &mut ctx));
     assert!(!a.on_command("b.one", &MenuScope::StartPage, &mut ctx));
 }
+
+#[test]
+fn a_bench_taken_out_leaves_its_kinds_free_for_the_next_to_claim() {
+    let mut registry = registry(vec![
+        FakeBench::new("a").claiming(&["a"]),
+        FakeBench::new("pkg").claiming(&["pkg.thing"]),
+    ]);
+    let kind = WorkbenchId::from("pkg.thing");
+    assert!(
+        registry
+            .unregister_workbench(&WorkbenchId::from("pkg"))
+            .is_some()
+    );
+    assert_eq!(registry.ids(), &[WorkbenchId::from("a")]);
+    assert_eq!(registry.owner_id_of(&kind), None, "its kinds are unowned");
+    assert!(
+        registry
+            .unregister_workbench(&WorkbenchId::from("pkg"))
+            .is_none()
+    );
+    // A new version registers in its place.
+    registry
+        .register_workbench(Box::new(FakeBench::new("pkg").claiming(&["pkg.thing"])))
+        .expect("the id and the kinds are free again");
+    assert_eq!(registry.owner_id_of(&kind), Some(&WorkbenchId::from("pkg")));
+}

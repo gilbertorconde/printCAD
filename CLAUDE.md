@@ -42,9 +42,15 @@ cargo fmt --all                   # CI enforces --check
   loads what `settings::workbenches_dir()` holds as
   `UserSettings.packages` allows (Preferences › Workbench packages
   installs from a file or a GitHub address, updates, removes, turns off
-  and grants; changes take effect at the next start). Network work
-  (installs, update checks at start, updates) runs on threads reporting
-  through `app/packages.rs::PackageNews`, drained each frame. A feature carries `made_by` (package and version); one
+  and grants, all while the app runs). Network work and compiling
+  (installs, update checks at start, updates, turning one on) runs on
+  threads reporting through `app/packages.rs::PackageNews`, drained each
+  frame; the registry then changes on the UI thread: `unload_bench` moves
+  every tab off the bench, drops the editing state tabs kept for it and
+  keeps its settings, then `DocumentService::unregister_workbench`;
+  `load_bench` registers the new one (`workbenches::register_prepared`)
+  and `invalidate_all`s its kinds in every tab, so its features rebuild
+  with the version running. A feature carries `made_by` (package and version); one
   whose kind no bench claims shows "Needs …" in the tree, keeps its data
   and cannot be deleted.
 - STEP tests use the bundled fixture

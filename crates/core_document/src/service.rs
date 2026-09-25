@@ -82,6 +82,17 @@ impl DocumentService {
         Ok(())
     }
 
+    /// Take workbench `id` out of the registry, with its feature kinds,
+    /// tools and commands: a package being removed or replaced while the
+    /// app runs. Features of its kinds stay in documents, unowned until a
+    /// bench claims them again. The caller moves any session off it first.
+    pub fn unregister_workbench(&mut self, id: &WorkbenchId) -> Option<Box<dyn Workbench>> {
+        let entry = self.workbenches.remove(id.as_str())?;
+        self.order.retain(|o| o != id);
+        self.owners.retain(|_, owner| owner != id);
+        Some(entry.workbench)
+    }
+
     pub fn workbench_descriptors(&self) -> impl Iterator<Item = &WorkbenchDescriptor> {
         self.workbenches.values().map(|entry| &entry.descriptor)
     }

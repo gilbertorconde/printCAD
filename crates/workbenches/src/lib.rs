@@ -11,7 +11,8 @@ pub use core_document::registration::REGISTERED_WORKBENCHES;
 pub use wb_wasm::remote::Source;
 pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION};
 
-/// How an installed workbench package fared when the app started.
+/// How an installed workbench package stands: loaded, turned off, or
+/// failed and why.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PackageStatus {
     pub id: String,
@@ -53,10 +54,6 @@ pub enum PackageState {
     Disabled,
     /// It did not load; why.
     Failed(String),
-    /// Installed since the app started: it loads at the next start.
-    Installed,
-    /// Removed since the app started: it is gone at the next start.
-    Removed,
 }
 
 /// Register every package installed under `root` that `enabled` allows,
@@ -98,16 +95,8 @@ pub fn register_packages(
             statuses.push(status);
             continue;
         }
-        let loaded = wb_wasm::load(&package, &granted(&manifest.id)).and_then(|bench| {
-            let descriptor = bench.descriptor();
-            registry
-                .register_workbench(Box::new(bench))
-                .map_err(|e| e.to_string())?;
-            let mut known = REGISTERED_WORKBENCHES.lock().unwrap();
-            known.push(descriptor);
-            known.sort_by(|a, b| a.label.cmp(&b.label));
-            Ok(())
-        });
+        let loaded = prepare_package(&package, &granted(&manifest.id))
+            .and_then(|bench| register_prepared(registry, bench));
         if let Err(reason) = loaded {
             tracing::warn!(target: "printcad.bench", package = %manifest.id, "not loaded: {reason}");
             status.state = PackageState::Failed(reason);
@@ -117,8 +106,47 @@ pub fn register_packages(
     statuses
 }
 
-/// Install the package archive at `archive` under `root`; its manifest.
-/// It loads the next time the app starts.
+/// Compile and start `package` as a workbench, allowing it `granted` of
+/// what it asks for, ready for [`register_prepared`]. The slow part of
+/// loading a package: call it away from the window.
+pub fn prepare_package(
+    package: &Package,
+    granted: &Capabilities,
+) -> Result<Box<dyn Workbench>, String> {
+    wb_wasm::load(package, granted).map(|bench| Box::new(bench) as Box<dyn Workbench>)
+}
+
+/// Add a prepared package's workbench to the registry and the lists the
+/// toolbar and menus read.
+pub fn register_prepared(
+    registry: &mut DocumentService,
+    bench: Box<dyn Workbench>,
+) -> Result<(), String> {
+    let descriptor = bench.descriptor();
+    registry
+        .register_workbench(bench)
+        .map_err(|e| e.to_string())?;
+    let mut known = REGISTERED_WORKBENCHES.lock().unwrap();
+    known.push(descriptor);
+    known.sort_by(|a, b| a.label.cmp(&b.label));
+    Ok(())
+}
+
+/// Take a package's workbench out of the registry and those lists; the
+/// workbench, when it was there.
+pub fn unregister_package(
+    registry: &mut DocumentService,
+    id: &core_document::WorkbenchId,
+) -> Option<Box<dyn Workbench>> {
+    let bench = registry.unregister_workbench(id)?;
+    REGISTERED_WORKBENCHES
+        .lock()
+        .unwrap()
+        .retain(|d| &d.id != id);
+    Some(bench)
+}
+
+/// Install the package archive at `archive` under `root`.
 pub fn install_package(
     archive: &std::path::Path,
     root: &std::path::Path,

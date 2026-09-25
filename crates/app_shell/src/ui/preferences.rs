@@ -1413,7 +1413,8 @@ fn packages_page(
     ui.label(
         RichText::new(
             "Workbenches others made, each run apart from the app and reaching only its own \
-             folder and what you allow here. Changes take effect the next time printCAD starts.",
+             folder and what you allow here. Installs, updates and removals take effect at once; \
+             turning a package on or off and what it may reach, when you apply.",
         )
         .font(sans(FONT_XS))
         .color(TEXT3),
@@ -1445,8 +1446,6 @@ fn packages_page(
                     PackageState::Loaded => ("Loaded", SUCCESS),
                     PackageState::Disabled => ("Turned off", TEXT3),
                     PackageState::Failed(_) => ("Did not load", DANGER),
-                    PackageState::Installed => ("Loads at the next start", INFO),
-                    PackageState::Removed => ("Removed", WARNING),
                 };
                 ui_kit::widgets::badge(ui, text, color);
             });
@@ -1472,16 +1471,13 @@ fn packages_page(
                         .color(TEXT3),
                 );
             }
-            if package.state == PackageState::Removed {
-                return;
-            }
             if let Some(tag) = &package.update
                 && primary_button(ui, &format!("Update to {tag}")).clicked()
             {
                 state.package_request = Some(super::UiCommand::UpdatePackage(package.id.clone()));
             }
             let mut enabled = draft.enabled(&package.id);
-            if ui_kit::widgets::check_row(ui, &mut enabled, "Load when printCAD starts").changed() {
+            if ui_kit::widgets::check_row(ui, &mut enabled, "Turned on").changed() {
                 draft.disabled.retain(|d| d != &package.id);
                 if !enabled {
                     draft.disabled.push(package.id.clone());

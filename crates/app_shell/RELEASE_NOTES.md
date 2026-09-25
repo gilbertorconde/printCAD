@@ -88,6 +88,7 @@ version first.
 - Workbenches others made install from a `.pcbench` file in Preferences › Workbench packages: tools, features with parametric solids, task panels whose numbers take formulas, viewport drawing, commands for scripts and agents, and a settings page.
 - Each package runs sandboxed: it reaches its own folder and nothing else unless you allow it to save files, run the programs it ships or use the network, and one that hangs or crashes is restarted, then turned off, without harming the app.
 - Packages install from a GitHub repository's releases as well as from a file, and the app checks for and installs their updates.
+- Installing, updating, removing or turning a package on or off takes effect at once, without restarting: its workbench joins or leaves the list, and its features in open documents rebuild with the version now running.
 - A document opened without the package it used keeps that package's features and shapes, and says which package they need.
 - The SDK and a gear workbench to start from are in `sdk/`; see docs/PLUGINS.md.
 
