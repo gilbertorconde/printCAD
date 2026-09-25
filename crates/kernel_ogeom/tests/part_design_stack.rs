@@ -82,6 +82,7 @@ fn pocket_feature(sketch: FeatureId, depth: f32) -> PartFeature {
         sketch,
         depth,
         reversed: false,
+        symmetric: false,
         through_all: false,
         mode: wb_part::ExtrudeMode::Dimension,
         depth2: 0.0,
@@ -658,6 +659,7 @@ fn bore_rim_fillets() {
             sketch: bore,
             depth: 12.0,
             reversed: false,
+            symmetric: false,
             through_all: true,
             mode: wb_part::ExtrudeMode::Dimension,
             depth2: 0.0,
@@ -1174,4 +1176,59 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
         "flipped: {min:?}..{max:?}"
     );
     assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
+}
+
+/// A symmetric pocket from the top face cuts half its depth into the
+/// material and half into the air above it.
+#[test]
+fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
+    let removed = |symmetric: bool| {
+        let (mut doc, body, rect_id) = setup(20.0, 20.0);
+        doc.add_feature_in_body(
+            pad_feature(rect_id, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+        let top = wb_sketch::sketch::SketchPlane {
+            origin: [5.0, 5.0, 10.0],
+            ..Default::default()
+        };
+        let hole = doc
+            .add_feature_in_body(rect_sketch_on(top, 5.0, 5.0), "top".into(), Some(body))
+            .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::Pocket {
+                refine: false,
+                sketch: hole,
+                depth: 4.0,
+                reversed: false,
+                symmetric,
+                through_all: false,
+                mode: wb_part::ExtrudeMode::Dimension,
+                depth2: 0.0,
+                taper_deg: 0.0,
+                up_to_face: None,
+                up_to_offset: 0.0,
+            },
+            "Pocket".into(),
+            Some(body),
+        )
+        .unwrap();
+        let mut kernel = OgeomKernel::new();
+        let result = kernel
+            .execute_solid_chain(
+                &wb_part::body_build_ops(&doc, body).unwrap().ops,
+                &TessellationSettings::default(),
+            )
+            .unwrap_or_else(|e| panic!("symmetric {symmetric}: {e:?}"));
+        let volume = kernel
+            .physical_properties(&result.brep_blob)
+            .unwrap()
+            .volume_mm3
+            .expect("a closed solid measures");
+        20.0 * 20.0 * 10.0 - volume
+    };
+    assert!((removed(false) - 100.0).abs() < 1e-6, "{}", removed(false));
+    assert!((removed(true) - 50.0).abs() < 1e-6, "{}", removed(true));
 }

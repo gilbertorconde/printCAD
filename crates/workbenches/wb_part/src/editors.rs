@@ -1136,6 +1136,7 @@ pub fn feature_editor(
             sketch,
             depth,
             reversed,
+            symmetric,
             through_all,
             mode,
             depth2,
@@ -1162,7 +1163,10 @@ pub fn feature_editor(
             }
             changed |= extrude_mode_combo(ui, ("pocket_mode", feature_id), mode, first_feature);
             match mode {
-                ExtrudeMode::Dimension => changed |= mm_drag(ui, fx, depth, "Depth:"),
+                ExtrudeMode::Dimension => {
+                    changed |= mm_drag(ui, fx, depth, "Depth:");
+                    changed |= check_row(ui, symmetric, "Symmetric to plane").changed();
+                }
                 ExtrudeMode::TwoLengths => {
                     changed |= mm_drag(ui, fx, depth, "Depth:");
                     changed |= mm_drag(ui, fx, depth2, "Second depth:");

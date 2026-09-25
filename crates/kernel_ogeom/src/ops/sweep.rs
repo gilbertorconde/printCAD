@@ -118,10 +118,11 @@ fn extrude(
         dir = dir.reversed();
     }
 
-    // Two plain lengths make one prism from the far end of the second
-    // side: no seam on the sketch plane, where a sketch on a face of the
-    // solid would put an edge lying in that face, which the boolean does
-    // not resolve.
+    // Two plain lengths, or one centred on the sketch plane, make one
+    // prism from its far end: no seam on the sketch plane, where a sketch
+    // on a face of the solid would put an edge lying in that face, which
+    // the boolean does not resolve; and no solid moved after it is built,
+    // which a cut through that face refuses as well.
     if let (
         ExtrudeTermination::Blind { distance: front },
         Some(ExtrudeTermination::Blind { distance: back }),
@@ -130,6 +131,14 @@ fn extrude(
         && *front + *back > 0.0
     {
         return one_prism_from(model, built, dir, -*back, *front + *back);
+    }
+    if let ExtrudeTermination::Blind { distance } = termination
+        && symmetric
+        && second_side.is_none()
+        && taper_deg.abs() <= 1e-12
+        && *distance > 0.0
+    {
+        return one_prism_from(model, built, dir, -distance * 0.5, *distance);
     }
     let mut tool = extrude_one_side(model, base, built, dir, termination, taper_deg)?;
     if let Some(term2) = second_side {

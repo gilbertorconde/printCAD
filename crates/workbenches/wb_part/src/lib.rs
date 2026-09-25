@@ -249,6 +249,7 @@ impl PartDesignWorkbench {
                         sketch: need_sketch(sketch)?,
                         depth: 5.0,
                         reversed: false,
+                        symmetric: false,
                         through_all: false,
                         mode: ExtrudeMode::Dimension,
                         depth2: 5.0,

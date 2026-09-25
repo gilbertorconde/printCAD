@@ -277,6 +277,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 sketch,
                 depth,
                 reversed,
+                symmetric,
                 through_all,
                 mode,
                 depth2,
@@ -303,7 +304,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     kind: SweepKind::Extrude {
                         termination,
                         second_side,
-                        symmetric: false,
+                        symmetric: *symmetric,
                         // A pocket cuts OPPOSITE the sketch normal — a sketch
                         // on a solid's face has its normal pointing out of the
                         // material, so the default digs in.
@@ -1497,6 +1498,7 @@ mod tests {
             sketch,
             depth,
             reversed,
+            symmetric: false,
             through_all,
             mode: ExtrudeMode::Dimension,
             depth2: 0.0,
@@ -2262,6 +2264,7 @@ mod tests {
                     sketch: cut_sketch,
                     depth: 2.0,
                     reversed: false,
+                    symmetric: false,
                     through_all: false,
                     mode: crate::ExtrudeMode::Dimension,
                     depth2: 0.0,

@@ -376,6 +376,12 @@ pub enum PartFeature {
         sketch: FeatureId,
         depth: f32,
         reversed: bool,
+        /// Cut half the depth to each side of the sketch plane.
+        #[serde(default)]
+        symmetric: bool,
+        /// Read from files and scripts only: `mode` ThroughAll says the
+        /// same, and a Pocket set through a command or its panel folds
+        /// this into it.
         #[serde(default)]
         through_all: bool,
         #[serde(default)]
@@ -954,6 +960,7 @@ mod tests {
         assert!(matches!(
             feature,
             PartFeature::Pocket {
+                symmetric: false,
                 through_all: true,
                 mode: ExtrudeMode::Dimension,
                 ..

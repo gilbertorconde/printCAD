@@ -526,6 +526,15 @@ fn apply_fields(feature: &mut PartFeature, fields: &Map<String, Value>) -> Resul
     }
     let kind = kind.clone();
     *feature = serde_json::from_value(value).map_err(|e| format!("{kind}: {e}"))?;
+    // One setting, one spelling: the flag reads back as the mode it means.
+    if let PartFeature::Pocket {
+        through_all, mode, ..
+    } = feature
+        && *through_all
+    {
+        *mode = crate::feature::ExtrudeMode::ThroughAll;
+        *through_all = false;
+    }
     Ok(())
 }
 
@@ -594,6 +603,43 @@ mod tests {
         let data = fields(&doc, &pad);
         assert_eq!(data["Pad"]["length"], json!(40.0));
         assert_eq!(data["Pad"]["reversed"], json!(true));
+    }
+
+    /// `through_all` and the ThroughAll mode are one setting; either way
+    /// a script names it, the feature reads back as the mode.
+    #[test]
+    fn a_pocket_through_all_reads_back_as_its_mode() {
+        let mut doc = Document::new("t");
+        let (_, sketch) = sketch_in(&mut doc);
+        let mut bench = PartDesignWorkbench::default();
+        call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string()}),
+        )
+        .unwrap();
+        let pocket = call(
+            &mut bench,
+            &mut doc,
+            "part.pocket",
+            json!({"sketch": sketch.0.to_string(), "through_all": true}),
+        )
+        .unwrap();
+        let data = fields(&doc, &pocket);
+        assert_eq!(data["Pocket"]["mode"], json!("ThroughAll"));
+        assert_eq!(data["Pocket"]["through_all"], json!(false));
+
+        call(
+            &mut bench,
+            &mut doc,
+            "part.set",
+            json!({"feature": pocket, "mode": "Dimension", "symmetric": true}),
+        )
+        .unwrap();
+        let data = fields(&doc, &pocket);
+        assert_eq!(data["Pocket"]["mode"], json!("Dimension"));
+        assert_eq!(data["Pocket"]["symmetric"], json!(true));
     }
 
     /// Draft and thickness read their face from the viewport's pick; a

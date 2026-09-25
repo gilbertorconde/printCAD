@@ -128,6 +128,7 @@ pub fn open_sketch_scene(
         sketch: top_id,
         depth: 5.0,
         reversed: false,
+        symmetric: false,
         through_all: false,
         mode: ExtrudeMode::Dimension,
         depth2: 0.0,

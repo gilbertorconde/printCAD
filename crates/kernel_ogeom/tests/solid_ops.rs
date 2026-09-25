@@ -1811,7 +1811,11 @@ fn a_refined_solid_measures_exactly() {
 #[test]
 fn a_two_sided_pocket_from_the_top_face_cuts() {
     let ops = [
-        blind_pad(vec![rect_wire(0.0, 0.0, 20.0, 20.0)], 10.0, BooleanOp::NewSolid),
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+            10.0,
+            BooleanOp::NewSolid,
+        ),
         SolidOp::Sweep {
             profile: Profile {
                 plane: plane_at_z(10.0),
