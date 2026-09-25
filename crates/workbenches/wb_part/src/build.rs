@@ -261,7 +261,8 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     kind: SweepKind::Extrude {
                         termination,
                         second_side,
-                        symmetric: *symmetric,
+                        // Centred only in the one mode that offers it.
+                        symmetric: *symmetric && *mode == ExtrudeMode::Dimension,
                         reversed: *reversed,
                         taper_deg: *taper_deg as f64,
                         direction: None,
@@ -301,7 +302,7 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                     kind: SweepKind::Extrude {
                         termination,
                         second_side,
-                        symmetric: *symmetric,
+                        symmetric: *symmetric && effective_mode == ExtrudeMode::Dimension,
                         // A pocket cuts OPPOSITE the sketch normal — a sketch
                         // on a solid's face has its normal pointing out of the
                         // material, so the default digs in.
@@ -1357,6 +1358,25 @@ pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, St
     sketches.into_iter().map(|(_, id, n)| (id, n)).collect()
 }
 
+/// The sketches `feature` may take in `body`: those earlier in history,
+/// since one made after it builds after it, and `current`, whatever it is,
+/// so the choice already made stays on the list.
+#[cfg_attr(not(feature = "egui"), allow(dead_code))]
+pub(crate) fn sketch_choices(
+    document: &Document,
+    body: BodyId,
+    feature: FeatureId,
+    current: Option<FeatureId>,
+) -> Vec<(FeatureId, String)> {
+    let tree = document.feature_tree();
+    let seq_of = |id: FeatureId| tree.get_node(id).map(|n| n.seq);
+    let limit = seq_of(feature).unwrap_or(u64::MAX);
+    sketches_of_body(document, body)
+        .into_iter()
+        .filter(|(id, _)| Some(*id) == current || seq_of(*id).is_some_and(|seq| seq < limit))
+        .collect()
+}
+
 /// Point a part feature at a different sketch: updates the payload, rewires
 /// the dependency edges, hides the new sketch (it's consumed) and reveals
 /// the old one when nothing else consumes it, then marks for rebuild.
@@ -2342,6 +2362,98 @@ mod tests {
         assert!(doc.get_feature_meta(sketch_a).unwrap().visible);
         assert!(!doc.get_feature_meta(sketch_b).unwrap().visible);
         assert!(doc.get_feature_meta(pad_id).unwrap().dirty);
+    }
+
+    /// Symmetric is a choice of the Dimension mode alone: a pad or pocket
+    /// left with it on in another mode builds as that mode does.
+    #[test]
+    fn symmetric_centres_only_a_dimension_extrusion() {
+        let symmetric_of = |feature: PartFeature| {
+            let (mut doc, body, sketch) = doc_with_body_sketch();
+            // Material first, for the modes that cut through it.
+            doc.add_feature_in_body(pad(sketch, 5.0), "Base".into(), Some(body))
+                .unwrap();
+            let mut feature = feature;
+            match &mut feature {
+                PartFeature::Pad { sketch: s, .. } | PartFeature::Pocket { sketch: s, .. } => {
+                    *s = sketch
+                }
+                _ => unreachable!(),
+            }
+            let id = doc
+                .add_feature_in_body(feature, "F".into(), Some(body))
+                .unwrap();
+            let plan = body_build_ops(&doc, body).unwrap();
+            let index = plan.op_features.iter().position(|f| *f == id).unwrap();
+            match &plan.ops[index] {
+                SolidOp::Sweep {
+                    kind: SweepKind::Extrude { symmetric, .. },
+                    ..
+                } => *symmetric,
+                other => panic!("not an extrude: {other:?}"),
+            }
+        };
+        let placeholder = FeatureId::new();
+        for mode in [
+            ExtrudeMode::Dimension,
+            ExtrudeMode::TwoLengths,
+            ExtrudeMode::ThroughAll,
+        ] {
+            let mut padded = pad(placeholder, 4.0);
+            let mut pocketed = pocket(placeholder, 2.0, false, false);
+            for feature in [&mut padded, &mut pocketed] {
+                match feature {
+                    PartFeature::Pad {
+                        symmetric,
+                        mode: m,
+                        length2,
+                        ..
+                    } => {
+                        (*symmetric, *m, *length2) = (true, mode, 3.0);
+                    }
+                    PartFeature::Pocket {
+                        symmetric,
+                        mode: m,
+                        depth2,
+                        ..
+                    } => {
+                        (*symmetric, *m, *depth2) = (true, mode, 1.0);
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            let expected = mode == ExtrudeMode::Dimension;
+            assert_eq!(symmetric_of(padded), expected, "pad, {mode:?}");
+            assert_eq!(symmetric_of(pocketed), expected, "pocket, {mode:?}");
+        }
+        // A pocket's legacy through-all flag is the ThroughAll mode.
+        let mut legacy = pocket(placeholder, 2.0, false, true);
+        if let PartFeature::Pocket { symmetric, .. } = &mut legacy {
+            *symmetric = true;
+        }
+        assert!(!symmetric_of(legacy));
+    }
+
+    /// A feature is offered the sketches before it in history, and the
+    /// one it already has even when that one comes later.
+    #[test]
+    fn a_feature_is_offered_the_sketches_before_it() {
+        let (mut doc, body, before) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(before, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let after = doc
+            .add_feature_in_body(rect_sketch(), "after".into(), Some(body))
+            .unwrap();
+        let ids = |current| {
+            sketch_choices(&doc, body, pad_id, current)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(Some(before)), vec![before]);
+        assert_eq!(ids(None), vec![before]);
+        assert_eq!(ids(Some(after)), vec![before, after]);
     }
 
     #[test]

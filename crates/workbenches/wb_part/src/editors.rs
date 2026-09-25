@@ -14,7 +14,7 @@ use ui_kit::widgets::{
     small_secondary_button,
 };
 
-use crate::build::{part_features_of_body, sketches_of_body};
+use crate::build::part_features_of_body;
 use crate::feature::{
     ChamferMode, EdgePick, EdgeSel, ExtrudeMode, FacePick, HelixMode, HoleCut, HoleFit,
     METRIC_SIZES, MirrorPlane, PartFeature, PatternAxis, RevolveAxis, TransformStep,
@@ -297,15 +297,7 @@ fn sketch_combo(
     current: Option<FeatureId>,
     label: &str,
 ) -> Option<FeatureId> {
-    // Only the sketches made before the feature: one made after it would
-    // be built after the feature that reads it.
-    let tree = ctx.document.feature_tree();
-    let seq_of = |id: FeatureId| tree.get_node(id).map(|n| n.seq);
-    let limit = seq_of(id_salt.1).unwrap_or(u64::MAX);
-    let sketches: Vec<(FeatureId, String)> = sketches_of_body(ctx.document, body)
-        .into_iter()
-        .filter(|(id, _)| seq_of(*id).is_some_and(|seq| seq < limit))
-        .collect();
+    let sketches = crate::build::sketch_choices(ctx.document, body, id_salt.1, current);
     let current_name = current
         .and_then(|id| {
             sketches
