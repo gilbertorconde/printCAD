@@ -7,7 +7,7 @@
 
 use core_document::{
     Args, BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, DatumFeature, DatumShape,
-    FeatureId, ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
+    FeatureId, FileImport, ParamKind, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
 };
 use serde_json::{Value, json};
 use uuid::Uuid;
@@ -20,41 +20,27 @@ use crate::sketch::{Arc, Circle, GeometryElement, Line, Point, Sketch, SketchPla
 pub fn register(context: &mut WorkbenchContext) {
     let sketch = |spec: CommandSpec| spec.param("sketch", ParamKind::Id, "The sketch to draw in");
     context.register_command(
-        CommandSpec::new("sketch.new", "Make an empty sketch on a base plane")
-            .optional(
-                "body",
-                ParamKind::Id,
-                "The body it belongs to; the selected body, else a new one",
-            )
-            .optional("plane", ParamKind::String, "XY (the default), XZ or YZ")
-            .optional(
-                "offset",
-                ParamKind::Number,
-                "How far along the plane's normal it sits",
-            )
-            .optional("name", ParamKind::String, "Its name in the tree")
-            .optional(
-                "on",
-                ParamKind::Id,
-                "A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes",
-            )
-            .optional(
-                "normal",
-                ParamKind::List,
-                "A plane of its own instead: its normal as {x, y, z}",
-            )
-            .optional(
-                "origin",
-                ParamKind::List,
-                "With normal: where the plane's origin sits, {x, y, z}",
-            )
-            .optional(
-                "x_axis",
-                ParamKind::List,
-                "With normal: the sketch's X direction, {x, y, z}",
-            )
-            .returns("the sketch's id"),
+        placing(CommandSpec::new(
+            "sketch.new",
+            "Make an empty sketch on a base plane",
+        ))
+        .returns("the sketch's id"),
     );
+    context.register_command(
+        placing(CommandSpec::new(
+            "sketch.import_dxf",
+            "Make a sketch of a DXF drawing's lines and polylines: visible ones as geometry, \
+             hidden ones as construction, ends that meet sharing one point",
+        ))
+        .param("path", ParamKind::String, "The DXF file")
+        .optional(
+            "scale",
+            ParamKind::Number,
+            "Millimetres per drawing unit (1 when left out)",
+        )
+        .returns("the sketch's id"),
+    );
+    context.register_import(FileImport::new("DXF drawing", ["dxf"], "sketch.import_dxf"));
     context.register_command(
         sketch(CommandSpec::new("sketch.point", "Add a point"))
             .param("x", ParamKind::Number, "")
@@ -340,11 +326,55 @@ pub fn register(context: &mut WorkbenchContext) {
     );
 }
 
+/// The arguments that say where a new sketch goes.
+fn placing(spec: CommandSpec) -> CommandSpec {
+    spec.optional(
+        "body",
+        ParamKind::Id,
+        "The body it belongs to; the selected body, else a new one",
+    )
+    .optional("plane", ParamKind::String, "XY (the default), XZ or YZ")
+    .optional(
+        "offset",
+        ParamKind::Number,
+        "How far along the plane's normal it sits",
+    )
+    .optional("name", ParamKind::String, "Its name in the tree")
+    .optional(
+        "on",
+        ParamKind::Id,
+        "A datum plane, or a coordinate system whose XY, XZ or YZ plane (see plane) it takes",
+    )
+    .optional(
+        "normal",
+        ParamKind::List,
+        "A plane of its own instead: its normal as {x, y, z}",
+    )
+    .optional(
+        "origin",
+        ParamKind::List,
+        "With normal: where the plane's origin sits, {x, y, z}",
+    )
+    .optional(
+        "x_axis",
+        ParamKind::List,
+        "With normal: the sketch's X direction, {x, y, z}",
+    )
+}
+
 /// Run command `id`, or say it is not one of these.
 pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let a = Args(args);
     if id == "sketch.new" {
-        return new_sketch(&a, ctx);
+        let name = match a.opt_string("name")? {
+            Some(name) => name.to_string(),
+            None => crate::SketchWorkbench::next_sketch_name(ctx.document),
+        };
+        let id = add_sketch(&a, ctx, Sketch::new(name))?;
+        return Ok(json!(id.0.to_string()));
+    }
+    if id == "sketch.import_dxf" {
+        return import_dxf(&a, ctx);
     }
     let sketch_id = FeatureId(a.id("sketch")?);
     let mut feature = load(ctx, sketch_id)?;
@@ -554,7 +584,57 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     Ok(answer)
 }
 
-fn new_sketch(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+/// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
+/// one and named after the file unless `name` says otherwise.
+fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
+    let path = std::path::Path::new(a.string("path")?);
+    let scale = a.opt_number("scale")?.unwrap_or(1.0);
+    if !(scale > 0.0 && scale.is_finite()) {
+        return Err(CommandError::bad("scale", "must be more than zero"));
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|e| CommandError::bad("path", format!("could not be read: {e}")))?;
+    // DXF text is often Latin-1 in its strings; the geometry is ASCII.
+    let text = String::from_utf8_lossy(&bytes);
+    let kernel = ctx
+        .kernel
+        .ok_or_else(|| CommandError::failed("there is no kernel to read the drawing"))?;
+    let drawing = kernel
+        .read_dxf(&text)
+        .map_err(|e| CommandError::failed(e.to_string()))?;
+    let name = match a.opt_string("name")? {
+        Some(name) => name.to_string(),
+        None => path
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_else(|| crate::SketchWorkbench::next_sketch_name(ctx.document)),
+    };
+    let mut sketch = Sketch::new(name);
+    let added = crate::dxf::add_drawing(&mut sketch, &drawing, scale);
+    if added.lines + added.construction == 0 {
+        return Err(CommandError::failed(
+            "the drawing has no lines or polylines to bring in",
+        ));
+    }
+    crate::solver::solve(&mut sketch);
+    let id = add_sketch(a, ctx, sketch)?;
+    ctx.log_info(format!(
+        "Imported {}: {} lines, {} construction",
+        path.display(),
+        added.lines,
+        added.construction
+    ));
+    Ok(json!(id.0.to_string()))
+}
+
+/// Add `sketch` as a new sketch feature where `a` places it: on a base
+/// plane, a datum or a plane of its own, in the body given or selected,
+/// else a new one.
+fn add_sketch(
+    a: &Args,
+    ctx: &mut WorkbenchRuntimeContext,
+    mut sketch: Sketch,
+) -> Result<FeatureId, CommandError> {
     let mut plane = match a.opt_string("plane")?.unwrap_or("XY") {
         p if p.eq_ignore_ascii_case("XY") => SketchPlane::xy(),
         p if p.eq_ignore_ascii_case("XZ") => SketchPlane::xz(),
@@ -590,19 +670,13 @@ fn new_sketch(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             None => ctx.document.create_body(None),
         },
     };
-    let name = match a.opt_string("name")? {
-        Some(name) => name.to_string(),
-        None => crate::SketchWorkbench::next_sketch_name(ctx.document),
-    };
-    let mut sketch = Sketch::new(name.clone());
     sketch.plane = plane;
+    let name = sketch.name.clone();
     let mut feature = SketchFeature::new(sketch, plane);
     feature.support = support;
-    let id = ctx
-        .document
+    ctx.document
         .add_feature_in_body(feature, name, Some(body))
-        .map_err(|e| CommandError::failed(e.to_string()))?;
-    Ok(json!(id.0.to_string()))
+        .map_err(|e| CommandError::failed(e.to_string()))
 }
 
 fn load(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Result<SketchFeature, CommandError> {

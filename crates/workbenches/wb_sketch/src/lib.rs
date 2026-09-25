@@ -4,6 +4,7 @@
 
 mod commands;
 mod constrain;
+mod dxf;
 mod external;
 mod feature;
 mod geom2d;

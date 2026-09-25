@@ -7,8 +7,8 @@ use crate::feature::FeatureId;
 use crate::feature::{BodyId, FeatureNode};
 use crate::rebuild::RebuildJob;
 use crate::workbench::{
-    FeatureInfo, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ToolDescriptor, ViewportPick,
-    Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
+    FeatureInfo, FileImport, MenuItem, MenuScope, PassiveGeometry, PropertyHints, ToolDescriptor,
+    ViewportPick, Workbench, WorkbenchContext, WorkbenchDescriptor, WorkbenchId,
 };
 use crate::{DocumentError, DocumentResult};
 
@@ -62,6 +62,11 @@ impl DocumentService {
                     id: command.id.clone(),
                     by: by.as_str().to_owned(),
                 });
+            }
+        }
+        for import in context.imports() {
+            if !context.commands().iter().any(|c| c.id == import.command) {
+                return Err(DocumentError::ImportWithoutCommand(import.command.clone()));
             }
         }
 
@@ -537,6 +542,24 @@ impl DocumentService {
     /// The command `id` and the workbench that runs it.
     pub fn command(&self, id: &str) -> Option<(WorkbenchId, &crate::CommandSpec)> {
         self.commands().into_iter().find(|(_, c)| c.id == id)
+    }
+
+    /// Every kind of file the workbenches import, in registration order,
+    /// each with the workbench that imports it.
+    pub fn file_imports(&self) -> Vec<(WorkbenchId, &FileImport)> {
+        let mut out = Vec::new();
+        for id in self.ids() {
+            if let Some(entry) = self.workbenches.get(id.as_str()) {
+                out.extend(entry.context.imports().iter().map(|i| (id.clone(), i)));
+            }
+        }
+        out
+    }
+
+    /// The workbench that imports `path`, by its extension, and how; the
+    /// first registered wins.
+    pub fn file_import_for(&self, path: &std::path::Path) -> Option<(WorkbenchId, &FileImport)> {
+        self.file_imports().into_iter().find(|(_, i)| i.takes(path))
     }
 
     /// Tell every workbench the keys in effect, by tool or action id.

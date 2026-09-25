@@ -289,7 +289,12 @@ registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
 claims; `busy` keeps frames coming while a bench's work runs away from
 the window; `rebuild_jobs`/`invalidate_body`/`invalidate_all` drive solids;
 `menu_items`/`on_command` add entries to the viewport body menu, tree rows
-and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
+and the start page's New cards; `register_import` (a `FileImport`: label,
+extensions, one of the bench's own commands) puts a file kind in File ›
+Import, and a picked file of that kind runs the command with its `path`
+(`import_with_bench`, reached from `import_step_at`), recorded as that
+command (the sketcher's `sketch.import_dxf`, read by the kernel through
+`KernelQueries::read_dxf`). `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through
 `WorkbenchRuntimeContext.sketch_palette`, never as literals.
 

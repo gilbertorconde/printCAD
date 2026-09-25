@@ -422,3 +422,67 @@ fn a_bench_that_panics_planning_a_rebuild_marks_its_features_and_spares_the_app(
         node.error
     );
 }
+
+/// A bench that imports `.drw` files through `<id>.import`, registering the
+/// command only when asked to.
+struct Importer {
+    id: &'static str,
+    registers_command: bool,
+}
+
+impl Workbench for Importer {
+    fn descriptor(&self) -> WorkbenchDescriptor {
+        WorkbenchDescriptor::new(self.id, self.id, "")
+    }
+    fn configure(&self, context: &mut WorkbenchContext) {
+        let command = format!("{}.import", self.id);
+        if self.registers_command {
+            context.register_command(
+                core_document::CommandSpec::new(command.clone(), "Import a drawing").param(
+                    "path",
+                    core_document::ParamKind::String,
+                    "",
+                ),
+            );
+        }
+        context.register_import(core_document::FileImport::new("Drawing", ["DRW"], command));
+    }
+}
+
+#[test]
+fn a_file_goes_to_the_first_bench_importing_its_extension() {
+    let mut registry = DocumentService::default();
+    for id in ["draw", "sketchy"] {
+        registry
+            .register_workbench(Box::new(Importer {
+                id,
+                registers_command: true,
+            }))
+            .unwrap();
+    }
+    let (bench, import) = registry
+        .file_import_for(std::path::Path::new("/tmp/Plan.Drw"))
+        .expect("an importer");
+    assert_eq!(bench, WorkbenchId::from("draw"));
+    assert_eq!(import.command, "draw.import");
+    assert_eq!(import.extensions, vec!["drw".to_string()]);
+    assert_eq!(registry.file_imports().len(), 2);
+    assert!(
+        registry
+            .file_import_for(std::path::Path::new("/tmp/plan.step"))
+            .is_none()
+    );
+}
+
+#[test]
+fn an_import_without_its_command_is_refused() {
+    let mut registry = DocumentService::default();
+    let err = registry
+        .register_workbench(Box::new(Importer {
+            id: "draw",
+            registers_command: false,
+        }))
+        .unwrap_err();
+    assert!(matches!(err, DocumentError::ImportWithoutCommand(ref c) if c == "draw.import"));
+    assert!(registry.ids().is_empty());
+}

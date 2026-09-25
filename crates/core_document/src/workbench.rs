@@ -883,6 +883,7 @@ pub struct WorkbenchContext {
     tools: Vec<ToolDescriptor>,
     actions: Vec<crate::shortcut::ActionDescriptor>,
     commands: Vec<crate::CommandSpec>,
+    imports: Vec<FileImport>,
 }
 
 impl WorkbenchContext {
@@ -912,6 +913,51 @@ impl WorkbenchContext {
 
     pub fn commands(&self) -> &[crate::CommandSpec] {
         &self.commands
+    }
+
+    /// Offer to import files with `import.extensions` through File ›
+    /// Import: the host runs `import.command`, one of this bench's
+    /// commands, with the picked file as its `path`.
+    pub fn register_import(&mut self, import: FileImport) {
+        self.imports.push(import);
+    }
+
+    pub fn imports(&self) -> &[FileImport] {
+        &self.imports
+    }
+}
+
+/// A kind of file a bench imports: what the import dialog calls it, its
+/// extensions, and the command that takes one as `path`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileImport {
+    pub label: String,
+    /// Lower case, without the dot.
+    pub extensions: Vec<String>,
+    pub command: String,
+}
+
+impl FileImport {
+    pub fn new<I, S>(label: impl Into<String>, extensions: I, command: impl Into<String>) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        Self {
+            label: label.into(),
+            extensions: extensions
+                .into_iter()
+                .map(|e| e.into().to_ascii_lowercase())
+                .collect(),
+            command: command.into(),
+        }
+    }
+
+    /// Whether `path` has one of this import's extensions.
+    pub fn takes(&self, path: &std::path::Path) -> bool {
+        path.extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| self.extensions.iter().any(|x| x.eq_ignore_ascii_case(e)))
     }
 }
 
