@@ -1015,6 +1015,64 @@ pub struct Overlap {
     pub mesh: TriMesh,
 }
 
+/// A stretch of a region's medial axis, in the profile plane's own 2D
+/// coordinates: points along one branch with the clearance at each, the
+/// radius of the largest disc centred there that stays inside the region.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MedialPath {
+    pub points: Vec<[f64; 2]>,
+    /// One per point, in millimetres.
+    pub clearance: Vec<f64>,
+    /// Whether the first and the last point end the axis on the boundary
+    /// (a corner, or a rounded end's centre) rather than meet other
+    /// branches: towards such an end the clearance falls without the
+    /// region getting thinner.
+    pub boundary_ends: [bool; 2],
+}
+
+/// Where a region is narrowest, and how narrow: the smallest clearance on
+/// its medial axis away from the branch ends at its corners (where the
+/// clearance runs down to nothing without the region getting any thinner).
+/// The wall there is twice the clearance.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct Narrowest {
+    pub at: [f64; 2],
+    pub clearance: f64,
+}
+
+/// The medial axis of one region of a profile: an outer wire and its holes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MedialRegion {
+    /// The profile's wires that bound it, by index, the outer one first.
+    pub wires: Vec<usize>,
+    pub paths: Vec<MedialPath>,
+    /// `None` only when the axis has no place away from the corners.
+    pub narrowest: Option<Narrowest>,
+}
+
+/// A picked face, named geometrically: a point on it and its outward
+/// normal, resolved to the face nearest the point.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct FaceProbe {
+    pub point: [f64; 3],
+    pub normal: [f64; 3],
+}
+
+/// The centre line of a pipe-like solid between two of its faces.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CentreLine {
+    /// Points along it, from the first face to the second, in the shape's
+    /// frame.
+    pub points: Vec<[f64; 3]>,
+    /// Its length, in millimetres.
+    pub length: f64,
+    /// The largest distance measured from the centroid of a section cut
+    /// square to the line to the line itself.
+    pub deviation: f64,
+    /// It is one straight segment.
+    pub straight: bool,
+}
+
 pub trait KernelQueries: Send + Sync {
     /// What `a` and `b` share when `b` sits where `b_in_a` (a rigid
     /// row-major 4×4 matrix) puts it in `a`'s frame; `None` when they only
@@ -1040,6 +1098,25 @@ pub trait KernelQueries: Send + Sync {
     /// The curves of a DXF drawing, given as its text.
     fn read_dxf(&self, _text: &str) -> KernelResult<Drawing2d> {
         Err(KernelError::Unsupported("reading DXF".into()))
+    }
+
+    /// The medial axis of each region of `profile`, held to `tolerance`
+    /// (mm), in the profile plane's own 2D coordinates.
+    fn medial_axis(&self, _profile: &Profile, _tolerance: f64) -> KernelResult<Vec<MedialRegion>> {
+        Err(KernelError::Unsupported("medial axis".into()))
+    }
+
+    /// The centre line of the solid in `brep` from the face `from` names to
+    /// the face `to` names, held to `tolerance` (mm). Everything is in the
+    /// shape's own frame.
+    fn centre_line(
+        &self,
+        _brep: &[u8],
+        _from: &FaceProbe,
+        _to: &FaceProbe,
+        _tolerance: f64,
+    ) -> KernelResult<CentreLine> {
+        Err(KernelError::Unsupported("centre line".into()))
     }
 }
 

@@ -4,6 +4,7 @@
 //! for dirty part features and drives the kernel rebuild (see `build.rs`).
 
 mod build;
+mod centre;
 mod commands;
 #[cfg(feature = "egui")]
 mod editors;
@@ -64,6 +65,8 @@ pub struct PartDesignWorkbench {
     /// A feature a tool just created: the task that opens for it deletes it
     /// on Cancel, and records it on OK as the command that makes it.
     pending_task_from_tool: Option<ToolMade>,
+    /// The centre line tool, while it is out.
+    centre: Option<centre::CentreTask>,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -940,6 +943,11 @@ impl Workbench for PartDesignWorkbench {
             context,
             action("part.boolean", "Boolean", "boolean", "boolean"),
         );
+        // Measure.
+        register(
+            context,
+            action("part.centre_line", "Centre line", centre::ICON, "measure"),
+        );
     }
 
     fn run_command(
@@ -1044,6 +1052,10 @@ impl Workbench for PartDesignWorkbench {
                 }
                 InputResult::consumed()
             }
+            Some("part.centre_line") => {
+                self.start_centre_line(ctx);
+                InputResult::consumed()
+            }
             Some("part.edit_sketch") => {
                 if Self::selected_sketch(ctx).is_some() {
                     // The sketcher picks the active object up as its edit
@@ -1081,6 +1093,14 @@ impl Workbench for PartDesignWorkbench {
     }
 
     fn task(&self, ctx: &WorkbenchRuntimeContext) -> Option<TaskInfo> {
+        if self.centre.is_some() {
+            return Some(TaskInfo {
+                title: "Centre line".to_string(),
+                icon: centre::ICON,
+                confirmable: false,
+                stepwise: false,
+            });
+        }
         #[cfg(feature = "egui")]
         {
             self.task_info(ctx)
@@ -1099,14 +1119,56 @@ impl Workbench for PartDesignWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         request: core_document::TaskRequest,
     ) -> core_document::TaskOutcome {
+        if self.centre.is_some() {
+            return self.centre_panel(ui, request);
+        }
         self.draw_task_panel(ui, ctx, request)
     }
 
     fn finish_editing(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        self.centre = None;
         #[cfg(feature = "egui")]
         {
             self.task = None;
         }
+    }
+
+    fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
+        self.centre = None;
+    }
+
+    fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        if self.centre.is_some() {
+            self.take_centre_pick(ctx);
+        }
+    }
+
+    fn viewport_hud(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::ViewportHud> {
+        self.centre_hud()
+    }
+
+    fn get_screen_space_overlays(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceOverlay> {
+        self.centre_overlays(ctx)
+    }
+
+    fn get_screen_space_marks(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceMark> {
+        self.centre_marks(ctx)
+    }
+
+    fn get_screen_space_labels(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        _active_feature: Option<FeatureId>,
+    ) -> Vec<core_document::ScreenSpaceLabel> {
+        self.centre_labels(ctx)
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
@@ -1142,7 +1204,8 @@ impl Workbench for PartDesignWorkbench {
             | "part.linear_pattern"
             | "part.polar_pattern"
             | "part.multi_transform"
-            | "part.boolean" => has_solid,
+            | "part.boolean"
+            | "part.centre_line" => has_solid,
             _ => false,
         }
     }

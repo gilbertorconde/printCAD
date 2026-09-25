@@ -639,6 +639,12 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `sketch` (id): The sketch to draw in
 - Returns a list of {id, kind, items, value?}
 
+`pc.sketch.wall_thickness`: How thin the sketch's closed profile gets, for printing.
+
+- `sketch` (id): The sketch to draw in
+- `minimum` (number, optional): The thinnest wall that prints, mm; the Sketcher preference when left out
+- Returns {thinnest, where = {x, y}, minimum, thin, regions}: the thinnest wall in mm, where it is, whether it is under the minimum, and each region's own
+
 `pc.sketch.status`: How constrained the sketch is, and what conflicts.
 
 - `sketch` (id): The sketch to draw in
@@ -897,6 +903,16 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `size` (number, optional): How large it draws, mm
 - `name` (string, optional): Its name in the tree
 - Returns the datum's id
+
+`pc.part.centre_line`: Measure the centre line of a tube-like solid between two of its faces.
+
+- `body` (id): The body whose solid it runs through
+- `from_point` (list): A point of the face it starts at, {x, y, z}, in the body's own frame
+- `from_normal` (list): That face's outward normal, {x, y, z}
+- `to_point` (list): A point of the face it ends at, {x, y, z}
+- `to_normal` (list): That face's outward normal, {x, y, z}
+- `tolerance` (number, optional): How closely it follows the sections' centres, mm (0.02 when left out)
+- Returns {length, points, deviation, straight}: its length in mm, points along it in the body's frame, the largest distance measured from a section's centre to it, and whether it is one straight segment
 
 ### asm
 

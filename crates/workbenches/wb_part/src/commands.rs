@@ -153,6 +153,48 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional("name", ParamKind::String, "Its name in the tree")
         .returns("the datum's id"),
     );
+    context.register_command(
+        CommandSpec::new(
+            "part.centre_line",
+            "Measure the centre line of a tube-like solid between two of its faces",
+        )
+        .param(
+            "body",
+            ParamKind::Id,
+            "The body whose solid it runs through",
+        )
+        .param(
+            "from_point",
+            ParamKind::List,
+            "A point of the face it starts at, {x, y, z}, in the body's own frame",
+        )
+        .param(
+            "from_normal",
+            ParamKind::List,
+            "That face's outward normal, {x, y, z}",
+        )
+        .param(
+            "to_point",
+            ParamKind::List,
+            "A point of the face it ends at, {x, y, z}",
+        )
+        .param(
+            "to_normal",
+            ParamKind::List,
+            "That face's outward normal, {x, y, z}",
+        )
+        .optional(
+            "tolerance",
+            ParamKind::Number,
+            "How closely it follows the sections' centres, mm (0.02 when left out)",
+        )
+        .returns(
+            "{length, points, deviation, straight}: its length in mm, points along it \
+             in the body's frame, the largest distance measured from a section's centre \
+             to it, and whether it is one straight segment",
+        )
+        .read_only(),
+    );
 }
 
 /// Run command `id` with `bench` making the features.
@@ -168,6 +210,9 @@ pub fn run(
     }
     if id == "part.datum" {
         return datum(&a, ctx);
+    }
+    if id == "part.centre_line" {
+        return crate::centre::command(&a, ctx);
     }
     if !FEATURES.iter().any(|(f, _)| *f == id) {
         return Err(CommandError::Unknown(id.to_string()));
@@ -361,7 +406,7 @@ fn datum(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     Ok(json!(id.0.to_string()))
 }
 
-fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
+pub(crate) fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
     let bad = || CommandError::bad(name, "must be {x, y, z}");
     let v = match value {
         Some(Value::Array(v)) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
