@@ -8,6 +8,7 @@ use wb_sketch::SketchWorkbench;
 core_document::define_workbenches!(SketchWorkbench, PartDesignWorkbench, AssemblyWorkbench);
 
 pub use core_document::registration::REGISTERED_WORKBENCHES;
+pub use wb_wasm::remote::Source;
 pub use wb_wasm::{Capabilities, Package, package::ARCHIVE_EXTENSION};
 
 /// How an installed workbench package fared when the app started.
@@ -21,6 +22,28 @@ pub struct PackageStatus {
     /// What it asks to reach.
     pub requested: Capabilities,
     pub state: PackageState,
+    /// The GitHub release it was installed from, when it was.
+    pub source: Option<Source>,
+    /// A newer release's tag, once a check found one.
+    pub update: Option<String>,
+}
+
+impl PackageStatus {
+    /// An installed package in `state`.
+    pub fn of(package: &Package, state: PackageState) -> Self {
+        let manifest = &package.manifest;
+        Self {
+            id: manifest.id.clone(),
+            name: manifest.name.clone(),
+            version: manifest.version.clone(),
+            description: manifest.description.clone(),
+            dir: package.dir.clone(),
+            requested: manifest.capabilities.clone(),
+            state,
+            source: wb_wasm::remote::source_of(package),
+            update: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -62,20 +85,14 @@ pub fn register_packages(
                     dir,
                     requested: Capabilities::default(),
                     state: PackageState::Failed(reason),
+                    source: None,
+                    update: None,
                 });
                 continue;
             }
         };
         let manifest = &package.manifest;
-        let mut status = PackageStatus {
-            id: manifest.id.clone(),
-            name: manifest.name.clone(),
-            version: manifest.version.clone(),
-            description: manifest.description.clone(),
-            dir: package.dir.clone(),
-            requested: manifest.capabilities.clone(),
-            state: PackageState::Loaded,
-        };
+        let mut status = PackageStatus::of(&package, PackageState::Loaded);
         if !enabled(&manifest.id) {
             status.state = PackageState::Disabled;
             statuses.push(status);
@@ -105,8 +122,40 @@ pub fn register_packages(
 pub fn install_package(
     archive: &std::path::Path,
     root: &std::path::Path,
-) -> Result<wb_wasm::Manifest, String> {
-    wb_wasm::install(archive, root).map(|p| p.manifest)
+) -> Result<Package, String> {
+    wb_wasm::install(archive, root)
+}
+
+/// Install the package a GitHub repository or release address publishes.
+/// It reaches the network; call it away from the window.
+pub fn install_from_github(text: &str, root: &std::path::Path) -> Result<Package, String> {
+    wb_wasm::remote::install_from_github(&wb_wasm::remote::Http::default(), text, root)
+}
+
+/// Every package installed from GitHub under `root`, each with the newer
+/// release's tag when there is one. It reaches the network.
+pub fn check_updates(root: &std::path::Path) -> Vec<(String, Result<Option<String>, String>)> {
+    let http = wb_wasm::remote::Http::default();
+    wb_wasm::discover(root)
+        .into_iter()
+        .flatten()
+        .filter(|p| wb_wasm::remote::source_of(p).is_some())
+        .map(|p| {
+            let found = wb_wasm::remote::check(&http, &p).map(|r| r.map(|r| r.tag));
+            (p.manifest.id, found)
+        })
+        .collect()
+}
+
+/// Update the installed package `id` to its repository's latest release,
+/// keeping its data. It reaches the network.
+pub fn update_package(root: &std::path::Path, id: &str) -> Result<Package, String> {
+    let package = Package::read(&root.join(id))?;
+    let http = wb_wasm::remote::Http::default();
+    match wb_wasm::remote::check(&http, &package)? {
+        Some(release) => wb_wasm::remote::update(&http, &package, &release),
+        None => Err(format!("{} is up to date", package.manifest.name)),
+    }
 }
 
 /// Remove the installed package `id`.

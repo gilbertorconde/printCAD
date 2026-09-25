@@ -26,6 +26,9 @@ egui = { workspace = true, optional = true }
 toml = "1.1"
 wasmtime = "49"
 wasmtime-wasi = "49"
+ureq = { version = "3", features = ["json"] }
+sha2.workspace = true
 
 [dev-dependencies]
 kernel_ogeom = { path = "../../kernel_ogeom" }
+sha2.workspace = true

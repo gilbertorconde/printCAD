@@ -58,6 +58,11 @@ it. `docs/PLUGINS.md` is the guide for package authors.
 - **Missing packages.** Implemented as described, except that bodies
   mixing a missing package's features with other benches' are not made
   read-only; a package normally builds its own bodies.
+- **GitHub releases.** Beyond files, a package installs from a GitHub
+  repository's latest (or a tagged) release carrying a `.pcbench` asset
+  (`wb_wasm::remote`); `source.json` in the package folder records the
+  repository and tag, updates are checked at start and on request, and an
+  update must hold the same package id and match GitHub's checksum.
 - **Milestone 0.** The declared panels (`core_document::panel`), runtime
   icons (`ui_kit::icon::register`), world-space polylines and jobs exist
   and are exercised by packages. The built-in benches keep their egui

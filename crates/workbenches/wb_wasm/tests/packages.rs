@@ -51,9 +51,9 @@ fn scratch(name: &str) -> PathBuf {
     dir
 }
 
-/// Package folder `source` (under `sdk/`) with its component, packed,
-/// installed under a fresh root.
-fn installed(source: &str, component: &str, name: &str) -> Package {
+/// Package folder `source` (under `sdk/`) with its component, packed into
+/// an archive under a fresh folder.
+fn archive(source: &str, component: &str, name: &str) -> PathBuf {
     let sdk = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../sdk");
     let work = scratch(name);
     let folder = work.join("src");
@@ -73,7 +73,13 @@ fn installed(source: &str, component: &str, name: &str) -> Package {
     }
     let archive = work.join("package.pcbench");
     wb_wasm::pack(&folder, &archive).expect("packs");
-    wb_wasm::install(&archive, &work.join("installed")).expect("installs")
+    archive
+}
+
+/// [`archive`], installed under a fresh root beside it.
+fn installed(source: &str, component: &str, name: &str) -> Package {
+    let archive = archive(source, component, name);
+    wb_wasm::install(&archive, &archive.parent().unwrap().join("installed")).expect("installs")
 }
 
 fn registry_with(package: &Package, granted: Capabilities) -> DocumentService {
@@ -425,4 +431,113 @@ fn reinstalling_keeps_the_data_folder_and_uninstalling_removes_it() {
     assert_eq!(wb_wasm::discover(&root).len(), 1);
     wb_wasm::uninstall(&root, "test.rogue").unwrap();
     assert!(wb_wasm::discover(&root).is_empty());
+}
+
+/// GitHub as the tests see it: one repository whose latest release holds
+/// `asset` with `bytes`, and a record of what was asked.
+struct FakeGithub {
+    tag: std::cell::RefCell<String>,
+    bytes: std::cell::RefCell<Vec<u8>>,
+    digest: std::cell::RefCell<Option<String>>,
+}
+
+impl FakeGithub {
+    fn publish(&self, tag: &str, bytes: Vec<u8>, digest: Option<String>) {
+        *self.tag.borrow_mut() = tag.into();
+        *self.bytes.borrow_mut() = bytes;
+        *self.digest.borrow_mut() = digest;
+    }
+}
+
+impl wb_wasm::remote::Fetch for FakeGithub {
+    fn json(&self, url: &str) -> Result<Value, String> {
+        let tag = self.tag.borrow().clone();
+        let known = url == "https://api.github.com/repos/acme/gears/releases/latest"
+            || url == format!("https://api.github.com/repos/acme/gears/releases/tags/{tag}");
+        if !known {
+            return Err(format!("{url} was not found"));
+        }
+        Ok(json!({
+            "tag_name": tag,
+            "assets": [
+                {"name": "notes.txt", "browser_download_url": "https://example.invalid/notes"},
+                {
+                    "name": "gears.pcbench",
+                    "browser_download_url": format!("https://example.invalid/{tag}/gears.pcbench"),
+                    "digest": *self.digest.borrow(),
+                }
+            ]
+        }))
+    }
+
+    fn bytes(&self, url: &str, _limit: u64) -> Result<Vec<u8>, String> {
+        assert!(url.ends_with("/gears.pcbench"), "{url}");
+        Ok(self.bytes.borrow().clone())
+    }
+}
+
+fn sha256(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let hex: String = sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    format!("sha256:{hex}")
+}
+
+#[test]
+fn a_package_installs_from_a_github_release_and_takes_its_updates() {
+    use wb_wasm::remote;
+    let gear = std::fs::read(archive("examples/gear", "gear.wasm", "github-gear")).unwrap();
+    let rogue = std::fs::read(archive("tests/rogue", "rogue.wasm", "github-rogue")).unwrap();
+    let root = scratch("github-root");
+    let github = FakeGithub {
+        tag: Default::default(),
+        bytes: Default::default(),
+        digest: Default::default(),
+    };
+    github.publish("v0.1.0", gear.clone(), Some(sha256(&gear)));
+
+    let package = remote::install_from_github(&github, "https://github.com/acme/gears", &root)
+        .expect("installs from the release");
+    assert_eq!(package.manifest.id, "example.gear");
+    let source = remote::source_of(&package).unwrap();
+    assert_eq!(
+        (source.repo.as_str(), source.tag.as_str()),
+        ("acme/gears", "v0.1.0")
+    );
+    assert_eq!(remote::check(&github, &package), Ok(None), "up to date");
+    std::fs::create_dir_all(package.data_dir()).unwrap();
+    std::fs::write(package.data_dir().join("tools.json"), "[]").unwrap();
+
+    // A release whose bytes do not match its checksum is refused.
+    github.publish("v0.2.0", gear.clone(), Some(sha256(b"something else")));
+    let release = remote::check(&github, &package)
+        .unwrap()
+        .expect("a newer release");
+    assert_eq!(release.tag, "v0.2.0");
+    let refused = remote::update(&github, &package, &release).unwrap_err();
+    assert!(refused.contains("checksum"), "{refused}");
+
+    // A repository that starts shipping another package is refused.
+    github.publish("v0.3.0", rogue.clone(), None);
+    let release = remote::check(&github, &package).unwrap().unwrap();
+    let refused = remote::update(&github, &package, &release).unwrap_err();
+    assert!(refused.contains("not example.gear"), "{refused}");
+    assert_eq!(wb_wasm::discover(&root).len(), 1, "nothing was replaced");
+
+    github.publish("v0.4.0", gear.clone(), Some(sha256(&gear)));
+    let release = remote::check(&github, &package).unwrap().unwrap();
+    let updated = remote::update(&github, &package, &release).expect("updates");
+    assert_eq!(remote::source_of(&updated).unwrap().tag, "v0.4.0");
+    assert_eq!(
+        std::fs::read_to_string(updated.data_dir().join("tools.json")).unwrap(),
+        "[]",
+        "the package's data stays"
+    );
+    assert_eq!(remote::check(&github, &updated), Ok(None));
+
+    // A repository with no such release says so.
+    let missing = remote::install_from_github(&github, "acme/other", &root).unwrap_err();
+    assert!(missing.contains("no published release"), "{missing}");
 }

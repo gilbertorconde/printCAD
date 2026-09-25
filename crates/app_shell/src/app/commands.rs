@@ -209,6 +209,9 @@ impl PrintCadApp {
                     self.start_file_dialog(crate::app::doc_io::FileDialogKind::InstallPackage)
                 }
                 UiCommand::RemovePackage(id) => self.remove_package(&id),
+                UiCommand::InstallPackageFromGithub(text) => self.install_package_from_github(text),
+                UiCommand::CheckPackageUpdates => self.check_package_updates(),
+                UiCommand::UpdatePackage(id) => self.update_package(id),
                 UiCommand::StopScript => self.stop_script(),
                 UiCommand::ToggleRecording => self.toggle_recording(),
                 UiCommand::Recorded(calls) => self.record_calls(calls),
@@ -575,6 +578,7 @@ impl PrintCadApp {
         }
 
         self.poll_file_dialog();
+        self.drain_package_news();
         for path in std::mem::take(&mut self.scripts_to_run) {
             self.run_script_file(&path);
         }

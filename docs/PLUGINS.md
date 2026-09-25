@@ -12,8 +12,17 @@ example is `sdk/examples/gear`, a spur gear workbench.
 
 ## Installing one
 
-Preferences › Workbench packages › Install package… takes a `.pcbench`
-file. The page lists what is installed, whether each loaded, turns one
+Preferences › Workbench packages installs a `.pcbench` file (Install from
+a file…) or a package published on GitHub: type the repository's address
+(`https://github.com/owner/repo`, or `owner/repo`) to take its latest
+release, or a release's address (`…/releases/tag/v1.2.0`) to take that
+one. A package installed from GitHub remembers where it came from; Check
+for updates looks for a newer release (and does so at every start unless
+you turn that off), and Update to … installs it, keeping the package's
+data and what you allowed it. An update that holds a different package,
+or whose download does not match GitHub's checksum, is refused.
+
+The page lists what is installed, whether each loaded, turns one
 off, removes it, and says what each may reach beyond its own folder:
 
 | Capability | What it allows |
@@ -111,6 +120,10 @@ cp target/wasm32-wasip2/release/hello.wasm pkg/bench.wasm
 cp icons/*.svg pkg/icons/
 tar czf hello.pcbench -C pkg .
 ```
+
+To publish, attach the `.pcbench` file to a GitHub release. The release's
+tag is its version for updates (`v0.2.0` is newer than `v0.1.0`); the
+first `.pcbench` asset of the latest release is what users get.
 
 Icons are 24×24 SVGs drawn in white (`#fff`) with a 1.5 px stroke; the app
 tints them. A tool or feature names one by its file name (`gear` for

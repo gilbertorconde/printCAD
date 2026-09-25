@@ -189,6 +189,7 @@ impl PrintCadApp {
             || !self.nav_device.motion().is_idle()
             || self.script_thread.busy()
             || self.registry.any_busy()
+            || self.package_work.busy()
     }
 
     /// What the 6-DoF mouse's buttons ask for, as commands. The device
@@ -767,7 +768,8 @@ impl PrintCadApp {
                 || self.export_rx.is_some()
                 || !self.nav_device.motion().is_idle()
                 || self.script_thread.busy()
-                || self.registry.any_busy();
+                || self.registry.any_busy()
+                || self.package_work.busy();
             let animating = self.session.camera.is_animating()
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()

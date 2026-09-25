@@ -114,6 +114,7 @@ fn main() -> Result<()> {
     }
 
     let packages = app::packages::register(&mut registry, &user_settings.packages);
+    let user_settings_check_updates = user_settings.packages.check_updates;
 
     // The benches' own settings, back from the file.
     registry.apply_settings(&user_settings.workbenches);
@@ -144,7 +145,11 @@ fn main() -> Result<()> {
         registry,
         event_loop.create_proxy(),
     );
+    let check_updates = user_settings_check_updates;
     app.packages = packages;
+    if check_updates {
+        app.check_package_updates();
+    }
     app.start_agent_server();
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())
@@ -315,6 +320,8 @@ struct PrintCadApp {
     /// The workbench packages found at start, and those installed or
     /// removed since (which take effect at the next start).
     packages: Vec<workbenches::PackageStatus>,
+    /// Package installs, update checks and updates running on threads.
+    package_work: app::packages::PackageWork,
     script_library_read: Option<Instant>,
     /// A script printed or failed: the console opens to show it.
     console_attention: bool,
@@ -437,6 +444,7 @@ impl PrintCadApp {
             scripts_to_run: Vec::new(),
             script_library: Vec::new(),
             packages: Vec::new(),
+            package_work: Default::default(),
             script_library_read: None,
             console_attention: false,
             command_ids: Vec::new(),

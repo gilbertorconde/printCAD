@@ -63,9 +63,12 @@ pub struct UserSettings {
 }
 
 /// What the user allowed each installed workbench package.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PackageSettings {
+    /// Look for newer releases of packages installed from GitHub when
+    /// the app starts.
+    pub check_updates: bool,
     /// Package ids not to load.
     pub disabled: Vec<String>,
     /// What each package may reach, by id; a package missing here may ask
@@ -91,6 +94,16 @@ impl Default for PackageGrant {
             save_dialog: true,
             helper: false,
             network: false,
+        }
+    }
+}
+
+impl Default for PackageSettings {
+    fn default() -> Self {
+        Self {
+            check_updates: true,
+            disabled: Vec::new(),
+            grants: Default::default(),
         }
     }
 }

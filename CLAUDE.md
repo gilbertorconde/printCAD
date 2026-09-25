@@ -41,8 +41,10 @@ cargo fmt --all                   # CI enforces --check
   `cargo test -p wb_wasm` builds them itself. At start `app/packages.rs`
   loads what `settings::workbenches_dir()` holds as
   `UserSettings.packages` allows (Preferences › Workbench packages
-  installs, removes, turns off and grants; changes take effect at the
-  next start). A feature carries `made_by` (package and version); one
+  installs from a file or a GitHub address, updates, removes, turns off
+  and grants; changes take effect at the next start). Network work
+  (installs, update checks at start, updates) runs on threads reporting
+  through `app/packages.rs::PackageNews`, drained each frame. A feature carries `made_by` (package and version); one
   whose kind no bench claims shows "Needs …" in the tree, keeps its data
   and cannot be deleted.
 - STEP tests use the bundled fixture
@@ -82,7 +84,11 @@ cargo fmt --all                   # CI enforces --check
   over the guest, frame cached by document seq, selection and events,
   world-space drawing projected by the host every frame, icons and short
   labels interned), `package.rs` (`bench.toml`, `.pcbench` tar archives,
-  install keeping `data/`, uninstall, pack). `sdk/` is a workspace of its
+  install keeping `data/`, uninstall, pack), `remote.rs` (GitHub releases:
+parse a repository or release address, the release's `.pcbench` asset,
+download checked against GitHub's sha256 digest, `source.json` beside the
+package, `check`/`update` refusing a different package id; network behind
+the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   own for wasm32-wasip2 (excluded from the root one): the guest SDK
   (`Bench` trait, `host` calls, `bench!`), `examples/gear` and
   `tests/rogue` (misbehaves on request); `wb_wasm/tests/packages.rs`

@@ -164,6 +164,13 @@ pub enum UiCommand {
     InstallPackage,
     /// Remove the installed workbench package with this id.
     RemovePackage(String),
+    /// Install the package a GitHub repository or release address
+    /// publishes.
+    InstallPackageFromGithub(String),
+    /// Look for newer releases of packages installed from GitHub.
+    CheckPackageUpdates,
+    /// Update the package with this id to its latest release.
+    UpdatePackage(String),
     /// Stop the running script.
     StopScript,
     /// Start recording what is done through the UI as a script, or stop

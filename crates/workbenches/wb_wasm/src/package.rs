@@ -130,16 +130,24 @@ pub fn discover(root: &Path) -> Vec<Result<Package, (PathBuf, String)>> {
 /// version of the same package but keeping its data folder.
 pub fn install(archive: &Path, root: &Path) -> Result<Package, String> {
     let bytes = fs::read(archive).map_err(|e| format!("cannot read {}: {e}", archive.display()))?;
-    install_bytes(&bytes, root)
+    install_bytes(&bytes, root, None)
 }
 
-/// [`install`] from the archive's bytes.
-pub fn install_bytes(bytes: &[u8], root: &Path) -> Result<Package, String> {
+/// [`install`] from the archive's bytes. With `expect`, the archive must
+/// hold that package (an update of it).
+pub fn install_bytes(bytes: &[u8], root: &Path, expect: Option<&str>) -> Result<Package, String> {
     fs::create_dir_all(root).map_err(|e| format!("cannot create {}: {e}", root.display()))?;
     let staging = root.join(format!(".installing-{}", std::process::id()));
     let _ = fs::remove_dir_all(&staging);
     fs::create_dir_all(&staging).map_err(|e| e.to_string())?;
     let unpacked = unpack(bytes, &staging).and_then(|_| Package::read(&staging));
+    let unpacked = unpacked.and_then(|package| match expect {
+        Some(id) if package.manifest.id != id => Err(format!(
+            "the archive holds {}, not {id}; nothing was replaced",
+            package.manifest.id
+        )),
+        _ => Ok(package),
+    });
     let package = match unpacked {
         Ok(package) => package,
         Err(e) => {

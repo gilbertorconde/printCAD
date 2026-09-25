@@ -10,6 +10,7 @@ mod guest;
 mod host;
 mod jobs;
 pub mod package;
+pub mod remote;
 
 pub use bench::{WasmWorkbench, load};
 pub use bench_api::{Capabilities, Manifest};

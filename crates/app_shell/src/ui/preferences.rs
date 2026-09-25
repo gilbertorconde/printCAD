@@ -120,6 +120,8 @@ pub struct PreferencesState {
     recording: Option<(String, bool)>,
     /// An install or a removal the packages page asked for, for the host.
     pub package_request: Option<super::UiCommand>,
+    /// The GitHub address typed on the packages page.
+    package_repo: String,
 }
 
 impl Default for PreferencesState {
@@ -136,6 +138,7 @@ impl Default for PreferencesState {
             just_opened: false,
             recording: None,
             package_request: None,
+            package_repo: String::new(),
         }
     }
 }
@@ -1462,8 +1465,20 @@ fn packages_page(
                     .font(mono(FONT_XS))
                     .color(TEXT3),
             );
+            if let Some(source) = &package.source {
+                ui.label(
+                    RichText::new(format!("github.com/{} · {}", source.repo, source.tag))
+                        .font(mono(FONT_XS))
+                        .color(TEXT3),
+                );
+            }
             if package.state == PackageState::Removed {
                 return;
+            }
+            if let Some(tag) = &package.update
+                && primary_button(ui, &format!("Update to {tag}")).clicked()
+            {
+                state.package_request = Some(super::UiCommand::UpdatePackage(package.id.clone()));
             }
             let mut enabled = draft.enabled(&package.id);
             if ui_kit::widgets::check_row(ui, &mut enabled, "Load when printCAD starts").changed() {
@@ -1505,9 +1520,54 @@ fn packages_page(
         ui.add_space(SPACE_1);
     }
     ui.add_space(SPACE_2);
-    if ui_kit::widgets::primary_button(ui, "Install package…").clicked() {
-        state.package_request = Some(super::UiCommand::InstallPackage);
-    }
+    ui.label(
+        RichText::new("Install from GitHub")
+            .font(sans_semibold(FONT_SM))
+            .color(TEXT1),
+    );
+    ui.label(
+        RichText::new(
+            "A repository whose releases carry a .pcbench file: its address takes the latest \
+             release, a release's address that one.",
+        )
+        .font(sans(FONT_XS))
+        .color(TEXT3),
+    );
+    ui.horizontal(|ui| {
+        let field = ui.add(
+            egui::TextEdit::singleline(&mut state.package_repo)
+                .hint_text("https://github.com/owner/repo")
+                .font(mono(FONT_SM))
+                .desired_width(320.0),
+        );
+        let enter = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        let typed = !state.package_repo.trim().is_empty();
+        let click = ui
+            .add_enabled_ui(typed, |ui| secondary_button(ui, "Install"))
+            .inner
+            .clicked();
+        if typed && (click || enter) {
+            state.package_request = Some(super::UiCommand::InstallPackageFromGithub(
+                std::mem::take(&mut state.package_repo),
+            ));
+        }
+    });
+    ui.add_space(SPACE_1);
+    ui.horizontal(|ui| {
+        if primary_button(ui, "Install from a file…").clicked() {
+            state.package_request = Some(super::UiCommand::InstallPackage);
+        }
+        if packages.iter().any(|p| p.source.is_some())
+            && secondary_button(ui, "Check for updates").clicked()
+        {
+            state.package_request = Some(super::UiCommand::CheckPackageUpdates);
+        }
+    });
+    ui_kit::widgets::check_row(
+        ui,
+        &mut state.draft.packages.check_updates,
+        "Check for updates of packages from GitHub when printCAD starts",
+    );
 }
 
 fn updates_page(ui: &mut Ui) {
