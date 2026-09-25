@@ -8,6 +8,8 @@ pub mod feature;
 pub mod history;
 pub mod op;
 pub mod palette;
+#[cfg(feature = "egui")]
+pub mod panel;
 pub mod placement;
 pub mod rebuild;
 pub mod registration;
@@ -458,6 +460,7 @@ impl Document {
                     seq: node.seq,
                     created_at: node.created_at,
                     formulas: node.formulas.clone(),
+                    made_by: node.made_by.clone(),
                 }
             }
             Op::SetImportedObjectVisibility { id, .. } => Op::SetImportedObjectVisibility {
@@ -591,6 +594,7 @@ impl Document {
                 seq,
                 created_at,
                 formulas,
+                made_by,
             } => {
                 self.feature_tree.add_node(FeatureNode {
                     id: *id,
@@ -605,6 +609,7 @@ impl Document {
                     error: None,
                     data: data.clone(),
                     formulas: formulas.clone(),
+                    made_by: made_by.clone(),
                 });
                 for dep in deps {
                     self.feature_tree.add_dependency(*id, *dep);
@@ -827,8 +832,36 @@ impl Document {
             seq: self.feature_tree.next_seq(),
             created_at: epoch_ms_now(),
             formulas: Default::default(),
+            made_by: None,
         });
         Ok(id)
+    }
+
+    /// Add a feature of kind `kind` whose data a workbench package owns,
+    /// recording the package and version that made it.
+    pub fn add_feature_of_kind(
+        &mut self,
+        kind: WorkbenchId,
+        name: String,
+        body: Option<BodyId>,
+        deps: Vec<FeatureId>,
+        data: serde_json::Value,
+        made_by: Option<String>,
+    ) -> FeatureId {
+        let id = FeatureId::new();
+        self.record_and_apply(op::DocumentOp::AddFeature {
+            id,
+            workbench_id: kind,
+            name,
+            body,
+            deps,
+            data,
+            seq: self.feature_tree.next_seq(),
+            created_at: epoch_ms_now(),
+            formulas: Default::default(),
+            made_by,
+        });
+        id
     }
 
     /// Get feature data (returns JSON, workbench must deserialize).

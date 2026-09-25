@@ -16,12 +16,33 @@ use crate::icon_table::ICONS;
 /// crisp on 2× displays.
 const RASTER_PX: u32 = 48;
 
-/// The SVG source of a vendored icon.
+/// Icons added while the app runs (a workbench package's), by name.
+static ADDED: std::sync::LazyLock<std::sync::RwLock<HashMap<String, &'static str>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// The SVG source of an icon: a vendored one, or one added with
+/// [`register`].
 pub fn svg(name: &str) -> Option<&'static str> {
     ICONS
         .binary_search_by(|(n, _)| n.cmp(&name))
         .ok()
         .map(|i| ICONS[i].1)
+        .or_else(|| ADDED.read().ok()?.get(name).copied())
+}
+
+/// Add an icon under `name` for as long as the app runs: a workbench
+/// package's, drawn in white like the set and tinted where it is shown.
+/// A vendored name keeps its own icon. Each name keeps its first source,
+/// so the set only grows by the packages loaded.
+pub fn register(name: &str, source: String) {
+    if ICONS.binary_search_by(|(n, _)| n.cmp(&name)).is_ok() {
+        return;
+    }
+    if let Ok(mut added) = ADDED.write() {
+        added
+            .entry(name.to_owned())
+            .or_insert_with(|| Box::leak(source.into_boxed_str()));
+    }
 }
 
 /// Whether `name` is in the set.

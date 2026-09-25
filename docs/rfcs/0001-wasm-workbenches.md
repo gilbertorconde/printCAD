@@ -1,6 +1,6 @@
 # RFC 0001: WebAssembly workbenches
 
-- Status: draft
+- Status: built (milestones 1 to 4); milestone 0 in part, see "As built"
 - Date: 2026-09-25
 - Scope: `core_document` (workbench seam), a new `wb_wasm` crate, `ui_kit`,
   the `workbenches` facade, the plugin SDK
@@ -19,6 +19,49 @@ The interface is a WIT world, `printcad:workbench`, that mirrors the
 instead of drawn with egui, the document is read through queries and
 changed only through commands, and long work runs as jobs off the UI
 thread.
+
+## As built
+
+The design below was built, with these differences, found while building
+it. `docs/PLUGINS.md` is the guide for package authors.
+
+- **Crates.** `bench_api` holds every type the two sides exchange (serde,
+  builds for wasm32-wasip2) and the WIT world (`bench_api/wit/`).
+  `wb_wasm` is the host: engine, sandbox, jobs, packages and
+  `WasmWorkbench`. The SDK and the examples are a workspace of their own
+  under `sdk/`, built for wasm32-wasip2.
+- **JSON over WIT.** The WIT functions carry `bench_api` values as JSON
+  text rather than WIT records: one definition of each type, and the
+  interface can grow without regenerating bindings on both sides. Bulk
+  data (meshes, shapes, job bytes) crosses as WIT lists.
+- **Archive.** A `.pcbench` is a tar file, gzipped or not, since the
+  workspace already reads and writes tar for documents.
+- **Strings.** Instead of turning `&'static str` into `Cow` across the
+  trait's types, a package's icon names and short labels are interned
+  once each (`convert::intern`), which bounds them to the distinct names
+  packages use and leaves the built-in benches untouched.
+- **Drawing.** Lines, marks and labels are declared in world space and
+  projected by the host every frame, so the cached frame survives any
+  camera move and only an event, a document or selection change, or
+  `redraw` asks the bench again. `frame` takes the pointer (selection and
+  active feature), so a bench knows what is selected when it draws.
+- **Meshes.** `body-mesh` answers a record of lists rather than a
+  chunked resource; the canonical ABI copies them in one go.
+- **Versions.** No `migrate` export: every node a bench sees carries
+  `made_by` (package and version), and a package keeps its own schema
+  version in its data if it needs one.
+- **Busy work.** `Workbench::busy` (new) keeps frames coming while a job
+  runs; a finished job is told to the bench on its next frame as active.
+- **Budgets.** Frame and input calls get 25 ms, the rest 1 s (a 5 ms
+  epoch tick, running only while a call or a job does). Three failures
+  in a session turn a bench off.
+- **Missing packages.** Implemented as described, except that bodies
+  mixing a missing package's features with other benches' are not made
+  read-only; a package normally builds its own bodies.
+- **Milestone 0.** The declared panels (`core_document::panel`), runtime
+  icons (`ui_kit::icon::register`), world-space polylines and jobs exist
+  and are exercised by packages. The built-in benches keep their egui
+  panels; moving Assembly onto declared panels remains to do.
 
 ## Motivation
 
@@ -104,7 +147,8 @@ This is why a WebAssembly bench does not pay per kernel operation.
 
 ### Package format
 
-A package is a zip file with the extension `.pcbench`:
+A package is a tar archive (gzipped or not) with the extension
+`.pcbench`:
 
 ```
 bench.toml          the manifest

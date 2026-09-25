@@ -1,0 +1,9 @@
+id = "example.gear"
+name = "Gears"
+version = "0.1.0"
+api = "printcad:workbench@0.1"
+description = "Spur gears from a tooth count and a module"
+feature_kinds = ["example.gear.gear"]
+
+[capabilities]
+save_dialog = true

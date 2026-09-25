@@ -1,0 +1,13 @@
+[package]
+name = "bench_api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The data a WebAssembly workbench and printCAD exchange"
+
+# Kept to what builds for wasm32-wasip2: guests depend on it.
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+kernel_api = { path = "../kernel_api" }

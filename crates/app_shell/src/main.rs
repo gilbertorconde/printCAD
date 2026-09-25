@@ -102,9 +102,6 @@ fn main() -> Result<()> {
         }
     };
 
-    // The benches' own settings, back from the file.
-    registry.apply_settings(&user_settings.workbenches);
-
     // A script run from the command line needs no window.
     let words: Vec<String> = std::env::args().skip(1).collect();
     // `printcad --mcp`: an agent's MCP server, relayed to the running app.
@@ -115,6 +112,11 @@ fn main() -> Result<()> {
         }
         return Ok(());
     }
+
+    let packages = app::packages::register(&mut registry, &user_settings.packages);
+
+    // The benches' own settings, back from the file.
+    registry.apply_settings(&user_settings.workbenches);
     match headless::parse(&words) {
         Ok(Some(invocation)) => {
             let finished = headless::run(&invocation, registry)?;
@@ -142,6 +144,7 @@ fn main() -> Result<()> {
         registry,
         event_loop.create_proxy(),
     );
+    app.packages = packages;
     app.start_agent_server();
     event_loop.run_app(&mut app).context("event loop error")?;
     Ok(())
@@ -309,6 +312,9 @@ struct PrintCadApp {
     scripts_to_run: Vec<PathBuf>,
     /// The scripts folder's scripts, and when it was last read.
     script_library: Vec<script_library::ScriptEntry>,
+    /// The workbench packages found at start, and those installed or
+    /// removed since (which take effect at the next start).
+    packages: Vec<workbenches::PackageStatus>,
     script_library_read: Option<Instant>,
     /// A script printed or failed: the console opens to show it.
     console_attention: bool,
@@ -430,6 +436,7 @@ impl PrintCadApp {
             redraw_needed: true,
             scripts_to_run: Vec::new(),
             script_library: Vec::new(),
+            packages: Vec::new(),
             script_library_read: None,
             console_attention: false,
             command_ids: Vec::new(),

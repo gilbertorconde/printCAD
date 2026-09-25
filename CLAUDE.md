@@ -36,6 +36,15 @@ cargo fmt --all                   # CI enforces --check
   system library: it speaks the spacenavd socket
   protocol itself, with the display-server (Magellan) protocol behind its
   `magellan` feature. Nothing is required to build or run without a device.
+- Workbench packages build in `sdk/` (`cargo build --release --target
+  wasm32-wasip2`, the target named in `rust-toolchain.toml`);
+  `cargo test -p wb_wasm` builds them itself. At start `app/packages.rs`
+  loads what `settings::workbenches_dir()` holds as
+  `UserSettings.packages` allows (Preferences › Workbench packages
+  installs, removes, turns off and grants; changes take effect at the
+  next start). A feature carries `made_by` (package and version); one
+  whose kind no bench claims shows "Needs …" in the tree, keeps its data
+  and cannot be deleted.
 - STEP tests use the bundled fixture
   `crates/kernel_ogeom/tests/data/box_native.step`; set
   `PRINTCAD_TEST_STEP_FILE` to test against a richer model. (`box.step` is an
@@ -52,6 +61,32 @@ cargo fmt --all                   # CI enforces --check
 
 ## Crate map / dataflow
 
+- `bench_api`: what a workbench package and the app exchange (serde,
+  builds for wasm32-wasip2): manifest, registration, nodes, rebuild plans,
+  input and pointer, the `Frame` a bench draws, declared panel `Widget`s
+  and `PanelEvent`s, menus, requests, the `calls` a package may make. The
+  WIT world is `bench_api/wit/workbench.wit`; its values cross as JSON of
+  these types, bulk data as lists.
+- `workbenches/wb_wasm`: workbench packages (`docs/PLUGINS.md`, RFC 0001).
+  One wasmtime engine (`engine.rs`: an epoch ticker that runs only while a
+  call or job does, 25 ms for frame and input calls, 1 s otherwise; the
+  compiled component cached beside `bench.wasm`), `host.rs` (the store's
+  `State`: what the call in progress may reach, `Access::None/Read/Write`,
+  a raw pointer valid for that one synchronous call; the `doc.*` calls a
+  package makes on its own kinds only, recorded like any edit), `guest.rs`
+  (instantiate with WASI, the package's `data/` preopened as `/data`, the
+  network only when granted, a memory cap; a trap or overrun replaces the
+  instance, three turn the bench off), `jobs.rs` (a job in its own
+  instance on its own thread, progress and cancel, native helpers under
+  the `helper` grant), `bench.rs` (`WasmWorkbench`: the `Workbench` trait
+  over the guest, frame cached by document seq, selection and events,
+  world-space drawing projected by the host every frame, icons and short
+  labels interned), `package.rs` (`bench.toml`, `.pcbench` tar archives,
+  install keeping `data/`, uninstall, pack). `sdk/` is a workspace of its
+  own for wasm32-wasip2 (excluded from the root one): the guest SDK
+  (`Bench` trait, `host` calls, `bench!`), `examples/gear` and
+  `tests/rogue` (misbehaves on request); `wb_wasm/tests/packages.rs`
+  builds them with cargo and runs them through the host.
 - `kernel_api`: pure data contract (TriMesh with per-triangle kernel face ids, ProfileWire w/ ellipse+B-spline
   segments, `SolidOp` = sweep/loft/pipe/primitive/dress-up/transform/boolean,
   ExtrudeTermination, TessellationSettings, ChainError). No geometry code.
@@ -120,6 +155,9 @@ cargo fmt --all                   # CI enforces --check
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
+- `workbenches` facade: `register_all_workbenches` (built-in benches) and
+  `register_packages` (installed packages, after them, as the user allowed;
+  `PackageStatus` for the Preferences page).
 - `workbenches/fixtures` (`bench_fixtures`): ready-made scenes built from
   the benches' feature types (a dimensioned sketch, padded, pocketed) for
   the app's `PRINTCAD_BENCH_SKETCH` hook and tests; the host composes
@@ -231,7 +269,8 @@ active. The UI surface: `configure` registers
 `ui_settings()` draws the bench's Preferences page (one rail entry per
 registered bench); `feature_info`/`passive_geometry`/`pick_feature`/
 `delete_feature`/`property_hints` answer for the feature kinds a bench
-claims; `rebuild_jobs`/`invalidate_body`/`invalidate_all` drive solids;
+claims; `busy` keeps frames coming while a bench's work runs away from
+the window; `rebuild_jobs`/`invalidate_body`/`invalidate_all` drive solids;
 `menu_items`/`on_command` add entries to the viewport body menu, tree rows
 and the start page's New cards. `docs/WORKBENCH_GUIDE.md` is the
 walkthrough. Colors reach the workbenches through

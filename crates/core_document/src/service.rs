@@ -151,6 +151,11 @@ impl DocumentService {
             .map(|e| e.workbench.as_ref())
     }
 
+    /// Whether any bench has work running away from the window.
+    pub fn any_busy(&self) -> bool {
+        self.benches().any(|wb| wb.busy())
+    }
+
     /// Every bench's settings, keyed by bench id.
     pub fn collect_settings(&self) -> HashMap<String, serde_json::Value> {
         self.order

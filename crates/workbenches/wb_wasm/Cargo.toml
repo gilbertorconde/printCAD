@@ -1,0 +1,31 @@
+[package]
+name = "wb_wasm"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Workbenches from packages: WebAssembly components run in a sandbox"
+
+[features]
+default = ["egui"]
+egui = ["core_document/egui", "dep:egui"]
+
+[dependencies]
+core_document = { path = "../../core_document" }
+kernel_api = { path = "../../kernel_api" }
+bench_api = { path = "../../bench_api" }
+ui_kit = { path = "../../ui_kit" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+glam.workspace = true
+uuid = { workspace = true }
+tracing.workspace = true
+tar.workspace = true
+flate2.workspace = true
+egui = { workspace = true, optional = true }
+toml = "1.1"
+wasmtime = "49"
+wasmtime-wasi = "49"
+
+[dev-dependencies]
+kernel_ogeom = { path = "../../kernel_ogeom" }

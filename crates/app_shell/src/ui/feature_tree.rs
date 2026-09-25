@@ -304,7 +304,13 @@ fn build_feature_node(
         dirty: node.dirty,
         visible: node.visible,
         suppressed: node.suppressed,
-        error: node.error.clone(),
+        error: node.error.clone().or_else(|| {
+            registry
+                .feature_info(node)
+                .is_none()
+                .then(|| FeatureInfo::missing_package(node))
+                .flatten()
+        }),
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
@@ -326,7 +332,7 @@ fn build_feature_node(
 pub(crate) fn feature_info(registry: &DocumentService, node: &FeatureNode) -> FeatureInfo {
     registry
         .feature_info(node)
-        .unwrap_or_else(|| FeatureInfo::fallback(node))
+        .unwrap_or_else(|| FeatureInfo::unowned(node))
 }
 
 fn build_body_node(body: &Body) -> TreeNode {

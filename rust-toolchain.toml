@@ -1,3 +1,5 @@
 [toolchain]
 channel = "1.98"
 components = ["rustfmt", "clippy"]
+# Workbench packages (`sdk/`) build for it, and wb_wasm's tests build them.
+targets = ["wasm32-wasip2"]

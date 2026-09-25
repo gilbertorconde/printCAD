@@ -160,6 +160,10 @@ pub enum UiCommand {
     RunConsole(String),
     /// Run a Lua script file.
     RunScriptFile(std::path::PathBuf),
+    /// Ask for a workbench package archive and install it.
+    InstallPackage,
+    /// Remove the installed workbench package with this id.
+    RemovePackage(String),
     /// Stop the running script.
     StopScript,
     /// Start recording what is done through the UI as a script, or stop

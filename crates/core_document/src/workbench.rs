@@ -471,6 +471,27 @@ impl FeatureInfo {
             builds_solid: false,
         }
     }
+
+    /// What a feature of a kind no loaded bench claims looks like: the
+    /// fallback, naming the package that made it when one did.
+    pub fn unowned(node: &FeatureNode) -> Self {
+        let mut info = Self::fallback(node);
+        if let Some(by) = &node.made_by {
+            info.family_label = format!("Needs {by}");
+        }
+        info
+    }
+
+    /// Why a feature no loaded bench claims cannot be edited, when a
+    /// package made it.
+    pub fn missing_package(node: &FeatureNode) -> Option<String> {
+        node.made_by.as_ref().map(|by| {
+            format!(
+                "Made by the workbench {by}, which is not installed. It keeps its data, \
+                 and its body keeps the shape it was saved with."
+            )
+        })
+    }
 }
 
 /// Trait implemented by all workbench plugins.
@@ -599,6 +620,12 @@ pub trait Workbench: Send {
 
     /// Called once at registration to declare tools.
     fn configure(&self, context: &mut WorkbenchContext);
+
+    /// The bench has work running away from the window (a job) whose end
+    /// it shows: the host keeps frames coming while it does.
+    fn busy(&self) -> bool {
+        false
+    }
 
     /// Called when this workbench becomes active.
     fn on_activate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {}

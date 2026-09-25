@@ -247,6 +247,7 @@ impl UiLayer {
             mut step_import_pending,
             mut export_pending,
             scripts,
+            packages,
             console_attention,
             command_ids,
             script_running,
@@ -437,8 +438,12 @@ impl UiLayer {
                         gpu_name,
                         nav_buttons,
                         scripts,
+                        packages,
                     },
                 );
+                if let Some(request) = self.preferences.package_request.take() {
+                    commands.push(request);
+                }
                 return;
             }
 
@@ -679,8 +684,12 @@ impl UiLayer {
                     gpu_name,
                     nav_buttons,
                     scripts,
+                    packages,
                 },
             );
+            if let Some(request) = self.preferences.package_request.take() {
+                commands.push(request);
+            }
 
             viewport_rect_logical = ui.available_rect_before_wrap();
 

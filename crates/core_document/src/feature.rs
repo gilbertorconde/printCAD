@@ -99,6 +99,11 @@ pub struct FeatureNode {
     /// (`Document::feature_values`).
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub formulas: std::collections::BTreeMap<String, String>,
+    /// The workbench package and version that made it (`acme.cam 0.3.0`),
+    /// when a loaded package did: what a document opened without that
+    /// package names as missing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub made_by: Option<String>,
 }
 
 /// A revision for a node's payload: the same JSON hashes the same, so a
@@ -135,6 +140,7 @@ impl FeatureNode {
             error: None,
             data: feature.to_json(),
             formulas: Default::default(),
+            made_by: None,
         }
     }
 }
@@ -357,6 +363,7 @@ mod tests {
             error: None,
             data: serde_json::Value::Null,
             formulas: Default::default(),
+            made_by: None,
         }
     }
 

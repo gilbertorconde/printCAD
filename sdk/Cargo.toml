@@ -1,0 +1,15 @@
+# Workbench packages build here, for wasm32-wasip2, apart from the app's
+# own workspace: `cargo build --release --target wasm32-wasip2`.
+[workspace]
+members = ["printcad-bench-sdk", "examples/gear", "tests/rogue"]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

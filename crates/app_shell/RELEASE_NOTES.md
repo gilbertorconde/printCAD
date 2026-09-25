@@ -84,6 +84,12 @@ version first.
 - A document's chats are kept with its file: open it again and they continue where they left off, the conversation replayed.
 - `printcad --mcp` serves the running application to any MCP client. See docs/AI.md.
 
+### Workbench packages
+- Workbenches others made install from a `.pcbench` file in Preferences › Workbench packages: tools, features with parametric solids, task panels whose numbers take formulas, viewport drawing, commands for scripts and agents, and a settings page.
+- Each package runs sandboxed: it reaches its own folder and nothing else unless you allow it to save files, run the programs it ships or use the network, and one that hangs or crashes is restarted, then turned off, without harming the app.
+- A document opened without the package it used keeps that package's features and shapes, and says which package they need.
+- The SDK and a gear workbench to start from are in `sdk/`; see docs/PLUGINS.md.
+
 ### Keyboard
 - Every shortcut can be changed in Preferences › Keyboard, which also warns when two commands share a key.
 - Every workbench has default keys: a letter picks a tool, Shift and a letter its partner (a sketch constraint, or the subtractive form of a Part Design feature).

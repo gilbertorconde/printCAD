@@ -85,6 +85,8 @@ pub(crate) enum FileDialogKind {
     SaveFile(Box<FileToSave>),
     /// A bench's animation, rendered and written where the user says.
     SaveAnimation(Box<crate::app::animation::Animation>),
+    /// A workbench package to install.
+    InstallPackage,
 }
 
 /// A file a bench asked to save: its suggested name, the dialog's filter
@@ -796,6 +798,11 @@ impl PrintCadApp {
                     crate::app::animation::write_in_background(*animation, path);
                 }
             }
+            FileDialogKind::InstallPackage => {
+                if let Some(path) = path {
+                    self.install_package_from(&path);
+                }
+            }
         }
         self.file_dialog_rx = None;
     }
@@ -841,6 +848,9 @@ impl PrintCadApp {
                 FileDialogKind::SaveAnimation(ref animation) => rfd::FileDialog::new()
                     .add_filter("Animated PNG", &["png"])
                     .set_file_name(format!("{}.png", animation.name)),
+                FileDialogKind::InstallPackage => rfd::FileDialog::new()
+                    .set_title("Install a workbench package")
+                    .add_filter("Workbench package", &[workbenches::ARCHIVE_EXTENSION]),
                 FileDialogKind::Export(format) => rfd::FileDialog::new()
                     .add_filter(format!("{} file", format.label()), &[format.extension()])
                     .set_file_name(format!("{stem}.{}", format.extension())),
@@ -848,7 +858,10 @@ impl PrintCadApp {
             };
 
             if let Some(recent_dir) = recent_dir
-                && !matches!(kind, FileDialogKind::RunScript)
+                && !matches!(
+                    kind,
+                    FileDialogKind::RunScript | FileDialogKind::InstallPackage
+                )
             {
                 dialog = dialog.set_directory(recent_dir);
             }
@@ -869,7 +882,9 @@ impl PrintCadApp {
                     FileDialogKind::Export(_)
                     | FileDialogKind::SaveFile(_)
                     | FileDialogKind::SaveAnimation(_) => dialog.save_file(),
-                    FileDialogKind::RunScript => dialog.pick_file(),
+                    FileDialogKind::RunScript | FileDialogKind::InstallPackage => {
+                        dialog.pick_file()
+                    }
                     FileDialogKind::Attach(_) => None,
                 }),
             };

@@ -1,0 +1,91 @@
+package printcad:workbench@0.1.0;
+
+/// What the host offers a bench. Structured values are JSON text of the
+/// `bench_api` types named beside each function.
+interface host {
+    /// A line in the app's log: `info`, `warn` or `error`.
+    log: func(level: string, message: string);
+
+    /// An owned feature or any other, as a `Node`, with the values its
+    /// formulas give it.
+    feature: func(id: string) -> option<string>;
+    /// Every feature of the document, as a list of `Node`.
+    features: func() -> string;
+    /// Every body, as a list of `Body`.
+    bodies: func() -> string;
+    /// A body's triangles in world space: positions as x, y, z triples.
+    body-mesh: func(body: string) -> option<mesh>;
+    /// A body's solid in the kernel's native format, for `SolidOp::Shape`
+    /// and `SolidOp::Boolean`.
+    body-shape: func(body: string) -> option<list<u8>>;
+
+    /// Run a document command (`bench_api::calls`): arguments and answer
+    /// as JSON. Allowed while the bench handles an event, a panel change,
+    /// a menu entry or a command; refused while it draws or plans.
+    call: func(command: string, args: string) -> result<string, string>;
+    /// Ask the host for something once this call returns (`Request`).
+    request: func(request: string);
+    /// Ask for `frame` again: the bench's drawing changed on its own.
+    redraw: func();
+
+    /// Inside a job: how far it is.
+    progress: func(done: u64, total: u64);
+    /// Inside a job: whether the user stopped it.
+    cancelled: func() -> bool;
+    /// Inside a job, with the `helper` capability: run one of the
+    /// package's native helpers with `input` on its standard input and
+    /// answer what it wrote to its standard output.
+    helper: func(name: string, input: list<u8>) -> result<list<u8>, string>;
+
+    record mesh {
+        positions: list<f32>,
+        indices: list<u32>,
+    }
+}
+
+/// What a bench offers the host.
+interface bench {
+    /// `Registration`: tools, actions, commands, label and icon.
+    describe: func() -> string;
+    /// `FeatureInfo` for a `Node` of an owned kind.
+    feature-info: func(node: string) -> string;
+    /// The `Parameter` list of a `Node`.
+    parameters: func(node: string) -> string;
+    /// A `Node`'s data made whole once formulas' values are in it.
+    settle: func(node: string) -> string;
+    /// A list of `Rebuild` for a `RebuildRequest`.
+    rebuild: func(request: string) -> string;
+    /// Run a registered command; arguments and answer as JSON.
+    run-command: func(id: string, args: string) -> result<string, string>;
+    /// An `Input`; true when the bench used it.
+    input: func(input: string) -> bool;
+    /// The `Frame`: everything the bench shows, for the selection and the
+    /// active feature in `pointer` (a `Pointer`).
+    frame: func(pointer: string) -> string;
+    /// A `PanelEvent` from the panel in `slot` (`task` or `settings`).
+    panel-event: func(slot: string, event: string);
+    /// The task's OK (true) or Cancel (false); the undo step's name when
+    /// it closed keeping its edits.
+    task-close: func(accept: bool) -> option<string>;
+    /// `MenuItem`s for a `MenuScope`.
+    menu-items: func(scope: string) -> string;
+    /// Run a menu entry; true when it was one of this bench's.
+    menu-command: func(id: string, scope: string) -> bool;
+    /// Remove an owned feature; false leaves it to the host.
+    delete-feature: func(id: string) -> bool;
+    /// The Preferences page, as a list of `Widget`.
+    settings-panel: func() -> string;
+    /// The bench's settings, for the host to keep.
+    settings: func() -> option<string>;
+    apply-settings: func(settings: string);
+    /// The editing state of the document on screen, to keep with its tab.
+    suspend: func() -> option<list<u8>>;
+    resume: func(state: option<list<u8>>);
+    /// A job, run away from the window in an instance of its own.
+    job-run: func(entry: string, input: string) -> result<string, string>;
+}
+
+world workbench {
+    import host;
+    export bench;
+}

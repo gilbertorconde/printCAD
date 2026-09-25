@@ -188,6 +188,7 @@ impl PrintCadApp {
             || self.export_rx.is_some()
             || !self.nav_device.motion().is_idle()
             || self.script_thread.busy()
+            || self.registry.any_busy()
     }
 
     /// What the 6-DoF mouse's buttons ask for, as commands. The device
@@ -687,6 +688,7 @@ impl PrintCadApp {
                         step_import_pending: self.session.step_import_pending.as_mut(),
                         export_pending: self.session.export_pending.as_mut(),
                         scripts: &self.script_library,
+                        packages: &self.packages,
                         console_attention: std::mem::take(&mut self.console_attention),
                         command_ids: &self.command_ids,
                         script_running: self.script_runs.front().map(|r| r.label.as_str()),
@@ -764,7 +766,8 @@ impl PrintCadApp {
                 || self.file_dialog_rx.is_some()
                 || self.export_rx.is_some()
                 || !self.nav_device.motion().is_idle()
-                || self.script_thread.busy();
+                || self.script_thread.busy()
+                || self.registry.any_busy();
             let animating = self.session.camera.is_animating()
                 || std::env::var_os("PRINTCAD_BENCH_ORBIT").is_some()
                 || std::env::var_os("PRINTCAD_EXIT_AFTER_MS").is_some()

@@ -108,6 +108,8 @@ pub struct UiFrameInputs<'a> {
     pub export_pending: Option<&'a mut crate::app::export::ExportDraft>,
     /// The scripts folder's scripts.
     pub scripts: &'a [crate::script_library::ScriptEntry],
+    /// The workbench packages found when the app started, and since.
+    pub packages: &'a [workbenches::PackageStatus],
     /// A script printed or failed since the last frame: show the console.
     pub console_attention: bool,
     /// Every command's id, for the console's completion.

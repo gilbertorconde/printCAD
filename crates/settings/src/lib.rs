@@ -57,6 +57,52 @@ pub struct UserSettings {
     /// The AI agents chats can talk to.
     #[serde(default)]
     pub ai: AiSettings,
+    /// Workbench packages: which are turned off and what each may reach.
+    #[serde(default)]
+    pub packages: PackageSettings,
+}
+
+/// What the user allowed each installed workbench package.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PackageSettings {
+    /// Package ids not to load.
+    pub disabled: Vec<String>,
+    /// What each package may reach, by id; a package missing here may ask
+    /// where to save a file and nothing more.
+    pub grants: std::collections::BTreeMap<String, PackageGrant>,
+}
+
+/// What one package may reach beyond its own folder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PackageGrant {
+    /// Ask the user where to save a file it made.
+    pub save_dialog: bool,
+    /// Run the native programs it ships.
+    pub helper: bool,
+    /// Open network connections.
+    pub network: bool,
+}
+
+impl Default for PackageGrant {
+    fn default() -> Self {
+        Self {
+            save_dialog: true,
+            helper: false,
+            network: false,
+        }
+    }
+}
+
+impl PackageSettings {
+    pub fn grant(&self, id: &str) -> PackageGrant {
+        self.grants.get(id).copied().unwrap_or_default()
+    }
+
+    pub fn enabled(&self, id: &str) -> bool {
+        !self.disabled.iter().any(|d| d == id)
+    }
 }
 
 /// The AI agents a chat can talk to, and how their changes are allowed.
@@ -157,6 +203,7 @@ impl Default for UserSettings {
             workbenches: std::collections::HashMap::new(),
             keyboard: KeyboardSettings::default(),
             ai: AiSettings::default(),
+            packages: PackageSettings::default(),
         }
     }
 }
@@ -706,6 +753,12 @@ pub fn config_path(name: &str) -> Option<PathBuf> {
 /// The folder the user's scripts live in: every `.lua` file there is a
 /// command of the application. `None` when the system names no
 /// configuration folder.
+/// Where workbench packages are installed, one folder each.
+pub fn workbenches_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_dir().join("workbenches"))
+}
+
 pub fn scripts_dir() -> Option<PathBuf> {
     ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
         .map(|dirs| dirs.config_dir().join("scripts"))

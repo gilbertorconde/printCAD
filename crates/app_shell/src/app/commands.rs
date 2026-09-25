@@ -205,6 +205,10 @@ impl PrintCadApp {
                 UiCommand::Undo => intents.undo = true,
                 UiCommand::RunConsole(line) => self.run_console_line(&line),
                 UiCommand::RunScriptFile(path) => self.run_script_file(&path),
+                UiCommand::InstallPackage => {
+                    self.start_file_dialog(crate::app::doc_io::FileDialogKind::InstallPackage)
+                }
+                UiCommand::RemovePackage(id) => self.remove_package(&id),
                 UiCommand::StopScript => self.stop_script(),
                 UiCommand::ToggleRecording => self.toggle_recording(),
                 UiCommand::Recorded(calls) => self.record_calls(calls),
@@ -911,7 +915,15 @@ impl PrintCadApp {
             TreeFeatureCommand::Delete => {
                 // The bench that claimed the feature's kind removes it and
                 // settles what depended on it; a kind no bench claims is
-                // simply removed.
+                // simply removed, unless a package that is not installed
+                // made it: its data waits for the package.
+                if let Some(node) = self.session.document.get_feature_meta(feature)
+                    && self.registry.owner_id_of(&node.workbench_id).is_none()
+                    && let Some(why) = core_document::FeatureInfo::missing_package(node)
+                {
+                    app_log::warn(why);
+                    return;
+                }
                 let owner = self
                     .session
                     .document

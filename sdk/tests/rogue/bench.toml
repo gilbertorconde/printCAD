@@ -1,0 +1,10 @@
+id = "test.rogue"
+name = "Rogue"
+version = "0.1.0"
+api = "printcad:workbench@0.1"
+description = "A package that misbehaves on request, for the host's tests"
+feature_kinds = ["test.rogue.thing"]
+memory_mb = 64
+
+[capabilities]
+helper = true

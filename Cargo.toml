@@ -2,6 +2,7 @@
 members = [
   "crates/app_shell",
   "crates/core_document",
+  "crates/bench_api",
     "crates/doc_server",
   "crates/kernel_api",
   "crates/kernel_ogeom",
@@ -9,6 +10,7 @@ members = [
   "crates/workbenches",
   "crates/workbenches/fixtures",
   "crates/workbenches/wb_assembly",
+  "crates/workbenches/wb_wasm",
 "crates/settings",
 "crates/axes",
   "crates/ui_kit",
@@ -16,6 +18,8 @@ members = [
   "crates/agents",
 ]
 resolver = "2"
+# Workbench packages build apart, for wasm32-wasip2.
+exclude = ["sdk"]
 
 # The geometry kernel is numeric code that runs unoptimized in a plain
 # `cargo run`, where it is ~26x slower — enough to make a large STEP import

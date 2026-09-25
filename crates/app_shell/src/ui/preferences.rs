@@ -27,6 +27,8 @@ pub enum PrefGroup {
     /// A registered workbench's own page, by its place in registration
     /// order.
     Workbench(usize),
+    /// Installed workbench packages.
+    Packages,
     Units,
     ImportExport,
     Printing,
@@ -36,7 +38,7 @@ pub enum PrefGroup {
 
 impl PrefGroup {
     /// The rail, top to bottom: the app's groups with one page per
-    /// registered workbench between Keyboard and Units.
+    /// registered workbench after Keyboard, then the packages page.
     pub fn all(registry: &DocumentService) -> Vec<PrefGroup> {
         let mut groups = vec![
             PrefGroup::General,
@@ -46,6 +48,7 @@ impl PrefGroup {
         ];
         groups.extend((0..registry.ids().len()).map(PrefGroup::Workbench));
         groups.extend([
+            PrefGroup::Packages,
             PrefGroup::Units,
             PrefGroup::ImportExport,
             PrefGroup::Printing,
@@ -67,6 +70,7 @@ impl PrefGroup {
                 .and_then(|id| registry.descriptor(id))
                 .map(|d| d.label.clone())
                 .unwrap_or_default(),
+            PrefGroup::Packages => "Workbench packages".to_string(),
             PrefGroup::Units => "Units".to_string(),
             PrefGroup::ImportExport => "Import / Export".to_string(),
             PrefGroup::Printing => "3D printing".to_string(),
@@ -82,6 +86,7 @@ impl PrefGroup {
             PrefGroup::Input => &["Mouse", "6-DoF mouse"],
             PrefGroup::Keyboard => &["Shortcuts"],
             PrefGroup::Workbench(_) => &["General"],
+            PrefGroup::Packages => &["Installed"],
             PrefGroup::Units => &["Units"],
             PrefGroup::ImportExport => &["STEP", "IGES"],
             PrefGroup::Printing => &["Printer"],
@@ -113,6 +118,8 @@ pub struct PreferencesState {
     /// The shortcut waiting for a key press: its id, and whether the key
     /// is added to its keys rather than replacing them.
     recording: Option<(String, bool)>,
+    /// An install or a removal the packages page asked for, for the host.
+    pub package_request: Option<super::UiCommand>,
 }
 
 impl Default for PreferencesState {
@@ -128,6 +135,7 @@ impl Default for PreferencesState {
             size: DIALOG,
             just_opened: false,
             recording: None,
+            package_request: None,
         }
     }
 }
@@ -156,6 +164,8 @@ pub struct PreferencesInputs<'a> {
     pub nav_buttons: u32,
     /// The scripts folder's scripts, which take keys like any command.
     pub scripts: &'a [crate::script_library::ScriptEntry],
+    /// The workbench packages found at start and since.
+    pub packages: &'a [workbenches::PackageStatus],
 }
 
 /// The six ways the puck moves, in the order the device reports them: what
@@ -528,6 +538,7 @@ fn draw_content(
                             keyboard_page(ui, state, inputs.registry, inputs.scripts, &filter)
                         }
                         PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, &filter),
+                        PrefGroup::Packages => packages_page(ui, state, inputs.packages, &filter),
                         PrefGroup::Units => units_page(ui, state, &filter),
                         PrefGroup::ImportExport => import_page(ui, state, &filter),
                         PrefGroup::Printing => printing_page(ui, state, &filter),
@@ -635,6 +646,7 @@ fn reset_group(state: &mut PreferencesState) {
         PrefGroup::ImportExport => state.draft.import = defaults.import,
         PrefGroup::Printing => state.draft.printing = defaults.printing,
         PrefGroup::Ai => state.draft.ai.ask_before_changes = defaults.ai.ask_before_changes,
+        PrefGroup::Packages => state.draft.packages = defaults.packages,
         PrefGroup::Workbench(_) | PrefGroup::Updates => {}
     }
 }
@@ -1141,6 +1153,7 @@ fn search_results(
                     keyboard_page(ui, state, inputs.registry, inputs.scripts, filter)
                 }
                 PrefGroup::Workbench(i) => workbench_page(ui, inputs.registry, i, filter),
+                PrefGroup::Packages => packages_page(ui, state, inputs.packages, filter),
                 PrefGroup::Units => units_page(ui, state, filter),
                 PrefGroup::ImportExport => import_page(ui, state, filter),
                 PrefGroup::Printing => printing_page(ui, state, filter),
@@ -1376,6 +1389,127 @@ fn split_words(text: &str) -> Vec<String> {
 }
 
 /// The running version and where releases are published.
+/// Installed workbench packages: whether each loads, what it may reach,
+/// removing it, and installing another. Everything here takes effect the
+/// next time the app starts.
+fn packages_page(
+    ui: &mut Ui,
+    state: &mut PreferencesState,
+    packages: &[workbenches::PackageStatus],
+    filter: &str,
+) {
+    use workbenches::PackageState;
+    if !filter.is_empty()
+        && !"workbench packages plugins install remove extensions".contains(filter)
+        && !packages
+            .iter()
+            .any(|p| p.name.to_lowercase().contains(filter) || p.id.contains(filter))
+    {
+        return;
+    }
+    ui.label(
+        RichText::new(
+            "Workbenches others made, each run apart from the app and reaching only its own \
+             folder and what you allow here. Changes take effect the next time printCAD starts.",
+        )
+        .font(sans(FONT_XS))
+        .color(TEXT3),
+    );
+    ui.add_space(SPACE_1);
+    if packages.is_empty() {
+        ui.label(
+            RichText::new("No packages are installed.")
+                .font(sans(FONT_SM))
+                .color(TEXT2),
+        );
+    }
+    let draft = &mut state.draft.packages;
+    for package in packages {
+        Card::new().padding(10.0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(
+                    RichText::new(&package.name)
+                        .font(sans_semibold(FONT_SM))
+                        .color(TEXT1),
+                );
+                ui.label(
+                    RichText::new(&package.version)
+                        .font(mono(FONT_XS))
+                        .color(TEXT3),
+                );
+                let (text, color) = match &package.state {
+                    PackageState::Loaded => ("Loaded", SUCCESS),
+                    PackageState::Disabled => ("Turned off", TEXT3),
+                    PackageState::Failed(_) => ("Did not load", DANGER),
+                    PackageState::Installed => ("Loads at the next start", INFO),
+                    PackageState::Removed => ("Removed", WARNING),
+                };
+                ui_kit::widgets::badge(ui, text, color);
+            });
+            if !package.description.is_empty() {
+                ui.label(
+                    RichText::new(&package.description)
+                        .font(sans(FONT_XS))
+                        .color(TEXT2),
+                );
+            }
+            if let PackageState::Failed(reason) = &package.state {
+                ui.label(RichText::new(reason).font(sans(FONT_XS)).color(DANGER));
+            }
+            ui.label(
+                RichText::new(format!("{} · {}", package.id, package.dir.display()))
+                    .font(mono(FONT_XS))
+                    .color(TEXT3),
+            );
+            if package.state == PackageState::Removed {
+                return;
+            }
+            let mut enabled = draft.enabled(&package.id);
+            if ui_kit::widgets::check_row(ui, &mut enabled, "Load when printCAD starts").changed() {
+                draft.disabled.retain(|d| d != &package.id);
+                if !enabled {
+                    draft.disabled.push(package.id.clone());
+                }
+            }
+            let mut grant = draft.grant(&package.id);
+            let mut changed = false;
+            if package.requested.save_dialog {
+                changed |= ui_kit::widgets::check_row(
+                    ui,
+                    &mut grant.save_dialog,
+                    "May ask where to save a file",
+                )
+                .changed();
+            }
+            if package.requested.helper {
+                changed |= ui_kit::widgets::check_row(
+                    ui,
+                    &mut grant.helper,
+                    "May run the programs it ships (they run outside its sandbox)",
+                )
+                .changed();
+            }
+            if package.requested.network {
+                changed |=
+                    ui_kit::widgets::check_row(ui, &mut grant.network, "May use the network")
+                        .changed();
+            }
+            if changed {
+                draft.grants.insert(package.id.clone(), grant);
+            }
+            if ui_kit::widgets::small_secondary_button(ui, "Remove").clicked() {
+                state.package_request = Some(super::UiCommand::RemovePackage(package.id.clone()));
+            }
+        });
+        ui.add_space(SPACE_1);
+    }
+    ui.add_space(SPACE_2);
+    if ui_kit::widgets::primary_button(ui, "Install package…").clicked() {
+        state.package_request = Some(super::UiCommand::InstallPackage);
+    }
+}
+
 fn updates_page(ui: &mut Ui) {
     pref_group(
         ui,
@@ -1757,11 +1891,16 @@ mod rail {
             .iter()
             .position(|g| *g == PrefGroup::Keyboard)
             .unwrap();
+        let packages = groups
+            .iter()
+            .position(|g| *g == PrefGroup::Packages)
+            .unwrap();
         let units = groups.iter().position(|g| *g == PrefGroup::Units).unwrap();
         assert_eq!(
-            units - keyboard,
+            packages - keyboard,
             3,
-            "the bench pages sit between Keyboard and Units"
+            "the bench pages sit between Keyboard and the packages page"
         );
+        assert_eq!(units, packages + 1, "then Units");
     }
 }

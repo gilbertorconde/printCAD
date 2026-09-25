@@ -140,6 +140,10 @@ pub enum DocumentOp {
         created_at: i64,
         #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
         formulas: std::collections::BTreeMap<String, String>,
+        /// The workbench package and version that made it, when a loaded
+        /// package did.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        made_by: Option<String>,
     },
     /// Whole-payload feature write (sketch edits, panel editors). Consecutive
     /// updates to the same feature coalesce in the outbox — nothing observes
