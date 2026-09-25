@@ -469,6 +469,19 @@ fn kind_word(kind: kernel_api::ImportedNodeKind) -> &'static str {
         kernel_api::ImportedNodeKind::Assembly => "assembly",
         kernel_api::ImportedNodeKind::Part => "part",
         kernel_api::ImportedNodeKind::Instance => "instance",
+        kernel_api::ImportedNodeKind::Annotations => "annotations",
+        kernel_api::ImportedNodeKind::Annotation => "annotation",
+    }
+}
+
+/// The icon an imported annotation row shows, by what it states.
+fn annotation_icon(annotation: Option<&core_document::Annotation>) -> &'static str {
+    match annotation.map(|a| a.kind) {
+        Some(kernel_api::AnnotationKind::Dimension) => "dimensional-constraint",
+        Some(kernel_api::AnnotationKind::Tolerance) => "check-geometry",
+        Some(kernel_api::AnnotationKind::Datum) => "datum-plane",
+        Some(kernel_api::AnnotationKind::Note) => "info",
+        Some(kernel_api::AnnotationKind::Other) | None => "tree-feature",
     }
 }
 
@@ -518,14 +531,24 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
         }
         kernel_api::ImportedNodeKind::Part => "Part".to_string(),
         kernel_api::ImportedNodeKind::Instance => "Instance".to_string(),
+        kernel_api::ImportedNodeKind::Annotations => {
+            format!("{} annotations from the file", imported.children.len())
+        }
+        kernel_api::ImportedNodeKind::Annotation => match &imported.annotation {
+            Some(annotation) => format!("{}: {}", annotation.kind.label(), annotation.text),
+            None => "Annotation".to_string(),
+        },
     };
     Some(TreeNode {
         id: TreeItemId::ImportedObject(imported.id),
         label,
         detail: Some(detail),
-        tooltip: imported
-            .body_id
-            .map(|body| format!("Linked body: {}", body.0)),
+        tooltip: match &imported.annotation {
+            Some(annotation) => Some(annotation.text.clone()),
+            None => imported
+                .body_id
+                .map(|body| format!("Linked body: {}", body.0)),
+        },
         dirty: false,
         visible: imported.visible,
         suppressed: false,
@@ -546,6 +569,10 @@ fn build_imported_node(document: &Document, id: Uuid) -> Option<TreeNode> {
             kernel_api::ImportedNodeKind::Assembly => "tree-group",
             kernel_api::ImportedNodeKind::Part => "tree-body",
             kernel_api::ImportedNodeKind::Instance => "tree-feature",
+            kernel_api::ImportedNodeKind::Annotations => "tree-group",
+            kernel_api::ImportedNodeKind::Annotation => {
+                annotation_icon(imported.annotation.as_ref())
+            }
         },
         accent_icon: imported.body_id.is_some(),
     })
@@ -1298,6 +1325,8 @@ mod tests {
                 visible: true,
                 body_id: None,
                 local_transform: None,
+                annotation: None,
+                layers: Vec::new(),
             },
         );
         graph.insert(
@@ -1311,6 +1340,8 @@ mod tests {
                 visible: true,
                 body_id: Some(body_id),
                 local_transform: None,
+                annotation: None,
+                layers: Vec::new(),
             },
         );
         doc.set_imported_object_graph(vec![root], graph);
@@ -1367,6 +1398,8 @@ mod tests {
             visible: true,
             body_id: Some(body),
             local_transform: None,
+            annotation: None,
+            layers: Vec::new(),
         };
         let mut graph = std::collections::HashMap::new();
         graph.insert(
@@ -1380,6 +1413,8 @@ mod tests {
                 visible: true,
                 body_id: None,
                 local_transform: None,
+                annotation: None,
+                layers: Vec::new(),
             },
         );
         graph.insert(broken_leaf, part(broken_leaf, broken));
@@ -1616,6 +1651,8 @@ mod tests {
             visible: true,
             body_id: None,
             local_transform: None,
+            annotation: None,
+            layers: Vec::new(),
         }
     }
 

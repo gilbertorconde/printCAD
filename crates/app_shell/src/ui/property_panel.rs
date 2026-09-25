@@ -428,6 +428,40 @@ fn data_groups(
                 kernel_api::ImportedNodeKind::Assembly => "Assembly",
                 kernel_api::ImportedNodeKind::Part => "Part",
                 kernel_api::ImportedNodeKind::Instance => "Instance",
+                kernel_api::ImportedNodeKind::Annotations => "Annotations",
+                kernel_api::ImportedNodeKind::Annotation => "Annotation",
+            };
+            if let Some(annotation) = &obj.annotation {
+                return vec![(
+                    "Annotation".to_string(),
+                    vec![
+                        PropRow::text("Label", &obj.name),
+                        PropRow::text("Kind", annotation.kind.label()),
+                        PropRow::text("Text", &annotation.text),
+                        PropRow::text(
+                            "Describes",
+                            annotation
+                                .body
+                                .and_then(|b| document.bodies().iter().find(|x| x.id == b))
+                                .map(|b| b.name.clone())
+                                .unwrap_or_else(|| "-".to_string()),
+                        )
+                        .dim(annotation.body.is_none()),
+                        PropRow::mono("Lines", annotation.polylines.len().to_string()),
+                    ],
+                )];
+            }
+            // An instance shown as the part it places answers with the
+            // part's layers.
+            let layers = if obj.layers.is_empty() {
+                document
+                    .body_of_imported_object(id)
+                    .and_then(|body| document.imported_object_for_body(body))
+                    .and_then(|part| document.imported_object(part))
+                    .map(|part| part.layers.clone())
+                    .unwrap_or_default()
+            } else {
+                obj.layers.clone()
             };
             vec![(
                 "Imported".to_string(),
@@ -443,6 +477,15 @@ fn data_groups(
                     )
                     .dim(obj.body_id.is_none()),
                     PropRow::mono("Children", obj.children.len().to_string()),
+                    PropRow::text(
+                        "Layers",
+                        if layers.is_empty() {
+                            "-".to_string()
+                        } else {
+                            layers.join(", ")
+                        },
+                    )
+                    .dim(layers.is_empty()),
                 ],
             )]
         }

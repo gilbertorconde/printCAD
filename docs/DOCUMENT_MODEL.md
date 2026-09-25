@@ -57,6 +57,24 @@ The result lands in `ImportedGeometry`: an `Arc<TriMesh>` for drawing, a
 the shape's health check. The kernel shape itself is kept beside it as
 ogeom native text.
 
+## Imported structure, annotations and layers
+
+An import's tree (assemblies, instances, parts) is kept as
+`ImportedObjectNode`s, written by the import's one op and saved with the
+document. Two things a STEP or IGES file carries ride on those nodes:
+
+- **Annotations.** The file's dimensions, geometric tolerances, datums and
+  notes sit in an `Annotations` group under the imported model, one
+  `Annotation` node each: its kind, the text a label shows (`Ø 35 ±0.2`,
+  `Position 0.75 | A`), the polylines the file draws it with and where
+  its label goes, in the frame of the body it describes. They are drawn
+  over the scene where that body is placed and hide with it; View ›
+  Annotations turns them all off, and each row's eye hides one.
+- **Layers.** A part node lists the layers the file puts its body on, by
+  name (an IGES level reads as `level 7`). The property panel shows them.
+
+They come from the file, so a reload does not re-derive them.
+
 ## Edits, undo and replay
 
 - **Every edit records exactly one operation.** Each method that changes the

@@ -18,8 +18,9 @@ Parametric CAD for designing 3D-printed parts. Linux, Rust, Vulkan.
   chamfers, patterns and booleans, all editable in a feature tree.
 - **Assembly:** place bodies against each other with joints: mate two flat
   faces, line up two round ones on one axis, or hold two faces at an angle.
-- **Import:** STEP and IGES as solids; STL, OBJ, 3MF, PLY, glTF and VRML as meshes that can
-  be converted to solids.
+- **Import:** STEP and IGES as solids, with the dimensions, tolerances,
+  datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
+  as meshes that can be converted to solids.
 - **Export:** STEP, STL and 3MF, or straight to your slicer.
 - **Documents:** `.prtcad` files, one tab each, with undo and redo.
 - **View:** GPU picking of faces and edges, a clipping plane, and 6-DoF mouse

@@ -455,6 +455,14 @@ pub struct RenderingSettings {
     /// How every body in the scene is drawn.
     #[serde(default)]
     pub draw_style: DrawStyle,
+    /// Whether the annotations imported files carry (dimensions,
+    /// tolerances, datums, notes) are drawn over the scene.
+    #[serde(default = "default_show_annotations")]
+    pub show_annotations: bool,
+}
+
+fn default_show_annotations() -> bool {
+    true
 }
 
 /// How the scene draws its bodies.
@@ -516,6 +524,7 @@ impl Default for RenderingSettings {
             preview_color: default_preview_color(),
             preview_opacity: default_preview_opacity(),
             draw_style: DrawStyle::default(),
+            show_annotations: default_show_annotations(),
         }
     }
 }

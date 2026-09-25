@@ -22,6 +22,8 @@ pub struct MenuBarInputs<'a> {
     /// "Body › Sketch001" while a sketch is being edited.
     pub breadcrumb: Option<&'a str>,
     pub show_log_panel: bool,
+    /// Imported annotations are drawn over the scene.
+    pub show_annotations: bool,
     pub show_console: bool,
     pub show_assistant: bool,
     pub projection: ProjectionMode,
@@ -296,6 +298,20 @@ pub fn draw_menu_bar(
                                 }
                             }
                         });
+                        if ui
+                            .checkbox(
+                                &mut inputs.show_annotations.clone(),
+                                RichText::new("Annotations").font(sans(FONT_SM)),
+                            )
+                            .on_hover_text(
+                                "Dimensions, tolerances, datums and notes \
+                                 carried by imported files",
+                            )
+                            .clicked()
+                        {
+                            commands.push(UiCommand::ToggleAnnotations);
+                            ui.close();
+                        }
                         ui.separator();
                         if ui
                             .checkbox(

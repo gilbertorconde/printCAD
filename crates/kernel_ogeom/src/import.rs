@@ -22,7 +22,7 @@ use ogeom::math::{Point, Transform, Vector};
 use ogeom::topo::{Filter, Model, Shape, ShapeType, explore};
 use tracing::{debug, info, warn};
 
-use crate::{progress, tess};
+use crate::{annotations, progress, tess};
 
 pub fn import_step(
     path: &Path,
@@ -115,19 +115,23 @@ pub fn import_step(
             face_colors,
             bounds_mm,
             health: Some(crate::health::diagnose(model, shape)),
+            layers: annotations::layers_of(document, &source.placed()),
         })
     });
     let bodies = computed.into_iter().collect::<KernelResult<Vec<_>>>()?;
     let loop_ms = loop_start.elapsed().as_secs_f64() * 1000.0;
 
     let nodes = nodes_from_document(document, bodies.len());
+    let placed: Vec<_> = sources.iter().map(BodySource::placed).collect();
+    let annotations = annotations::annotations(document, &placed, is_iges(path));
 
     info!(
-        "Imported {} `{}`: {} bodies, source unit {:?}, parse {:.1} ms, \
+        "Imported {} `{}`: {} bodies, {} annotations, source unit {:?}, parse {:.1} ms, \
          bodies {:.1} ms, total {:.1} ms",
         if is_iges(path) { "IGES" } else { "STEP" },
         path.display(),
         bodies.len(),
+        annotations.len(),
         source_unit,
         parse_ms,
         loop_ms,
@@ -139,6 +143,7 @@ pub fn import_step(
         report,
         nodes,
         source_unit,
+        annotations,
     })
 }
 
@@ -374,6 +379,15 @@ struct BodySource {
     /// The part product it came from, for colour inheritance.
     part: Option<ProductId>,
     name: Option<String>,
+}
+
+impl BodySource {
+    fn placed(&self) -> annotations::PlacedBody<'_> {
+        annotations::PlacedBody {
+            shape: &self.shape,
+            part: self.part,
+        }
+    }
 }
 
 /// The bodies an import should produce.

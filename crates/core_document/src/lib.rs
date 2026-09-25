@@ -304,6 +304,32 @@ pub struct ImportedObjectNode {
     pub body_id: Option<BodyId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub local_transform: Option<[[f32; 4]; 4]>,
+    /// What an annotation node says and draws.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub annotation: Option<Annotation>,
+    /// The layers the file puts this node's body on, by name.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<String>,
+}
+
+/// An annotation an imported file carries: a dimension, a tolerance, a
+/// datum or a note, with the lines it draws and where its label goes.
+///
+/// The geometry is in the frame of the body it describes, which for an
+/// imported body is where the import put it; it is drawn where the body
+/// is placed, and hidden with it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Annotation {
+    pub kind: kernel_api::AnnotationKind,
+    /// What its label shows.
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub polylines: Vec<Vec<[f32; 3]>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<[f32; 3]>,
+    /// The body it describes, where the file says which.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<BodyId>,
 }
 
 fn default_imported_object_visible() -> bool {
@@ -1738,6 +1764,36 @@ impl Document {
             cursor = node.parent_id;
         }
         true
+    }
+
+    /// Every imported annotation, in tree order, with its node.
+    pub fn imported_annotations(&self) -> Vec<(&ImportedObjectNode, &Annotation)> {
+        let mut out = Vec::new();
+        let mut stack: Vec<Uuid> = self.imported_object_roots.iter().rev().copied().collect();
+        while let Some(id) = stack.pop() {
+            let Some(node) = self.imported_objects.get(&id) else {
+                continue;
+            };
+            if let Some(annotation) = &node.annotation {
+                out.push((node, annotation));
+            }
+            stack.extend(node.children.iter().rev().copied());
+        }
+        out
+    }
+
+    /// Whether an annotation shows: its row and every row above it shown,
+    /// and the body it describes too.
+    pub fn imported_annotation_effective_visible(&self, id: Uuid) -> bool {
+        let Some(node) = self.imported_objects.get(&id) else {
+            return false;
+        };
+        self.imported_object_effective_visible(id)
+            && node
+                .annotation
+                .as_ref()
+                .and_then(|a| a.body)
+                .is_none_or(|body| self.imported_body_effective_visible(body))
     }
 
     pub fn imported_body_effective_visible(&self, body: BodyId) -> bool {
