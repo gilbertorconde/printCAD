@@ -39,6 +39,16 @@ pub fn apply(
         let rigid = rigid_of(matrix);
         for tool in tools {
             let placed = match (&tool.tool, &rigid) {
+                // A primitive is placed by a frame a mirror would make
+                // left-handed: it is built where it is and mirrored whole.
+                (PatternTool::Op(op), None)
+                    if is_isometry(matrix) && matches!(**op, SolidOp::Primitive { .. }) =>
+                {
+                    let tool = build_tool_op(model, Some(&acc), op)?;
+                    transformed(model, &tool, reflection_of(matrix))
+                        .map_err(|e| format!("pattern mirror failed: {e}"))?
+                        .shape
+                }
                 // Isometries (rotations, translations, mirrors) re-run the
                 // op with mapped inputs — exact, analytic, concrete.
                 (PatternTool::Op(op), _) if is_isometry(matrix) => {
@@ -129,11 +139,92 @@ fn map_plane(m: &[[f64; 4]; 4], plane: &ProfilePlane) -> ProfilePlane {
     }
 }
 
+/// Whether the matrix turns space inside out (a mirror).
+fn reflects(m: &[[f64; 4]; 4]) -> bool {
+    let c0 = Vector::new(m[0][0], m[1][0], m[2][0]);
+    let c1 = Vector::new(m[0][1], m[1][1], m[2][1]);
+    let c2 = Vector::new(m[0][2], m[1][2], m[2][2]);
+    c0.dot(c1.cross(c2)) < 0.0
+}
+
+/// The profile moved by `m`. A mirror would leave its plane's frame
+/// left-handed, which a sweep reads as a frame whose y axis points the
+/// other way; the frame keeps its right hand by turning its y axis round,
+/// and the wires follow by turning their v coordinates round, so every
+/// point lands where the mirror puts it.
 fn map_profile(m: &[[f64; 4]; 4], profile: &Profile) -> Profile {
-    Profile {
-        plane: map_plane(m, &profile.plane),
-        wires: profile.wires.clone(),
+    let mut plane = map_plane(m, &profile.plane);
+    if !reflects(m) {
+        return Profile {
+            plane,
+            wires: profile.wires.clone(),
+        };
     }
+    plane.y_axis = plane.y_axis.map(|v| -v);
+    Profile {
+        plane,
+        wires: profile.wires.iter().map(flip_v_wire).collect(),
+    }
+}
+
+fn flip_v(p: [f64; 2]) -> [f64; 2] {
+    [p[0], -p[1]]
+}
+
+/// A wire with its v coordinates turned round.
+fn flip_v_wire(wire: &kernel_api::ProfileWire) -> kernel_api::ProfileWire {
+    use kernel_api::ProfileSegment as S;
+    let segments = wire
+        .segments
+        .iter()
+        .map(|segment| match segment {
+            S::Line { start, end } => S::Line {
+                start: flip_v(*start),
+                end: flip_v(*end),
+            },
+            S::Arc { start, mid, end } => S::Arc {
+                start: flip_v(*start),
+                mid: flip_v(*mid),
+                end: flip_v(*end),
+            },
+            S::Circle { center, radius } => S::Circle {
+                center: flip_v(*center),
+                radius: *radius,
+            },
+            S::Ellipse {
+                center,
+                major,
+                ratio,
+            } => S::Ellipse {
+                center: flip_v(*center),
+                major: flip_v(*major),
+                ratio: *ratio,
+            },
+            // Mirrored, the arc runs the other way round its ellipse: the
+            // point at parameter t lands at -t.
+            S::EllipseArc {
+                center,
+                major,
+                ratio,
+                start_param,
+                end_param,
+            } => S::EllipseArc {
+                center: flip_v(*center),
+                major: flip_v(*major),
+                ratio: *ratio,
+                start_param: -end_param,
+                end_param: -start_param,
+            },
+            S::BSpline {
+                control_points,
+                periodic,
+            } => S::BSpline {
+                control_points: control_points.iter().map(|p| flip_v(*p)).collect(),
+                periodic: *periodic,
+            },
+        })
+        .collect();
+    kernel_api::ProfileWire { segments }
 }
 
 /// A shape-producing op with its world-space inputs moved by a rigid
@@ -158,6 +249,44 @@ fn transformed_op(op: &SolidOp, m: &[[f64; 4]; 4]) -> SolidOp {
                     reversed: *reversed,
                     taper_deg: *taper_deg,
                     direction: direction.map(|d| map_vector(m, d)),
+                },
+                // The axis lies in the profile's plane: its v coordinates
+                // turn round with the wires under a mirror, and a mirror
+                // reverses the sense of turning, which turning about the
+                // opposite direction gives back.
+                SweepKind::Revolve {
+                    axis_origin,
+                    axis_dir,
+                    angle_deg,
+                    second_angle_deg,
+                    midplane,
+                    reversed,
+                } if reflects(m) => SweepKind::Revolve {
+                    axis_origin: flip_v(*axis_origin),
+                    axis_dir: [-axis_dir[0], axis_dir[1]],
+                    angle_deg: *angle_deg,
+                    second_angle_deg: *second_angle_deg,
+                    midplane: *midplane,
+                    reversed: *reversed,
+                },
+                // A mirrored helix climbs the same axis, turning the other
+                // way.
+                SweepKind::Helix {
+                    axis_origin,
+                    axis_dir,
+                    pitch,
+                    height,
+                    left_handed,
+                    cone_angle_deg,
+                    reversed,
+                } if reflects(m) => SweepKind::Helix {
+                    axis_origin: flip_v(*axis_origin),
+                    axis_dir: flip_v(*axis_dir),
+                    pitch: *pitch,
+                    height: *height,
+                    left_handed: !left_handed,
+                    cone_angle_deg: *cone_angle_deg,
+                    reversed: *reversed,
                 },
                 other => other.clone(),
             },

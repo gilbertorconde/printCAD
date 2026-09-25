@@ -184,7 +184,7 @@ impl MirrorPlane {
         }
     }
 
-    /// World-space (point, normal).
+    /// The plane as (point, normal), in the body's own frame.
     pub fn plane(&self) -> ([f64; 3], [f64; 3]) {
         match self {
             MirrorPlane::XY => ([0.0; 3], [0.0, 0.0, 1.0]),

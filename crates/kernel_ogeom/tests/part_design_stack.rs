@@ -944,3 +944,140 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         "the groove takes some of the wall, not all of it: {threaded} (tapped {tapped})"
     );
 }
+
+/// A box off the origin mirrored across each base plane and across one of
+/// its own faces: each copy lands on the far side of that plane.
+#[test]
+fn mirrored_copies_the_pad_across_every_plane_it_is_given() {
+    use wb_part::{FacePick, MirrorPlane};
+    let cases: [(MirrorPlane, [f32; 3], [f32; 3]); 4] = [
+        (MirrorPlane::XY, [0.0, 0.0, -8.0], [10.0, 5.0, 8.0]),
+        (MirrorPlane::XZ, [0.0, -5.0, 0.0], [10.0, 5.0, 8.0]),
+        (MirrorPlane::YZ, [-10.0, 0.0, 0.0], [10.0, 5.0, 8.0]),
+        (
+            MirrorPlane::Face(FacePick {
+                point: [10.0, 2.5, 4.0],
+                normal: [1.0, 0.0, 0.0],
+            }),
+            [0.0, 0.0, 0.0],
+            [20.0, 5.0, 8.0],
+        ),
+    ];
+    let mut failures = Vec::new();
+    for (plane, want_min, want_max) in cases {
+        let (mut doc, body, sketch_id) = setup(10.0, 5.0);
+        let pad = doc
+            .add_feature_in_body(
+                pad_feature(sketch_id, 8.0, false, false),
+                "Pad".into(),
+                Some(body),
+            )
+            .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::Mirrored {
+                refine: false,
+                originals: vec![pad],
+                plane,
+            },
+            "Mirror".into(),
+            Some(body),
+        )
+        .unwrap();
+        let plan = wb_part::body_build_ops(&doc, body).unwrap();
+        let result =
+            OgeomKernel::new().execute_solid_chain(&plan.ops, &TessellationSettings::default());
+        let result = match result {
+            Ok(result) => result,
+            Err(e) => {
+                failures.push(format!("{plane:?}: {e}"));
+                continue;
+            }
+        };
+        let (min, max) = mesh_bounds(&result.mesh);
+        let fits = (0..3)
+            .all(|i| (min[i] - want_min[i]).abs() < 1e-3 && (max[i] - want_max[i]).abs() < 1e-3);
+        if !fits {
+            failures.push(format!(
+                "{plane:?}: bounds {min:?}..{max:?}, want {want_min:?}..{want_max:?}"
+            ));
+        }
+    }
+    assert!(failures.is_empty(), "{failures:#?}");
+}
+
+/// A quarter turn is not symmetric, so its mirror image shows whether the
+/// copy turned the right way: across each base plane it must be the
+/// original's reflection, filling the bounds the reflection fills.
+#[test]
+fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
+    use wb_part::MirrorPlane;
+    let build = |mirror: Option<MirrorPlane>| {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let mut sketch = Sketch::new("ring");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(8.0, 0.0))));
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(8.0, 2.0))));
+        let d = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 2.0))));
+        for (s, e) in [(a, b), (b, c), (c, d), (d, a)] {
+            sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
+        }
+        let plane = sketch.plane;
+        let sketch_id = doc
+            .add_feature_in_body(SketchFeature::new(sketch, plane), "ring".into(), Some(body))
+            .unwrap();
+        let turn = doc
+            .add_feature_in_body(
+                PartFeature::Revolution {
+                    refine: false,
+                    sketch: sketch_id,
+                    angle_deg: 90.0,
+                    axis: wb_part::RevolveAxis::SketchY,
+                    reversed: false,
+                    midplane: false,
+                    second_angle_deg: None,
+                },
+                "Revolution".into(),
+                Some(body),
+            )
+            .unwrap();
+        if let Some(plane) = mirror {
+            doc.add_feature_in_body(
+                PartFeature::Mirrored {
+                    refine: false,
+                    originals: vec![turn],
+                    plane,
+                },
+                "Mirror".into(),
+                Some(body),
+            )
+            .unwrap();
+        }
+        let ops = wb_part::body_build_ops(&doc, body).unwrap().ops;
+        let result = OgeomKernel::new()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .unwrap();
+        mesh_bounds(&result.mesh)
+    };
+    let (min, max) = build(None);
+    for (plane, axis) in [
+        (MirrorPlane::YZ, 0),
+        (MirrorPlane::XZ, 1),
+        (MirrorPlane::XY, 2),
+    ] {
+        let (got_min, got_max) = build(Some(plane));
+        for i in 0..3 {
+            let (want_lo, want_hi) = if i == axis {
+                (min[i].min(-max[i]), max[i].max(-min[i]))
+            } else {
+                (min[i], max[i])
+            };
+            assert!(
+                (got_min[i] - want_lo).abs() < 0.1 && (got_max[i] - want_hi).abs() < 0.1,
+                "{plane:?} axis {i}: {:?}..{:?}, want {want_lo}..{want_hi} (original {min:?}..{max:?})",
+                got_min[i],
+                got_max[i]
+            );
+        }
+    }
+}

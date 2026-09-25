@@ -158,6 +158,20 @@ impl PartDesignWorkbench {
         })
     }
 
+    /// The flat face picked in the viewport, as a plane to mirror across;
+    /// a curved face has no plane to offer.
+    fn selected_mirror_face(ctx: &WorkbenchRuntimeContext, body: BodyId) -> Option<MirrorPlane> {
+        let face = ctx.selected_face_in(body)?;
+        let flat = matches!(
+            face.surface,
+            None | Some(kernel_api::FaceSurface::Plane { .. })
+        );
+        flat.then_some(MirrorPlane::Face(FacePick {
+            point: face.point,
+            normal: face.normal,
+        }))
+    }
+
     /// What a dress-up takes from the viewport selection, in `body`'s
     /// frame: the picked edges first, else the edges of the picked face,
     /// else every edge.
@@ -421,7 +435,7 @@ impl PartDesignWorkbench {
                     PartFeature::Mirrored {
                         refine: false,
                         originals: original.into_iter().collect(),
-                        plane: MirrorPlane::YZ,
+                        plane: Self::selected_mirror_face(ctx, body).unwrap_or(MirrorPlane::YZ),
                     },
                     "Mirrored",
                 )
@@ -1427,6 +1441,75 @@ mod body_tool {
             ]
         );
     }
+    /// The Mirror tool with a face picked: a flat face is the plane it
+    /// starts with, a curved one leaves it on YZ.
+    #[test]
+    fn a_picked_flat_face_is_the_plane_a_new_mirror_starts_with() {
+        let mirror_with = |surface: Option<kernel_api::FaceSurface>| {
+            let mut wb = PartDesignWorkbench::default();
+            let mut doc = Document::new("t");
+            let body = doc.create_body(None);
+            let pad = doc
+                .add_feature_in_body(
+                    PartFeature::Primitive {
+                        refine: false,
+                        kind: primitive_preset("box").unwrap(),
+                        placement: kernel_api::Placement::default(),
+                        subtractive: false,
+                    },
+                    "Box".into(),
+                    Some(body),
+                )
+                .unwrap();
+            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            ctx.selected_body_id = Some(body.0);
+            ctx.active_document_object = Some(pad);
+            ctx.selected_face = Some(core_document::FaceRef {
+                point: [10.0, 2.5, 4.0],
+                normal: [1.0, 0.0, 0.0],
+                surface,
+            });
+            wb.on_input(
+                &WorkbenchInputEvent::ToolActivated,
+                Some("part.mirror"),
+                &mut ctx,
+            );
+            let mirrored = doc
+                .feature_tree()
+                .all_nodes()
+                .find_map(|(_, n)| match PartFeature::from_json(&n.data).ok()? {
+                    PartFeature::Mirrored {
+                        plane, originals, ..
+                    } => Some((plane, originals)),
+                    _ => None,
+                })
+                .expect("the tool made a mirror");
+            assert_eq!(
+                mirrored.1,
+                vec![pad],
+                "the selected feature is the original"
+            );
+            mirrored.0
+        };
+        let flat = kernel_api::FaceSurface::Plane {
+            origin: [10.0, 0.0, 0.0],
+            normal: [1.0, 0.0, 0.0],
+        };
+        assert_eq!(
+            mirror_with(Some(flat)),
+            MirrorPlane::Face(FacePick {
+                point: [10.0, 2.5, 4.0],
+                normal: [1.0, 0.0, 0.0],
+            })
+        );
+        let round = kernel_api::FaceSurface::Cylinder {
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: 5.0,
+        };
+        assert_eq!(mirror_with(Some(round)), MirrorPlane::YZ);
+    }
+
     #[test]
     fn the_coordinate_system_tool_places_a_frame_on_the_body() {
         let mut wb = PartDesignWorkbench::default();
