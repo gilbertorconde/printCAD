@@ -123,7 +123,7 @@ impl Recorder {
 fn stem(call: &Recorded) -> String {
     let from_arg = |name: &str| call.args.get(name).and_then(Value::as_str);
     let raw = match call.id.as_str() {
-        "sketch.new" => "sketch",
+        "sketch.new" | "sketch.import_dxf" => "sketch",
         "doc.new_body" => "body",
         "sketch.draw" => from_arg("tool").unwrap_or("shape"),
         "part.datum" => from_arg("kind").unwrap_or("datum"),

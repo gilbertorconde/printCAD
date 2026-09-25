@@ -144,6 +144,18 @@ fn run_command(&mut self, id: &str, args: &CommandArgs, ctx: &mut WorkbenchRunti
   duplicate.
 - Scripts reach it as `pc.mine.slab{width = 20}`.
 
+A command that takes a file as `path` can also serve File › Import.
+Register the file kind beside it:
+
+```rust
+context.register_import(FileImport::new("Slab drawing", ["slab"], "mine.import"));
+```
+
+- The import dialog offers the extensions, and a picked file with one of
+  them runs the command with `path` set, recorded as that command.
+- A feature id the command answers is selected in the tree.
+- Registration fails when the command is not one the workbench registers.
+
 ## 6. Store features
 
 Define a type implementing `WorkbenchFeature` (see
@@ -258,7 +270,8 @@ to the new one as `ctx.attach_request`.
 5. `on_input` for the tools.
 6. `task` and `ui_task_panel` for editing, `ui_settings` for preferences.
 7. `menu_items` and `on_command` for menus and start cards.
-8. `register_command` and `run_command` for what scripts can do.
+8. `register_command` and `run_command` for what scripts can do, and
+   `register_import` for files it reads.
 9. Registration in `crates/workbenches/src/lib.rs`.
 
 `crates/app_shell/src/app/seam_lint.rs` fails if a workbench name appears in

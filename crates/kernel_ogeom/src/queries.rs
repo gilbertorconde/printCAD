@@ -124,4 +124,8 @@ impl KernelQueries for OgeomQueries {
             }
         })
     }
+
+    fn read_dxf(&self, text: &str) -> KernelResult<kernel_api::Drawing2d> {
+        crate::dxf::read_dxf(text)
+    }
 }

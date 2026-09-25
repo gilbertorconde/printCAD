@@ -34,8 +34,12 @@ impl PrintCadApp {
     /// the response is delivered later via `drain_kernel_responses` and the
     /// document mutation happens in `apply_step_import` once the worker is
     /// done. Logging the start/finish here keeps the user oriented while the
-    /// import is in flight.
+    /// import is in flight. A file a workbench imports goes to the
+    /// workbench instead (`import_with_bench`).
     pub(crate) fn import_step_at(&mut self, path: &Path, detail: TessellationSettings) {
+        if self.import_with_bench(path) {
+            return;
+        }
         app_log::info(format!(
             "Importing {} `{}`...",
             format_of(path),

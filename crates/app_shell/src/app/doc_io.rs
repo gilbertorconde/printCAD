@@ -766,10 +766,13 @@ impl PrintCadApp {
                 }
             }
             FileDialogKind::ImportStep => {
-                // A mesh file has no shapes to mesh, so the meshing options
-                // the import dialog asks for mean nothing to it.
+                // A mesh file has no shapes to mesh, and a file a workbench
+                // imports is the workbench's to read, so the meshing options
+                // the import dialog asks for mean nothing to either.
                 if let Some(path) = path {
-                    if kernel_ogeom::is_mesh_file(&path) {
+                    if kernel_ogeom::is_mesh_file(&path)
+                        || self.registry.file_import_for(&path).is_some()
+                    {
                         self.import_step_at(&path, self.last_step_import_detail.clone());
                     } else {
                         self.session.step_import_pending =
@@ -828,23 +831,39 @@ impl PrintCadApp {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| "untitled".to_string());
         let recent_dir = self.recent.last_dir.clone();
+        // What the workbenches import beside the host's own formats.
+        let bench_imports: Vec<(String, Vec<String>)> = self
+            .registry
+            .file_imports()
+            .into_iter()
+            .map(|(_, import)| (import.label.clone(), import.extensions.clone()))
+            .collect();
 
         std::thread::spawn(move || {
             let mut dialog = match kind {
-                FileDialogKind::ImportStep => rfd::FileDialog::new()
-                    .add_filter(
-                        "CAD or mesh file",
-                        &[
-                            "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb",
-                            "gltf", "wrl", "vrml",
-                        ],
-                    )
-                    .add_filter("STEP file", &["step", "stp"])
-                    .add_filter("IGES file", &["iges", "igs"])
-                    .add_filter(
-                        "Mesh (STL, OBJ, 3MF, PLY, glTF, VRML)",
-                        &["stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml"],
-                    ),
+                FileDialogKind::ImportStep => {
+                    let mut any = vec![
+                        "step", "stp", "iges", "igs", "stl", "obj", "3mf", "ply", "glb", "gltf",
+                        "wrl", "vrml",
+                    ];
+                    any.extend(
+                        bench_imports
+                            .iter()
+                            .flat_map(|(_, e)| e.iter().map(String::as_str)),
+                    );
+                    let mut dialog = rfd::FileDialog::new()
+                        .add_filter("Any file printCAD imports", &any)
+                        .add_filter("STEP file", &["step", "stp"])
+                        .add_filter("IGES file", &["iges", "igs"])
+                        .add_filter(
+                            "Mesh (STL, OBJ, 3MF, PLY, glTF, VRML)",
+                            &["stl", "obj", "3mf", "ply", "glb", "gltf", "wrl", "vrml"],
+                        );
+                    for (label, extensions) in &bench_imports {
+                        dialog = dialog.add_filter(label.as_str(), extensions);
+                    }
+                    dialog
+                }
                 FileDialogKind::RunScript => {
                     let dialog = rfd::FileDialog::new().add_filter("Lua script", &["lua"]);
                     match settings::scripts_dir().filter(|d| d.is_dir()) {

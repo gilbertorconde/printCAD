@@ -994,6 +994,16 @@ pub enum ProjectedEdge {
     Polyline(Vec<[f64; 2]>),
 }
 
+/// The curves of a 2D drawing file, in the drawing's own coordinates.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct Drawing2d {
+    /// Polylines drawn as outline, each as its points in order; a closed
+    /// one ends on the point it starts from.
+    pub visible: Vec<Vec<[f64; 2]>>,
+    /// Polylines the drawing marks hidden.
+    pub hidden: Vec<Vec<[f64; 2]>>,
+}
+
 /// Geometry questions a workbench may ask while it runs, answered by the
 /// kernel at once. Shapes arrive as the snapshot bytes the document keeps.
 /// The solid two shapes share: its volume, its centre and its mesh, in
@@ -1026,6 +1036,11 @@ pub trait KernelQueries: Send + Sync {
         near: [f64; 3],
         plane: &ProfilePlane,
     ) -> KernelResult<ProjectedEdge>;
+
+    /// The curves of a DXF drawing, given as its text.
+    fn read_dxf(&self, _text: &str) -> KernelResult<Drawing2d> {
+        Err(KernelError::Unsupported("reading DXF".into()))
+    }
 }
 
 /// Standardized error type for kernel interactions.

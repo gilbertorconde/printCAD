@@ -164,6 +164,53 @@ impl PrintCadApp {
         Some((result, outcome))
     }
 
+    /// Import `path` through the workbench that registered its extension
+    /// (`WorkbenchContext::register_import`): its command runs with the
+    /// file as `path`, is recorded as that command, and what it answers,
+    /// when a feature, is selected in the tree. `false` when no workbench
+    /// imports such a file.
+    pub(crate) fn import_with_bench(&mut self, path: &std::path::Path) -> bool {
+        let Some((bench, import)) = self.registry.file_import_for(path) else {
+            return false;
+        };
+        let command = import.command.clone();
+        let label = import.label.clone();
+        let args: core_document::CommandArgs = [(
+            "path".to_string(),
+            serde_json::json!(path.display().to_string()),
+        )]
+        .into_iter()
+        .collect();
+        self.session.journal.label_next(format!("Import {label}"));
+        let params = self.interaction_ctx_params();
+        let Some((result, outcome)) = self.with_workbench_ctx(&bench, params, |wb, ctx| {
+            let result = wb.run_command(&command, &args, ctx);
+            if let Ok(answer) = &result {
+                ctx.record(command.clone(), args.clone(), answer.clone());
+            }
+            result
+        }) else {
+            return false;
+        };
+        self.apply_hook_outcome(outcome, HookSite::Interaction);
+        match result {
+            Ok(answer) => {
+                self.session.screen = crate::ui::Screen::Workspace;
+                if let Some(id) = answer.as_str().and_then(|s| Uuid::parse_str(s).ok())
+                    && self
+                        .session
+                        .document
+                        .get_feature_meta(FeatureId(id))
+                        .is_some()
+                {
+                    self.session.tree_selection = Some(TreeItemId::Feature(FeatureId(id)));
+                }
+            }
+            Err(err) => app_log::error(format!("Could not import {}: {err}", path.display())),
+        }
+        true
+    }
+
     /// The active workbench's per-frame hook. Tool enablement, overlays
     /// and the HUD all read state it refreshes, so it runs before the
     /// scene and the UI are built.
