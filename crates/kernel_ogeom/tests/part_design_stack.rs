@@ -879,7 +879,6 @@ fn a_variable_drives_a_named_sketch_dimension_and_the_pad_on_it() {
 /// An M6 hole with its thread modeled: the thread's groove is cut into the
 /// tap-drilled wall, out toward the M6 major diameter, a closed solid.
 #[test]
-#[ignore = "kernel: cutting a multi-turn helical sweep from a bored solid fails in the boolean (ogeom-rs#56)"]
 fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
     let (mut doc, body, rect_id) = setup(20.0, 20.0);
     doc.add_feature_in_body(

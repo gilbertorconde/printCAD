@@ -1332,7 +1332,6 @@ fn two_solids_overlap_by_the_volume_they_share() {
 /// curved surface itself, not on a plane through where it is first met:
 /// to the first face, up to the picked face, and up to it with an offset.
 #[test]
-#[ignore = "kernel: booleans refuse a half space bounded by a curved face, so a sweep cannot be trimmed on a curved surface (ogeom-rs#55)"]
 fn a_pad_stops_exactly_on_a_curved_face() {
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();

@@ -800,15 +800,9 @@ on the start page (`Screen::Start`); the recent list lives in
   Up to face (`ExtrudeTermination::UpToFace`, the base's face nearest the
   pick), to first and to last trim a long prism by the half-space of the
   target face's whole surface, pushed out by the offset along an offset
-  surface. Flat targets are exact; curved ones wait on the kernel's
-  booleans accepting a curved half-space and until then fail as a
-  `ChainError` on the feature (the ignored `a_pad_stops_exactly_on_a_curved_face`
-  test flips green when they do).
+  surface, so flat and curved targets alike stop exactly on the face.
 - Helix with height 0 (flat spiral) is rejected; use a small pitch instead.
 - Hole threads: a threaded standard hole drills its tap diameter
   (ISO 273 clearances otherwise); "Modeled thread" also cuts the 60°
   metric groove along a helix out to the major diameter (`thread_cut` in
-  `wb_part/src/build.rs`), which waits on the kernel's boolean handling
-  a multi-turn helical sweep and until then fails as a `ChainError` on the
-  hole (the ignored `a_modeled_thread_cuts_its_groove_into_the_hole_wall`
-  flips green when it does).
+  `wb_part/src/build.rs`).
