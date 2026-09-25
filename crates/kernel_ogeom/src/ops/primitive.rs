@@ -116,13 +116,18 @@ pub fn build_tool(
                 if a2 <= a1 {
                     return Err("sphere latitude range is empty".into());
                 }
+                // The band between the two latitudes, capped flat: in from
+                // the axis at the lower latitude's height, round the
+                // meridian, and back to the axis at the upper one's. At a
+                // pole the cap shrinks to nothing and is left out.
                 let p = |a: f64| [radius * a.cos(), radius * a.sin()];
-                let mut wire = Vec::new();
                 let (p1, p2) = (p(a1), p(a2));
                 let on_axis = |pt: [f64; 2]| pt[0].abs() <= 1e-9;
+                let (below, above) = ([0.0, p1[1]], [0.0, p2[1]]);
+                let mut wire = Vec::new();
                 if !on_axis(p1) {
                     wire.push(ProfileSegment::Line {
-                        start: [0.0, 0.0],
+                        start: below,
                         end: p1,
                     });
                 }
@@ -134,13 +139,13 @@ pub fn build_tool(
                 if !on_axis(p2) {
                     wire.push(ProfileSegment::Line {
                         start: p2,
-                        end: [0.0, 0.0],
+                        end: above,
                     });
                 }
-                if on_axis(p1) && on_axis(p2) {
-                    // Full meridian: close pole to pole along the axis.
-                    wire.push(ProfileSegment::Line { start: p2, end: p1 });
-                }
+                wire.push(ProfileSegment::Line {
+                    start: above,
+                    end: below,
+                });
                 revolve_synthetic(model, placement, wire, angle_deg3_or_full(*angle3_deg))
             }
         }

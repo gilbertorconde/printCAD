@@ -1472,3 +1472,298 @@ fn a_pad_stops_on_the_picked_flat_face_and_its_offset() {
     let want = 4000.0 + 500.0 + 36.0 * 8.0;
     assert!((volume - want).abs() < 1e-3, "volume {volume}, want {want}");
 }
+
+/// The kernel's volume of the solid `ops` build.
+fn volume_of(ops: &[SolidOp]) -> Result<f64, String> {
+    let mut kernel = new_kernel();
+    let built = kernel
+        .execute_solid_chain(ops, &TessellationSettings::default())
+        .map_err(|e| e.to_string())?;
+    kernel
+        .physical_properties(&built.brep_blob)
+        .map_err(|e| e.to_string())?
+        .volume_mm3
+        .ok_or_else(|| "no closed volume".to_string())
+}
+
+fn assert_volume(ops: &[SolidOp], want: f64, what: &str) {
+    let got = volume_of(ops).unwrap_or_else(|e| panic!("{what}: {e}"));
+    assert!(
+        (got - want).abs() <= want * 1e-4,
+        "{what}: volume {got}, want {want}"
+    );
+}
+
+/// `wire` walked the other way round: clockwise where it was
+/// counter-clockwise.
+fn walked_back(wire: &ProfileWire) -> ProfileWire {
+    let mut segments = wire.segments.clone();
+    segments.reverse();
+    for s in &mut segments {
+        if let ProfileSegment::Line { start, end } = s {
+            std::mem::swap(start, end);
+        }
+    }
+    ProfileWire { segments }
+}
+
+/// The XZ plane, v up along world Z: where a spine rising from the XY
+/// plane is drawn.
+fn xz_plane() -> ProfilePlane {
+    ProfilePlane {
+        origin: [0.0; 3],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [0.0, -1.0, 0.0],
+    }
+}
+
+fn pipe_along(profile: ProfileWire, spine: Vec<ProfileSegment>) -> SolidOp {
+    SolidOp::Pipe {
+        profile: Profile {
+            plane: xy_plane(),
+            wires: vec![profile],
+        },
+        spine: Profile {
+            plane: xz_plane(),
+            wires: vec![ProfileWire { segments: spine }],
+        },
+        frenet: false,
+        op: BooleanOp::NewSolid,
+    }
+}
+
+fn smooth_loft(a: ProfileWire, b: ProfileWire) -> SolidOp {
+    SolidOp::Loft {
+        sections: vec![
+            Profile {
+                plane: xy_plane(),
+                wires: vec![a],
+            },
+            Profile {
+                plane: plane_at_z(15.0),
+                wires: vec![b],
+            },
+        ],
+        ruled: false,
+        closed: false,
+        op: BooleanOp::NewSolid,
+    }
+}
+
+/// A 2 x 2 square 10 to 12 mm from the sketch's Y axis, swept 20 mm up
+/// it at pitch 5: four turns of a profile whose centroid runs 11 mm out.
+fn helix_of(profile: ProfileWire, cone_angle_deg: f64, pitch: f64, height: f64) -> SolidOp {
+    SolidOp::Sweep {
+        profile: Profile {
+            plane: xy_plane(),
+            wires: vec![profile],
+        },
+        kind: SweepKind::Helix {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            pitch,
+            height,
+            left_handed: false,
+            cone_angle_deg,
+            reversed: false,
+        },
+        op: BooleanOp::NewSolid,
+    }
+}
+
+#[test]
+#[ignore = "kernel: make_loft_skinned misses its tolerance on sections with corners (0.15 mm on squares) and on circles (0.003 mm where the skin is a cylinder) (ogeom-rs#57)"]
+fn a_smooth_loft_holds_its_sections_exactly() {
+    let square = rect_wire(-5.0, -5.0, 5.0, 5.0);
+    assert_volume(&[smooth_loft(square.clone(), square)], 1500.0, "squares");
+    let circle = circle_wire(0.0, 0.0, 5.0);
+    assert_volume(
+        &[smooth_loft(circle.clone(), circle)],
+        std::f64::consts::PI * 25.0 * 15.0,
+        "circles",
+    );
+}
+
+#[test]
+#[ignore = "kernel: make_pipe_shell and the helical sweep read a reversed ring edge's curve from its start, ignoring its sense (ogeom-rs#58)"]
+fn a_clockwise_profile_pipes_and_coils_as_a_counter_clockwise_one_does() {
+    let square = rect_wire(-2.0, -2.0, 2.0, 2.0);
+    let rise = vec![ProfileSegment::Line {
+        start: [0.0, 0.0],
+        end: [0.0, 20.0],
+    }];
+    assert_volume(
+        &[pipe_along(square.clone(), rise.clone())],
+        320.0,
+        "ccw pipe",
+    );
+    assert_volume(&[pipe_along(walked_back(&square), rise)], 320.0, "cw pipe");
+    let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
+    let a = volume_of(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)]).unwrap();
+    let b = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 20.0)]).unwrap();
+    assert!((a - b).abs() < 1e-6, "{a} vs {b}");
+}
+
+#[test]
+#[ignore = "kernel: make_pipe_shell refuses a profile square to a curved spine's start as leaning (the station tangent against a 1e-9 test), and a conical helix likewise (ogeom-rs#59)"]
+fn a_profile_square_to_an_arc_spine_pipes_along_it() {
+    // A quarter circle rising from the origin, square to the XY plane
+    // where it starts: its centre 10 mm along X.
+    let arc = vec![ProfileSegment::Arc {
+        start: [0.0, 0.0],
+        mid: [10.0 - 50f64.sqrt(), 50f64.sqrt()],
+        end: [10.0, 10.0],
+    }];
+    // Pappus: the square's area times the length its centroid runs.
+    let want = 16.0 * 10.0 * std::f64::consts::FRAC_PI_2;
+    assert_volume(
+        &[pipe_along(rect_wire(-2.0, -2.0, 2.0, 2.0), arc)],
+        want,
+        "arc pipe",
+    );
+    volume_of(&[helix_of(rect_wire(10.0, 0.0, 12.0, 2.0), 10.0, 5.0, 20.0)])
+        .expect("a conical helix");
+}
+
+#[test]
+#[ignore = "kernel: a circle piped along a straight line comes out 2.6% short of the cylinder it is (ogeom-rs#60)"]
+fn a_circle_piped_along_a_line_is_a_cylinder() {
+    let rise = vec![ProfileSegment::Line {
+        start: [0.0, 0.0],
+        end: [0.0, 20.0],
+    }];
+    assert_volume(
+        &[pipe_along(circle_wire(0.0, 0.0, 2.0), rise)],
+        std::f64::consts::PI * 4.0 * 20.0,
+        "cylinder",
+    );
+}
+
+#[test]
+#[ignore = "kernel: the helical sweep is 0.68% light, overshoots its radius and height, and pitch 3 over 30 mm leaves a solid the mass properties refuse (ogeom-rs#61)"]
+fn a_helical_sweep_is_as_big_as_pappus_says() {
+    let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
+    let want = 4.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0;
+    assert_volume(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)], want, "4 turns");
+    let mut kernel = new_kernel();
+    let built = kernel
+        .execute_solid_chain(
+            &[helix_of(coil.clone(), 0.0, 5.0, 20.0)],
+            &TessellationSettings::default(),
+        )
+        .unwrap();
+    let (min, max) = built.bounds_mm.unwrap();
+    assert_close(max[0], 12.0, 1e-3, "outer radius");
+    assert_close(min[1], 0.0, 1e-3, "starts on the profile");
+    assert_close(max[1], 22.0, 1e-3, "height plus the profile");
+    assert_volume(
+        &[helix_of(coil, 0.0, 3.0, 30.0)],
+        10.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0,
+        "10 turns",
+    );
+}
+
+#[test]
+#[ignore = "kernel: a revolve through less than a full turn fails when the profile has an edge on the axis, 'wire 0 is open' (ogeom-rs#62)"]
+fn a_partial_revolve_of_a_profile_on_its_axis_builds() {
+    use kernel_api::PrimitiveKind;
+    let turn = |angle: f64| SolidOp::Sweep {
+        profile: Profile {
+            plane: xy_plane(),
+            wires: vec![rect_wire(0.0, 0.0, 5.0, 10.0)],
+        },
+        kind: SweepKind::Revolve {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            angle_deg: angle,
+            second_angle_deg: None,
+            midplane: false,
+            reversed: false,
+        },
+        op: BooleanOp::NewSolid,
+    };
+    let full = std::f64::consts::PI * 25.0 * 10.0;
+    assert_volume(&[turn(270.0)], full * 0.75, "270 degree revolve");
+    let prim = |kind| SolidOp::Primitive {
+        kind,
+        placement: Default::default(),
+        op: BooleanOp::NewSolid,
+    };
+    assert_volume(
+        &[prim(PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 10.0,
+            angle_deg: 270.0,
+        })],
+        full * 0.75,
+        "270 degree cylinder",
+    );
+    let band = 462.800_306_058_165_35;
+    assert_volume(
+        &[prim(PrimitiveKind::Sphere {
+            radius: 5.0,
+            angle1_deg: -45.0,
+            angle2_deg: 45.0,
+            angle3_deg: 270.0,
+        })],
+        band * 0.75,
+        "270 degree sphere band",
+    );
+}
+
+#[test]
+#[ignore = "kernel: a scaled copy that does not touch the solid fuses as a malformed solid, 208 mm3 where it is 280 (ogeom-rs#63)"]
+fn a_scaled_copy_standing_apart_is_whole() {
+    let apart: [[f64; 4]; 4] = [
+        [1.5, 0.0, 0.0, 10.0],
+        [0.0, 1.5, 0.0, 0.0],
+        [0.0, 0.0, 1.5, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    assert_volume(
+        &[
+            blind_pad(
+                vec![rect_wire(0.0, 0.0, 4.0, 4.0)],
+                4.0,
+                BooleanOp::NewSolid,
+            ),
+            SolidOp::Transform {
+                transforms: vec![apart],
+                originals: vec![0],
+            },
+        ],
+        64.0 + 216.0,
+        "cube and its copy",
+    );
+}
+
+/// A sphere's latitude limits cut it flat: a band between two parallels,
+/// and a hemisphere from the equator to either pole.
+#[test]
+fn a_sphere_between_two_latitudes_is_a_flat_capped_band() {
+    use kernel_api::PrimitiveKind;
+    let sphere = |a1: f64, a2: f64| {
+        [SolidOp::Primitive {
+            kind: PrimitiveKind::Sphere {
+                radius: 5.0,
+                angle1_deg: a1,
+                angle2_deg: a2,
+                angle3_deg: 360.0,
+            },
+            placement: Default::default(),
+            op: BooleanOp::NewSolid,
+        }]
+    };
+    let pi = std::f64::consts::PI;
+    let hemisphere = 2.0 / 3.0 * pi * 125.0;
+    assert_volume(&sphere(0.0, 90.0), hemisphere, "upper hemisphere");
+    assert_volume(&sphere(-90.0, 0.0), hemisphere, "lower hemisphere");
+    // A zone of height 2h about the equator: pi (2h r^2 - (2/3) h^3).
+    let h = 5.0 * 45f64.to_radians().sin();
+    assert_volume(
+        &sphere(-45.0, 45.0),
+        pi * (2.0 * h * 25.0 - 2.0 / 3.0 * h.powi(3)),
+        "band",
+    );
+}
