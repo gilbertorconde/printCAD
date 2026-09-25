@@ -120,10 +120,11 @@ struct LabelDrag {
     moved: bool,
     /// Cursor position (sketch coords) at press time.
     grab: Vec2D,
-    /// `label_offset` at press time, restored on Escape.
-    original: Option<Vec2D>,
     /// Offset the glyph was drawn with at press time (default when unset).
     base: Vec2D,
+    /// Where the drag has the label now; written to the sketch once, on
+    /// release, and drawn from here until then.
+    current: Option<Vec2D>,
 }
 
 /// An in-viewport dimension edit (opened by double-clicking a dimensional
@@ -515,6 +516,19 @@ impl SketchWorkbench {
         let placement = sketch_placement(ctx.document, id);
         feature.plane = placed_plane(&feature.plane, &placement);
         feature.sketch.plane = placed_plane(&feature.sketch.plane, &placement);
+        if let Some(LabelDrag {
+            constraint,
+            current: Some(offset),
+            ..
+        }) = &self.label_drag
+            && let Some(c) = feature
+                .sketch
+                .constraints
+                .iter_mut()
+                .find(|c| c.id == *constraint)
+        {
+            c.label_offset = Some(*offset);
+        }
         Some(feature)
     }
 
@@ -724,6 +738,19 @@ impl SketchWorkbench {
         } else {
             Self::snap_tolerance(ctx, &plane)
         };
+        if is_transform_tool(tool) {
+            // A base, target or centre lands on a point within reach as
+            // the tool takes it, anywhere else on the grid.
+            let on_point = matches!(
+                crate::snap::snap_to_point(&feature.sketch, cursor, tol, &[]),
+                crate::snap::SnapTarget::Existing(_)
+            );
+            return if on_point {
+                (cursor, tol)
+            } else {
+                (self.grid_snapped(ctx, &plane, cursor), tol)
+            };
+        }
         if !is_draw_tool(tool) {
             return (cursor, tol);
         }
@@ -1147,8 +1174,8 @@ impl SketchWorkbench {
                 constraint: hit.constraint,
                 moved: false,
                 grab: cursor,
-                original,
                 base: original.unwrap_or(base),
+                current: None,
             });
         }
         InputResult::consumed()
@@ -1173,12 +1200,7 @@ impl SketchWorkbench {
                 && (ld.moved || (cursor - ld.grab).to_glam().length() > tol)
             {
                 ld.moved = true;
-                let offset = ld.base + (cursor - ld.grab);
-                let id = ld.constraint;
-                if let Some(c) = feature.sketch.constraints.iter_mut().find(|c| c.id == id) {
-                    c.label_offset = Some(offset);
-                    self.store_sketch_data(ctx, feature);
-                }
+                ld.current = Some(ld.base + (cursor - ld.grab));
             }
             return InputResult::consumed();
         }
@@ -1228,7 +1250,14 @@ impl SketchWorkbench {
     }
 
     fn handle_left_release(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        if self.label_drag.take().is_some() {
+        if let Some(ld) = &self.label_drag {
+            // The label lands: one write for the whole drag.
+            let landed = ld.current.is_some();
+            let feature = self.get_active_sketch(ctx);
+            self.label_drag = None;
+            if landed && let Some(feature) = feature {
+                self.store_sketch_data(ctx, feature);
+            }
             return InputResult::consumed();
         }
         if let Some(bs) = self.box_select.take() {
@@ -1301,14 +1330,20 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// Delete everything selected, elements and constraints alike, as one
+    /// edit.
     fn delete_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        if self.selected.is_empty() {
+        if self.selected.is_empty() && self.selected_constraints.is_empty() {
             return InputResult::ignored();
         }
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let mut doomed: Vec<Uuid> = self.selected.drain().collect();
+        let mut doomed: Vec<Uuid> = self
+            .selected
+            .drain()
+            .chain(self.selected_constraints.drain())
+            .collect();
         doomed.sort();
         let removed = commands::delete_items(&mut feature.sketch, &doomed);
         self.hovered = None;
@@ -1326,7 +1361,7 @@ impl SketchWorkbench {
             );
         }
         self.solve(ctx, &mut feature);
-        ctx.log_info(format!("Deleted {removed} sketch element(s)"));
+        ctx.log_info(format!("Deleted {removed} sketch item(s)"));
         self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
@@ -1451,18 +1486,8 @@ impl SketchWorkbench {
         if self.dim_edit.take().is_some() {
             return InputResult::consumed();
         }
-        if let Some(ld) = self.label_drag.take() {
-            // Restore the pre-drag label offset.
-            if let Some(mut feature) = self.get_active_sketch(ctx)
-                && let Some(c) = feature
-                    .sketch
-                    .constraints
-                    .iter_mut()
-                    .find(|c| c.id == ld.constraint)
-            {
-                c.label_offset = ld.original;
-                self.store_sketch_data(ctx, feature);
-            }
+        if self.label_drag.take().is_some() {
+            // Nothing is written until the release: the label stays put.
             return InputResult::consumed();
         }
         if self.box_select.take().is_some() {
@@ -1497,35 +1522,6 @@ impl SketchWorkbench {
             self.selected.clear();
             self.selected_constraints.clear();
         }
-        InputResult::consumed()
-    }
-
-    /// Delete the selected constraints (glyph selection) and re-solve.
-    fn delete_selected_constraints(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
-            return InputResult::ignored();
-        };
-        let mut doomed: Vec<Uuid> = std::mem::take(&mut self.selected_constraints)
-            .into_iter()
-            .collect();
-        doomed.sort();
-        let removed = commands::delete_items(&mut feature.sketch, &doomed);
-        if removed == 0 {
-            return InputResult::consumed();
-        }
-        if let Some(sketch_id) = self.active_sketch_id {
-            ctx.record(
-                "sketch.delete",
-                commands::args(serde_json::json!({
-                    "sketch": sketch_id.0.to_string(),
-                    "items": ids_json(&doomed),
-                })),
-                serde_json::Value::Null,
-            );
-        }
-        self.solve(ctx, &mut feature);
-        ctx.log_info(format!("Deleted {removed} constraint(s)"));
-        self.store_sketch(ctx, feature);
         InputResult::consumed()
     }
 
@@ -1594,13 +1590,7 @@ impl SketchWorkbench {
             KeyCode::Delete | KeyCode::Backspace if !self.tool_state.is_idle() => {
                 InputResult::consumed()
             }
-            KeyCode::Delete | KeyCode::Backspace => {
-                if self.selected_constraints.is_empty() {
-                    self.delete_selected(ctx)
-                } else {
-                    self.delete_selected_constraints(ctx)
-                }
-            }
+            KeyCode::Delete | KeyCode::Backspace => self.delete_selected(ctx),
             _ => InputResult::ignored(),
         }
     }
@@ -2600,20 +2590,24 @@ impl Workbench for SketchWorkbench {
             self.take_external_picks(ctx);
         }
         let seq = ctx.document.mutation_seq();
-        if self.own_seq.swap(seq, std::sync::atomic::Ordering::Relaxed) != seq
-            && let Some(feature) = self.get_active_sketch(ctx)
-        {
-            // Changed from outside: what was selected may be gone, and the
-            // verdict is of a sketch that is not there any more.
-            self.selected
-                .retain(|id| feature.sketch.get_geometry(*id).is_some());
-            self.selected_constraints
-                .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
-            self.last_solve = None;
-            self.last_diagnosis = None;
-        }
+        let from_outside = self.own_seq.swap(seq, std::sync::atomic::Ordering::Relaxed) != seq;
         self.selection_shape = match self.get_active_sketch(ctx) {
-            Some(feature) => constrain::SelectionShape::of(&feature.sketch, &self.selected),
+            Some(feature) => {
+                // What was selected may be gone, by an edit here that took
+                // more with it (an element's constraints) or one from outside.
+                self.selected.retain(|id| {
+                    feature.sketch.get_geometry(*id).is_some()
+                        || sketch::Reference::of(*id).is_some()
+                });
+                self.selected_constraints
+                    .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+                if from_outside {
+                    // The verdict is of a sketch that is not there any more.
+                    self.last_solve = None;
+                    self.last_diagnosis = None;
+                }
+                constrain::SelectionShape::of(&feature.sketch, &self.selected)
+            }
             None => constrain::SelectionShape::default(),
         };
     }
@@ -2739,10 +2733,19 @@ impl Workbench for SketchWorkbench {
             let px = proj.to_px(cursor)?;
             let rows =
                 ovp::readout_rows(&self.dim_capture, &self.tool_state, &feature.sketch, cursor);
+            // An ellipse's axes take no constraint: typed, they only size it.
+            let hint = if matches!(
+                self.tool_state,
+                ToolState::EllipseCenter { .. } | ToolState::EllipseMajor { .. }
+            ) {
+                "Tab next · Enter places it"
+            } else {
+                "Tab next · Enter constrains · click keeps free"
+            };
             (!rows.is_empty()).then(|| core_document::OvpWidget {
                 anchor: [px[0] + 22.0, px[1] - 12.0],
                 rows,
-                hint: "Tab next · Enter constrains · click keeps free",
+                hint,
             })
         });
         Some(ViewportHud {
@@ -2933,7 +2936,13 @@ impl SketchWorkbench {
         let typed = self.dim_capture.typed();
         let preview_cursor = self.cursor.map(|cursor| {
             if typed.is_empty() {
-                cursor
+                // A transform's ghost goes where its click would.
+                match self.last_tool.as_deref() {
+                    Some(tool) if is_transform_tool(tool) => {
+                        self.landing(ctx, feature, tool, cursor).0
+                    }
+                    _ => cursor,
+                }
             } else {
                 ovp::override_cursor(&self.tool_state, &feature.sketch, cursor, &typed)
             }
@@ -3990,6 +3999,14 @@ pub(crate) fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'stati
     ["radius", "angle", "distance", "distance_x", "distance_y"]
         .into_iter()
         .find(|tool| constrain::fits(tool, shape))
+}
+
+/// The tools that move, turn, scale or mirror the selection.
+pub(crate) fn is_transform_tool(tool: &str) -> bool {
+    matches!(
+        tool,
+        "sketch.translate" | "sketch.rotate" | "sketch.scale" | "sketch.mirror"
+    )
 }
 
 pub(crate) fn is_draw_tool(tool: &str) -> bool {

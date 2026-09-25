@@ -1484,6 +1484,14 @@ fn split_arc_produces_two_ccw_arcs() {
         })
         .collect();
     assert_eq!(arcs_v[0].end, arcs_v[1].start, "shared split point");
+    assert!(
+        sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::EqualRadius { circle1, circle2 }
+                if circle1 == arcs_v[0].id && circle2 == arcs_v[1].id
+        )),
+        "the halves keep one radius"
+    );
     for a in &arcs_v {
         let sp = sketch.point_position(a.start).unwrap().to_glam();
         let ep = sketch.point_position(a.end).unwrap().to_glam();

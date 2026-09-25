@@ -443,46 +443,51 @@ pub fn apply_typed_constraints(
             }
         }
         ToolState::RectFrom { .. } | ToolState::RectCenterAt { .. } if changed => {
-            // The last four elements are the edges bottom → right → top →
-            // left. The width sits on the bottom edge and the height on the
-            // right one, so the two dimensions draw along their own sides.
-            let edges = match (
-                last_of(sketch, 4, |g| match g {
-                    GeometryElement::Line(l) => Some(l),
-                    _ => None,
-                }),
-                last_of(sketch, 3, |g| match g {
-                    GeometryElement::Line(l) => Some(l),
-                    _ => None,
-                }),
-            ) {
-                (Some(bottom), Some(right)) => Some((bottom.id, right.id)),
+            // The rectangle's four edges are the last lines made, bottom →
+            // right → top → left. A plain one ends with them: the width sits
+            // on the bottom edge and the height on the right one, so the two
+            // dimensions draw along their own sides. A rounded one ends with
+            // its corner arcs, and its edges stop short of the corners, so
+            // the width and height run between opposite edges instead.
+            let mut edges = sketch.geometry.iter().rev().filter_map(|g| match g {
+                GeometryElement::Line(l) => Some(l.clone()),
                 _ => None,
-            };
-            let Some((bottom, right)) = edges else {
+            });
+            let (Some(left), Some(top), Some(right), Some(bottom)) =
+                (edges.next(), edges.next(), edges.next(), edges.next())
+            else {
                 return 0;
             };
+            let rounded = !matches!(sketch.geometry.last(), Some(GeometryElement::Line(_)));
             if let Some(w) = get(FieldKind::Width) {
-                add(
-                    sketch,
+                let kind = if rounded {
+                    ConstraintKind::DistanceX {
+                        a: left.start,
+                        b: Some(right.start),
+                        value: w.abs(),
+                    }
+                } else {
                     ConstraintKind::Length {
-                        line: bottom,
+                        line: bottom.id,
                         length: w.abs(),
-                    },
-                    constrain,
-                    &mut added,
-                );
+                    }
+                };
+                add(sketch, kind, constrain, &mut added);
             }
             if let Some(h) = get(FieldKind::Height) {
-                add(
-                    sketch,
+                let kind = if rounded {
+                    ConstraintKind::DistanceY {
+                        a: bottom.start,
+                        b: Some(top.start),
+                        value: h.abs(),
+                    }
+                } else {
                     ConstraintKind::Length {
-                        line: right,
+                        line: right.id,
                         length: h.abs(),
-                    },
-                    constrain,
-                    &mut added,
-                );
+                    }
+                };
+                add(sketch, kind, constrain, &mut added);
             }
         }
         ToolState::CircleFrom { .. } | ToolState::Circle3Two { .. } if changed => {

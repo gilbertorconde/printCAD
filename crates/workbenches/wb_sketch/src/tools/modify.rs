@@ -704,9 +704,14 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect 
             };
             let (center_pid, old_end, radius) = (arc.center, arc.end, arc.radius);
             arc.end = m_id;
-            sketch.add_geometry(GeometryElement::Arc(Arc::new(
+            let rest = sketch.add_geometry(GeometryElement::Arc(Arc::new(
                 center_pid, m_id, old_end, radius,
             )));
+            // The halves stay one circle: same centre, same radius.
+            sketch.add_constraint(ConstraintKind::EqualRadius {
+                circle1: id,
+                circle2: rest,
+            });
             ToolEffect::changed("Split arc")
         }
         Prim::Circle { .. } => ToolEffect::none(),

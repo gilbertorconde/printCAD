@@ -1962,6 +1962,39 @@ fn geometry_delete_still_works_when_no_constraint_selected() {
     );
 }
 
+/// Escape during a label drag leaves the label where it was.
+#[test]
+fn escape_puts_a_dragged_label_back() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let labels = h.labels();
+    let dim = labels
+        .iter()
+        .find(|l| l.background && l.text == "25")
+        .expect("dimension label drawn")
+        .clone();
+    h.press_px((dim.pos[0], dim.pos[1]));
+    h.mouse_move(5.0, 8.0, "sketch.select");
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    h.release(5.0, 8.0, "sketch.select");
+    let back = h.labels();
+    let label = back.iter().find(|l| l.text == "25").unwrap();
+    assert_eq!(label.pos, dim.pos);
+    assert!(
+        h.sketch()
+            .constraints
+            .iter()
+            .all(|c| c.label_offset.is_none()),
+        "nothing was stored"
+    );
+}
+
 #[test]
 fn dimension_label_drag_updates_label_offset() {
     let mut h = Harness::new();
@@ -1978,8 +2011,22 @@ fn dimension_label_drag_updates_label_offset() {
         .find(|l| l.background && l.text == "25")
         .expect("dimension label drawn");
     h.press_px((dim.pos[0], dim.pos[1]));
+    let seq = h.doc.mutation_seq();
+    h.mouse_move(5.0, 6.0, "sketch.select");
     h.mouse_move(5.0, 8.0, "sketch.select");
+    assert_eq!(
+        h.doc.mutation_seq(),
+        seq,
+        "nothing is written while dragging"
+    );
+    assert!(
+        h.labels()
+            .iter()
+            .all(|l| l.text != "25" || l.pos != dim.pos),
+        "the label follows the drag"
+    );
     h.release(5.0, 8.0, "sketch.select");
+    assert_eq!(h.doc.mutation_seq(), seq + 1, "one write for the drag");
 
     let sketch = h.sketch();
     let offset = sketch
@@ -2080,9 +2127,12 @@ fn glyph_click_keeps_geometry_selection() {
     h.click(3.0, 4.0, "sketch.line");
     h.click(18.0, 4.05, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(30.0, 30.0, "sketch.line");
+    h.click(40.0, 38.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
 
-    // Select the line, then ctrl-click the H glyph: both stay selected, so
-    // Delete removes the constraint (constraints win) but keeps the line.
+    // Select the first line, then ctrl-click its H glyph: both stay
+    // selected, and Delete takes both in one step.
     h.click(6.0, 4.0, "sketch.select");
     let marks = h.marks();
     let glyph = marks
@@ -2100,14 +2150,18 @@ fn glyph_click_keeps_geometry_selection() {
     );
     h.key(KeyCode::Delete, Some("sketch.select"));
     assert!(
-        h.sketch().constraints.is_empty(),
-        "constraint deleted first"
+        !h.sketch()
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::Horizontal { .. })),
+        "the constraint went"
     );
     let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 1), "geometry kept for the next Delete");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (0, 0), "geometry Delete still works afterwards");
+    assert_eq!(
+        (p, l),
+        (2, 1),
+        "the selected line went with it, the other stays"
+    );
 }
 
 #[test]
@@ -2480,6 +2534,43 @@ fn with_grid_snapping_on_a_drawn_line_lands_on_grid_points() {
     assert!(
         (points[1].0 - 10.0).abs() < 0.05 && points[1].1.abs() < 0.05,
         "{points:?}"
+    );
+}
+
+/// With grid snapping on, a move's base and target round to the grid as a
+/// drawing click does, so the move is a whole number of grid steps.
+#[test]
+fn with_grid_snapping_on_a_move_goes_by_grid_steps() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 0.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(5.0, 0.0, "sketch.select");
+    h.wb.options.grid_on = true;
+    h.wb.options.grid_snap = true;
+    h.wb.options.grid_auto = false;
+    h.wb.options.grid_size = 5.0;
+
+    h.click(20.4, 20.9, "sketch.translate"); // base, rounds to (20, 20)
+    h.click(31.1, 24.2, "sketch.translate"); // target, rounds to (30, 25)
+    let sketch = h.sketch();
+    let mut xs: Vec<(f32, f32)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some((p.position.x, p.position.y)),
+            _ => None,
+        })
+        .collect();
+    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    assert!(
+        (xs[0].0 - 10.0).abs() < 0.05 && (xs[0].1 - 5.0).abs() < 0.05,
+        "{xs:?}"
+    );
+    assert!(
+        (xs[1].0 - 20.0).abs() < 0.05 && (xs[1].1 - 5.0).abs() < 0.05,
+        "{xs:?}"
     );
 }
 
@@ -3065,4 +3156,41 @@ fn typing_into_the_dimension_editor_lands_every_key_at_once() {
         interrupted.iter().skip(2).all(|i| !i),
         "focus is taken once, not every frame: {interrupted:?}"
     );
+}
+
+/// A rounded rectangle takes its typed width and height as dimensions
+/// between opposite edges, which stop short of the rounded corners.
+#[test]
+fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    let tool = "sketch.rect:rounded";
+    h.click(5.0, 5.0, tool);
+    h.mouse_move(12.0, 9.0, tool);
+    h.key(KeyCode::Key2, Some(tool));
+    h.key(KeyCode::Key0, Some(tool));
+    h.key(KeyCode::Tab, Some(tool));
+    h.key(KeyCode::Key1, Some(tool));
+    h.key(KeyCode::Key0, Some(tool));
+    h.key(KeyCode::Enter, Some(tool));
+
+    let sketch = h.sketch();
+    let has = |f: fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
+    assert!(has(
+        |k| matches!(k, ConstraintKind::DistanceX { value, .. } if (*value - 20.0).abs() < 1e-4)
+    ));
+    assert!(has(
+        |k| matches!(k, ConstraintKind::DistanceY { value, .. } if (*value - 10.0).abs() < 1e-4)
+    ));
+    let xs: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) if !sketch.is_construction(p.id) => Some(p.position.x),
+            _ => None,
+        })
+        .collect();
+    let width =
+        xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min);
+    assert!((width - 20.0).abs() < 1e-3, "{width}");
 }
