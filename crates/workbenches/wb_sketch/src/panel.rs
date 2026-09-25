@@ -571,7 +571,11 @@ impl SketchWorkbench {
                             .desired_width(120.0)
                             .font(sans(FONT_SM)),
                     );
-                    resp.request_focus();
+                    // Focus once, as renaming starts (see the dimension
+                    // editor).
+                    if !resp.has_focus() && !resp.lost_focus() {
+                        resp.request_focus();
+                    }
                     if resp.changed() {
                         let mut c = constraint.clone();
                         c.name = (!name.is_empty()).then_some(name);
@@ -884,7 +888,13 @@ impl SketchWorkbench {
                             |edit| edit.desired_width(180.0).font(mono(FONT_SM)),
                         );
                         let response = completed.response;
-                        response.request_focus();
+                        // Focus once, as the editor opens: asking again
+                        // every frame would interrupt the input method's
+                        // composition every frame, and keys would arrive
+                        // late, several at once.
+                        if !response.has_focus() && !response.lost_focus() {
+                            response.request_focus();
+                        }
                         // What it comes to, as typed: a value, or a formula.
                         let angular = self_angular;
                         let preview = ctx.document.evaluate_formula(

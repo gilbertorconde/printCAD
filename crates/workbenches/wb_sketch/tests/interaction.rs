@@ -2992,3 +2992,77 @@ fn a_three_point_circle_takes_a_typed_diameter() {
         "on the cursor's side of the chord: {center:?}"
     );
 }
+
+/// Typing into the dimension editor: every key lands in the frame it
+/// arrives, and only the frame the editor takes focus interrupts the
+/// input method. Interrupting it every frame made keys arrive late and
+/// several at once.
+#[test]
+fn typing_into_the_dimension_editor_lands_every_key_at_once() {
+    use core_document::{TaskRequest, Workbench};
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.line");
+    h.key(KeyCode::Key2, Some("sketch.line"));
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let labels = h.labels();
+    let dim = labels.iter().find(|l| l.background).expect("a dimension");
+    let pos = (dim.pos[0], dim.pos[1]);
+    h.press_px(pos);
+    h.release_px(pos);
+    h.press_px(pos);
+    h.release_px(pos);
+    assert!(h.wb.pending_dim_edit().is_some());
+
+    let ctx = egui::Context::default();
+    ui_kit::theme::apply_theme(&ctx);
+    let backspace = egui::Event::Key {
+        key: egui::Key::Backspace,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    let frames: Vec<(Vec<egui::Event>, &str)> = vec![
+        (vec![], "25"),
+        (vec![], "25"),
+        (vec![backspace], "2"),
+        (vec![egui::Event::Text("7".into())], "27"),
+        (vec![], "27"),
+        (vec![egui::Event::Text("3".into())], "273"),
+    ];
+    let mut interrupted = Vec::new();
+    for (events, want) in frames {
+        let input = egui::RawInput {
+            events,
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1200.0, 800.0),
+            )),
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            let mut wbctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0; 3], VIEWPORT);
+            wbctx.view_proj = Some(h.vp);
+            wbctx.active_document_object = h.active_object;
+            let _ = h.wb.ui_task_panel(ui, &mut wbctx, TaskRequest::default());
+        });
+        out.textures_delta.clear();
+        interrupted.push(
+            out.platform_output
+                .ime
+                .is_some_and(|ime| ime.should_interrupt_composition),
+        );
+        assert_eq!(
+            h.wb.pending_dim_edit().map(|e| e.text.as_str()),
+            Some(want),
+            "the key landed in its own frame"
+        );
+    }
+    assert!(
+        interrupted.iter().skip(2).all(|i| !i),
+        "focus is taken once, not every frame: {interrupted:?}"
+    );
+}
