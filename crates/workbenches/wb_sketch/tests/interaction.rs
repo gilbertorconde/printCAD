@@ -1515,9 +1515,10 @@ fn clicking_near_a_line_attaches_new_point_onto_it() {
     h.click(23.0, 4.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
-    // Start a new line just off the base line's mid-span (no point nearby):
-    // the start point is projected ONTO the line and constrained to it.
-    h.click(13.0, 4.5, "sketch.line");
+    // Start a new line just off the base line, away from its ends and its
+    // middle: the start point is projected ONTO the line and constrained
+    // to it.
+    h.click(8.0, 4.5, "sketch.line");
     h.click(17.0, 12.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
 
@@ -1533,7 +1534,7 @@ fn clicking_near_a_line_attaches_new_point_onto_it() {
     let (point, _line) = on_line;
     let p = sketch.point_position(point).unwrap();
     assert!(
-        (p.x - 13.0).abs() < 0.1 && (p.y - 4.0).abs() < 1e-3,
+        (p.x - 8.0).abs() < 0.1 && (p.y - 4.0).abs() < 1e-3,
         "start point projected onto the base line, got ({}, {})",
         p.x,
         p.y
@@ -2652,5 +2653,153 @@ fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
         points
             .iter()
             .any(|p| p[0].abs() < 1e-5 && (p[1] - 6.0).abs() < 1e-3)
+    );
+}
+
+#[test]
+fn a_click_by_a_line_s_middle_lands_on_it_and_stays_there() {
+    use wb_sketch::sketch::ConstraintKind;
+
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 4.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    // Near the middle (13, 4), not on it.
+    h.click(13.2, 4.3, "sketch.line");
+    h.click(17.0, 12.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    let (point, _) = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::Midpoint { point, line } => Some((point, line)),
+            _ => None,
+        })
+        .expect("the midpoint snap holds the point at the middle");
+    let p = sketch.point_position(point).unwrap();
+    assert!(
+        // The clicked ends sit a pixel's rounding off whole numbers.
+        (p.x - 13.0).abs() < 1e-3 && (p.y - 4.0).abs() < 1e-3,
+        "at the middle, got ({}, {})",
+        p.x,
+        p.y
+    );
+}
+
+#[test]
+fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
+    use wb_sketch::sketch::ConstraintKind;
+
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 14.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(3.0, 14.0, "sketch.line");
+    h.click(13.0, 4.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    // The two cross at (9⅔, 7⅓), away from either's middle; a circle
+    // centred just off it.
+    h.click(9.8, 7.5, "sketch.circle");
+    h.click(16.0, 9.0, "sketch.circle");
+
+    let sketch = h.sketch();
+    let center = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            wb_sketch::sketch::GeometryElement::Circle(c) => Some(c.center),
+            _ => None,
+        })
+        .expect("a circle");
+    let p = sketch.point_position(center).unwrap();
+    assert!(
+        (p.x - 29.0 / 3.0).abs() < 1e-3 && (p.y - 22.0 / 3.0).abs() < 1e-3,
+        "centred on the crossing, got ({}, {})",
+        p.x,
+        p.y
+    );
+    let held = sketch
+        .constraints
+        .iter()
+        .filter(|c| matches!(c.kind, ConstraintKind::PointOnLine { point, .. } if point == center))
+        .count();
+    assert_eq!(held, 2, "held on both lines");
+}
+
+/// The cue names what the cursor would snap to, and the click lands there:
+/// the same answer for both.
+#[test]
+fn the_snap_cue_names_where_the_click_lands() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 4.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let cue = |h: &mut Harness| {
+        h.labels().into_iter().map(|l| l.text).find(|t| {
+            ["Endpoint", "Midpoint", "On curve", "On axis", "Origin"].contains(&t.as_str())
+        })
+    };
+    h.mouse_move(23.2, 4.2, "sketch.rect");
+    assert_eq!(cue(&mut h).as_deref(), Some("Endpoint"));
+    h.mouse_move(13.2, 4.2, "sketch.rect");
+    assert_eq!(cue(&mut h).as_deref(), Some("Midpoint"));
+    h.mouse_move(17.0, 4.2, "sketch.rect");
+    assert_eq!(cue(&mut h).as_deref(), Some("On curve"));
+    h.mouse_move(0.2, -0.1, "sketch.rect");
+    assert_eq!(cue(&mut h).as_deref(), Some("Origin"));
+    h.mouse_move(40.0, 30.0, "sketch.rect");
+    assert_eq!(cue(&mut h), None, "nothing near, no cue");
+
+    // A rectangle from the origin to the line's far end: its second corner,
+    // which the cue marks as the endpoint, is that very point.
+    h.click(0.1, 0.1, "sketch.rect");
+    h.click(23.2, 4.2, "sketch.rect");
+    let sketch = h.sketch();
+    let ends: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            wb_sketch::sketch::GeometryElement::Point(p)
+                if (p.position.x - 23.0).abs() < 1e-3 && (p.position.y - 4.0).abs() < 1e-3 =>
+            {
+                Some(p.id)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        ends.len(),
+        1,
+        "the corner is the line's end, not a copy of it"
+    );
+}
+
+/// With snapping off, no cue promises a snap the click will not make.
+#[test]
+fn with_snapping_off_there_is_no_cue_and_no_snap() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 4.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.event(WorkbenchInputEvent::ToolActivated, Some("sketch.snap"));
+    h.mouse_move(13.2, 4.2, "sketch.line");
+    assert!(
+        !h.labels().iter().any(|l| l.text == "Midpoint"),
+        "no cue with snapping off"
+    );
+    h.click(13.2, 4.2, "sketch.line");
+    h.click(13.2, 10.0, "sketch.line");
+    let sketch = h.sketch();
+    assert!(
+        sketch.geometry.iter().any(|g| matches!(g,
+            wb_sketch::sketch::GeometryElement::Point(p)
+                if (p.position.x - 13.2).abs() < 1e-2 && (p.position.y - 4.2).abs() < 1e-2)),
+        "the point stays where it was clicked"
     );
 }

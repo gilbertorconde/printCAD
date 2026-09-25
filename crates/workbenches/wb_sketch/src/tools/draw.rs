@@ -23,10 +23,23 @@ fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f32) -> SnapTarget {
     }
 }
 
-pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D) -> ToolEffect {
-    // Deliberately no point-snap: clicking near an existing point
-    // would otherwise be a silent no-op.
-    let id = sketch.add_geometry(GeometryElement::Point(Point::new(cursor)));
+/// A point at `pos`: the existing one when one is exactly there (a snap
+/// put the click on it), else a new one, held on whatever curve it lies
+/// exactly on. Corners a tool works out from a click (a rectangle's other
+/// two) go through here too, so one landing on a point shares it.
+fn place(sketch: &mut Sketch, pos: Vec2D, snap_tol: f32) -> Uuid {
+    let eps = super::curve_attach_eps(snap_tol);
+    materialize_on_curve(sketch, snap_point_or_curve(sketch, pos, eps), snap_tol)
+}
+
+pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f32) -> ToolEffect {
+    // A snap onto an existing point would only double it.
+    if let SnapTarget::Existing(_) =
+        snap::snap_to_point(sketch, cursor, super::curve_attach_eps(snap_tol), &[])
+    {
+        return ToolEffect::log("A point is already there");
+    }
+    let id = materialize_on_curve(sketch, SnapTarget::New(cursor), snap_tol);
     ToolEffect::changed(format!(
         "Point at ({:.2}, {:.2}) [{}]",
         cursor.x,
@@ -262,9 +275,9 @@ pub(super) fn rect(
             let d = Vec2D::new(a.x, c.y);
 
             let pa = materialize_on_curve(sketch, corner, snap_tol);
-            let pb = sketch.add_geometry(GeometryElement::Point(Point::new(b)));
-            let pc = sketch.add_geometry(GeometryElement::Point(Point::new(c)));
-            let pd = sketch.add_geometry(GeometryElement::Point(Point::new(d)));
+            let pb = place(sketch, b, snap_tol);
+            let pc = place(sketch, c, snap_tol);
+            let pd = place(sketch, d, snap_tol);
             close_rectangle(sketch, pa, pb, pc, pd);
 
             *state = ToolState::Idle;
@@ -312,7 +325,12 @@ pub(super) fn rect_rounded(
     ))
 }
 
-pub(super) fn rect_center(state: &mut ToolState, sketch: &mut Sketch, cursor: Vec2D) -> ToolEffect {
+pub(super) fn rect_center(
+    state: &mut ToolState,
+    sketch: &mut Sketch,
+    cursor: Vec2D,
+    snap_tol: f32,
+) -> ToolEffect {
     match *state {
         ToolState::RectCenterAt { center } => {
             let k = cursor;
@@ -323,10 +341,10 @@ pub(super) fn rect_center(state: &mut ToolState, sketch: &mut Sketch, cursor: Ve
             let o = Vec2D::new(2.0 * center.x - k.x, 2.0 * center.y - k.y);
             let (x0, x1) = (o.x.min(k.x), o.x.max(k.x));
             let (y0, y1) = (o.y.min(k.y), o.y.max(k.y));
-            let pa = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x0, y0))));
-            let pb = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x1, y0))));
-            let pc = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x1, y1))));
-            let pd = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x0, y1))));
+            let pa = place(sketch, Vec2D::new(x0, y0), snap_tol);
+            let pb = place(sketch, Vec2D::new(x1, y0), snap_tol);
+            let pc = place(sketch, Vec2D::new(x1, y1), snap_tol);
+            let pd = place(sketch, Vec2D::new(x0, y1), snap_tol);
             close_rectangle(sketch, pa, pb, pc, pd);
 
             *state = ToolState::Idle;
@@ -843,7 +861,7 @@ pub(super) fn slot(
             let half = width * 0.5;
 
             let center_a = materialize(sketch, from);
-            let center_b = sketch.add_geometry(GeometryElement::Point(Point::new(b)));
+            let center_b = place(sketch, b, snap_tol);
             let i1 = sketch.add_geometry(GeometryElement::Point(Point::new(p1)));
             let i2 = sketch.add_geometry(GeometryElement::Point(Point::new(p2)));
             let i3 = sketch.add_geometry(GeometryElement::Point(Point::new(p3)));

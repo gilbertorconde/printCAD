@@ -672,6 +672,47 @@ impl SketchWorkbench {
         ))
     }
 
+    /// Where a click of `tool` at `cursor` goes before its snap, and the
+    /// snap's reach (off for drawing tools when snapping is switched off;
+    /// modify tools keep their pick tolerance): a point within reach as it
+    /// is, anything else rounded to the grid first. The click and the cue before it
+    /// both come through here, so they cannot disagree.
+    fn landing(
+        &self,
+        ctx: &WorkbenchRuntimeContext,
+        feature: &SketchFeature,
+        tool: &str,
+        cursor: Vec2D,
+    ) -> (Vec2D, f32) {
+        let plane = feature.plane;
+        let tol = if self.snap_off && is_draw_tool(tool) {
+            0.0
+        } else {
+            Self::snap_tolerance(ctx, &plane)
+        };
+        if !is_draw_tool(tool) {
+            return (cursor, tol);
+        }
+        // A snap onto a point wins over the grid; one onto a curve, an axis
+        // or an alignment leaves a direction free for the grid to round.
+        use crate::snap::SnapKind;
+        let on_point = matches!(
+            tools::snap_at(&self.tool_state, &feature.sketch, cursor, tol).kind,
+            Some(
+                SnapKind::Endpoint
+                    | SnapKind::Center
+                    | SnapKind::Origin
+                    | SnapKind::Intersection
+                    | SnapKind::Midpoint
+            )
+        );
+        if on_point {
+            (cursor, tol)
+        } else {
+            (self.grid_snapped(ctx, &plane, cursor), tol)
+        }
+    }
+
     /// Pixel tolerance converted into sketch units at the current zoom.
     fn snap_tolerance(ctx: &WorkbenchRuntimeContext, plane: &SketchPlane) -> f32 {
         let proj = SketchProjector::new(ctx, *plane);
@@ -750,14 +791,7 @@ impl SketchWorkbench {
         let Some(mut feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
-        let plane = feature.plane;
-        // Object snapping off: drawing tools never reuse or attach to
-        // existing geometry; modify tools keep their pick tolerance.
-        let tol = if self.snap_off && is_draw_tool(tool) {
-            0.0
-        } else {
-            Self::snap_tolerance(ctx, &plane)
-        };
+        let (cursor, tol) = self.landing(ctx, &feature, tool, cursor);
         // The copy tool is the move tool with at least one copy.
         let params = ToolParams {
             copies: if self.copy_mode {
@@ -767,11 +801,6 @@ impl SketchWorkbench {
             },
             auto_constraints: self.options.auto_constraints,
             ..self.tool_params
-        };
-        let cursor = if is_draw_tool(tool) {
-            self.grid_snapped(ctx, &plane, cursor)
-        } else {
-            cursor
         };
         self.dim_capture.sync(&self.tool_state);
         let typed = self.dim_capture.typed();
@@ -2694,21 +2723,25 @@ impl Workbench for SketchWorkbench {
         let Some(feature) = self.get_active_sketch(ctx) else {
             return Vec::new();
         };
-        if self.options.constraints_hidden {
-            return Vec::new();
-        }
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
-        glyphs::build(
-            &feature.sketch,
-            &proj,
-            &self.selected_constraints,
-            &self.bound_dimensions(ctx),
-            &pal,
-        )
-        .iter()
-        .filter_map(glyphs::Glyph::label)
-        .collect()
+        let mut labels: Vec<ScreenSpaceLabel> = if self.options.constraints_hidden {
+            Vec::new()
+        } else {
+            glyphs::build(
+                &feature.sketch,
+                &proj,
+                &self.selected_constraints,
+                &self.bound_dimensions(ctx),
+                &pal,
+            )
+            .iter()
+            .filter_map(glyphs::Glyph::label)
+            .collect()
+        };
+        // What the cursor would snap to, by name.
+        labels.extend(self.build_overlays(ctx, &feature, &proj, &pal).labels);
+        labels
     }
 }
 
@@ -2721,8 +2754,24 @@ impl SketchWorkbench {
         proj: &SketchProjector,
         pal: &SketchPalette,
     ) -> overlay::Overlays {
-        let _ = ctx;
         let snap_tol = SNAP_TOLERANCE_PX * proj.units_per_px();
+        // Where a click would land, as the click itself works it out.
+        let snap = match (self.last_tool.as_deref(), self.cursor) {
+            (Some(tool), Some(cursor))
+                if is_draw_tool(tool)
+                    && self.box_select.is_none()
+                    && self.dim_capture.typed().is_empty() =>
+            {
+                let (cursor, tol) = self.landing(ctx, feature, tool, cursor);
+                Some(tools::snap_at(
+                    &self.tool_state,
+                    &feature.sketch,
+                    cursor,
+                    tol,
+                ))
+            }
+            _ => None,
+        };
         // Selected constraints highlight their referenced geometry too.
         let mut selected = self.selected.clone();
         for c in &feature.sketch.constraints {
@@ -2742,6 +2791,7 @@ impl SketchWorkbench {
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),
             self.last_tool.as_deref(),
             snap_tol,
+            snap,
             self.options.construction_on_top,
         )
     }
@@ -3758,7 +3808,7 @@ pub(crate) fn dimension_for(shape: &constrain::SelectionShape) -> Option<&'stati
         .find(|tool| constrain::fits(tool, shape))
 }
 
-fn is_draw_tool(tool: &str) -> bool {
+pub(crate) fn is_draw_tool(tool: &str) -> bool {
     matches!(
         tool,
         "sketch.point"

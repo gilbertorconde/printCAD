@@ -3,7 +3,7 @@
 
 use glam::Vec2;
 
-use crate::sketch::Vec2D;
+use crate::sketch::{GeometryElement, Sketch, Vec2D};
 use crate::snap::arc_angles;
 
 /// Below this the two directions/points are treated as coincident.
@@ -260,6 +260,67 @@ fn de_boor(points: &[Vec2], knots: &[f32], p: usize, t: f32) -> Vec2 {
         }
     }
     d[p]
+}
+
+// ---------------------------------------------------------- intersections
+
+/// A trim/extend-capable curve resolved to positions.
+pub(crate) enum Prim {
+    Seg { a: Vec2, b: Vec2 },
+    Arc { c: Vec2, r: f32, s: Vec2, e: Vec2 },
+    Circle { c: Vec2, r: f32 },
+}
+
+pub(crate) fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
+    match geom {
+        GeometryElement::Line(l) => Some(Prim::Seg {
+            a: sketch.point_position(l.start)?.to_glam(),
+            b: sketch.point_position(l.end)?.to_glam(),
+        }),
+        GeometryElement::Arc(a) => {
+            let c = sketch.point_position(a.center)?.to_glam();
+            let s = sketch.point_position(a.start)?.to_glam();
+            Some(Prim::Arc {
+                c,
+                r: (s - c).length(),
+                s,
+                e: sketch.point_position(a.end)?.to_glam(),
+            })
+        }
+        GeometryElement::Circle(circle) => Some(Prim::Circle {
+            c: sketch.point_position(circle.center)?.to_glam(),
+            r: circle.radius,
+        }),
+        _ => None,
+    }
+}
+
+/// Whether `p` lies within the prim's own extent (segments by parameter,
+/// arcs by angular range; circles are unbounded).
+pub(crate) fn within(prim: &Prim, p: Vec2) -> bool {
+    match *prim {
+        Prim::Seg { a, b } => on_segment(a, b, p),
+        Prim::Arc { c, s, e, .. } => point_on_arc(c, s, e, p),
+        Prim::Circle { .. } => true,
+    }
+}
+
+/// Intersections of the *unbounded* carriers of two prims (infinite line /
+/// full circle), before any extent filtering.
+pub(crate) fn raw_hits(a: &Prim, b: &Prim) -> Vec<Vec2> {
+    match (a, b) {
+        (Prim::Seg { a: a1, b: a2 }, Prim::Seg { a: b1, b: b2 }) => {
+            line_line(*a1, *a2, *b1, *b2).into_iter().collect()
+        }
+        (Prim::Seg { a: a1, b: a2 }, Prim::Arc { c, r, .. })
+        | (Prim::Seg { a: a1, b: a2 }, Prim::Circle { c, r })
+        | (Prim::Arc { c, r, .. }, Prim::Seg { a: a1, b: a2 })
+        | (Prim::Circle { c, r }, Prim::Seg { a: a1, b: a2 }) => line_circle(*a1, *a2, *c, *r),
+        (
+            Prim::Arc { c: c1, r: r1, .. } | Prim::Circle { c: c1, r: r1 },
+            Prim::Arc { c: c2, r: r2, .. } | Prim::Circle { c: c2, r: r2 },
+        ) => circle_circle(*c1, *r1, *c2, *r2),
+    }
 }
 
 #[cfg(test)]

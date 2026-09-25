@@ -250,6 +250,13 @@ impl ToolEffect {
             log: Some(log.into()),
         }
     }
+    /// Nothing changed, and why.
+    fn log(log: impl Into<String>) -> Self {
+        Self {
+            changed: false,
+            log: Some(log.into()),
+        }
+    }
 }
 
 /// Resolve a snap target into a concrete point id, creating the point when
@@ -268,45 +275,97 @@ fn curve_attach_eps(snap_tol: f32) -> f32 {
     (snap_tol * 0.05).max(1e-5)
 }
 
-/// Like `materialize`, but a NEW point whose position lies on an existing
-/// curve (arranged by `draw`'s curve snapping projecting the click) also
-/// records the matching on-curve auto-constraint. Existing points are
-/// reused untouched — shared ids already imply coincidence.
+/// Like `materialize`, but a NEW point placed where a snap put it stays
+/// there: at a line's middle by a midpoint constraint, on the origin by a
+/// coincidence, on each curve it lies on (two at a crossing) by an on-curve
+/// constraint. Snapped positions sit numerically on what they snapped to;
+/// anything else is at least a full tolerance away, so a tiny epsilon finds
+/// them again here. Existing points are reused untouched: shared ids
+/// already imply coincidence.
 fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) -> Uuid {
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
     };
-    let curve = snap::snap_to_curve(sketch, pos, curve_attach_eps(snap_tol), &[]);
+    let eps = curve_attach_eps(snap_tol);
     let point = sketch.add_geometry(GeometryElement::Point(Point::new(pos)));
-    if let Some((curve_id, _)) = curve {
-        let kind = match curve_id {
-            // The sketch's own origin and axes: fixed references, not
-            // geometry, pinned by the same constraints drawn curves take.
-            crate::sketch::ORIGIN_ID => ConstraintKind::Coincident {
-                point1: point,
-                point2: curve_id,
-            },
-            crate::sketch::X_AXIS_ID | crate::sketch::Y_AXIS_ID => ConstraintKind::PointOnLine {
-                point,
-                line: curve_id,
-            },
-            _ => match sketch.get_geometry(curve_id) {
-                Some(GeometryElement::Line(_)) => ConstraintKind::PointOnLine {
-                    point,
-                    line: curve_id,
-                },
-                Some(GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
-                    ConstraintKind::PointOnCircle {
-                        point,
-                        circle: curve_id,
-                    }
+    if pos.to_glam().length() <= eps {
+        sketch.add_constraint(ConstraintKind::Coincident {
+            point1: point,
+            point2: crate::sketch::ORIGIN_ID,
+        });
+        return point;
+    }
+    let mut on: Vec<ConstraintKind> = Vec::new();
+    for (axis, off) in [
+        (crate::sketch::X_AXIS_ID, pos.y),
+        (crate::sketch::Y_AXIS_ID, pos.x),
+    ] {
+        if off.abs() <= eps {
+            on.push(ConstraintKind::PointOnLine { point, line: axis });
+        }
+    }
+    for geom in &sketch.geometry {
+        if geom.id() == point
+            || matches!(geom, GeometryElement::Point(_))
+            || !snap::distance_to_element(sketch, geom, pos).is_some_and(|d| d <= eps)
+        {
+            continue;
+        }
+        let kind = match geom {
+            GeometryElement::Line(l) => {
+                let middle = sketch
+                    .point_position(l.start)
+                    .zip(sketch.point_position(l.end))
+                    .map(|(a, b)| Vec2D::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5));
+                if middle.is_some_and(|m| (m - pos).to_glam().length() <= eps) {
+                    ConstraintKind::Midpoint { point, line: l.id }
+                } else {
+                    ConstraintKind::PointOnLine { point, line: l.id }
                 }
-                _ => return point,
+            }
+            GeometryElement::Circle(_) | GeometryElement::Arc(_) => ConstraintKind::PointOnCircle {
+                point,
+                circle: geom.id(),
             },
+            GeometryElement::Ellipse(_) => ConstraintKind::PointOnEllipse {
+                point,
+                ellipse: geom.id(),
+            },
+            _ => continue,
         };
+        on.push(kind);
+    }
+    // Two are a crossing; a third would only over-constrain the point.
+    for kind in on.into_iter().take(2) {
         sketch.add_constraint(kind);
     }
     point
+}
+
+/// What a snap made by `tool` in `state` knows of the drawing in
+/// progress: a straight segment's start, for alignment, which it must not
+/// land back on.
+pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
+    let from = match state {
+        ToolState::LineFrom { from, .. }
+        | ToolState::PolylineFrom {
+            from, arc: false, ..
+        } => Some(*from),
+        _ => None,
+    };
+    snap::SnapContext {
+        from: from.and_then(|f| f.position(sketch)),
+        exclude: match from {
+            Some(SnapTarget::Existing(id)) => vec![id],
+            _ => Vec::new(),
+        },
+    }
+}
+
+/// Where a click of drawing tool `tool` at `cursor` lands, and on what:
+/// what the click uses and what the cue before it shows.
+pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f32) -> snap::Snap {
+    snap::resolve(sketch, cursor, tol, &snap_context(state, sketch))
 }
 
 /// Advance the tool state machine with a left click at `cursor` (sketch
@@ -324,7 +383,7 @@ pub fn handle_click(
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
     match tool {
-        "sketch.point" => draw::point(sketch, cursor),
+        "sketch.point" => draw::point(sketch, cursor, snap_tol),
         "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params.auto_constraints),
         "sketch.polyline" => {
             draw::polyline(state, sketch, cursor, snap_tol, params.auto_constraints)
@@ -333,7 +392,7 @@ pub fn handle_click(
         "sketch.rect_rounded" => {
             draw::rect_rounded(state, sketch, cursor, snap_tol, params.fillet_radius)
         }
-        "sketch.rect_center" => draw::rect_center(state, sketch, cursor),
+        "sketch.rect_center" => draw::rect_center(state, sketch, cursor, snap_tol),
         "sketch.circle" => draw::circle(state, sketch, cursor, snap_tol),
         "sketch.circle3" => draw::circle3(state, sketch, cursor, snap_tol),
         "sketch.arc" => draw::arc(state, sketch, cursor, snap_tol),

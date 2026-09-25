@@ -53,10 +53,22 @@ pub(crate) fn click(
     selected: &HashSet<Uuid>,
 ) -> StepOutcome {
     capture.sync(state);
-    let cursor = if typed.is_empty() {
-        cursor
-    } else {
+    // A plain click lands where the snap cue said; typed values place it
+    // themselves.
+    let snapped = typed.is_empty() && crate::is_draw_tool(tool);
+    let cursor = if !typed.is_empty() {
         ovp::override_cursor(state, sketch, cursor, typed)
+    } else if snapped {
+        tools::snap_at(state, sketch, cursor, settings.tol).pos
+    } else {
+        cursor
+    };
+    // Once snapped, the tool only finds again what the snap landed on: a
+    // wider reach could pull the point on to something else.
+    let tol = if snapped && settings.tol > 0.0 {
+        (settings.tol * 0.01).max(1e-5)
+    } else {
+        settings.tol
     };
     // Which geometry existed, so construction mode flags everything the
     // tool made (an id set: the fillet tool also removes a point).
@@ -65,15 +77,7 @@ pub(crate) fn click(
         .then(|| sketch.geometry.iter().map(GeometryElement::id).collect());
     let state_before = state.clone();
     let constraints_before: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
-    let effect = tools::handle_click(
-        state,
-        tool,
-        sketch,
-        cursor,
-        settings.tol,
-        &settings.params,
-        selected,
-    );
+    let effect = tools::handle_click(state, tool, sketch, cursor, tol, &settings.params, selected);
     let mut skipped = 0;
     // An auto constraint the solver would call redundant adds nothing the
     // sketch does not already enforce; it goes before it lands.

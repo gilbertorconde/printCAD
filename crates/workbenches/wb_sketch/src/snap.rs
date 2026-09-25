@@ -27,6 +27,194 @@ impl SnapTarget {
     }
 }
 
+/// What a snap landed on: each draws its own marker, and each leaves the
+/// new point held there by its own constraint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapKind {
+    /// An existing point: a line's end, a vertex. Reused, never doubled.
+    Endpoint,
+    /// An existing point that is a circle's, an arc's or an ellipse's
+    /// centre. Reused.
+    Center,
+    /// The sketch's origin.
+    Origin,
+    /// Where two curves (or a curve and an axis) cross.
+    Intersection,
+    /// The middle of a line.
+    Midpoint,
+    /// Somewhere on a curve.
+    OnCurve,
+    /// Somewhere on one of the sketch's axes.
+    OnAxis,
+    /// Level with the point being drawn from.
+    Horizontal,
+    /// Plumb with the point being drawn from.
+    Vertical,
+}
+
+impl SnapKind {
+    /// Its name, beside the marker.
+    pub fn label(self) -> &'static str {
+        match self {
+            SnapKind::Endpoint => "Endpoint",
+            SnapKind::Center => "Center",
+            SnapKind::Origin => "Origin",
+            SnapKind::Intersection => "Intersection",
+            SnapKind::Midpoint => "Midpoint",
+            SnapKind::OnCurve => "On curve",
+            SnapKind::OnAxis => "On axis",
+            SnapKind::Horizontal => "Horizontal",
+            SnapKind::Vertical => "Vertical",
+        }
+    }
+}
+
+/// Where a click lands: the point to use and what it landed on (`None` for
+/// the bare cursor).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Snap {
+    pub target: SnapTarget,
+    pub pos: Vec2D,
+    pub kind: Option<SnapKind>,
+}
+
+/// What a snap knows of the drawing in progress: the point a segment is
+/// drawn from (for horizontal and vertical alignment) and points it must
+/// not land on (that same point).
+#[derive(Debug, Clone, Default)]
+pub struct SnapContext {
+    pub from: Option<Vec2D>,
+    pub exclude: Vec<Uuid>,
+}
+
+/// Where `cursor` snaps, within `tol` (sketch units), in this order:
+/// an existing point (reused), the origin, a crossing of two curves, a
+/// line's middle, a curve or an axis, then alignment with `from`. The one
+/// function every drawing click and the cue before it go through, so what
+/// is shown is where the click lands.
+pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Snap {
+    let bare = Snap {
+        target: SnapTarget::New(cursor),
+        pos: cursor,
+        kind: None,
+    };
+    if tol <= 0.0 {
+        return bare;
+    }
+    let at = |target: SnapTarget, pos: Vec2D, kind: SnapKind| Snap {
+        target,
+        pos,
+        kind: Some(kind),
+    };
+    if let SnapTarget::Existing(id) = snap_to_point(sketch, cursor, tol, &cx.exclude)
+        && let Some(pos) = sketch.point_position(id)
+    {
+        let center = sketch.geometry.iter().any(|g| match g {
+            GeometryElement::Circle(c) => c.center == id,
+            GeometryElement::Arc(a) => a.center == id,
+            GeometryElement::Ellipse(e) => e.center == id,
+            _ => false,
+        });
+        let kind = if center {
+            SnapKind::Center
+        } else {
+            SnapKind::Endpoint
+        };
+        return at(SnapTarget::Existing(id), pos, kind);
+    }
+    let near = |p: Vec2D| (p - cursor).to_glam().length();
+    let origin = Vec2D::new(0.0, 0.0);
+    if !cx.exclude.contains(&ORIGIN_ID) && near(origin) <= tol {
+        return at(SnapTarget::New(origin), origin, SnapKind::Origin);
+    }
+    if let Some(cross) = crossing_near(sketch, cursor, tol) {
+        return at(SnapTarget::New(cross), cross, SnapKind::Intersection);
+    }
+    let middle = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Line(l) => {
+                let a = sketch.point_position(l.start)?;
+                let b = sketch.point_position(l.end)?;
+                Some(Vec2D::new((a.x + b.x) * 0.5, (a.y + b.y) * 0.5))
+            }
+            _ => None,
+        })
+        .filter(|m| near(*m) <= tol)
+        .min_by(|a, b| near(*a).total_cmp(&near(*b)));
+    if let Some(m) = middle {
+        return at(SnapTarget::New(m), m, SnapKind::Midpoint);
+    }
+    if let Some((id, proj)) = snap_to_curve(sketch, cursor, tol, &cx.exclude) {
+        let kind = if id == X_AXIS_ID || id == Y_AXIS_ID {
+            SnapKind::OnAxis
+        } else if id == ORIGIN_ID {
+            SnapKind::Origin
+        } else {
+            SnapKind::OnCurve
+        };
+        return at(SnapTarget::New(proj), proj, kind);
+    }
+    if let Some(from) = cx.from {
+        match snap_axis(from, cursor, tol) {
+            (pos, Some(AxisSnap::Horizontal)) => {
+                return at(SnapTarget::New(pos), pos, SnapKind::Horizontal);
+            }
+            (pos, Some(AxisSnap::Vertical)) => {
+                return at(SnapTarget::New(pos), pos, SnapKind::Vertical);
+            }
+            _ => {}
+        }
+    }
+    bare
+}
+
+/// How far the axes reach when crossed with other curves.
+const AXIS_REACH: f32 = 1.0e6;
+
+/// The crossing of two curves (the sketch's axes among them) nearest
+/// `cursor`, within `tol`.
+fn crossing_near(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec2D> {
+    use crate::geom2d::{Prim, prim_of, raw_hits, within};
+    let c = cursor.to_glam();
+    let mut prims: Vec<Prim> = sketch
+        .geometry
+        .iter()
+        .filter(|g| !matches!(g, GeometryElement::Point(_)))
+        .filter(|g| distance_to_element(sketch, g, cursor).is_some_and(|d| d <= tol))
+        .filter_map(|g| prim_of(sketch, g))
+        .collect();
+    if cursor.y.abs() <= tol {
+        prims.push(Prim::Seg {
+            a: glam::Vec2::new(-AXIS_REACH, 0.0),
+            b: glam::Vec2::new(AXIS_REACH, 0.0),
+        });
+    }
+    if cursor.x.abs() <= tol {
+        prims.push(Prim::Seg {
+            a: glam::Vec2::new(0.0, -AXIS_REACH),
+            b: glam::Vec2::new(0.0, AXIS_REACH),
+        });
+    }
+    let mut best: Option<(glam::Vec2, f32)> = None;
+    for i in 0..prims.len() {
+        for j in i + 1..prims.len() {
+            for p in raw_hits(&prims[i], &prims[j]) {
+                let d = (p - c).length();
+                if d <= tol
+                    && within(&prims[i], p)
+                    && within(&prims[j], p)
+                    && best.is_none_or(|(_, bd)| d < bd)
+                {
+                    best = Some((p, d));
+                }
+            }
+        }
+    }
+    best.map(|(p, _)| Vec2D::from_glam(p))
+}
+
 /// Axis alignment detected while drawing a line segment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AxisSnap {

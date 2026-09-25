@@ -37,6 +37,7 @@ const CROSSHAIR_PX: f32 = 20.0;
 pub struct Overlays {
     pub lines: Vec<ScreenSpaceOverlay>,
     pub marks: Vec<ScreenSpaceMark>,
+    pub labels: Vec<core_document::ScreenSpaceLabel>,
 }
 
 /// How one element draws: color, width and dash pattern.
@@ -201,17 +202,87 @@ pub fn element_style(
     }
 }
 
-/// Small diamond marker: the pending point-on-curve auto-constraint hint at
-/// the projected snap position.
-fn push_diamond_marker(out: &mut Overlays, proj: &SketchProjector, pos: Vec2D, color: [f32; 3]) {
-    if let Some([x, y]) = proj.to_px(pos) {
-        let h = POINT_RADIUS_PX + 2.5;
-        let corners = [[x - h, y], [x, y - h], [x + h, y], [x, y + h], [x - h, y]];
-        for pair in corners.windows(2) {
+/// Half the size of a snap marker, in pixels.
+const SNAP_MARK_PX: f32 = POINT_RADIUS_PX + 3.0;
+
+/// The cue for where a click will land: a mark shaped for what it snapped
+/// to (a square on an endpoint, a ring on a centre, a ringed cross on the
+/// origin, an X on a crossing, a triangle on a midpoint, a diamond on a
+/// curve or an axis, a dashed guide back to the point being drawn from
+/// when level or plumb with it), and its name beside it.
+fn push_snap_marker(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    snap: &crate::snap::Snap,
+    from: Option<Vec2D>,
+) {
+    use crate::snap::SnapKind;
+    let Some(kind) = snap.kind else {
+        return;
+    };
+    let Some([x, y]) = proj.to_px(snap.pos) else {
+        return;
+    };
+    let color = pal.preselect;
+    let h = SNAP_MARK_PX;
+    let mut path = |points: &[[f32; 2]]| {
+        for pair in points.windows(2) {
             out.lines
                 .push(ScreenSpaceOverlay::new(pair[0], pair[1], color, 2.0));
         }
+    };
+    let ring = |r: f32| -> Vec<[f32; 2]> {
+        (0..=24)
+            .map(|i| {
+                let t = i as f32 / 24.0 * std::f32::consts::TAU;
+                [x + r * t.cos(), y + r * t.sin()]
+            })
+            .collect()
+    };
+    match kind {
+        SnapKind::Endpoint => path(&[
+            [x - h, y - h],
+            [x + h, y - h],
+            [x + h, y + h],
+            [x - h, y + h],
+            [x - h, y - h],
+        ]),
+        SnapKind::Center => path(&ring(h)),
+        SnapKind::Origin => {
+            path(&ring(h));
+            path(&[[x - h, y], [x + h, y]]);
+            path(&[[x, y - h], [x, y + h]]);
+        }
+        SnapKind::Intersection => {
+            path(&[[x - h, y - h], [x + h, y + h]]);
+            path(&[[x - h, y + h], [x + h, y - h]]);
+        }
+        // Screen y runs down: the apex is above.
+        SnapKind::Midpoint => path(&[
+            [x, y - h],
+            [x + h, y + h * 0.8],
+            [x - h, y + h * 0.8],
+            [x, y - h],
+        ]),
+        SnapKind::OnCurve | SnapKind::OnAxis => {
+            path(&[[x - h, y], [x, y - h], [x + h, y], [x, y + h], [x - h, y]]);
+        }
+        SnapKind::Horizontal | SnapKind::Vertical => {
+            if let Some(start) = from.and_then(|f| proj.to_px(f)) {
+                push_segment_px(&mut out.lines, start, [x, y], color, 1.0, Some(GUIDE_DASH));
+            }
+        }
     }
+    out.labels.push(
+        core_document::ScreenSpaceLabel::new(
+            [x + h + 30.0, y - h - 8.0],
+            kind.label(),
+            color,
+            11.0,
+        )
+        .pill(),
+    );
 }
 
 fn push_element(
@@ -1117,6 +1188,7 @@ pub fn build_overlays(
     selection_box: Option<(Vec2D, Vec2D)>,
     active_tool: Option<&str>,
     snap_tol: f32,
+    snap: Option<crate::snap::Snap>,
     construction_on_top: bool,
 ) -> Overlays {
     let mut out = Overlays::default();
@@ -1149,7 +1221,9 @@ pub fn build_overlays(
 
     if let Some((a, b)) = selection_box {
         push_selection_box(&mut out, proj, pal, a, b);
-    } else if let Some(cursor) = cursor {
+    } else if let Some(raw) = cursor {
+        // The preview runs to where the click would land.
+        let cursor = snap.map_or(raw, |s| s.pos);
         push_preview(
             &mut out, proj, pal, sketch, tool_state, cursor, params, selected,
         );
@@ -1158,18 +1232,9 @@ pub fn build_overlays(
         {
             push_polyline(&mut out.lines, proj, span.into_iter(), pal.trim, 3.0, false);
         }
-        // Pending auto-constraint hint: tools that attach new points onto
-        // curves show a diamond at the projected snap position (only when
-        // no point snap wins — shared point ids need no constraint).
-        if matches!(
-            active_tool,
-            Some("sketch.line" | "sketch.circle" | "sketch.rect" | "sketch.arc")
-        ) && matches!(
-            crate::snap::snap_to_point(sketch, cursor, snap_tol, &[]),
-            SnapTarget::New(_)
-        ) && let Some((_, projected)) = crate::snap::snap_to_curve(sketch, cursor, snap_tol, &[])
-        {
-            push_diamond_marker(&mut out, proj, projected, pal.preselect);
+        if let Some(snap) = &snap {
+            let from = crate::tools::snap_context(tool_state, sketch).from;
+            push_snap_marker(&mut out, proj, pal, snap, from);
         }
         // A crosshair follows the cursor while a drawing tool is armed.
         if active_tool.is_some_and(|t| t != "sketch.select")

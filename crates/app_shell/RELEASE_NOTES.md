@@ -21,6 +21,7 @@ version first.
 - External geometry projects a solid's edges into the sketch as fixed references to constrain against, kept up to date when the solid changes.
 - Rendering order puts construction or normal geometry on top.
 - Drawing snaps to the origin and the two axes as it does to drawn geometry, and pins the new point there.
+- Snapping works the same in every drawing tool and every click: to endpoints, centres, the origin, crossings, the middles of lines, curves and axes, and level or plumb with the last point. Each has its own marker and name at the cursor, the click lands exactly where the marker is, and the point stays there by a matching constraint.
 
 ### Part Design
 - Pad, pocket, revolution, groove, loft, pipe, helix and primitives, additive and subtractive, and booleans between bodies.

@@ -7,7 +7,7 @@ use glam::Vec2;
 use uuid::Uuid;
 
 use super::ToolEffect;
-use crate::geom2d;
+use crate::geom2d::{self, Prim, prim_of, raw_hits, within};
 use crate::sketch::{Arc, GeometryElement, Line, Point, Sketch, Vec2D};
 use crate::snap::{self, arc_angles};
 
@@ -173,67 +173,6 @@ pub(super) fn chamfer(
 }
 
 // ---------------------------------------------------------- intersections
-
-/// A trim/extend-capable curve resolved to positions.
-enum Prim {
-    Seg { a: Vec2, b: Vec2 },
-    Arc { c: Vec2, r: f32, s: Vec2, e: Vec2 },
-    Circle { c: Vec2, r: f32 },
-}
-
-fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
-    match geom {
-        GeometryElement::Line(l) => Some(Prim::Seg {
-            a: sketch.point_position(l.start)?.to_glam(),
-            b: sketch.point_position(l.end)?.to_glam(),
-        }),
-        GeometryElement::Arc(a) => {
-            let c = sketch.point_position(a.center)?.to_glam();
-            let s = sketch.point_position(a.start)?.to_glam();
-            Some(Prim::Arc {
-                c,
-                r: (s - c).length(),
-                s,
-                e: sketch.point_position(a.end)?.to_glam(),
-            })
-        }
-        GeometryElement::Circle(circle) => Some(Prim::Circle {
-            c: sketch.point_position(circle.center)?.to_glam(),
-            r: circle.radius,
-        }),
-        _ => None,
-    }
-}
-
-/// Whether `p` lies within the prim's own extent (segments by parameter,
-/// arcs by angular range; circles are unbounded).
-fn within(prim: &Prim, p: Vec2) -> bool {
-    match *prim {
-        Prim::Seg { a, b } => geom2d::on_segment(a, b, p),
-        Prim::Arc { c, s, e, .. } => geom2d::point_on_arc(c, s, e, p),
-        Prim::Circle { .. } => true,
-    }
-}
-
-/// Intersections of the *unbounded* carriers of two prims (infinite line /
-/// full circle), before any extent filtering.
-fn raw_hits(a: &Prim, b: &Prim) -> Vec<Vec2> {
-    match (a, b) {
-        (Prim::Seg { a: a1, b: a2 }, Prim::Seg { a: b1, b: b2 }) => {
-            geom2d::line_line(*a1, *a2, *b1, *b2).into_iter().collect()
-        }
-        (Prim::Seg { a: a1, b: a2 }, Prim::Arc { c, r, .. })
-        | (Prim::Seg { a: a1, b: a2 }, Prim::Circle { c, r })
-        | (Prim::Arc { c, r, .. }, Prim::Seg { a: a1, b: a2 })
-        | (Prim::Circle { c, r }, Prim::Seg { a: a1, b: a2 }) => {
-            geom2d::line_circle(*a1, *a2, *c, *r)
-        }
-        (
-            Prim::Arc { c: c1, r: r1, .. } | Prim::Circle { c: c1, r: r1 },
-            Prim::Arc { c: c2, r: r2, .. } | Prim::Circle { c: c2, r: r2 },
-        ) => geom2d::circle_circle(*c1, *r1, *c2, *r2),
-    }
-}
 
 /// Intersections of `target` with every OTHER line/arc/circle in the
 /// sketch. `bounded_target` restricts hits to the target's own extent
