@@ -1011,6 +1011,11 @@ impl Workbench for PartDesignWorkbench {
                 let plane = wb_sketch::sketch::SketchPlane::from_face(face.point, face.normal);
                 feature.plane = plane;
                 feature.sketch.plane = plane;
+                // Mapped to the face, it follows the face, not the datum it was on.
+                if feature.support.take().is_some() {
+                    ctx.document
+                        .set_feature_dependencies(sketch_id, feature.dependencies());
+                }
                 match ctx
                     .document
                     .update_feature_data(sketch_id, feature.to_json())

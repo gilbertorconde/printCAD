@@ -12,17 +12,72 @@ pub struct SketchFeature {
     pub sketch: Sketch,
     /// The reference plane for the sketch.
     pub plane: SketchPlane,
+    /// The datum the sketch was drawn on, which its plane follows: moved,
+    /// turned or flipped, the datum takes the sketch with it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub support: Option<DatumSupport>,
+}
+
+/// A sketch's place on a datum: a datum plane, or one of a coordinate
+/// system's three planes, pushed `offset` along its normal.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DatumSupport {
+    pub datum: FeatureId,
+    /// A coordinate system's plane: `XY`, `XZ` or `YZ`. A datum plane has
+    /// only its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plane: Option<String>,
+    /// Millimetres along the plane's normal.
+    #[serde(default)]
+    pub offset: f32,
+}
+
+impl DatumSupport {
+    /// The plane this support puts a sketch on, from the datum's `data`;
+    /// `None` when it is not a datum plane or coordinate system.
+    pub fn plane_from(&self, data: &serde_json::Value) -> Option<SketchPlane> {
+        use core_document::{DatumFeature, DatumShape};
+        let datum = DatumFeature::from_json(data).ok()?;
+        let frame = match datum.shape {
+            DatumShape::Plane { .. } => datum.frame(),
+            DatumShape::CoordinateSystem { .. } => {
+                let which = self.plane.as_deref().unwrap_or("XY");
+                datum
+                    .frame()
+                    .planes()
+                    .into_iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case(which))?
+                    .1
+            }
+            _ => return None,
+        };
+        let mut plane = SketchPlane {
+            origin: frame.origin,
+            normal: frame.normal,
+            x_axis: frame.x_axis,
+            y_axis: frame.y_axis(),
+        };
+        for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
+            *o += n * self.offset;
+        }
+        Some(plane)
+    }
 }
 
 impl SketchFeature {
     pub fn new(sketch: Sketch, plane: SketchPlane) -> Self {
-        Self { sketch, plane }
+        Self {
+            sketch,
+            plane,
+            support: None,
+        }
     }
 
     pub fn from_sketch(sketch: Sketch) -> Self {
         Self {
             sketch,
             plane: SketchPlane::default(),
+            support: None,
         }
     }
 }
@@ -43,8 +98,7 @@ impl WorkbenchFeature for SketchFeature {
     }
 
     fn dependencies(&self) -> Vec<FeatureId> {
-        // Sketches have no dependencies (they are root features)
-        Vec::new()
+        self.support.iter().map(|s| s.datum).collect()
     }
 
     fn name(&self) -> &str {

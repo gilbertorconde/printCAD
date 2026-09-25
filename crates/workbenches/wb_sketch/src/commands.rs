@@ -12,6 +12,7 @@ use core_document::{
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+use crate::feature::DatumSupport;
 use crate::feature::SketchFeature;
 use crate::sketch::{Arc, Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
 
@@ -359,6 +360,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let plane = custom_plane(&a)?;
             feature.plane = plane;
             feature.sketch.plane = plane;
+            // A plane set outright leaves the datum the sketch followed.
+            if feature.support.take().is_some() {
+                ctx.document
+                    .set_feature_dependencies(sketch_id, feature.dependencies());
+            }
             return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.carbon_copy" => {
@@ -559,14 +565,16 @@ fn new_sketch(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
         plane = custom_plane(a)?;
     }
     let mut datum_body = None;
+    let offset = a.opt_number("offset")?.unwrap_or(0.0) as f32;
+    let mut support = None;
     if let Some(on) = a.opt_id("on")? {
-        let (frame, body) = datum_plane(ctx, FeatureId(on), a.opt_string("plane")?)?;
-        plane = frame;
+        let (on_datum, body) = datum_support(ctx, FeatureId(on), a.opt_string("plane")?, offset)?;
+        plane = on_datum.1;
+        support = Some(on_datum.0);
         datum_body = body;
-    }
-    if let Some(offset) = a.opt_number("offset")? {
+    } else {
         for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
-            *o += n * offset as f32;
+            *o += n * offset;
         }
     }
     let body = match a.opt_id("body")?.or(datum_body.map(|b| b.0)) {
@@ -588,9 +596,11 @@ fn new_sketch(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     };
     let mut sketch = Sketch::new(name.clone());
     sketch.plane = plane;
+    let mut feature = SketchFeature::new(sketch, plane);
+    feature.support = support;
     let id = ctx
         .document
-        .add_feature_in_body(SketchFeature::new(sketch, plane), name, Some(body))
+        .add_feature_in_body(feature, name, Some(body))
         .map_err(|e| CommandError::failed(e.to_string()))?;
     Ok(json!(id.0.to_string()))
 }
@@ -651,37 +661,45 @@ fn polyline(
     Ok(ids)
 }
 
-/// The plane of datum `id`: a datum plane's own, or one of a coordinate
-/// system's three (`which`, XY when left out), with the body it is in.
-fn datum_plane(
+/// A sketch's place on datum `id`: a datum plane, or one of a coordinate
+/// system's three (`which`, XY when left out), `offset` along its normal;
+/// with the plane that puts it on now and the body the datum is in.
+#[allow(clippy::type_complexity)]
+fn datum_support(
     ctx: &WorkbenchRuntimeContext,
     id: FeatureId,
     which: Option<&str>,
-) -> Result<(SketchPlane, Option<BodyId>), CommandError> {
+    offset: f32,
+) -> Result<((DatumSupport, SketchPlane), Option<BodyId>), CommandError> {
     let not_a_plane = || CommandError::bad("on", "is not a datum plane or coordinate system");
     let node = ctx.document.get_feature_meta(id).ok_or_else(not_a_plane)?;
     let datum = DatumFeature::from_json(&node.data).map_err(|_| not_a_plane())?;
-    let frame = match datum.shape {
-        DatumShape::Plane { .. } => datum.frame(),
+    let plane = match datum.shape {
+        DatumShape::Plane { .. } => None,
         DatumShape::CoordinateSystem { .. } => {
             let which = which.unwrap_or("XY");
-            datum
-                .frame()
-                .planes()
-                .into_iter()
-                .find(|(name, _)| name.eq_ignore_ascii_case(which))
-                .map(|(_, f)| f)
-                .ok_or_else(|| CommandError::bad("plane", "must be XY, XZ or YZ"))?
+            if !["XY", "XZ", "YZ"]
+                .iter()
+                .any(|p| p.eq_ignore_ascii_case(which))
+            {
+                return Err(CommandError::bad("plane", "must be XY, XZ or YZ"));
+            }
+            Some(which.to_ascii_uppercase())
         }
         _ => return Err(not_a_plane()),
     };
-    let plane = SketchPlane {
-        origin: frame.origin,
-        normal: frame.normal,
-        x_axis: frame.x_axis,
-        y_axis: frame.y_axis(),
+    let support = DatumSupport {
+        datum: id,
+        plane,
+        offset,
     };
-    Ok((plane, node.body))
+    let values = ctx
+        .document
+        .feature_values(id)
+        .cloned()
+        .unwrap_or_else(|| node.data.clone());
+    let at = support.plane_from(&values).ok_or_else(not_a_plane)?;
+    Ok(((support, at), node.body))
 }
 
 /// A plane from `normal`, `origin` and `x_axis`, the last two optional.
@@ -1355,6 +1373,61 @@ mod tests {
     fn call(doc: &mut Document, id: &str, args: Value) -> CommandResult {
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         run(id, args.as_object().unwrap(), &mut ctx)
+    }
+
+    /// `sketch.new{on = datum}` draws the sketch on the datum and keeps it
+    /// there: the sketch records the datum and depends on it; a plane set
+    /// outright later lets it go.
+    #[test]
+    fn a_sketch_made_on_a_datum_keeps_to_it() {
+        use core_document::{
+            AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape,
+        };
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let datum = doc
+            .add_feature_in_body(
+                DatumFeature {
+                    shape: DatumShape::CoordinateSystem { size: 10.0 },
+                    attachment: DatumAttachment::BasePlane(BasePlane::XY),
+                    offset: AttachmentOffset {
+                        translation: [0.0, 0.0, 5.0],
+                        rotation_deg: 0.0,
+                        flip: false,
+                    },
+                },
+                "Frame".into(),
+                Some(body),
+            )
+            .unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.new",
+            json!({"on": datum.0.to_string(), "plane": "xz", "offset": 2.0}),
+        )
+        .unwrap();
+        let id = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
+        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        assert_eq!(
+            feature.support,
+            Some(DatumSupport {
+                datum,
+                plane: Some("XZ".into()),
+                offset: 2.0,
+            })
+        );
+        assert_eq!(doc.feature_tree().dependencies(id), vec![datum]);
+        assert_eq!(doc.get_feature_meta(id).unwrap().body, Some(body));
+
+        call(
+            &mut doc,
+            "sketch.set_plane",
+            json!({"sketch": made, "normal": [0, 0, 1]}),
+        )
+        .unwrap();
+        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        assert_eq!(feature.support, None);
+        assert!(doc.feature_tree().dependencies(id).is_empty());
     }
 
     #[test]

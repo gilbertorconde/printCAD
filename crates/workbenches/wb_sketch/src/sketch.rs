@@ -501,7 +501,7 @@ pub fn is_angular(kind: &ConstraintKind) -> bool {
 }
 
 /// Reference plane for a sketch (2D coordinate system in 3D space).
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SketchPlane {
     /// Origin point in world space.
     pub origin: [f32; 3],

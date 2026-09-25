@@ -31,7 +31,7 @@ use core_document::{
     ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
     WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
 };
-pub use feature::SketchFeature;
+pub use feature::{DatumSupport, SketchFeature};
 use overlay::SketchProjector;
 use ovp::DimCapture;
 use sketch::{Constraint, GeometryElement, Sketch, SketchPlane, Vec2D};
@@ -764,23 +764,37 @@ impl SketchWorkbench {
         ctx: &mut WorkbenchRuntimeContext,
         body: Option<BodyId>,
         plane: SketchPlane,
+        support: Option<crate::feature::DatumSupport>,
     ) {
         let sketch_name = Self::next_sketch_name(ctx.document);
         let mut sketch = Sketch::new(sketch_name.clone());
         sketch.plane = plane;
-        let sketch_feature = SketchFeature::new(sketch, plane);
+        let mut sketch_feature = SketchFeature::new(sketch, plane);
+        sketch_feature.support = support.clone();
 
         match ctx
             .document
             .add_feature_in_body(sketch_feature, sketch_name.clone(), body)
         {
             Ok(feature_id) => {
-                let mut args = serde_json::json!({
-                    "name": sketch_name,
-                    "normal": plane.normal,
-                    "origin": plane.origin,
-                    "x_axis": plane.x_axis,
-                });
+                let mut args = match &support {
+                    Some(support) => {
+                        let mut args = serde_json::json!({
+                            "name": sketch_name,
+                            "on": support.datum.0.to_string(),
+                        });
+                        if let Some(which) = &support.plane {
+                            args["plane"] = serde_json::json!(which);
+                        }
+                        args
+                    }
+                    None => serde_json::json!({
+                        "name": sketch_name,
+                        "normal": plane.normal,
+                        "origin": plane.origin,
+                        "x_axis": plane.x_axis,
+                    }),
+                };
                 if let Some(body) = body {
                     args["body"] = serde_json::json!(body.0.to_string());
                 }
@@ -1843,7 +1857,7 @@ impl Workbench for SketchWorkbench {
         match (scope, id) {
             (MenuScope::StartPage, "sketch.start_blank") => {
                 let body = ctx.selected_body_id.map(BodyId);
-                self.create_sketch_on_plane(ctx, body, SketchPlane::default());
+                self.create_sketch_on_plane(ctx, body, SketchPlane::default(), None);
                 true
             }
             (MenuScope::EditMenu, "edit.copy") => self.clipboard_copy(ctx, false),
@@ -1859,6 +1873,33 @@ impl Workbench for SketchWorkbench {
 
     fn settle(&self, _node: &core_document::FeatureNode, values: &mut serde_json::Value) {
         params::settle(values);
+    }
+
+    /// A sketch drawn on a datum sits on the datum's plane as the datum is
+    /// now.
+    fn derive(
+        &self,
+        _node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        values_of: &dyn Fn(FeatureId) -> Option<serde_json::Value>,
+    ) -> bool {
+        let Ok(mut feature) = SketchFeature::from_json(values) else {
+            return false;
+        };
+        let Some(plane) = feature
+            .support
+            .as_ref()
+            .and_then(|s| values_of(s.datum).and_then(|data| s.plane_from(&data)))
+        else {
+            return false;
+        };
+        if feature.plane == plane && feature.sketch.plane == plane {
+            return false;
+        }
+        feature.plane = plane;
+        feature.sketch.plane = plane;
+        *values = feature.to_json();
+        true
     }
 
     fn passive_geometry(

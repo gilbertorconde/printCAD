@@ -1300,21 +1300,23 @@ impl Document {
         }
     }
 
-    /// Swap a feature with its history neighbour (previous when `up`, next
-    /// otherwise) among same-workbench features of its body. Refuses moves
-    /// that would place a feature before one of its dependencies (or after a
-    /// dependent). Returns whether the order changed.
+    /// Move a feature one place in its body's history (earlier when `up`),
+    /// swapping it with the feature beside it, whatever kind that is: a
+    /// sketch and the feature that uses it keep their places relative to
+    /// everything else. Refuses a move that would put a feature before one
+    /// it uses (or after one that uses it). Returns whether the order
+    /// changed.
     pub fn move_feature_in_history(&mut self, feature_id: FeatureId, up: bool) -> bool {
         let Some(node) = self.feature_tree.get_node(feature_id) else {
             return false;
         };
-        let (workbench, body, seq) = (node.workbench_id.clone(), node.body, node.seq);
+        let (body, seq) = (node.body, node.seq);
 
-        // Ordered peers = same body + same workbench, sorted by seq.
+        // The body's history, every kind of feature in it, by seq.
         let mut peers: Vec<(u64, FeatureId)> = self
             .feature_tree
             .all_nodes()
-            .filter(|(_, n)| n.workbench_id == workbench && n.body == body)
+            .filter(|(_, n)| n.body == body)
             .map(|(id, n)| (n.seq, *id))
             .collect();
         // Same tie-break as every seq sort: (seq, id) is the total order.

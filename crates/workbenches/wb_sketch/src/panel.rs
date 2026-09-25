@@ -175,7 +175,7 @@ impl SketchWorkbench {
         };
         let body = pending.body;
         let face_plane = pending.face_plane;
-        let mut chosen: Option<SketchPlane> = None;
+        let mut chosen: Option<(SketchPlane, Option<crate::feature::DatumSupport>)> = None;
         let mut cancel = false;
         ui_kit::widgets::Card::new().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -197,23 +197,23 @@ impl SketchWorkbench {
                     .on_hover_text("Sketch on the face you clicked on the solid")
                     .clicked()
             {
-                chosen = Some(face);
+                chosen = Some((face, None));
             }
             ui.horizontal(|ui| {
                 if secondary_button(ui, "Top (XY)").clicked() {
-                    chosen = Some(SketchPlane::xy());
+                    chosen = Some((SketchPlane::xy(), None));
                 }
                 if secondary_button(ui, "Front (XZ)").clicked() {
-                    chosen = Some(SketchPlane::xz());
+                    chosen = Some((SketchPlane::xz(), None));
                 }
                 if secondary_button(ui, "Side (YZ)").clicked() {
-                    chosen = Some(SketchPlane::yz());
+                    chosen = Some((SketchPlane::yz(), None));
                 }
             });
             // Datum planes of the target body attach the sketch to their
             // resolved frame (toponaming-safe anchor).
             if let Some(body) = body {
-                for (_, name, datum) in core_document::datums_of_body(ctx.document, body) {
+                for (datum_id, name, datum) in core_document::datums_of_body(ctx.document, body) {
                     let frame = datum.frame();
                     match datum.shape {
                         core_document::DatumShape::Plane { .. } => {
@@ -221,10 +221,17 @@ impl SketchWorkbench {
                                 .on_hover_text("Sketch on this datum plane")
                                 .clicked()
                             {
-                                chosen = Some(SketchPlane::from_frame(
-                                    frame.origin,
-                                    frame.normal,
-                                    frame.x_axis,
+                                chosen = Some((
+                                    SketchPlane::from_frame(
+                                        frame.origin,
+                                        frame.normal,
+                                        frame.x_axis,
+                                    ),
+                                    Some(crate::feature::DatumSupport {
+                                        datum: datum_id,
+                                        plane: None,
+                                        offset: 0.0,
+                                    }),
                                 ));
                             }
                         }
@@ -234,8 +241,13 @@ impl SketchWorkbench {
                                     .on_hover_text("Sketch on this plane of the coordinate system")
                                     .clicked()
                                 {
-                                    chosen = Some(SketchPlane::from_frame(
-                                        at.origin, at.normal, at.x_axis,
+                                    chosen = Some((
+                                        SketchPlane::from_frame(at.origin, at.normal, at.x_axis),
+                                        Some(crate::feature::DatumSupport {
+                                            datum: datum_id,
+                                            plane: Some(plane.to_string()),
+                                            offset: 0.0,
+                                        }),
                                     ));
                                 }
                             }
@@ -252,9 +264,9 @@ impl SketchWorkbench {
         if cancel {
             self.pending_creation = None;
         }
-        if let Some(plane) = chosen {
+        if let Some((plane, support)) = chosen {
             self.pending_creation = None;
-            self.create_sketch_on_plane(ctx, body, plane);
+            self.create_sketch_on_plane(ctx, body, plane, support);
         }
     }
 

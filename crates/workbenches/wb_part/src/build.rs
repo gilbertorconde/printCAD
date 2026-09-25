@@ -2243,6 +2243,58 @@ mod tests {
         assert!(!doc.move_feature_in_history(pad_a, false));
     }
 
+    /// A move is one place in the body's whole history: the Pocket cannot
+    /// pass its own sketch, and the Pad never jumps past a sketch it does
+    /// not use.
+    #[test]
+    fn a_move_is_one_place_in_the_whole_history() {
+        let (mut doc, body, base) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(base, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let cut_sketch = doc
+            .add_feature_in_body(rect_sketch(), "cut".into(), Some(body))
+            .unwrap();
+        let pocket = doc
+            .add_feature_in_body(
+                PartFeature::Pocket {
+                    refine: false,
+                    sketch: cut_sketch,
+                    depth: 2.0,
+                    reversed: false,
+                    through_all: false,
+                    mode: crate::ExtrudeMode::Dimension,
+                    depth2: 0.0,
+                    taper_deg: 0.0,
+                    up_to_face: None,
+                    up_to_offset: 0.0,
+                },
+                "Pocket".into(),
+                Some(body),
+            )
+            .unwrap();
+        let order = |doc: &Document| {
+            let mut nodes: Vec<(u64, FeatureId)> = doc
+                .feature_tree()
+                .all_nodes()
+                .filter(|(_, n)| n.body == Some(body))
+                .map(|(id, n)| (n.seq, *id))
+                .collect();
+            nodes.sort();
+            nodes.into_iter().map(|(_, id)| id).collect::<Vec<_>>()
+        };
+        assert!(
+            !doc.move_feature_in_history(pocket, true),
+            "the pocket stays after its sketch"
+        );
+        assert_eq!(order(&doc), vec![base, pad_id, cut_sketch, pocket]);
+        assert!(doc.move_feature_in_history(cut_sketch, true));
+        assert_eq!(order(&doc), vec![base, cut_sketch, pad_id, pocket]);
+        // The pocket does not use the pad, so the pad may move past it.
+        assert!(doc.move_feature_in_history(pad_id, false));
+        assert_eq!(order(&doc), vec![base, cut_sketch, pocket, pad_id]);
+    }
+
     #[test]
     fn retarget_moves_dependency_and_visibility() {
         let (mut doc, body, sketch_a) = doc_with_body_sketch();

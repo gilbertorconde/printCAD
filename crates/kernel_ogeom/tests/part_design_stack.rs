@@ -1081,3 +1081,97 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
         }
     }
 }
+
+/// A sketch drawn on a datum plane follows it: the pad on the sketch moves
+/// when the datum is moved, turned or flipped, and settles once rebuilt.
+#[test]
+fn a_pad_on_a_datum_sketch_follows_the_datum() {
+    use core_document::{
+        AttachmentOffset, BasePlane, DatumAttachment, DatumFeature, DatumShape, DocumentService,
+        WorkbenchFeature,
+    };
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_part::PartDesignWorkbench::default()))
+        .unwrap();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let datum_at = |z: f32, rotation_deg: f32, flip: bool| DatumFeature {
+        shape: DatumShape::Plane { size: 20.0 },
+        attachment: DatumAttachment::BasePlane(BasePlane::XY),
+        offset: AttachmentOffset {
+            translation: [0.0, 0.0, z],
+            rotation_deg,
+            flip,
+        },
+    };
+    let datum = doc
+        .add_feature_in_body(datum_at(10.0, 0.0, false), "Datum".into(), Some(body))
+        .unwrap();
+    // A 4 x 2 rectangle drawn on the datum, as `sketch.new{on = datum}` makes it.
+    let mut sketch = rect_sketch(4.0, 2.0);
+    sketch.support = Some(wb_sketch::DatumSupport {
+        datum,
+        plane: None,
+        offset: 0.0,
+    });
+    let sketch_id = doc
+        .add_feature_in_body(sketch, "sketch".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(sketch_id, 3.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+
+    let bounds = |doc: &mut Document| {
+        let job = registry
+            .rebuild_jobs(doc)
+            .into_iter()
+            .find(|j| j.body == body)
+            .expect("a rebuild");
+        let result = OgeomKernel::new()
+            .execute_solid_chain(&job.plan.unwrap().ops, &TessellationSettings::default())
+            .unwrap();
+        mesh_bounds(&result.mesh)
+    };
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3);
+
+    let (min, max) = bounds(&mut doc);
+    assert!(
+        near(min, [0.0, 0.0, 10.0]) && near(max, [4.0, 2.0, 13.0]),
+        "{min:?}..{max:?}"
+    );
+
+    // Moved up: the pad goes with it.
+    doc.update_feature_data(datum, datum_at(20.0, 0.0, false).to_json())
+        .unwrap();
+    let (min, max) = bounds(&mut doc);
+    assert!(
+        near(min, [0.0, 0.0, 20.0]) && near(max, [4.0, 2.0, 23.0]),
+        "moved: {min:?}..{max:?}"
+    );
+
+    // Turned a quarter about its normal: the rectangle stands along Y.
+    doc.update_feature_data(datum, datum_at(20.0, 90.0, false).to_json())
+        .unwrap();
+    let (min, max) = bounds(&mut doc);
+    assert!(
+        near(min, [-2.0, 0.0, 20.0]) && near(max, [0.0, 4.0, 23.0]),
+        "turned: {min:?}..{max:?}"
+    );
+
+    // Flipped: the pad grows down from the datum.
+    doc.update_feature_data(datum, datum_at(20.0, 0.0, true).to_json())
+        .unwrap();
+    let (min, max) = bounds(&mut doc);
+    assert!(
+        (max[2] - 20.0).abs() < 1e-3 && (min[2] - 17.0).abs() < 1e-3,
+        "flipped: {min:?}..{max:?}"
+    );
+    assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
+}

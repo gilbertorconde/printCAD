@@ -232,6 +232,34 @@ impl DocumentService {
         }
         let mut evaluation =
             crate::evaluate::evaluate_document(document, &|node| self.parameters(node));
+        // What features take from the ones they follow, in history order so
+        // a follower sees its leader's working data.
+        let mut nodes: Vec<&FeatureNode> = document
+            .feature_tree()
+            .all_nodes()
+            .map(|(_, n)| n)
+            .collect();
+        nodes.sort_by_key(|n| n.seq);
+        for node in nodes {
+            let Some(owner) = self.owner_of(&node.workbench_id) else {
+                continue;
+            };
+            let mut values = evaluation
+                .data
+                .get(&node.id)
+                .cloned()
+                .unwrap_or_else(|| node.data.clone());
+            let values_of = |id: FeatureId| {
+                evaluation
+                    .data
+                    .get(&id)
+                    .cloned()
+                    .or_else(|| document.get_feature_data(id).cloned())
+            };
+            if owner.derive(node, &mut values, &values_of) {
+                evaluation.data.insert(node.id, values);
+            }
+        }
         let ids: Vec<FeatureId> = evaluation.data.keys().copied().collect();
         for id in ids {
             let data = evaluation.data.get_mut(&id).expect("listed");
