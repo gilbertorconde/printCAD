@@ -1767,3 +1767,66 @@ fn a_sphere_between_two_latitudes_is_a_flat_capped_band() {
         "band",
     );
 }
+
+#[test]
+#[ignore = "kernel: a face unify_same_domain merges loses the closed form the mass properties need, so a refined solid measures from its mesh (ogeom-rs#64)"]
+fn a_refined_solid_measures_exactly() {
+    let ops = [
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+            10.0,
+            BooleanOp::NewSolid,
+        ),
+        SolidOp::Sweep {
+            profile: Profile {
+                plane: plane_at_z(10.0),
+                wires: vec![rect_wire(0.0, 0.0, 5.0, 5.0)],
+            },
+            kind: SweepKind::Extrude {
+                termination: ExtrudeTermination::Blind { distance: 5.0 },
+                second_side: None,
+                symmetric: false,
+                reversed: false,
+                taper_deg: 0.0,
+                direction: None,
+            },
+            op: BooleanOp::Fuse,
+        },
+        SolidOp::Refine,
+    ];
+    let mut kernel = new_kernel();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let props = kernel.physical_properties(&built.brep_blob).unwrap();
+    assert!(
+        !props.approximate,
+        "a box and a box on it have closed forms"
+    );
+    assert!((props.volume_mm3.unwrap() - 4125.0).abs() < 1e-6);
+}
+
+/// A pocket two lengths deep from a sketch lying on the solid's top face:
+/// the tool reaching both ways from the face cuts like any other.
+#[test]
+fn a_two_sided_pocket_from_the_top_face_cuts() {
+    let ops = [
+        blind_pad(vec![rect_wire(0.0, 0.0, 20.0, 20.0)], 10.0, BooleanOp::NewSolid),
+        SolidOp::Sweep {
+            profile: Profile {
+                plane: plane_at_z(10.0),
+                wires: vec![rect_wire(5.0, 5.0, 15.0, 15.0)],
+            },
+            kind: SweepKind::Extrude {
+                termination: ExtrudeTermination::Blind { distance: 4.0 },
+                second_side: Some(ExtrudeTermination::Blind { distance: 2.0 }),
+                symmetric: false,
+                reversed: true,
+                taper_deg: 0.0,
+                direction: None,
+            },
+            op: BooleanOp::Cut,
+        },
+    ];
+    assert_volume(&ops, 4000.0 - 100.0 * 4.0, "pocketed box");
+}

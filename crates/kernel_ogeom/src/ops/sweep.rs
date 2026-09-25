@@ -118,6 +118,19 @@ fn extrude(
         dir = dir.reversed();
     }
 
+    // Two plain lengths make one prism from the far end of the second
+    // side: no seam on the sketch plane, where a sketch on a face of the
+    // solid would put an edge lying in that face, which the boolean does
+    // not resolve.
+    if let (
+        ExtrudeTermination::Blind { distance: front },
+        Some(ExtrudeTermination::Blind { distance: back }),
+    ) = (termination, second_side)
+        && taper_deg.abs() <= 1e-12
+        && *front + *back > 0.0
+    {
+        return one_prism_from(model, built, dir, -*back, *front + *back);
+    }
     let mut tool = extrude_one_side(model, base, built, dir, termination, taper_deg)?;
     if let Some(term2) = second_side {
         let back = extrude_one_side(model, base, built, dir.reversed(), term2, taper_deg)?;
@@ -131,6 +144,28 @@ fn extrude(
             .shape;
     }
     Ok(tool)
+}
+
+/// The profile's faces moved `start` along `dir` and extruded `length`
+/// along it, fused into one tool.
+fn one_prism_from(
+    model: &mut Model,
+    built: &BuiltProfile,
+    dir: Direction,
+    start: f64,
+    length: f64,
+) -> Result<Shape, String> {
+    let shift = Transform::translation(dir.vector() * start);
+    let mut parts = Vec::with_capacity(built.faces.len());
+    for face in &built.faces {
+        let moved = ogeom::algo::transformed(model, face, shift)
+            .map_err(|e| format!("placing the extrusion's start failed: {e}"))?
+            .shape;
+        let part = make_prism(model, &moved, dir.vector() * length, tol())
+            .map_err(|e| format!("extrude operation failed: {e}"))?;
+        parts.push(part.shape);
+    }
+    fuse_all(model, parts)
 }
 
 fn extrude_one_side(
