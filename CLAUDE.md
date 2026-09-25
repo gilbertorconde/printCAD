@@ -118,7 +118,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `drive_mesh_solids` derives the B-rep with the kernel's `solid_from_mesh`
   (coplanar triangles merged into faces; a mesh that does not close becomes
   an open shell, said in the log), after which the body is an ordinary
-  imported solid. STEP import builds bodies from
+  imported solid. The files' annotations (`annotations.rs`: PMI callouts,
+  undrawn semantic dimensions/tolerances/datums, datum targets, notes)
+  leave as `ImportedModel.annotations`, one per body a callout describes,
+  placed with that body's occurrence, text formatted (`Ø 35 ±0.2`); IGES
+  levels and groups as `ImportedBody.layers`. The app keeps them on the
+  import's nodes (`ImportedObjectNode::annotation`/`layers`, an
+  `Annotations` group under the model's root) and `app/annotations.rs`
+  draws them as screen-space lines and labels (`rendering.show_annotations`,
+  View › Annotations), placed and hidden with their body. STEP import builds bodies from
   the document's **placed occurrences** (`Document::occurrences_of`), never
   from `import.solids`; the latter are part-local, so an assembly built from
   them puts every part at its own origin. The node walk mirrors the kernel's

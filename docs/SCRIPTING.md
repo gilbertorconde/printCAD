@@ -454,6 +454,8 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 
 `pc.view.print_bed`: Print bed.
 
+`pc.view.annotations`: Annotations.
+
 ### tab
 
 `pc.tab.new`: New tab.
