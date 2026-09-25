@@ -56,7 +56,14 @@ const FEATURES: &[(&str, &str)] = &[
 ];
 
 /// Arguments every feature command reads itself rather than as a field.
-const OWN_ARGS: &[&str] = &["sketch", "body", "name", "variant"];
+const OWN_ARGS: &[&str] = &[
+    "sketch",
+    "body",
+    "name",
+    "variant",
+    "face_point",
+    "face_normal",
+];
 
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
@@ -68,7 +75,19 @@ pub fn register(context: &mut WorkbenchContext) {
                 ParamKind::Id,
                 "The body it goes in; the sketch's body when left out",
             )
-            .optional("name", ParamKind::String, "Its name in the tree");
+            .optional("name", ParamKind::String, "Its name in the tree")
+            .optional(
+                "face_point",
+                ParamKind::List,
+                "A face it takes as the viewport's picked face (a thickness's \
+                 opening, a draft's neutral plane, a mirror's plane): a point of it, {x, y, z}, \
+                 in the body's own frame",
+            )
+            .optional(
+                "face_normal",
+                ParamKind::List,
+                "With face_point: the face's outward normal, {x, y, z}",
+            );
         if id.ends_with("primitive") {
             spec = spec.optional(
                 "variant",
@@ -175,6 +194,18 @@ pub fn run(
             .or_else(|| ctx.selected_body_id.map(BodyId))
             .ok_or_else(|| CommandError::bad("body", "is required when there is no sketch"))?,
     };
+    // A face given here stands in for one picked in the viewport, which is
+    // where the toolbar's path reads it, in world space.
+    if a.has("face_point") {
+        let placement = ctx.document.body_placement(body);
+        let point = vector3(a.0.get("face_point"), "face_point")?;
+        let normal = vector3(a.0.get("face_normal"), "face_normal")?;
+        ctx.selected_face = Some(core_document::FaceRef {
+            point: placement.point(point),
+            normal: placement.direction(normal),
+            surface: None,
+        });
+    }
     let tool = match a.opt_string("variant")? {
         Some(variant) => format!("{id}:{variant}"),
         None => id.to_string(),
@@ -563,6 +594,66 @@ mod tests {
         let data = fields(&doc, &pad);
         assert_eq!(data["Pad"]["length"], json!(40.0));
         assert_eq!(data["Pad"]["reversed"], json!(true));
+    }
+
+    /// Draft and thickness read their face from the viewport's pick; a
+    /// script passes it instead, in the body's own frame, wherever the body
+    /// has been moved to.
+    #[test]
+    fn a_script_gives_a_thickness_or_a_draft_its_face() {
+        let mut doc = Document::new("t");
+        let (body, sketch) = sketch_in(&mut doc);
+        doc.set_body_placement(
+            body,
+            core_document::BodyPlacement {
+                translation: [30.0, -5.0, 2.0],
+                rotation: [0.0, 0.0, 0.35f32.sin(), 0.35f32.cos()],
+            },
+        );
+        let mut bench = PartDesignWorkbench::default();
+        call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string(), "length": 10.0}),
+        )
+        .unwrap();
+        let face = json!({"face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]});
+        let without = call(
+            &mut bench,
+            &mut doc,
+            "part.thickness",
+            json!({"body": body.0.to_string()}),
+        );
+        assert!(without.is_err(), "no face, no thickness");
+        let near = |pick: &Value, want: [f64; 3]| {
+            let point: Vec<f64> = pick["point"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_f64().unwrap())
+                .collect();
+            point.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-3)
+        };
+        let mut args = face.clone();
+        args["body"] = json!(body.0.to_string());
+        let made = call(&mut bench, &mut doc, "part.thickness", args.clone()).unwrap();
+        let thickness = fields(&doc, &made);
+        let opened = thickness["Thickness"]["faces"].as_array().expect("faces");
+        assert_eq!(opened.len(), 1);
+        assert!(near(&opened[0], [5.0, 2.5, 10.0]), "{opened:?}");
+        // A draft's face is its neutral plane; the faces to tilt are a field.
+        args["faces"] = json!([{"point": [10.0, 2.5, 5.0], "normal": [1.0, 0.0, 0.0]}]);
+        let made = call(&mut bench, &mut doc, "part.draft", args).unwrap();
+        let draft = fields(&doc, &made);
+        assert!(
+            near(&draft["Draft"]["neutral"], [5.0, 2.5, 10.0]),
+            "{draft}"
+        );
+        assert!(
+            near(&draft["Draft"]["faces"][0], [10.0, 2.5, 5.0]),
+            "{draft}"
+        );
     }
 
     /// One frame of the task panel, as the host runs it; what it recorded
