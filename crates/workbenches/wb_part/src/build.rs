@@ -583,6 +583,16 @@ pub fn body_build_ops(document: &Document, body: BodyId) -> Result<BuildPlan, Bu
                 kind,
                 refine: _,
             } => {
+                if *tool_body == body {
+                    return Err(fail(
+                        "a body cannot be its own tool; pick another body".into(),
+                    ));
+                }
+                if !document.bodies().iter().any(|b| b.id == *tool_body) {
+                    return Err(fail(
+                        "the tool body is not in this document; pick another body".into(),
+                    ));
+                }
                 let tool_brep = document
                     .imported_brep_blob(*tool_body)
                     .ok_or_else(|| {
@@ -1958,6 +1968,25 @@ mod tests {
 
     /// A size the table does not have is an error on the hole, whatever
     /// its thread settings, never a panic.
+    #[test]
+    fn a_body_is_never_its_own_boolean_tool() {
+        let (mut doc, body, base_sketch) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        doc.add_feature_in_body(
+            PartFeature::BodyBoolean {
+                refine: false,
+                tool_body: body,
+                kind: kernel_api::BoolKind::Cut,
+            },
+            "Boolean".into(),
+            Some(body),
+        )
+        .unwrap();
+        let error = body_build_ops(&doc, body).unwrap_err();
+        assert!(error.message.contains("its own tool"), "{}", error.message);
+    }
+
     #[test]
     fn a_hole_of_a_size_the_table_lacks_fails_cleanly() {
         for (threaded, modeled_thread) in [(false, false), (true, false), (true, true)] {

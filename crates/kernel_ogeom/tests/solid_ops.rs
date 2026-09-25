@@ -562,6 +562,39 @@ fn fillet_and_chamfer_modify_all_edges() {
     assert!(chamfered.mesh.indices.len() / 3 > plain.mesh.indices.len() / 3);
 }
 
+/// A picked point names the edge beside it; one in the middle of a face
+/// names none, and the fillet says so rather than rounding whichever edge
+/// happens to be nearest.
+#[test]
+fn an_edge_pick_far_from_every_edge_fails() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let fillet_at = |kernel: &mut OgeomKernel, point: [f64; 3]| {
+        kernel.execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+                    10.0,
+                    BooleanOp::NewSolid,
+                ),
+                SolidOp::Fillet {
+                    radius: 2.0,
+                    edges: EdgeSelection::Near(vec![point]),
+                },
+            ],
+            &detail,
+        )
+    };
+    fillet_at(&mut kernel, [10.0, 0.5, 10.0]).expect("a pick beside the edge rounds it");
+    let err =
+        fillet_at(&mut kernel, [10.0, 10.0, 10.0]).expect_err("the face's middle names no edge");
+    assert!(
+        err.message.contains("no edge near the pick"),
+        "{}",
+        err.message
+    );
+}
+
 #[test]
 fn fillet_of_faces_selection_uses_nearest_face() {
     let mut kernel = new_kernel();

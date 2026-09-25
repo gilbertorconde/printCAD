@@ -25,6 +25,16 @@ pub fn nearest_of(
     want: ShapeType,
     probe: Point,
 ) -> Result<Shape, String> {
+    nearest_with_distance(model, root, want, probe).map(|(shape, _)| shape)
+}
+
+/// [`nearest_of`] and how far the probe is from it.
+fn nearest_with_distance(
+    model: &mut Model,
+    root: &Shape,
+    want: ShapeType,
+    probe: Point,
+) -> Result<(Shape, f64), String> {
     let vertex = model.add_vertex(ogeom::topo::VertexData::new(probe));
     let candidates = explore_unique(model, root, want)
         .map_err(|e| format!("exploring the solid failed: {e}"))?;
@@ -43,8 +53,17 @@ pub fn nearest_of(
             best = Some((d.distance, candidate));
         }
     }
-    best.map(|(_, s)| s)
+    best.map(|(d, s)| (s, d))
         .ok_or_else(|| format!("no {want:?} found near the selection point"))
+}
+
+/// How far from an edge a picked point may lie and still name it: a tenth
+/// of the solid's diagonal, room for the edge to move with an upstream
+/// edit while a point in the middle of a face names nothing.
+fn pick_reach(model: &Model, solid: &Shape) -> f64 {
+    crate::tess::robust_bounds(model, solid)
+        .map(|(lo, hi)| (hi - lo).magnitude() * 0.1)
+        .unwrap_or(f64::INFINITY)
 }
 
 /// A point on (or representative of) an edge, for later re-resolution.
@@ -66,18 +85,22 @@ fn edge_probe(model: &Model, edge: &Shape) -> Option<Point> {
     Some(Point::new(acc.x / n, acc.y / n, acc.z / n))
 }
 
-/// Probe points for every edge a selection names, resolved on `solid`.
+/// Probe points for every edge a selection names, resolved on `solid`, and
+/// whether they are picks, which must lie within reach of their edge (the
+/// others are read off the solid's own edges).
 fn selection_probes(
     model: &mut Model,
     solid: &Shape,
     edges: &EdgeSelection,
-) -> Result<Vec<Point>, String> {
-    match edges {
-        EdgeSelection::Near(points) => Ok(points.iter().map(|p| point3(*p)).collect()),
+) -> Result<(Vec<Point>, bool), String> {
+    let probes = match edges {
+        EdgeSelection::Near(points) => {
+            return Ok((points.iter().map(|p| point3(*p)).collect(), true));
+        }
         EdgeSelection::All => {
             let all = explore_unique(model, solid, ShapeType::Edge)
                 .map_err(|e| format!("exploring edges failed: {e}"))?;
-            Ok(all.iter().filter_map(|e| edge_probe(model, e)).collect())
+            all.iter().filter_map(|e| edge_probe(model, e)).collect()
         }
         EdgeSelection::OfFaces(points) => {
             let mut probes = Vec::new();
@@ -96,9 +119,10 @@ fn selection_probes(
                     seen.push(edge);
                 }
             }
-            Ok(probes)
+            probes
         }
-    }
+    };
+    Ok((probes, false))
 }
 
 pub fn fillet(
@@ -108,7 +132,7 @@ pub fn fillet(
     edges: &EdgeSelection,
 ) -> Result<Shape, String> {
     let probes = selection_probes(model, solid, edges)?;
-    if probes.is_empty() {
+    if probes.0.is_empty() {
         return Err("fillet selection matches no edges".into());
     }
     let chain = chain_of(model, solid, probes)?;
@@ -117,11 +141,27 @@ pub fn fillet(
         .map_err(|e| format!("fillet failed: {e}"))
 }
 
-/// The edges of `solid` the probes name, each once.
-fn chain_of(model: &mut Model, solid: &Shape, probes: Vec<Point>) -> Result<Vec<Shape>, String> {
+/// The edges of `solid` the probes name, each once; a pick with no edge
+/// within reach names none and fails the selection.
+fn chain_of(
+    model: &mut Model,
+    solid: &Shape,
+    (probes, picked): (Vec<Point>, bool),
+) -> Result<Vec<Shape>, String> {
+    let reach = if picked {
+        pick_reach(model, solid)
+    } else {
+        f64::INFINITY
+    };
     let mut chain: Vec<Shape> = Vec::with_capacity(probes.len());
     for probe in probes {
-        let edge = nearest_of(model, solid, ShapeType::Edge, probe)?;
+        let (edge, distance) = nearest_with_distance(model, solid, ShapeType::Edge, probe)?;
+        if distance > reach {
+            return Err(format!(
+                "no edge near the pick at ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+                probe.x, probe.y, probe.z
+            ));
+        }
         if !chain.iter().any(|e| e.is_same(&edge)) {
             chain.push(edge);
         }
@@ -137,7 +177,7 @@ pub fn chamfer(
     edges: &EdgeSelection,
 ) -> Result<Shape, String> {
     let probes = selection_probes(model, solid, edges)?;
-    if probes.is_empty() {
+    if probes.0.is_empty() {
         return Err("chamfer selection matches no edges".into());
     }
     let chain = chain_of(model, solid, probes)?;

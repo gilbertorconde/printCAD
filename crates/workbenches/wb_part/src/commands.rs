@@ -605,6 +605,36 @@ mod tests {
         assert_eq!(data["Pad"]["reversed"], json!(true));
     }
 
+    /// A boolean starts with the body made last, the one just built to
+    /// combine, as its tool.
+    #[test]
+    fn a_boolean_starts_on_the_latest_other_body() {
+        let mut doc = Document::new("t");
+        let (body, sketch) = sketch_in(&mut doc);
+        let mut bench = PartDesignWorkbench::default();
+        call(
+            &mut bench,
+            &mut doc,
+            "part.pad",
+            json!({"sketch": sketch.0.to_string()}),
+        )
+        .unwrap();
+        doc.create_body(None);
+        let latest = doc.create_body(None);
+        let boolean = call(
+            &mut bench,
+            &mut doc,
+            "part.boolean",
+            json!({"body": body.0.to_string()}),
+        )
+        .unwrap();
+        let data = fields(&doc, &boolean);
+        assert_eq!(
+            data["BodyBoolean"]["tool_body"],
+            json!(latest.0.to_string())
+        );
+    }
+
     /// `through_all` and the ThroughAll mode are one setting; either way
     /// a script names it, the feature reads back as the mode.
     #[test]

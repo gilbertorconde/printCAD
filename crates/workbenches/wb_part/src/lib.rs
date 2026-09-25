@@ -528,6 +528,7 @@ impl PartDesignWorkbench {
                     .document
                     .bodies()
                     .iter()
+                    .rev()
                     .find(|b| b.id != body)
                     .map(|b| b.id)
                     .ok_or("Create a second body to combine with first")?;
