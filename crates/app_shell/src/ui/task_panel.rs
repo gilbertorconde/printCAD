@@ -19,7 +19,8 @@ pub struct TaskPanelResult {
     pub writeback: PanelWriteback,
     /// The task closed this frame.
     pub outcome: Option<TaskOutcome>,
-    /// A task is open after this frame.
+    /// A task that holds its edits as one undo step is open after this
+    /// frame.
     pub open: bool,
 }
 
@@ -46,10 +47,11 @@ pub fn draw_task_panel(ui: &mut egui::Ui, inputs: TaskPanelInputs<'_>) -> TaskPa
     let Ok(wb) = registry.workbench_mut(&active_workbench.0) else {
         return result;
     };
-    if task.is_none() {
+    let Some(info) = task else {
         return result;
-    }
-    result.open = true;
+    };
+    // A stepwise task leaves each edit its own undo step.
+    result.open = !info.stepwise;
 
     // Enter and Escape reach the task only when no text field owns them;
     // a focused field keeps its own Enter/Esc and the next press arrives.

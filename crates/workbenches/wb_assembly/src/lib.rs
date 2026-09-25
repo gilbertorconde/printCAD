@@ -1053,6 +1053,7 @@ impl Workbench for AssemblyWorkbench {
                 title: picking.kind.label().to_string(),
                 icon: picking.kind.icon(),
                 confirmable: false,
+                stepwise: false,
             });
         }
         match self.task.as_ref()? {
@@ -1066,27 +1067,32 @@ impl Workbench for AssemblyWorkbench {
                     title: kind.label().to_string(),
                     icon: kind.icon(),
                     confirmable: true,
+                    stepwise: false,
                 })
             }
             Task::Move { .. } => Some(core_document::TaskInfo {
                 title: "Move body".to_string(),
                 icon: "move-geometry",
                 confirmable: true,
+                stepwise: false,
             }),
             Task::Interference { .. } => Some(core_document::TaskInfo {
                 title: "Interference".to_string(),
                 icon: "check-geometry",
                 confirmable: false,
+                stepwise: false,
             }),
             Task::Explode { .. } => Some(core_document::TaskInfo {
                 title: "Exploded view".to_string(),
                 icon: "scale-geometry",
                 confirmable: false,
+                stepwise: false,
             }),
             Task::Parts => Some(core_document::TaskInfo {
                 title: "Parts list".to_string(),
                 icon: "file-document",
                 confirmable: false,
+                stepwise: false,
             }),
         }
     }

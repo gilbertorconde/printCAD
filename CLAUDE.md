@@ -434,7 +434,9 @@ is the guide.
 live, OK accepts, Cancel writes the opening snapshot back (or deletes the
 feature the tool just created). `frame.rs` skips the per-frame
 `journal.note` while a task is open, so one task is one undo entry;
-`TaskClosed` closes the gesture.
+`TaskClosed` closes the gesture. A `TaskInfo::stepwise` task (the
+sketcher's editing session) is the exception: each edit in it is an undo
+step of its own.
 
 Recompute loop: workbench edits document → features marked dirty via the
 dependency DAG → `drive_part_recompute` (each frame) asks every bench for

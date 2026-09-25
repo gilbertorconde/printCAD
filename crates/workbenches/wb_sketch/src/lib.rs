@@ -254,6 +254,10 @@ pub struct SketchWorkbench {
     /// The tool id as it was activated, variant and all: a change of it is
     /// a change of tool.
     activated_tool: Option<String>,
+    /// The document's edit count after the sketcher last wrote the sketch:
+    /// when it has moved on without a write of ours (an undo, a script), the
+    /// cached solve verdict and the selection are checked again.
+    own_seq: std::sync::atomic::AtomicU64,
     /// While on, every newly created element (from any drawing tool) is
     /// flagged as construction geometry. Toggled by the
     /// `sketch.construction` action when nothing is selected.
@@ -547,6 +551,10 @@ impl SketchWorkbench {
             ctx.log_error(format!("Failed to update sketch: {e}"));
             return false;
         }
+        self.own_seq.store(
+            ctx.document.mutation_seq(),
+            std::sync::atomic::Ordering::Relaxed,
+        );
         true
     }
 
@@ -2509,6 +2517,7 @@ impl Workbench for SketchWorkbench {
                 title: "New sketch".to_string(),
                 icon: "sketch-new",
                 confirmable: false,
+                stepwise: false,
             });
         }
         let id = self.active_sketch_id?;
@@ -2517,6 +2526,8 @@ impl Workbench for SketchWorkbench {
             title: name,
             icon: "sketch-edit",
             confirmable: false,
+            // Every line drawn or constraint added is a step of its own.
+            stepwise: true,
         })
     }
 
@@ -2546,6 +2557,19 @@ impl Workbench for SketchWorkbench {
         }
         if self.last_tool.as_deref() == Some("sketch.external") {
             self.take_external_picks(ctx);
+        }
+        let seq = ctx.document.mutation_seq();
+        if self.own_seq.swap(seq, std::sync::atomic::Ordering::Relaxed) != seq
+            && let Some(feature) = self.get_active_sketch(ctx)
+        {
+            // Changed from outside: what was selected may be gone, and the
+            // verdict is of a sketch that is not there any more.
+            self.selected
+                .retain(|id| feature.sketch.get_geometry(*id).is_some());
+            self.selected_constraints
+                .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+            self.last_solve = None;
+            self.last_diagnosis = None;
         }
         self.selection_shape = match self.get_active_sketch(ctx) {
             Some(feature) => constrain::SelectionShape::of(&feature.sketch, &self.selected),

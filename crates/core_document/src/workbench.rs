@@ -242,6 +242,10 @@ pub struct TaskInfo {
     pub icon: &'static str,
     /// Show OK and Cancel; otherwise a single Close.
     pub confirmable: bool,
+    /// Each edit made in the task is an undo step of its own (a sketch's
+    /// editing session, where Ctrl+Z takes back the last line drawn);
+    /// otherwise the whole task is one step, as Cancel treats it.
+    pub stepwise: bool,
 }
 
 /// Host → workbench: the buttons or keys pressed on the task panel this

@@ -71,6 +71,7 @@ impl PartDesignWorkbench {
             title: node.name.clone(),
             icon,
             confirmable: true,
+            stepwise: false,
         })
     }
 
