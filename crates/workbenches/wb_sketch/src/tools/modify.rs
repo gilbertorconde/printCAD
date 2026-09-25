@@ -106,15 +106,15 @@ fn replace_corner(sketch: &mut Sketch, ctx: &CornerCtx, t1_id: Uuid, t2_id: Uuid
 /// CCW arc; constraints referencing the removed corner are dropped.
 pub(super) fn fillet(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f32, radius: f32) -> ToolEffect {
     if radius < 1e-6 {
-        return ToolEffect::none();
+        return ToolEffect::log("Set a fillet radius first");
     }
     let Some(ctx) = corner_under_cursor(sketch, cursor, snap_tol) else {
-        return ToolEffect::none();
+        return ToolEffect::log("Click a corner where two lines meet");
     };
     let theta = ctx.u1.dot(ctx.u2).clamp(-1.0, 1.0).acos(); // corner opening angle
     let d = radius / (theta * 0.5).tan(); // corner → tangent point distance
     if d >= ctx.len1 - 1e-6 || d >= ctx.len2 - 1e-6 {
-        return ToolEffect::none(); // radius too large for these segments
+        return ToolEffect::log("The radius is too large for these lines");
     }
 
     // Tangent points along each line; arc center on the angle bisector.
@@ -154,13 +154,13 @@ pub(super) fn chamfer(
     length: f32,
 ) -> ToolEffect {
     if length < 1e-6 {
-        return ToolEffect::none();
+        return ToolEffect::log("Set a chamfer length first");
     }
     let Some(ctx) = corner_under_cursor(sketch, cursor, snap_tol) else {
-        return ToolEffect::none();
+        return ToolEffect::log("Click a corner where two lines meet");
     };
     if length >= ctx.len1 - 1e-6 || length >= ctx.len2 - 1e-6 {
-        return ToolEffect::none(); // setback longer than a segment
+        return ToolEffect::log("The chamfer is longer than these lines");
     }
     let t1 = Vec2D::from_glam(ctx.corner.to_glam() + ctx.u1 * length);
     let t2 = Vec2D::from_glam(ctx.corner.to_glam() + ctx.u2 * length);
@@ -383,7 +383,7 @@ pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec<Vec2
 
 pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     let Some(plan) = plan_trim(sketch, cursor, tol) else {
-        return ToolEffect::none();
+        return ToolEffect::log("Nothing to trim here: click a curve's part to remove");
     };
     let new_point = |sketch: &mut Sketch, p: Vec2D| -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(p)))
@@ -520,7 +520,7 @@ pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
 
 pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     let Some(id) = curve_under_cursor(sketch, cursor, tol, false) else {
-        return ToolEffect::none();
+        return ToolEffect::log("Click near the end of a line or an arc to extend");
     };
     let Some(prim) = prim_of(sketch, sketch.get_geometry(id).unwrap()) else {
         return ToolEffect::none();
@@ -552,7 +552,7 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect
                 t.map(|t| (start_pid, a + ab * t))
             };
             let Some((pid, new_pos)) = target else {
-                return ToolEffect::none(); // nothing to extend to
+                return ToolEffect::log("Nothing to extend to in that direction");
             };
             if let Some(GeometryElement::Point(pt)) = sketch.get_geometry_mut(pid) {
                 pt.position = Vec2D::from_glam(new_pos);
@@ -603,7 +603,7 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect
 
 pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     let Some(id) = curve_under_cursor(sketch, cursor, tol, false) else {
-        return ToolEffect::none(); // circles have no split point pair
+        return ToolEffect::log("Click a line or an arc to split");
     };
     let Some(prim) = prim_of(sketch, sketch.get_geometry(id).unwrap()) else {
         return ToolEffect::none();
@@ -614,7 +614,7 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect 
             let ab = b - a;
             let t = ((p - a).dot(ab) / ab.length_squared()).clamp(0.0, 1.0);
             if !(SPAN_EPS..=1.0 - SPAN_EPS).contains(&t) {
-                return ToolEffect::none(); // too close to an endpoint
+                return ToolEffect::log("Too close to an end to split");
             }
             let m = Vec2D::from_glam(a + ab * t);
             let m_id = sketch.add_geometry(GeometryElement::Point(Point::new(m)));

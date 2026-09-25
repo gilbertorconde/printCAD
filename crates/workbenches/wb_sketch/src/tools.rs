@@ -382,6 +382,17 @@ pub fn handle_click(
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
+    // A transform with nothing to act on says so at its first click,
+    // rather than walking through its clicks to do nothing.
+    if selected.is_empty()
+        && state.is_idle()
+        && matches!(
+            tool,
+            "sketch.translate" | "sketch.rotate" | "sketch.scale" | "sketch.mirror"
+        )
+    {
+        return ToolEffect::log("Select the geometry to transform first");
+    }
     match tool {
         "sketch.point" => draw::point(sketch, cursor, snap_tol),
         "sketch.line" => draw::line(state, sketch, cursor, snap_tol, params.auto_constraints),

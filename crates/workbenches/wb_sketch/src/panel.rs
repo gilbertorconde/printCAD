@@ -618,16 +618,12 @@ impl SketchWorkbench {
             });
         }
         self.pending_focus = None; // one-shot: the row grabbed focus
-        if let Some((id, additive)) = clicked {
-            if additive {
-                if !self.selected_constraints.remove(&id) {
-                    self.selected_constraints.insert(id);
-                }
-            } else {
-                self.selected.clear();
-                self.selected_constraints.clear();
-                self.selected_constraints.insert(id);
-            }
+        // As the element rows and the viewport do: a click adds to the
+        // selection, a second click takes it out.
+        if let Some((id, _)) = clicked
+            && !self.selected_constraints.remove(&id)
+        {
+            self.selected_constraints.insert(id);
         }
         if let Some(idx) = delete
             && let Some(mut feature) = self.get_active_sketch(ctx)

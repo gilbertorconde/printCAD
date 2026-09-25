@@ -2131,16 +2131,20 @@ fn selected_constraint_highlights_glyph_and_geometry() {
         "selected glyph tinted, got {:?}",
         glyph.color
     );
-    // Referenced line drawn in the selection color.
+    // Referenced line drawn in the constraint colour: shown, not selected.
     let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
     ctx.view_proj = Some(h.vp);
     ctx.active_document_object = h.active_object;
     let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
-    let selected_lines = overlays
+    let referenced_lines = overlays
         .iter()
-        .filter(|o| same_color(o.color, pal().selected))
+        .filter(|o| same_color(o.color, pal().constraint))
         .count();
-    assert!(selected_lines >= 1, "referenced geometry highlighted");
+    assert!(referenced_lines >= 1, "referenced geometry highlighted");
+    assert!(
+        !overlays.iter().any(|o| same_color(o.color, pal().selected)),
+        "but not as if selected"
+    );
 }
 
 #[test]
@@ -2924,5 +2928,27 @@ fn a_typed_level_angle_is_not_repeated_by_an_auto_horizontal() {
         !has(|k| matches!(k, ConstraintKind::Horizontal { .. })),
         "{:?}",
         sketch.constraints
+    );
+}
+
+/// A boxed line is a line: its endpoints are not selected with it, so the
+/// constraint tools see one line.
+#[test]
+fn a_boxed_line_is_selected_without_its_endpoints() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(13.0, 4.1, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.box_select(1.0, 2.0, 15.0, 6.0);
+    h.key(KeyCode::A, Some("sketch.constrain.dimension"));
+    assert!(
+        h.sketch().constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::Length { .. } | ConstraintKind::Distance { .. }
+        )),
+        "the dimension tool took the boxed line as a line: {:?}",
+        h.sketch().constraints
     );
 }

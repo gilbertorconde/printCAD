@@ -1198,6 +1198,7 @@ pub fn build_overlays(
     pal: &SketchPalette,
     sketch: &Sketch,
     selected: &HashSet<Uuid>,
+    referenced: &HashSet<Uuid>,
     hovered: Option<Uuid>,
     tool_state: &ToolState,
     cursor: Option<Vec2D>,
@@ -1231,7 +1232,11 @@ pub fn build_overlays(
             if matches!(geom, GeometryElement::Point(_)) != pass_points {
                 continue;
             }
-            let style = element_style(sketch, geom.id(), selected, hovered, pal);
+            let mut style = element_style(sketch, geom.id(), selected, hovered, pal);
+            if referenced.contains(&geom.id()) && !selected.contains(&geom.id()) {
+                style.color = pal.constraint;
+                style.thickness = 2.5;
+            }
             push_element(&mut out, proj, pal, sketch, geom, style, &centers);
         }
     }

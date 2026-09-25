@@ -1986,3 +1986,20 @@ fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 4);
 }
+
+#[test]
+fn a_transform_with_nothing_selected_says_so_at_its_first_click() {
+    let mut sketch = Sketch::new("t");
+    let mut state = ToolState::Idle;
+    for tool in [
+        "sketch.translate",
+        "sketch.rotate",
+        "sketch.scale",
+        "sketch.mirror",
+    ] {
+        let effect = handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.5);
+        assert!(!effect.changed);
+        assert!(effect.log.is_some(), "{tool} says why");
+        assert!(state.is_idle(), "{tool} did not start");
+    }
+}

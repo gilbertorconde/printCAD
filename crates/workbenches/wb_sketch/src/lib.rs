@@ -536,6 +536,12 @@ impl SketchWorkbench {
     /// Run the constraint solver on `feature`, record the outcome, and log
     /// failures. Returns the (possibly adjusted) feature.
     fn solve(&mut self, ctx: &mut WorkbenchRuntimeContext, feature: &mut SketchFeature) {
+        // An edit may have taken selected items away: they leave the
+        // selection with it, so Delete and the tools act on what is there.
+        self.selected
+            .retain(|id| feature.sketch.get_geometry(*id).is_some());
+        self.selected_constraints
+            .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
         if !self.options.auto_update {
             // The panel's Solve now button runs it.
             self.last_diagnosis = None;
@@ -852,6 +858,9 @@ impl SketchWorkbench {
                 ctx.log_info(log);
             }
             self.store_sketch(ctx, feature);
+        } else if let Some(why) = effect.log {
+            // A click that did nothing says why.
+            ctx.log_warn(why);
         }
         InputResult::consumed()
     }
@@ -1203,9 +1212,10 @@ impl SketchWorkbench {
     }
 
     /// Resolve a released box selection. A drag beyond the snap tolerance
-    /// selects every element fully inside the rectangle (replacing the
-    /// selection, or adding to it when ctrl was held at press); anything
-    /// shorter counts as a plain empty click (clear unless additive).
+    /// adds every element fully inside the rectangle to the selection
+    /// (selection accumulates), a curve without the points that define it,
+    /// so a boxed line is a line to the constraint tools; anything shorter
+    /// is a click on empty space, which clears it.
     fn finish_box_select(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -1224,8 +1234,19 @@ impl SketchWorkbench {
         }
         let min = Vec2D::new(bs.anchor.x.min(bs.current.x), bs.anchor.y.min(bs.current.y));
         let max = Vec2D::new(bs.anchor.x.max(bs.current.x), bs.anchor.y.max(bs.current.y));
-        for geom in &feature.sketch.geometry {
-            if element_fully_inside(&feature.sketch, geom, min, max) {
+        let boxed: Vec<&sketch::GeometryElement> = feature
+            .sketch
+            .geometry
+            .iter()
+            .filter(|g| element_fully_inside(&feature.sketch, g, min, max))
+            .collect();
+        let owned: HashSet<Uuid> = boxed
+            .iter()
+            .filter(|g| !matches!(g, sketch::GeometryElement::Point(_)))
+            .flat_map(|g| Sketch::curve_point_ids(g))
+            .collect();
+        for geom in boxed {
+            if !owned.contains(&geom.id()) {
                 self.selected.insert(geom.id());
             }
         }
@@ -2615,7 +2636,8 @@ impl Workbench for SketchWorkbench {
             key("Enter", "finish");
         }
         if tool == "sketch.select" {
-            key("Ctrl", "add to selection");
+            key("Click", "add to selection");
+            key("Empty click", "clear");
             key("Del", "delete");
         } else {
             key("Esc", "cancel");
@@ -2807,11 +2829,13 @@ impl SketchWorkbench {
             }
             _ => None,
         };
-        // Selected constraints highlight their referenced geometry too.
-        let mut selected = self.selected.clone();
+        // Selected constraints show the geometry they hold, in their own
+        // colour: it is not selected, so tools do not act on it.
+        let selected = self.selected.clone();
+        let mut referenced: HashSet<Uuid> = HashSet::new();
         for c in &feature.sketch.constraints {
             if self.selected_constraints.contains(&c.id) {
-                selected.extend(sketch::constraint_refs(&c.kind));
+                referenced.extend(sketch::constraint_refs(&c.kind));
             }
         }
         // Typed values place the preview where they will place the click.
@@ -2828,6 +2852,7 @@ impl SketchWorkbench {
             pal,
             &feature.sketch,
             &selected,
+            &referenced,
             self.hovered,
             &self.tool_state,
             preview_cursor,
