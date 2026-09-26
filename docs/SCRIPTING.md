@@ -480,7 +480,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `x_axis` (list, optional): With normal: the sketch's X direction, {x, y, z}
 - Returns the sketch's id
 
-`pc.sketch.import_dxf`: Make a sketch of a DXF drawing's lines and polylines: visible ones as geometry, hidden ones as construction, ends that meet sharing one point.
+`pc.sketch.import_dxf`: Make a sketch of a DXF drawing: its lines, arcs, circles, ellipses and polylines as sketch curves, splines as lines through points on them, hidden ones as construction, ends that meet sharing one point.
 
 - `body` (id, optional): The body it belongs to; the selected body, else a new one
 - `plane` (string, optional): XY (the default), XZ or YZ
@@ -491,7 +491,7 @@ pc.asm.mate{body = lid, face = bottom(lid), other = box, other_face = top(box)}
 - `origin` (list, optional): With normal: where the plane's origin sits, {x, y, z}
 - `x_axis` (list, optional): With normal: the sketch's X direction, {x, y, z}
 - `path` (string): The DXF file
-- `scale` (number, optional): Millimetres per drawing unit (1 when left out)
+- `scale` (number, optional): Millimetres per drawing unit; the drawing's own unit when left out, else 1
 - Returns the sketch's id
 
 `pc.sketch.point`: Add a point.

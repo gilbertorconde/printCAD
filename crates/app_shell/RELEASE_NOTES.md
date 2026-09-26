@@ -19,7 +19,7 @@ version first.
 - Geometric and dimensional constraints, solved live, with a message for every conflicting or redundant one.
 - Trim, extend, split, fillet, offset, mirror, move, rotate, scale and arrays.
 - Carbon copy brings another sketch's geometry in; merge makes one sketch of several.
-- File › Import reads a DXF drawing into a new sketch: its lines and polylines, hidden ones as construction, with ends that meet joined so outlines close.
+- File › Import reads a DXF drawing into a new sketch in the drawing's own units: its lines, arcs, circles, ellipses and polylines (bulges as arcs) as sketch curves, splines as lines along them, hidden ones as construction, with ends that meet joined so outlines close.
 - External geometry projects a solid's edges into the sketch as fixed references to constrain against, kept up to date when the solid changes.
 - Rendering order puts construction or normal geometry on top.
 - Drawing snaps to the origin and the two axes as it does to drawn geometry, and pins the new point there.

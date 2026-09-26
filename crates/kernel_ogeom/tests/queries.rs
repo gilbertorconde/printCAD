@@ -113,7 +113,6 @@ fn an_l_of_two_thicknesses_is_as_thin_as_its_thinner_arm() {
 }
 
 #[test]
-#[ignore = "kernel: medial_graph does not settle on a face between two full circles (ogeom-rs#71)"]
 fn a_ring_is_as_thin_as_its_width() {
     let (wall, _) = thinnest_wall(vec![circle(10.0), circle(7.0)]);
     assert!((wall - 3.0).abs() < 1e-3, "{wall}");

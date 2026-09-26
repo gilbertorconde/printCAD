@@ -239,7 +239,6 @@ fn a_file_that_is_not_a_drawing_makes_nothing() {
 }
 
 #[test]
-#[ignore = "kernel: read_dxf reads no arcs, circles, ellipses, splines, polyline bulges or closed flags (ogeom-rs#72)"]
 fn arcs_and_circles_import_as_sketch_arcs_and_circles() {
     let text = dxf(&[
         ("0", "CIRCLE"),
@@ -311,7 +310,6 @@ fn arcs_and_circles_import_as_sketch_arcs_and_circles() {
 }
 
 #[test]
-#[ignore = "kernel: read_dxf takes a POLYLINE header's own 10/20 point for a vertex (ogeom-rs#72)"]
 fn a_polyline_header_point_is_not_a_vertex() {
     // An R12 POLYLINE carries a point of its own (its elevation in 30),
     // written as zeros; only the VERTEX entities are the curve.

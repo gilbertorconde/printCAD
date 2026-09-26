@@ -1066,11 +1066,58 @@ pub enum ProjectedEdge {
 /// The curves of a 2D drawing file, in the drawing's own coordinates.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Drawing2d {
-    /// Polylines drawn as outline, each as its points in order; a closed
-    /// one ends on the point it starts from.
-    pub visible: Vec<Vec<[f64; 2]>>,
-    /// Polylines the drawing marks hidden.
-    pub hidden: Vec<Vec<[f64; 2]>>,
+    /// Millimetres per drawing unit, when the drawing names its unit.
+    pub unit_mm: Option<f64>,
+    /// Every curve, in the order the file has them.
+    pub curves: Vec<DrawingCurve>,
+}
+
+/// One curve of a drawing, and whether the drawing marks it hidden
+/// (a hidden layer, or a dashed line type).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DrawingCurve {
+    pub hidden: bool,
+    pub shape: DrawingShape,
+}
+
+/// The kinds of curve a drawing carries. Angles are radians, arcs run
+/// counter-clockwise.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DrawingShape {
+    /// Points in order, each segment a line, or an arc where the bulge of
+    /// the segment starting at that point (the tangent of a quarter of its
+    /// included angle, positive counter-clockwise) is not zero. `bulges`
+    /// is as long as `points`, or empty for straight segments only.
+    Polyline {
+        points: Vec<[f64; 2]>,
+        bulges: Vec<f64>,
+        closed: bool,
+    },
+    Arc {
+        centre: [f64; 2],
+        radius: f64,
+        start_angle: f64,
+        end_angle: f64,
+    },
+    Circle {
+        centre: [f64; 2],
+        radius: f64,
+    },
+    /// Points `centre + major cos t + ratio perp(major) sin t` for `t`
+    /// from `start_param` to `end_param`; the whole ellipse when those span
+    /// a full turn.
+    Ellipse {
+        centre: [f64; 2],
+        major: [f64; 2],
+        ratio: f64,
+        start_param: f64,
+        end_param: f64,
+    },
+    /// A spline, as points along the exact curve.
+    Spline {
+        points: Vec<[f64; 2]>,
+        closed: bool,
+    },
 }
 
 /// Geometry questions a workbench may ask while it runs, answered by the

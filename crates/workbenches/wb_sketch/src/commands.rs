@@ -29,14 +29,15 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         placing(CommandSpec::new(
             "sketch.import_dxf",
-            "Make a sketch of a DXF drawing's lines and polylines: visible ones as geometry, \
-             hidden ones as construction, ends that meet sharing one point",
+            "Make a sketch of a DXF drawing: its lines, arcs, circles, ellipses and polylines \
+             as sketch curves, splines as lines through points on them, hidden ones as \
+             construction, ends that meet sharing one point",
         ))
         .param("path", ParamKind::String, "The DXF file")
         .optional(
             "scale",
             ParamKind::Number,
-            "Millimetres per drawing unit (1 when left out)",
+            "Millimetres per drawing unit; the drawing's own unit when left out, else 1",
         )
         .returns("the sketch's id"),
     );
@@ -604,8 +605,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
 /// one and named after the file unless `name` says otherwise.
 fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
     let path = std::path::Path::new(a.string("path")?);
-    let scale = a.opt_number("scale")?.unwrap_or(1.0);
-    if !(scale > 0.0 && scale.is_finite()) {
+    let given_scale = a.opt_number("scale")?;
+    if given_scale.is_some_and(|s| !(s > 0.0 && s.is_finite())) {
         return Err(CommandError::bad("scale", "must be more than zero"));
     }
     let bytes = std::fs::read(path)
@@ -625,20 +626,37 @@ fn import_dxf(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
             .map(|s| s.to_string_lossy().into_owned())
             .unwrap_or_else(|| crate::SketchWorkbench::next_sketch_name(ctx.document)),
     };
+    // The scale given, else the drawing's own unit, else millimetres.
+    let scale = given_scale.or(drawing.unit_mm).unwrap_or(1.0);
     let mut sketch = Sketch::new(name);
     let added = crate::dxf::add_drawing(&mut sketch, &drawing, scale);
-    if added.lines + added.construction == 0 {
+    if added.curves() == 0 {
         return Err(CommandError::failed(
-            "the drawing has no lines or polylines to bring in",
+            "the drawing has no curves to bring in",
         ));
     }
     crate::solver::solve(&mut sketch);
     let id = add_sketch(a, ctx, sketch)?;
+    let mut parts: Vec<String> = [
+        (added.lines, "lines"),
+        (added.arcs, "arcs"),
+        (added.circles, "circles"),
+        (added.ellipses, "ellipses"),
+    ]
+    .iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, what)| format!("{n} {what}"))
+    .collect();
+    if added.construction > 0 {
+        parts.push(format!("{} of them construction", added.construction));
+    }
+    if added.splines > 0 {
+        parts.push(format!("{} spline(s) as lines through them", added.splines));
+    }
     ctx.log_info(format!(
-        "Imported {}: {} lines, {} construction",
+        "Imported {} at {scale} mm a unit: {}",
         path.display(),
-        added.lines,
-        added.construction
+        parts.join(", ")
     ));
     Ok(json!(id.0.to_string()))
 }
