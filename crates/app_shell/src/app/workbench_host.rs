@@ -27,6 +27,7 @@ pub(crate) struct WbCtxParams {
     pub view_proj: Option<[[f32; 4]; 4]>,
     pub hovered_world_pos: Option<[f32; 3]>,
     pub hovered_body_id: Option<Uuid>,
+    pub hovered_base_plane: Option<core_document::BasePlane>,
     pub selected_body_id: Option<Uuid>,
     pub cursor_viewport_pos: Option<(f32, f32)>,
     pub active_document_object: Option<FeatureId>,
@@ -95,6 +96,7 @@ impl PrintCadApp {
             view_proj: Some(self.session.camera.view_projection()),
             hovered_world_pos: self.session.hovered_world_pos,
             hovered_body_id: self.session.hovered_body,
+            hovered_base_plane: self.session.hovered_base_plane,
             selected_body_id: self.session.selected_body,
             cursor_viewport_pos: self.cursor_in_viewport,
             active_document_object: self.session.active_document_object,
@@ -129,6 +131,7 @@ impl PrintCadApp {
             view_proj: Some(self.session.camera.view_projection()),
             hovered_world_pos: None,
             hovered_body_id: None,
+            hovered_base_plane: None,
             selected_body_id: self.session.active_body_id.map(|id| id.0),
             cursor_viewport_pos: None,
             active_document_object: self.session.active_document_object,
@@ -166,6 +169,7 @@ impl PrintCadApp {
         ctx.pixels_per_point = params.pixels_per_point;
         ctx.hovered_world_pos = params.hovered_world_pos;
         ctx.hovered_body_id = params.hovered_body_id;
+        ctx.hovered_base_plane = params.hovered_base_plane;
         ctx.selected_body_id = params.selected_body_id;
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
         ctx.active_document_object = params.active_document_object;

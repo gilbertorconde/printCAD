@@ -490,7 +490,12 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   plane whose lines `grid.wgsl` works out per pixel, three decades at once,
   each faded by its spacing on screen, depth-tested and never picked.
   `app/scene_guides.rs` lays out the ground grid and origin planes; View ›
-  Grid and Origin planes hide them while an edit session holds the view.
+  Grid and Origin planes turn them on (both start off), and an edit
+  session holding the view hides them. While the active bench's
+  `shows_origin_planes` is true (the sketcher's plane picker) the planes
+  draw whatever the setting, and the one under the cursor (a ray test, a
+  body in front of it winning) reaches the bench as
+  `ctx.hovered_base_plane`.
 - `app_shell`: binary. **Tabs:** `app/session.rs` is `DocumentSession`,
   everything the app keeps per document (document, journal, file, camera,
   selection, active bench and tool, server connection, in-flight open/save,

@@ -649,6 +649,13 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Whether the origin's planes draw now, whatever the view's setting
+    /// says, for the user to pick one: the plane under the cursor reaches
+    /// the bench as `ctx.hovered_base_plane`.
+    fn shows_origin_planes(&self) -> bool {
+        false
+    }
+
     /// Whether the bench is taking a typed number from the keyboard right
     /// now (a length while drawing). Bare digits, `.`, `,` and `-` stay
     /// with it rather than running their shortcuts.

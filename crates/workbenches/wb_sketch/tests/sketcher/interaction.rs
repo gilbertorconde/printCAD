@@ -343,6 +343,49 @@ fn create_action_opens_picker_instead_of_creating() {
 }
 
 #[test]
+fn clicking_an_origin_plane_in_the_picker_sketches_on_it() {
+    let mut h = Harness::new();
+    h.event(
+        WorkbenchInputEvent::KeyPress { key: KeyCode::A },
+        Some("sketch.create"),
+    );
+    assert!(h.wb.shows_origin_planes(), "the picker shows the planes");
+    let release = |h: &mut Harness, plane| {
+        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(h.vp);
+        ctx.hovered_base_plane = plane;
+        h.wb.on_input(
+            &WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                viewport_pos: (400.0, 300.0),
+            },
+            None,
+            &mut ctx,
+        );
+    };
+    release(&mut h, None);
+    assert_eq!(
+        h.doc.feature_tree().all_nodes().count(),
+        0,
+        "a miss picks nothing"
+    );
+
+    release(&mut h, Some(core_document::BasePlane::XZ));
+    let sketches: Vec<_> = h
+        .doc
+        .feature_tree()
+        .all_nodes()
+        .filter_map(|(_, node)| SketchFeature::from_json(&node.data).ok())
+        .collect();
+    assert_eq!(sketches.len(), 1);
+    assert_eq!(sketches[0].plane.normal, [0.0, -1.0, 0.0]);
+    assert!(
+        !h.wb.shows_origin_planes(),
+        "the planes go once one is chosen"
+    );
+}
+
+#[test]
 fn cross_workbench_sketch_request_is_consumed() {
     let mut h = Harness::new();
     let body = uuid::Uuid::new_v4();

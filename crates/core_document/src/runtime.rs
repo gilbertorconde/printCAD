@@ -61,6 +61,11 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// ID of the body currently under the cursor (if any).
     pub hovered_body_id: Option<uuid::Uuid>,
 
+    /// The origin plane under the cursor, with nothing drawn in front of
+    /// it, while the active bench shows them
+    /// ([`crate::Workbench::shows_origin_planes`]).
+    pub hovered_base_plane: Option<crate::datum::BasePlane>,
+
     /// ID of the currently selected body (if any).
     pub selected_body_id: Option<uuid::Uuid>,
 
@@ -407,6 +412,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             pixels_per_point: 1.0,
             hovered_world_pos: None,
             hovered_body_id: None,
+            hovered_base_plane: None,
             selected_body_id: None,
             cursor_viewport_pos: None,
             active_document_object: None,

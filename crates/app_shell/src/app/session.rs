@@ -39,6 +39,9 @@ pub(crate) struct DocumentSession {
     pub selected_body: Option<Uuid>,
     pub hovered_body: Option<Uuid>,
     pub hovered_world_pos: Option<[f32; 3]>,
+    /// The origin plane under the cursor, while the active bench shows them
+    /// to be picked from (`Workbench::shows_origin_planes`).
+    pub hovered_base_plane: Option<core_document::BasePlane>,
     /// Currently active workbench (determines which tools are visible).
     pub active_workbench: ActiveWorkbench,
     /// Active document object (selected feature in tree - separate from
@@ -257,6 +260,7 @@ impl DocumentSession {
             selected_body: None,
             hovered_body: None,
             hovered_world_pos: None,
+            hovered_base_plane: None,
             active_workbench: landing,
             active_document_object: None,
             active_body_id: None,

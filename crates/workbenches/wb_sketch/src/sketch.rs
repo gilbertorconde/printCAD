@@ -855,6 +855,15 @@ impl SketchPlane {
             y_axis: [0.0, 0.0, 1.0],
         }
     }
+
+    /// The origin plane `plane`, as its button in the plane picker gives.
+    pub fn of_base(plane: core_document::BasePlane) -> Self {
+        match plane {
+            core_document::BasePlane::XY => Self::xy(),
+            core_document::BasePlane::XZ => Self::xz(),
+            core_document::BasePlane::YZ => Self::yz(),
+        }
+    }
 }
 
 impl SketchPlane {

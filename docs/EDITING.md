@@ -46,7 +46,8 @@ a plane picker:
 
 - the face selected in the viewport, if any (the sketch then follows the
   face as the solid changes)
-- the base planes XY, XZ and YZ
+- the base planes XY, XZ and YZ, from their buttons or by clicking one of
+  the origin's planes, which the view shows while the picker is open
 - a plane placed by an attachment mode on what is selected on the body, as
   a datum plane is
 - the body's datum planes

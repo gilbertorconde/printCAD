@@ -1050,6 +1050,11 @@ impl PrintCadApp {
             self.session.hovered_world_pos = pick_result.world_position.filter(|_| over_scene);
             self.session.pick_depths = pick_result.depth_window;
         }
+        let hovered_plane = self.base_plane_under_cursor().filter(|_| over_scene);
+        if hovered_plane != self.session.hovered_base_plane {
+            self.session.hovered_base_plane = hovered_plane;
+            self.redraw_needed = true;
+        }
         // The edge under the cursor, on the body the pick found; an edge
         // takes the hover from the face it borders.
         let hovered_edge = self
@@ -1101,6 +1106,37 @@ impl PrintCadApp {
         self.registry
             .workbench(&self.session.active_workbench.0)
             .is_ok_and(|wb| wb.locks_view_to_plane() && wb.editing_feature().is_some())
+    }
+
+    /// Whether the active bench asks for the origin's planes to be picked
+    /// from.
+    pub(crate) fn bench_shows_origin_planes(&self) -> bool {
+        self.registry
+            .workbench(&self.session.active_workbench.0)
+            .is_ok_and(|wb| wb.shows_origin_planes())
+    }
+
+    /// The origin plane under the cursor while the active bench shows them,
+    /// unless a body the pick found stands in front of it.
+    fn base_plane_under_cursor(&self) -> Option<core_document::BasePlane> {
+        if !self.bench_shows_origin_planes() {
+            return None;
+        }
+        let cursor = self.cursor_in_viewport?;
+        let vp = self.session.camera.viewport_info();
+        let (origin, dir) = core_document::runtime::viewport_to_ray(
+            self.session.camera.view_projection(),
+            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            cursor,
+        )?;
+        let (origin, dir) = (glam::Vec3::from_array(origin), glam::Vec3::from_array(dir));
+        let half = scene_guides::origin_plane_half(&GuideView::of(&self.session.camera));
+        let (plane, t) = scene_guides::origin_plane_hit(origin, dir, half)?;
+        let in_front = self
+            .session
+            .hovered_world_pos
+            .is_some_and(|p| (glam::Vec3::from_array(p) - origin).dot(dir) < t);
+        (!in_front).then_some(plane)
     }
 
     /// Update the camera and assemble this frame's [`FrameSubmission`]
@@ -1820,11 +1856,12 @@ impl PrintCadApp {
                     &self.session.camera.axis_system(),
                 ));
             }
-            if rendering.show_origin_planes {
-                all_meshes.extend(
-                    self.origin_planes
-                        .bodies(scene_guides::origin_plane_half(&guides)),
-                );
+            // Shown too while a bench asks for one of them to be picked.
+            if rendering.show_origin_planes || self.bench_shows_origin_planes() {
+                all_meshes.extend(self.origin_planes.bodies(
+                    scene_guides::origin_plane_half(&guides),
+                    self.session.hovered_base_plane,
+                ));
             }
         }
 

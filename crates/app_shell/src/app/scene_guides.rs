@@ -24,8 +24,10 @@ const WORLD_AXES: [(Vec3, egui::Color32); 3] = [
 
 /// How far an origin plane reaches from the origin, in pixels on screen.
 const ORIGIN_PLANE_HALF_PX: f32 = 80.0;
-/// How much of its colour an origin plane's face takes.
+/// How much of its colour an origin plane's face takes, and the one
+/// under the cursor while they are picked from.
 const ORIGIN_PLANE_OPACITY: f32 = 0.12;
+const ORIGIN_PLANE_HOVER_OPACITY: f32 = 0.35;
 /// How opaque the grid's finest lines are, lines far apart, and the axes.
 const GRID_MINOR_ALPHA: f32 = 0.08;
 const GRID_MAJOR_ALPHA: f32 = 0.22;
@@ -173,6 +175,30 @@ fn origin_plane_meshes(plane: BasePlane, half: f32) -> (TriMesh, TriMesh) {
     (face, outline)
 }
 
+/// The origin plane a ray from `origin` along `dir` meets first inside its
+/// square, `half` out from the origin, and how far along the ray it does.
+pub(crate) fn origin_plane_hit(origin: Vec3, dir: Vec3, half: f32) -> Option<(BasePlane, f32)> {
+    BasePlane::ALL
+        .into_iter()
+        .filter_map(|plane| {
+            let (center, normal, x) = plane.frame();
+            let (center, normal, x) = (
+                Vec3::from_array(center),
+                Vec3::from_array(normal),
+                Vec3::from_array(x),
+            );
+            let across = dir.dot(normal);
+            if across.abs() < 1e-6 {
+                return None;
+            }
+            let t = (center - origin).dot(normal) / across;
+            let at = origin + dir * t - center;
+            let inside = at.dot(x).abs() <= half && at.dot(normal.cross(x)).abs() <= half;
+            (t > 0.0 && inside).then_some((plane, t))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+}
+
 /// The origin's planes as drawn, rebuilt only when their size moves.
 pub(crate) struct OriginPlanes {
     /// Two ids a plane: its face and its outline.
@@ -190,8 +216,8 @@ impl OriginPlanes {
 
     /// The bodies that draw the planes `half` out from the origin: each a
     /// see-through face in the colour of the axis square to it, and its
-    /// outline.
-    pub(crate) fn bodies(&mut self, half: f32) -> Vec<BodySubmission> {
+    /// outline, `hovered` the more opaque.
+    pub(crate) fn bodies(&mut self, half: f32, hovered: Option<BasePlane>) -> Vec<BodySubmission> {
         let key = half.to_bits();
         let meshes = match &self.built {
             Some((built, meshes)) if *built == key => meshes,
@@ -223,7 +249,12 @@ impl OriginPlanes {
                 edge_color: None,
                 front_only: false,
             };
-            bodies.push(body(ids[0], face, ORIGIN_PLANE_OPACITY));
+            let opacity = if hovered == Some(*plane) {
+                ORIGIN_PLANE_HOVER_OPACITY
+            } else {
+                ORIGIN_PLANE_OPACITY
+            };
+            bodies.push(body(ids[0], face, opacity));
             bodies.push(body(ids[1], outline, 1.0));
         }
         bodies
@@ -288,6 +319,25 @@ mod tests {
     }
 
     #[test]
+    fn a_ray_picks_the_origin_plane_it_meets_first_inside_its_square() {
+        let down = Vec3::NEG_Z;
+        let hit = origin_plane_hit(Vec3::new(10.0, 20.0, 500.0), down, 80.0);
+        assert_eq!(hit, Some((BasePlane::XY, 500.0)));
+        assert_eq!(
+            origin_plane_hit(Vec3::new(200.0, 0.0, 500.0), down, 80.0),
+            None
+        );
+        assert_eq!(
+            origin_plane_hit(Vec3::new(10.0, 20.0, -5.0), down, 80.0),
+            None
+        );
+        // From the front, slanting down: the XZ plane comes before the XY.
+        let dir = Vec3::new(0.0, 1.0, -0.1).normalize();
+        let hit = origin_plane_hit(Vec3::new(30.0, -100.0, 20.0), dir, 80.0);
+        assert_eq!(hit.map(|(plane, _)| plane), Some(BasePlane::XZ));
+    }
+
+    #[test]
     fn origin_planes_keep_their_size_on_screen() {
         let near = top_view(PixelSize::PerDepth(0.001));
         let mut far = near;
@@ -300,7 +350,7 @@ mod tests {
 
     #[test]
     fn each_origin_plane_takes_the_colour_of_the_axis_square_to_it() {
-        let bodies = OriginPlanes::new().bodies(10.0);
+        let bodies = OriginPlanes::new().bodies(10.0, None);
         let faces: Vec<_> = bodies.iter().step_by(2).map(|b| b.color).collect();
         assert_eq!(
             faces,

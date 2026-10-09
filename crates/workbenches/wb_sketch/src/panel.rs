@@ -317,6 +317,7 @@ impl SketchWorkbench {
         );
         let mut chosen: Option<Choice> = None;
         let mut by_mode: Option<core_document::DatumAttachment> = None;
+        let mut base: Option<core_document::BasePlane> = None;
         let mut cancel = false;
         ui_kit::widgets::Card::new().show(ui, |ui| {
             ui.horizontal(|ui| {
@@ -331,6 +332,7 @@ impl SketchWorkbench {
                 Some(made_by) => format!("Choose the plane for the {}.", made_by.base_name()),
                 None => "Choose the plane to sketch on.".to_string(),
             };
+            let ask = format!("{ask} An origin plane can be clicked in the view too.");
             ui.label(RichText::new(ask).font(sans(FONT_SM)).color(TEXT2));
             ui.add_space(SPACE_1);
             if let Some(face) = face
@@ -358,13 +360,13 @@ impl SketchWorkbench {
             }
             ui.horizontal(|ui| {
                 if secondary_button(ui, "Top (XY)").clicked() {
-                    chosen = Some((SketchPlane::xy(), None, None));
+                    base = Some(core_document::BasePlane::XY);
                 }
                 if secondary_button(ui, "Front (XZ)").clicked() {
-                    chosen = Some((SketchPlane::xz(), None, None));
+                    base = Some(core_document::BasePlane::XZ);
                 }
                 if secondary_button(ui, "Side (YZ)").clicked() {
-                    chosen = Some((SketchPlane::yz(), None, None));
+                    base = Some(core_document::BasePlane::YZ);
                 }
             });
             // Attached as a datum plane would be, by a mode on what is
@@ -459,6 +461,9 @@ impl SketchWorkbench {
         });
         if cancel {
             self.pending_creation = None;
+        }
+        if let Some(plane) = base {
+            self.create_on_base_plane(ctx, plane);
         }
         if let Some((plane, support, face)) = chosen {
             self.pending_creation = None;

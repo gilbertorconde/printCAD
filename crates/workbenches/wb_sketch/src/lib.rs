@@ -41,10 +41,11 @@ use std::time::Duration;
 use web_time::Instant;
 
 use core_document::{
-    BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, MenuItem, MenuScope,
-    ScreenSpaceLabel, ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo, ToolDescriptor,
-    ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext, WorkbenchDescriptor,
-    WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext, base_tool_id, tool_variant,
+    BasePlane, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, MenuItem,
+    MenuScope, ScreenSpaceLabel, ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo,
+    ToolDescriptor, ToolHint, ToolVariant, ViewportHud, Workbench, WorkbenchContext,
+    WorkbenchDescriptor, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
+    base_tool_id, tool_variant,
 };
 pub use feature::{AttachedSupport, DatumSupport, FaceSupport, LentFace, SketchFeature};
 use overlay::SketchProjector;
@@ -1117,6 +1118,23 @@ impl SketchWorkbench {
             face_origin,
             generator: None,
         });
+    }
+
+    /// Close the plane picker with a sketch on the origin plane `plane`,
+    /// chosen by its button or clicked in the view.
+    fn create_on_base_plane(&mut self, ctx: &mut WorkbenchRuntimeContext, plane: BasePlane) {
+        let Some(pending) = self.pending_creation.take() else {
+            return;
+        };
+        self.create_sketch_on_plane(
+            ctx,
+            pending.body,
+            SketchPlane::of_base(plane),
+            NewSketchOn {
+                made_by: pending.generator,
+                ..Default::default()
+            },
+        );
     }
 
     fn create_sketch_on_plane(
@@ -2558,6 +2576,10 @@ impl Workbench for SketchWorkbench {
         true
     }
 
+    fn shows_origin_planes(&self) -> bool {
+        self.pending_creation.is_some() && self.active_sketch_id.is_none()
+    }
+
     fn takes_numeric_input(&self) -> bool {
         !ovp::fields_for(&self.tool_state).is_empty()
     }
@@ -3371,6 +3393,18 @@ impl Workbench for SketchWorkbench {
             if self.active_sketch_id.is_none() {
                 ctx.log_warn("Select a sketch in the tree first");
             }
+            return InputResult::consumed();
+        }
+
+        // A click on one of the origin's planes the picker shows chooses it.
+        if let WorkbenchInputEvent::MouseRelease {
+            button: core_document::MouseButton::Left,
+            ..
+        } = event
+            && let Some(plane) = ctx.hovered_base_plane
+            && self.shows_origin_planes()
+        {
+            self.create_on_base_plane(ctx, plane);
             return InputResult::consumed();
         }
 
