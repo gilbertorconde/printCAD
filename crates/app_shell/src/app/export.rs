@@ -663,6 +663,7 @@ mod tests {
                 source_asset: None,
                 revision: 1,
                 brep_blob_path: None,
+                mesh_path: None,
                 face_colors_path: None,
                 health: None,
             },

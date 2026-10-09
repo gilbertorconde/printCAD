@@ -40,7 +40,7 @@ pub(crate) fn load_recent() -> settings::recent::RecentStore {
         if let Some(dir) = page_documents() {
             for path in crate::platform::list(&dir) {
                 if !recent.files.iter().any(|entry| entry.path == path) {
-                    let size = crate::platform::read(&path).map_or(0, |b| b.len() as u64);
+                    let size = crate::platform::file_size(&path);
                     recent.files.push(settings::recent::RecentEntry {
                         path,
                         last_opened_ms: 0,
@@ -194,7 +194,7 @@ impl PrintCadApp {
     /// Front the recent list with `path` and write it out.
     pub(crate) fn touch_recent(&mut self, path: &Path) {
         if crate::platform::ON_PAGE {
-            let size = crate::platform::read(path).map_or(0, |b| b.len() as u64);
+            let size = crate::platform::file_size(path);
             let now = web_time::SystemTime::now()
                 .duration_since(web_time::UNIX_EPOCH)
                 .map_or(0, |d| d.as_millis() as u64);
@@ -527,7 +527,11 @@ impl PrintCadApp {
                     .with_context(|| "Failed to serialize document")?;
             }
             _ => {
-                let compression = if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
+                // A page keeps its documents in memory as well as in the
+                // browser's storage, so it keeps them packed small.
+                let compression = if crate::platform::ON_PAGE {
+                    core_document::Compression::Zstd
+                } else if lowered.ends_with(".prtcad.gz") || lowered.ends_with(".gz") {
                     core_document::Compression::Gzip
                 } else if lowered.ends_with(".prtcad.zst") || lowered.ends_with(".zst") {
                     core_document::Compression::Zstd

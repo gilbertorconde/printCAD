@@ -671,6 +671,7 @@ dependencies = [
  "glam 0.33.7",
  "printcad-bench-api",
  "printcad-kernel-api",
+ "rmp-serde",
  "serde",
  "serde_json",
  "surface_texture",

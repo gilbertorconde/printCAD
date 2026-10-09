@@ -23,6 +23,7 @@ fn geometry(mesh: Arc<TriMesh>) -> ImportedGeometry {
         source_asset: None,
         revision: 0,
         brep_blob_path: None,
+        mesh_path: None,
         face_colors_path: None,
         health: None,
     }

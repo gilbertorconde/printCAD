@@ -65,7 +65,7 @@ tracing-wasm = "0.2"
 web-sys = { version = "0.3", features = [
     "Blob", "BlobPropertyBag", "DedicatedWorkerGlobalScope", "Document", "Element", "File",
     "FileList", "HtmlAnchorElement", "HtmlCanvasElement", "HtmlElement", "HtmlInputElement",
-    "BeforeUnloadEvent", "MessageEvent", "Navigator", "Storage", "Url", "Window", "Worker", "WorkerOptions",
+    "BeforeUnloadEvent", "ErrorEvent", "MessageEvent", "Navigator", "Storage", "Url", "Window", "Worker", "WorkerOptions",
     "WorkerType",
 ] }
 js-sys = "0.3"

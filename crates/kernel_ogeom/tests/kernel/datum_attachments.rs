@@ -83,6 +83,7 @@ fn settle(registry: &DocumentService, doc: &mut Document, body: BodyId) -> ([f32
                     revision: 0,
                     bounds_mm: result.bounds_mm,
                     brep_blob_path: None,
+                    mesh_path: None,
                     face_colors_path: None,
                     health: None,
                 },

@@ -47,6 +47,7 @@ fn imported_geometry_roundtrips_through_prtcad() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },
@@ -113,6 +114,7 @@ fn brep_sidecars_roundtrip_through_prtcad() {
             revision: 0,
             bounds_mm: Some(([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])),
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },
@@ -159,6 +161,7 @@ fn imported_object_graph_and_visibility_roundtrip() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },
@@ -337,6 +340,7 @@ fn a_cloned_document_saves_independently_from_another_thread() {
             revision: 0,
             bounds_mm: Some(([0.0; 3], [1.0, 2.0, 3.0])),
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },
@@ -392,6 +396,7 @@ fn packing_an_archive_reports_what_it_has_packed() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },
@@ -449,6 +454,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: Some(broken.clone()),
         },
@@ -461,6 +467,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },
@@ -505,6 +512,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: Some(ShapeHealth {
                 repaired: true,
@@ -556,6 +564,7 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
         revision: 0,
         bounds_mm: None,
         brep_blob_path: None,
+        mesh_path: None,
         face_colors_path: None,
         health: Some(ShapeHealth {
             faceted,
@@ -638,6 +647,7 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
                 revision: 0,
                 bounds_mm: None,
                 brep_blob_path: None,
+                mesh_path: None,
                 face_colors_path: None,
                 health: None,
             },
@@ -754,4 +764,102 @@ fn a_clone_keeps_the_sidecar_bytes() {
     let copy = doc.clone();
     assert_eq!(copy.asset_bytes(asset_id), Some(&[1u8, 2, 3][..]));
     assert_eq!(copy.imported_brep_blob(body), Some(&[9u8, 9][..]));
+}
+
+/// An archive keeps each mesh as an entry of its own, the document's JSON
+/// an empty mesh in its place (a document as text is many times its
+/// meshes' size); a document saved with its meshes in the JSON still loads
+/// them.
+#[test]
+fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
+    let mut doc = Document::new("MeshesApart");
+    let body_id = doc.create_body(Some("Body".into()));
+    doc.set_imported_geometry(
+        body_id,
+        ImportedGeometry {
+            mesh: fake_mesh(),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+
+    let bytes = doc.save_to_bytes(Compression::None).expect("save");
+    let mut archive = tar::Archive::new(bytes.as_slice());
+    let mut json = None;
+    let mut mesh_entry = false;
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().into_owned();
+        if path == "document.json" {
+            let mut text = String::new();
+            std::io::Read::read_to_string(&mut entry, &mut text).unwrap();
+            json = Some(text);
+        }
+        mesh_entry |= path == format!("mesh/{}.bin", body_id.0);
+    }
+    assert!(mesh_entry, "the mesh is an entry of its own");
+    let json: serde_json::Value = serde_json::from_str(&json.expect("document.json")).unwrap();
+    let kept = &json["imported_meshes"][body_id.0.to_string()];
+    assert_eq!(kept["mesh"]["positions"], json!([]), "no mesh in the JSON");
+    assert!(kept["mesh_path"].is_string());
+
+    let loaded = Document::load_from_bytes(bytes).expect("load");
+    let mesh = &loaded.imported_geometry(body_id).unwrap().mesh;
+    assert_eq!(mesh.positions, fake_mesh().positions);
+    assert_eq!(mesh.colors, fake_mesh().colors);
+
+    // An archive whose JSON holds the mesh, as earlier saves wrote it.
+    let inline = serde_json::to_vec(&doc).unwrap();
+    let mut builder = tar::Builder::new(Vec::new());
+    let mut header = tar::Header::new_gnu();
+    header.set_path("document.json").unwrap();
+    header.set_size(inline.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    builder.append(&header, inline.as_slice()).unwrap();
+    let old = builder.into_inner().unwrap();
+    let loaded = Document::load_from_bytes(old).expect("load an inline save");
+    let mesh = &loaded.imported_geometry(body_id).unwrap().mesh;
+    assert_eq!(mesh.indices, vec![0, 1, 2]);
+}
+
+/// A `.prtcad` packed with zstd (as a browser page saves and downloads
+/// one) opens from its file, its preview too: its first bytes say how it
+/// is packed.
+#[test]
+fn a_zstd_packed_prtcad_opens_by_its_first_bytes() {
+    let mut doc = Document::new("Packed");
+    let body_id = doc.create_body(Some("Body".into()));
+    doc.set_imported_geometry(
+        body_id,
+        ImportedGeometry {
+            mesh: fake_mesh(),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: None,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    doc.set_thumbnail(Some(b"\x89PNG-ish".to_vec()));
+    let bytes = doc.save_to_bytes(Compression::Zstd).expect("save");
+    let tmp = std::env::temp_dir().join(format!("printcad_zstd_{}.prtcad", std::process::id()));
+    std::fs::write(&tmp, &bytes).unwrap();
+    let loaded = Document::load_from_file(&tmp).expect("opens");
+    assert_eq!(
+        loaded.imported_geometry(body_id).unwrap().mesh.indices,
+        vec![0, 1, 2]
+    );
+    assert_eq!(
+        Document::read_thumbnail(&tmp).as_deref(),
+        Some(&b"\x89PNG-ish"[..])
+    );
+    let _ = std::fs::remove_file(&tmp);
 }

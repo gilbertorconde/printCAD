@@ -828,6 +828,7 @@ mod tests {
                     revision: 0,
                     bounds_mm: None,
                     brep_blob_path: None,
+                    mesh_path: None,
                     face_colors_path: None,
                     health: None,
                 },

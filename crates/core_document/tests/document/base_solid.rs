@@ -25,6 +25,7 @@ fn imported_body(doc: &mut Document) -> BodyId {
             source_asset: Some(uuid::Uuid::new_v4()),
             revision: 0,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },

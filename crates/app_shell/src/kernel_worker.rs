@@ -992,7 +992,14 @@ fn serve_request(
                     Ok(model) => {
                         let kernel_ms = k0.elapsed();
                         let r0 = Instant::now();
-                        match crate::platform::read(&path) {
+                        // A page's worker sends no source back: the page
+                        // picked the file and holds it.
+                        let source = if cfg!(target_arch = "wasm32") {
+                            Ok(Vec::new())
+                        } else {
+                            crate::platform::read(&path)
+                        };
+                        match source {
                             Ok(raw_bytes) => {
                                 let read_ms = r0.elapsed();
                                 let worker_total = started.elapsed();

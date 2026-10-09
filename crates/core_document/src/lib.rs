@@ -551,8 +551,14 @@ impl Default for BodyDisplay {
 /// [`Document::set_imported_geometry`].
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImportedGeometry {
-    /// Triangulated representation ready for the viewport.
+    /// Triangulated representation ready for the viewport. An archive keeps
+    /// it as an entry of its own ([`Self::mesh_path`]), the document's JSON
+    /// an empty mesh in its place.
+    #[serde(default, serialize_with = "serialize_mesh")]
     pub mesh: std::sync::Arc<TriMesh>,
+    /// Archive path to the mesh (`mesh/<uuid>.bin`) when it is kept apart.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_path: Option<String>,
     /// Optional reference back to the source asset (e.g. STEP file).
     #[serde(default)]
     pub source_asset: Option<Uuid>,
@@ -574,6 +580,41 @@ pub struct ImportedGeometry {
     /// drawn from; `None` for a shape that was never checked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub health: Option<kernel_api::ShapeHealth>,
+}
+
+thread_local! {
+    /// Set while an archive's JSON is written: its meshes are entries of
+    /// their own, which a document's JSON would hold as text many times
+    /// their size (past what one buffer may hold on a 32-bit target).
+    static MESHES_APART: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn serialize_mesh<S: serde::Serializer>(
+    mesh: &std::sync::Arc<TriMesh>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    if MESHES_APART.with(std::cell::Cell::get) {
+        // An empty mesh, which a reader without `mesh_path` still takes.
+        TriMesh::default().serialize(serializer)
+    } else {
+        mesh.serialize(serializer)
+    }
+}
+
+/// Keeps meshes out of the JSON written while it lives.
+struct MeshesApart;
+
+impl MeshesApart {
+    fn start() -> Self {
+        MESHES_APART.with(|apart| apart.set(true));
+        MeshesApart
+    }
+}
+
+impl Drop for MeshesApart {
+    fn drop(&mut self) {
+        MESHES_APART.with(|apart| apart.set(false));
+    }
 }
 
 /// Persistent imported object node (assembly/part/instance) shown in the model tree.
@@ -2884,6 +2925,7 @@ impl Document {
             revision: 0,
             bounds_mm: bounds,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: from.and_then(|g| g.health.clone()),
         };
@@ -3355,7 +3397,14 @@ impl Document {
         compression: Compression,
         progress: ArchiveProgress<'_>,
     ) -> DocumentResult<Vec<u8>> {
-        let mut bytes = Vec::with_capacity(self.archive_payload_bytes() as usize);
+        // Room for the archive up front: whole when it is stored as it is,
+        // a share when compressed, which packs the blobs well below their
+        // size (reserving all of it would ask for memory never used).
+        let payload = self.archive_payload_bytes() as usize;
+        let mut bytes = Vec::with_capacity(match compression {
+            Compression::None => payload,
+            Compression::Gzip | Compression::Zstd => payload / 4,
+        });
         self.save_to_writer(&mut bytes, compression, Some(progress))?;
         Ok(bytes)
     }
@@ -3456,11 +3505,11 @@ impl Document {
         } else {
             Compression::None
         };
-        Self::thumbnail_in(std::io::Cursor::new(bytes.to_vec()), compression)
+        Self::thumbnail_in(bytes, compression)
     }
 
-    fn thumbnail_in<R: Read + 'static>(file: R, compression: Compression) -> Option<Vec<u8>> {
-        let reader: Box<dyn Read> = match compression {
+    fn thumbnail_in<'a, R: Read + 'a>(file: R, compression: Compression) -> Option<Vec<u8>> {
+        let reader: Box<dyn Read + 'a> = match compression {
             Compression::None => Box::new(file),
             Compression::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
             Compression::Zstd => Box::new(zstd::Decoder::new(std::io::BufReader::new(file)).ok()?),
@@ -3497,7 +3546,10 @@ impl Document {
             || magic.starts_with(&[0x1f, 0x8b])
         {
             Compression::Gzip
-        } else if file_name.ends_with(".zst") || file_name.ends_with(".prtcad.zst") {
+        } else if file_name.ends_with(".zst")
+            || file_name.ends_with(".prtcad.zst")
+            || magic.starts_with(&[0x28, 0xb5, 0x2f, 0xfd])
+        {
             Compression::Zstd
         } else {
             Compression::None
@@ -3554,7 +3606,10 @@ impl Document {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 thumbnail = Some(buf);
-            } else if entry_path_str.starts_with("assets/") || entry_path_str.starts_with("brep/") {
+            } else if entry_path_str.starts_with("assets/")
+                || entry_path_str.starts_with("brep/")
+                || entry_path_str.starts_with("mesh/")
+            {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 blobs_by_path.insert(entry_path_str, buf);
@@ -3569,6 +3624,22 @@ impl Document {
         })?;
         let mut doc: Document = serde_json::from_slice(&json)?;
         doc.thumbnail = thumbnail.map(std::sync::Arc::new);
+        // Meshes kept as entries of their own; a document saved before
+        // carries them in its JSON.
+        for geom in doc
+            .imported_meshes
+            .values_mut()
+            .chain(doc.base_solids.values_mut())
+        {
+            if let Some(path) = &geom.mesh_path
+                && let Some(bytes) = blobs_by_path.remove(path)
+            {
+                match rmp_serde::from_slice::<TriMesh>(&bytes) {
+                    Ok(mesh) => geom.mesh = std::sync::Arc::new(mesh),
+                    Err(e) => tracing::warn!("a mesh in {path} did not read: {e}"),
+                }
+            }
+        }
         doc.recover_local_meshes();
         doc.refresh_left_out();
 
@@ -3641,7 +3712,10 @@ impl Document {
         doc: &Document,
         progress: Option<ArchiveProgress<'_>>,
     ) -> DocumentResult<()> {
-        let json = serde_json::to_vec_pretty(doc)?;
+        let json = {
+            let _apart = MeshesApart::start();
+            serde_json::to_vec_pretty(doc)?
+        };
         // The document's own JSON is only known once it is built, so the
         // total the caller sees settles here and holds for the rest.
         let total = doc.archive_payload_bytes() + json.len() as u64;
@@ -3720,6 +3794,22 @@ impl Document {
             packed += brep_bytes.len() as u64 + colors_bytes.len() as u64;
             report(packed);
         }
+        // Meshes, each an entry of its own.
+        for geom in doc.imported_meshes.values().chain(doc.base_solids.values()) {
+            let Some(path) = geom.mesh_path.as_ref() else {
+                continue;
+            };
+            let bytes = rmp_serde::to_vec(&*geom.mesh)
+                .map_err(|e| DocumentError::Compression(format!("a mesh did not pack: {e}")))?;
+            let mut header = Header::new_gnu();
+            header.set_path(path)?;
+            header.set_size(bytes.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            builder.append(&header, &bytes[..])?;
+            packed += bytes.len() as u64;
+            report(packed);
+        }
         // Base solids: what bodies' histories start from.
         for (body_id, geom) in &doc.base_solids {
             let (Some(brep_path), Some(colors_path), Some(brep_bytes)) = (
@@ -3766,14 +3856,17 @@ impl Document {
             if copies.contains(body_id) {
                 geom.brep_blob_path = None;
                 geom.face_colors_path = None;
+                geom.mesh_path = None;
                 continue;
             }
+            geom.mesh_path = Some(format!("mesh/{}.bin", body_id.0));
             if doc.imported_brep_blobs.contains_key(body_id) {
                 geom.brep_blob_path = Some(format!("brep/{}.bin", body_id.0));
                 geom.face_colors_path = Some(format!("brep/{}.colors", body_id.0));
             }
         }
         for (body_id, geom) in doc.base_solids.iter_mut() {
+            geom.mesh_path = Some(format!("mesh/{}.base.bin", body_id.0));
             if doc.base_brep_blobs.contains_key(body_id) {
                 geom.brep_blob_path = Some(format!("brep/{}.base.bin", body_id.0));
                 geom.face_colors_path = Some(format!("brep/{}.base.colors", body_id.0));

@@ -90,6 +90,17 @@ pub(crate) fn write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     }
 }
 
+/// [`write`], handing the bytes over: a page keeps them without a copy.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn write_owned(path: &Path, bytes: Vec<u8>) -> std::io::Result<()> {
+    if web::is_kept(path) {
+        web::keep_owned(path, bytes);
+        Ok(())
+    } else {
+        web::download(path, &bytes)
+    }
+}
+
 /// Take the file at `path` away; one that is not there is no error.
 pub(crate) fn remove(path: &Path) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -106,6 +117,14 @@ pub(crate) fn list(dir: &Path) -> Vec<PathBuf> {
         .unwrap_or_default();
     #[cfg(target_arch = "wasm32")]
     web::list(dir)
+}
+
+/// The size of the file at `path`; zero when there is none.
+pub(crate) fn file_size(path: &Path) -> u64 {
+    #[cfg(not(target_arch = "wasm32"))]
+    return std::fs::metadata(path).map_or(0, |m| m.len());
+    #[cfg(target_arch = "wasm32")]
+    web::size(path).unwrap_or(0)
 }
 
 /// Whether there is a file at `path`.

@@ -79,7 +79,7 @@ impl DocumentServer for BrowserFiles {
                 at_seq,
             } => self
                 .replies
-                .push_back(match crate::platform::write(&path, &bytes) {
+                .push_back(match crate::platform::write_owned(&path, bytes) {
                     Ok(()) => ServerMessage::SaveCompleted { path, at_seq },
                     Err(err) => ServerMessage::SaveFailed {
                         path,

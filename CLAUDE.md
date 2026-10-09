@@ -118,7 +118,11 @@ cargo fmt --all                   # CI enforces --check
   page's picker and downloads), `app/server.rs` (`BrowserFiles` in place
   of the daemon), the kernel's jobs in the page's workers
   (`kernel_pool.rs`, `web/kernel-worker.js`: one for requests, more for
-  builds, MessagePack between them, Cancel ending the busy one), the renderer awaited (`Renderer::initialize_async`; WebGPU,
+  builds, MessagePack between them, an import's bodies sent a chunk at a
+  time and its source left with the page, which holds it; Cancel ends the
+  busy one, a worker that dies has its job answered with why (its panic
+  told first) and is started again, as the request worker is after every
+  import, a WebAssembly memory never shrinking), the renderer awaited (`Renderer::initialize_async`; WebGPU,
   else WebGL2), settings in the page's storage, `kernel_ogeom::files` (the
   reader imports go through), and `web_time` for every clock (the
   standard one panics on that target). The console's Lua is wasmoon
@@ -1117,6 +1121,13 @@ hacks, no silently degraded feature). Instead:
   GPU is done with it. Keep it that way.
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
+- A `.prtcad`'s meshes are entries of their own (`mesh/<uuid>.bin`,
+  MessagePack; `ImportedGeometry::mesh_path`), the JSON carrying an empty
+  mesh in their place (`MESHES_APART` while it is written), since a large
+  assembly's meshes as JSON text passed what one buffer may hold on a
+  32-bit target; a document whose JSON holds them still loads. A plain
+  `.prtcad` is an uncompressed tar on a desktop; a page saves zstd, and
+  both read either by its first bytes.
 - Persisted shape blobs (`brep/<uuid>.bin` in `.prtcad`, `SolidOp::Boolean`
   tools) are ogeom native-format text ("ogeom" magic); pre-migration blobs are
   dropped on load with a warning.

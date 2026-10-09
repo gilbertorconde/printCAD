@@ -48,13 +48,13 @@ impl ThumbnailCache {
             return texture.clone();
         }
         // A page's documents are held in memory.
-        let png = if crate::platform::ON_PAGE {
-            crate::platform::read(path)
-                .ok()
-                .and_then(|bytes| core_document::Document::thumbnail_of_bytes(&bytes))
-        } else {
-            core_document::Document::read_thumbnail(path)
-        };
+        #[cfg(target_arch = "wasm32")]
+        let png = crate::platform::web::with_bytes(path, |bytes| {
+            core_document::Document::thumbnail_of_bytes(bytes)
+        })
+        .flatten();
+        #[cfg(not(target_arch = "wasm32"))]
+        let png = core_document::Document::read_thumbnail(path);
         let texture = png
             .and_then(|png| tiny_skia::Pixmap::decode_png(&png).ok())
             .map(|pixmap| {

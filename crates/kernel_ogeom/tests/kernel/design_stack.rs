@@ -1590,6 +1590,7 @@ fn settle(doc: &mut Document, kernel: &mut OgeomKernel) {
                         revision: 0,
                         bounds_mm: result.bounds_mm,
                         brep_blob_path: None,
+                        mesh_path: None,
                         face_colors_path: None,
                         health: None,
                     },

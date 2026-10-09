@@ -101,12 +101,17 @@ pub(crate) fn is_kept(path: &Path) -> bool {
 /// Keep `bytes` as the file at `path`, under [`KEPT`]: at once in memory,
 /// and in the page's database as soon as it takes them.
 pub(crate) fn keep_at(path: &Path, bytes: &[u8]) {
-    FILES.with(|files| {
-        files
-            .borrow_mut()
-            .insert(path.to_path_buf(), bytes.to_vec())
-    });
-    let written = keep_file(&path.to_string_lossy(), &js_sys::Uint8Array::from(bytes));
+    keep_owned(path, bytes.to_vec());
+}
+
+/// [`keep_at`], taking the bytes: the page's copy is these, the database's
+/// the one the browser makes.
+pub(crate) fn keep_owned(path: &Path, bytes: Vec<u8>) {
+    let written = keep_file(
+        &path.to_string_lossy(),
+        &js_sys::Uint8Array::from(&bytes[..]),
+    );
+    FILES.with(|files| files.borrow_mut().insert(path.to_path_buf(), bytes));
     let path = path.to_path_buf();
     wasm_bindgen_futures::spawn_local(async move {
         if let Err(e) = wasm_bindgen_futures::JsFuture::from(written).await {
@@ -136,6 +141,17 @@ pub(crate) fn list(dir: &Path) -> Vec<PathBuf> {
             .cloned()
             .collect()
     })
+}
+
+/// The size of the file at `path`, without copying it.
+pub(crate) fn size(path: &Path) -> Option<u64> {
+    FILES.with(|files| files.borrow().get(path).map(|bytes| bytes.len() as u64))
+}
+
+/// Run `look` on the bytes of the file at `path` where they lie: a large
+/// document is several hundred megabytes, which a copy would double.
+pub(crate) fn with_bytes<R>(path: &Path, look: impl FnOnce(&[u8]) -> R) -> Option<R> {
+    FILES.with(|files| files.borrow().get(path).map(|bytes| look(bytes)))
 }
 
 /// Whether there is a file at `path`.

@@ -7,8 +7,12 @@
 //! as its build threads do, a body going to the worker that built it last
 //! so its chain states are there. Jobs and answers cross as MessagePack
 //! (`rmp-serde`, named fields: the payloads leave empty fields out), a
-//! picked file's bytes going with the job that reads it. A worker cannot
-//! be reached while it works: Cancel stops it and starts another.
+//! picked file's bytes going with the job that reads it. An import's bodies
+//! come back a few at a time, so a worker never holds the whole answer
+//! twice over, and its source is the page's own. A worker cannot be
+//! reached while it works: Cancel stops it and starts another; one that
+//! dies (out of memory, a panic) has its job answered with why, and is
+//! started again.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -50,8 +54,24 @@ enum News {
     Ready,
     /// The running job's stage, for the status bar.
     Stage(Stage),
-    /// The job's answer.
+    /// Some of an import's bodies, ahead of its answer.
+    Bodies(Vec<kernel_api::ImportedBody>),
+    /// The job's answer; an import's carries no bodies, which came before.
     Done(KernelResponse),
+    /// The worker panicked, and is about to stop.
+    Panicked(String),
+}
+
+/// About how many bytes of bodies cross in one message.
+const BODIES_PER_MESSAGE: usize = 64 << 20;
+
+/// About how many bytes `body` takes on its way.
+fn weight(body: &kernel_api::ImportedBody) -> usize {
+    let mesh = &body.mesh;
+    (mesh.positions.len() + mesh.normals.len() + mesh.colors.len()) * 12
+        + (mesh.indices.len() + mesh.edges.len() + mesh.faces.len() + mesh.edge_ids.len()) * 4
+        + body.brep_blob.len()
+        + body.face_colors.len() * 12
 }
 
 /// A job's progress as the status bar reads it: [`Activity`] without what
@@ -106,14 +126,27 @@ struct Slot {
     worker: web_sys::Worker,
     state: Rc<RefCell<SlotState>>,
     _on_message: Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_error: Closure<dyn FnMut(web_sys::ErrorEvent)>,
 }
 
 #[derive(Default)]
 struct SlotState {
     ready: bool,
-    /// The job out, as the answer a cancel gives it, and its build serial.
-    busy: Option<(KernelResponse, Option<u64>)>,
+    /// The job out: the answers a cancel and a crash give it, and its
+    /// build serial.
+    busy: Option<(Failed, Option<u64>)>,
+    /// An import's bodies come so far.
+    bodies: Vec<kernel_api::ImportedBody>,
+    /// What the worker said as it panicked.
+    panic: Option<String>,
+    /// The worker died, or holds memory it will never give back (a
+    /// WebAssembly memory only grows): the pool starts another.
+    dead: bool,
 }
+
+/// How a job is answered when it does not finish (cancelled, or its
+/// worker gone), from why.
+type Failed = Box<dyn Fn(String) -> KernelResponse>;
 
 impl Slot {
     fn start(responses: &Sender<KernelResponse>, activity: &Arc<Mutex<Activity>>) -> Self {
@@ -146,20 +179,63 @@ impl Slot {
                         activity.progress = stage.progress;
                         activity.own_progress = stage.own_progress;
                     }
-                    Some(News::Done(response)) => {
-                        state.borrow_mut().busy = None;
+                    Some(News::Bodies(bodies)) => state.borrow_mut().bodies.extend(bodies),
+                    Some(News::Done(mut response)) => {
+                        let mut slot = state.borrow_mut();
+                        slot.busy = None;
+                        let bodies = std::mem::take(&mut slot.bodies);
+                        drop(slot);
+                        if let KernelResponse::StepImported {
+                            path,
+                            model,
+                            raw_bytes,
+                            ..
+                        } = &mut response
+                        {
+                            // An import grows the worker's memory to the
+                            // file's size; a fresh worker gives it back.
+                            state.borrow_mut().dead = true;
+                            model.bodies = bodies;
+                            // The source is the file the page picked.
+                            if raw_bytes.is_empty() {
+                                *raw_bytes = crate::platform::read(path).unwrap_or_default();
+                            }
+                        }
                         *lock(&activity) = Activity::default();
                         let _ = responses.send(response);
                     }
+                    Some(News::Panicked(message)) => state.borrow_mut().panic = Some(message),
                     None => {}
                 }
             })
         };
         worker.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        // A worker that dies (out of memory, a panic) never answers: its job
+        // is answered here with why, and the pool starts another.
+        let on_error = {
+            let (state, responses, activity) =
+                (state.clone(), responses.clone(), Arc::clone(activity));
+            Closure::<dyn FnMut(web_sys::ErrorEvent)>::new(move |event: web_sys::ErrorEvent| {
+                let mut state = state.borrow_mut();
+                state.dead = true;
+                state.bodies.clear();
+                let panic = state.panic.take();
+                let Some((failed, _)) = state.busy.take() else {
+                    return;
+                };
+                drop(state);
+                let why = died(panic, &event.message());
+                tracing::error!("{why}");
+                *lock(&activity) = Activity::default();
+                let _ = responses.send(failed(why));
+            })
+        };
+        worker.set_onerror(Some(on_error.as_ref().unchecked_ref()));
         Self {
             worker,
             state,
             _on_message: on_message,
+            _on_error: on_error,
         }
     }
 
@@ -168,8 +244,8 @@ impl Slot {
         state.ready && state.busy.is_none()
     }
 
-    fn send(&self, job: &Job, cancelled: KernelResponse, serial: Option<u64>) {
-        self.state.borrow_mut().busy = Some((cancelled, serial));
+    fn send(&self, job: &Job, failed: Failed, serial: Option<u64>) {
+        self.state.borrow_mut().busy = Some((failed, serial));
         if let Err(err) = self.worker.post_message(&encode(job)) {
             tracing::error!("a kernel worker took no job: {err:?}");
         }
@@ -223,16 +299,23 @@ impl Pool {
         while let Ok(build) = lock(&self.builds).try_recv() {
             self.waiting_builds.push_back(build);
         }
+        // A worker that died is replaced before work goes out.
+        for (slot, activity) in self.slots.borrow_mut().iter_mut() {
+            if slot.state.borrow().dead {
+                slot.worker.terminate();
+                *slot = Slot::start(&self.responses, activity);
+            }
+        }
         let slots = self.slots.borrow();
 
         if slots[0].0.free()
             && let Some(request) = self.waiting.pop_front()
         {
             let files = files_read_by(&request);
-            let cancelled = cancelled_answer(&request);
+            let failed = failure_of(&request);
             slots[0]
                 .0
-                .send(&Job::Request { request, files }, cancelled, None);
+                .send(&Job::Request { request, files }, failed, None);
         }
 
         let mut kept = VecDeque::new();
@@ -257,15 +340,9 @@ impl Pool {
                 Some(i) if slots[i].0.free() && !taken.contains(&i) => {
                     self.homes.insert(build.body_id, i);
                     taken.insert(i);
-                    let cancelled = KernelResponse::SolidFailed {
-                        body_id: build.body_id,
-                        failed_feature: None,
-                        error: "cancelled".to_string(),
-                        unbuilt: Vec::new(),
-                        nothing_built: false,
-                    };
+                    let failed = build_failure(build.body_id);
                     let serial = build.serial;
-                    slots[i].0.send(&Job::Build(build), cancelled, Some(serial));
+                    slots[i].0.send(&Job::Build(build), failed, Some(serial));
                 }
                 // Its worker is busy: it waits, ahead of later builds of
                 // the same body.
@@ -295,12 +372,12 @@ impl Pool {
     pub(super) fn cancel_busy(&self) {
         let mut slots = self.slots.borrow_mut();
         for (slot, activity) in slots.iter_mut() {
-            let Some((answer, _)) = slot.state.borrow_mut().busy.take() else {
+            let Some((failed, _)) = slot.state.borrow_mut().busy.take() else {
                 continue;
             };
             slot.worker.terminate();
             *lock(activity) = Activity::default();
-            let _ = self.responses.send(answer);
+            let _ = self.responses.send(failed("cancelled".to_string()));
             *slot = Slot::start(&self.responses, activity);
         }
     }
@@ -318,50 +395,85 @@ fn files_read_by(request: &KernelRequest) -> Vec<(PathBuf, Vec<u8>)> {
     }
 }
 
-/// What a request answers when it is cancelled.
-fn cancelled_answer(request: &KernelRequest) -> KernelResponse {
-    let error = || "cancelled".to_string();
+/// How a request is answered when it does not finish.
+fn failure_of(request: &KernelRequest) -> Failed {
     match request {
-        KernelRequest::ImportStep { path, .. } => KernelResponse::StepFailed {
-            path: path.clone(),
-            error: error(),
-        },
+        KernelRequest::ImportStep { path, .. } => {
+            let path = path.clone();
+            Box::new(move |error| KernelResponse::StepFailed {
+                path: path.clone(),
+                error,
+            })
+        }
         KernelRequest::Measure {
             body_id, revision, ..
-        } => KernelResponse::Measured {
-            body_id: *body_id,
-            revision: *revision,
-            result: Err(error()),
-        },
-        KernelRequest::MeshToSolid { body_id, .. } => KernelResponse::MeshSolidFailed {
-            body_id: *body_id,
-            error: error(),
-        },
+        } => {
+            let (body_id, revision) = (*body_id, *revision);
+            Box::new(move |error| KernelResponse::Measured {
+                body_id,
+                revision,
+                result: Err(error),
+            })
+        }
+        KernelRequest::MeshToSolid { body_id, .. } => {
+            let body_id = *body_id;
+            Box::new(move |error| KernelResponse::MeshSolidFailed { body_id, error })
+        }
         KernelRequest::MirrorShape {
             body_id,
             source_blob,
             ..
-        } => KernelResponse::ShapeMirrored {
-            body_id: *body_id,
-            from: source_blob.clone(),
-            result: Err(error()),
-        },
-        KernelRequest::ReadSolid { body_id, asset, .. } => KernelResponse::SolidRead {
-            body_id: *body_id,
-            asset: *asset,
-            result: Err(error()),
-            elapsed: std::time::Duration::ZERO,
-        },
-        KernelRequest::RepairShape { body_id, .. } => KernelResponse::RepairFailed {
-            body_id: *body_id,
-            error: error(),
-        },
-        KernelRequest::RefineShape { body_id, .. } => KernelResponse::ShapeRefined {
-            body_id: *body_id,
-            result: Err(error()),
-            elapsed: std::time::Duration::ZERO,
-        },
+        } => {
+            let (body_id, from) = (*body_id, source_blob.clone());
+            Box::new(move |error| KernelResponse::ShapeMirrored {
+                body_id,
+                from: from.clone(),
+                result: Err(error),
+            })
+        }
+        KernelRequest::ReadSolid { body_id, asset, .. } => {
+            let (body_id, asset) = (*body_id, *asset);
+            Box::new(move |error| KernelResponse::SolidRead {
+                body_id,
+                asset,
+                result: Err(error),
+                elapsed: std::time::Duration::ZERO,
+            })
+        }
+        KernelRequest::RepairShape { body_id, .. } => {
+            let body_id = *body_id;
+            Box::new(move |error| KernelResponse::RepairFailed { body_id, error })
+        }
+        KernelRequest::RefineShape { body_id, .. } => {
+            let body_id = *body_id;
+            Box::new(move |error| KernelResponse::ShapeRefined {
+                body_id,
+                result: Err(error),
+                elapsed: std::time::Duration::ZERO,
+            })
+        }
     }
+}
+
+/// How a build is answered when it does not finish.
+fn build_failure(body_id: Uuid) -> Failed {
+    Box::new(move |error| KernelResponse::SolidFailed {
+        body_id,
+        failed_feature: None,
+        error,
+        unbuilt: Vec::new(),
+        nothing_built: false,
+    })
+}
+
+/// Why a job ended with its worker: what it said as it panicked, else
+/// what the page saw.
+fn died(panic: Option<String>, seen: &str) -> String {
+    let why = panic.unwrap_or_else(|| seen.to_string());
+    format!(
+        "the kernel worker stopped ({why}); a browser gives each worker at most 4 GB, \
+         which a large file can run out of: the desktop app has no such limit"
+    )
 }
 
 // ---- The worker's side ----------------------------------------------------
@@ -418,7 +530,24 @@ use wasm_bindgen_rayon as _;
 /// worker builds and answers until the page stops it.
 #[wasm_bindgen]
 pub fn kernel_worker_main(threads: usize) {
-    console_error_panic_hook::set_once();
+    // A panic is told to the page before the worker stops, so the job it
+    // ends says why.
+    std::panic::set_hook(Box::new(|info| {
+        console_error_panic_hook::hook(info);
+        WORKER.with(|worker| {
+            if let Ok(worker) = worker.try_borrow()
+                && let Some((scope, _)) = worker.as_ref()
+            {
+                let message = info
+                    .payload()
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| info.payload().downcast_ref::<&str>().map(|s| s.to_string()))
+                    .unwrap_or_else(|| info.to_string());
+                post(scope, &News::Panicked(message));
+            }
+        });
+    }));
     tracing_wasm::set_as_global_default_with_config(
         tracing_wasm::WASMLayerConfigBuilder::new()
             .set_max_level(tracing::Level::INFO)
@@ -445,15 +574,38 @@ pub fn kernel_worker_main(threads: usize) {
             let Some(job) = decode::<Job>(&event.data()) else {
                 return;
             };
-            let response = match job {
+            let mut response = match job {
                 Job::Request { request, files } => {
+                    let paths: Vec<PathBuf> = files.iter().map(|(p, _)| p.clone()).collect();
                     for (path, bytes) in files {
                         crate::platform::web::put(&path, bytes);
                     }
-                    serve_request(&mut kernel, &activity, request)
+                    let response = serve_request(&mut kernel, &activity, request);
+                    // Read; the page keeps the file, the worker need not.
+                    for path in &paths {
+                        crate::platform::web::remove(path);
+                    }
+                    response
                 }
                 Job::Build(build) => serve_build(&mut kernel, &shared, &activity, build),
             };
+            // An import's bodies go a few at a time, each sent and let go
+            // before the next is packed, ahead of the answer.
+            if let KernelResponse::StepImported { model, .. } = &mut response {
+                let mut chunk = Vec::new();
+                let mut size = 0;
+                for body in std::mem::take(&mut model.bodies) {
+                    size += weight(&body);
+                    chunk.push(body);
+                    if size >= BODIES_PER_MESSAGE {
+                        post(&scope, &News::Bodies(std::mem::take(&mut chunk)));
+                        size = 0;
+                    }
+                }
+                if !chunk.is_empty() {
+                    post(&scope, &News::Bodies(chunk));
+                }
+            }
             post(&scope, &News::Done(response));
         })
     };

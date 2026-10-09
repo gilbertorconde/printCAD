@@ -488,6 +488,7 @@ impl PrintCadApp {
             source_asset: Some(asset),
             revision: 0,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: Some(read.health),
         };
@@ -872,6 +873,7 @@ pub(crate) fn store_built_solid(
             revision: 0,
             bounds_mm,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },

@@ -2093,6 +2093,7 @@ mod tests {
                     revision: 0,
                     bounds_mm: None,
                     brep_blob_path: None,
+                    mesh_path: None,
                     face_colors_path: None,
                     health: Some(kernel_api::ShapeHealth {
                         broken: broken_count,
@@ -2188,6 +2189,7 @@ mod tests {
                 revision: 0,
                 bounds_mm: None,
                 brep_blob_path: None,
+                mesh_path: None,
                 face_colors_path: None,
                 health: None,
             },
@@ -2237,6 +2239,7 @@ mod tests {
                 revision: 0,
                 bounds_mm: None,
                 brep_blob_path: None,
+                mesh_path: None,
                 face_colors_path: None,
                 health: Some(kernel_api::ShapeHealth {
                     faceted: true,

@@ -852,6 +852,7 @@ fn a_bench_removes_the_body_it_made_but_not_one_holding_anothers_feature() {
             revision: 0,
             bounds_mm: None,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health: None,
         },

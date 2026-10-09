@@ -79,6 +79,7 @@ fn shape_of(source: &Document, body: BodyId) -> Option<Shape> {
             revision: 0,
             bounds_mm: bounds,
             brep_blob_path: None,
+            mesh_path: None,
             face_colors_path: None,
             health,
         },
