@@ -569,11 +569,11 @@ pub struct RenderingSettings {
     pub show_annotations: bool,
     /// Whether a grid lies on the ground plane through the origin, the
     /// plane square to the axis preset's up.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub show_grid: bool,
     /// Whether the origin's three planes (XY, XZ, YZ) draw as see-through
     /// squares around it.
-    #[serde(default = "default_true")]
+    #[serde(default)]
     pub show_origin_planes: bool,
     /// Colours the user keeps to pick again, in the order added.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -674,8 +674,8 @@ impl Default for RenderingSettings {
             preview_opacity: default_preview_opacity(),
             draw_style: DrawStyle::default(),
             show_annotations: default_show_annotations(),
-            show_grid: true,
-            show_origin_planes: true,
+            show_grid: false,
+            show_origin_planes: false,
             custom_colors: Vec::new(),
             curve_step_deg: default_curve_step_deg(),
         }
