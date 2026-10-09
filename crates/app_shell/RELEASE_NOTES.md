@@ -19,7 +19,8 @@ version first.
 - A compressed `.prtcad`, as the browser downloads one, opens on the desktop with its preview.
 
 ### Kernel
-- Built on ogeom 0.9.15: parts far from the origin keep their faces and features through conversion, sewing, chamfers, pipes, meshing, booleans and healing, mesh conversion depends far less on the order of a mesh's triangles, and mass properties are exact under a scaling placement.
+- Built on ogeom 0.9.16: parts far from the origin keep their faces and features through conversion, sewing, chamfers, pipes, meshing, booleans and healing, mesh conversion depends far less on the order of a mesh's triangles, and mass properties are exact under a scaling placement.
+- STEP files whose round faces start their rims at different points read without falling back, a drill nicking an edge a few microns deep cuts rather than being refused, and a sheared or unevenly scaled shape keeps track of all its parts.
 
 ## 0.8.0
 
