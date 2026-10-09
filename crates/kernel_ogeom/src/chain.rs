@@ -76,6 +76,9 @@ pub struct ChainCache {
     reused: bool,
     /// The meshes of the faces the last build drew.
     faces: crate::reuse::FaceMeshes,
+    /// Keep every edited op's solid for the next build to compare, whatever
+    /// the build's timings say it is worth.
+    every_edit: bool,
 }
 
 /// What a build made of its edited op (the first that differs from the
@@ -88,7 +91,8 @@ struct AfterEdit {
     tail: u64,
     /// The snapshot of the solid the op made, hashed; `None` when the ops
     /// after it took less than twice as long as writing a snapshot, too
-    /// little to be worth the comparison.
+    /// little to be worth the comparison (unless the cache keeps every
+    /// edit).
     solid: Option<u64>,
     result: SolidBuildResult,
 }
@@ -131,6 +135,17 @@ impl ChainCache {
     /// building them: zero for a build from the first op.
     pub fn resumed(&self) -> usize {
         self.resumed
+    }
+
+    /// A cache that keeps every edited op's solid for comparison, rather than
+    /// only those whose following ops took long enough to be worth it:
+    /// what it reuses then depends on the history alone, not on how fast
+    /// the machine built it.
+    pub fn keeping_every_edit() -> Self {
+        Self {
+            every_edit: true,
+            ..Self::default()
+        }
     }
 
     /// Whether the last build stopped at its edited op, which made the
@@ -930,7 +945,7 @@ pub fn execute_cached(
         probes: answers,
     };
     if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
-        let worth = tail_took.is_some_and(|t| t > snapshot_took * 2);
+        let worth = cache.every_edit || tail_took.is_some_and(|t| t > snapshot_took * 2);
         cache.after_edit = Some(AfterEdit {
             at,
             tail,

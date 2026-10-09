@@ -236,7 +236,9 @@ fn a_resumed_build_is_the_build_from_scratch() {
 #[test]
 fn an_edit_that_makes_the_same_solid_takes_the_rest_as_built() {
     let mut part = Part::new();
-    let mut cache = ChainCache::default();
+    // Every edit kept: whether one is worth comparing is timed, and a busy
+    // machine times it differently.
+    let mut cache = ChainCache::keeping_every_edit();
     part.build(&mut cache);
     let pocket = part.id("pocket");
     part.set(pocket, "depth", 10.0);
