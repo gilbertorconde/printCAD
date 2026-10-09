@@ -6,6 +6,9 @@ version first.
 
 ## 0.8.1
 
+### View
+- A grid on the ground and the origin's three planes give the model something to stand on and be read by: the grid fades with distance and zoom, the planes keep their size on screen, and View › Grid and View › Origin planes turn each off. Both hide while you edit a sketch. Thanks to enomado.
+
 ### In your browser
 - Large assemblies import, save and reopen in the browser: the 165 MB, 1,189-body Doom 350 assembly imports in about 3 minutes and saves to 184 MB. Its import used to stop at "Preparing… bodies" for good, and saving it crashed the page.
 - When the kernel stops in the browser (out of memory, say), the task ends with a message saying why rather than waiting forever.
