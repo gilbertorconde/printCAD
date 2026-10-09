@@ -4,6 +4,20 @@ Each release is a `## <version>` heading, its topics `### <topic>`, and one
 bullet per change. The start page's What's new shows these, the running
 version first.
 
+## 0.8.1
+
+### In your browser
+- Large assemblies import, save and reopen in the browser: the 165 MB, 1,189-body Doom 350 assembly imports in about 3 minutes and saves to 184 MB. Its import used to stop at "Preparing… bodies" for good, and saving it crashed the page.
+- When the kernel stops in the browser (out of memory, say), the task ends with a message saying why rather than waiting forever.
+- The browser keeps saved documents compressed, so they take far less of its memory and storage.
+
+### Documents
+- A document keeps each body's mesh as a compact entry of its own, so large documents save smaller and faster. A document saved by this version opens in 0.8.0 with those bodies' meshes missing until they are imported again; earlier documents open as before.
+- A compressed `.prtcad`, as the browser downloads one, opens on the desktop with its preview.
+
+### Kernel
+- Built on ogeom 0.9.15: parts far from the origin keep their faces and features through conversion, sewing, chamfers, pipes, meshing, booleans and healing, mesh conversion depends far less on the order of a mesh's triangles, and mass properties are exact under a scaling placement.
+
 ## 0.8.0
 
 ### In your browser
