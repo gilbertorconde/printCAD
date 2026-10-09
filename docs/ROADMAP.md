@@ -56,3 +56,12 @@ And in printCAD, as each lands:
 Each goes to the kernel's repository as an issue with its API, a repro, the
 bench numbers and an acceptance test (the time follows the touched region,
 the result the same as now).
+
+## Proposed sketch solver extraction
+
+[RFC 0003](rfcs/0003-standalone-sketch-solver.md) proposes a standalone 2D
+constraint solver with a numerical problem/result API, replayable fixtures
+and independent tests. Its five milestones cover behaviour capture, pure
+mathematics, the library and sketch adapter, replay and generated tests,
+and dependency checks. The extraction preserves the current algorithm and
+sketch behaviour; the RFC is open for discussion before implementation.
