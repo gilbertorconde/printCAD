@@ -8,7 +8,7 @@ use glam::DVec2;
 
 use crate::conic::Shape;
 use crate::sketch::{GeometryElement, Sketch};
-use crate::spline::Basis;
+use sketch_solver::spline::Basis;
 
 /// What a curve runs along, whatever part of it the element keeps.
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ impl Curve {
                 }
             }
             GeometryElement::BSpline(b) => {
-                let basis = Basis::of(b)?;
+                let basis = crate::spline::basis_of(b)?;
                 let control = b
                     .control_points
                     .iter()

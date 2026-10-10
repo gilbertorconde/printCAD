@@ -11,8 +11,9 @@ use glam::DVec2;
 use uuid::Uuid;
 
 use crate::sketch::{BSpline, GeometryElement, Point, Sketch, Vec2D};
-use crate::spline::{Basis, MAX_DEGREE, insert_knot};
+use crate::spline::{MAX_DEGREE, basis_of};
 use crate::tools::ToolEffect;
+use sketch_solver::spline::{Basis, insert_knot};
 
 /// A spline in the making: degree, clamped knots, and control points with
 /// their weights; `start` and `end` are the sketch points the first and
@@ -196,7 +197,7 @@ struct Lifted {
 /// closed one is laid open where its parameter starts, a curve that runs
 /// from a point back to it, so it can take knots of its own.
 fn lifted(sketch: &Sketch, spline: &BSpline) -> Option<Lifted> {
-    let basis = Basis::of(spline)?;
+    let basis = basis_of(spline)?;
     let control = spline.control_positions(sketch)?;
     let rational = !basis.weights().is_empty();
     if basis.is_periodic() {

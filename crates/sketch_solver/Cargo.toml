@@ -1,0 +1,19 @@
+[package]
+name = "sketch_solver"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.98"
+description = "Standalone two-dimensional geometric constraint solver"
+
+[features]
+default = []
+serde = ["dep:serde", "dep:serde_json"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = { version = "1.0.151", features = ["float_roundtrip"], optional = true }
+
+[[example]]
+name = "solve_problem"
+required-features = ["serde"]

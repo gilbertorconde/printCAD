@@ -1288,7 +1288,7 @@ fn cut_spline(sketch: &mut Sketch, id: Uuid, spans: &[(f64, f64)], shared: &[(f6
     let Some(GeometryElement::BSpline(spline)) = sketch.get_geometry(id).cloned() else {
         return false;
     };
-    let Some(basis) = crate::spline::Basis::of(&spline) else {
+    let Some(basis) = crate::spline::basis_of(&spline) else {
         return false;
     };
     let Some(control) = spline
@@ -1867,7 +1867,7 @@ fn offset_sampled(
         .map(|&i| samples[i] + tangent(i).perp() * d)
         .map(|q| [f64::from(q.x), f64::from(q.y)])
         .collect();
-    let fit = crate::spline::interpolate(&points, 3, closed)?;
+    let fit = sketch_solver::spline::interpolate(&points, 3, closed)?;
     let control: Vec<Uuid> = fit
         .control
         .iter()

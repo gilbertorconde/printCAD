@@ -10,6 +10,7 @@ default = ["egui"]
 egui = ["core_document/egui", "dep:egui", "dep:ui_kit"]
 
 [dependencies]
+sketch_solver = { path = "../../sketch_solver" }
 web-time.workspace = true
 core_document = { path = "../../core_document" }
 egui = { workspace = true, optional = true }
@@ -23,4 +24,5 @@ ttf-parser = "0.25"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 
 [dev-dependencies]
+sketch_solver = { path = "../../sketch_solver", features = ["serde"] }
 scripting = { path = "../../scripting" }

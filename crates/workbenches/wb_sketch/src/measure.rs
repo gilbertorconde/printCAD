@@ -8,6 +8,7 @@ use glam::Vec2;
 use uuid::Uuid;
 
 use crate::sketch::{GeometryElement, Reference, Sketch};
+use sketch_solver::contact::circles_nest;
 
 /// An item as the measurements see it: a point, the infinite line through
 /// a segment, or a whole circle (an arc counts as its circle).
@@ -47,17 +48,6 @@ pub fn arc_length(sketch: &Sketch, arc: Uuid) -> Option<f32> {
     let e = sketch.point_position(a.end)?.to_glam();
     let (_, sweep) = crate::snap::arc_angles(s - c, e - c);
     Some(a.radius * sweep)
-}
-
-/// Whether two circles, `d` apart, sit one inside the other: their gap is
-/// then measured inside the larger one.
-pub fn circles_nest(d: f64, r1: f64, r2: f64) -> bool {
-    d < (r1 - r2).abs()
-}
-
-/// Whether a point `d` from a circle's center lies inside it.
-pub fn point_inside(d: f64, r: f64) -> bool {
-    d < r
 }
 
 /// The gap between two items: its length and the nearest point on each.
@@ -182,15 +172,14 @@ pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<Vec2>> {
     let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
     match sketch.get_geometry(curve)? {
         GeometryElement::BSpline(b) => {
-            let basis = crate::spline::Basis::of(b)?;
+            let basis = crate::spline::basis_of(b)?;
             let control = b
                 .control_points
                 .iter()
                 .map(|id| pos(*id).map(|p| [f64::from(p.x), f64::from(p.y)]))
                 .collect::<Option<Vec<_>>>()?;
             Some(
-                basis
-                    .sample(&control, STEPS)
+                crate::spline::sample_basis(&basis, &control, STEPS)
                     .into_iter()
                     .map(|p| p.to_glam())
                     .collect(),

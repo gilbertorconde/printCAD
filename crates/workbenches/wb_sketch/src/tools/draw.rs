@@ -1227,13 +1227,13 @@ pub fn bspline_preview(clicks: &[Vec2D], params: &ToolParams) -> Option<Vec<Vec2
         .collect();
     let periodic = params.bspline_periodic;
     let (degree, knots, control) = if params.bspline_interpolate {
-        let fit = spline::interpolate(&points, params.bspline_degree, periodic)?;
+        let fit = sketch_solver::spline::interpolate(&points, params.bspline_degree, periodic)?;
         (fit.degree, fit.knots, fit.control)
     } else {
         (params.bspline_degree, Vec::new(), points)
     };
-    let basis = spline::Basis::new(degree, control.len(), &knots, periodic)?;
-    Some(basis.sample(&control, 48))
+    let basis = sketch_solver::spline::Basis::new(degree, control.len(), &knots, periodic)?;
+    Some(spline::sample_basis(&basis, &control, 48))
 }
 
 /// Complete the in-progress B-spline (right-click/Enter). Fewer than 3
@@ -1266,7 +1266,8 @@ pub(super) fn bspline_finish(
             .iter()
             .map(|p| [f64::from(p.x), f64::from(p.y)])
             .collect();
-        let Some(fit) = spline::interpolate(&at, params.bspline_degree, periodic) else {
+        let Some(fit) = sketch_solver::spline::interpolate(&at, params.bspline_degree, periodic)
+        else {
             return ToolEffect::log("No spline goes through the same point twice in a row");
         };
         let fit_points: Vec<Uuid> = points.iter().map(|t| materialize(sketch, *t)).collect();

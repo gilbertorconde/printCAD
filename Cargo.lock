@@ -2088,6 +2088,7 @@ dependencies = [
  "rayon",
  "scripting",
  "serde_json",
+ "sketch_solver",
  "thiserror 2.0.20",
  "tracing",
  "tracing-subscriber",
@@ -4131,6 +4132,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "sketch_solver"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "skrifa"
 version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5635,6 +5644,7 @@ dependencies = [
  "scripting",
  "serde",
  "serde_json",
+ "sketch_solver",
  "ttf-parser",
  "ui_kit",
  "uuid",

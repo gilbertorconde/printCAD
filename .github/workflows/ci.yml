@@ -36,6 +36,17 @@ jobs:
       - name: Tests, within their time budget
         run: node scripts/test-budget.mjs
 
+      - name: Standalone solver dependencies and features
+        run: |
+          node scripts/check-solver-deps.mjs
+          cargo test -p sketch_solver --locked
+          cargo test -p sketch_solver --no-default-features --locked
+          cargo test -p sketch_solver --features serde --locked
+          cargo clippy -p sketch_solver --all-targets --no-default-features --locked -- -D warnings
+          cargo clippy -p sketch_solver --all-targets --features serde --locked -- -D warnings
+          cargo check -p sketch_solver --all-features --target wasm32-unknown-unknown --locked
+          cargo check -p sketch_solver --all-features --target wasm32-wasip2 --locked
+
       - name: Comment-rot lint
         run: node scripts/lint-comment-rot.mjs --all
 

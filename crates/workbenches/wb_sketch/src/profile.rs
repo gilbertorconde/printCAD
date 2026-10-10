@@ -564,7 +564,7 @@ fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> 
             periodic: b.periodic,
         };
     }
-    match crate::spline::Basis::of(b) {
+    match crate::spline::basis_of(b) {
         Some(basis) => ProfileSegment::Nurbs {
             degree: basis.degree() as u32,
             knots: if b.periodic {

@@ -321,9 +321,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   chat's messages: `pulldown-cmark` into a small block tree, each run of
   text one selectable label whose links are found from where a click lands
   in the laid-out text, code blocks with a copy button.
+- `sketch_solver`: standalone std-only sketch mathematics: ordered typed
+  `problem`, semantic `compile`, `curves`, `spline`, `residual`, LM `solve`,
+  rank/DoF `freedom` and `diagnosis`; optional serde. Its complete directory
+  can be copied to another consumer without workspace inheritance.
 - `workbenches/wb_sketch`: sketcher: `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
-  `snap.rs`, `solver.rs` (LM, uniform constraint records + diagnostics),
+  `snap.rs`, `solver.rs` (sketch_solver adapter, storage write-back and
+  application diagnostics),
   the line tool's drag from its end (`LinePress`, `step::line_arc_click`:
   the polyline's tangent arc, a `sketch.draw` point with `arc = true`),
   reference pictures (`images.rs`, `Sketch::images`, the file a document

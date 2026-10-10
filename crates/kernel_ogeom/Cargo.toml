@@ -24,6 +24,7 @@ ogeom = { workspace = true, features = ["web"] }
 rayon.workspace = true
 
 [dev-dependencies]
+sketch_solver = { path = "../sketch_solver" }
 tracing-subscriber = { workspace = true }
 core_document = { path = "../core_document" }
 wb_design = { path = "../workbenches/wb_design" }

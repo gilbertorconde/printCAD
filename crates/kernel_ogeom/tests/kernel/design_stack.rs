@@ -1725,7 +1725,7 @@ fn bodies_that_take_each_other_as_tools_fail_once() {
 fn a_spline_through_points_closed_by_a_line_pads() {
     use wb_sketch::sketch::BSpline;
     let clicks = [[0.0, 0.0], [4.0, 6.0], [9.0, 7.0], [14.0, 3.0], [18.0, 0.0]];
-    let fit = wb_sketch::spline::interpolate(&clicks, 4, false).expect("a fit");
+    let fit = sketch_solver::spline::interpolate(&clicks, 4, false).expect("a fit");
     let mut sketch = Sketch::new("spline");
     let fit_points: Vec<_> = clicks
         .iter()

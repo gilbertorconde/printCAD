@@ -8,7 +8,6 @@ use uuid::Uuid;
 use super::ToolEffect;
 use crate::sketch::{BSpline, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::arc_angles;
-use crate::spline;
 
 /// How close the joined spline keeps to the curves it replaces, mm, when
 /// nothing else is asked for.
@@ -182,7 +181,8 @@ pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f32) -> To
     }
     // The fit's knots are the even ones a spline takes when it has none of
     // its own.
-    let Some((_, control)) = spline::fit_chain(&samples, f64::from(tolerance), MAX_CONTROL_POINTS)
+    let Some((_, control)) =
+        sketch_solver::spline::fit_chain(&samples, f64::from(tolerance), MAX_CONTROL_POINTS)
     else {
         return ToolEffect::log(format!(
             "No spline follows these curves within {tolerance} mm; a sharp corner needs a looser tolerance"

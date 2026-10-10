@@ -28,6 +28,7 @@ mod selection;
 pub mod sketch;
 pub mod snap;
 mod solver;
+pub use solver::report as solver_report;
 pub mod spline;
 pub mod spline_edit;
 mod step;
