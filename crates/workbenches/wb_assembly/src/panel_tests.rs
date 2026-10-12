@@ -625,6 +625,79 @@ fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
     draws(&mut wb, &mut doc);
 }
 
+/// Every text the task panel draws in a panel `width` points wide, with
+/// how many lines each took.
+fn drawn_texts(wb: &mut AssemblyWorkbench, doc: &mut Document, width: f32) -> Vec<(String, usize)> {
+    let egui_ctx = egui::Context::default();
+    ui_kit::apply_theme(&egui_ctx);
+    let input = egui::RawInput {
+        screen_rect: Some(egui::Rect::from_min_size(
+            egui::Pos2::ZERO,
+            egui::vec2(width, 900.0),
+        )),
+        ..Default::default()
+    };
+    let mut output = egui_ctx.run_ui(input, |ui| {
+        let mut ctx = context(doc);
+        wb.ui_task_panel(ui, &mut ctx, TaskRequest::default());
+    });
+    output.textures_delta.clear();
+    fn texts(shape: &egui::Shape, out: &mut Vec<(String, usize)>) {
+        match shape {
+            egui::Shape::Text(text) => {
+                out.push((text.galley.text().to_string(), text.galley.rows.len()))
+            }
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| texts(s, out)),
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &output.shapes {
+        texts(&clipped.shape, &mut out);
+    }
+    out
+}
+
+#[test]
+fn an_exploded_step_says_what_it_does_and_its_remove_button_keeps_one_line() {
+    let (mut doc, base, part) = scene();
+    let placements = crate::all_placements(&context(&mut doc));
+    let mut wb = AssemblyWorkbench {
+        task: Some(Task::Explode {
+            placements,
+            spread: 0.0,
+            steps: Box::default(),
+        }),
+        ..AssemblyWorkbench::default()
+    };
+    for bodies in [vec![part], vec![base, part]] {
+        if let Some(Task::Explode { steps, .. }) = &mut wb.task {
+            steps.picked = bodies;
+        }
+        send(&mut wb, &mut doc, number("shift_2", 10.0));
+        send(&mut wb, &mut doc, choose("turn_axis", 2));
+        send(&mut wb, &mut doc, number("turn_degrees", 90.0));
+        send(&mut wb, &mut doc, number("radial", 5.0));
+        send(&mut wb, &mut doc, button("add_step"));
+    }
+    let said = words(&widgets(&wb, &mut doc));
+    assert!(
+        said.contains("2. Base, Part: turn 90° about Z, spread 5 mm, shift (0, 0, 10) mm"),
+        "{said}"
+    );
+    // Whatever the panel's width, a step's line wraps and its button
+    // keeps its label on one line.
+    for width in (240..=480).step_by(4) {
+        let drawn = drawn_texts(&mut wb, &mut doc, width as f32);
+        let removes: Vec<_> = drawn.iter().filter(|(t, _)| t == "Remove").collect();
+        assert_eq!(removes.len(), 2, "{width}: {drawn:?}");
+        assert!(
+            removes.iter().all(|(_, lines)| *lines == 1),
+            "{width}: {drawn:?}"
+        );
+    }
+}
+
 #[test]
 fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     let (mut doc, _, _) = scene();

@@ -816,16 +816,16 @@ impl AssemblyWorkbench {
             .unwrap_or_default();
         for (i, step) in view.steps.iter().enumerate() {
             let names: Vec<String> = step.bodies.iter().map(|b| body_name(ctx, *b)).collect();
+            // The button first, so a long line wraps beside it rather
+            // than squeezing it.
             widgets.push(w::row(vec![
+                w::button(&format!("remove_step:{i}"), "Remove", ButtonStyle::Small),
                 w::text(format!(
-                    "{}. {} by ({:.1}, {:.1}, {:.1})",
+                    "{}. {}: {}",
                     i + 1,
                     names.join(", "),
-                    step.shift[0],
-                    step.shift[1],
-                    step.shift[2]
+                    step.summary()
                 )),
-                w::button(&format!("remove_step:{i}"), "Remove", ButtonStyle::Small),
             ]));
         }
         if !view.steps.is_empty() {

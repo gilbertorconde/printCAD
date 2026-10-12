@@ -141,6 +141,65 @@ impl ExplodeStep {
         }
         BodyPlacement::new(quat, offset + Vec3::from_array(self.shift) * share)
     }
+
+    /// What the step does, in a few words: its turn, spread and shift,
+    /// each left out when it does nothing ("turn 90° about Z, spread
+    /// 5 mm, shift (0, 0, 30) mm").
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(turn) = self.turn.filter(|t| t.degrees != 0.0) {
+            parts.push(format!(
+                "turn {}° about {}",
+                short(turn.degrees),
+                axis_name(turn.axis)
+            ));
+        }
+        if let Some(radial) = self.radial.filter(|r| r.distance != 0.0) {
+            let mut said = format!("spread {} mm", short(radial.distance));
+            if let Some(axis) = radial.axis {
+                said += &format!(" from {}", axis_name(axis));
+            }
+            parts.push(said);
+        }
+        if self.shift != [0.0; 3] {
+            let [x, y, z] = self.shift.map(short);
+            parts.push(format!("shift ({x}, {y}, {z}) mm"));
+        }
+        if parts.is_empty() {
+            "stays".into()
+        } else {
+            parts.join(", ")
+        }
+    }
+}
+
+/// `v` to two decimals at most, trailing zeros dropped.
+fn short(v: f32) -> String {
+    let text = format!("{v:.2}");
+    let text = text.trim_end_matches('0').trim_end_matches('.');
+    if text == "-0" {
+        "0".into()
+    } else {
+        text.into()
+    }
+}
+
+/// X, Y or Z for an axis along one (either way), else its direction.
+fn axis_name(axis: [f32; 3]) -> String {
+    let Some(dir) = Vec3::from_array(axis).try_normalize() else {
+        return "no axis".into();
+    };
+    for (k, name) in ["X", "Y", "Z"].into_iter().enumerate() {
+        if dir[k].abs() > 1.0 - 1e-5 {
+            return if dir[k] < 0.0 {
+                format!("-{name}")
+            } else {
+                name.into()
+            };
+        }
+    }
+    let [x, y, z] = dir.to_array().map(short);
+    format!("({x}, {y}, {z})")
 }
 
 /// The view `id` as stored.
@@ -187,6 +246,49 @@ mod tests {
         assert_eq!(at(1.5)[0].1.offset(), Vec3::new(2.5, 0.0, 10.0));
         assert_eq!(at(1.5)[1].1.offset(), Vec3::new(2.5, 0.0, 0.0));
         assert_eq!(at(2.0)[1].1.offset(), Vec3::new(5.0, 0.0, 0.0));
+    }
+
+    #[test]
+    fn a_step_s_summary_names_its_turn_spread_and_shift() {
+        let mut step = ExplodeStep {
+            bodies: vec![BodyId::new()],
+            shift: [0.0, 0.0, 30.0],
+            turn: None,
+            radial: None,
+        };
+        assert_eq!(step.summary(), "shift (0, 0, 30) mm");
+        step.turn = Some(StepTurn {
+            point: [1.0, 2.0, 3.0],
+            axis: [0.0, 0.0, 1.0],
+            degrees: 90.0,
+        });
+        step.radial = Some(StepRadial {
+            centre: [0.0; 3],
+            axis: None,
+            distance: 12.5,
+        });
+        assert_eq!(
+            step.summary(),
+            "turn 90° about Z, spread 12.5 mm, shift (0, 0, 30) mm"
+        );
+        step.shift = [0.0; 3];
+        step.turn = Some(StepTurn {
+            point: [0.0; 3],
+            axis: [0.0, -2.0, 0.0],
+            degrees: -45.0,
+        });
+        step.radial = Some(StepRadial {
+            centre: [0.0; 3],
+            axis: Some([3.0, 4.0, 0.0]),
+            distance: 5.0,
+        });
+        assert_eq!(
+            step.summary(),
+            "turn -45° about -Y, spread 5 mm from (0.6, 0.8, 0)"
+        );
+        step.turn = None;
+        step.radial = None;
+        assert_eq!(step.summary(), "stays");
     }
 }
 
