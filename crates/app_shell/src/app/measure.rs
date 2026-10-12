@@ -132,6 +132,32 @@ pub(crate) fn describe_pair(a: &MeasurePick, b: &MeasurePick, unit: Unit) -> Vec
     lines
 }
 
+/// What a click with the tool armed picks: the edge under the cursor, else
+/// the face of the picked body's mesh at the picked point, else the point.
+/// The face comes from the body's mesh rather than the hover paint, which is
+/// dropped while a button is down and so is gone when the release lands.
+pub(crate) fn pick_at(
+    edge: Option<MeasurePick>,
+    body_mesh: Option<&TriMesh>,
+    point: Option<[f32; 3]>,
+) -> Option<MeasurePick> {
+    if edge.is_some() {
+        return edge;
+    }
+    let point = point?;
+    let face = body_mesh.and_then(|mesh| {
+        let face = crate::app::input::face_ref_from_mesh(mesh, Vec3::from_array(point))?;
+        let sub = crate::app::input::face_submesh(mesh, face.point, face.normal)?;
+        Some(MeasurePick::Face {
+            point: face.point,
+            normal: face.normal,
+            surface: face.surface,
+            area: mesh_area(&sub),
+        })
+    });
+    Some(face.unwrap_or(MeasurePick::Point(point)))
+}
+
 /// The area of a mesh's triangles, mm².
 pub(crate) fn mesh_area(mesh: &TriMesh) -> f64 {
     mesh.indices
@@ -162,6 +188,57 @@ mod tests {
             }),
             area: 100.0,
         }
+    }
+
+    /// A 2 x 3 square at z = 1 cut from kernel face 4, beside a unit square
+    /// at z = 0 cut from face 5.
+    fn two_face_body() -> TriMesh {
+        TriMesh {
+            positions: vec![
+                [0.0, 0.0, 1.0],
+                [2.0, 0.0, 1.0],
+                [2.0, 3.0, 1.0],
+                [0.0, 3.0, 1.0],
+                [5.0, 0.0, 0.0],
+                [6.0, 0.0, 0.0],
+                [6.0, 1.0, 0.0],
+                [5.0, 1.0, 0.0],
+            ],
+            indices: vec![0, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7],
+            faces: vec![4, 4, 5, 5],
+            ..TriMesh::default()
+        }
+    }
+
+    #[test]
+    fn a_click_on_a_body_picks_the_face_there_with_its_area() {
+        let mesh = two_face_body();
+        let pick = pick_at(None, Some(&mesh), Some([1.0, 1.5, 1.0])).unwrap();
+        let MeasurePick::Face { area, normal, .. } = pick else {
+            panic!("a face, not {pick:?}");
+        };
+        assert!((area - 6.0).abs() < 1e-6, "{area}");
+        assert!((Vec3::from_array(normal) - Vec3::Z).length() < 1e-5);
+        let lines = pick.describe(Unit::Mm);
+        assert!(lines[0].starts_with("Area 6.00"), "{lines:?}");
+    }
+
+    #[test]
+    fn an_edge_takes_the_click_and_empty_space_gives_a_point() {
+        let mesh = two_face_body();
+        let edge = MeasurePick::Edge {
+            point: [1.0, 0.0, 1.0],
+            direction: [1.0, 0.0, 0.0],
+            length: 2.0,
+            circle: None,
+        };
+        let picked = pick_at(Some(edge.clone()), Some(&mesh), Some([1.0, 0.0, 1.0]));
+        assert_eq!(picked, Some(edge));
+        assert_eq!(
+            pick_at(None, None, Some([9.0, 9.0, 9.0])),
+            Some(MeasurePick::Point([9.0, 9.0, 9.0]))
+        );
+        assert_eq!(pick_at(None, Some(&mesh), None), None);
     }
 
     #[test]

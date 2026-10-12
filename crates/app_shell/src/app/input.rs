@@ -499,28 +499,23 @@ impl PrintCadApp {
     /// cursor, else the point, joins the measurement; a third click starts
     /// over.
     fn measure_click(&mut self) -> bool {
-        use crate::app::measure::{MeasurePick, describe_pair, mesh_area};
-        let pick = if let Some(edge) = self.session.hovered_edge {
-            MeasurePick::Edge {
-                point: edge.point,
-                direction: edge.direction,
-                length: edge.length_mm,
-                circle: edge.circle,
-            }
-        } else if let (Some(hover), Some(body)) =
-            (&self.session.hovered_face, self.session.hovered_body)
-            && hover.body == body
-            && let Some(face) = self.face_hit_under_cursor(body)
-        {
-            MeasurePick::Face {
-                point: face.point,
-                normal: face.normal,
-                surface: face.surface,
-                area: mesh_area(&hover.mesh),
-            }
-        } else if let Some(point) = self.session.hovered_world_pos {
-            MeasurePick::Point(point)
-        } else {
+        use crate::app::measure::{MeasurePick, describe_pair, pick_at};
+        let edge = self.session.hovered_edge.map(|edge| MeasurePick::Edge {
+            point: edge.point,
+            direction: edge.direction,
+            length: edge.length_mm,
+            circle: edge.circle,
+        });
+        let mesh = self.session.hovered_body.and_then(|body| {
+            self.session
+                .document
+                .imported_geometry(core_document::BodyId(body))
+        });
+        let Some(pick) = pick_at(
+            edge,
+            mesh.map(|geometry| &*geometry.mesh),
+            self.session.hovered_world_pos,
+        ) else {
             return false;
         };
         let unit = self.session.document.display_unit();
