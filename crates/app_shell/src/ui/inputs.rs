@@ -82,6 +82,8 @@ pub struct UiFrameInputs<'a> {
     pub physical: Option<Physical>,
     /// The camera's field of view, in degrees, for the view toolbar.
     pub field_of_view_deg: f32,
+    /// The projection the tab's view draws with.
+    pub projection: settings::ProjectionMode,
     /// The clipping plane, when on, and the scene box it moves across.
     pub section: Option<crate::camera::section::SectionPlane>,
     /// What a click in the view picks.

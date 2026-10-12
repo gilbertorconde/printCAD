@@ -639,6 +639,7 @@ fn reset_group(state: &mut PreferencesState) {
             state.draft.fps_cap = defaults.fps_cap;
             state.draft.rendering.show_log_panel = defaults.rendering.show_log_panel;
             state.draft.diagnostics = defaults.diagnostics;
+            state.draft.session = defaults.session;
         }
         PrefGroup::Display => {
             let camera = &mut state.draft.camera;
@@ -926,6 +927,24 @@ fn general_page(
                 ],
                 filter,
             );
+            // A page keeps no session between visits.
+            if !crate::platform::ON_PAGE {
+                pref_group(
+                    ui,
+                    "Session",
+                    vec![
+                        PrefRow::toggle(
+                            "Reopen documents at start",
+                            &mut draft.session.reopen_documents,
+                        )
+                        .hint(
+                            "Open again the documents that were open when printCAD closed; off \
+                             starts on the start page",
+                        ),
+                    ],
+                    filter,
+                );
+            }
             // The report is written to the temp dir, which a page has not.
             if !crate::platform::ON_PAGE {
                 pref_group(

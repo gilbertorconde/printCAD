@@ -991,6 +991,78 @@ impl CameraController {
     pub(crate) fn position_vec(&self) -> Vec3 {
         self.state.eye_vec3()
     }
+
+    /// The projection this view draws with.
+    pub fn projection(&self) -> ProjectionMode {
+        self.state.projection
+    }
+
+    /// Where the view stands, to put it back another time.
+    pub fn kept_view(&self) -> KeptView {
+        let target = self.state.focal_point_dvec(&self.axes);
+        KeptView {
+            target: target.to_array(),
+            orientation: self.state.orientation.normalize().to_array(),
+            distance: self.state.focal_distance,
+            projection: self.state.projection,
+            field_of_view_deg: self.state.height_angle_rad.to_degrees(),
+            ortho_height: self.state.ortho_height,
+            axis_preset: self.axis_preset,
+        }
+    }
+
+    /// Stand where `view` was kept. A view kept under another axis preset,
+    /// or one whose numbers do not make a view, is refused: `false`, and
+    /// the camera is left as it was.
+    pub fn restore_view(&mut self, view: &KeptView, settings: &CameraSettings) -> bool {
+        let orientation = Quat::from_array(view.orientation);
+        let usable = view.axis_preset == self.axis_preset
+            && view.target.iter().all(|v| v.is_finite())
+            && orientation.is_finite()
+            && orientation.length() > 0.5
+            && view.distance.is_finite()
+            && view.distance > 0.0
+            && view.ortho_height.is_finite()
+            && view.ortho_height > 0.0
+            && view.field_of_view_deg.is_finite();
+        if !usable {
+            return false;
+        }
+        self.forget_released([false; 3]);
+        self.cancel_animation();
+        self.state.orientation = orientation.normalize();
+        // As a fit does: a large model's view is kept however far it stands.
+        self.state.focal_distance = view.distance.max(f64::from(settings.min_focal_distance));
+        self.state.projection = view.projection;
+        self.state.height_angle_rad = view
+            .field_of_view_deg
+            .clamp(f64::from(FOV_RANGE_DEG.0), f64::from(FOV_RANGE_DEG.1))
+            .to_radians();
+        self.state.ortho_height = view.ortho_height;
+        self.state
+            .rederive_eye_from_focal(DVec3::from_array(view.target), &self.axes);
+        self.state.clip_dirty = true;
+        true
+    }
+}
+
+/// A view as it is kept between runs: what it looks at, from which way and
+/// how far, and through which projection.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct KeptView {
+    /// The focal point the view looks at and orbits about, in mm.
+    pub target: [f64; 3],
+    /// The camera's turn, as the camera holds it (`x, y, z, w`).
+    pub orientation: [f32; 4],
+    /// From the eye to the target, in mm.
+    pub distance: f64,
+    pub projection: ProjectionMode,
+    /// The perspective's vertical field of view.
+    pub field_of_view_deg: f64,
+    /// How much an orthographic view shows top to bottom, in mm.
+    pub ortho_height: f64,
+    /// The axis preset the orientation is in.
+    pub axis_preset: AxisPreset,
 }
 
 fn rotate_vec_by_quat(v: Vec3, q: Quat) -> Vec3 {

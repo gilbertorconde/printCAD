@@ -90,6 +90,7 @@ impl PrintCadApp {
                 // Any save the answers started finishes before the exit;
                 // leaving mid-write would truncate a file.
                 self.wait_for_all_document_saves();
+                self.keep_session_for_next_run();
                 event_loop.exit();
             }
         }

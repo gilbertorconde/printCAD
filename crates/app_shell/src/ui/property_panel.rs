@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 use super::feature_tree::{TreeFeatureCommand, TreeItemId};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub enum PropertyTab {
     View,
     #[default]

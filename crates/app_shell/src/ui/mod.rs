@@ -62,6 +62,30 @@ pub enum Screen {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveWorkbench(pub WorkbenchId);
 
+/// The panels around the view as they were left: kept between runs.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct PanelLayout {
+    /// Each resizable panel's size across the window, by the panel's name.
+    pub sizes: std::collections::BTreeMap<String, f32>,
+    pub console_open: bool,
+    pub assistant_open: bool,
+    /// The property panel's page.
+    pub property_page: property_panel::PropertyTab,
+    /// The tree's share of the left column.
+    pub tree_share: Option<f32>,
+}
+
+/// The panels whose size is dragged, by name, and whether each is sized
+/// along the window's width.
+const RESIZABLE_PANELS: [(&str, bool); 5] = [
+    ("combo_view", true),
+    ("task_panel", true),
+    ("assistant_panel", true),
+    ("console_panel", false),
+    ("log_panel", false),
+];
+
 #[derive(Debug, Clone, Default)]
 pub struct ActiveTool {
     /// Set of active tool IDs. For Radio tools, only one per group is active.
@@ -239,6 +263,55 @@ impl UiLayer {
         }
     }
 
+    /// The panels as they stand now.
+    pub fn panel_layout(&self) -> PanelLayout {
+        let sizes = RESIZABLE_PANELS
+            .iter()
+            .filter_map(|&(name, across)| {
+                let state =
+                    egui::containers::panel::PanelState::load(&self.ctx, egui::Id::new(name))?;
+                let size = state.size();
+                Some((name.to_string(), if across { size.x } else { size.y }))
+            })
+            .collect();
+        PanelLayout {
+            sizes,
+            console_open: self.console.open,
+            assistant_open: self.assistant.open,
+            property_page: self.property_tab,
+            tree_share: Some(self.tree_share),
+        }
+    }
+
+    /// Lay the panels out as `layout` left them: each panel takes its size
+    /// when it is next drawn, within the range it allows.
+    pub fn restore_panel_layout(&mut self, layout: &PanelLayout) {
+        for &(name, across) in &RESIZABLE_PANELS {
+            let Some(&size) = layout.sizes.get(name) else {
+                continue;
+            };
+            if !size.is_finite() || size <= 0.0 {
+                continue;
+            }
+            let extent = if across {
+                egui::vec2(size, 1.0)
+            } else {
+                egui::vec2(1.0, size)
+            };
+            let state = egui::containers::panel::PanelState {
+                outer_rect: egui::Rect::from_min_size(egui::Pos2::ZERO, extent),
+            };
+            self.ctx
+                .data_mut(|d| d.insert_persisted(egui::Id::new(name), state));
+        }
+        self.console.open = layout.console_open;
+        self.assistant.open = layout.assistant_open;
+        self.property_tab = layout.property_page;
+        if let Some(share) = layout.tree_share.filter(|s| (0.0..=1.0).contains(s)) {
+            self.tree_share = share;
+        }
+    }
+
     /// A text field owns the keyboard.
     pub fn wants_keyboard_input(&self) -> bool {
         self.ctx.egui_wants_keyboard_input()
@@ -366,6 +439,7 @@ impl UiLayer {
             dimensions,
             physical,
             field_of_view_deg,
+            projection,
             section,
             pick_filter,
             scene_bounds,
@@ -432,7 +506,6 @@ impl UiLayer {
         let mut step_import_dialog = StepImportDialogAction::default();
         let mut export_dialog = StepImportDialogAction::default();
 
-        let projection = settings.camera.projection;
         let document_name = document.name().to_owned();
         let document_dirty = document.metadata().dirty();
         let breadcrumb = editing_feature

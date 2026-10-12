@@ -851,3 +851,63 @@ fn fit_keeping_orientation_stays_square_on_the_plane() {
         );
     }
 }
+
+/// A kept view, put back on a fresh camera through its JSON, draws the
+/// same picture: the same eye, target, turn, projection and zoom.
+#[test]
+fn a_kept_view_comes_back_as_it_was() {
+    use super::{CameraController, KeptView};
+    use glam::Vec3;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+    for _ in 0..7 {
+        ops::orbit_pixels(&mut cam.state, &cam.axes, Vec2::new(13.0, -4.0), &settings);
+    }
+    cam.set_field_of_view(33.0, &settings);
+    cam.state.focal_distance *= 0.4;
+
+    for projection in [ProjectionMode::Perspective, ProjectionMode::Orthographic] {
+        cam.state
+            .set_projection_preserve_framing(projection, &cam.axes);
+        let kept = cam.kept_view();
+        let text = serde_json::to_string(&kept).unwrap();
+        let read: KeptView = serde_json::from_str(&text).unwrap();
+        assert_eq!(read, kept);
+
+        let mut again = CameraController::new(&settings, (800, 600));
+        again.update_viewport((0, 0), (800, 600));
+        assert!(again.restore_view(&read, &settings));
+        assert_eq!(again.projection(), projection);
+        let near = |a: [f32; 3], b: [f32; 3]| (Vec3::from_array(a) - Vec3::from_array(b)).length();
+        assert!(near(again.target(), cam.target()) < 1e-3);
+        assert!(near(again.position(), cam.position()) < 1e-3);
+        let (a, b) = (again.view_projection(), cam.view_projection());
+        for (row_a, row_b) in a.iter().zip(b.iter()) {
+            for (x, y) in row_a.iter().zip(row_b.iter()) {
+                assert!((x - y).abs() < 1e-4, "{a:?} against {b:?}");
+            }
+        }
+    }
+}
+
+/// A view kept under another axis preset, or with numbers that make no
+/// view, leaves the camera where it stands.
+#[test]
+fn a_kept_view_that_does_not_fit_is_refused() {
+    use super::CameraController;
+
+    let settings = CameraSettings::default();
+    let mut cam = CameraController::new(&settings, (800, 600));
+    let before = cam.kept_view();
+    let mut other = before.clone();
+    other.axis_preset = axes::AxisPreset::RightHandedZForward;
+    assert_ne!(other.axis_preset, before.axis_preset);
+    assert!(!cam.restore_view(&other, &settings));
+    let mut broken = before.clone();
+    broken.distance = f64::NAN;
+    assert!(!cam.restore_view(&broken, &settings));
+    assert_eq!(cam.kept_view(), before);
+}

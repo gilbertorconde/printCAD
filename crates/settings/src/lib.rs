@@ -78,6 +78,9 @@ pub struct UserSettings {
     /// Which of the status bar's readouts show.
     #[serde(default)]
     pub status_bar: StatusBarSettings,
+    /// What the next start brings back of this run.
+    #[serde(default)]
+    pub session: SessionSettings,
 }
 
 /// The status bar's readouts, each shown or left out from the bar's own
@@ -118,6 +121,22 @@ impl Default for StatusBarSettings {
             mode: true,
             size: true,
             coordinates: true,
+        }
+    }
+}
+
+/// What a start brings back of the run before it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SessionSettings {
+    /// Open again the documents that were open when the app last closed.
+    pub reopen_documents: bool,
+}
+
+impl Default for SessionSettings {
+    fn default() -> Self {
+        Self {
+            reopen_documents: true,
         }
     }
 }
@@ -370,6 +389,7 @@ impl Default for UserSettings {
             autosave_minutes: default_autosave_minutes(),
             updates: UpdateSettings::default(),
             status_bar: StatusBarSettings::default(),
+            session: SessionSettings::default(),
         }
     }
 }

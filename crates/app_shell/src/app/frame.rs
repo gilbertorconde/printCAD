@@ -426,6 +426,7 @@ impl PrintCadApp {
         {
             tracing::info!(target: "printcad.frame", "bench exit requested");
             self.wait_for_all_document_saves();
+            self.keep_session_for_next_run();
             event_loop.exit();
             return;
         }
@@ -452,6 +453,10 @@ impl PrintCadApp {
             }
             if std::env::var_os("PRINTCAD_BENCH_SKETCH").is_some() {
                 self.bench_open_sketch();
+            }
+            // Without a hook, the command line's files or the last run's.
+            if crate::launch_screen() == crate::ui::Screen::Start {
+                self.reopen_at_start();
             }
         }
         // Dev/bench hook: `PRINTCAD_BENCH_SELECT=<n or name>` selects the
@@ -866,6 +871,7 @@ impl PrintCadApp {
                         dimensions,
                         physical,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),
+                        projection: self.session.camera.projection(),
                         section: self.session.section,
                         pick_filter: self.session.pick_filter,
                         scene_bounds: self.session.camera.scene_bounds(),

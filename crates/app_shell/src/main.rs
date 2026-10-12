@@ -154,6 +154,12 @@ fn main() -> Result<()> {
         event_loop.create_proxy(),
     );
     app.packages = packages;
+    // `printcad <file>…`, as a desktop entry or file manager starts it.
+    app.launch_files = words
+        .iter()
+        .filter(|word| !word.starts_with('-'))
+        .map(PathBuf::from)
+        .collect();
     if user_settings_check_updates {
         app.check_package_updates();
         // The stores' lists, for whoever has a package one took off.
@@ -471,6 +477,11 @@ struct PrintCadApp {
     console_attention: bool,
     /// Every command's id, read once the workbenches are registered.
     command_ids: Vec<String>,
+    /// What the last run left: its open documents, window and panels.
+    last_session: app::session_store::KeptSession,
+    /// Files named on the command line, opened at start in place of the
+    /// last session's.
+    launch_files: Vec<PathBuf>,
     /// A browser page's window and renderer, set once the renderer, which
     /// the page may not wait for, is ready.
     #[cfg(target_arch = "wasm32")]
@@ -613,6 +624,8 @@ impl PrintCadApp {
             script_library_read: None,
             console_attention: false,
             command_ids: Vec::new(),
+            last_session: app::session_store::last_session(),
+            launch_files: Vec::new(),
             #[cfg(target_arch = "wasm32")]
             web_gfx: Default::default(),
             #[cfg(target_arch = "wasm32")]
@@ -752,6 +765,8 @@ impl PrintCadApp {
         let attributes = WindowAttributes::default()
             .with_title("printCAD".to_string())
             .with_window_icon(window_icon());
+        let attributes =
+            app::session_store::placed_window(attributes, self.last_session.window, event_loop);
         // Wayland shows the icon of the desktop entry the app id names.
         #[cfg(all(unix, not(target_os = "macos"), not(target_os = "android")))]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
@@ -829,7 +844,10 @@ impl PrintCadApp {
             render_wgpu::RenderBackend::resize(&mut renderer, window.inner_size());
             renderer
         };
-        let ui_layer = UiLayer::new(&window);
+        let mut ui_layer = UiLayer::new(&window);
+        if let Some(panels) = &self.last_session.panels {
+            ui_layer.restore_panel_layout(panels);
+        }
         self.gpu_name = renderer.gpu_name().map(|s| s.to_string());
         self.graphics_api = renderer.graphics_api();
         if let Some(list) = renderer.available_gpus() {

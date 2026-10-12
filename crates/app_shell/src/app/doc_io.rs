@@ -275,15 +275,19 @@ impl PrintCadApp {
         // scene bounds and the automatic near/far planes agree with the view;
         // keeping the old eye and target would clip the model at the margins.
         // Framed now, and again once the workspace's viewport is laid out
-        // and the bodies have their geometry.
-        self.session.fit_on_layout = !self.session.document.bodies().is_empty();
-        if document_imported_aabb(&self.session.document).is_some() {
-            self.frame_scene();
-        } else {
-            self.session.camera.clear_scene_zoom_constraint();
-            self.session
-                .camera
-                .clamp_focal_to_settings(&self.user_settings.camera);
+        // and the bodies have their geometry. A file opened before comes
+        // back in the view it was left in instead.
+        let restored = self.restore_kept_view(&path);
+        self.session.fit_on_layout = !restored && !self.session.document.bodies().is_empty();
+        if !restored {
+            if document_imported_aabb(&self.session.document).is_some() {
+                self.frame_scene();
+            } else {
+                self.session.camera.clear_scene_zoom_constraint();
+                self.session
+                    .camera
+                    .clamp_focal_to_settings(&self.user_settings.camera);
+            }
         }
         self.session.journal.reset(&mut self.session.document);
         // A fresh baseline: what the server logged before describes another

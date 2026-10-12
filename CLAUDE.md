@@ -544,6 +544,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   updates; it only informs, nothing downloads; a newer release shows
   as a card at the view's bottom right, `hud::draw_release_notice`, until
   put away),
+  `session_store.rs` (what a run leaves the next, in the configuration
+  folder beside `chats.json`, never in the document: each file's view in
+  `views.json`, the latest 50, put back on open in place of both fits;
+  the open files, window place and panel layout in `session.json`,
+  written on the exit paths after the saves, the files reopened at start
+  unless a bench hook or the command line's files open something, as
+  `UserSettings.session.reopen_documents` allows; desktop only),
   `sixdof.rs` (6-DoF mouse reader thread; holds the puck's current deflection,
   which `camera::apply_device_motion` integrates once per frame).
   `ui/` is one module per region: `menu_bar`, `toolbar` (groups: the
