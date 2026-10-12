@@ -75,6 +75,51 @@ pub struct UserSettings {
     /// Looking for newer printCAD releases.
     #[serde(default)]
     pub updates: UpdateSettings,
+    /// Which of the status bar's readouts show.
+    #[serde(default)]
+    pub status_bar: StatusBarSettings,
+}
+
+/// The status bar's readouts, each shown or left out from the bar's own
+/// menu. A busy job's progress and its Cancel, a recording and a running
+/// script always show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct StatusBarSettings {
+    /// The bench's state dot and title while nothing is busy.
+    pub state: bool,
+    /// What is selected, or under the cursor.
+    pub selection: bool,
+    /// The switches of the log, the console and the assistant.
+    pub panel_switches: bool,
+    /// The connected 6-DoF mouse.
+    pub device: bool,
+    /// Frames per second and scene redraws.
+    pub performance: bool,
+    /// The document server's dot.
+    pub server: bool,
+    /// The mode the bench says it is in.
+    pub mode: bool,
+    /// The selection's bounding box.
+    pub size: bool,
+    /// The point under the cursor.
+    pub coordinates: bool,
+}
+
+impl Default for StatusBarSettings {
+    fn default() -> Self {
+        Self {
+            state: true,
+            selection: true,
+            panel_switches: true,
+            device: true,
+            performance: true,
+            server: true,
+            mode: true,
+            size: true,
+            coordinates: true,
+        }
+    }
 }
 
 /// Looking for newer printCAD releases; nothing is ever downloaded.
@@ -324,6 +369,7 @@ impl Default for UserSettings {
             recent_commands: Vec::new(),
             autosave_minutes: default_autosave_minutes(),
             updates: UpdateSettings::default(),
+            status_bar: StatusBarSettings::default(),
         }
     }
 }
@@ -1102,6 +1148,28 @@ mod tests {
             serde_json::from_value(serde_json::Value::Object(older)).unwrap();
         assert!(!loaded.diagnostics.import_report);
     }
+    #[test]
+    fn every_status_bar_readout_shows_until_turned_off() {
+        let all = StatusBarSettings::default();
+        assert!(all.state && all.selection && all.panel_switches && all.device);
+        assert!(all.performance && all.server && all.mode && all.size && all.coordinates);
+        // A file from before the bar's menu loads with all of them shown,
+        // and one naming only some keeps the rest shown.
+        let mut older = serde_json::to_value(UserSettings::default()).unwrap();
+        older.as_object_mut().unwrap().remove("status_bar");
+        let loaded: UserSettings = serde_json::from_value(older).unwrap();
+        assert_eq!(loaded.status_bar, all);
+        let some: StatusBarSettings =
+            serde_json::from_value(serde_json::json!({"performance": false})).unwrap();
+        assert_eq!(
+            some,
+            StatusBarSettings {
+                performance: false,
+                ..all
+            }
+        );
+    }
+
     #[test]
     fn curves_draw_finer_than_the_kernel_s_default_and_old_files_take_it() {
         let mut older = serde_json::to_value(RenderingSettings::default()).unwrap();

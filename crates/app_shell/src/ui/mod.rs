@@ -778,8 +778,12 @@ impl UiLayer {
                         console: self.console.open,
                         assistant: self.assistant.open,
                     },
+                    shown: settings.status_bar,
                 },
             );
+            if let Some(shown) = status.shown {
+                commands.push(UiCommand::SetStatusBar(shown));
+            }
             if status.toggle_log {
                 commands.push(UiCommand::ToggleLogPanel);
             }

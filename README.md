@@ -137,6 +137,8 @@ View keys:
 | Orthographic, perspective | O, P |
 | Full screen | F11 |
 
+Right click the status bar to choose which of its readouts show.
+
 ### Row and body menus
 
 Right click a row of the tree, or a body in the view, for what can be

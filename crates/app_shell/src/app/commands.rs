@@ -123,6 +123,10 @@ impl PrintCadApp {
                     self.user_settings.printing.layout_gap_mm = gap.max(0.0);
                     intents.persist_settings = true;
                 }
+                UiCommand::SetStatusBar(shown) => {
+                    self.user_settings.status_bar = shown;
+                    intents.persist_settings = true;
+                }
                 UiCommand::SetSlicerLayout(on) => {
                     self.user_settings.printing.slicer_layout = on;
                     intents.persist_settings = true;

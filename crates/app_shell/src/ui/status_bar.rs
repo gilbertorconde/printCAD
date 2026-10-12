@@ -55,6 +55,8 @@ pub struct StatusBarInputs<'a> {
     pub recording: bool,
     /// Which of the log, the console and the assistant are showing.
     pub panels: Panels,
+    /// The readouts the user keeps on the bar.
+    pub shown: settings::StatusBarSettings,
 }
 
 /// The panels the bar's buttons open and close.
@@ -78,6 +80,40 @@ pub struct StatusBarResult {
     pub toggle_log: bool,
     pub toggle_console: bool,
     pub toggle_assistant: bool,
+    /// The bar's menu turned a readout on or off: what shows now.
+    pub shown: Option<settings::StatusBarSettings>,
+}
+
+/// The rows of the bar's menu: each readout's name and its switch.
+fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut bool); 9] {
+    [
+        ("State", &mut shown.state),
+        ("Selection", &mut shown.selection),
+        ("Panel switches", &mut shown.panel_switches),
+        ("6-DoF mouse", &mut shown.device),
+        ("Frame rate", &mut shown.performance),
+        ("Document server", &mut shown.server),
+        ("Mode", &mut shown.mode),
+        ("Size", &mut shown.size),
+        ("Coordinates", &mut shown.coordinates),
+    ]
+}
+
+/// The bar's menu: a switch per readout, the menu kept open between them.
+fn readout_menu(
+    ui: &mut egui::Ui,
+    shown: settings::StatusBarSettings,
+) -> Option<settings::StatusBarSettings> {
+    let mut edited = shown;
+    ui_kit::widgets::fitted_menu(ui, |ui| {
+        for (label, on) in readouts(&mut edited) {
+            let row = egui::Button::selectable(*on, RichText::new(label).font(sans(FONT_SM)));
+            if ui.add(row).clicked() {
+                *on = !*on;
+            }
+        }
+    });
+    (edited != shown).then_some(edited)
 }
 
 /// A thin bar, `done` of `total` filled, the counts on hover.
@@ -159,6 +195,7 @@ fn panel_button(ui: &mut egui::Ui, icon: &str, name: &str, open: bool) -> bool {
 pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
     let mut result = StatusBarResult::default();
     let mut right = StatusBarResult::default();
+    let mut shown = None;
     egui::Panel::bottom("status_bar")
         .exact_size(STATUS_BAR)
         .frame(
@@ -169,6 +206,10 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
         )
         .show(ui, |ui| {
             let rect = ui.max_rect();
+            // Under the readouts, so a right click anywhere on the bar's
+            // free room opens its menu.
+            let background =
+                ui.interact(rect, egui::Id::new("status_bar_menu"), egui::Sense::click());
             ui.painter()
                 .hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0, BORDER));
             // The readouts on the right keep their room; what is happening
@@ -190,16 +231,19 @@ pub fn draw_status_bar(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> Statu
                         right = draw_right(ui, inputs);
                     },
                 );
+            background.context_menu(|ui| shown = readout_menu(ui, inputs.shown));
         });
     result.toggle_log = right.toggle_log;
     result.toggle_console = right.toggle_console;
     result.toggle_assistant = right.toggle_assistant;
+    result.shown = shown;
     result
 }
 
 /// What is happening: the activity, a recording, a script, the selection.
 fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut StatusBarResult) {
     draw_activity(ui, inputs, &mut result.cancel_kernel);
+    let shown = inputs.shown;
     if inputs.recording {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_2;
@@ -234,6 +278,9 @@ fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut Statu
         (None, Some(pre)) => ("Under the cursor", pre),
         (None, None) => return,
     };
+    if !shown.selection {
+        return;
+    }
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = SPACE_1;
         text(ui, what, TEXT3);
@@ -245,18 +292,28 @@ fn draw_left(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, result: &mut Statu
 /// the server, then what the bench or the cursor says.
 fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResult {
     let mut result = StatusBarResult::default();
+    let shown = inputs.shown;
+    // A separator goes between two groups that both show.
+    let mut drawn = false;
+    let mut group = |ui: &mut egui::Ui, on: bool| {
+        if on && drawn {
+            vseparator(ui, 12.0);
+        }
+        drawn |= on;
+        on
+    };
     // The panels' switches at the end, the assistant outermost.
     let panels = inputs.panels;
-    if crate::platform::offers("app.assistant") {
-        result.toggle_assistant = panel_button(ui, "assistant", "Assistant", panels.assistant);
+    if group(ui, shown.panel_switches) {
+        if crate::platform::offers("app.assistant") {
+            result.toggle_assistant = panel_button(ui, "assistant", "Assistant", panels.assistant);
+        }
+        result.toggle_console = panel_button(ui, "console", "Console", panels.console);
+        result.toggle_log = panel_button(ui, "log", "Log panel", panels.log);
     }
-    result.toggle_console = panel_button(ui, "console", "Console", panels.console);
-    result.toggle_log = panel_button(ui, "log", "Log panel", panels.log);
-    vseparator(ui, 12.0);
-    if let Some(device) = inputs.nav_device {
+    if let Some(device) = inputs.nav_device.filter(|_| group(ui, shown.device)) {
         text(ui, device, TEXT3).on_hover_text("6-DoF mouse connected");
     }
-    vseparator(ui, 12.0);
 
     // Two numbers because they are two things: UI frames presented, and
     // how often the 3D scene was drawn again under them.
@@ -272,22 +329,30 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
     } else {
         format!("{}/s", inputs.scene_redraws_per_s)
     };
-    mono_label(ui, format!("{fps} · {scene}"), FONT_XS, TEXT3).on_hover_text(
-        "Frames drawn per second, and how often the 3D scene was drawn again \
-         (cached while nothing in it changes)",
-    );
-    vseparator(ui, 12.0);
-    draw_server(ui, inputs.server);
-
-    let coords = coords_text(inputs);
-    let mode = inputs.items.and_then(|i| i.mode.as_deref());
-    if coords.is_some() || inputs.dimensions.is_some() || mode.is_some() {
-        vseparator(ui, 12.0);
+    if group(ui, shown.performance) {
+        mono_label(ui, format!("{fps} · {scene}"), FONT_XS, TEXT3).on_hover_text(
+            "Frames drawn per second, and how often the 3D scene was drawn again \
+             (cached while nothing in it changes)",
+        );
     }
+    if group(ui, shown.server) {
+        draw_server(ui, inputs.server);
+    }
+
+    let coords = coords_text(inputs).filter(|_| shown.coordinates);
+    let mode = inputs
+        .items
+        .and_then(|i| i.mode.as_deref())
+        .filter(|_| shown.mode);
+    let dimensions = inputs.dimensions.filter(|_| shown.size);
+    group(
+        ui,
+        coords.is_some() || dimensions.is_some() || mode.is_some(),
+    );
     if let Some(mode) = mode {
         text(ui, mode, TEXT2);
     }
-    if let Some(dim) = inputs.dimensions {
+    if let Some(dim) = dimensions {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = SPACE_1;
             mono_label(ui, dim, FONT_XS, TEXT2);
@@ -397,6 +462,9 @@ fn coords_text(inputs: &StatusBarInputs<'_>) -> Option<String> {
 /// a Cancel button.
 fn draw_activity(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>, cancel: &mut bool) {
     let busy = inputs.pending_imports > 0 || inputs.pending_document_open > 0;
+    if !busy && !inputs.shown.state {
+        return;
+    }
     if !busy {
         let (color, title) = match inputs.items.and_then(|i| i.state.clone()) {
             Some((rgb_color, title)) => (rgb(rgb_color, 1.0), title),
@@ -487,6 +555,7 @@ mod tests {
             script_running: None,
             recording: false,
             panels: Panels::default(),
+            shown: settings::StatusBarSettings::default(),
         }
     }
 

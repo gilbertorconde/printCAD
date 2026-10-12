@@ -228,6 +228,8 @@ pub enum UiCommand {
     Undo,
     Redo,
     ToggleLogPanel,
+    /// The status bar's readouts, as its menu left them.
+    SetStatusBar(settings::StatusBarSettings),
     /// Orbit around the point on the focal plane under the cursor.
     PivotAtCursor,
     /// Run a workbench's keyboard action, bound to a key.
