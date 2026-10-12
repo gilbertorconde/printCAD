@@ -2968,6 +2968,7 @@ fn a_skipped_original_leaves_its_cut_unmade_and_the_first_solid_stays() {
     doc.add_feature_in_body(
         with(
             DesignFeature::Mirrored {
+                boolean_tolerance: None,
                 refine: false,
                 originals: vec![pad],
                 plane: wb_design::MirrorPlane::YZ,

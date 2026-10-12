@@ -3660,6 +3660,7 @@ mod tests {
             .add_feature_in_body(padded, "Pad".into(), Some(body))
             .unwrap();
         let mut pattern = DesignFeature::LinearPattern {
+            skipped: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             originals: vec![pad_id],
@@ -4778,6 +4779,7 @@ mod tests {
 
         doc.add_feature_in_body(
             DesignFeature::LinearPattern {
+                skipped: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 originals: vec![pocket_id],
@@ -4810,6 +4812,7 @@ mod tests {
             .add_feature_in_body(pad(sketch_id, 8.0), "Boss".into(), Some(body))
             .unwrap();
         let pattern = |originals: Vec<FeatureId>, skipped: Vec<u32>| DesignFeature::LinearPattern {
+            boolean_tolerance: None,
             skipped,
             refine: false,
             originals,

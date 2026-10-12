@@ -206,6 +206,8 @@ mod tests {
         let block = doc
             .add_feature_in_body(
                 DesignFeature::Primitive {
+                    keep_inside: false,
+                    boolean_tolerance: None,
                     kind: kernel_api::PrimitiveKind::Box {
                         length: 2.0,
                         width: 2.0,
@@ -226,6 +228,7 @@ mod tests {
         let pattern = doc
             .add_feature_in_body(
                 DesignFeature::LinearPattern {
+                    boolean_tolerance: None,
                     skipped: vec![1],
                     refine: false,
                     originals: vec![block],
