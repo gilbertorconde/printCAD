@@ -285,7 +285,7 @@ impl SketchWorkbench {
             let args = crate::commands::args(serde_json::json!({
                 "sketch": sketch.0.to_string(),
                 "from": from.0.to_string(),
-                "counts": !self.construction_mode,
+                "counts": !self.construction_mode(),
             }));
             match crate::commands::run("sketch.external_from", &args, ctx) {
                 Ok(made) => {

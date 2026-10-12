@@ -928,6 +928,43 @@ fn construction_action_toggles_selected_line() {
     assert!(!h.sketch().is_construction(line_id));
 }
 
+/// Construction mode belongs to the sketch it was turned on in: another
+/// sketch opens in normal mode, and the first is in construction mode
+/// again when it is edited again.
+#[test]
+fn construction_mode_is_kept_per_sketch() {
+    let mut h = Harness::new();
+    let first = h.create_sketch();
+    h.key(KeyCode::A, Some("sketch.construction"));
+    assert!(h.wb.tool_toggled("sketch.construction"));
+
+    h.create_sketch();
+    assert!(
+        !h.wb.tool_toggled("sketch.construction"),
+        "a new sketch draws normal"
+    );
+    h.click(0.0, 0.0, "sketch.line");
+    h.click(10.0, 7.0, "sketch.line");
+    let line = h
+        .sketch()
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!h.sketch().is_construction(line));
+
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.active_object = Some(first);
+    h.key(KeyCode::A, None);
+    assert!(
+        h.wb.tool_toggled("sketch.construction"),
+        "the first sketch keeps its mode"
+    );
+}
+
 /// The toolbar's button, pressed with a line and its end point picked in
 /// the view as a user picks them (press and release, no tool in hand),
 /// converts what is picked rather than switching the drawing mode.

@@ -516,10 +516,11 @@ pub struct SketchWorkbench {
     /// when it has moved on without a write of ours (an undo, a script), the
     /// cached solve verdict and the selection are checked again.
     own_seq: std::sync::atomic::AtomicU64,
-    /// While on, every newly created element (from any drawing tool) is
-    /// flagged as construction geometry. Toggled by the
-    /// `sketch.construction` action when nothing is selected.
-    construction_mode: bool,
+    /// The sketches in construction mode, in which every newly created
+    /// element (from any drawing tool) is flagged as construction
+    /// geometry. Each sketch keeps its own mode; the `sketch.construction`
+    /// action toggles the edited one's when nothing is selected.
+    construction_sketches: HashSet<FeatureId>,
     /// Last solver outcome, surfaced in the panel.
     last_solve: Option<SolveOutcome>,
     /// Cached constraint diagnosis (recomputed lazily after every solve).
@@ -1279,7 +1280,7 @@ impl SketchWorkbench {
         let settings = step::StepSettings {
             tol,
             params,
-            construction: self.construction_mode,
+            construction: self.construction_mode(),
             avoid_redundant: self.options.avoid_redundant_auto,
         };
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
@@ -1869,14 +1870,25 @@ impl SketchWorkbench {
         InputResult::consumed()
     }
 
+    /// Whether the edited sketch is in construction mode.
+    fn construction_mode(&self) -> bool {
+        self.active_sketch_id
+            .is_some_and(|sketch| self.construction_sketches.contains(&sketch))
+    }
+
     /// The `sketch.construction` action. With a selection: flip each
     /// selected element's construction flag individually (mixed selections
     /// end up mixed-inverted). With nothing selected: toggle construction
     /// *mode*, under which all newly drawn geometry is construction.
     fn toggle_construction_selected(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         if self.selected.is_empty() {
-            self.construction_mode = !self.construction_mode;
-            ctx.log_info(if self.construction_mode {
+            let Some(sketch) = self.active_sketch_id else {
+                return InputResult::consumed();
+            };
+            if !self.construction_sketches.remove(&sketch) {
+                self.construction_sketches.insert(sketch);
+            }
+            ctx.log_info(if self.construction_mode() {
                 "Construction mode ON"
             } else {
                 "Construction mode OFF"
@@ -3847,7 +3859,7 @@ impl Workbench for SketchWorkbench {
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match tool_id {
-            "sketch.construction" => self.construction_mode,
+            "sketch.construction" => self.construction_mode(),
             "sketch.snap" => !self.snap_off,
             "sketch.show_constraints" => self.options.constraints_hidden,
             "sketch.grid" => self.options.grid_on,
@@ -5362,7 +5374,7 @@ impl SketchWorkbench {
             .collect();
         // As the drawing tools do: a guide in construction mode, counting
         // in the profile out of it.
-        let defining = !self.construction_mode;
+        let defining = !self.construction_mode();
         let mut sources: Vec<sketch::ExternalSource> = fresh
             .iter()
             .map(|edge| {
@@ -5421,7 +5433,7 @@ impl SketchWorkbench {
                 commands::args(serde_json::json!({
                     "sketch": id.0.to_string(),
                     "edges": edges,
-                    "counts": !self.construction_mode,
+                    "counts": !self.construction_mode(),
                 })),
                 commands::made_since(&feature.sketch, &before),
             );
@@ -5498,7 +5510,7 @@ impl SketchWorkbench {
             point: local.point,
             direction: local.normal,
             section: true,
-            defining: !self.construction_mode,
+            defining: !self.construction_mode(),
             reference: None,
         };
         let before = commands::ids_of(&feature.sketch);
@@ -5520,7 +5532,7 @@ impl SketchWorkbench {
                         "point": source.point,
                         "normal": source.direction,
                     }],
-                    "counts": !self.construction_mode,
+                    "counts": !self.construction_mode(),
                 })),
                 commands::made_since(&feature.sketch, &before),
             );
