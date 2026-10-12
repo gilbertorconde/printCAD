@@ -1294,14 +1294,14 @@ fn push_preview(
             // One ghost per copy, as the click makes them (the moved
             // selection itself when there are none).
             let delta = (cursor - *base).to_glam();
-            for k in 1..=params.copies.max(1) {
+            for m in crate::tools::pattern_multiples(params).unwrap_or_else(|| vec![1.0]) {
                 push_ghost(
                     out,
                     proj,
                     pal,
                     sketch,
                     selected,
-                    &Similarity::translation(delta * k as f32),
+                    &Similarity::translation(delta * m),
                 );
             }
         }
@@ -1329,14 +1329,14 @@ fn push_preview(
             );
             if to.length() > 1e-6 && (reference.to_glam() - c).length() > 1e-6 {
                 let angle = (reference.to_glam() - c).angle_to(to);
-                for k in 1..=params.copies.max(1) {
+                for m in crate::tools::pattern_multiples(params).unwrap_or_else(|| vec![1.0]) {
                     push_ghost(
                         out,
                         proj,
                         pal,
                         sketch,
                         selected,
-                        &Similarity::rotation_about(c, angle * k as f32),
+                        &Similarity::rotation_about(c, angle * m),
                     );
                 }
             }
@@ -1510,6 +1510,19 @@ pub fn build_overlays(
             selected,
             active_tool,
         );
+        // A full turn is made at the centre's click: its copies show
+        // about the cursor before it.
+        if active_tool == Some("sketch.rotate")
+            && params.rotate_full_turn
+            && tool_state.is_idle()
+            && let Some(angles) = tools::full_turn_angles(params)
+        {
+            push_point_marker(&mut out, proj, cursor, pal.preview);
+            for angle in angles {
+                let turn = Similarity::rotation_about(cursor.to_glam(), angle);
+                push_ghost(&mut out, proj, pal, sketch, selected, &turn);
+            }
+        }
         if active_tool == Some("sketch.trim")
             && let Some(span) = tools::trim_preview(sketch, cursor, snap_tol, params.cut_at_axes)
         {

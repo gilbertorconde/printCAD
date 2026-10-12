@@ -1267,11 +1267,7 @@ impl SketchWorkbench {
         }
         // The copy tool is the move tool with at least one copy.
         let params = ToolParams {
-            copies: if self.copy_mode {
-                self.tool_params.copies.max(1)
-            } else {
-                self.tool_params.copies
-            },
+            copies: self.effective_copies(),
             auto_constraints: self.options.auto_constraints,
             ..self.tool_params
         };
@@ -1881,6 +1877,17 @@ impl SketchWorkbench {
     fn construction_mode(&self) -> bool {
         self.active_sketch_id
             .is_some_and(|sketch| self.construction_sketches.contains(&sketch))
+    }
+
+    /// The copy count the transform tools take: the copy tool makes one
+    /// copy at least (two elements, when the count includes the original).
+    fn effective_copies(&self) -> u32 {
+        let least = if self.tool_params.copies_total { 2 } else { 1 };
+        if self.copy_mode {
+            self.tool_params.copies.max(least)
+        } else {
+            self.tool_params.copies
+        }
     }
 
     /// The `sketch.construction` action. With a selection: flip each
@@ -3930,6 +3937,9 @@ impl Workbench for SketchWorkbench {
                 "Intersection",
                 "Click faces of a solid to add where they cross the sketch plane",
             ),
+            None if tool == "sketch.rotate" && self.tool_params.rotate_full_turn => {
+                ("Rotate", "Click the centre: the copies go evenly around it")
+            }
             None => idle_hint(tool),
         };
         let mut keys: Vec<(String, &'static str)> = Vec::new();
@@ -4343,11 +4353,7 @@ impl SketchWorkbench {
             preview_cursor,
             &ToolParams {
                 // The copy tool makes one copy at least.
-                copies: if self.copy_mode {
-                    self.tool_params.copies.max(1)
-                } else {
-                    self.tool_params.copies
-                },
+                copies: self.effective_copies(),
                 ..self.tool_params
             },
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),

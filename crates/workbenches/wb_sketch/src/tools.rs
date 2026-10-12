@@ -28,6 +28,7 @@ pub use modify::{next_stroke_crossing, trim_preview};
 pub use transform::{
     Similarity, array, copy_constraints, copy_from, copy_mapped, remove_axis_alignment,
 };
+pub(crate) use transform::{full_turn_angles, pattern_multiples};
 
 use crate::sketch::{ConicKind, ConstraintKind, GeometryElement, Point, Sketch, Vec2D};
 use crate::snap::{self, SnapTarget};
@@ -258,6 +259,15 @@ pub struct ToolParams {
     pub copies: u32,
     /// Copies and arrays stay the originals' size, spaced by one pitch.
     pub copies_linked: bool,
+    /// Translate and rotate count every element, the original included,
+    /// and the clicked shift or turn spans the whole pattern.
+    pub copies_total: bool,
+    /// Translate and rotate repeat the copies on the other side of the
+    /// original as well.
+    pub copies_symmetric: bool,
+    /// Rotate spreads the elements evenly around a full turn, taking only
+    /// the centre's click.
+    pub rotate_full_turn: bool,
     /// Whether new B-splines close on themselves.
     pub bspline_periodic: bool,
     /// The degree of new B-splines (2 to 5).
@@ -299,6 +309,9 @@ impl Default for ToolParams {
             offset_linked: false,
             copies: 0,
             copies_linked: false,
+            copies_total: false,
+            copies_symmetric: false,
+            rotate_full_turn: false,
             bspline_periodic: false,
             bspline_degree: 3,
             bspline_interpolate: false,
@@ -643,24 +656,10 @@ pub fn handle_click(
                 linked: params.offset_linked,
             },
         ),
-        "sketch.translate" => transform::translate(
-            state,
-            sketch,
-            cursor,
-            snap_tol,
-            selected,
-            params.copies,
-            params.copies_linked,
-        ),
-        "sketch.rotate" => transform::rotate(
-            state,
-            sketch,
-            cursor,
-            snap_tol,
-            selected,
-            params.copies,
-            params.copies_linked,
-        ),
+        "sketch.translate" => {
+            transform::translate(state, sketch, cursor, snap_tol, selected, params)
+        }
+        "sketch.rotate" => transform::rotate(state, sketch, cursor, snap_tol, selected, params),
         "sketch.scale" => {
             transform::scale(state, sketch, cursor, snap_tol, selected, params.copies)
         }

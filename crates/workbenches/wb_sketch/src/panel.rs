@@ -685,6 +685,31 @@ impl SketchWorkbench {
                         }
                         ui.end_row();
                         if tool.as_deref() != Some("sketch.scale") {
+                            ui_kit::widgets::field_label(ui, "Count");
+                            check_row(ui, &mut params.copies_total, "Includes the original")
+                                .on_hover_text(
+                                    "The count is every element, the original included, and \
+                                     the clicks span the whole pattern",
+                                );
+                            ui.end_row();
+                            let full_turn =
+                                tool.as_deref() == Some("sketch.rotate") && params.rotate_full_turn;
+                            ui_kit::widgets::field_label(ui, "Sides");
+                            ui.add_enabled_ui(!full_turn, |ui| {
+                                check_row(ui, &mut params.copies_symmetric, "Symmetric")
+                                    .on_hover_text(
+                                        "The copies repeat on the other side of the original",
+                                    );
+                            });
+                            ui.end_row();
+                            if tool.as_deref() == Some("sketch.rotate") {
+                                ui_kit::widgets::field_label(ui, "Turn");
+                                check_row(ui, &mut params.rotate_full_turn, "Full turn")
+                                    .on_hover_text(
+                                        "The elements go evenly around 360°: click only the centre",
+                                    );
+                                ui.end_row();
+                            }
                             ui_kit::widgets::field_label(ui, "Linked");
                             ui.add_enabled_ui(params.copies > 0, |ui| {
                                 check_row(ui, &mut params.copies_linked, "Follow the original")

@@ -1887,6 +1887,132 @@ fn rotate_selection_about_pivot() {
 }
 
 #[test]
+fn pattern_steps_count_copies_or_elements_on_one_side_or_both() {
+    let with = |copies, total, symmetric| ToolParams {
+        copies,
+        copies_total: total,
+        copies_symmetric: symmetric,
+        ..ToolParams::default()
+    };
+    let steps = |p: ToolParams| super::pattern_multiples(&p);
+    assert_eq!(steps(with(0, false, false)), None, "no copies: a move");
+    assert_eq!(steps(with(3, false, false)), Some(vec![1.0, 2.0, 3.0]));
+    assert_eq!(
+        steps(with(2, false, true)),
+        Some(vec![-2.0, -1.0, 1.0, 2.0])
+    );
+    let thirds = steps(with(4, true, false)).unwrap();
+    for (got, want) in thirds.iter().zip([1.0 / 3.0, 2.0 / 3.0, 1.0]) {
+        assert!(
+            (got - want).abs() < 1e-6,
+            "the click spans all four: {thirds:?}"
+        );
+    }
+    assert_eq!(
+        steps(with(1, true, false)),
+        None,
+        "the original alone: a move"
+    );
+    assert_eq!(steps(with(3, true, true)), Some(vec![-1.0, -0.5, 0.5, 1.0]));
+}
+
+/// A full turn takes only the centre: four elements a quarter turn apart,
+/// held by one polar pitch through the original in turn order.
+#[test]
+fn rotate_full_turn_spreads_the_elements_evenly_from_one_click() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 10.0, 0.0);
+    let b = pt(&mut sketch, 12.0, 0.0);
+    let l = line_between(&mut sketch, a, b);
+    let selected: HashSet<Uuid> = [l].into_iter().collect();
+    let params = ToolParams {
+        copies: 4,
+        copies_total: true,
+        copies_linked: true,
+        rotate_full_turn: true,
+        ..ToolParams::default()
+    };
+    let fx = click_sel(
+        &mut ToolState::default(),
+        "sketch.rotate",
+        &mut sketch,
+        Vec2D::new(0.0, 0.0),
+        0.1,
+        &params,
+        &selected,
+    );
+    assert!(fx.changed);
+    assert_eq!(lines(&sketch), 4, "the original and three copies");
+    for want in [(0.0, 10.0), (-10.0, 0.0), (0.0, -10.0)] {
+        assert!(
+            sketch.geometry.iter().any(|g| matches!(g,
+                GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::from(want)).length() < 1e-3)),
+            "a copy's start at {want:?}"
+        );
+    }
+    let pitch = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match &c.kind {
+            ConstraintKind::PolarPitch {
+                points, angle_rad, ..
+            } => Some((points.clone(), *angle_rad)),
+            _ => None,
+        })
+        .expect("a polar pitch");
+    assert_eq!(pitch.0.len(), 4);
+    assert_eq!(pitch.0[0], a, "the original first, the rest in turn");
+    assert!((pitch.1 - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+}
+
+/// Symmetric copies go both ways from the original, and a linked pitch
+/// runs through them in order with the original in the middle.
+#[test]
+fn translate_symmetric_copies_go_both_ways() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 0.0, 0.0);
+    let b = pt(&mut sketch, 0.0, 4.0);
+    let l = line_between(&mut sketch, a, b);
+    let selected: HashSet<Uuid> = [l].into_iter().collect();
+    let params = ToolParams {
+        copies: 1,
+        copies_symmetric: true,
+        copies_linked: true,
+        ..ToolParams::default()
+    };
+    let mut state = ToolState::default();
+    for at in [Vec2D::new(20.0, 20.0), Vec2D::new(25.0, 20.0)] {
+        click_sel(
+            &mut state,
+            "sketch.translate",
+            &mut sketch,
+            at,
+            0.1,
+            &params,
+            &selected,
+        );
+    }
+    assert_eq!(lines(&sketch), 3);
+    for x in [-5.0f32, 5.0] {
+        assert!(sketch.geometry.iter().any(|g| matches!(g,
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(x, 0.0)).length() < 1e-3)));
+    }
+    let (points, distance) = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match &c.kind {
+            ConstraintKind::Pitch {
+                points, distance, ..
+            } => Some((points.clone(), *distance)),
+            _ => None,
+        })
+        .expect("a pitch");
+    assert_eq!(points.len(), 3);
+    assert_eq!(points[1], a, "the original between its copies");
+    assert!((distance - 5.0).abs() < 1e-4);
+}
+
+#[test]
 fn scale_selection_scales_radii_too() {
     let mut sketch = Sketch::new("t");
     let center = pt(&mut sketch, 4.0, 0.0);

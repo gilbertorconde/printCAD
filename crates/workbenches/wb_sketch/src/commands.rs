@@ -571,7 +571,7 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Any,
             "Tool settings: polygon_sides, slot_width, fillet_radius, chamfer_length, corner_keep, \
              offset_distance, offset_round, offset_both, offset_delete, offset_linked, copies, \
-             copies_linked, \
+             copies_linked, copies_total, copies_symmetric, rotate_full_turn, \
              bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
              mirror_keep, mirror_linked, \
              mirror_center, cut_at_axes",

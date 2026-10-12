@@ -284,6 +284,17 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         ("offset_delete", params.offset_delete, d.offset_delete),
         ("offset_linked", params.offset_linked, d.offset_linked),
         ("copies_linked", params.copies_linked, d.copies_linked),
+        ("copies_total", params.copies_total, d.copies_total),
+        (
+            "copies_symmetric",
+            params.copies_symmetric,
+            d.copies_symmetric,
+        ),
+        (
+            "rotate_full_turn",
+            params.rotate_full_turn,
+            d.rotate_full_turn,
+        ),
     ] {
         put(name, json!(value), json!(default));
     }
@@ -362,6 +373,9 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             "offset_delete" => p.offset_delete = flag()?,
             "offset_linked" => p.offset_linked = flag()?,
             "copies_linked" => p.copies_linked = flag()?,
+            "copies_total" => p.copies_total = flag()?,
+            "copies_symmetric" => p.copies_symmetric = flag()?,
+            "rotate_full_turn" => p.rotate_full_turn = flag()?,
             "copies" => p.copies = number()? as u32,
             "bspline_periodic" => p.bspline_periodic = flag()?,
             "bspline_degree" => {
