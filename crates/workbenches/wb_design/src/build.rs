@@ -1045,7 +1045,7 @@ fn plan_feature(
                 ));
             }
             plan.ops.push(SolidOp::Project {
-                profile: sketch_profile(document, *sketch).map_err(&fail)?,
+                profile: sketch_profile(document, *sketch, &[]).map_err(&fail)?,
                 faces: faces.iter().map(face_probe).collect(),
                 mode: *mode,
                 height: f64::from(*height),

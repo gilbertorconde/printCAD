@@ -4930,6 +4930,8 @@ fn sketch_projected_onto_a_cylinder(
     let body = doc.create_body(Some("Body".into()));
     doc.add_feature_in_body(
         DesignFeature::Primitive {
+            boolean_tolerance: None,
+            keep_inside: false,
             attached: None,
             kind: kernel_api::PrimitiveKind::Cylinder {
                 radius: 10.0,
