@@ -1605,7 +1605,9 @@ fn extrude_op(
             }
         }
     }
-    let reversed = if boolean == BooleanOp::Cut && custom.is_none() {
+    // A pocket's tool digs into the material whether it cuts or keeps.
+    let pocket = matches!(feature, DesignFeature::Pocket { .. });
+    let reversed = if pocket && custom.is_none() {
         !reversed
     } else {
         reversed
@@ -4738,6 +4740,21 @@ mod tests {
             .unwrap();
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Common);
+        // It digs into the material as the cutting pocket does.
+        let digs = |op: &SolidOp| match op {
+            SolidOp::Sweep {
+                kind: SweepKind::Extrude { reversed, .. },
+                ..
+            } => *reversed,
+            other => panic!("expected an extrusion, got {other:?}"),
+        };
+        let mut cutting = doc.clone();
+        cutting
+            .update_feature_data(pocket_id, pocket(sketch_id, 5.0, false, false).to_json())
+            .unwrap();
+        let cut_plan = body_build_ops(&cutting, body).unwrap();
+        assert_eq!(boolean_of(&cut_plan.ops[1]), BooleanOp::Cut);
+        assert_eq!(digs(&plan.ops[1]), digs(&cut_plan.ops[1]));
 
         doc.add_feature_in_body(
             DesignFeature::LinearPattern {

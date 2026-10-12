@@ -4747,3 +4747,54 @@ fn crossing_circles_pad_their_union_or_the_crescents_chosen() {
     );
     assert!((lo[0] + 10.0).abs() < 1e-3 && (hi[0] - 20.0).abs() < 1e-3);
 }
+
+/// A pocket kept inside, sketched on the block's top, keeps the stretch of
+/// the block its tool digs through: a disc as deep as the pocket.
+#[test]
+fn a_pocket_kept_inside_keeps_the_disc_it_digs_through() {
+    let (mut doc, body, rect_id) = setup(40.0, 30.0);
+    doc.add_feature_in_body(
+        pad_feature(rect_id, 12.0, false, false),
+        "Pad".into(),
+        Some(body),
+    )
+    .unwrap();
+    let top = wb_sketch::sketch::SketchPlane {
+        origin: [0.0, 0.0, 12.0],
+        ..Default::default()
+    };
+    let disc = doc
+        .add_feature_in_body(
+            circle_sketch_on(top, 20.0, 15.0, 6.0),
+            "disc".into(),
+            Some(body),
+        )
+        .unwrap();
+    let mut kept = pocket_feature(disc, 4.0);
+    *kept.keep_inside_mut().expect("a pocket offers it") = true;
+    doc.add_feature_in_body(kept, "Pocket".into(), Some(body))
+        .unwrap();
+
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(
+            &wb_design::body_build_ops(&doc, body).unwrap().ops,
+            &TessellationSettings::default(),
+        )
+        .expect("the common keeps material");
+    let (lo, hi) = result.bounds_mm.expect("bounds");
+    assert!(
+        (lo[2] - 8.0).abs() < 1e-3 && (hi[2] - 12.0).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
+    );
+    let volume = kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a closed solid");
+    let expected = std::f64::consts::PI * 36.0 * 4.0;
+    assert!(
+        (volume - expected).abs() < 1e-2 * expected,
+        "volume {volume} vs {expected}"
+    );
+}
