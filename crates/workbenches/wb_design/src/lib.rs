@@ -2896,6 +2896,43 @@ mod icon_coverage {
         assert!(info.builds_solid);
     }
 
+    /// A hole with a cosmetic thread names its designation where the tree
+    /// says what the feature is; the same hole cutting nothing extra does
+    /// not.
+    #[test]
+    fn a_cosmetic_thread_names_its_designation_in_the_feature_kind() {
+        let hole = |cosmetic_thread: bool| DesignFeature::Hole {
+            cosmetic_thread,
+            clearance: None,
+            thread_length: Default::default(),
+            refine: false,
+            sketch: FeatureId(uuid::Uuid::new_v4()),
+            diameter: 10.2,
+            depth: 10.0,
+            through_all: true,
+            cut: crate::feature::HoleCut::None,
+            thread: Some(crate::feature::ThreadSpec::new(
+                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                "M12",
+            )),
+            threaded: true,
+            modeled_thread: false,
+            thread_depth: 0.0,
+            fit: crate::feature::HoleFit::Normal,
+            drill_point: crate::feature::DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
+            nut_trap: None,
+            reversed: false,
+        };
+        let kind = |feature: &DesignFeature| {
+            let node = core_document::FeatureNode::new(FeatureId(uuid::Uuid::new_v4()), feature);
+            DesignWorkbench::default().feature_info(&node).kind_label
+        };
+        assert_eq!(kind(&hole(true)), "Hole · M12 thread");
+        assert_eq!(kind(&hole(false)), "Hole");
+    }
+
     #[test]
     fn every_default_key_lands_on_a_tool_and_no_two_share_one() {
         let mut ctx = WorkbenchContext::default();

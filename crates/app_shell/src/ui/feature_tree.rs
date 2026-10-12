@@ -354,7 +354,7 @@ fn build_feature_node(
         id: TreeItemId::Feature(node.id),
         label: node.name.clone(),
         detail: Some(info.family_label.clone()),
-        tooltip: Some(feature_tooltip(node, &info.family_label, after_tip)),
+        tooltip: Some(feature_tooltip(node, &info, after_tip)),
         dirty: node.dirty,
         visible: node.visible,
         suppressed: node.suppressed,
@@ -1951,9 +1951,14 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
     }
 }
 
-fn feature_tooltip(node: &FeatureNode, family: &str, after_tip: bool) -> String {
+/// A feature row's tooltip: what the feature is ("Hole · M6 thread") when
+/// its bench says more than the family, the family, then its state.
+fn feature_tooltip(node: &FeatureNode, info: &FeatureInfo, after_tip: bool) -> String {
     let mut parts = Vec::new();
-    parts.push(family.to_string());
+    if info.kind_label != info.family_label {
+        parts.push(info.kind_label.clone());
+    }
+    parts.push(info.family_label.clone());
     parts.push(format!("Visible: {}", node.visible));
     parts.push(format!("Suppressed: {}", node.suppressed));
     if node.dirty {
@@ -2074,6 +2079,55 @@ mod tests {
         assert_eq!(linked[0].id, TreeItemId::Feature(joint));
         assert!(linked[0].linked);
         assert_eq!(linked[0].label, "Mate 1 (Part)");
+    }
+
+    /// A feature row's tooltip says what the feature is, as its bench
+    /// names it ("Hole · M12 thread"), above the family the Kind row shows.
+    #[test]
+    fn a_feature_row_tooltip_names_the_feature_as_its_bench_does() {
+        use core_document::{Workbench, WorkbenchContext, WorkbenchDescriptor};
+        struct Bench;
+        impl Workbench for Bench {
+            fn descriptor(&self) -> WorkbenchDescriptor {
+                WorkbenchDescriptor::new("test.holes", "Holes", "").feature_kinds(["test.hole"])
+            }
+            fn configure(&self, _context: &mut WorkbenchContext) {}
+            fn feature_info(&self, _node: &FeatureNode) -> FeatureInfo {
+                FeatureInfo {
+                    icon: "tree-feature",
+                    kind_label: "Hole · M12 thread".into(),
+                    family_label: "Drilling".into(),
+                    builds_solid: true,
+                }
+            }
+        }
+        let mut doc = Document::new("t");
+        let body = doc.create_body(Some("Body".into()));
+        let hole = doc.add_feature_of_kind(
+            core_document::WorkbenchId::new("test.hole"),
+            "Hole".into(),
+            Some(body),
+            Vec::new(),
+            serde_json::json!({}),
+            core_document::FeatureOrigin::default(),
+        );
+        let mut registry = DocumentService::default();
+        registry.register_workbench(Box::new(Bench)).unwrap();
+        let tree = DocumentTree::build(&doc, &registry);
+        let body_row = tree
+            .nodes()
+            .iter()
+            .find(|n| n.id == TreeItemId::Body(body))
+            .expect("a body row");
+        let row = body_row
+            .children
+            .iter()
+            .find(|n| n.id == TreeItemId::Feature(hole))
+            .expect("the hole's row");
+        let tooltip = row.tooltip.as_deref().expect("a tooltip");
+        let mut lines = tooltip.lines();
+        assert_eq!(lines.next(), Some("Hole · M12 thread"), "{tooltip}");
+        assert_eq!(lines.next(), Some("Drilling"), "{tooltip}");
     }
 
     /// A part whose shape the checker calls broken is red and offers its

@@ -45,9 +45,10 @@ first, to know how far it runs.
 
 **Cosmetic thread** (on a threaded hole that is not modeled) keeps the
 bore at its tap drill and shows the thread instead: a helix of the
-thread's pitch down the bore, and the designation in the hole's name in
-the tree ("Hole · M6 thread"). Nothing of it reaches an export: drill the
-tap size, print, and tap the hole afterwards.
+thread's pitch down the bore, as far as the hole goes (a through hole's
+to where it leaves the solid), and the designation in its row's
+tooltip in the tree ("Hole · M6 thread"). Nothing of it reaches an
+export: drill the tap size, print, and tap the hole afterwards.
 
 ## Depth and bottom
 

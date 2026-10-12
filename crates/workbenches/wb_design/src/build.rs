@@ -1977,16 +1977,15 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
     centers
 }
 
-/// Translate a hole feature into cut ops: the drill (and its point), then
-/// what the hole cut makes of its mouth, then a modeled thread's groove.
 /// How many line pieces a cosmetic thread draws per turn.
 const THREAD_SEGMENTS_PER_TURN: usize = 24;
 
 /// A cosmetic thread as lines in its body's frame: at every hole centre a
 /// helix of the thread's pitch, just inside the bore so the wall does not
-/// hide it, down the thread's length (the hole's depth, the thread's own
-/// depth when set, or through the body's box for a through hole). Empty
-/// for a hole with no cosmetic thread.
+/// hide it, down the thread's length: the thread's own depth when set,
+/// never past the hole's end, which for a through hole is where the solid
+/// ends along it (`through_length`). Empty for a hole with no cosmetic
+/// thread.
 pub(crate) fn cosmetic_thread_lines(
     document: &Document,
     body: Option<BodyId>,
@@ -2017,30 +2016,37 @@ pub(crate) fn cosmetic_thread_lines(
     } else {
         plane.normal.map(|c| -c)
     };
-    let length = if *thread_depth > 0.0 {
-        f64::from(*thread_depth)
-    } else if *through_all {
-        body.and_then(|b| document.local_geometry(b))
-            .and_then(|(mesh, bounds)| bounds.or_else(|| mesh.bounds()))
-            .map(|(lo, hi)| {
-                let d = [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]];
-                f64::from((d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt())
-            })
-            .unwrap_or(20.0)
-    } else {
-        f64::from(*depth)
-    };
-    let radius = f64::from(hole_diameter(feature)) * 0.5 * 0.98;
+    let bore = f64::from(hole_diameter(feature)) * 0.5;
+    let radius = bore * 0.98;
     let pitch = size.pitch;
-    if length <= 0.0 || radius <= 0.0 || pitch <= 0.0 {
+    if radius <= 0.0 || pitch <= 0.0 {
         return mesh;
     }
+    let solid = body.and_then(|b| document.local_geometry(b));
     let (u, v) = (plane.x_axis, cross3(into, plane.x_axis));
     let turn = if spec.left_handed { -1.0 } else { 1.0 };
-    let steps = ((length / pitch) * THREAD_SEGMENTS_PER_TURN as f64).ceil() as usize;
     for centre in hole_centers(&sketch_feature.sketch) {
         let at =
             |k: usize| plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1];
+        let hole_length = if *through_all {
+            solid
+                .as_ref()
+                .and_then(|(mesh, bounds)| {
+                    through_length(mesh, *bounds, std::array::from_fn(at), into, bore)
+                })
+                .unwrap_or(20.0)
+        } else {
+            f64::from(*depth)
+        };
+        let length = if *thread_depth > 0.0 {
+            f64::from(*thread_depth).min(hole_length)
+        } else {
+            hole_length
+        };
+        if length <= 0.0 {
+            continue;
+        }
+        let steps = ((length / pitch) * THREAD_SEGMENTS_PER_TURN as f64).ceil() as usize;
         let base = mesh.positions.len() as u32;
         for i in 0..=steps {
             let down = length * i as f64 / steps as f64;
@@ -2059,6 +2065,51 @@ pub(crate) fn cosmetic_thread_lines(
     mesh
 }
 
+/// How far a through hole starting at `start` runs along `into` before it
+/// leaves the solid `mesh` (in the body's frame): to the deepest point of
+/// its bore's wall, the mesh's points within `bore` of its axis, or, with
+/// no bore cut there, to the far side of the solid's bounds.
+fn through_length(
+    mesh: &kernel_api::TriMesh,
+    bounds: Option<([f32; 3], [f32; 3])>,
+    start: [f64; 3],
+    into: [f64; 3],
+    bore: f64,
+) -> Option<f64> {
+    // How far along the axis a point lies, and how far off it.
+    let along = |p: [f64; 3]| {
+        let d: [f64; 3] = std::array::from_fn(|k| p[k] - start[k]);
+        let down = d[0] * into[0] + d[1] * into[1] + d[2] * into[2];
+        let off: [f64; 3] = std::array::from_fn(|k| d[k] - into[k] * down);
+        (
+            down,
+            (off[0] * off[0] + off[1] * off[1] + off[2] * off[2]).sqrt(),
+        )
+    };
+    let deepest = |far: Option<f64>, down: f64| Some(far.map_or(down, |f: f64| f.max(down)));
+    let reach = bore * 1.01 + 1e-3;
+    let wall = mesh
+        .positions
+        .iter()
+        .map(|p| along(p.map(f64::from)))
+        .filter(|(down, off)| *off <= reach && *down > 0.0)
+        .map(|(down, _)| down)
+        .fold(None, deepest);
+    if wall.is_some() {
+        return wall;
+    }
+    let (lo, hi) = bounds.or_else(|| mesh.bounds())?;
+    (0..8)
+        .map(|corner| {
+            along(std::array::from_fn(|k| {
+                f64::from(if corner >> k & 1 == 0 { lo[k] } else { hi[k] })
+            }))
+            .0
+        })
+        .fold(None, deepest)
+        .filter(|far| *far > 0.0)
+}
+
 fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     [
         a[1] * b[2] - a[2] * b[1],
@@ -2067,6 +2118,8 @@ fn cross3(a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     ]
 }
 
+/// Translate a hole feature into cut ops: the drill (and its point), then
+/// what the hole cut makes of its mouth, then a modeled thread's groove.
 fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>, String> {
     let DesignFeature::Hole {
         sketch,
@@ -4459,6 +4512,93 @@ mod tests {
                 .positions
                 .is_empty()
         );
+    }
+
+    /// A cosmetic thread through all of an 8 mm plate stops at the plate's
+    /// far side, though the plate is far wider than it is thick: at the
+    /// bore's exit once the bore is cut, at the solid's far face along the
+    /// hole before, and a thread depth longer than the hole stops there too.
+    #[test]
+    fn a_cosmetic_thread_through_all_stops_where_the_hole_leaves_the_solid() {
+        let (mut doc, body, _) = doc_with_body_sketch();
+        let mut holes = Sketch::new("holes");
+        holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(3.0, 4.0))));
+        let plane = holes.plane;
+        let holes = doc
+            .add_feature_in_body(SketchFeature::new(holes, plane), "holes".into(), Some(body))
+            .unwrap();
+        let hole = |thread_depth: f32| DesignFeature::Hole {
+            cosmetic_thread: true,
+            clearance: None,
+            thread_length: Default::default(),
+            refine: false,
+            sketch: holes,
+            diameter: 5.0,
+            depth: 0.0,
+            through_all: true,
+            cut: HoleCut::None,
+            thread: Some(crate::feature::ThreadSpec::new(
+                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                "M6",
+            )),
+            threaded: true,
+            modeled_thread: false,
+            thread_depth,
+            fit: crate::feature::HoleFit::Normal,
+            drill_point: DrillPoint::Flat,
+            point_in_depth: false,
+            taper_deg: 0.0,
+            nut_trap: None,
+            reversed: false,
+        };
+        let plate = |bored: bool| {
+            let mut positions = Vec::new();
+            for corner in 0..8 {
+                positions.push([
+                    if corner & 1 == 0 { -50.0 } else { 50.0 },
+                    if corner & 2 == 0 { -50.0 } else { 50.0 },
+                    if corner & 4 == 0 { -8.0 } else { 0.0 },
+                ]);
+            }
+            if bored {
+                for k in 0..16 {
+                    let (sin, cos) = (std::f32::consts::TAU * k as f32 / 16.0).sin_cos();
+                    for z in [0.0, -8.0] {
+                        positions.push([3.0 + 2.5 * cos, 4.0 + 2.5 * sin, z]);
+                    }
+                }
+            }
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(kernel_api::TriMesh {
+                    positions,
+                    ..Default::default()
+                }),
+                source_asset: None,
+                revision: 1,
+                bounds_mm: Some(([-50.0, -50.0, -8.0], [50.0, 50.0, 0.0])),
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            }
+        };
+        for bored in [true, false] {
+            doc.set_imported_geometry(body, plate(bored));
+            for thread_depth in [0.0, 30.0] {
+                let lines = cosmetic_thread_lines(&doc, Some(body), &hole(thread_depth));
+                assert!(!lines.positions.is_empty());
+                let deepest = lines
+                    .positions
+                    .iter()
+                    .map(|p| p[2])
+                    .fold(f32::INFINITY, f32::min);
+                assert!(
+                    (deepest + 8.0).abs() < 1e-3,
+                    "bored {bored}, thread depth {thread_depth}: ends at {deepest}, not -8"
+                );
+                assert!(lines.positions.iter().all(|p| p[2] <= 1e-4));
+            }
+        }
     }
 
     #[test]

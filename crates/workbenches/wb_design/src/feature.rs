@@ -2217,7 +2217,6 @@ impl DesignFeature {
         probe.refine()
     }
 
-    /// True when this feature removes material (must not be a body's first).
     /// A cutting feature that keeps what it shares with the body (the
     /// common) rather than cutting it away.
     pub fn keeps_inside(&self) -> bool {
@@ -2274,6 +2273,7 @@ impl DesignFeature {
         Some(name)
     }
 
+    /// True when this feature removes material (must not be a body's first).
     pub fn is_subtractive(&self) -> bool {
         match self {
             DesignFeature::Pocket { .. }
