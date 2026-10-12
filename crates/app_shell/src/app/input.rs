@@ -57,6 +57,8 @@ impl PrintCadApp {
         // Track modifiers and pressed-button count regardless of who consumes
         // the event: the undo system uses "no button held" as its snapshot
         // boundary, and a release swallowed by egui must still decrement.
+        // A release that ends a box selection is not also a click.
+        let mut boxed = false;
         match &event {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
@@ -79,9 +81,26 @@ impl PrintCadApp {
                 if let Some(at) = at {
                     self.held_buttons[at] = state.is_pressed();
                 }
+                // The box ends with its button, whoever takes the release.
+                if *button == MouseButton::Left
+                    && !state.is_pressed()
+                    && let Some(drag) = self.box_select.take()
+                {
+                    let threshold = self.user_settings.camera.click_drag_threshold_px
+                        * self
+                            .gfx
+                            .as_ref()
+                            .map_or(1.0, |g| g.window.scale_factor() as f32);
+                    if drag.dragged(threshold) {
+                        self.finish_box_select(drag);
+                        boxed = true;
+                    }
+                    self.redraw_needed = true;
+                }
             }
             // A release outside the window never arrives.
             WindowEvent::Focused(false) => {
+                self.box_select = None;
                 self.mouse_buttons_down = 0;
                 self.held_buttons = [false; 3];
                 self.session.camera.forget_released([false; 3]);
@@ -142,6 +161,15 @@ impl PrintCadApp {
             let vp = self.session.camera.viewport_info();
             let cursor_x = phys_x as f32 - vp.0;
             let cursor_y = phys_y as f32 - vp.1;
+
+            // The box's corner follows the pointer, held to the view.
+            if let Some(drag) = self.box_select.as_mut() {
+                drag.to = Vec2::new(
+                    cursor_x.clamp(0.0, vp.2 as f32),
+                    cursor_y.clamp(0.0, vp.3 as f32),
+                );
+                self.redraw_needed = true;
+            }
 
             if cursor_x >= 0.0
                 && cursor_y >= 0.0
@@ -270,13 +298,27 @@ impl PrintCadApp {
             return;
         }
 
+        // A left press no bench took, on empty space, starts a box.
+        if matches!(
+            event,
+            WindowEvent::MouseInput {
+                button: MouseButton::Left,
+                state: ElementState::Pressed,
+                ..
+            }
+        ) && let Some((x, y)) = self.cursor_in_viewport
+            && self.may_start_box()
+        {
+            self.box_select = Some(crate::app::box_select::BoxDrag::at(Vec2::new(x, y)));
+        }
+
         let orbit_pick = self.session.hovered_world_pos.map(Vec3::from_array);
         let cam_res =
             self.session
                 .camera
                 .on_viewport_pointer(&event, &self.user_settings.camera, orbit_pick);
         redraw |= cam_res.wants_redraw();
-        if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) {
+        if matches!(cam_res, CameraPointerResult::LmbReleasedMaybeSelect) && !boxed {
             redraw |= if self.session.measure.is_some() {
                 self.measure_click()
             } else {
@@ -644,12 +686,15 @@ impl PrintCadApp {
         self.session.selected_body = None;
         self.session.last_face_hit = None;
         self.session.earlier_faces.clear();
+        self.session.earlier_bodies.clear();
         self.session.face_highlight = None;
         self.session.selected_edges.clear();
         self.session.last_select_click = None;
     }
 
     pub(crate) fn toggle_body_under_cursor_selection(&mut self) -> bool {
+        // A click picks one body at most; the others a box took go.
+        self.session.earlier_bodies.clear();
         // Sketch curves first: their tessellated lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
         // against sketch geometry on the CPU with a proper pixel tolerance.
@@ -837,7 +882,11 @@ impl PrintCadApp {
     }
 
     /// The highlight of `face` of `body`: the triangles it is drawn with.
-    fn face_highlight_of(&self, body: Uuid, face: core_document::FaceRef) -> Option<FaceHighlight> {
+    pub(crate) fn face_highlight_of(
+        &self,
+        body: Uuid,
+        face: core_document::FaceRef,
+    ) -> Option<FaceHighlight> {
         let geometry = self
             .session
             .document
@@ -887,7 +936,7 @@ impl PrintCadApp {
     /// cursor, as its bench measures it (a sketch: unprojected onto its
     /// plane and hit-tested in sketch coordinates). Hidden features are
     /// skipped; the nearest hit wins.
-    fn feature_under_cursor(&self) -> Option<core_document::FeatureId> {
+    pub(crate) fn feature_under_cursor(&self) -> Option<core_document::FeatureId> {
         const TOLERANCE_PX: f32 = 8.0;
         let cursor = self.cursor_in_viewport?;
         let vp = self.session.camera.viewport_info();

@@ -1196,6 +1196,23 @@ impl PrintCadApp {
         if !picking_faces {
             self.session.earlier_faces.clear();
         }
+        // Bodies a box took stand only beside a body picked whole, and only
+        // while each is still drawn.
+        if self.session.selected_body.is_none()
+            || self.session.face_highlight.is_some()
+            || !self.session.selected_edges.is_empty()
+        {
+            self.session.earlier_bodies.clear();
+        }
+        let document = &self.session.document;
+        let selected = self.session.selected_body;
+        self.session.earlier_bodies.retain(|body| {
+            Some(*body) != selected
+                && document
+                    .imported_geometry(core_document::BodyId(*body))
+                    .is_some()
+                && document.imported_body_effective_visible(core_document::BodyId(*body))
+        });
 
         let mut region_meshes: Vec<BodySubmission> = Vec::new();
         let mut regions_seen: Vec<core_document::FeatureId> = Vec::new();
@@ -1532,6 +1549,13 @@ impl PrintCadApp {
         }
         let screen_space_labels = &mut data.labels;
 
+        // The selection box being dragged, in the colour the sketcher's
+        // box draws in.
+        if let Some(drag) = &self.box_select {
+            data.overlays
+                .extend(drag.outline(core_document::SketchPalette::default().preview));
+        }
+
         // The measurement in progress: its points, the line between them
         // and the distance, drawn over the scene.
         if let Some(picks) = &self.session.measure {
@@ -1756,6 +1780,31 @@ impl PrintCadApp {
             let (hi, lo) = self.session.selected_body.unwrap_or_default().as_u64_pair();
             all_meshes.push(BodySubmission {
                 id: self.body_highlight_id,
+                revision: geometry.revision ^ hi ^ lo,
+                mesh: Arc::clone(&geometry.mesh),
+                color: paint,
+                opacity,
+                highlight: HighlightState::None,
+                is_wireframe: false,
+                pickable: false,
+                on_top: false,
+                edge_color: None,
+                front_only: false,
+            });
+        }
+
+        // The bodies a box took beside the last, each in a slot of its own.
+        for (i, body) in self.session.earlier_bodies.iter().enumerate() {
+            let id = core_document::BodyId(*body);
+            if self.session.previews.contains_key(&id) {
+                continue;
+            }
+            let Some(geometry) = self.session.document.imported_geometry(id) else {
+                continue;
+            };
+            let (hi, lo) = body.as_u64_pair();
+            all_meshes.push(BodySubmission {
+                id: Uuid::from_u128(self.body_highlight_id.as_u128() ^ (i as u128 + 1)),
                 revision: geometry.revision ^ hi ^ lo,
                 mesh: Arc::clone(&geometry.mesh),
                 color: paint,

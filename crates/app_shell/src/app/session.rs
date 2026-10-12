@@ -231,6 +231,9 @@ pub(crate) struct DocumentSession {
     /// Faces Ctrl added before the last one picked (`last_face_hit`), on
     /// its body, in the order picked. Empty whenever no face is picked.
     pub earlier_faces: Vec<crate::app::input::PickedFace>,
+    /// Bodies a box picked whole beside `selected_body`, the last. Empty
+    /// whenever a face or an edge is the pick.
+    pub earlier_bodies: Vec<Uuid>,
     /// Each bench's editing state for this tab while another tab is
     /// active, keyed by bench id; handed back to the benches on switch.
     pub bench_states: HashMap<String, Box<dyn Any + Send>>,
@@ -342,6 +345,7 @@ impl DocumentSession {
             physical: Default::default(),
             selected_edges: Vec::new(),
             earlier_faces: Vec::new(),
+            earlier_bodies: Vec::new(),
             bench_states: HashMap::new(),
         }
     }

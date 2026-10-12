@@ -181,13 +181,13 @@ impl PrintCadApp {
     fn export_every_configuration(&mut self, path: &Path, draft: &ExportDraft) {
         let base = path.with_extension("");
         let bodies = if draft.selected_only && !draft.layout {
-            match self.session.selected_body {
-                Some(body) => format!("{{\"{body}\"}}"),
-                None => {
-                    app_log::warn("Nothing to export: select a body with geometry first");
-                    return;
-                }
+            let selected = self.bodies_to_export_selected();
+            if selected.is_empty() {
+                app_log::warn("Nothing to export: select a body with geometry first");
+                return;
             }
+            let quoted: Vec<String> = selected.iter().map(|b| format!("\"{b}\"")).collect();
+            format!("{{{}}}", quoted.join(", "))
         } else {
             "nil".to_string()
         };
@@ -344,7 +344,7 @@ impl PrintCadApp {
             let layout = self.current_print_layout();
             return layout_bodies(document, &layout, textured);
         }
-        let selected = self.session.selected_body;
+        let selected = self.bodies_to_export_selected();
         // What a bench says is not made (a bought part) stays out of an
         // export of everything.
         let not_made = self.registry.not_printed(document);
@@ -352,13 +352,24 @@ impl PrintCadApp {
             document,
             |id| {
                 if draft.selected_only {
-                    selected == Some(id.0)
+                    selected.contains(&id.0)
                 } else {
                     document.imported_body_effective_visible(id) && !not_made.contains(&id)
                 }
             },
             textured,
         )
+    }
+
+    /// The bodies an export of the selection writes: the selected body
+    /// and any others a box took with it.
+    fn bodies_to_export_selected(&self) -> Vec<uuid::Uuid> {
+        self.session
+            .earlier_bodies
+            .iter()
+            .copied()
+            .chain(self.session.selected_body)
+            .collect()
     }
 
     /// The print layout as it stands: the one shown, when it is up to

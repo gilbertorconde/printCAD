@@ -98,7 +98,7 @@ reads the device directly. Either way it finds the device on its own.
 | Select a face or edge | Left click (Ctrl adds) |
 | Select a whole body | Left double click |
 | Body menu | Right click on a body |
-| Box select in a sketch | Left drag |
+| Box select | Left drag from empty space: rightwards takes what lies wholly inside, leftwards (dashed) what the box touches; bodies, faces or edges by the pick filter, Ctrl adds |
 | Fit the model | **F** |
 | Standard views | Click the orientation cube (double click also fits), or **0** to **6** |
 | Orbit from the cube | Left drag on the orientation cube; its house returns home |
