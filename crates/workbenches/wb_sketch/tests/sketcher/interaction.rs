@@ -5245,7 +5245,6 @@ fn a_point_dragged_onto_a_line_is_held_on_it() {
     );
 }
 
-
 /// The character a number key types, as the app sends it after the key.
 fn number_text(key: KeyCode) -> Option<&'static str> {
     Some(match key {
