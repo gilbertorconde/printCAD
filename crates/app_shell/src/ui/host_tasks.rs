@@ -76,6 +76,36 @@ pub struct PlacementTask {
     offset: [f32; 3],
     /// Turn about X, then Y, then Z, degrees.
     angles: [f32; 3],
+    /// The axes a move by numbers goes along and turns about.
+    frame: Frame,
+    /// The point a move by numbers turns about.
+    pivot: Pivot,
+    /// The move by numbers: along the frame's X, Y and Z, millimetres.
+    shift: [f32; 3],
+    /// And about the frame's X, then Y, then Z through the pivot, degrees.
+    turn: [f32; 3],
+}
+
+/// The axes a placement moves along by numbers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Frame {
+    World,
+    /// Another body's own axes, where it sits.
+    Body(BodyId),
+    /// A datum's axes, where its body sits: a plane's or a coordinate
+    /// system's.
+    Datum(FeatureId),
+}
+
+/// The point a placement turns about by numbers.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Pivot {
+    /// The body's own origin.
+    Origin,
+    /// The middle of the box around the body.
+    BoxCentre,
+    /// The centre of the body's volume, from its mesh.
+    Mass,
 }
 
 #[derive(Debug, Clone)]
@@ -228,6 +258,10 @@ impl HostTask {
                 .collect(),
             offset: placement.offset().to_array(),
             angles: [x, y, z].map(f32::to_degrees),
+            frame: Frame::World,
+            pivot: Pivot::Origin,
+            shift: [0.0; 3],
+            turn: [0.0; 3],
         })
     }
 
@@ -417,6 +451,93 @@ fn print_layout(
 }
 
 impl PlacementTask {
+    /// The move by numbers: a frame, a pivot, a shift and a turn, applied
+    /// to where the body is by Move. Whether it moved the body's fields.
+    fn move_by(&mut self, ui: &mut Ui, document: &Document) -> bool {
+        heading(ui, "Move by");
+        let mut frames: Vec<(Frame, String)> = vec![(Frame::World, "World".to_string())];
+        frames.extend(
+            document
+                .bodies()
+                .iter()
+                .filter(|b| b.id != self.body)
+                .map(|b| (Frame::Body(b.id), b.name.clone())),
+        );
+        frames.extend(
+            document
+                .feature_tree()
+                .all_nodes()
+                .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND)
+                .map(|(id, n)| (Frame::Datum(*id), n.name.clone())),
+        );
+        let frame_labels: Vec<(Frame, &str)> =
+            frames.iter().map(|(f, n)| (*f, n.as_str())).collect();
+        let pivots = [
+            (Pivot::Origin, "Body origin"),
+            (Pivot::BoxCentre, "Middle of its box"),
+            (Pivot::Mass, "Centre of mass"),
+        ];
+        egui::Grid::new("host_placement_move_by")
+            .num_columns(2)
+            .spacing([SPACE_3, SPACE_1])
+            .show(ui, |ui| {
+                ui.label(
+                    RichText::new("Relative to")
+                        .font(sans(FONT_SM))
+                        .color(TEXT2),
+                );
+                ui_kit::widgets::select_field(
+                    ui,
+                    "host_placement_frame",
+                    &mut self.frame,
+                    &frame_labels,
+                    180.0,
+                );
+                ui.end_row();
+                ui.label(RichText::new("Turn about").font(sans(FONT_SM)).color(TEXT2));
+                ui_kit::widgets::select_field(
+                    ui,
+                    "host_placement_pivot",
+                    &mut self.pivot,
+                    &pivots,
+                    180.0,
+                );
+                ui.end_row();
+                for (i, axis) in ["Along X", "Along Y", "Along Z"].iter().enumerate() {
+                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
+                    QtyField::offset(&mut self.shift[i]).show(ui);
+                    ui.end_row();
+                }
+                for (i, axis) in ["About X", "About Y", "About Z"].iter().enumerate() {
+                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
+                    QtyField::degrees(&mut self.turn[i])
+                        .range(-360.0..=360.0)
+                        .show(ui);
+                    ui.end_row();
+                }
+            });
+        let still = self.shift == [0.0; 3] && self.turn == [0.0; 3];
+        if !ui
+            .add_enabled_ui(!still, |ui| secondary_button(ui, "Move"))
+            .inner
+            .on_hover_text("Move the body by these numbers, from where it is now")
+            .clicked()
+        {
+            return false;
+        }
+        let Some((axes, _)) = frame_of(document, self.frame) else {
+            return false;
+        };
+        let pivot = pivot_of(document, self.body, self.pivot);
+        let moved = moved_by(self.placement(), axes, pivot, self.shift, self.turn);
+        let (x, y, z) = moved.quat().to_euler(glam::EulerRot::XYZ);
+        self.offset = moved.offset().to_array();
+        self.angles = [x, y, z].map(f32::to_degrees);
+        self.shift = [0.0; 3];
+        self.turn = [0.0; 3];
+        true
+    }
+
     fn placement(&self) -> BodyPlacement {
         let [x, y, z] = self.angles.map(f32::to_radians);
         BodyPlacement::new(
@@ -491,6 +612,7 @@ impl PlacementTask {
                     ui.end_row();
                 }
             });
+        changed |= self.move_by(ui, document);
         ui.add_space(SPACE_3);
         ui.horizontal(|ui| {
             if secondary_button(ui, "Where it was made").clicked() {
@@ -872,6 +994,89 @@ impl HistoryTask {
     }
 }
 
+/// The axes and origin of `frame`, in the world.
+fn frame_of(document: &Document, frame: Frame) -> Option<(glam::Quat, glam::Vec3)> {
+    match frame {
+        Frame::World => Some((glam::Quat::IDENTITY, glam::Vec3::ZERO)),
+        Frame::Body(body) => {
+            let placed = document.body_placement(body);
+            Some((placed.quat(), placed.offset()))
+        }
+        Frame::Datum(id) => {
+            let datum =
+                <core_document::DatumFeature as core_document::WorkbenchFeature>::from_json(
+                    document.feature_values(id)?,
+                )
+                .ok()?;
+            let own = datum.frame();
+            let v = glam::Vec3::from_array;
+            let axes = glam::Quat::from_mat3(&glam::Mat3::from_cols(
+                v(own.x_axis).normalize(),
+                v(own.y_axis()).normalize(),
+                v(own.normal).normalize(),
+            ));
+            let placed = document
+                .get_feature_meta(id)
+                .and_then(|n| n.body)
+                .map(|b| document.body_placement(b))
+                .unwrap_or_default();
+            Some((
+                (placed.quat() * axes).normalize(),
+                v(placed.point(own.origin)),
+            ))
+        }
+    }
+}
+
+/// Where `pivot` is for `body`, in the world.
+fn pivot_of(document: &Document, body: BodyId, pivot: Pivot) -> glam::Vec3 {
+    let origin = document.body_placement(body).offset();
+    let mesh = document.imported_geometry(body).map(|g| &g.mesh);
+    match pivot {
+        Pivot::Origin => origin,
+        Pivot::BoxCentre => mesh
+            .and_then(|m| m.bounds())
+            .map(|(lo, hi)| (glam::Vec3::from_array(lo) + glam::Vec3::from_array(hi)) * 0.5)
+            .unwrap_or(origin),
+        Pivot::Mass => mesh.and_then(|m| volume_centre(m)).unwrap_or(origin),
+    }
+}
+
+/// The centre of the volume a closed mesh bounds: the tetrahedra from the
+/// origin to each triangle, weighted by their signed volumes. `None` for
+/// a mesh that encloses nothing.
+fn volume_centre(mesh: &kernel_api::TriMesh) -> Option<glam::Vec3> {
+    let mut volume = 0.0f64;
+    let mut moment = glam::DVec3::ZERO;
+    for [i, j, k] in mesh.indices.as_chunks::<3>().0 {
+        let p = |i: u32| glam::Vec3::from_array(mesh.positions[i as usize]).as_dvec3();
+        let (a, b, c) = (p(*i), p(*j), p(*k));
+        let v = a.dot(b.cross(c)) / 6.0;
+        volume += v;
+        moment += (a + b + c) * (v / 4.0);
+    }
+    (volume.abs() > 1e-12).then(|| (moment / volume).as_vec3())
+}
+
+/// `placement` moved along `axes` by `shift`, then turned about `axes`'
+/// X, then Y, then Z by `turn` degrees about `pivot`, all in the world.
+fn moved_by(
+    placement: BodyPlacement,
+    axes: glam::Quat,
+    pivot: glam::Vec3,
+    shift: [f32; 3],
+    turn: [f32; 3],
+) -> BodyPlacement {
+    let [x, y, z] = turn.map(f32::to_radians);
+    let local = glam::Quat::from_euler(glam::EulerRot::XYZ, x, y, z);
+    let spin = (axes * local * axes.inverse()).normalize();
+    let along = axes * glam::Vec3::from_array(shift);
+    BodyPlacement::new(
+        (spin * placement.quat()).normalize(),
+        spin * (placement.offset() - pivot) + pivot + along,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -945,6 +1150,89 @@ mod tests {
             [2, 5],
             "its own body's, in order, for the swatches to colour"
         );
+    }
+
+    /// A quarter turn about Z through a pivot beside the origin swings the
+    /// origin round it; a shift goes along the frame's axes, not the
+    /// world's.
+    #[test]
+    fn move_by_turns_about_the_pivot_and_shifts_along_the_frame() {
+        let close = |a: glam::Vec3, b: [f32; 3]| (a - glam::Vec3::from_array(b)).length() < 1e-4;
+        let turned = moved_by(
+            BodyPlacement::IDENTITY,
+            glam::Quat::IDENTITY,
+            glam::Vec3::new(10.0, 0.0, 0.0),
+            [0.0; 3],
+            [0.0, 0.0, 90.0],
+        );
+        assert!(
+            close(turned.offset(), [10.0, -10.0, 0.0]),
+            "{:?}",
+            turned.offset()
+        );
+        assert!(close(turned.quat() * glam::Vec3::X, [0.0, 1.0, 0.0]));
+
+        let frame = glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2);
+        let shifted = moved_by(
+            BodyPlacement::IDENTITY,
+            frame,
+            glam::Vec3::ZERO,
+            [5.0, 0.0, 0.0],
+            [0.0; 3],
+        );
+        assert!(
+            close(shifted.offset(), [0.0, 5.0, 0.0]),
+            "{:?}",
+            shifted.offset()
+        );
+        // About the frame's X, which is the world's Y.
+        let tipped = moved_by(
+            BodyPlacement::IDENTITY,
+            frame,
+            glam::Vec3::ZERO,
+            [0.0; 3],
+            [90.0, 0.0, 0.0],
+        );
+        assert!(
+            close(tipped.quat() * glam::Vec3::Z, [1.0, 0.0, 0.0]),
+            "{:?}",
+            tipped.quat() * glam::Vec3::Z
+        );
+    }
+
+    /// A box's volume centre is its middle, wherever it sits.
+    #[test]
+    fn the_centre_of_mass_of_a_box_is_its_middle() {
+        let (lo, hi) = (
+            glam::Vec3::new(2.0, 4.0, 6.0),
+            glam::Vec3::new(12.0, 8.0, 7.0),
+        );
+        let corner = |i: usize| {
+            [
+                if i & 1 == 0 { lo.x } else { hi.x },
+                if i & 2 == 0 { lo.y } else { hi.y },
+                if i & 4 == 0 { lo.z } else { hi.z },
+            ]
+        };
+        // Outward-facing triangles of the box's six sides.
+        let quads = [
+            [0, 2, 3, 1],
+            [4, 5, 7, 6],
+            [0, 1, 5, 4],
+            [2, 6, 7, 3],
+            [0, 4, 6, 2],
+            [1, 3, 7, 5],
+        ];
+        let mesh = kernel_api::TriMesh {
+            positions: (0..8).map(corner).collect(),
+            indices: quads
+                .iter()
+                .flat_map(|[a, b, c, d]| [*a, *b, *c, *a, *c, *d])
+                .collect(),
+            ..Default::default()
+        };
+        let centre = volume_centre(&mesh).unwrap();
+        assert!((centre - (lo + hi) * 0.5).length() < 1e-4, "{centre:?}");
     }
 
     #[test]
