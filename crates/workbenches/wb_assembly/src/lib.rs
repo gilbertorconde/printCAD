@@ -117,13 +117,21 @@ pub(crate) type Frames = Vec<(f32, Vec<(BodyId, BodyPlacement)>)>;
 
 /// An exploded view's steps being shown or made: the view (once it has a
 /// step), how far through them it stands, the bodies picked for the next
-/// step and its shift, and whether it plays.
+/// step and its shift, turn and spread, and whether it plays.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Stepping {
     view: Option<FeatureId>,
     at: f32,
     picked: Vec<BodyId>,
     shift: [f32; 3],
+    /// The world axis the next step turns about, through the middle of
+    /// its bodies: X, Y or Z.
+    turn_axis: usize,
+    /// How far it turns, degrees; none at 0.
+    turn_degrees: f32,
+    /// How far it pushes each body out from the middle of its bodies,
+    /// mm; none at 0.
+    radial: f32,
     playing: bool,
 }
 
@@ -1037,7 +1045,7 @@ impl AssemblyWorkbench {
         else {
             return;
         };
-        for (body, placement) in view.placed_at(placements, steps.at) {
+        for (body, placement) in view.placed_at(ctx.document, placements, steps.at) {
             ctx.document.set_body_placement(body, placement);
         }
     }
@@ -1057,7 +1065,7 @@ impl AssemblyWorkbench {
         else {
             return Vec::new();
         };
-        view.placed_at(placements, steps.at)
+        view.placed_at(ctx.document, placements, steps.at)
             .into_iter()
             .zip(placements)
             .filter(|((_, now), (_, was))| !now.after(&was.inverse()).is_identity())

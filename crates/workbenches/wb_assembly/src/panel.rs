@@ -862,6 +862,22 @@ impl AssemblyWorkbench {
                 Dim::Length,
             ));
         }
+        next.push(choice(
+            "turn_axis",
+            "Turn about",
+            &["X", "Y", "Z"],
+            steps.turn_axis.min(2),
+        ));
+        next.push(w::number(
+            "turn_degrees",
+            "Turn",
+            steps.turn_degrees,
+            Dim::Angle,
+        ));
+        next.push(w::hinted(
+            "How far each body moves straight out from the middle of the step's bodies",
+            w::number("radial", "Spread out", steps.radial, Dim::Length),
+        ));
         if !steps.picked.is_empty() {
             next.push(w::button("add_step", "Add step", ButtonStyle::Secondary));
         }
@@ -907,6 +923,18 @@ impl AssemblyWorkbench {
             PanelEvent::Number { id, value } if id == "at" => {
                 steps.at = *value as f32;
             }
+            PanelEvent::Choice { id, index } if id == "turn_axis" => {
+                steps.turn_axis = (*index).min(2);
+                return None;
+            }
+            PanelEvent::Number { id, value } if id == "turn_degrees" => {
+                steps.turn_degrees = *value as f32;
+                return None;
+            }
+            PanelEvent::Number { id, value } if id == "radial" => {
+                steps.radial = *value as f32;
+                return None;
+            }
             PanelEvent::Number { id, value } => {
                 let k = id
                     .strip_prefix("shift_")
@@ -921,9 +949,31 @@ impl AssemblyWorkbench {
             }
             PanelEvent::Button { id } if id == "add_step" && !steps.picked.is_empty() => {
                 let mut changed = view.clone();
+                let bodies = std::mem::take(&mut steps.picked);
+                // Turned about, and spread from, the middle of its bodies.
+                let middles: Vec<glam::Vec3> = bodies
+                    .iter()
+                    .filter_map(|b| {
+                        let at = placements.iter().find(|(p, _)| p == b)?.1;
+                        crate::exploded::centre(ctx.document, *b, &at).map(glam::Vec3::from_array)
+                    })
+                    .collect();
+                let middle = (middles.iter().copied().sum::<glam::Vec3>()
+                    / middles.len().max(1) as f32)
+                    .to_array();
                 changed.steps.push(crate::ExplodeStep {
-                    bodies: std::mem::take(&mut steps.picked),
+                    bodies,
                     shift: steps.shift,
+                    turn: (steps.turn_degrees != 0.0).then_some(crate::exploded::StepTurn {
+                        point: middle,
+                        axis: AXES[steps.turn_axis.min(2)],
+                        degrees: steps.turn_degrees,
+                    }),
+                    radial: (steps.radial != 0.0).then_some(crate::exploded::StepRadial {
+                        centre: middle,
+                        axis: None,
+                        distance: steps.radial,
+                    }),
                 });
                 steps.at = changed.steps.len() as f32;
                 edited = Some(changed);

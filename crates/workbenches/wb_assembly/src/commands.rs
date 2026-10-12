@@ -3318,7 +3318,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .map(|b| (b.id, b.placement))
                 .collect();
             Ok(Value::Array(
-                view.placed_at(&start, a.number("at")? as f32)
+                view.placed_at(ctx.document, &start, a.number("at")? as f32)
                     .into_iter()
                     .map(|(body, p)| {
                         json!({

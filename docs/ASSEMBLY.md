@@ -255,7 +255,11 @@ Exploded view (E) moves every body straight out from the middle of the
 assembly by the spread you set. Nothing is kept: the bodies go back when
 it closes. Click bodies while it is open to make a step of a view kept in
 the document: the bodies picked and a shift, Add step, and on to the next.
-The steps play in order (Progress, or Play for a step a second), each
+A step can also turn its bodies about X, Y or Z through their middle
+(Turn) and push each straight out from that middle (Spread out); in a
+script a step's `turn = {point, axis, degrees}` and `radial = {centre,
+axis, distance}` take any axis, a radial one with an axis pushing square
+away from it. The steps play in order (Progress, or Play for a step a second), each
 moved body drawn with a dashed line from where it sits; the view is a row
 of the tree, and a double-click shows it again. `asm.exploded_view` makes
 one from a script and `asm.explode_at` says where it puts every body.
