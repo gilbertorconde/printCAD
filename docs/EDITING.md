@@ -15,7 +15,9 @@ How documents, bodies, sketches and features behave in the app.
 
 - Clicking a body in the tree makes it the active body.
 - Clicking a feature makes it the active object. Tools then work on that
-  feature's body.
+  feature's body. Ctrl+click adds more features to the tree's selection,
+  or takes one out; the row menu's Suppress then acts on all of them as
+  one undo step.
 - Clicking a solid in the viewport selects the face under the cursor; near
   an outline it selects the whole edge instead. Ctrl+click adds or removes
   faces of the selected body, and edges; the status bar counts them ("3

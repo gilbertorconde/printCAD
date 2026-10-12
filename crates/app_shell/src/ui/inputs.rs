@@ -60,6 +60,8 @@ pub struct UiFrameInputs<'a> {
     pub pivot_screen_pos: Option<(f32, f32)>,
     pub axis_system: AxisSystem,
     pub tree_selection: Option<TreeItemId>,
+    /// Features Ctrl-clicked into the tree's selection beside it.
+    pub tree_also: &'a [core_document::FeatureId],
     pub active_document_object: Option<core_document::FeatureId>,
     /// The feature whose edit session is open (tree badge, breadcrumb).
     pub editing_feature: Option<core_document::FeatureId>,

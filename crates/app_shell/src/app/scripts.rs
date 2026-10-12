@@ -2664,9 +2664,7 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         UiCommand::TreeFeature { feature, command } => {
             let id = feature.0.to_string();
             match command {
-                TreeFeatureCommand::Suppress(on) => {
-                    Some(call("doc.suppress", json!({"id": id, "suppressed": on})))
-                }
+                TreeFeatureCommand::Suppress(on) => Some(suppress_call(*feature, *on)),
                 TreeFeatureCommand::Delete => Some(call("doc.delete", json!({"id": id}))),
                 TreeFeatureCommand::MoveUp => Some(call("doc.move", json!({"id": id, "up": true}))),
                 TreeFeatureCommand::MoveDown => {
@@ -3323,6 +3321,30 @@ fn feature_arg(document: &core_document::Document, a: &Args) -> Result<FeatureId
 pub(crate) fn suppress(document: &mut core_document::Document, feature: FeatureId, on: bool) {
     document.set_feature_suppressed(feature, on);
     document.mark_feature_dirty(feature);
+}
+
+/// Suppress or unsuppress each of `features`; the caller closes the
+/// gesture once, so they are one undo step.
+pub(crate) fn suppress_all(
+    document: &mut core_document::Document,
+    features: &[FeatureId],
+    on: bool,
+) {
+    for feature in features {
+        suppress(document, *feature, on);
+    }
+}
+
+/// The `doc.suppress` call that suppresses `feature`, or puts it back.
+pub(crate) fn suppress_call(feature: FeatureId, on: bool) -> core_document::Recorded {
+    let mut args = CommandArgs::new();
+    args.insert("id".into(), json!(feature.0.to_string()));
+    args.insert("suppressed".into(), json!(on));
+    core_document::Recorded {
+        id: "doc.suppress".to_string(),
+        args,
+        result: Value::Null,
+    }
 }
 
 /// Move `feature` a step earlier (`up`) or later, or say why it cannot go.
@@ -4054,6 +4076,60 @@ mod tests {
                 .unwrap();
             spec.check(&call.args).unwrap();
         }
+    }
+
+    #[test]
+    fn suppressing_a_tree_selection_is_one_undo_step_recorded_per_feature() {
+        let mut doc = core_document::Document::new("t");
+        let body = doc.create_body(None);
+        let features: Vec<FeatureId> = ["a", "b", "c"]
+            .into_iter()
+            .map(|name| {
+                doc.add_feature_in_body(
+                    core_document::DatumFeature {
+                        shape: core_document::DatumShape::Point,
+                        attachment: core_document::DatumAttachment::BasePlane(
+                            core_document::BasePlane::XY,
+                        ),
+                        offset: Default::default(),
+                    },
+                    name.to_string(),
+                    Some(body),
+                )
+                .unwrap()
+            })
+            .collect();
+        let mut journal = core_document::history::OpJournal::new(16);
+        journal.note(&mut doc);
+        let suppressed = |doc: &core_document::Document| {
+            features
+                .iter()
+                .map(|f| doc.get_feature_meta(*f).unwrap().suppressed)
+                .collect::<Vec<_>>()
+        };
+
+        let chosen = [features[0], features[2]];
+        suppress_all(&mut doc, &chosen, true);
+        journal.label_next("Suppress features");
+        journal.note(&mut doc);
+        assert_eq!(suppressed(&doc), [true, false, true]);
+        assert!(journal.undo(&mut doc).is_some());
+        assert_eq!(
+            suppressed(&doc),
+            [false, false, false],
+            "one undo puts both back"
+        );
+        assert!(journal.redo(&mut doc).is_some());
+        assert_eq!(suppressed(&doc), [true, false, true]);
+
+        // A recording replays it as the document's own command, per feature.
+        let call = suppress_call(chosen[1], true);
+        let spec = doc_commands()
+            .into_iter()
+            .find(|c| c.id == call.id)
+            .unwrap();
+        spec.check(&call.args).unwrap();
+        assert_eq!(call.args["id"], json!(chosen[1].0.to_string()));
     }
 
     #[test]

@@ -58,6 +58,10 @@ pub(crate) struct DocumentSession {
     pub active_document_object: Option<FeatureId>,
     pub active_body_id: Option<BodyId>,
     pub tree_selection: Option<TreeItemId>,
+    /// Features Ctrl-clicked into the tree's selection beside the row
+    /// they were added with; read through `tree_also`, which drops them
+    /// once that row is no longer the selection.
+    pub tree_also: Option<(TreeItemId, Vec<FeatureId>)>,
     pub current_file: Option<PathBuf>,
     /// Start page or workspace: a fresh tab shows the start page.
     pub screen: Screen,
@@ -282,6 +286,7 @@ impl DocumentSession {
             active_document_object: None,
             active_body_id: None,
             tree_selection: Some(TreeItemId::DocumentRoot),
+            tree_also: None,
             current_file: None,
             screen,
             document_save_rx: None,
@@ -362,6 +367,15 @@ impl DocumentSession {
             && self.document_save_rx.is_none()
             && self.step_import_pending.is_none()
             && self.server.status().opens_in_flight == 0
+    }
+
+    /// The features Ctrl-clicked into the tree's selection beside the
+    /// selected row.
+    pub fn tree_also(&self) -> &[FeatureId] {
+        match &self.tree_also {
+            Some((with, also)) if self.tree_selection == Some(*with) => also,
+            _ => &[],
+        }
     }
 
     /// Whether this tab still has work on its way through a worker or the

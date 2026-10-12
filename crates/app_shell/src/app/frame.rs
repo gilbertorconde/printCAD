@@ -828,6 +828,7 @@ impl PrintCadApp {
                     .camera
                     .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
+                let tree_also = self.session.tree_also().to_vec();
                 let ui_started = Instant::now();
                 let ui_result = ui_layer.run(
                     window,
@@ -853,6 +854,7 @@ impl PrintCadApp {
                         pivot_screen_pos,
                         axis_system: self.session.camera.axis_system(),
                         tree_selection: self.session.tree_selection,
+                        tree_also: &tree_also,
                         active_document_object: self.session.active_document_object,
                         editing_feature,
                         viewport_hud,

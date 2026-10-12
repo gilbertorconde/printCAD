@@ -52,6 +52,8 @@ struct DraggedFeature(FeatureId);
 #[derive(Debug, Default)]
 pub struct TreeUiResult {
     pub selection: Option<TreeItemId>,
+    /// A feature's row was Ctrl-clicked: it joins the selection, or leaves.
+    pub toggle_feature: Option<FeatureId>,
     pub activation: Option<TreeItemId>,
     /// The row under the pointer this frame. It drives the details line, so
     /// a glance tells what something is without committing a click.
@@ -857,6 +859,8 @@ fn build_imported_node(
 #[derive(Debug, Clone, Copy, Default)]
 pub struct TreeDrawOptions<'a> {
     pub selected: Option<TreeItemId>,
+    /// Features Ctrl-clicked into the selection beside `selected`.
+    pub also: &'a [FeatureId],
     /// A body picked in the viewport that the tree should jump to: its row
     /// is selected, every branch above it opens, and the list scrolls to it.
     pub reveal_body: Option<BodyId>,
@@ -879,12 +883,37 @@ impl<'a> TreeDrawOptions<'a> {
     pub fn new(selected: Option<TreeItemId>, editing: Option<FeatureId>, filter: &'a str) -> Self {
         Self {
             selected,
+            also: &[],
             reveal_body: None,
             editing,
             filter,
             scroll_to: None,
             bench_menus: None,
             keymap: None,
+        }
+    }
+
+    /// Draw these features selected too, beside `selected`.
+    pub fn with_also(mut self, also: &'a [FeatureId]) -> Self {
+        self.also = also;
+        self
+    }
+
+    /// The features a feature row's menu acts on: every selected feature
+    /// when the row is one of them, else the row's own.
+    fn acting_on(&self, feature: FeatureId) -> Vec<FeatureId> {
+        let selected = match self.selected {
+            Some(TreeItemId::Feature(id)) => Some(id),
+            _ => None,
+        };
+        let all: Vec<FeatureId> = selected
+            .into_iter()
+            .chain(self.also.iter().copied())
+            .collect();
+        if all.contains(&feature) {
+            all
+        } else {
+            vec![feature]
         }
     }
 
@@ -1076,7 +1105,8 @@ fn draw_row(
     result: &mut TreeUiResult,
     node: Option<&TreeNode>,
 ) -> bool {
-    let selected = options.selected == Some(spec.id);
+    let selected = options.selected == Some(spec.id)
+        || matches!(spec.id, TreeItemId::Feature(id) if options.also.contains(&id));
     // A feature's row drags to another place in the history.
     let feature = match spec.id {
         TreeItemId::Feature(id) => Some(id),
@@ -1491,7 +1521,19 @@ fn attach_feature_menu(
             } else {
                 "Suppress"
             };
-            if ui.button(suppress_label).clicked() {
+            // With several features selected, it takes them all to this
+            // row's opposite state.
+            let together = options.acting_on(feature_id);
+            if together.len() > 1 {
+                let label = format!("{suppress_label} {} features", together.len());
+                if ui.button(label).clicked() {
+                    result.commands.push(super::UiCommand::SuppressFeatures {
+                        features: together,
+                        suppressed: !node.suppressed,
+                    });
+                    ui.close();
+                }
+            } else if ui.button(suppress_label).clicked() {
                 command = Some(TreeFeatureCommand::Suppress(!node.suppressed));
                 ui.close();
             }
@@ -1944,7 +1986,12 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
         result.hovered = Some(id);
     }
     if response.clicked() {
-        result.selection = Some(id);
+        match id {
+            TreeItemId::Feature(feature) if response.ctx.input(|i| i.modifiers.command) => {
+                result.toggle_feature = Some(feature);
+            }
+            _ => result.selection = Some(id),
+        }
     }
     if response.double_clicked() {
         result.activation = Some(id);
@@ -1982,6 +2029,18 @@ mod tests {
             out.push(node.id);
             collect_ids(&node.children, out);
         }
+    }
+
+    #[test]
+    fn a_feature_menu_acts_on_the_whole_selection_only_from_inside_it() {
+        let [a, b, c] = [(); 3].map(|_| FeatureId(Uuid::new_v4()));
+        let also = [b];
+        let options = TreeDrawOptions::new(Some(TreeItemId::Feature(a)), None, "").with_also(&also);
+        assert_eq!(options.acting_on(a), [a, b]);
+        assert_eq!(options.acting_on(b), [a, b]);
+        assert_eq!(options.acting_on(c), [c], "a row outside it acts alone");
+        let alone = TreeDrawOptions::new(Some(TreeItemId::Feature(a)), None, "");
+        assert_eq!(alone.acting_on(a), [a]);
     }
 
     #[test]

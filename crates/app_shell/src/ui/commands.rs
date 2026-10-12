@@ -188,6 +188,14 @@ pub enum UiCommand {
     },
     SelectTreeItem(TreeItemId),
     ActivateTreeItem(TreeItemId),
+    /// A Ctrl-click on a feature's row: add it to the tree's selection, or
+    /// take it out.
+    ToggleTreeFeature(core_document::FeatureId),
+    /// Suppress or unsuppress several features as one undo step.
+    SuppressFeatures {
+        features: Vec<core_document::FeatureId>,
+        suppressed: bool,
+    },
     /// History context-menu action on a tree feature row.
     TreeFeature {
         feature: core_document::FeatureId,

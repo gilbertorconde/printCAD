@@ -152,7 +152,9 @@ what was there.
   body's features to click; a feature row also drags to its place: above
   a row's middle it goes before it, below it after), Freeze body, Cut, Copy, Paste, Delete, Copy
   formulas and Paste formulas (onto a feature of the same kind),
-  Recompute, Send to console, Properties.
+  Recompute, Send to console, Properties. Ctrl+click adds feature rows to
+  the selection; Suppress on one of them suppresses (or unsuppresses)
+  them all as one undo step.
 - A body: Select, Rename, Hide, Show only this, Show all, Appearance,
   Placement, Freeze (its features are not rebuilt until it thaws; the row
   shows FROZEN), Make unselectable (clicks in the view pass through it),

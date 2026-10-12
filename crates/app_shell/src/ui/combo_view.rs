@@ -54,6 +54,8 @@ pub struct ComboViewInputs<'a> {
     pub registry: &'a mut core_document::DocumentService,
     pub host: HostCtxParams,
     pub active_tree_selection: Option<TreeItemId>,
+    /// Features Ctrl-clicked into the tree's selection beside it.
+    pub tree_also: &'a [core_document::FeatureId],
     pub active_document_object: Option<core_document::FeatureId>,
     pub editing_feature: Option<core_document::FeatureId>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
@@ -81,6 +83,7 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         registry,
         host,
         active_tree_selection,
+        tree_also,
         active_document_object,
         editing_feature,
         reveal_body,
@@ -194,12 +197,18 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                             editing_feature,
                             filter.trim(),
                         )
+                        .with_also(tree_also)
                         .revealing(reveal_body)
                         .with_bench_menus(document, registry)
                         .with_keys(keymap),
                     );
                     result.bench_command = tree_ui.bench_command;
                     result.tree_selection = tree_ui.selection;
+                    if let Some(feature) = tree_ui.toggle_feature {
+                        result
+                            .commands
+                            .push(super::UiCommand::ToggleTreeFeature(feature));
+                    }
                     result.tree_activation = tree_ui.activation;
                     result.tree_hovered = tree_ui.hovered;
                     result.imported_visibility_change = tree_ui.imported_visibility_change;
