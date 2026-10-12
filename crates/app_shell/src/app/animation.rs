@@ -1,8 +1,9 @@
 //! Animations a bench records (a joint's motion swept through its range):
 //! the scene drawn once per frame, as the camera sees it, into an animated
 //! PNG, a GIF, a folder of numbered PNG frames, or with `ffmpeg` on the
-//! system a WebM or MP4 video, by the kind of file saved. Frames are drawn on the CPU, on a thread of their own, all framed
-//! alike so the view holds still while the model moves.
+//! system a WebM or MP4 video, by the ending of the name saved to. Frames
+//! are drawn on the CPU, on a thread of their own, all framed alike so the
+//! view holds still while the model moves.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -73,13 +74,91 @@ impl PrintCadApp {
     }
 }
 
-/// The extension the save dialog offers for a folder of frames: the
-/// folder takes the file's name without it.
+/// The extension that saves a folder of frames: the folder takes the
+/// file's name without it.
 pub(crate) const FRAMES_EXTENSION: &str = "frames";
 
-/// Draw `animation` and write it to `path`, away from the window, as the
-/// path's extension says: `gif`, a folder of frames for
-/// [`FRAMES_EXTENSION`], else an animated PNG. The log says when it is done.
+/// The kinds of file an animation is saved as, each named by the
+/// extension that ends the file's name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    AnimatedPng,
+    Gif,
+    Frames,
+    Webm,
+    Mp4,
+}
+
+impl Kind {
+    const ALL: [Kind; 5] = [
+        Kind::AnimatedPng,
+        Kind::Gif,
+        Kind::Frames,
+        Kind::Webm,
+        Kind::Mp4,
+    ];
+
+    pub(crate) fn extension(self) -> &'static str {
+        match self {
+            Kind::AnimatedPng => "png",
+            Kind::Gif => "gif",
+            Kind::Frames => FRAMES_EXTENSION,
+            Kind::Webm => "webm",
+            Kind::Mp4 => "mp4",
+        }
+    }
+
+    /// What `path` is saved as, and where: the kind its extension names,
+    /// in any case; a name ending otherwise, or not at all, is an animated
+    /// PNG and is given `.png`.
+    pub(crate) fn of(path: &std::path::Path) -> (Kind, PathBuf) {
+        let named = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(str::to_ascii_lowercase)
+            .and_then(|e| Kind::ALL.into_iter().find(|k| k.extension() == e));
+        match named {
+            Some(kind) => (kind, path.to_path_buf()),
+            None => {
+                let mut name = path.as_os_str().to_owned();
+                name.push(".png");
+                (Kind::AnimatedPng, PathBuf::from(name))
+            }
+        }
+    }
+}
+
+/// The save dialog's title, its one file type and that type's extensions,
+/// the videos only with ffmpeg. The dialog reports only the path chosen,
+/// never the type picked, so the name's ending decides and the dialog
+/// offers no choice of type that could disagree with it.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn save_dialog(videos: bool) -> (String, String, Vec<&'static str>) {
+    let extensions: Vec<&'static str> = Kind::ALL
+        .into_iter()
+        .filter(|k| videos || !matches!(k, Kind::Webm | Kind::Mp4))
+        .map(Kind::extension)
+        .collect();
+    let mut said = vec!["no ending or .png an animated PNG", ".gif a GIF"];
+    if videos {
+        said.push(".webm or .mp4 a video");
+    }
+    said.push(".frames a folder of PNG frames");
+    let title = format!("Record the motion ({})", said.join(", "));
+    let label = format!(
+        "Animation ({})",
+        extensions
+            .iter()
+            .map(|e| format!(".{e}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    (title, label, extensions)
+}
+
+/// Draw `animation` and write it to `path`, away from the window, in the
+/// kind the path's extension names ([`Kind::of`]). The log says when it
+/// is done.
 pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
     let spawned = crate::platform::spawn("printcad-animation", move || {
         match write(&animation, &path) {
@@ -96,31 +175,24 @@ pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
     }
 }
 
-/// Write the animation where `path` says, in its kind (an animated PNG
-/// for a path without an extension, which it is given); where it went.
+/// Write the animation where `path` says, in the kind [`Kind::of`] makes
+/// of it; where it went.
 fn write(animation: &Animation, path: &std::path::Path) -> Result<PathBuf, String> {
-    let extension = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase);
-    let path = &match extension {
-        Some(_) => path.to_path_buf(),
-        None => path.with_extension("png"),
-    };
+    let (kind, path) = Kind::of(path);
     let save = |target: &std::path::Path, bytes: Vec<u8>| {
         crate::platform::write(target, &bytes)
             .map_err(|err| format!("could not save {}: {err}", target.display()))
     };
-    match extension.as_deref() {
-        Some(kind @ ("webm" | "mp4")) => {
-            encode_video(animation, path, kind)?;
-            Ok(path.to_path_buf())
+    match kind {
+        Kind::Webm | Kind::Mp4 => {
+            encode_video(animation, &path, kind)?;
+            Ok(path)
         }
-        Some("gif") => {
-            save(path, encode_gif(animation)?)?;
-            Ok(path.to_path_buf())
+        Kind::Gif => {
+            save(&path, encode_gif(animation)?)?;
+            Ok(path)
         }
-        Some(FRAMES_EXTENSION) => {
+        Kind::Frames => {
             let folder = path.with_extension("");
             std::fs::create_dir_all(&folder)
                 .map_err(|err| format!("could not make {}: {err}", folder.display()))?;
@@ -136,9 +208,9 @@ fn write(animation: &Animation, path: &std::path::Path) -> Result<PathBuf, Strin
             }
             Ok(folder)
         }
-        _ => {
-            save(path, encode(animation)?)?;
-            Ok(path.to_path_buf())
+        Kind::AnimatedPng => {
+            save(&path, encode(animation)?)?;
+            Ok(path)
         }
     }
 }
@@ -187,15 +259,15 @@ pub(crate) fn ffmpeg() -> Option<PathBuf> {
         .find(|candidate| candidate.is_file())
 }
 
-/// The frames as a `kind` video (`webm`, VP9; `mp4`, H.264) at `path`,
+/// The frames as a `kind` video (WebM, VP9; MP4, H.264) at `path`,
 /// through `ffmpeg`, the frames handed to it raw.
-fn encode_video(animation: &Animation, path: &std::path::Path, kind: &str) -> Result<(), String> {
+fn encode_video(animation: &Animation, path: &std::path::Path, kind: Kind) -> Result<(), String> {
     use std::io::Write as _;
     let ffmpeg = ffmpeg().ok_or("a video needs ffmpeg, which is not on this system")?;
     let frames = frames(animation)?;
     let rate = format!("{:.3}", 1000.0 / f64::from(animation.frame_ms.max(1)));
     let codec: &[&str] = match kind {
-        "mp4" => &["-c:v", "libx264", "-crf", "20"],
+        Kind::Mp4 => &["-c:v", "libx264", "-crf", "20"],
         _ => &["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32"],
     };
     let mut child = std::process::Command::new(ffmpeg)
@@ -338,6 +410,49 @@ mod tests {
         let control = info.animation_control().expect("animated");
         assert_eq!(control.num_frames, 4);
         assert_eq!(control.num_plays, 0, "on a loop");
+    }
+
+    /// The name's ending alone picks the kind, any case; any other ending,
+    /// or none, is an animated PNG given `.png`.
+    #[test]
+    fn the_name_s_ending_picks_the_kind_saved() {
+        let of = |name: &str| Kind::of(std::path::Path::new(name));
+        assert_eq!(of("/v/hinge.webm"), (Kind::Webm, "/v/hinge.webm".into()));
+        assert_eq!(of("/v/HINGE.MP4"), (Kind::Mp4, "/v/HINGE.MP4".into()));
+        assert_eq!(of("/v/hinge.gif"), (Kind::Gif, "/v/hinge.gif".into()));
+        assert_eq!(
+            of("/v/shot.frames"),
+            (Kind::Frames, "/v/shot.frames".into())
+        );
+        assert_eq!(
+            of("/v/hinge.png"),
+            (Kind::AnimatedPng, "/v/hinge.png".into())
+        );
+        assert_eq!(
+            of("/v/Motion 1"),
+            (Kind::AnimatedPng, "/v/Motion 1.png".into())
+        );
+        assert_eq!(of("/v/arm.v2"), (Kind::AnimatedPng, "/v/arm.v2.png".into()));
+    }
+
+    /// The dialog's one file type lists what can be saved, the videos only
+    /// with ffmpeg, and its title says how the ending picks.
+    #[test]
+    fn the_save_dialog_offers_one_type_naming_every_ending() {
+        let (title, label, extensions) = save_dialog(false);
+        assert_eq!(extensions, ["png", "gif", "frames"]);
+        assert_eq!(label, "Animation (.png, .gif, .frames)");
+        assert!(!title.contains("webm"), "{title}");
+        let (title, label, extensions) = save_dialog(true);
+        assert_eq!(extensions, ["png", "gif", "frames", "webm", "mp4"]);
+        assert!(label.contains(".webm, .mp4"), "{label}");
+        assert!(title.contains(".webm or .mp4 a video"), "{title}");
+        for kind in Kind::ALL {
+            assert_eq!(
+                Kind::of(&PathBuf::from(format!("a.{}", kind.extension()))).0,
+                kind
+            );
+        }
     }
 
     #[test]
