@@ -282,7 +282,7 @@ fn a_projection_marks_only_the_side_facing_the_sketch() {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve projected across a periodic face's seam, \"a curve to split along runs along the face's boundary\""]
+#[ignore = "kernel: split_face refuses a closed curve projected across a periodic face's seam, \"a curve to split along runs along the face's boundary\" (ogeom-rs#208)"]
 fn a_projection_across_the_cylinders_seam() {
     // The cylinder's seam runs up its +X side, through the rectangle.
     for mode in [ProjectMode::Emboss, ProjectMode::Deboss] {
