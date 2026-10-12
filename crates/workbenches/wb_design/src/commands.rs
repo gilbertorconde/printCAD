@@ -848,6 +848,16 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                          original and grow evenly up to `factor`. A `factor` given on its \
                          own is refused.",
                     )
+                    .note(
+                        "`steps` may hold any of `{Linear = {axis, length, occurrences}}`, \
+                         `{Polar = {axis, angle_deg, occurrences}}`, `{Mirror = {plane}}`, \
+                         `{Scale = ...}`, `{Circular = {axis, outward, spacing, counts}}` \
+                         (concentric rings about `axis`, ring i moved i × `spacing` along \
+                         `outward`, `counts[i]` round it) and `{Points = {sketch}}` (a copy \
+                         at each of the sketch's points after its first, moved by how far it \
+                         is from the first), each applied to every result of the steps \
+                         before.",
+                    )
                     .see_also("design.linear_pattern")
                     .example(
                         "A block repeated at 1.5 and 2 times its size",

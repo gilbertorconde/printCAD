@@ -3193,6 +3193,8 @@ pub fn feature_editor(
                     TransformStep::Polar { .. } => "Polar",
                     TransformStep::Mirror { .. } => "Mirror",
                     TransformStep::Scale { .. } => "Scale",
+                    TransformStep::Circular { .. } => "Circular",
+                    TransformStep::Points { .. } => "Points",
                 };
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {label}", i + 1), FONT_XS, TEXT1);
@@ -3303,6 +3305,65 @@ pub fn feature_editor(
                         }
                         changed |= count_drag(ui, fx, occurrences, "Occurrences:");
                     }
+                    TransformStep::Circular {
+                        axis,
+                        outward,
+                        spacing,
+                        counts,
+                    } => {
+                        changed |= pattern_axis_editor(
+                            ui,
+                            ctx,
+                            (body, feature_id),
+                            axis,
+                            ("mt_circ", feature_id, i),
+                        );
+                        ui.label(
+                            RichText::new("Rings step out along")
+                                .font(sans(FONT_XS))
+                                .color(TEXT2),
+                        );
+                        changed |= pattern_axis_editor(
+                            ui,
+                            ctx,
+                            (body, feature_id),
+                            outward,
+                            ("mt_circ_out", feature_id, i),
+                        );
+                        changed |= mm_drag(ui, fx, spacing, "Ring spacing:");
+                        let mut drop = None;
+                        for (ring, count) in counts.iter_mut().enumerate() {
+                            ui.horizontal(|ui| {
+                                changed |=
+                                    count_drag(ui, fx, count, &format!("Ring {}:", ring + 1));
+                                if ring > 0 && small_secondary_button(ui, "✕").clicked() {
+                                    drop = Some(ring);
+                                }
+                            });
+                        }
+                        if let Some(ring) = drop {
+                            counts.remove(ring);
+                            changed = true;
+                        }
+                        if small_secondary_button(ui, "+ Ring").clicked() {
+                            let last = counts.last().copied().unwrap_or(6);
+                            counts.push(last + 6);
+                            changed = true;
+                        }
+                    }
+                    TransformStep::Points { sketch } => {
+                        if let Some(picked) = sketch_combo(
+                            ui,
+                            ctx,
+                            body,
+                            ("mt_points", feature_id),
+                            Some(*sketch),
+                            "Points",
+                        ) {
+                            *sketch = picked;
+                            changed = true;
+                        }
+                    }
                 }
             }
             fx.prefix = None;
@@ -3331,6 +3392,24 @@ pub fn feature_editor(
                     steps.push(TransformStep::Mirror {
                         plane: MirrorPlane::YZ,
                     });
+                    changed = true;
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                if secondary_button(ui, "+ Circular").clicked() {
+                    steps.push(TransformStep::Circular {
+                        axis: PatternAxis::Z,
+                        outward: PatternAxis::X,
+                        spacing: 10.0,
+                        counts: vec![6, 12],
+                    });
+                    changed = true;
+                }
+                if let Some((sketch, _)) =
+                    crate::build::sketches_of_body(ctx.document, body).first()
+                    && secondary_button(ui, "+ Points").clicked()
+                {
+                    steps.push(TransformStep::Points { sketch: *sketch });
                     changed = true;
                 }
                 if secondary_button(ui, "+ Scale").clicked() {

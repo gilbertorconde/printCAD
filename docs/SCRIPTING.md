@@ -3877,6 +3877,7 @@ Notes:
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - It makes a Multi Transform whose fields are `originals` and `steps`, one `{Scale = {factor, center, occurrences}}`: 1.5 about the body's origin, 2 occurrences, when left out. The occurrences count the original and grow evenly up to `factor`. A `factor` given on its own is refused.
+- `steps` may hold any of `{Linear = {axis, length, occurrences}}`, `{Polar = {axis, angle_deg, occurrences}}`, `{Mirror = {plane}}`, `{Scale = ...}`, `{Circular = {axis, outward, spacing, counts}}` (concentric rings about `axis`, ring i moved i × `spacing` along `outward`, `counts[i]` round it) and `{Points = {sketch}}` (a copy at each of the sketch's points after its first, moved by how far it is from the first), each applied to every result of the steps before.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
 

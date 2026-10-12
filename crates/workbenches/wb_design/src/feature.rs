@@ -776,6 +776,20 @@ pub enum TransformStep {
         center: [f32; 3],
         occurrences: u32,
     },
+    /// Rings about `axis`: ring `i` moved `i × spacing` along `outward`,
+    /// then spread evenly round the axis, `counts[i]` occurrences in it,
+    /// the original first in the first ring.
+    Circular {
+        axis: PatternAxis,
+        outward: PatternAxis,
+        spacing: f32,
+        counts: Vec<u32>,
+    },
+    /// An occurrence at every point of `sketch` after its first, moved by
+    /// how far that point is from the first, where the original stands.
+    Points {
+        sketch: FeatureId,
+    },
 }
 
 /// A hexagonal pocket for a captive nut, at one end of a hole: sized
@@ -2308,15 +2322,25 @@ impl WorkbenchFeature for DesignFeature {
             }
             DesignFeature::MultiTransform { steps, .. } => steps
                 .iter()
-                .filter_map(|step| match step {
+                .flat_map(|step| match step {
                     TransformStep::Linear { axis, .. } | TransformStep::Polar { axis, .. } => {
-                        Some(axis)
+                        vec![axis]
                     }
-                    _ => None,
+                    TransformStep::Circular { axis, outward, .. } => vec![axis, outward],
+                    _ => Vec::new(),
                 })
                 .collect(),
             _ => Vec::new(),
         };
+        if let DesignFeature::MultiTransform { steps, .. } = self {
+            for step in steps {
+                if let TransformStep::Points { sketch } = step
+                    && !deps.contains(sketch)
+                {
+                    deps.push(*sketch);
+                }
+            }
+        }
         for reference in axes.into_iter().filter_map(PatternAxis::reference) {
             if !deps.contains(&reference) {
                 deps.push(reference);

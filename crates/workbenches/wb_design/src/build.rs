@@ -2990,6 +2990,69 @@ fn linear_transforms(
         .collect())
 }
 
+/// Concentric rings about the axis through `origin` along `dir`: ring `i`
+/// moved `i × spacing` along `outward` (square to the axis), then turned
+/// round it in `counts[i]` even steps; the original, ring 0's first, left
+/// out.
+fn circular_transforms(
+    (origin, dir): ([f64; 3], [f64; 3]),
+    outward: [f64; 3],
+    spacing: f32,
+    counts: &[u32],
+) -> Result<Vec<Mat4>, String> {
+    if counts.is_empty() || counts.contains(&0) {
+        return Err("every ring needs at least one occurrence".into());
+    }
+    let axis = normalize(dir)?;
+    let along = dot3(outward, axis);
+    let out = normalize([
+        outward[0] - axis[0] * along,
+        outward[1] - axis[1] * along,
+        outward[2] - axis[2] * along,
+    ])
+    .map_err(|_| "the rings' outward direction runs along the axis".to_string())?;
+    let mut transforms = Vec::new();
+    for (ring, count) in counts.iter().enumerate() {
+        let step = f64::from(spacing) * ring as f64;
+        let shift = mat_translation(out.map(|c| c * step));
+        for k in 0..*count {
+            if ring == 0 && k == 0 {
+                continue;
+            }
+            let turn = mat_rotation(origin, axis, 360.0 * f64::from(k) / f64::from(*count))?;
+            transforms.push(mat_mul(&turn, &shift));
+        }
+    }
+    Ok(transforms)
+}
+
+/// A shift to every point of `sketch` after its first, by how far it is
+/// from the first, in the sketch's body frame.
+fn point_transforms(document: &Document, sketch: FeatureId) -> Result<Vec<Mat4>, String> {
+    let feature = load_sketch(document, sketch)?;
+    let plane = profile::plane_of(&feature.plane);
+    let points: Vec<[f64; 3]> = feature
+        .sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) if !feature.sketch.is_construction(p.id) => Some(p.position),
+            _ => None,
+        })
+        .map(|p| {
+            let (x, y) = (f64::from(p.x), f64::from(p.y));
+            std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * x + plane.y_axis[k] * y)
+        })
+        .collect();
+    let Some(first) = points.first().copied() else {
+        return Err("the points sketch has no points".into());
+    };
+    Ok(points[1..]
+        .iter()
+        .map(|p| mat_translation(std::array::from_fn(|k| p[k] - first[k])))
+        .collect())
+}
+
 fn polar_transforms(
     (origin, dir): ([f64; 3], [f64; 3]),
     angle_deg: f32,
@@ -3144,6 +3207,18 @@ fn multi_transforms(document: &Document, steps: &[TransformStep]) -> Result<Vec<
                     })
                     .collect()
             }
+            TransformStep::Circular {
+                axis,
+                outward,
+                spacing,
+                counts,
+            } => circular_transforms(
+                pattern_axis(document, axis)?,
+                pattern_axis(document, outward)?.1,
+                *spacing,
+                counts,
+            )?,
+            TransformStep::Points { sketch } => point_transforms(document, *sketch)?,
         };
         let mut next = Vec::with_capacity(accumulated.len() * (step_transforms.len() + 1));
         for base in &accumulated {
@@ -4855,6 +4930,55 @@ mod tests {
             "{}",
             refused.message
         );
+    }
+
+    /// Two rings about Z, 4 and 8 round, the second 10 mm out along X:
+    /// eleven copies (the original left out), the outer ring's at radius
+    /// 10 from where the original stands, a quarter and an eighth apart.
+    #[test]
+    fn circular_rings_spread_their_counts_round_the_axis() {
+        let z = ([0.0; 3], [0.0, 0.0, 1.0]);
+        let ts = circular_transforms(z, [1.0, 0.0, 0.0], 10.0, &[4, 8]).unwrap();
+        assert_eq!(ts.len(), 3 + 8);
+        let moved = |t: &Mat4| transform_point(t, [0.0; 3]);
+        let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9);
+        // The first ring turns the original in place.
+        assert!(close(moved(&ts[0]), [0.0; 3]));
+        assert!((ts[0][1][0] - 1.0).abs() < 1e-9, "a quarter turn: x to y");
+        // The outer ring: out along X, then round by eighths.
+        assert!(close(moved(&ts[3]), [10.0, 0.0, 0.0]));
+        let r = 10.0 * std::f64::consts::FRAC_1_SQRT_2;
+        assert!(close(moved(&ts[4]), [r, r, 0.0]), "{:?}", moved(&ts[4]));
+        assert!(
+            circular_transforms(z, [0.0, 0.0, 1.0], 10.0, &[4, 8]).is_err(),
+            "outward along the axis"
+        );
+        assert!(circular_transforms(z, [1.0, 0.0, 0.0], 10.0, &[4, 0]).is_err());
+    }
+
+    /// A copy at each point of the sketch after the first, moved by how far
+    /// it is from the first; construction points left out.
+    #[test]
+    fn a_points_step_moves_copies_to_each_point() {
+        let (mut doc, body, _) = doc_with_body_sketch();
+        let mut points = Sketch::new("points");
+        for (x, y) in [(1.0, 1.0), (6.0, 1.0), (1.0, 9.0)] {
+            points.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+        }
+        let guide = points.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(50.0, 50.0))));
+        points.set_construction(guide, true);
+        let plane = points.plane;
+        let sketch = doc
+            .add_feature_in_body(
+                SketchFeature::new(points, plane),
+                "points".into(),
+                Some(body),
+            )
+            .unwrap();
+        let ts = point_transforms(&doc, sketch).unwrap();
+        assert_eq!(ts.len(), 2);
+        assert_eq!(transform_point(&ts[0], [0.0; 3]), [5.0, 0.0, 0.0]);
+        assert_eq!(transform_point(&ts[1], [0.0; 3]), [0.0, 8.0, 0.0]);
     }
 
     #[test]
