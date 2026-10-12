@@ -1011,7 +1011,7 @@ impl PrintCadApp {
 
     /// [`Self::fit_view_to_scene`] without the log line.
     pub(crate) fn frame_scene(&mut self) {
-        if let Some(aabb) = document_imported_aabb(&self.session.document) {
+        if let Some(aabb) = self.drawn_bodies_aabb() {
             let (center, radius) = aabb_fit_center_radius(aabb.0, aabb.1);
             self.session.camera.reset_to_fit(
                 center,
@@ -1024,6 +1024,27 @@ impl PrintCadApp {
                 .camera
                 .reset_to_fit(Vec3::ZERO, 50.0, None, &self.user_settings.camera);
         }
+    }
+
+    /// The box around the bodies as the view draws them: the document's
+    /// geometry and, while a feature is edited, its preview's tool, which
+    /// stands in for a body that has no built shape yet.
+    fn drawn_bodies_aabb(&self) -> Option<(Vec3, Vec3)> {
+        let previews = self
+            .session
+            .previews
+            .iter()
+            .filter(|(body, _)| {
+                self.session
+                    .document
+                    .imported_body_effective_visible(**body)
+            })
+            .filter_map(|(_, preview)| preview.tool.bounds())
+            .map(|(lo, hi)| (Vec3::from_array(lo), Vec3::from_array(hi)));
+        document_imported_aabb(&self.session.document)
+            .into_iter()
+            .chain(previews)
+            .reduce(|(lo, hi), (a, b)| (lo.min(a), hi.max(b)))
     }
 
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {
