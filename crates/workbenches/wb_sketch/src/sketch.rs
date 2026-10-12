@@ -122,6 +122,11 @@ pub struct TextBlock {
     pub text: String,
     /// A font the application carries, by name, or a font file's path.
     pub font: String,
+    /// The document asset holding the font file, for a font the
+    /// application does not carry: what the outlines are made from on any
+    /// machine, the path in `font` only naming where it came from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_asset: Option<Uuid>,
     /// The font's em, in millimetres.
     pub size: f32,
     /// Millimetres added between letters.

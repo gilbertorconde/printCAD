@@ -339,6 +339,7 @@ fn cases() -> Vec<(Sketch, Vec<Uuid>)> {
         id: Uuid::from_u128(800),
         text: "I".into(),
         font: crate::text::DEFAULT_FONT.into(),
+        font_asset: None,
         size: 10.0,
         spacing: 0.0,
         angle: 0.0,

@@ -1283,7 +1283,11 @@ impl SketchWorkbench {
         };
         let (cursor, tol) = self.landing(ctx, &feature, tool, cursor);
         if tool == "sketch.text" {
-            let spec = self.text_draft.clone();
+            let mut spec = self.text_draft.clone();
+            if let Err(why) = text::load_font(ctx.document, &mut spec) {
+                ctx.log_warn(why);
+                return InputResult::consumed();
+            }
             return self.sketch_edit(
                 ctx,
                 "sketch.text",
@@ -6253,6 +6257,9 @@ pub(crate) fn text_args(spec: &text::TextSpec, at: Option<Vec2D>) -> serde_json:
         "spacing": spec.spacing,
         "angle": spec.angle,
     });
+    if let Some(asset) = spec.font_asset {
+        args["font_asset"] = serde_json::json!(asset.to_string());
+    }
     if let Some(at) = at {
         args["at"] = serde_json::json!([at.x, at.y]);
     }

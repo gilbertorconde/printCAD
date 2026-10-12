@@ -1036,6 +1036,16 @@ pub fn register(context: &mut WorkbenchContext) {
             "IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path \
              (IBM Plex Sans)",
         )
+        .optional(
+            "font_asset",
+            ParamKind::String,
+            "The document asset a font file was kept as, which a recording names",
+        )
+        .note(
+            "A font file named by its path is kept in the document the first time it is \
+             used, so the text is made again from it on any machine; a font neither carried \
+             nor kept is refused with why.",
+        )
         .optional("size", ParamKind::Number, "The font's em, mm (10)")
         .optional(
             "spacing",
@@ -1083,6 +1093,7 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("block", ParamKind::Id, "The text block, or its point")
         .optional("text", ParamKind::String, "")
         .optional("font", ParamKind::String, "")
+        .optional("font_asset", ParamKind::String, "")
         .optional("size", ParamKind::Number, "mm")
         .optional("spacing", ParamKind::Number, "mm")
         .optional("angle", ParamKind::Number, "degrees")
@@ -2331,6 +2342,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 ..Default::default()
             };
             text_options(&a, &mut spec)?;
+            crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
             let at = points(Some(&json!([args
                 .get("at")
                 .cloned()
@@ -2362,6 +2374,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 spec.text = t.to_string();
             }
             text_options(&a, &mut spec)?;
+            crate::text::load_font(ctx.document, &mut spec).map_err(CommandError::failed)?;
             crate::text::change(sketch, id, &spec).map_err(CommandError::failed)?;
             Value::Null
         }
@@ -3054,6 +3067,13 @@ fn unit(v: [f64; 3], name: &str) -> Result<[f64; 3], CommandError> {
 fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), CommandError> {
     if let Some(font) = a.opt_string("font")? {
         spec.font = font.to_string();
+        spec.font_asset = None;
+    }
+    if let Some(asset) = a.opt_string("font_asset")? {
+        spec.font_asset = Some(
+            Uuid::parse_str(asset)
+                .map_err(|_| CommandError::bad("font_asset", "must be an asset's id"))?,
+        );
     }
     if let Some(size) = a.opt_number("size")? {
         if size <= 0.0 {
@@ -4954,6 +4974,61 @@ mod tests {
             json!({"sketch": s, "items": length, "as": "diameter"}),
         );
         assert!(refused.is_err(), "a length is no circle's size");
+    }
+
+    /// Text in a font file named by its path keeps the font in the
+    /// document: changed after the file is gone, it is made again from the
+    /// kept copy, and a second text in the same file keeps no second one.
+    #[test]
+    fn a_font_file_is_kept_in_the_document() {
+        let path = std::env::temp_dir().join(format!("printcad-font-{}.ttf", Uuid::new_v4()));
+        std::fs::write(&path, crate::text::FONTS[2].1).unwrap();
+        let font = path.to_string_lossy().to_string();
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let fonts = |doc: &Document| {
+            doc.assets()
+                .filter(|a| a.metadata.get("kind").and_then(|k| k.as_str()) == Some("font"))
+                .count()
+        };
+        let made = call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": s, "text": "A", "at": [0, 0], "font": font}),
+        )
+        .unwrap();
+        assert_eq!(fonts(&doc), 1);
+        std::fs::remove_file(&path).unwrap();
+        call(
+            &mut doc,
+            "sketch.text_edit",
+            json!({"sketch": s, "block": made["text"], "text": "AB", "size": 14}),
+        )
+        .expect("made again from the kept font");
+        let block = sketch_of(&doc, &s).texts[0].clone();
+        assert_eq!((block.text.as_str(), block.size), ("AB", 14.0));
+        assert!(block.font_asset.is_some());
+
+        std::fs::write(&path, crate::text::FONTS[2].1).unwrap();
+        call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": s, "text": "C", "at": [0, 20], "font": font}),
+        )
+        .unwrap();
+        assert_eq!(fonts(&doc), 1, "the same file is kept once");
+        std::fs::remove_file(&path).unwrap();
+        let missing = call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": s, "text": "D", "at": [0, 40], "font": "/nowhere/font.ttf"}),
+        );
+        assert!(
+            missing
+                .unwrap_err()
+                .to_string()
+                .contains("cannot read the font")
+        );
     }
 
     #[test]

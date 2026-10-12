@@ -772,6 +772,10 @@ impl SketchWorkbench {
                 changed = text_fields(ui, "sketch_text_block", &mut spec);
             });
         if changed {
+            if let Err(why) = crate::text::load_font(ctx.document, &mut spec) {
+                ctx.log_warn(why);
+                return;
+            }
             let mut args = crate::text_args(&spec, None);
             args["block"] = serde_json::json!(id.to_string());
             self.sketch_edit(

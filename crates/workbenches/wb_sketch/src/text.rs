@@ -39,6 +39,11 @@ pub const DEFAULT_FONT: &str = "IBM Plex Sans";
 pub struct TextSpec {
     pub text: String,
     pub font: String,
+    /// The document asset holding a font file the application does not
+    /// carry.
+    pub font_asset: Option<Uuid>,
+    /// That asset's bytes, read for the outlines.
+    pub font_data: Option<std::sync::Arc<Vec<u8>>>,
     /// The font's em in millimetres.
     pub size: f32,
     /// Millimetres added between letters.
@@ -52,6 +57,8 @@ impl Default for TextSpec {
         Self {
             text: "Text".to_string(),
             font: DEFAULT_FONT.to_string(),
+            font_asset: None,
+            font_data: None,
             size: 10.0,
             spacing: 0.0,
             angle: 0.0,
@@ -64,6 +71,8 @@ impl TextSpec {
         Self {
             text: block.text.clone(),
             font: block.font.clone(),
+            font_asset: block.font_asset,
+            font_data: None,
             size: block.size,
             spacing: block.spacing,
             angle: block.angle,
@@ -71,13 +80,66 @@ impl TextSpec {
     }
 }
 
-fn font_bytes(font: &str) -> Result<Cow<'static, [u8]>, String> {
+fn font_bytes(spec: &TextSpec) -> Result<Cow<'_, [u8]>, String> {
+    let font = spec.font.as_str();
     if let Some((_, bytes)) = FONTS.iter().find(|(name, _)| *name == font) {
         return Ok(Cow::Borrowed(bytes));
     }
+    if let Some(data) = &spec.font_data {
+        return Ok(Cow::Borrowed(data.as_slice()));
+    }
     std::fs::read(font)
         .map(Cow::Owned)
-        .map_err(|e| format!("cannot read the font {font}: {e}"))
+        .map_err(|e| format!("the font {font} is not in the document and cannot be read: {e}"))
+}
+
+/// Ready `spec`'s font from `document`: a font the application carries
+/// needs nothing; one kept in the document is read from its asset; a font
+/// file named by its path is read and kept in the document (once for the
+/// same file), so the text can be made again on any machine.
+pub fn load_font(
+    document: &mut core_document::Document,
+    spec: &mut TextSpec,
+) -> Result<(), String> {
+    if FONTS.iter().any(|(name, _)| *name == spec.font) {
+        spec.font_asset = None;
+        spec.font_data = None;
+        return Ok(());
+    }
+    if let Some(bytes) = spec.font_asset.and_then(|id| document.asset_bytes(id)) {
+        spec.font_data = Some(std::sync::Arc::new(bytes.to_vec()));
+        return Ok(());
+    }
+    let bytes = std::fs::read(&spec.font)
+        .map_err(|e| format!("cannot read the font {}: {e}", spec.font))?;
+    ttf_parser::Face::parse(&bytes, 0)
+        .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
+    let kept = document
+        .assets()
+        .filter(|asset| asset.metadata.get("kind").and_then(|k| k.as_str()) == Some("font"))
+        .map(|asset| asset.id)
+        .find(|id| document.asset_bytes(*id) == Some(bytes.as_slice()));
+    let id = kept.unwrap_or_else(|| {
+        let file = std::path::Path::new(&spec.font)
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string());
+        let extension = std::path::Path::new(&spec.font)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("ttf")
+            .to_ascii_lowercase();
+        document.add_asset_with_data(
+            core_document::AssetReference::new(
+                format!("assets/font-{}.{extension}", Uuid::new_v4()),
+                core_document::AssetType::Other,
+                serde_json::json!({"kind": "font", "file": file}),
+            ),
+            bytes.clone(),
+        )
+    });
+    spec.font_asset = Some(id);
+    spec.font_data = Some(std::sync::Arc::new(bytes));
+    Ok(())
 }
 
 /// One piece of a glyph's outline.
@@ -165,7 +227,7 @@ impl ttf_parser::OutlineBuilder for Contours {
 
 /// The closed contours `spec` lays out with its point at `at`.
 fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
-    let bytes = font_bytes(&spec.font)?;
+    let bytes = font_bytes(spec)?;
     let face = ttf_parser::Face::parse(&bytes, 0)
         .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
     if spec.size.is_nan() || spec.size <= 0.0 {
@@ -317,6 +379,7 @@ pub fn add(sketch: &mut Sketch, at: Vec2D, spec: &TextSpec) -> Result<Uuid, Stri
         id,
         text: spec.text.clone(),
         font: spec.font.clone(),
+        font_asset: spec.font_asset,
         size: spec.size,
         spacing: spec.spacing,
         angle: spec.angle,
@@ -343,6 +406,7 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
     let block = &mut sketch.texts[index];
     block.text = spec.text.clone();
     block.font = spec.font.clone();
+    block.font_asset = spec.font_asset;
     block.size = spec.size;
     block.spacing = spec.spacing;
     block.angle = spec.angle;
