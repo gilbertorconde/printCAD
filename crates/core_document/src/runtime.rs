@@ -72,6 +72,11 @@ pub struct WorkbenchRuntimeContext<'a> {
     /// Active document object (selected feature in tree - separate from editing mode).
     pub active_document_object: Option<FeatureId>,
 
+    /// Host → workbench: every feature of the tree's selection when there
+    /// are several (Ctrl-clicked, or [`HostRequest::SelectFeatures`]), the
+    /// active document object first; empty while one row or none is.
+    pub selected_features: Vec<FeatureId>,
+
     /// Current cursor position in viewport-local coordinates (if inside viewport).
     pub cursor_viewport_pos: Option<(f32, f32)>,
 
@@ -318,6 +323,11 @@ pub enum HostRequest {
     ActivateTool(String),
     /// Make `body` the tree selection and the active body.
     SelectBody(crate::BodyId),
+    /// Select these features in the tree together, as Ctrl-clicks would:
+    /// the first is the active document object, as a click on its row
+    /// makes it, and every row draws selected. An empty list selects the
+    /// document.
+    SelectFeatures(Vec<FeatureId>),
     /// Label the undo entry this frame closes.
     JournalLabel(String),
     /// Switch to `workbench` and hand it `attach` on its next hook, as its
@@ -359,7 +369,9 @@ impl HostRequest {
     pub fn rank(&self) -> u8 {
         match self {
             HostRequest::ActivateTool(_) => 0,
-            HostRequest::SelectBody(_) | HostRequest::JournalLabel(_) => 1,
+            HostRequest::SelectBody(_)
+            | HostRequest::SelectFeatures(_)
+            | HostRequest::JournalLabel(_) => 1,
             HostRequest::StartOn { .. } | HostRequest::SwitchWorkbench(_) => 2,
             HostRequest::OrientCamera(_) => 3,
             HostRequest::FinishEditing => 4,
@@ -416,6 +428,7 @@ impl<'a> WorkbenchRuntimeContext<'a> {
             selected_body_id: None,
             cursor_viewport_pos: None,
             active_document_object: None,
+            selected_features: Vec::new(),
             view_proj: None,
             requests: Vec::new(),
             recorded: Vec::new(),

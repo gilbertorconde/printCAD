@@ -378,6 +378,20 @@ impl DocumentSession {
         }
     }
 
+    /// Every feature of the tree's selection, the selected row first, when
+    /// there are several (Ctrl-clicked, or selected together by a bench);
+    /// empty while one row or none is.
+    pub fn selected_features(&self) -> Vec<FeatureId> {
+        match self.tree_selection {
+            Some(TreeItemId::Feature(primary)) if !self.tree_also().is_empty() => {
+                std::iter::once(primary)
+                    .chain(self.tree_also().iter().copied())
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// Whether this tab still has work on its way through a worker or the
     /// server.
     pub fn busy(&self) -> bool {

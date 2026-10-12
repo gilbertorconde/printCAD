@@ -31,6 +31,7 @@ pub(crate) struct WbCtxParams {
     pub selected_body_id: Option<Uuid>,
     pub cursor_viewport_pos: Option<(f32, f32)>,
     pub active_document_object: Option<FeatureId>,
+    pub selected_features: Vec<FeatureId>,
     pub attach_request: Option<core_document::SketchAttachRequest>,
     pub selected_face: Option<core_document::FaceRef>,
     pub selected_faces: Vec<core_document::FaceRef>,
@@ -100,6 +101,7 @@ impl PrintCadApp {
             selected_body_id: self.session.selected_body,
             cursor_viewport_pos: self.cursor_in_viewport,
             active_document_object: self.session.active_document_object,
+            selected_features: self.session.selected_features(),
             attach_request: self.session.pending_sketch_creation,
             selected_face: self
                 .session
@@ -135,6 +137,7 @@ impl PrintCadApp {
             selected_body_id: self.session.active_body_id.map(|id| id.0),
             cursor_viewport_pos: None,
             active_document_object: self.session.active_document_object,
+            selected_features: self.session.selected_features(),
             attach_request: None,
             selected_face: None,
             selected_faces: Vec::new(),
@@ -173,6 +176,7 @@ impl PrintCadApp {
         ctx.selected_body_id = params.selected_body_id;
         ctx.cursor_viewport_pos = params.cursor_viewport_pos;
         ctx.active_document_object = params.active_document_object;
+        ctx.selected_features = params.selected_features;
         ctx.attach_request = params.attach_request;
         ctx.selected_face = params.selected_face;
         ctx.selected_faces = params.selected_faces;
@@ -277,6 +281,14 @@ impl PrintCadApp {
             HostRequest::SelectBody(body) => {
                 self.apply_tree_selection(TreeItemId::Body(body));
             }
+            HostRequest::SelectFeatures(features) => match features.split_first() {
+                Some((first, rest)) => {
+                    let row = TreeItemId::Feature(*first);
+                    self.apply_tree_selection(row);
+                    self.session.tree_also = Some((row, rest.to_vec()));
+                }
+                None => self.apply_tree_selection(TreeItemId::DocumentRoot),
+            },
             HostRequest::JournalLabel(label) => self.session.journal.label_next(label),
             HostRequest::StartOn { workbench, attach } => {
                 if site == HookSite::Interaction {
