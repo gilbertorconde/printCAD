@@ -7,7 +7,7 @@ use settings::ProjectionMode;
 
 use super::ActiveWorkbench;
 use super::feature_tree::{TreeFeatureCommand, TreeItemId};
-use crate::orientation_cube::{CameraSnapView, RotateDelta};
+use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 /// The Edit menu's clipboard entries; the active bench answers them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -169,6 +169,13 @@ pub enum UiCommand {
         scope: core_document::MenuScope,
     },
     CameraSnap(CameraSnapView),
+    /// Turn to a standard view and frame everything (a double click on
+    /// the orientation cube).
+    CameraSnapFit(CameraSnapView),
+    /// The default corner view, framed (the cube's home glyph).
+    CameraHome,
+    /// A left drag on the orientation cube, orbiting the view.
+    CubeDrag(CubeDrag),
     CameraRotate(RotateDelta),
     /// Stop the kernel job that is running now.
     CancelKernelJob,

@@ -465,7 +465,9 @@ pub(super) fn draw_cube_interactive(
 
     if let Some(label) = hovered_label {
         response.clone().on_hover_ui_at_pointer(|ui| {
-            ui.label(format!("Click to view {}", label));
+            ui.label(format!(
+                "Click to view {label}, double click to fit all there too"
+            ));
         });
     }
 

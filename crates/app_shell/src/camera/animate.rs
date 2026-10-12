@@ -24,13 +24,24 @@ impl CameraTween {
         end_fd: f64,
         settings: &CameraSettings,
     ) -> Self {
-        let origin = state.eye;
-        let source = core::camera(state, axes, origin);
         let mut target = state.clone();
         target.eye = end_eye;
         target.orientation = end_q;
         target.focal_distance = end_fd;
-        let target = core::camera(&target, axes, origin);
+        Self::toward(state, axes, &target, settings)
+    }
+
+    /// A transition from `state` to the whole of `target`: its lens and
+    /// zoom as much as its pose.
+    pub(crate) fn toward(
+        state: &CadCameraState,
+        axes: &AxisSystem,
+        target: &CadCameraState,
+        settings: &CameraSettings,
+    ) -> Self {
+        let origin = state.eye;
+        let source = core::camera(state, axes, origin);
+        let target = core::camera(target, axes, origin);
         let duration = Duration::from_secs_f32((settings.view_transition_ms / 1000.0).max(0.0));
         Self {
             running: Some((origin, CameraTransition::frame(source, target, duration))),

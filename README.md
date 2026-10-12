@@ -100,7 +100,8 @@ reads the device directly. Either way it finds the device on its own.
 | Body menu | Right click on a body |
 | Box select in a sketch | Left drag |
 | Fit the model | **F** |
-| Standard views | Click the orientation cube, or **0** to **6** |
+| Standard views | Click the orientation cube (double click also fits), or **0** to **6** |
+| Orbit from the cube | Left drag on the orientation cube; its house returns home |
 
 ### Keyboard
 

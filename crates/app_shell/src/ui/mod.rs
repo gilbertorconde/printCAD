@@ -1130,7 +1130,17 @@ impl UiLayer {
         // Fold the remaining interactions into commands. Application order
         // is decided by `apply_ui_commands`, not by the order of this list.
         if let Some(view) = cube_result.snap_to_view {
-            commands.push(UiCommand::CameraSnap(view));
+            commands.push(if cube_result.fit {
+                UiCommand::CameraSnapFit(view)
+            } else {
+                UiCommand::CameraSnap(view)
+            });
+        }
+        if cube_result.home {
+            commands.push(UiCommand::CameraHome);
+        }
+        if let Some(drag) = cube_result.drag {
+            commands.push(UiCommand::CubeDrag(drag));
         }
         if let Some(delta) = cube_result.rotate_delta {
             commands.push(UiCommand::CameraRotate(delta));

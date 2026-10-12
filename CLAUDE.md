@@ -312,7 +312,7 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   set under `icons/`, vendored by `scripts/vendor-icons.mjs` into a
   generated `icon_table.rs`; `icon::texture/draw` rasterize with a
   font-free usvg, since the system-font scan is far too slow for 200 icons;
-  `select.svg`, `expression.svg` and `chevrons-down.svg` are
+  `select.svg`, `expression.svg`, `chevrons-down.svg` and `home.svg` are
   hand-authored locals). The same
   table carries the `motion-*` drawings (200×200, their own colours, one
   per movement of a 6-DoF mouse), drawn through `icon::drawing`, which

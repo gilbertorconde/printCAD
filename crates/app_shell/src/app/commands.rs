@@ -8,7 +8,7 @@ use winit::event_loop::ActiveEventLoop;
 use crate::app::doc_io::FileDialogKind;
 use crate::app::frame::{aabb_fit_center_radius, document_imported_aabb};
 use crate::log_panel as app_log;
-use crate::orientation_cube::{CameraSnapView, RotateDelta};
+use crate::orientation_cube::{CameraSnapView, CubeDrag, RotateDelta};
 
 use crate::PrintCadApp;
 use crate::ui::{
@@ -21,6 +21,10 @@ use crate::ui::{
 #[derive(Default)]
 struct FrameIntents {
     camera_snap: Option<CameraSnapView>,
+    /// Turn to a view and frame everything: a standard view, or the
+    /// default corner view when `None`.
+    camera_fit: Option<Option<CameraSnapView>>,
+    cube_drag: Option<CubeDrag>,
     camera_rotate: Option<RotateDelta>,
     persist_settings: bool,
     apply_camera_settings: bool,
@@ -183,6 +187,9 @@ impl PrintCadApp {
                 }
                 UiCommand::CloseViewportMenu => self.session.viewport_menu = None,
                 UiCommand::CameraSnap(view) => intents.camera_snap = Some(view),
+                UiCommand::CameraSnapFit(view) => intents.camera_fit = Some(Some(view)),
+                UiCommand::CameraHome => intents.camera_fit = Some(None),
+                UiCommand::CubeDrag(drag) => intents.cube_drag = Some(drag),
                 UiCommand::CameraRotate(delta) => intents.camera_rotate = Some(delta),
                 UiCommand::CommitSettings {
                     settings,
@@ -596,6 +603,26 @@ impl PrintCadApp {
                 .session
                 .camera
                 .snap_to_view(view, &self.user_settings.camera),
+            None => {}
+        }
+        match intents.camera_fit {
+            Some(_) if planar_only => {
+                app_log::info("Standard views are locked while a sketch is open")
+            }
+            Some(view) => self.fly_to_scene(view),
+            None => {}
+        }
+        match intents.cube_drag {
+            Some(CubeDrag::Moved(offset)) => {
+                if self
+                    .session
+                    .camera
+                    .orbit_from_cube(offset, &self.user_settings.camera)
+                {
+                    self.redraw_needed = true;
+                }
+            }
+            Some(CubeDrag::Released) => self.session.camera.release_cube_orbit(),
             None => {}
         }
         if let Some(ref delta) = intents.camera_rotate {
@@ -1078,6 +1105,19 @@ impl PrintCadApp {
             .into_iter()
             .chain(previews)
             .reduce(|(lo, hi), (a, b)| (lo.min(a), hi.max(b)))
+    }
+
+    /// Turn to `view` (the default corner view when `None`) framing what
+    /// [`Self::frame_scene`] frames, as one transition.
+    fn fly_to_scene(&mut self, view: Option<CameraSnapView>) {
+        let (center, radius) = self
+            .drawn_bodies_aabb()
+            .map_or((Vec3::ZERO, 50.0), |(mn, mx)| {
+                aabb_fit_center_radius(mn, mx)
+            });
+        self.session
+            .camera
+            .fly_to_fit(view, center, radius, &self.user_settings.camera);
     }
 
     pub(crate) fn apply_tree_selection(&mut self, selection: TreeItemId) {

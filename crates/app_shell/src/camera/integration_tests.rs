@@ -422,3 +422,97 @@ fn saved_camera_settings_keep_explicit_free_rotation() {
         OrbitYawAxis::WorldUp
     );
 }
+
+#[test]
+fn a_cube_drag_orbits_as_the_middle_button_does_and_respects_the_plane_lock() {
+    let mut checked = 0;
+    for preset in AxisPreset::ALL {
+        for scale in [1.0, 2.0] {
+            let settings = CameraSettings {
+                axis_preset: preset,
+                ..Default::default()
+            };
+            let from = Vec2::new(300.0, 220.0) * scale;
+            let offset = Vec2::new(180.0, 75.0);
+            let mut middle = start(&settings, scale);
+            button(&mut middle, &settings, MouseButton::Middle, true, None);
+            moved(&mut middle, &settings, from + offset * scale, None);
+
+            let mut cube = start(&settings, scale);
+            assert!(cube.orbit_from_cube(offset * 0.5, &settings));
+            assert!(cube.orbit_from_cube(offset, &settings));
+            assert!(cube.state.orientation.dot(middle.state.orientation).abs() > 0.99999);
+            assert!(cube.state.eye.distance(middle.state.eye) < 1e-3);
+
+            // Released, the next drag starts from where this one left off.
+            cube.release_cube_orbit();
+            let held = cube.state.orientation;
+            assert!(cube.orbit_from_cube(Vec2::ZERO, &settings));
+            assert!(cube.state.orientation.dot(held).abs() > 0.999999);
+
+            cube.set_orbit_lock(true);
+            let locked = cube.state.orientation;
+            assert!(!cube.orbit_from_cube(offset, &settings));
+            assert_eq!(cube.state.orientation, locked);
+            checked += 1;
+        }
+    }
+    assert_eq!(checked, 2 * AxisPreset::ALL.len());
+}
+
+#[test]
+fn fly_to_fit_turns_to_the_view_and_frames_the_sphere() {
+    use crate::orientation_cube::CameraSnapView;
+    let center = Vec3::new(40.0, -12.0, 7.0);
+    let radius = 25.0;
+    for projection in [ProjectionMode::Perspective, ProjectionMode::Orthographic] {
+        let settings = CameraSettings {
+            projection,
+            ..Default::default()
+        };
+        let mut home = start(&settings, 1.0);
+        home.orbit_from_cube(Vec2::new(90.0, -40.0), &settings);
+        home.release_cube_orbit();
+        home.fly_to_fit(None, center, radius, &settings);
+        assert!(home.is_animating());
+        home.update(60.0, &settings);
+        let mut fitted = start(&settings, 1.0);
+        fitted.reset_to_fit(center, radius, None, &settings);
+        assert!(home.state.orientation.dot(fitted.state.orientation).abs() > 0.99999);
+        assert!(home.state.eye.distance(fitted.state.eye) < 1e-3);
+
+        for view in [
+            CameraSnapView::Front,
+            CameraSnapView::Top,
+            CameraSnapView::RearLeft,
+        ] {
+            let mut camera = start(&settings, 1.0);
+            camera.fly_to_fit(Some(view), center, radius, &settings);
+            camera.update(60.0, &settings);
+            let mut snapped = start(&settings, 1.0);
+            snapped.snap_to_view(view, &settings);
+            snapped.update(60.0, &settings);
+            assert!(
+                camera
+                    .state
+                    .orientation
+                    .dot(snapped.state.orientation)
+                    .abs()
+                    > 0.99999
+            );
+            let focal = camera.focal_point_world();
+            assert!(focal.distance(center) < 1e-3, "{focal:?}");
+            for dir in [
+                Vec3::X,
+                Vec3::NEG_X,
+                Vec3::Y,
+                Vec3::NEG_Y,
+                Vec3::Z,
+                Vec3::NEG_Z,
+            ] {
+                let (x, y) = camera.world_to_viewport(center + dir * radius).unwrap();
+                assert!((0.0..=800.0).contains(&x) && (0.0..=600.0).contains(&y));
+            }
+        }
+    }
+}

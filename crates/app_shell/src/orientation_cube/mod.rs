@@ -4,7 +4,10 @@
 //! rendered as a 3D cube with labeled faces (FRONT, REAR, LEFT, RIGHT, TOP, BOTTOM)
 //! and colored axis arrows (X=red, Y=green, Z=blue).
 //!
-//! The cube is interactive: clicking faces snaps to that view, clicking arrows rotates 45°.
+//! The cube is interactive: clicking faces snaps to that view (a double
+//! click also frames everything), clicking arrows rotates 45°, a left drag
+//! on the disc orbits as the middle button does, and the home glyph at its
+//! top-left corner returns to the default corner view, framed.
 //!
 //! The RGB axis triad is drawn in a separate floating widget at the **bottom-left** of the
 //! viewport so it does not overlap the cube (which sits at the **top-right**).
@@ -84,6 +87,42 @@ pub struct OrientationCubeResult {
     pub snap_to_view: Option<CameraSnapView>,
     /// If set, rotate camera by this amount (in degrees) around the specified axis
     pub rotate_delta: Option<RotateDelta>,
+    /// `snap_to_view` came from a double click: frame everything as well.
+    pub fit: bool,
+    /// The home glyph was clicked: the default corner view, framed.
+    pub home: bool,
+    /// A left drag on the disc, orbiting the view.
+    pub drag: Option<CubeDrag>,
+}
+
+/// A left drag on the cube's disc.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CubeDrag {
+    /// The pointer stands this far from where it was pressed, in logical
+    /// pixels.
+    Moved(glam::Vec2),
+    /// The button came up.
+    Released,
+}
+
+/// Side of the home glyph, in logical pixels.
+const HOME_SIZE: f32 = 18.0;
+/// Inset of the home glyph's centre from the widget's top-left corner.
+const HOME_INSET: f32 = 14.0;
+
+/// Where the home glyph sits in the widget `rect`: its top-left corner,
+/// clear of the disc and of the roll arrows at its sides.
+fn home_rect(rect: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(
+        rect.min + egui::vec2(HOME_INSET, HOME_INSET),
+        egui::Vec2::splat(HOME_SIZE),
+    )
+}
+
+/// Whether a press at `origin` takes hold of the view: anywhere on the
+/// disc of `radius` about `center`.
+fn grabs_view(origin: Pos2, center: Pos2, radius: f32) -> bool {
+    origin.distance(center) <= radius
 }
 
 /// Predefined camera snap views
@@ -256,8 +295,10 @@ pub fn draw(
         .fixed_pos(pos)
         .order(crate::ui::VIEW_LAYER)
         .show(ctx, |ui| {
-            let (response, painter) =
-                ui.allocate_painter(egui::Vec2::new(total_width, total_height), Sense::click());
+            let (response, painter) = ui.allocate_painter(
+                egui::Vec2::new(total_width, total_height),
+                Sense::click_and_drag(),
+            );
 
             // Center the circle within the allocated space (offset down to make room for arc arrows)
             let local_center = Pos2::new(
@@ -286,7 +327,17 @@ pub fn draw(
                 &response,
             ) {
                 result.snap_to_view = Some(snap);
+                result.fit = response.double_clicked();
             }
+
+            result.drag = cube_drag(
+                ui,
+                &response,
+                local_center,
+                config.widget_size / 2.0,
+                config.planar_only,
+            );
+            result.home = draw_home_glyph(ui, &response, config.planar_only);
 
             if config.show_rotation_arrows
                 && let Some(delta) = draw_rotation_arrows_interactive(
@@ -327,6 +378,62 @@ pub fn draw(
     result
 }
 
+/// The drag a left press on the disc makes, `None` while the view is
+/// locked to a plane or the press began off the disc.
+fn cube_drag(
+    ui: &Ui,
+    response: &Response,
+    center: Pos2,
+    radius: f32,
+    planar_only: bool,
+) -> Option<CubeDrag> {
+    if response.drag_stopped_by(egui::PointerButton::Primary) {
+        return Some(CubeDrag::Released);
+    }
+    if planar_only || !response.dragged_by(egui::PointerButton::Primary) {
+        return None;
+    }
+    let (origin, pointer) = ui.input(|i| (i.pointer.press_origin(), i.pointer.latest_pos()));
+    let (origin, pointer) = (origin?, pointer?);
+    if !grabs_view(origin, center, radius) {
+        return None;
+    }
+    ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    let offset = pointer - origin;
+    Some(CubeDrag::Moved(glam::Vec2::new(offset.x, offset.y)))
+}
+
+/// Draws the home glyph and answers whether it was clicked. While the view
+/// is locked to a plane it draws inert, as the arrows that would leave the
+/// plane do.
+fn draw_home_glyph(ui: &Ui, response: &Response, planar_only: bool) -> bool {
+    let rect = home_rect(response.rect);
+    let hovered = !planar_only
+        && ui
+            .input(|i| i.pointer.hover_pos())
+            .is_some_and(|p| rect.contains(p));
+    let tint = if planar_only {
+        ui_kit::tokens::TEXT3
+    } else if hovered {
+        ui_kit::tokens::TEXT1
+    } else {
+        ui_kit::tokens::TEXT2
+    };
+    if let Some(image) = ui_kit::icon::image(ui.ctx(), "home", HOME_SIZE, tint) {
+        image.paint_at(ui, rect);
+    }
+    if hovered {
+        response.clone().on_hover_ui_at_pointer(|ui| {
+            ui.label("Home view: the default corner view, fitted");
+        });
+    }
+    !planar_only
+        && response.clicked()
+        && response
+            .interact_pointer_pos()
+            .is_some_and(|p| rect.contains(p))
+}
+
 /// Point-in-polygon test using ray casting
 pub(super) fn point_in_polygon(point: Pos2, polygon: &[Pos2]) -> bool {
     let n = polygon.len();
@@ -354,7 +461,30 @@ pub(super) fn point_in_polygon(point: Pos2, polygon: &[Pos2]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::RotateAxis;
+    use super::{RotateAxis, grabs_view, home_rect};
+    use egui::{Pos2, Rect, vec2};
+
+    #[test]
+    fn the_home_glyph_sits_in_the_corner_off_the_disc() {
+        // The widget as `draw` lays it out: 200 px square, the disc of
+        // radius 75 centred 115 px down.
+        let widget = Rect::from_min_size(Pos2::new(1000.0, 60.0), vec2(200.0, 200.0));
+        let center = Pos2::new(widget.center().x, widget.min.y + 115.0);
+        let home = home_rect(widget);
+        assert!(widget.contains_rect(home));
+        assert!(home.contains(widget.min + vec2(14.0, 14.0)));
+        for corner in [
+            home.left_top(),
+            home.right_top(),
+            home.left_bottom(),
+            home.right_bottom(),
+        ] {
+            assert!(!grabs_view(corner, center, 75.0), "{corner:?} on the disc");
+        }
+        assert!(grabs_view(center, center, 75.0));
+        assert!(grabs_view(center + vec2(0.0, 74.0), center, 75.0));
+        assert!(!grabs_view(center + vec2(60.0, 60.0), center, 75.0));
+    }
 
     #[test]
     fn only_roll_leaves_the_view_direction_alone() {

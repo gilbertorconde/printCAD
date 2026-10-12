@@ -48,16 +48,20 @@ maths.
 | Action | Input | What happens |
 | --- | --- | --- |
 | Orbit | Middle drag | Turns about the focal point, or about the point picked under the cursor when that option is on |
+| Orbit | Left drag on the orientation cube | Turns about the focal point, as a middle drag does |
 | Pan | Right drag | Moves the eye; one pixel is one pixel at the focal plane |
 | Roll | Left and right drag | Turns about the view direction |
 | Zoom | Wheel | Perspective moves the eye; orthographic scales the height. Toward the cursor by default |
 | Set pivot | Middle click on the model | The point under the cursor becomes the focal point |
 | Set pivot | **H** | The cursor's point on the focal plane becomes the focal point |
 | Fit | **F** | Isometric view of the whole scene. The view toolbar can also fit the selection |
+| Home | The house by the orientation cube | The same isometric view of the whole scene, animated |
+| Standard view | Click on the orientation cube | Turns to that face, edge or corner; a double click fits the whole scene there too |
 
 A drag starts after 4 logical pixels, so a click never orbits. Perspective zoom keeps
 the focal distance between the configured minimum and maximum (1 mm and
-5000 mm by default). While a sketch is open, orbit is turned off.
+5000 mm by default). While a sketch is open, orbit (the cube's drag and home
+included) is turned off.
 
 Pan and orbit keep the camera and anchor from the press and use the total
 pointer displacement. Results are independent of event frequency, and a picked

@@ -97,6 +97,9 @@ pub struct CameraController {
     navigation_hold: Option<core::Hold>,
     pixels_per_point: f32,
     roll_hold: Option<(Vec2, Quat)>,
+    /// The orbit a left drag on the orientation cube holds, taken at the
+    /// drag's first move.
+    cube_hold: Option<core::Hold>,
 }
 
 impl CameraController {
@@ -124,6 +127,7 @@ impl CameraController {
             navigation_hold: None,
             pixels_per_point: 1.0,
             roll_hold: None,
+            cube_hold: None,
         }
     }
 
@@ -141,6 +145,7 @@ impl CameraController {
     pub fn set_orbit_lock(&mut self, locked: bool) {
         if locked != self.orbit_locked {
             self.navigation_hold = None;
+            self.cube_hold = None;
             self.mmb_was_down_scene = false;
             self.mmb_dragging_scene = false;
         }
@@ -164,6 +169,7 @@ impl CameraController {
     pub fn forget_released(&mut self, [left, right, middle]: [bool; 3]) {
         if !left {
             self.roll_hold = None;
+            self.cube_hold = None;
             self.lmb_was_down_scene = false;
             self.lmb_dragging_scene = false;
             self.lmb_dragging_roll = false;
@@ -806,6 +812,67 @@ impl CameraController {
         self.last_cursor_vp_for_drag = None;
         self.pending_wheel_lines = 0.0;
         self.forget_released([false; 3]);
+    }
+
+    /// Orbit as a middle-button drag does, for a left drag on the
+    /// orientation cube: `offset` is how far the pointer has moved since
+    /// the press, in logical pixels. The orbit turns about the focal point,
+    /// whatever the pivot setting, since the cube is over no geometry.
+    /// Refused while the view is locked to a plane.
+    pub fn orbit_from_cube(&mut self, offset: Vec2, settings: &CameraSettings) -> bool {
+        if self.orbit_locked {
+            self.cube_hold = None;
+            return false;
+        }
+        let (w, h) = self.state.viewport_size;
+        let start = Vec2::new(w as f32, h as f32) * 0.5;
+        if self.cube_hold.is_none() {
+            self.cancel_animation();
+            self.cube_hold = Some(core::Hold::begin(
+                &self.state,
+                &self.axes,
+                settings,
+                start,
+                self.state.focal_point_dvec(&self.axes),
+                GestureKind::Orbit,
+                self.pixels_per_point,
+            ));
+        }
+        let hold = self.cube_hold.expect("taken above");
+        hold.sample(
+            &mut self.state,
+            &self.axes,
+            start + offset * self.pixels_per_point,
+        );
+        self.state.clip_dirty = true;
+        true
+    }
+
+    /// The cube drag is over: the next one starts from the view as it is.
+    pub fn release_cube_orbit(&mut self) {
+        self.cube_hold = None;
+    }
+
+    /// Turn to `view` (the default corner view when `None`) and frame the
+    /// sphere at `center`, as one transition.
+    pub fn fly_to_fit(
+        &mut self,
+        view: Option<CameraSnapView>,
+        center: Vec3,
+        radius: f32,
+        settings: &CameraSettings,
+    ) {
+        self.forget_released([false; 3]);
+        self.cancel_animation();
+        let mut target = self.state.clone();
+        ops::fit_sphere(&mut target, &self.axes, center, radius, None, settings);
+        if let Some(view) = view {
+            let focal = target.focal_point_dvec(&self.axes);
+            target.orientation = canonical_quat_to_world(&self.axes, view.orientation());
+            target.rederive_eye_from_focal(focal, &self.axes);
+        }
+        self.tween = CameraTween::toward(&self.state, &self.axes, &target, settings);
+        self.after_scene_or_settings_touch(settings);
     }
 
     pub fn snap_to_view(&mut self, view: CameraSnapView, settings: &CameraSettings) {
