@@ -318,6 +318,41 @@ pub fn draggable(document: &Document, body: BodyId) -> bool {
     free_bodies(&all).contains(&body) && crate::components::joined_outside(document, body, &all)
 }
 
+/// The island of bodies joined to `body`, it among them, when nothing
+/// holds the island where it is: no member grounded and no joint to the
+/// world. `None` for a body alone, or one in an island something holds.
+pub fn ungrounded_island(document: &Document, body: BodyId) -> Option<Vec<BodyId>> {
+    let all = usable(document);
+    let mut island = vec![body];
+    let mut at = 0;
+    while at < island.len() {
+        let b = island[at];
+        at += 1;
+        for j in &all {
+            if j.feature.kind == JointKind::Ground {
+                if j.body == b {
+                    return None;
+                }
+                continue;
+            }
+            let next = if j.body == b {
+                j.feature.other_body
+            } else if j.feature.other_body == b {
+                j.body
+            } else {
+                continue;
+            };
+            if next == WORLD {
+                return None;
+            }
+            if !island.contains(&next) {
+                island.push(next);
+            }
+        }
+    }
+    (island.len() > 1).then_some(island)
+}
+
 /// `body` dragged so its `point` (in its own frame) follows `target` (in
 /// the world) as far as its joints let it, every joint holding; the bodies
 /// that moved and where. A body the solver does not move (grounded, or
@@ -2057,6 +2092,47 @@ mod tests {
         assert!(close(handle, [-10.0, 0.0, 0.0]), "{handle:?}");
         // The frame has no joints of its own: nothing drags it.
         assert!(drag(&doc, frame, [0.0; 3], [5.0, 5.0, 5.0]).is_empty());
+    }
+
+    /// A door hung on a frame, nothing grounding either, is an island a
+    /// Shift drag takes as one; grounded, or a body alone, is none.
+    #[test]
+    fn an_island_nothing_grounds_is_found_from_any_member() {
+        let mut doc = Document::new("t");
+        let frame = doc.create_body(None);
+        let door = doc.create_body(None);
+        let alone = doc.create_body(None);
+        add_joint(
+            &mut doc,
+            door,
+            JointFeature {
+                second: None,
+                shape: Vec::new(),
+                ends: [0.0; 2],
+                names: [0; 2],
+                kind: JointKind::Hinge {
+                    offset: 0.0,
+                    zero: DQuat::IDENTITY.to_array(),
+                    drive: Default::default(),
+                },
+                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
+                other_body: frame,
+                fixed: axis([0.0; 3], [0.0, 0.0, 1.0]),
+            },
+        );
+        let sorted = |found: Option<Vec<BodyId>>| {
+            found.map(|mut bodies| {
+                bodies.sort();
+                bodies
+            })
+        };
+        let mut both = vec![frame, door];
+        both.sort();
+        assert_eq!(sorted(ungrounded_island(&doc, door)), Some(both.clone()));
+        assert_eq!(sorted(ungrounded_island(&doc, frame)), Some(both));
+        assert_eq!(ungrounded_island(&doc, alone), None);
+        ground(&mut doc, frame);
+        assert_eq!(ungrounded_island(&doc, door), None);
     }
 
     fn ground(doc: &mut Document, body: BodyId) {

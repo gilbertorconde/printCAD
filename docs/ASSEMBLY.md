@@ -201,7 +201,9 @@ Drag a jointed body with the left mouse button: it follows the mouse as
 far as its joints let it, so a door swings on its hinge rather than
 sliding off it. A body with no joints of its own drags straight across
 the view, what is joined to it following; a grounded body does not drag.
-A drag is one undo step.
+With Shift held, a drag on any body of a group of jointed bodies that
+nothing grounds moves the whole group straight across the view as one,
+its joints as they are. A drag is one undo step.
 
 Move body (G) moves the selected body by numbers, or by its handles about
 the middle of its box. The panel's Handles choice, or Shift+G, switches

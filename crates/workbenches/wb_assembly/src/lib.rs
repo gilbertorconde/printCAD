@@ -270,6 +270,9 @@ struct Grab {
     baseline: collide::Baseline,
     /// A body no joint places, moved straight across the view plane.
     free: bool,
+    /// With Shift held on a body whose island nothing grounds, every body
+    /// of the island, moved straight across the view plane together.
+    island: Vec<BodyId>,
 }
 
 /// An interference check under way: its answer to come, the pairs asked
@@ -1166,6 +1169,11 @@ impl AssemblyWorkbench {
         } else {
             ray
         };
+        let island = if ctx.shift_down {
+            solve::ungrounded_island(ctx.document, body).unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let jointed = draggable(ctx.document, body);
         let unit = ctx.document.rigid_unit_of(body);
         let grounded = joints(ctx.document)
@@ -1184,6 +1192,7 @@ impl AssemblyWorkbench {
             placements: all_placements(ctx),
             reached: None,
             free: !jointed,
+            island,
         });
     }
 
@@ -1203,6 +1212,18 @@ impl AssemblyWorkbench {
         let Some(target) = ctx.viewport_to_plane(at, origin, normal) else {
             return InputResult::ignored();
         };
+        if !grab.island.is_empty() {
+            // The whole island straight across the plane, as one.
+            let by = glam::Vec3::from_array(target) - glam::Vec3::from_array(origin);
+            let moves: Vec<(BodyId, BodyPlacement)> = grab
+                .placements
+                .iter()
+                .filter(|(b, _)| grab.island.contains(b))
+                .map(|(b, start)| (*b, BodyPlacement::new(start.quat(), start.offset() + by)))
+                .collect();
+            place_bodies(ctx.document, &moves);
+            return InputResult::redraw_only();
+        }
         if grab.free {
             // Straight across the plane; what is joined to it follows.
             let start = grab
