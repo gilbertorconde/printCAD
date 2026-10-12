@@ -4,6 +4,9 @@
 //! Curves are stitched into loops through their *shared point ids*: the
 //! sketcher's endpoint snapping reuses point elements, so a visually closed
 //! profile is topologically closed here with no coincidence tolerance.
+//! Curves that cross, touch away from their ends or branch go through the
+//! arrangement of [`crate::regions`] instead, which finds every region they
+//! close and lets a feature choose among them.
 
 use std::collections::HashMap;
 
@@ -26,6 +29,8 @@ pub enum ProfileError {
     /// The sketch's constraints are not met: its curves are not where
     /// they say.
     Unsolved,
+    /// A region chosen by name is not among the sketch's regions.
+    MissingRegion(String),
 }
 
 impl std::fmt::Display for ProfileError {
@@ -39,6 +44,9 @@ impl std::fmt::Display for ProfileError {
             ProfileError::MissingPoint(_) => write!(f, "curve references a missing point"),
             ProfileError::Unsolved => {
                 write!(f, "the sketch does not solve: its constraints conflict")
+            }
+            ProfileError::MissingRegion(name) => {
+                write!(f, "the sketch has no region `{name}` any more")
             }
         }
     }
@@ -117,7 +125,52 @@ pub fn closed_profile(
 /// Extract every closed wire from the sketch. Standalone points are
 /// ignored; circles are closed wires by themselves; lines/arcs must form
 /// closed loops via shared endpoints, and those that do not are left out.
+/// Curves that cross or branch give the outline of the regions they close,
+/// nested ones alternating between material and hole.
 pub fn extract_wires(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> {
+    extract_regions(sketch, &[])
+}
+
+/// The outline of the sketch's regions named in `chosen` (see [`regions`]):
+/// regions side by side merge into one face, a region left out inside a
+/// chosen one is a hole. Empty `chosen` takes what [`extract_wires`] does.
+pub fn extract_regions(
+    sketch: &Sketch,
+    chosen: &[String],
+) -> Result<Vec<ProfileWire>, ProfileError> {
+    let looped = loops(sketch);
+    if let Err(ProfileError::Unsolved | ProfileError::MissingPoint(_)) = looped {
+        return looped;
+    }
+    let arranged = arrangement(sketch)?;
+    if chosen.is_empty() && looped.is_ok() && !arranged.branches() {
+        return looped;
+    }
+    if !arranged.closes_any() {
+        return looped;
+    }
+    arranged.wires(chosen).map_err(ProfileError::MissingRegion)
+}
+
+/// Every region the sketch's curves close, whether they meet at shared
+/// points, cross or branch: what a feature's chosen regions name.
+pub fn regions(sketch: &Sketch) -> Result<Vec<crate::regions::Region>, ProfileError> {
+    Ok(arrangement(sketch)?.regions().to_vec())
+}
+
+fn arrangement(sketch: &Sketch) -> Result<crate::regions::Arranged, ProfileError> {
+    let (wires, edges) = curves(sketch)?;
+    let segments: Vec<(ProfileSegment, kernel_api::TopoName)> = wires
+        .into_iter()
+        .filter_map(|w| Some((w.segments.into_iter().next()?, *w.names.first()?)))
+        .chain(edges.into_iter().map(|e| (e.segment, e.name)))
+        .collect();
+    Ok(crate::regions::Arranged::of(&segments))
+}
+
+/// The closed loops the curves make through their shared points, curves
+/// with a loose end left out.
+fn loops(sketch: &Sketch) -> Result<Vec<ProfileWire>, ProfileError> {
     let (mut wires, edges) = curves(sketch)?;
     let touching = endpoint_graph(&edges);
     // What does not close is left out: a curve with a loose end goes, and
@@ -572,7 +625,7 @@ fn spline_segment(b: &crate::sketch::BSpline, control_points: Vec<[f64; 2]>) -> 
 
 /// `segment` run from its end to its start. An arc of an ellipse only runs
 /// counter-clockwise, so it stays as it is.
-fn reversed(segment: &ProfileSegment) -> ProfileSegment {
+pub(crate) fn reversed(segment: &ProfileSegment) -> ProfileSegment {
     match segment {
         ProfileSegment::Line { start, end } => ProfileSegment::Line {
             start: *end,
@@ -763,22 +816,22 @@ mod tests {
         ));
     }
 
+    /// Two loops through one point are two regions side by side, each its
+    /// own outline.
     #[test]
-    fn branching_is_rejected() {
+    fn loops_branching_at_a_point_are_each_a_wire() {
         let mut sketch = Sketch::new("t");
         let [a, ..] = rectangle(&mut sketch);
         let e = pt(&mut sketch, -5.0, -5.0);
         let e2 = pt(&mut sketch, -5.0, 5.0);
-        // Two extra edges through corner `a` (degree 4) forming a closed-ish
-        // detour: every vertex except `a` has degree 2, so the failure is
-        // unambiguously the branch at `a`.
+        // A triangle off corner `a`, four curves meeting there.
         line(&mut sketch, a, e);
         line(&mut sketch, e, e2);
         line(&mut sketch, e2, a);
-        assert!(matches!(
-            extract_wires(&sketch),
-            Err(ProfileError::BranchingAt(_))
-        ));
+        let wires = extract_wires(&sketch).expect("both loops close");
+        let mut sides: Vec<usize> = wires.iter().map(|w| w.segments.len()).collect();
+        sides.sort_unstable();
+        assert_eq!(sides, vec![3, 4]);
     }
 
     /// A loop with loose curves around it is still a profile: the spur

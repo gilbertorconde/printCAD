@@ -1722,6 +1722,48 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         sketch(CommandSpec::new(
+            "sketch.regions",
+            "List the regions the sketch's curves close",
+        ))
+        .returns("a list of {name, area, x, y, default}")
+        .read_only()
+        .note(
+            "Curves split where they cross, touch or branch, and every closed area between \
+             them is a region: two overlapping circles make three, the lens and two \
+             crescents. Curves with a loose end are left out.",
+        )
+        .note(
+            "`name` stays while the sketch's dimensions change; a pad, pocket, revolution \
+             or groove takes regions by it in its `regions` field. `x`, `y` is a point \
+             inside the region, `area` in mm² with its holes taken out. `default` is true \
+             for the regions a feature takes when it names none: a region inside another \
+             loop is a hole, one inside that is material again.",
+        )
+        .see_also("design.pad")
+        .see_also("sketch.wall_thickness")
+        .example(
+            "Two crossing circles close three regions",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+            pc.sketch.circle{sketch = s, x = 10, y = 0, radius = 10}
+            local regions = pc.sketch.regions{sketch = s}
+            assert(#regions == 3)
+            local lens = 2 * 100 * math.acos(0.5) - 5 * math.sqrt(300)
+            local found = false
+            for _, r in ipairs(regions) do
+              assert(r.default, "every region is material")
+              if math.abs(r.x - 5) < 1 then
+                found = true
+                assert(math.abs(r.area - lens) < 0.01 * lens, r.area)
+              end
+            end
+            assert(found, "the lens sits between the centres")
+            "#,
+        ),
+    );
+    context.register_command(
+        sketch(CommandSpec::new(
             "sketch.wall_thickness",
             "How thin the sketch's closed profile gets, for printing",
         ))
@@ -2041,12 +2083,13 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
     // solved.
     if matches!(
         id,
-        "sketch.geometry" | "sketch.constraints" | "sketch.status"
+        "sketch.geometry" | "sketch.constraints" | "sketch.status" | "sketch.regions"
     ) {
         let evaluated = crate::stored_sketch(ctx.document, sketch_id).unwrap_or(feature);
         return Ok(match id {
             "sketch.geometry" => describe(&evaluated.sketch),
             "sketch.constraints" => describe_constraints(&evaluated.sketch),
+            "sketch.regions" => describe_regions(&evaluated.sketch)?,
             _ => status(&evaluated.sketch),
         });
     }
@@ -3892,6 +3935,27 @@ fn describe_constraints(sketch: &Sketch) -> Value {
             })
             .collect(),
     )
+}
+
+/// The regions the sketch's curves close, each `{name, area, x, y,
+/// default}` with a point inside it.
+fn describe_regions(sketch: &Sketch) -> Result<Value, CommandError> {
+    let regions =
+        crate::profile::regions(sketch).map_err(|e| CommandError::failed(e.to_string()))?;
+    Ok(Value::Array(
+        regions
+            .iter()
+            .map(|r| {
+                json!({
+                    "name": r.name,
+                    "area": r.area,
+                    "x": r.inside[0],
+                    "y": r.inside[1],
+                    "default": r.default,
+                })
+            })
+            .collect(),
+    ))
 }
 
 fn status(sketch: &Sketch) -> Value {

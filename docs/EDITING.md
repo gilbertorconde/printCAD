@@ -84,6 +84,17 @@ preview.
 ![A pad's preview, drawn see-through](images/pad-preview.png)
 ![The Pad task panel](images/pad-task.png)
 
+**Regions.** A sketch's curves may cross, meet three or more at a point,
+or leave a spur: every closed area between them is a region (two
+overlapping circles make three, the lens and two crescents). By default a
+feature takes them all, a loop inside another loop being a hole. A pad,
+pocket, revolution or groove can take only some: with its task open, click
+a region on the sketch's plane to take it alone, Ctrl+click to add or take
+away one; the regions left out show shaded. The task panel lists the same
+regions as checks. A region keeps its name while the sketch's dimensions
+change; `pc.sketch.regions` lists them for scripts, and the feature's
+`regions` field holds the names it takes.
+
 **Imported and converted solids take features too.** The first feature
 added to one (a pocket, a fillet) gives the body a **Base shape** feature
 first: the imported solid, kept as what the body's history starts from.

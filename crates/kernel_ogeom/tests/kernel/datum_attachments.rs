@@ -165,6 +165,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
         .unwrap();
     doc.add_feature_in_body(
         DesignFeature::Pad {
+            regions: Vec::new(),
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -357,6 +358,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
         .unwrap();
     doc.add_feature_in_body(
         DesignFeature::Revolution {
+            regions: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             sketch: ring,
@@ -403,6 +405,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
 
 fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
     DesignFeature::Pad {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -428,6 +431,7 @@ fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
 
 fn pocket(sketch: FeatureId, depth: f32) -> DesignFeature {
     DesignFeature::Pocket {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,

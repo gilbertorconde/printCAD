@@ -604,6 +604,7 @@ mod tests {
 
     fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
         DesignFeature::Pad {
+            regions: Vec::new(),
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -829,6 +830,88 @@ mod tests {
             panic!()
         };
         assert!((length - 17.0).abs() < 0.051, "{length}");
+    }
+
+    /// With a pad's task open on two crossing circles, a click on the lens
+    /// takes it alone and Ctrl+click adds a crescent; a click off the
+    /// circles goes on to pick as any click.
+    #[test]
+    fn clicking_regions_in_the_view_chooses_what_the_pad_takes() {
+        use core_document::{MouseButton, Workbench, WorkbenchInputEvent as E};
+        use wb_sketch::sketch::Circle;
+        let mut sketch = Sketch::new("venn");
+        for x in [0.0, 10.0] {
+            let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))));
+            sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 10.0)));
+        }
+        let plane = sketch.plane;
+        let regions = wb_sketch::profile::regions(&sketch).unwrap();
+        let name_at = |x: f64| {
+            regions
+                .iter()
+                .find(|r| (r.inside[0] - x).abs() < 3.0)
+                .map(|r| r.name.clone())
+                .expect("a region there")
+        };
+        let (left, lens) = (name_at(-5.0), name_at(5.0));
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let sketch_id = doc
+            .add_feature_in_body(
+                SketchFeature::new(sketch, plane),
+                "Sketch".into(),
+                Some(body),
+            )
+            .unwrap();
+        let id = doc
+            .add_feature_in_body(pad(sketch_id, 2.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut wb = DesignWorkbench::default();
+        let panel = panel();
+        open(&mut wb, &panel, &mut doc, id);
+
+        let eye = glam::Vec3::new(5.0, -40.0, 80.0);
+        let view = glam::camera::rh::view::look_at_mat4(
+            eye,
+            glam::Vec3::new(5.0, 0.0, 0.0),
+            glam::Vec3::Z,
+        );
+        let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
+        let mut ctx = WorkbenchRuntimeContext::new(
+            &mut doc,
+            eye.to_array(),
+            [5.0, 0.0, 0.0],
+            (0, 0, 800, 600),
+        );
+        ctx.view_proj = Some((proj * view).to_cols_array_2d());
+        let press = |ctx: &WorkbenchRuntimeContext, at: [f32; 3]| E::MousePress {
+            button: MouseButton::Left,
+            viewport_pos: ctx.world_to_viewport(at).unwrap(),
+        };
+        let taken = |ctx: &WorkbenchRuntimeContext| {
+            DesignFeature::from_json(ctx.document.get_feature_data(id).unwrap())
+                .unwrap()
+                .regions()
+                .to_vec()
+        };
+
+        let event = press(&ctx, [5.0, 6.0, 0.0]);
+        assert!(wb.on_input(&event, None, &mut ctx).consumed);
+        assert_eq!(taken(&ctx), vec![lens.clone()], "the lens alone");
+        ctx.ctrl_down = true;
+        let event = press(&ctx, [-6.0, 0.0, 0.0]);
+        assert!(wb.on_input(&event, None, &mut ctx).consumed);
+        let mut both = taken(&ctx);
+        both.sort();
+        let mut expected = vec![lens, left];
+        expected.sort();
+        assert_eq!(both, expected, "the crescent added");
+        ctx.ctrl_down = false;
+        let event = press(&ctx, [30.0, 0.0, 0.0]);
+        assert!(
+            !wb.on_input(&event, None, &mut ctx).consumed,
+            "off the circles"
+        );
     }
 
     /// Cancel puts back everything the task changed: the data and what it

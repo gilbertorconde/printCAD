@@ -659,7 +659,7 @@ fn plan_feature(
                 ));
             }
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-            let profile = profile_of(&sketch_feature).map_err(&fail)?;
+            let profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
             let axis_2d = axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
             let termination = match (mode, up_to_face) {
                 (RevolveMode::Angle, _) => RevolveTermination::Angle,
@@ -775,7 +775,7 @@ fn plan_feature(
                     .iter()
                     .all(|s| matches!(s, kernel_api::LoftSection::Profile(_)));
             if plain {
-                let profile = sketch_profile(document, *profile).map_err(&fail)?;
+                let profile = sketch_profile(document, *profile, &[]).map_err(&fail)?;
                 let spine =
                     sketch_spine(document, *spine, profile_anchor(&profile)).map_err(&fail)?;
                 plan.ops.push(SolidOp::Pipe {
@@ -796,7 +796,7 @@ fn plan_feature(
                 let section = match profile_face {
                     Some(pick) => kernel_api::LoftSection::Face(face_probe(pick)),
                     None => kernel_api::LoftSection::Profile(
-                        sketch_profile(document, *profile).map_err(&fail)?,
+                        sketch_profile(document, *profile, &[]).map_err(&fail)?,
                     ),
                 };
                 let path = if !path_edges.is_empty() {
@@ -839,7 +839,7 @@ fn plan_feature(
             keep_inside,
         } => {
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-            let profile = profile_of(&sketch_feature).map_err(&fail)?;
+            let profile = profile_of(&sketch_feature, &[]).map_err(&fail)?;
             let extent = helix_extent(*mode, *pitch, *height, *turns, *growth).map_err(&fail)?;
             let kind = if *axis == RevolveAxis::SketchNormal {
                 SweepKind::HelixNormal {
@@ -1675,7 +1675,7 @@ fn extrude_op(
             op: boolean,
         }],
         (None, Some(sketch)) => {
-            let mut profile = sketch_profile(document, sketch)?;
+            let mut profile = sketch_profile(document, sketch, feature.regions())?;
             if extras.start_offset != 0.0 {
                 // Along the way the first side runs.
                 let way = normalize(custom.unwrap_or(profile.plane.normal))
@@ -2540,10 +2540,13 @@ fn loft_section(
             return Ok(kernel_api::LoftSection::Point([at(0), at(1), at(2)]));
         }
     }
-    Ok(kernel_api::LoftSection::Profile(profile_of(&sketch)?))
+    Ok(kernel_api::LoftSection::Profile(profile_of(&sketch, &[])?))
 }
 
-fn load_sketch(document: &Document, sketch_id: FeatureId) -> Result<SketchFeature, String> {
+pub(crate) fn load_sketch(
+    document: &Document,
+    sketch_id: FeatureId,
+) -> Result<SketchFeature, String> {
     // A sketch another body lends, where this body sees it.
     if let Some(borrowed) = crate::borrow::sketch(document, sketch_id) {
         return borrowed;
@@ -2562,12 +2565,48 @@ pub(crate) fn sketch_normal(document: &Document, sketch_id: FeatureId) -> Option
         .map(|sketch| sketch.plane.normal)
 }
 
-fn sketch_profile(document: &Document, sketch_id: FeatureId) -> Result<Profile, String> {
-    profile_of(&load_sketch(document, sketch_id)?)
+fn sketch_profile(
+    document: &Document,
+    sketch_id: FeatureId,
+    regions: &[String],
+) -> Result<Profile, String> {
+    profile_of(&load_sketch(document, sketch_id)?, regions)
 }
 
-fn profile_of(sketch_feature: &SketchFeature) -> Result<Profile, String> {
-    let wires = profile::extract_wires(&sketch_feature.sketch).map_err(|e| e.to_string())?;
+/// The regions sketch `id`'s curves close, as a feature reads the sketch;
+/// none for a sketch that is gone or closes nothing. Kept while the
+/// document stays as it is, since a task panel asks every frame.
+pub(crate) fn sketch_regions(
+    document: &Document,
+    id: FeatureId,
+) -> std::rc::Rc<Vec<wb_sketch::regions::Region>> {
+    type Kept = Option<(FeatureId, u64, std::rc::Rc<Vec<wb_sketch::regions::Region>>)>;
+    thread_local! {
+        static KEPT: std::cell::RefCell<Kept> = const { std::cell::RefCell::new(None) };
+    }
+    let seq = document.mutation_seq();
+    KEPT.with(|kept| {
+        if let Some((at, when, regions)) = &*kept.borrow()
+            && (*at, *when) == (id, seq)
+        {
+            return regions.clone();
+        }
+        let regions = std::rc::Rc::new(
+            load_sketch(document, id)
+                .ok()
+                .and_then(|s| profile::regions(&s.sketch).ok())
+                .unwrap_or_default(),
+        );
+        *kept.borrow_mut() = Some((id, seq, regions.clone()));
+        regions
+    })
+}
+
+/// The sketch's profile: the outline of the regions named, or what its
+/// curves close when none is.
+fn profile_of(sketch_feature: &SketchFeature, regions: &[String]) -> Result<Profile, String> {
+    let wires =
+        profile::extract_regions(&sketch_feature.sketch, regions).map_err(|e| e.to_string())?;
     Ok(Profile {
         plane: profile::plane_of(&sketch_feature.plane),
         wires,
@@ -3250,6 +3289,7 @@ mod tests {
 
     fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
         DesignFeature::Pad {
+            regions: Vec::new(),
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -3275,6 +3315,7 @@ mod tests {
 
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> DesignFeature {
         DesignFeature::Pocket {
+            regions: Vec::new(),
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -3713,6 +3754,7 @@ mod tests {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         doc.add_feature_in_body(
             DesignFeature::Revolution {
+                regions: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 sketch: sketch_id,
@@ -3730,6 +3772,7 @@ mod tests {
         .unwrap();
         doc.add_feature_in_body(
             DesignFeature::Groove {
+                regions: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 sketch: sketch_id,
@@ -4941,6 +4984,7 @@ mod tests {
         let pocket = doc
             .add_feature_in_body(
                 DesignFeature::Pocket {
+                    regions: Vec::new(),
                     profile_borrowed: None,
                     extras: Default::default(),
                     refine: false,
@@ -5356,6 +5400,7 @@ mod tests {
     fn a_revolution_takes_its_end_mode() {
         let revolution =
             |mode: RevolveMode, up_to_face: Option<FacePick>, sketch| DesignFeature::Revolution {
+                regions: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 sketch,

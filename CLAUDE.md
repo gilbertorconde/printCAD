@@ -339,7 +339,13 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `KernelQueries::profile_mesh`, cached by profile) and out of it (the
   passive geometry's `PassiveRegion`, which the host meshes once per
   revision and draws see-through behind the lines), loose ends ringed,
-  `profile.rs` (closed-wire extraction), `overlay.rs` (screen-space rendering
+  `profile.rs` (closed-wire extraction), `regions.rs` (the planar arrangement:
+  curves split where they cross, touch or branch, every bounded face a
+  `Region` named by the elements round it and the side of each it lies on;
+  `profile::extract_regions` outlines the ones named, which Design's Pad,
+  Pocket, Revolution and Groove keep in `regions`, chosen by clicks in the
+  view while their task is open, `wb_design/src/region_pick.rs`, or the
+  task's checks; `sketch.regions` lists them), `overlay.rs` (screen-space rendering
   while editing), `glyphs.rs` (constraint icons and dimension layouts),
   `constrain.rs` (which constraint a toolbar action creates for the
   selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
@@ -1130,7 +1136,9 @@ hacks, no silently degraded feature). Instead:
   coincident duplicate points. The profile is the sketch's closed loops:
   curves with a loose end (a stray line, a spur off a loop) are pruned away
   and loops enclosing no area dropped; it fails only when nothing closes
-  (`profile::loose_ends` names what was left out).
+  (`profile::loose_ends` names what was left out). Curves that cross or
+  branch go through `regions.rs` instead, whose default (every region, one
+  nested in a loop a hole) is the same shape for a sketch that does neither.
 - **Pocket/Groove cut AGAINST the sketch normal by default** (a face
   sketch's normal points out of the material, so the default digs in).
 - **NDC is Y-down**: the camera bakes a Y flip into `view_proj`, and the

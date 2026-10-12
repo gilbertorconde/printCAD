@@ -20,6 +20,7 @@ mod hole_tables;
 mod params;
 mod recognize;
 mod references;
+mod region_pick;
 #[cfg(feature = "egui")]
 mod task;
 
@@ -406,6 +407,7 @@ impl DesignWorkbench {
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     DesignFeature::Pad {
+                        regions: Vec::new(),
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
@@ -435,6 +437,7 @@ impl DesignWorkbench {
                 let (sketch, profile_face, profile_borrowed) = extrude_profile()?;
                 (
                     DesignFeature::Pocket {
+                        regions: Vec::new(),
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
@@ -462,6 +465,7 @@ impl DesignWorkbench {
             }
             "design.revolve" => (
                 DesignFeature::Revolution {
+                    regions: Vec::new(),
                     refine: false,
                     boolean_tolerance: None,
                     sketch: need_sketch(sketch)?,
@@ -479,6 +483,7 @@ impl DesignWorkbench {
                 need_material(has_solid)?;
                 (
                     DesignFeature::Groove {
+                        regions: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
                         sketch: need_sketch(sketch)?,
@@ -1208,12 +1213,15 @@ impl DesignWorkbench {
                 button: MouseButton::Left,
                 viewport_pos,
             } => {
-                let handle = self.handle(ctx)?;
-                if !handles::within_reach(ctx, &handle, *viewport_pos) {
-                    return None;
+                if let Some(handle) = self.handle(ctx)
+                    && handles::within_reach(ctx, &handle, *viewport_pos)
+                {
+                    self.held = Some(handle);
+                    return Some(InputResult::consumed());
                 }
-                self.held = Some(handle);
-                Some(InputResult::consumed())
+                // A click on a region of the open task's sketch chooses it.
+                let task = self.task_feature()?;
+                region_pick::click(ctx, task, *viewport_pos).then(InputResult::consumed)
             }
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
                 let held = self.held.as_mut()?;
@@ -2388,6 +2396,10 @@ impl Workbench for DesignWorkbench {
                 color,
             ));
         }
+        meshes.extend(
+            self.task_feature()
+                .and_then(|task| region_pick::overlay(ctx, task)),
+        );
         meshes
     }
 }
@@ -2752,6 +2764,7 @@ mod icon_coverage {
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),
             &DesignFeature::Pad {
+                regions: Vec::new(),
                 profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,

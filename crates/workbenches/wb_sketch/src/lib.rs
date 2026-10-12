@@ -23,6 +23,7 @@ mod ovp;
 mod panel;
 mod params;
 pub mod profile;
+pub mod regions;
 pub mod render;
 mod repair;
 mod selection;
@@ -5333,6 +5334,9 @@ impl SketchWorkbench {
             }
             Err(profile::ProfileError::Unsolved) => {
                 problems.push("conflicting constraints, so no profile".to_string());
+            }
+            Err(profile::ProfileError::MissingRegion(_)) => {
+                problems.push("a chosen region is gone".to_string());
             }
         }
         ctx.log_info(format!("Sketch check: {}", problems.join(", ")));

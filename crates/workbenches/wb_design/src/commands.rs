@@ -96,8 +96,32 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 "It goes in the sketch's body. With no sketch, `face_point` and `face_normal` \
                  name a flat face of the solid to extrude instead.",
             )
+            .note(
+                "`regions` takes some of the sketch's regions by name (`sketch.regions`), \
+                 where its curves cross or branch: neighbours merge, and one left out \
+                 inside a taken one is a hole. Left out, the pad takes the whole profile.",
+            )
             .see_also("sketch.new")
+            .see_also("sketch.regions")
             .see_also("design.pocket")
+            .example(
+                "The lens two crossing circles share, padded alone",
+                r#"
+                local s = pc.sketch.new{plane = "XY"}
+                pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+                pc.sketch.circle{sketch = s, x = 10, y = 0, radius = 10}
+                local lens
+                for _, r in ipairs(pc.sketch.regions{sketch = s}) do
+                  if math.abs(r.x - 5) < 1 then lens = r.name end
+                end
+                local pad = pc.design.pad{sketch = s, length = 5, regions = {lens}}
+                assert(#pc.doc.rebuild() == 0, "the lens pads")
+                local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+                local area = 2 * 100 * math.acos(0.5) - 5 * math.sqrt(300)
+                assert(math.abs(m.volume - 5 * area) < 1e-3, m.volume)
+                assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 10) < 1e-6)
+                "#,
+            )
             .example(
                 "A plate padded from a rectangle",
                 r#"
@@ -2258,16 +2282,18 @@ fn read_fields(value: Value) -> Result<DesignFeature, serde_json::Error> {
         Ok(read) => return Ok(read),
         Err(first) => first,
     };
-    let mut tables = value;
+    let mut tables = value.clone();
     core_document::command::empty_lists_as_tables(&mut tables);
     if let Ok(read) = serde_json::from_value(tables.clone()) {
         return Ok(read);
     }
-    for to_table in [true, false] {
-        let mut again = tables.clone();
-        datum_forms(&mut again, to_table);
-        if let Ok(read) = serde_json::from_value(again) {
-            return Ok(read);
+    for written in [&value, &tables] {
+        for to_table in [true, false] {
+            let mut again = written.clone();
+            datum_forms(&mut again, to_table);
+            if let Ok(read) = serde_json::from_value(again) {
+                return Ok(read);
+            }
         }
     }
     Err(first)
@@ -2514,6 +2540,7 @@ mod tests {
         let datum = FeatureId::new();
         let id = datum.0.to_string();
         let mut revolve = DesignFeature::Revolution {
+            regions: Vec::new(),
             sketch: FeatureId::new(),
             angle_deg: 360.0,
             axis: crate::feature::RevolveAxis::default(),

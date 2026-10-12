@@ -2792,6 +2792,38 @@ assert(listed[1].kind == "Angle" and math.abs(listed[1].value - 45) < 1e-4, "deg
 assert(listed[1].items[1] == a and listed[1].items[2] == b)
 ```
 
+`pc.sketch.regions`: List the regions the sketch's curves close.
+
+- `sketch` (id): The sketch to draw in
+- Returns a list of {name, area, x, y, default}
+
+Notes:
+
+- Curves split where they cross, touch or branch, and every closed area between them is a region: two overlapping circles make three, the lens and two crescents. Curves with a loose end are left out.
+- `name` stays while the sketch's dimensions change; a pad, pocket, revolution or groove takes regions by it in its `regions` field. `x`, `y` is a point inside the region, `area` in mm² with its holes taken out. `default` is true for the regions a feature takes when it names none: a region inside another loop is a hole, one inside that is material again.
+
+See also `pc.design.pad`, `pc.sketch.wall_thickness`.
+
+Example: Two crossing circles close three regions.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+pc.sketch.circle{sketch = s, x = 10, y = 0, radius = 10}
+local regions = pc.sketch.regions{sketch = s}
+assert(#regions == 3)
+local lens = 2 * 100 * math.acos(0.5) - 5 * math.sqrt(300)
+local found = false
+for _, r in ipairs(regions) do
+  assert(r.default, "every region is material")
+  if math.abs(r.x - 5) < 1 then
+    found = true
+    assert(math.abs(r.area - lens) < 0.01 * lens, r.area)
+  end
+end
+assert(found, "the lens sits between the centres")
+```
+
 `pc.sketch.wall_thickness`: How thin the sketch's closed profile gets, for printing.
 
 - `sketch` (id): The sketch to draw in
@@ -3020,19 +3052,26 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `length` is 10 mm when left out. The pad grows along the sketch's normal; `reversed = true` grows it the other way, `symmetric = true` half each way.
 - It goes in the sketch's body. With no sketch, `face_point` and `face_normal` name a flat face of the solid to extrude instead.
+- `regions` takes some of the sketch's regions by name (`sketch.regions`), where its curves cross or branch: neighbours merge, and one left out inside a taken one is a hole. Left out, the pad takes the whole profile.
 
-See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.new`, `pc.design.pocket`.
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.sketch.new`, `pc.sketch.regions`, `pc.design.pocket`.
 
-Example: A plate padded from a rectangle.
+Example: The lens two crossing circles share, padded alone.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
-pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
-local pad = pc.design.pad{sketch = s, length = 5}
-assert(#pc.doc.rebuild() == 0, "the pad builds")
-local body = pc.doc.feature{id = pad}.body
-assert(math.abs(pc.doc.measure{body = body}.volume - 40 * 30 * 5) < 1e-3)
-assert(#pc.doc.faces{body = body} == 6, "a box has six faces")
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 10}
+pc.sketch.circle{sketch = s, x = 10, y = 0, radius = 10}
+local lens
+for _, r in ipairs(pc.sketch.regions{sketch = s}) do
+  if math.abs(r.x - 5) < 1 then lens = r.name end
+end
+local pad = pc.design.pad{sketch = s, length = 5, regions = {lens}}
+assert(#pc.doc.rebuild() == 0, "the lens pads")
+local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+local area = 2 * 100 * math.acos(0.5) - 5 * math.sqrt(300)
+assert(math.abs(m.volume - 5 * area) < 1e-3, m.volume)
+assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 10) < 1e-6)
 ```
 
 `pc.design.pocket`: Cut a sketch into the body.

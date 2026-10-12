@@ -13,16 +13,18 @@ use crate::feature::{DesignFeature, FacePick};
 /// The key of a feature's profile.
 pub(crate) const PROFILE: &str = "profile";
 
-/// Where a feature's profile is kept: the data fields that hold it, and
-/// whether a flat face of the solid can stand in for its sketch.
+/// Where a feature's profile is kept: the data fields that hold it (the
+/// regions of the sketch it takes among them), and whether a flat face of
+/// the solid can stand in for its sketch.
 fn profile_fields(feature: &DesignFeature) -> Option<(&'static [&'static str], bool)> {
     match feature {
         DesignFeature::Pad { .. } | DesignFeature::Pocket { .. } => {
-            Some((&["sketch", "profile_face"], true))
+            Some((&["sketch", "profile_face", "regions"], true))
         }
-        DesignFeature::Revolution { .. }
-        | DesignFeature::Groove { .. }
-        | DesignFeature::Helix { .. } => Some((&["sketch"], false)),
+        DesignFeature::Revolution { .. } | DesignFeature::Groove { .. } => {
+            Some((&["sketch", "regions"], false))
+        }
+        DesignFeature::Helix { .. } => Some((&["sketch"], false)),
         DesignFeature::Pipe { .. } => Some((&["profile"], false)),
         _ => None,
     }
@@ -45,18 +47,22 @@ fn profile_of(feature: &DesignFeature) -> (Option<FeatureId>, Option<FacePick>) 
     }
 }
 
-/// Point `feature`'s profile at `sketch`, or at `face` in its place.
+/// Point `feature`'s profile at `sketch`, or at `face` in its place. The
+/// regions it took of the sketch before are let go: a new profile is
+/// taken whole.
 fn set_profile(feature: &mut DesignFeature, to: Result<FeatureId, FacePick>) -> Result<(), String> {
     match (feature, to) {
         (
             DesignFeature::Pad {
                 sketch,
                 profile_face,
+                regions,
                 ..
             }
             | DesignFeature::Pocket {
                 sketch,
                 profile_face,
+                regions,
                 ..
             },
             to,
@@ -65,13 +71,21 @@ fn set_profile(feature: &mut DesignFeature, to: Result<FeatureId, FacePick>) -> 
                 Ok(id) => (Some(id), None),
                 Err(face) => (None, Some(face)),
             };
+            regions.clear();
         }
         (
-            DesignFeature::Revolution { sketch, .. }
-            | DesignFeature::Groove { sketch, .. }
-            | DesignFeature::Helix { sketch, .. },
+            DesignFeature::Revolution {
+                sketch, regions, ..
+            }
+            | DesignFeature::Groove {
+                sketch, regions, ..
+            },
             Ok(id),
-        ) => *sketch = id,
+        ) => {
+            *sketch = id;
+            regions.clear();
+        }
+        (DesignFeature::Helix { sketch, .. }, Ok(id)) => *sketch = id,
         (DesignFeature::Pipe { profile, .. }, Ok(id)) => *profile = id,
         (_, Err(_)) => return Err("only a pad or a pocket takes a face as its profile".into()),
         _ => return Err("this feature has no profile to change".into()),
@@ -192,6 +206,7 @@ mod tests {
 
     fn pad(sketch: FeatureId) -> DesignFeature {
         DesignFeature::Pad {
+            regions: Vec::new(),
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -234,7 +249,7 @@ mod tests {
         let profile = &refs[0];
         assert_eq!(profile.current, "a");
         assert!(profile.takes_face);
-        assert_eq!(profile.fields, ["sketch", "profile_face"]);
+        assert_eq!(profile.fields, ["sketch", "profile_face", "regions"]);
         assert!(profile.choices.iter().any(|(id, _)| *id == b));
 
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));

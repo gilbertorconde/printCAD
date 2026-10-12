@@ -63,6 +63,7 @@ fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
 
 fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) -> DesignFeature {
     DesignFeature::Pad {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -88,6 +89,7 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
 
 fn pocket_feature(sketch: FeatureId, depth: f32) -> DesignFeature {
     DesignFeature::Pocket {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -271,6 +273,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         wb_design::DesignFeature::Revolution {
+            regions: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             sketch: sketch_id,
@@ -908,6 +911,7 @@ fn bore_rim_fillets() {
         .unwrap();
     doc.add_feature_in_body(
         DesignFeature::Pocket {
+            regions: Vec::new(),
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -1358,6 +1362,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
         let turn = doc
             .add_feature_in_body(
                 DesignFeature::Revolution {
+                    regions: Vec::new(),
                     refine: false,
                     boolean_tolerance: None,
                     sketch: sketch_id,
@@ -1533,6 +1538,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
             .unwrap();
         doc.add_feature_in_body(
             DesignFeature::Pocket {
+                regions: Vec::new(),
                 profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
@@ -2538,6 +2544,7 @@ fn wall_and_profile() -> (Document, BodyId, FeatureId) {
 fn revolution(sketch: FeatureId, fields: serde_json::Value) -> DesignFeature {
     with(
         DesignFeature::Revolution {
+            regions: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             sketch,
@@ -4636,4 +4643,98 @@ fn a_boolean_takes_several_tool_bodies() {
         .volume_mm3
         .unwrap();
     assert!((volume - (1000.0 - 2.0 * 20.0)).abs() < 1e-3, "{volume}");
+}
+
+/// Two circles of radius 10 with centres 10 apart, padded 5 taking the
+/// regions `pick` chooses of the three they close: the solid's volume and
+/// bounds.
+fn padded_circle_regions(
+    pick: impl Fn(&[wb_sketch::regions::Region]) -> Vec<String>,
+) -> (f64, ([f32; 3], [f32; 3])) {
+    let mut sketch = Sketch::new("venn");
+    for x in [0.0, 10.0] {
+        let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))));
+        sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 10.0)));
+    }
+    let regions = wb_sketch::profile::regions(&sketch).expect("regions");
+    assert_eq!(regions.len(), 3, "a lens and two crescents");
+    let chosen = pick(&regions);
+    let plane = sketch.plane;
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(sketch, plane),
+            "sketch".into(),
+            Some(body),
+        )
+        .unwrap();
+    let mut pad = pad_feature(sketch_id, 5.0, false, false);
+    if let DesignFeature::Pad { regions, .. } = &mut pad {
+        *regions = chosen;
+    }
+    doc.add_feature_in_body(pad, "Pad".into(), Some(body))
+        .unwrap();
+    let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let result = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the regions pad");
+    let volume = kernel
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a closed solid");
+    (volume, mesh_bounds(&result.mesh))
+}
+
+/// The area two circles of radius 10 with centres 10 apart share.
+fn venn_lens_area() -> f64 {
+    200.0 * (0.5f64).acos() - 5.0 * 300f64.sqrt()
+}
+
+#[test]
+fn a_pad_takes_the_lens_two_circles_share_alone() {
+    let (volume, (lo, hi)) = padded_circle_regions(|regions| {
+        let lens = regions
+            .iter()
+            .find(|r| (r.inside[0] - 5.0).abs() < 1.0)
+            .expect("the lens between the centres");
+        vec![lens.name.clone()]
+    });
+    assert!(
+        (volume - 5.0 * venn_lens_area()).abs() < 1e-3,
+        "{volume} vs {}",
+        5.0 * venn_lens_area()
+    );
+    // From one centre to the other, as high as the circles cross.
+    assert!(
+        lo[0].abs() < 1e-3 && (hi[0] - 10.0).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
+    );
+    let half = 75f32.sqrt();
+    assert!((hi[1] - half).abs() < 1e-3 && (lo[1] + half).abs() < 1e-3);
+    assert!((hi[2] - lo[2] - 5.0).abs() < 1e-3);
+}
+
+#[test]
+fn crossing_circles_pad_their_union_or_the_crescents_chosen() {
+    let disc = std::f64::consts::PI * 100.0;
+    let (union, _) = padded_circle_regions(|_| Vec::new());
+    let expected = 5.0 * (2.0 * disc - venn_lens_area());
+    assert!((union - expected).abs() < 1e-3, "{union} vs {expected}");
+    // The two crescents, which meet only where the circles cross.
+    let (crescents, (lo, hi)) = padded_circle_regions(|regions| {
+        regions
+            .iter()
+            .filter(|r| (r.inside[0] - 5.0).abs() >= 1.0)
+            .map(|r| r.name.clone())
+            .collect()
+    });
+    let expected = 5.0 * 2.0 * (disc - venn_lens_area());
+    assert!(
+        (crescents - expected).abs() < 1e-3,
+        "{crescents} vs {expected}"
+    );
+    assert!((lo[0] + 10.0).abs() < 1e-3 && (hi[0] - 20.0).abs() < 1e-3);
 }

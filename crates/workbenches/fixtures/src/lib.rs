@@ -87,6 +87,7 @@ pub fn open_sketch_scene(
     }
 
     let pad = DesignFeature::Pad {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -126,6 +127,7 @@ pub fn open_sketch_scene(
         .add_feature_in_body(SketchFeature::new(top, plane), "sketch_1".into(), body)
         .map_err(|err| format!("face sketch: {err}"))?;
     let pocket = DesignFeature::Pocket {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,

@@ -1203,6 +1203,80 @@ fn face_profile_row(
     }
 }
 
+/// The regions of the profile sketch a feature takes, a check each, shown
+/// when the sketch's curves close more than one. With none chosen the
+/// checks show the regions the whole profile takes; choosing those again
+/// goes back to taking the whole profile.
+fn regions_rows(
+    ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    sketch: FeatureId,
+    chosen: &mut Vec<String>,
+) -> bool {
+    let regions = crate::build::sketch_regions(ctx.document, sketch);
+    if regions.len() < 2 && chosen.is_empty() {
+        return false;
+    }
+    let mut changed = false;
+    let taken: Vec<bool> = regions
+        .iter()
+        .map(|r| {
+            if chosen.is_empty() {
+                r.default
+            } else {
+                chosen.contains(&r.name)
+            }
+        })
+        .collect();
+    ui.horizontal(|ui| label_cell(ui, "Regions:"));
+    for (index, region) in regions.iter().enumerate() {
+        let mut on = taken[index];
+        let label = format!(
+            "Region {} · {:.1} mm² at ({:.1}, {:.1})",
+            index + 1,
+            region.area,
+            region.inside[0],
+            region.inside[1]
+        );
+        if !check_row(ui, &mut on, &label).changed() {
+            continue;
+        }
+        let mut now = taken.clone();
+        now[index] = on;
+        // Nothing taken is no profile: the last region stays.
+        if !now.contains(&true) {
+            continue;
+        }
+        let defaults: Vec<bool> = regions.iter().map(|r| r.default).collect();
+        *chosen = if now == defaults {
+            Vec::new()
+        } else {
+            regions
+                .iter()
+                .zip(&now)
+                .filter(|(_, on)| **on)
+                .map(|(r, _)| r.name.clone())
+                .collect()
+        };
+        changed = true;
+    }
+    let gone = chosen
+        .iter()
+        .filter(|name| !regions.iter().any(|r| &r.name == *name))
+        .count();
+    if gone > 0 {
+        taper_note(
+            ui,
+            &format!("{gone} chosen region(s) are no longer in the sketch."),
+        );
+        if small_secondary_button(ui, "Take the whole profile").clicked() {
+            chosen.clear();
+            changed = true;
+        }
+    }
+    changed
+}
+
 /// What a pipe sweeps and along what: its profile a sketch or a picked
 /// face, its path a sketch, picked edges of the solid or edges another body
 /// lends.
@@ -2198,7 +2272,8 @@ pub fn feature_editor(
         DesignFeature::Pad {
             refine: _,
             boolean_tolerance: _,
-            sketch: _,
+            regions,
+            sketch,
             length,
             reversed,
             symmetric,
@@ -2219,6 +2294,9 @@ pub fn feature_editor(
         } => {
             let borrowed = end_targets(ctx, body);
             changed |= face_profile_row(ui, ctx, body, profile_face);
+            if let (Some(sketch), None) = (*sketch, profile_face.as_ref()) {
+                changed |= regions_rows(ui, ctx, sketch, regions);
+            }
             changed |=
                 extrude_mode_combo(ui, ("pad_mode", feature_id), mode, first_feature, &borrowed);
             changed |= extrude_side_rows(
@@ -2269,7 +2347,8 @@ pub fn feature_editor(
         DesignFeature::Pocket {
             refine: _,
             boolean_tolerance: _,
-            sketch: _,
+            regions,
+            sketch,
             depth,
             reversed,
             symmetric,
@@ -2297,6 +2376,9 @@ pub fn feature_editor(
                 changed = true;
             }
             changed |= face_profile_row(ui, ctx, body, profile_face);
+            if let (Some(sketch), None) = (*sketch, profile_face.as_ref()) {
+                changed |= regions_rows(ui, ctx, sketch, regions);
+            }
             let borrowed = end_targets(ctx, body);
             changed |= extrude_mode_combo(
                 ui,
@@ -2356,6 +2438,7 @@ pub fn feature_editor(
         DesignFeature::Revolution {
             refine: _,
             boolean_tolerance: _,
+            regions,
             sketch,
             angle_deg,
             axis,
@@ -2368,6 +2451,7 @@ pub fn feature_editor(
         | DesignFeature::Groove {
             refine: _,
             boolean_tolerance: _,
+            regions,
             sketch,
             angle_deg,
             axis,
@@ -2377,6 +2461,7 @@ pub fn feature_editor(
             mode,
             up_to_face,
         } => {
+            changed |= regions_rows(ui, ctx, *sketch, regions);
             // Each face the body borrows is a target of its own.
             let targets: Vec<(RevolveMode, String)> =
                 crate::borrow::faces_of_body(ctx.document, body)

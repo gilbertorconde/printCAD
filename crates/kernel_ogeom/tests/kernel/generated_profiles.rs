@@ -14,6 +14,7 @@ use wb_sketch::sketch::SketchPlane;
 
 fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
     DesignFeature::Pad {
+        regions: Vec::new(),
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -39,6 +40,7 @@ fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
 
 fn revolve(sketch: FeatureId) -> DesignFeature {
     DesignFeature::Revolution {
+        regions: Vec::new(),
         refine: false,
         boolean_tolerance: None,
         sketch,

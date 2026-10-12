@@ -1243,6 +1243,10 @@ pub enum DesignFeature {
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
+        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// empty takes what the sketch's profile is.
+        #[serde(default)]
+        regions: Vec<String>,
         #[serde(default)]
         extras: ExtrudeExtras,
     },
@@ -1302,6 +1306,10 @@ pub enum DesignFeature {
         up_to_offset2: f32,
         #[serde(default)]
         up_to_shape2: Vec<FacePick>,
+        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// empty takes what the sketch's profile is.
+        #[serde(default)]
+        regions: Vec<String>,
         #[serde(default)]
         extras: ExtrudeExtras,
     },
@@ -1328,6 +1336,10 @@ pub enum DesignFeature {
         mode: RevolveMode,
         #[serde(default)]
         up_to_face: Option<FacePick>,
+        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// empty takes what the sketch's profile is.
+        #[serde(default)]
+        regions: Vec<String>,
     },
     /// Revolve the sketch profile and subtract it.
     Groove {
@@ -1352,6 +1364,10 @@ pub enum DesignFeature {
         mode: RevolveMode,
         #[serde(default)]
         up_to_face: Option<FacePick>,
+        /// The sketch's regions it takes, by name (`wb_sketch::profile::regions`);
+        /// empty takes what the sketch's profile is.
+        #[serde(default)]
+        regions: Vec<String>,
     },
     /// Skin through two or more sections: sketches, datum points (or
     /// sketches of a single point) at either end, and flat faces of the
@@ -1729,6 +1745,19 @@ impl DesignFeature {
             | DesignFeature::Hole { sketch, .. } => Some(*sketch),
             DesignFeature::Pipe { profile, .. } => Some(*profile),
             _ => None,
+        }
+    }
+
+    /// The sketch regions a pad, pocket, revolution or groove takes by
+    /// name; empty for every other feature, and for one taking its whole
+    /// profile.
+    pub fn regions(&self) -> &[String] {
+        match self {
+            DesignFeature::Pad { regions, .. }
+            | DesignFeature::Pocket { regions, .. }
+            | DesignFeature::Revolution { regions, .. }
+            | DesignFeature::Groove { regions, .. } => regions,
+            _ => &[],
         }
     }
 
