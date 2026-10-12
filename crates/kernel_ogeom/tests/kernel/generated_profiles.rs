@@ -46,6 +46,7 @@ fn revolve(sketch: FeatureId) -> DesignFeature {
         sketch,
         angle_deg: 360.0,
         axis: wb_design::RevolveAxis::SketchY,
+        project_axis: false,
         reversed: false,
         midplane: false,
         second_angle_deg: None,

@@ -1156,6 +1156,20 @@ fn revolve_axis_editor(
     changed
 }
 
+/// The axis taken as its shadow on the sketch plane, offered for the axes
+/// from outside the sketch, which can stand tilted to it.
+fn project_axis_row(ui: &mut Ui, axis: &RevolveAxis, project_axis: &mut bool) -> bool {
+    matches!(
+        axis,
+        RevolveAxis::Edge(_)
+            | RevolveAxis::Datum(_)
+            | RevolveAxis::Borrowed(_)
+            | RevolveAxis::Base(_)
+    ) && check_row(ui, project_axis, "Project onto the sketch")
+        .on_hover_text("An axis tilted to the sketch plane turns about its shadow on the plane")
+        .changed()
+}
+
 /// A pad's or a pocket's face profile, when it has one: where it is, and a
 /// flat face picked in the view to take its place.
 fn face_profile_row(
@@ -2442,6 +2456,7 @@ pub fn feature_editor(
             sketch,
             angle_deg,
             axis,
+            project_axis,
             reversed,
             midplane,
             second_angle_deg,
@@ -2455,6 +2470,7 @@ pub fn feature_editor(
             sketch,
             angle_deg,
             axis,
+            project_axis,
             reversed,
             midplane,
             second_angle_deg,
@@ -2520,6 +2536,7 @@ pub fn feature_editor(
                 ("rev_axis", feature_id),
                 false,
             );
+            changed |= project_axis_row(ui, axis, project_axis);
             if *mode == RevolveMode::Angle {
                 changed |= check_row(ui, midplane, "Midplane").changed();
                 let mut two_sided = second_angle_deg.is_some();
@@ -2728,6 +2745,7 @@ pub fn feature_editor(
             boolean_tolerance: _,
             sketch,
             axis,
+            project_axis,
             mode,
             pitch,
             height,
@@ -2748,6 +2766,7 @@ pub fn feature_editor(
                 ("helix_axis", feature_id),
                 true,
             );
+            changed |= project_axis_row(ui, axis, project_axis);
             ui.horizontal(|ui| {
                 label_cell(ui, "Mode");
                 egui::ComboBox::from_id_salt(("helix_mode", feature_id))

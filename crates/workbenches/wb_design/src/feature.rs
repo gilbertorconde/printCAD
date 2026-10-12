@@ -1319,6 +1319,10 @@ pub enum DesignFeature {
         angle_deg: f32,
         #[serde(default)]
         axis: RevolveAxis,
+        /// An axis that does not run along the sketch plane is taken as its
+        /// shadow on it, rather than refused.
+        #[serde(default)]
+        project_axis: bool,
         #[serde(default)]
         reversed: bool,
         #[serde(default)]
@@ -1347,6 +1351,10 @@ pub enum DesignFeature {
         angle_deg: f32,
         #[serde(default)]
         axis: RevolveAxis,
+        /// An axis that does not run along the sketch plane is taken as its
+        /// shadow on it, rather than refused.
+        #[serde(default)]
+        project_axis: bool,
         #[serde(default)]
         reversed: bool,
         #[serde(default)]
@@ -1427,6 +1435,10 @@ pub enum DesignFeature {
     Helix {
         sketch: FeatureId,
         axis: RevolveAxis,
+        /// An axis that does not run along the sketch plane is taken as its
+        /// shadow on it, rather than refused.
+        #[serde(default)]
+        project_axis: bool,
         mode: HelixMode,
         pitch: f32,
         height: f32,

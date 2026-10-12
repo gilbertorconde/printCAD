@@ -633,6 +633,7 @@ fn plan_feature(
             sketch,
             angle_deg,
             axis,
+            project_axis,
             reversed,
             midplane,
             second_angle_deg,
@@ -644,6 +645,7 @@ fn plan_feature(
             sketch,
             angle_deg,
             axis,
+            project_axis,
             reversed,
             midplane,
             second_angle_deg,
@@ -660,7 +662,8 @@ fn plan_feature(
             }
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
             let profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
-            let axis_2d = axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
+            let axis_2d =
+                axis_in_sketch(document, &sketch_feature, axis, *project_axis).map_err(&fail)?;
             let termination = match (mode, up_to_face) {
                 (RevolveMode::Angle, _) => RevolveTermination::Angle,
                 (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
@@ -827,6 +830,7 @@ fn plan_feature(
             boolean_tolerance: _,
             sketch,
             axis,
+            project_axis,
             mode,
             pitch,
             height,
@@ -854,7 +858,8 @@ fn plan_feature(
                 }
             } else {
                 let (axis_origin, axis_dir) =
-                    axis_in_sketch(document, &sketch_feature, axis).map_err(&fail)?;
+                    axis_in_sketch(document, &sketch_feature, axis, *project_axis)
+                        .map_err(&fail)?;
                 SweepKind::Helix {
                     axis_origin,
                     axis_dir,
@@ -1734,19 +1739,29 @@ fn sketch_line_direction(
 
 /// Where a revolution's (or helix's) axis lies in its sketch: a point and a
 /// direction in the sketch's own coordinates. A picked edge or a datum line
-/// must run along the sketch plane, and is taken where it falls on it.
+/// must run along the sketch plane, and is taken where it falls on it; with
+/// `project`, one tilted to the plane is taken as its shadow on it, and
+/// only one square to it is refused.
 pub(crate) fn axis_in_sketch(
     document: &Document,
     sketch: &SketchFeature,
     axis: &RevolveAxis,
+    project: bool,
 ) -> Result<([f64; 2], [f64; 2]), String> {
     let plane = profile::plane_of(&sketch.plane);
     let onto_plane = |point: [f64; 3], dir: [f64; 3], what: &str| {
         let d = normalize(dir).map_err(|_| format!("the {what} has no direction"))?;
         let n = normalize(plane.normal).map_err(|_| "the sketch has no normal".to_string())?;
-        if dot3(d, n).abs() > 1e-3 {
+        let across = dot3(d, n);
+        if across.abs() > 1.0 - 1e-6 {
             return Err(format!(
-                "the {what} does not run along the sketch plane, so it cannot be the axis"
+                "the {what} stands square to the sketch plane, so it cannot be the axis"
+            ));
+        }
+        if across.abs() > 1e-3 && !project {
+            return Err(format!(
+                "the {what} does not run along the sketch plane, so it cannot be the axis; \
+                 project the axis to take its shadow on the plane"
             ));
         }
         let rel = [
@@ -1754,9 +1769,11 @@ pub(crate) fn axis_in_sketch(
             point[1] - plane.origin[1],
             point[2] - plane.origin[2],
         ];
+        let (dx, dy) = (dot3(d, plane.x_axis), dot3(d, plane.y_axis));
+        let length = dx.hypot(dy);
         Ok((
             [dot3(rel, plane.x_axis), dot3(rel, plane.y_axis)],
-            [dot3(d, plane.x_axis), dot3(d, plane.y_axis)],
+            [dx / length, dy / length],
         ))
     };
     let (origin, dir) = match axis {
@@ -3760,6 +3777,7 @@ mod tests {
                 sketch: sketch_id,
                 angle_deg: 270.0,
                 axis: RevolveAxis::SketchY,
+                project_axis: false,
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
@@ -3778,6 +3796,7 @@ mod tests {
                 sketch: sketch_id,
                 angle_deg: 90.0,
                 axis: RevolveAxis::SketchX,
+                project_axis: false,
                 reversed: true,
                 midplane: false,
                 second_angle_deg: None,
@@ -5406,6 +5425,7 @@ mod tests {
                 sketch,
                 angle_deg: 360.0,
                 axis: RevolveAxis::SketchY,
+                project_axis: false,
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
@@ -5497,11 +5517,12 @@ mod tests {
             };
             close(got.0, want.0) && close(unit(got.1), unit(want.1))
         };
-        let line_axis = axis_in_sketch(&doc, &feature, &RevolveAxis::SketchLine(line)).unwrap();
+        let line_axis =
+            axis_in_sketch(&doc, &feature, &RevolveAxis::SketchLine(line), false).unwrap();
         assert!(near(line_axis, ([-1.0, 0.0], [0.0, 3.0])), "{line_axis:?}");
         // The YZ plane pushed back 4 along its normal (world X): a line
         // along world Y through x = -4.
-        let datum_axis = axis_in_sketch(&doc, &feature, &RevolveAxis::Datum(datum)).unwrap();
+        let datum_axis = axis_in_sketch(&doc, &feature, &RevolveAxis::Datum(datum), false).unwrap();
         assert!(
             near(datum_axis, ([-4.0, 0.0], [0.0, 1.0])),
             "{datum_axis:?}"
@@ -5513,14 +5534,27 @@ mod tests {
                 direction,
             })
         };
-        let edge_axis = axis_in_sketch(&doc, &feature, &edge([1.0, 0.0, 0.0])).unwrap();
+        let edge_axis = axis_in_sketch(&doc, &feature, &edge([1.0, 0.0, 0.0]), false).unwrap();
         assert!(near(edge_axis, ([2.0, 7.0], [1.0, 0.0])), "{edge_axis:?}");
-        let across = axis_in_sketch(&doc, &feature, &edge([0.0, 0.0, 1.0]));
+        let across = axis_in_sketch(&doc, &feature, &edge([0.0, 0.0, 1.0]), false);
         assert!(across.unwrap_err().contains("sketch plane"));
+        // Tilted to the plane: refused, unless projected, when it is its
+        // shadow on the plane. Square to it, even projected, it is refused.
+        let tilted = edge([1.0, 0.0, 1.0]);
+        assert!(axis_in_sketch(&doc, &feature, &tilted, false).is_err());
+        let shadow = axis_in_sketch(&doc, &feature, &tilted, true).unwrap();
+        assert!(near(shadow, ([2.0, 7.0], [1.0, 0.0])), "{shadow:?}");
+        assert!(
+            (shadow.1[0].hypot(shadow.1[1]) - 1.0).abs() < 1e-9,
+            "a unit direction"
+        );
+        let square = axis_in_sketch(&doc, &feature, &edge([0.0, 0.0, 1.0]), true);
+        assert!(square.unwrap_err().contains("square"));
         let missing = axis_in_sketch(
             &doc,
             &feature,
             &RevolveAxis::SketchLine(uuid::Uuid::new_v4()),
+            false,
         );
         assert!(missing.is_err());
     }
@@ -5531,6 +5565,7 @@ mod tests {
             boolean_tolerance: None,
             sketch,
             axis: RevolveAxis::SketchY,
+            project_axis: false,
             mode,
             pitch: 2.0,
             height,

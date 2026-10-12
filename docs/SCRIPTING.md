@@ -3124,6 +3124,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - It turns the sketch about the sketch's own y axis through its origin (`axis = "SketchY"`; on an XZ sketch that is the world's Z), 360 degrees when `angle_deg` is left out; `axis = "SketchX"` or `axis = {Custom = {origin = {x, y}, dir = {x, y}}}` in sketch coordinates turn it about another.
 - A profile that touches the axis makes a solid of revolution; one that crosses it fails at `pc.doc.rebuild()` (the profile sits on the axis).
+- An edge, datum line or body axis taken as the axis must run along the sketch plane; with `project_axis = true` one tilted to it turns about its shadow on the plane, and only one square to it is refused. Groove and helix take it too.
 - It is refused without a sketch.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.groove`, `pc.design.helix`.

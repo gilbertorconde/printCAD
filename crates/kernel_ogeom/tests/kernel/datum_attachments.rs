@@ -364,6 +364,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
             sketch: ring,
             angle_deg: 360.0,
             axis: wb_design::RevolveAxis::Datum(axis),
+            project_axis: false,
             reversed: false,
             midplane: false,
             second_angle_deg: None,

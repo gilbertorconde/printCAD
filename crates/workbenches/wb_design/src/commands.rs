@@ -315,6 +315,11 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 "A profile that touches the axis makes a solid of revolution; one that \
                  crosses it fails at `pc.doc.rebuild()` (the profile sits on the axis).",
             )
+            .note(
+                "An edge, datum line or body axis taken as the axis must run along the sketch \
+                 plane; with `project_axis = true` one tilted to it turns about its shadow on \
+                 the plane, and only one square to it is refused. Groove and helix take it too.",
+            )
             .note("It is refused without a sketch.")
             .see_also("design.groove")
             .see_also("design.helix")
@@ -2544,6 +2549,7 @@ mod tests {
             sketch: FeatureId::new(),
             angle_deg: 360.0,
             axis: crate::feature::RevolveAxis::default(),
+            project_axis: false,
             reversed: false,
             midplane: false,
             second_angle_deg: None,
