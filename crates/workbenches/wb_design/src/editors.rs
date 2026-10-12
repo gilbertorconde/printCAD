@@ -48,7 +48,7 @@ fn skipped_editor(ui: &mut Ui, skipped: &mut Vec<u32>) -> bool {
             for (at, index) in skipped.iter().enumerate() {
                 if small_secondary_button(
                     ui,
-                    &format!("{} ✕", crate::instances::occurrence_name(*index)),
+                    &format!("{} ×", crate::instances::occurrence_name(*index)),
                 )
                 .on_hover_text("Bring it back")
                 .clicked()
