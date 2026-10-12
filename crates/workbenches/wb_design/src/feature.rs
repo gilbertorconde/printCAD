@@ -413,8 +413,12 @@ pub struct ExtrudeExtras {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub up_to_shape_borrowed2: Vec<BorrowedRef>,
     /// Millimetres the extrusion starts away from the profile's plane,
-    /// along the way it runs.
+    /// along the way it runs; from `start_at`'s plane when that is set.
     pub start_offset: f32,
+    /// A datum plane or a sketch whose plane the extrusion starts on, the
+    /// profile carried there along the way it runs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_at: Option<FeatureId>,
     /// The second side's taper, when it differs from the first's.
     pub taper2_deg: Option<f32>,
     /// With a slanted direction, the length is measured along the
@@ -2325,6 +2329,11 @@ impl WorkbenchFeature for DesignFeature {
 
     fn dependencies(&self) -> Vec<FeatureId> {
         let mut deps = self.sketches();
+        if let DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } = self
+            && let Some(start) = extras.start_at
+        {
+            deps.push(start);
+        }
         if let Some(originals) = self.originals() {
             deps.extend_from_slice(originals);
         }

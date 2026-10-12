@@ -1629,7 +1629,7 @@ fn extrude_op(
         boolean
     };
     if let Some(r) = borrowed {
-        if extras.start_offset != 0.0 || second.is_some() {
+        if extras.start_offset != 0.0 || extras.start_at.is_some() || second.is_some() {
             return Err(
                 "a start offset or a second side's own taper takes a sketch's profile, not a face"
                     .into(),
@@ -1645,8 +1645,8 @@ fn extrude_op(
         }]);
     }
     Ok(match (profile_face, sketch) {
-        (Some(_), _) if extras.start_offset != 0.0 => {
-            return Err("a start offset takes a sketch's profile, not a face".into());
+        (Some(_), _) if extras.start_offset != 0.0 || extras.start_at.is_some() => {
+            return Err("a start offset or plane takes a sketch's profile, not a face".into());
         }
         (Some(_), _) if second.is_some() => {
             return Err("a second side's own taper takes a sketch's profile, not a face".into());
@@ -1658,11 +1658,18 @@ fn extrude_op(
         }],
         (None, Some(sketch)) => {
             let mut profile = sketch_profile(document, sketch, feature.regions())?;
-            if extras.start_offset != 0.0 {
+            if extras.start_offset != 0.0 || extras.start_at.is_some() {
                 // Along the way the first side runs.
                 let way = normalize(custom.unwrap_or(profile.plane.normal))
                     .map_err(|_| "the extrusion direction is zero".to_string())?;
-                let s = f64::from(extras.start_offset) * if reversed { -1.0 } else { 1.0 };
+                let to_start = match extras.start_at {
+                    Some(start) => {
+                        distance_to_plane(profile.plane.origin, way, start_plane(document, start)?)?
+                    }
+                    None => 0.0,
+                };
+                let s =
+                    to_start + f64::from(extras.start_offset) * if reversed { -1.0 } else { 1.0 };
                 for (o, w) in profile.plane.origin.iter_mut().zip(way) {
                     *o += w * s;
                 }
@@ -1683,6 +1690,43 @@ fn extrude_op(
         }
         (None, None) => unreachable!("a profile was required above"),
     })
+}
+
+/// The plane an extrusion starts on, as a point and its normal in the
+/// body's frame: a datum plane's (or coordinate system's), or a sketch's.
+fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64; 3]), String> {
+    let data = document
+        .feature_values(start)
+        .ok_or("the plane the extrusion starts on is gone")?;
+    if let Ok(datum) = core_document::DatumFeature::from_json(data) {
+        if matches!(
+            datum.shape,
+            core_document::DatumShape::Line { .. } | core_document::DatumShape::Point
+        ) {
+            return Err("the extrusion starts on a plane, not a datum line or point".into());
+        }
+        let frame = datum.frame();
+        return Ok((frame.origin.map(f64::from), frame.normal.map(f64::from)));
+    }
+    let sketch = load_sketch(document, start)
+        .map_err(|_| "the extrusion starts on a datum plane or a sketch".to_string())?;
+    let plane = profile::plane_of(&sketch.plane);
+    Ok((plane.origin, plane.normal))
+}
+
+/// How far from `from` along `way` the plane through `point` square to
+/// `normal` lies; refused for a plane the way runs along.
+fn distance_to_plane(
+    from: [f64; 3],
+    way: [f64; 3],
+    (point, normal): ([f64; 3], [f64; 3]),
+) -> Result<f64, String> {
+    let across = dot3(way, normal);
+    if across.abs() < 1e-6 {
+        return Err("the extrusion runs along the plane it should start on".into());
+    }
+    let gap = [point[0] - from[0], point[1] - from[1], point[2] - from[2]];
+    Ok(dot3(gap, normal) / across)
 }
 
 /// The way a datum runs: a line along itself, a plane or coordinate
@@ -5276,6 +5320,57 @@ mod tests {
         assert_eq!(ts.len(), 2);
         assert_eq!(transform_point(&ts[0], [0.0; 3]), [5.0, 0.0, 0.0]);
         assert_eq!(transform_point(&ts[1], [0.0; 3]), [0.0, 8.0, 0.0]);
+    }
+
+    /// A pad that starts on another sketch's plane, 7 mm above its own,
+    /// sweeps from there (and a start offset adds to it); one that starts
+    /// on a plane the extrusion runs along is refused.
+    #[test]
+    fn a_pad_starts_on_the_plane_it_names() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let lifted = {
+            let mut s = Sketch::new("lifted");
+            s.plane.origin = [0.0, 0.0, 7.0];
+            let plane = s.plane;
+            SketchFeature::new(s, plane)
+        };
+        let lifted = doc
+            .add_feature_in_body(lifted, "lifted".into(), Some(body))
+            .unwrap();
+        let mut started = pad(sketch_id, 5.0);
+        if let DesignFeature::Pad { extras, .. } = &mut started {
+            extras.start_at = Some(lifted);
+            extras.start_offset = 1.0;
+        }
+        assert!(started.dependencies().contains(&lifted));
+        doc.add_feature_in_body(started.clone(), "Pad".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::Sweep { profile, .. } = &plan.ops[0] else {
+            panic!("a sweep");
+        };
+        assert!(
+            (profile.plane.origin[2] - 8.0).abs() < 1e-9,
+            "{:?}",
+            profile.plane.origin
+        );
+
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let side = {
+            let s = Sketch::new("side");
+            SketchFeature::new(s, wb_sketch::sketch::SketchPlane::xz())
+        };
+        let side = doc
+            .add_feature_in_body(side, "side".into(), Some(body))
+            .unwrap();
+        if let DesignFeature::Pad { extras, sketch, .. } = &mut started {
+            extras.start_at = Some(side);
+            *sketch = Some(sketch_id);
+        }
+        doc.add_feature_in_body(started, "Pad".into(), Some(body))
+            .unwrap();
+        let refused = body_build_ops(&doc, body).unwrap_err().to_string();
+        assert!(refused.contains("runs along the plane"), "{refused}");
     }
 
     #[test]

@@ -929,12 +929,51 @@ fn extrude_direction_editor(
 /// side's own taper, and a slanted length measured along the normal.
 fn extrude_extras_rows(
     ui: &mut Ui,
+    ctx: &WorkbenchRuntimeContext,
+    body: BodyId,
     fx: &mut Formulas,
     extras: &mut crate::feature::ExtrudeExtras,
     two_sided: bool,
     direction: ExtrudeDirection,
 ) -> bool {
-    let mut changed = offset_drag(ui, fx, &mut extras.start_offset, "Start offset:");
+    let mut changed = false;
+    // Where it starts: the profile's own plane, a datum plane's or another
+    // sketch's.
+    let mut planes: Vec<(Option<FeatureId>, String)> = vec![(None, "Profile".to_string())];
+    planes.extend(
+        core_document::datums_of_body(ctx.document, body)
+            .into_iter()
+            .filter(|(_, _, d)| {
+                !matches!(
+                    d.shape,
+                    core_document::DatumShape::Line { .. } | core_document::DatumShape::Point
+                )
+            })
+            .map(|(id, name, _)| (Some(id), name)),
+    );
+    planes.extend(
+        crate::build::sketches_of_body(ctx.document, body)
+            .into_iter()
+            .map(|(id, name)| (Some(id), name)),
+    );
+    let shown = planes
+        .iter()
+        .find(|(id, _)| *id == extras.start_at)
+        .map_or_else(|| "(gone)".to_string(), |(_, name)| name.clone());
+    ui.horizontal(|ui| {
+        label_cell(ui, "Start at");
+        egui::ComboBox::from_id_salt(("extrude_start_at", body))
+            .selected_text(shown)
+            .show_ui(ui, |ui| {
+                for (id, name) in &planes {
+                    if ui.selectable_label(extras.start_at == *id, name).clicked() {
+                        extras.start_at = *id;
+                        changed = true;
+                    }
+                }
+            });
+    });
+    changed |= offset_drag(ui, fx, &mut extras.start_offset, "Start offset:");
     if two_sided {
         let mut own = extras.taper2_deg.is_some();
         if check_row(ui, &mut own, "Second side's own taper").changed() {
@@ -2401,7 +2440,7 @@ pub fn feature_editor(
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
             taper_note(ui, "Positive opens the pad out as it rises.");
             let two_sided = mode.sides(*mode2).1.is_some();
-            changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
+            changed |= extrude_extras_rows(ui, ctx, body, fx, extras, two_sided, *direction);
         }
         DesignFeature::Pocket {
             keep_inside: _,
@@ -2493,7 +2532,7 @@ pub fn feature_editor(
             changed |= deg_drag(ui, fx, taper_deg, "Taper:", -85.0..=85.0);
             taper_note(ui, "Positive widens the pocket as it goes deeper.");
             let two_sided = mode.sides(*mode2).1.is_some();
-            changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
+            changed |= extrude_extras_rows(ui, ctx, body, fx, extras, two_sided, *direction);
         }
         DesignFeature::Revolution {
             refine: _,
