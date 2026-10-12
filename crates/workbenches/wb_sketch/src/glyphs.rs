@@ -7,13 +7,12 @@ use std::collections::{HashMap, HashSet};
 use core_document::{ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette};
 use uuid::Uuid;
 
+use crate::appearance::Appearance;
 use crate::overlay::SketchProjector;
 use crate::sketch::{self, ConstraintKind, GeometryElement, Sketch, Vec2D};
 use crate::snap::arc_angles;
 use crate::style::constraint_icon;
 
-/// Dimension label font size in pixels.
-const LABEL_SIZE: f32 = 12.0;
 /// Icon glyph size in pixels.
 const ICON_SIZE: f32 = 14.0;
 /// Screen-space offset of symbol glyphs from their element anchor.
@@ -72,15 +71,16 @@ impl Glyph {
         }
     }
 
-    /// The pill label of a dimension, or the suffix label of an indexed
-    /// icon.
-    pub fn label(&self) -> Option<ScreenSpaceLabel> {
+    /// The pill label of a dimension, in the size and face `look` gives,
+    /// or the suffix label of an indexed icon.
+    pub fn label(&self, look: &Appearance) -> Option<ScreenSpaceLabel> {
         match &self.visual {
-            GlyphVisual::Pill { text } => Some(
-                ScreenSpaceLabel::new(self.pos, text.clone(), self.color, LABEL_SIZE)
-                    .pill()
-                    .mono(),
-            ),
+            GlyphVisual::Pill { text } => {
+                let label =
+                    ScreenSpaceLabel::new(self.pos, text.clone(), self.color, look.label_size)
+                        .pill();
+                Some(if look.label_mono { label.mono() } else { label })
+            }
             GlyphVisual::Icon {
                 suffix: Some(n), ..
             } => Some(
@@ -975,10 +975,10 @@ fn fan_out(glyphs: &mut [Glyph]) {
     }
 }
 
-/// The dimension, extension and leader lines of every glyph: 1px in the
-/// glyph's color. Radial leaders appear only once the label is dragged
-/// away from its anchor.
-pub fn dimension_overlays(glyphs: &[Glyph]) -> Vec<ScreenSpaceOverlay> {
+/// The dimension, extension and leader lines of every glyph, in the
+/// glyph's color and the width and dash `look` gives. Radial leaders
+/// appear only once the label is dragged away from its anchor.
+pub fn dimension_overlays(glyphs: &[Glyph], look: &Appearance) -> Vec<ScreenSpaceOverlay> {
     let mut out = Vec::new();
     for g in glyphs {
         let radial_leader = g.lines.len() == 1 && g.lines[0].1 == g.pos;
@@ -989,7 +989,9 @@ pub fn dimension_overlays(glyphs: &[Glyph]) -> Vec<ScreenSpaceOverlay> {
             }
         }
         for (a, b) in &g.lines {
-            out.push(ScreenSpaceOverlay::new(*a, *b, g.color, 1.0));
+            let mut line = ScreenSpaceOverlay::new(*a, *b, g.color, look.dimension_width);
+            line.dash = Appearance::dash(look.dimension_dashed);
+            out.push(line);
         }
     }
     out
@@ -1009,14 +1011,14 @@ const fn ui_kit_pill_pad() -> [f32; 2] {
 }
 
 /// The glyph under `p` (viewport px), nearest-center first. Dimension
-/// pills use their text rect; icons a small circle.
-pub fn hit_test(glyphs: &[Glyph], p: [f32; 2]) -> Option<&Glyph> {
+/// pills use their text rect at `label_size`; icons a small circle.
+pub fn hit_test(glyphs: &[Glyph], p: [f32; 2], label_size: f32) -> Option<&Glyph> {
     let mut best: Option<(&Glyph, f32)> = None;
     for g in glyphs {
         let dx = p[0] - g.pos[0];
         let dy = p[1] - g.pos[1];
         let inside = if g.dimensional {
-            let (hw, hh) = pill_half_extents(LABEL_SIZE, g.text().chars().count());
+            let (hw, hh) = pill_half_extents(label_size, g.text().chars().count());
             dx.abs() <= hw && dy.abs() <= hh
         } else {
             dx * dx + dy * dy <= SYMBOL_HIT_RADIUS_PX * SYMBOL_HIT_RADIUS_PX
@@ -1034,6 +1036,8 @@ pub fn hit_test(glyphs: &[Glyph], p: [f32; 2]) -> Option<&Glyph> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const LABEL_SIZE: f32 = 12.0;
 
     #[test]
     fn icons_on_one_spot_fan_out_each_clickable() {
@@ -1057,7 +1061,7 @@ mod tests {
         fan_out(&mut glyphs);
         let ids: Vec<Uuid> = glyphs
             .iter()
-            .map(|g| hit_test(&glyphs, g.pos).unwrap().constraint)
+            .map(|g| hit_test(&glyphs, g.pos, LABEL_SIZE).unwrap().constraint)
             .collect();
         assert_eq!(
             ids,
@@ -1103,17 +1107,23 @@ mod tests {
     fn dimension_label_hit_uses_text_rect() {
         let g = [pill([100.0, 100.0], "12.5")];
         let (hw, hh) = pill_half_extents(LABEL_SIZE, 4);
-        assert!(hit_test(&g, [100.0 + hw - 0.5, 100.0]).is_some());
-        assert!(hit_test(&g, [100.0 + hw + 1.0, 100.0]).is_none());
-        assert!(hit_test(&g, [100.0, 100.0 + hh - 0.5]).is_some());
-        assert!(hit_test(&g, [100.0, 100.0 + hh + 1.0]).is_none());
+        assert!(hit_test(&g, [100.0 + hw - 0.5, 100.0], LABEL_SIZE).is_some());
+        assert!(hit_test(&g, [100.0 + hw + 1.0, 100.0], LABEL_SIZE).is_none());
+        assert!(hit_test(&g, [100.0, 100.0 + hh - 0.5], LABEL_SIZE).is_some());
+        assert!(hit_test(&g, [100.0, 100.0 + hh + 1.0], LABEL_SIZE).is_none());
     }
 
     #[test]
     fn symbol_hit_uses_radius_circle() {
         let g = [icon([50.0, 50.0], "constraint-horizontal")];
-        assert!(hit_test(&g, [57.0, 57.0]).is_some(), "within 10px radius");
-        assert!(hit_test(&g, [58.0, 58.0]).is_none(), "outside 10px radius");
+        assert!(
+            hit_test(&g, [57.0, 57.0], LABEL_SIZE).is_some(),
+            "within 10px radius"
+        );
+        assert!(
+            hit_test(&g, [58.0, 58.0], LABEL_SIZE).is_none(),
+            "outside 10px radius"
+        );
     }
 
     #[test]
@@ -1122,7 +1132,7 @@ mod tests {
         let b = icon([106.0, 100.0], "constraint-vertical");
         let id_b = b.constraint;
         let g = [a, b];
-        let hit = hit_test(&g, [105.0, 100.0]).unwrap();
+        let hit = hit_test(&g, [105.0, 100.0], LABEL_SIZE).unwrap();
         assert_eq!(hit.constraint, id_b);
     }
 

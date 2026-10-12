@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use core_document::{ScreenSpaceMark, ScreenSpaceOverlay, SketchPalette, WorkbenchRuntimeContext};
 use uuid::Uuid;
 
+use crate::appearance::Appearance;
 use crate::geom2d;
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
 use crate::snap::{SnapTarget, arc_angles};
@@ -442,14 +443,16 @@ fn push_axes(
     pal: &SketchPalette,
     selected: &HashSet<Uuid>,
     hovered: Option<Uuid>,
+    look: &Appearance,
 ) {
+    let width = look.axis_width;
     let state = |id: Uuid, base: [f32; 3]| {
         if selected.contains(&id) {
-            (pal.selected, 2.0, 1.0)
+            (pal.selected, width + 1.0, 1.0)
         } else if hovered == Some(id) {
-            (pal.preselect, 1.5, 1.0)
+            (pal.preselect, width + 0.5, 1.0)
         } else {
-            (base, 1.0, AXIS_ALPHA)
+            (base, width, AXIS_ALPHA)
         }
     };
     let axes = [
@@ -469,8 +472,9 @@ fn push_axes(
     for (id, a, b, base) in axes {
         let (color, thickness, alpha) = state(id, base);
         if let (Some(pa), Some(pb)) = (proj.to_px(a), proj.to_px(b)) {
-            out.lines
-                .push(ScreenSpaceOverlay::new(pa, pb, color, thickness).with_alpha(alpha));
+            let mut line = ScreenSpaceOverlay::new(pa, pb, color, thickness).with_alpha(alpha);
+            line.dash = Appearance::dash(look.axis_dashed);
+            out.lines.push(line);
         }
     }
     let (color, _, alpha) = state(crate::sketch::ORIGIN_ID, pal.reference);
@@ -1455,9 +1459,10 @@ pub fn build_overlays(
     snap_tol: f32,
     snap: Option<crate::snap::Snap>,
     construction_on_top: bool,
+    look: &Appearance,
 ) -> Overlays {
     let mut out = Overlays::default();
-    push_axes(&mut out, proj, pal, selected, hovered);
+    push_axes(&mut out, proj, pal, selected, hovered, look);
 
     let centers: HashSet<Uuid> = sketch
         .geometry

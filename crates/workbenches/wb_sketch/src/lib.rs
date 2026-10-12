@@ -2,6 +2,7 @@
 // the kernel bench use; the panel-only state and helpers go unused there.
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
+mod appearance;
 mod commands;
 pub mod conic;
 mod constrain;
@@ -354,8 +355,6 @@ const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 const ANGLE_STEP_DEG: f32 = 15.0;
 /// How far the shaded regions stand off the sketch plane, in mm.
 const REGION_LIFT_MM: f64 = 0.01;
-/// How much of the geometry colour the shaded regions take.
-const REGION_OPACITY: f32 = 0.12;
 
 /// The switches on the sketcher's panel and Preferences page.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -399,6 +398,8 @@ pub struct SketchOptions {
     pub section_on_open: bool,
     /// The regions the profile closes are shaded while editing.
     pub shade_regions: bool,
+    /// How the edited sketch draws.
+    pub appearance: appearance::Appearance,
 }
 
 impl Default for SketchOptions {
@@ -421,6 +422,7 @@ impl Default for SketchOptions {
             spline_knots: false,
             section_on_open: false,
             shade_regions: true,
+            appearance: appearance::Appearance::default(),
         }
     }
 }
@@ -1639,7 +1641,12 @@ impl SketchWorkbench {
         }
         let proj = SketchProjector::new(ctx, feature.plane);
         let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
-        glyphs::hit_test(&glyphs, [viewport_pos.0, viewport_pos.1]).map(|g| GlyphHit {
+        glyphs::hit_test(
+            &glyphs,
+            [viewport_pos.0, viewport_pos.1],
+            self.options.appearance.label_size,
+        )
+        .map(|g| GlyphHit {
             constraint: g.constraint,
             dimensional: g.dimensional,
             pos: g.pos,
@@ -2941,7 +2948,7 @@ impl Workbench for SketchWorkbench {
                 }
                 core_document::PassiveRegion {
                     profile: kernel_api::Profile { plane, wires },
-                    opacity: REGION_OPACITY,
+                    opacity: self.options.appearance.region_opacity,
                 }
             });
         Some(core_document::PassiveGeometry {
@@ -3874,6 +3881,68 @@ impl Workbench for SketchWorkbench {
             ],
             filter,
         );
+        let look = &mut self.options.appearance;
+        let faces = [(true, "Monospace"), (false, "Sans")];
+        pref_group(
+            ui,
+            "Appearance",
+            vec![
+                PrefRow::qty(
+                    "Label size",
+                    ui_kit::widgets::QtyField::new(&mut look.label_size)
+                        .unit("px")
+                        .decimals(0)
+                        .speed(0.2)
+                        .range(8.0..=24.0),
+                )
+                .hint("The size of the dimensions' values"),
+                PrefRow::select(
+                    "Label face",
+                    "sketch_label_face",
+                    &mut look.label_mono,
+                    &faces,
+                )
+                .hint("The face the dimensions' values are set in"),
+                PrefRow::qty(
+                    "Dimension lines",
+                    ui_kit::widgets::QtyField::new(&mut look.dimension_width)
+                        .unit("px")
+                        .decimals(1)
+                        .speed(0.05)
+                        .range(0.5..=4.0),
+                )
+                .hint("How wide the dimension, extension and leader lines draw"),
+                PrefRow::toggle("Dashed dimension lines", &mut look.dimension_dashed)
+                    .hint("Tones the dimensions down against the geometry"),
+                PrefRow::qty(
+                    "Axes",
+                    ui_kit::widgets::QtyField::new(&mut look.axis_width)
+                        .unit("px")
+                        .decimals(1)
+                        .speed(0.05)
+                        .range(0.5..=4.0),
+                )
+                .hint("How wide the sketch's axes draw while not picked"),
+                PrefRow::toggle("Dashed axes", &mut look.axis_dashed),
+                PrefRow::qty(
+                    "Grid",
+                    ui_kit::widgets::QtyField::new(&mut look.grid_opacity)
+                        .decimals(2)
+                        .speed(0.01)
+                        .range(0.05..=1.0),
+                )
+                .hint("How much the grid shows, from faint to solid"),
+                PrefRow::qty(
+                    "Region shading",
+                    ui_kit::widgets::QtyField::new(&mut look.region_opacity)
+                        .decimals(2)
+                        .speed(0.01)
+                        .range(0.02..=0.8),
+                )
+                .hint("How strongly the regions a profile closes are shaded"),
+            ],
+            filter,
+        );
         let pal = core_document::SketchPalette::default();
         pref_group(
             ui,
@@ -4323,7 +4392,7 @@ impl Workbench for SketchWorkbench {
             mesh: mesh.clone(),
             color: ctx.sketch_palette.geometry,
             wireframe: false,
-            opacity: REGION_OPACITY,
+            opacity: self.options.appearance.region_opacity,
             on_top: false,
         }]
     }
@@ -4375,7 +4444,10 @@ impl Workbench for SketchWorkbench {
         }
         if !self.options.constraints_hidden {
             let glyphs = self.glyphs(ctx, &feature.sketch, &proj);
-            out.extend(glyphs::dimension_overlays(&glyphs));
+            out.extend(glyphs::dimension_overlays(
+                &glyphs,
+                &self.options.appearance,
+            ));
         }
         out
     }
@@ -4432,7 +4504,7 @@ impl Workbench for SketchWorkbench {
         } else {
             self.glyphs(ctx, &feature.sketch, &proj)
                 .iter()
-                .filter_map(glyphs::Glyph::label)
+                .filter_map(|g| g.label(&self.options.appearance))
                 .collect()
         };
         // What the cursor would snap to, by name.
@@ -4532,6 +4604,7 @@ impl SketchWorkbench {
             snap_tol,
             snap,
             self.options.construction_on_top,
+            &self.options.appearance,
         )
     }
 
@@ -4915,7 +4988,10 @@ impl SketchWorkbench {
         let color = pal.inactive;
         let mut line = |a: Vec2D, b: Vec2D| {
             if let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b)) {
-                out.push(core_document::ScreenSpaceOverlay::new(a, b, color, 1.0).with_alpha(0.35));
+                out.push(
+                    core_document::ScreenSpaceOverlay::new(a, b, color, 1.0)
+                        .with_alpha(self.options.appearance.grid_opacity),
+                );
             }
         };
         let (x0, x1) = ((lo.x / step).floor() as i64, (hi.x / step).ceil() as i64);
