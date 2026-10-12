@@ -602,7 +602,11 @@ fn from_end_nearest(
 }
 
 /// The face of `base` a pick names: by name, else the nearest.
-fn picked_face(model: &mut Model, base: &Shape, pick: &FaceProbe) -> Result<Shape, String> {
+pub(crate) fn picked_face(
+    model: &mut Model,
+    base: &Shape,
+    pick: &FaceProbe,
+) -> Result<Shape, String> {
     let point = point(pick.point);
     let by_name = (pick.name != 0)
         .then(|| crate::naming::find_face(model, base, pick.name, point))

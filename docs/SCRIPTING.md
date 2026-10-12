@@ -3739,6 +3739,44 @@ assert(math.abs(m.volume - 2000) < 1e-3, "what one end gains the other loses")
 assert(math.abs(m.max[3] - (10 + 10 * math.tan(math.rad(10)))) < 1e-4, m.max[3])
 ```
 
+`pc.design.project`: Project a sketch onto faces: split lines, emboss or deboss.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `sketch` is required, and `face_point` with `face_normal` names a face to project onto; `faces = {{point = .., normal = ..}, ...}` lists several, replacing that one.
+- The sketch's curves are carried along its plane's normal, either way, to the faces, landing on the side nearest the sketch: put the sketch beside the faces, not through the solid.
+- `mode` is "Emboss" (the default: the regions the curves enclose stand out by `height`), "Deboss" (they sink in by `height`) or "Split" (the faces are only split along the curves). `height` is 1 mm when left out.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.doc.faces`, `pc.sketch.new`.
+
+Example: A raised label on a cylinder's side.
+
+```lua
+local body = pc.doc.new_body{}
+pc.design.primitive{body = body,
+  kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
+-- A sketch standing in front of the side, facing away from it.
+local label = pc.sketch.new{body = body, origin = {0, -15, 10},
+  normal = {0, -1, 0}, x_axis = {1, 0, 0}}
+pc.sketch.rect{sketch = label, x = -3, y = -2, width = 6, height = 4}
+pc.design.project{sketch = label, mode = "Emboss", height = 1,
+  face_point = {0, -10, 10}, face_normal = {0, -1, 0}}
+assert(#pc.doc.rebuild() == 0, "the emboss builds")
+local volume = pc.doc.measure{body = body}.volume
+-- A ring sector 10 to 11 mm out, as wide as the label, 4 mm tall.
+local added = 2 * math.asin(0.3) * (121 - 100) / 2 * 4
+assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.1 * added, volume)
+```
+
 `pc.design.mirror`: Mirror the last feature.
 
 - `sketch` (id, optional): The sketch it uses

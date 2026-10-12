@@ -188,6 +188,10 @@ pub const SYNONYMS: &[(&[&str], &[&str])] = &[
     (&["circular", "radial", "circle"], &["polar"]),
     (&["variable", "parameter"], &["var"]),
     (&["constraint", "dimension"], &["constrain", "constraint"]),
+    (
+        &["engrave", "imprint", "raise"],
+        &["deboss", "emboss", "project"],
+    ),
 ];
 
 /// Words too common in a question to say anything about the answer.

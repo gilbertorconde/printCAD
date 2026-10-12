@@ -60,6 +60,10 @@ const FEATURES: &[(&str, &str)] = &[
         "design.move_faces",
         "Move or turn faces, their neighbours following",
     ),
+    (
+        "design.project",
+        "Project a sketch onto faces: split lines, emboss or deboss",
+    ),
     ("design.mirror", "Mirror the last feature"),
     (
         "design.linear_pattern",
@@ -674,6 +678,43 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 local volume = pc.doc.measure{body = body}.volume
                 assert(math.abs(volume - 1000) < 1e-3, volume)
                 assert(#pc.doc.faces{body = body} == 6)
+                "#,
+            ),
+        "design.project" => spec
+            .note(
+                "`sketch` is required, and `face_point` with `face_normal` names a face to \
+                 project onto; `faces = {{point = .., normal = ..}, ...}` lists several, \
+                 replacing that one.",
+            )
+            .note(
+                "The sketch's curves are carried along its plane's normal, either way, to \
+                 the faces, landing on the side nearest the sketch: put the sketch beside \
+                 the faces, not through the solid.",
+            )
+            .note(
+                "`mode` is \"Emboss\" (the default: the regions the curves enclose stand \
+                 out by `height`), \"Deboss\" (they sink in by `height`) or \"Split\" (the \
+                 faces are only split along the curves). `height` is 1 mm when left out.",
+            )
+            .see_also("doc.faces")
+            .see_also("sketch.new")
+            .example(
+                "A raised label on a cylinder's side",
+                r#"
+                local body = pc.doc.new_body{}
+                pc.design.primitive{body = body,
+                  kind = {Cylinder = {radius = 10, height = 20, angle_deg = 360}}}
+                -- A sketch standing in front of the side, facing away from it.
+                local label = pc.sketch.new{body = body, origin = {0, -15, 10},
+                  normal = {0, -1, 0}, x_axis = {1, 0, 0}}
+                pc.sketch.rect{sketch = label, x = -3, y = -2, width = 6, height = 4}
+                pc.design.project{sketch = label, mode = "Emboss", height = 1,
+                  face_point = {0, -10, 10}, face_normal = {0, -1, 0}}
+                assert(#pc.doc.rebuild() == 0, "the emboss builds")
+                local volume = pc.doc.measure{body = body}.volume
+                -- A ring sector 10 to 11 mm out, as wide as the label, 4 mm tall.
+                local added = 2 * math.asin(0.3) * (121 - 100) / 2 * 4
+                assert(math.abs(volume - (math.pi * 100 * 20 + added)) < 0.1 * added, volume)
                 "#,
             ),
         "design.offset_faces" => spec
@@ -1631,6 +1672,14 @@ pub fn run(
              delete, or the neutral plane) and its outward normal, in the body's own frame",
         ));
     }
+    if id == "design.project" && ctx.selected_face.is_none() && !a.has("faces") {
+        return Err(CommandError::bad(
+            "face_point",
+            "is required with face_normal, or `faces` in its place: the faces the sketch \
+             is projected onto, each a point on it and its outward normal, in the body's \
+             own frame",
+        ));
+    }
     let tool = match a.opt_string("variant")? {
         Some(variant) if !crate::PRIMITIVE_SHAPES.iter().any(|(v, _)| *v == variant) => {
             let names: Vec<&str> = crate::PRIMITIVE_SHAPES.iter().map(|(v, _)| *v).collect();
@@ -2457,6 +2506,66 @@ mod tests {
             )
             .unwrap();
         (body, sketch)
+    }
+
+    /// A projection takes its sketch and the faces named, as a point and
+    /// normal or as a list, and is refused with neither.
+    #[test]
+    fn a_projection_takes_its_sketch_and_faces() {
+        let mut doc = Document::new("t");
+        let (body, profile) = sketch_in(&mut doc);
+        let mut bench = DesignWorkbench::default();
+        let id = |f: FeatureId| json!(f.0.to_string());
+        call(
+            &mut bench,
+            &mut doc,
+            "design.pad",
+            json!({"sketch": id(profile), "length": 10.0}),
+        )
+        .unwrap();
+        let label = doc
+            .add_feature_in_body(
+                wb_sketch::SketchFeature::new(
+                    wb_sketch::sketch::Sketch::new("label"),
+                    wb_sketch::sketch::SketchPlane::default(),
+                ),
+                "label".to_string(),
+                Some(body),
+            )
+            .unwrap();
+        let err = call(
+            &mut bench,
+            &mut doc,
+            "design.project",
+            json!({"sketch": id(label)}),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("face_point"), "{err}");
+        let made = call(
+            &mut bench,
+            &mut doc,
+            "design.project",
+            json!({"sketch": id(label), "face_point": [5.0, 2.5, 10.0],
+                   "face_normal": [0.0, 0.0, 1.0]}),
+        )
+        .unwrap();
+        let project = &fields(&doc, &made)["Project"];
+        assert_eq!(project["sketch"], id(label));
+        assert_eq!(project["mode"], "Emboss");
+        assert_eq!(project["height"], 1.0);
+        assert_eq!(project["faces"].as_array().unwrap().len(), 1);
+        let made = call(
+            &mut bench,
+            &mut doc,
+            "design.project",
+            json!({"sketch": id(label), "mode": "Deboss", "height": 0.5,
+                   "faces": [{"point": [5.0, 2.5, 10.0], "normal": [0.0, 0.0, 1.0]},
+                             {"point": [10.0, 2.5, 5.0], "normal": [1.0, 0.0, 0.0]}]}),
+        )
+        .unwrap();
+        let project = &fields(&doc, &made)["Project"];
+        assert_eq!(project["mode"], "Deboss");
+        assert_eq!(project["faces"].as_array().unwrap().len(), 2);
     }
 
     /// A pipe takes the path it is given, from any body; given none it

@@ -56,13 +56,30 @@ pub fn answer(model: &mut Model, root: &Shape, probe: &ShapeProbe) -> Result<Pro
 }
 
 fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswer, String> {
-    let tol = tess::tolerances();
     let face = crate::queries::face_named(model, root, probe).map_err(|e| e.to_string())?;
-    let vertex = model.add_vertex(ogeom::topo::VertexData::new(point3(probe.point)));
+    let (on_face, outward) = outward_at(model, &face, point3(probe.point))?;
+    let outward = unit(outward);
+    let facing = outward.map(|c| c as f32);
+    Ok(ProbeAnswer::Face {
+        point: array(on_face),
+        normal: outward,
+        surface: tess::face_surface(model, &face, facing),
+    })
+}
+
+/// The point of `face` nearest `near`, and the face's outward normal there
+/// (its surface's normal, turned where the face is reversed).
+pub(crate) fn outward_at(
+    model: &mut Model,
+    face: &Shape,
+    near: Point,
+) -> Result<(Point, Vector), String> {
+    let tol = tess::tolerances();
+    let vertex = model.add_vertex(ogeom::topo::VertexData::new(near));
     let nearest = distance_between_shapes(
         model,
         &vertex,
-        &face,
+        face,
         ogeom::intersect::ExtremaOptions::default(),
         tol,
     )
@@ -72,7 +89,7 @@ fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswe
         .first()
         .map(|pair| pair.point_b)
         .ok_or("the face has no nearest point")?;
-    let Some(NodeData::Face(data)) = model.node(&face).map(|n| n.data()) else {
+    let Some(NodeData::Face(data)) = model.node(face).map(|n| n.data()) else {
         return Err("the face holds no face data".into());
     };
     let surface = model
@@ -96,13 +113,7 @@ fn face(model: &mut Model, root: &Shape, probe: &FaceProbe) -> Result<ProbeAnswe
     } else {
         placed
     };
-    let outward = unit(outward);
-    let facing = outward.map(|c| c as f32);
-    Ok(ProbeAnswer::Face {
-        point: array(on_face),
-        normal: outward,
-        surface: tess::face_surface(model, &face, facing),
-    })
+    Ok((on_face, outward))
 }
 
 /// Least cosine between a probe's direction and an edge's tangent where the

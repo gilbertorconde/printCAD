@@ -166,6 +166,17 @@ normals (negative into the material; a bore offset in widens), and
 around them follow on their own surfaces. The distance, the move and the
 angle take formulas.
 
+**Project sketch onto faces** carries a sketch along its plane's normal
+onto picked faces of the solid, flat or curved: a label or a logo on a
+cylinder's wall. Select the sketch in the tree (and the faces, or add them
+in the task), then choose the mode: Split lines divides the faces along
+the sketch's curves and leaves the solid as it is (faces later features
+and colours can take), Emboss raises the regions the curves enclose out of
+the faces by the height, and Deboss sinks them in. Put the sketch beside
+the faces rather than through the solid: each curve lands on the side
+nearest the sketch. The sketch is projected straight, not wrapped, so on
+a round wall its widths shorten toward the sides.
+
 **Recognize holes** reads the body's solid for round holes: full bores
 open at one end or both, ending flat or in a drill point. It deletes
 their faces (one Delete faces feature) and drills them again as Hole

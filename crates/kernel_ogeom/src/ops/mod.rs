@@ -4,6 +4,7 @@ pub mod dressup;
 pub mod loft_pipe;
 pub mod pattern;
 pub mod primitive;
+pub mod project;
 pub mod surface;
 pub mod sweep;
 

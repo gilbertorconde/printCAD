@@ -1381,6 +1381,42 @@ pub enum SolidOp {
     /// them. The op keeps its place in the chain, as a pattern's
     /// `originals` count it.
     WithTolerance { tolerance: f64, op: Box<SolidOp> },
+    /// A sketch carried along its plane's normal onto faces of the running
+    /// solid, each face split along the curves where they land; `mode`
+    /// says whether the regions the curves enclose then stand out of the
+    /// faces or sink into them by `height`.
+    Project {
+        profile: Profile,
+        faces: Vec<FaceProbe>,
+        mode: ProjectMode,
+        height: f64,
+    },
+}
+
+/// What a [`SolidOp::Project`] makes of the faces a sketch lands on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ProjectMode {
+    /// The faces split along the sketch's curves, the solid's shape
+    /// unchanged: lines later features and face colours can use.
+    #[default]
+    Split,
+    /// The regions the curves enclose raised out of the faces.
+    Emboss,
+    /// The regions the curves enclose sunk into the faces.
+    Deboss,
+}
+
+impl ProjectMode {
+    pub const ALL: [ProjectMode; 3] =
+        [ProjectMode::Split, ProjectMode::Emboss, ProjectMode::Deboss];
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ProjectMode::Split => "Split lines",
+            ProjectMode::Emboss => "Emboss",
+            ProjectMode::Deboss => "Deboss",
+        }
+    }
 }
 
 /// A curve a surface is built from.

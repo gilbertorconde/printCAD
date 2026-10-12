@@ -24,7 +24,7 @@ fn profile_fields(feature: &DesignFeature) -> Option<(&'static [&'static str], b
         DesignFeature::Revolution { .. } | DesignFeature::Groove { .. } => {
             Some((&["sketch", "regions"], false))
         }
-        DesignFeature::Helix { .. } => Some((&["sketch"], false)),
+        DesignFeature::Helix { .. } | DesignFeature::Project { .. } => Some((&["sketch"], false)),
         DesignFeature::Pipe { .. } => Some((&["profile"], false)),
         _ => None,
     }
@@ -85,7 +85,9 @@ fn set_profile(feature: &mut DesignFeature, to: Result<FeatureId, FacePick>) -> 
             *sketch = id;
             regions.clear();
         }
-        (DesignFeature::Helix { sketch, .. }, Ok(id)) => *sketch = id,
+        (DesignFeature::Helix { sketch, .. } | DesignFeature::Project { sketch, .. }, Ok(id)) => {
+            *sketch = id
+        }
         (DesignFeature::Pipe { profile, .. }, Ok(id)) => *profile = id,
         (_, Err(_)) => return Err("only a pad or a pocket takes a face as its profile".into()),
         _ => return Err("this feature has no profile to change".into()),

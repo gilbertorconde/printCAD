@@ -722,6 +722,19 @@ impl DesignWorkbench {
                     "MoveFaces",
                 )
             }
+            "design.project" => {
+                need_material(has_solid)?;
+                // The faces may be picked now or added in its task.
+                (
+                    DesignFeature::Project {
+                        sketch: need_sketch(sketch)?,
+                        faces: Self::selected_face_picks(ctx, body),
+                        mode: kernel_api::ProjectMode::Emboss,
+                        height: 1.0,
+                    },
+                    "Project",
+                )
+            }
             "design.delete_faces" => {
                 need_material(has_solid)?;
                 let faces = Self::selected_face_picks(ctx, body);
@@ -1759,6 +1772,15 @@ impl Workbench for DesignWorkbench {
         register(
             context,
             action(
+                "design.project",
+                "Project sketch onto faces",
+                "sketch-map",
+                "dressup",
+            ),
+        );
+        register(
+            context,
+            action(
                 "design.recognize_holes",
                 "Recognize holes",
                 "hole",
@@ -2223,6 +2245,7 @@ impl Workbench for DesignWorkbench {
             "design.revolve" | "design.loft" | "design.pipe" | "design.helix" => has_sketch,
             "design.groove"
             | "design.hole"
+            | "design.project"
             | "design.subtractive_loft"
             | "design.subtractive_pipe"
             | "design.subtractive_helix" => has_sketch && has_solid,
@@ -2950,6 +2973,13 @@ mod icon_coverage {
         );
         assert_eq!(info.kind_label, "Pad");
         assert!(info.builds_solid);
+        let projection = DesignFeature::Project {
+            sketch: FeatureId(uuid::Uuid::new_v4()),
+            faces: Vec::new(),
+            mode: kernel_api::ProjectMode::Emboss,
+            height: 1.0,
+        };
+        assert!(ui_kit::icon::exists(projection.icon()));
     }
 
     /// A hole with a cosmetic thread names its designation where the tree

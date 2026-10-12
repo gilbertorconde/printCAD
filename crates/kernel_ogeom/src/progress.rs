@@ -91,6 +91,7 @@ pub fn op_label(op: &SolidOp) -> &'static str {
         SolidOp::RemoveFaces { .. } => "Deleting faces",
         SolidOp::OffsetFaces { .. } => "Offsetting faces",
         SolidOp::MoveFaces { .. } => "Moving faces",
+        SolidOp::Project { .. } => "Projecting a sketch",
         SolidOp::Refine => "Refine",
         SolidOp::Transform { .. } | SolidOp::TransformCopies { .. } => "Pattern",
         SolidOp::Boolean { .. } => "Boolean",

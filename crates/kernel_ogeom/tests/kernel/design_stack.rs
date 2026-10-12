@@ -4901,3 +4901,108 @@ fn a_pocket_kept_inside_keeps_the_disc_it_digs_through() {
         "volume {volume} vs {expected}"
     );
 }
+
+/// A Ø20 × 20 cylinder with a 6 × 4 rectangle sketched in front of its
+/// side, square to Y and facing away from it, projected onto the side as
+/// `mode` says; the plain cylinder's volume and the built result.
+fn projected_onto_a_cylinder(
+    mode: kernel_api::ProjectMode,
+    height: f32,
+) -> (f64, kernel_api::SolidBuildResult) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    doc.add_feature_in_body(
+        DesignFeature::Primitive {
+            attached: None,
+            kind: kernel_api::PrimitiveKind::Cylinder {
+                radius: 10.0,
+                height: 20.0,
+                angle_deg: 360.0,
+            },
+            placement: kernel_api::Placement::default(),
+            subtractive: false,
+            refine: false,
+        },
+        "Cylinder".into(),
+        Some(body),
+    )
+    .unwrap();
+    let plane = wb_sketch::sketch::SketchPlane {
+        origin: [-3.0, -15.0, 8.0],
+        normal: [0.0, -1.0, 0.0],
+        x_axis: [1.0, 0.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+    };
+    let label = doc
+        .add_feature_in_body(rect_sketch_on(plane, 6.0, 4.0), "label".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        DesignFeature::Project {
+            sketch: label,
+            faces: vec![wb_design::FacePick {
+                point: [0.0, -10.0, 10.0],
+                normal: [0.0, -1.0, 0.0],
+                name: 0,
+            }],
+            mode,
+            height,
+        },
+        "Project".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
+    let result = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    (std::f64::consts::PI * 100.0 * 20.0, result)
+}
+
+fn volume_and_soundness(result: &kernel_api::SolidBuildResult) -> (f64, bool) {
+    let volume = OgeomKernel::new()
+        .physical_properties(&result.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .expect("a solid has a volume");
+    let mut model = ogeom::topo::Model::new();
+    let text = std::str::from_utf8(&result.brep_blob).unwrap();
+    let read = ogeom::io::native::read_into(&mut model, text).unwrap();
+    let check = ogeom::algo::check(
+        &model,
+        &read.shapes[0],
+        ogeom::core::Tolerances::millimetres(),
+    )
+    .unwrap();
+    (volume, check.is_usable())
+}
+
+#[test]
+fn a_projected_rectangle_embosses_and_debosses_a_cylinder_through_the_full_stack() {
+    // The rectangle's 6 mm spans this angle on the Ø20 side; the slab is a
+    // ring sector of it, 4 mm tall, 1 mm deep.
+    let span = 2.0 * 0.3f64.asin();
+    let (plain, raised) = projected_onto_a_cylinder(kernel_api::ProjectMode::Emboss, 1.0);
+    let (volume, sound) = volume_and_soundness(&raised);
+    assert!(sound, "the embossed solid checks sound");
+    let added = span * (121.0 - 100.0) / 2.0 * 4.0;
+    assert!(
+        (volume - plain - added).abs() < 0.1 * added,
+        "{} vs {added}",
+        volume - plain
+    );
+
+    let (_, sunk) = projected_onto_a_cylinder(kernel_api::ProjectMode::Deboss, 1.0);
+    let (volume, sound) = volume_and_soundness(&sunk);
+    assert!(sound, "the debossed solid checks sound");
+    let removed = span * (100.0 - 81.0) / 2.0 * 4.0;
+    assert!(
+        (plain - volume - removed).abs() < 0.1 * removed,
+        "{} vs {removed}",
+        plain - volume
+    );
+
+    let (_, split) = projected_onto_a_cylinder(kernel_api::ProjectMode::Split, 1.0);
+    let (volume, sound) = volume_and_soundness(&split);
+    assert!(sound, "the split solid checks sound");
+    assert!((volume - plain).abs() < 1e-3 * plain, "{volume}");
+}

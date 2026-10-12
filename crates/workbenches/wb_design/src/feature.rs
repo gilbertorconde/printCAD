@@ -1638,6 +1638,18 @@ pub enum DesignFeature {
         #[serde(default = "z_axis")]
         axis_dir: [f32; 3],
     },
+    /// A sketch carried onto faces of the solid along its plane's normal:
+    /// the faces split along its curves, and as `mode` says the regions
+    /// it encloses raised out of them or sunk into them by `height`.
+    Project {
+        sketch: FeatureId,
+        faces: Vec<FacePick>,
+        #[serde(default)]
+        mode: kernel_api::ProjectMode,
+        /// mm the regions stand out or sink in; unused for split lines.
+        #[serde(default = "default_project_height")]
+        height: f32,
+    },
     Thickness {
         value: f32,
         faces: Vec<FacePick>,
@@ -1805,6 +1817,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_project_height() -> f32 {
+    1.0
+}
+
 impl DesignFeature {
     /// The sketch this feature consumes, when it is sketch-based.
     pub fn sketch(&self) -> Option<FeatureId> {
@@ -1813,7 +1829,8 @@ impl DesignFeature {
             DesignFeature::Revolution { sketch, .. }
             | DesignFeature::Groove { sketch, .. }
             | DesignFeature::Helix { sketch, .. }
-            | DesignFeature::Hole { sketch, .. } => Some(*sketch),
+            | DesignFeature::Hole { sketch, .. }
+            | DesignFeature::Project { sketch, .. } => Some(*sketch),
             DesignFeature::Pipe { profile, .. } => Some(*profile),
             _ => None,
         }
@@ -1995,6 +2012,7 @@ impl DesignFeature {
             DesignFeature::DeleteFaces { .. } => "Delete Faces",
             DesignFeature::OffsetFaces { .. } => "Offset Faces",
             DesignFeature::MoveFaces { .. } => "Move Faces",
+            DesignFeature::Project { .. } => "Project",
             DesignFeature::Mirrored { .. } => "Mirrored",
             DesignFeature::LinearPattern { .. } => "Linear Pattern",
             DesignFeature::PolarPattern { .. } => "Polar Pattern",
@@ -2058,6 +2076,7 @@ impl DesignFeature {
             DesignFeature::DeleteFaces { .. } => "delete",
             DesignFeature::OffsetFaces { .. } => "offset-geometry",
             DesignFeature::MoveFaces { .. } => "move-geometry",
+            DesignFeature::Project { .. } => "sketch-map",
             DesignFeature::Mirrored { .. } => "mirrored",
             DesignFeature::LinearPattern { .. } => "linear-pattern",
             DesignFeature::PolarPattern { .. } => "polar-pattern",
@@ -2303,6 +2322,7 @@ impl DesignFeature {
                 | DesignFeature::DeleteFaces { .. }
                 | DesignFeature::OffsetFaces { .. }
                 | DesignFeature::MoveFaces { .. }
+                | DesignFeature::Project { .. }
                 | DesignFeature::Mirrored { .. }
                 | DesignFeature::LinearPattern { .. }
                 | DesignFeature::PolarPattern { .. }
@@ -2569,6 +2589,43 @@ pub fn primitive_preset(shape: &str) -> Option<kernel_api::PrimitiveKind> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A projection saved with only its sketch and faces reads as split
+    /// lines at the default height, its sketch its one dependency, and
+    /// comes back as it was written.
+    #[test]
+    fn a_projection_reads_its_defaults_and_round_trips() {
+        let sketch = FeatureId::new();
+        let value = serde_json::json!({"Project": {
+            "sketch": sketch.0.to_string(),
+            "faces": [{"point": [0.0, -10.0, 10.0], "normal": [0.0, -1.0, 0.0]}],
+        }});
+        let read = DesignFeature::from_json(&value).unwrap();
+        let DesignFeature::Project {
+            faces,
+            mode,
+            height,
+            ..
+        } = &read
+        else {
+            panic!("{read:?}");
+        };
+        assert_eq!(faces.len(), 1);
+        assert_eq!(*mode, kernel_api::ProjectMode::Split);
+        assert_eq!(*height, 1.0);
+        assert_eq!(read.dependencies(), vec![sketch]);
+        assert!(read.is_modifier());
+        let embossed = DesignFeature::Project {
+            sketch,
+            faces: faces.clone(),
+            mode: kernel_api::ProjectMode::Emboss,
+            height: 0.6,
+        };
+        assert_eq!(
+            DesignFeature::from_json(&embossed.to_json()).unwrap(),
+            embossed
+        );
+    }
 
     #[test]
     fn old_pad_json_without_new_fields_still_deserializes() {

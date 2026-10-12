@@ -883,7 +883,13 @@ pub fn face_plane(model: &Model, face: &Shape) -> Option<(Point, Direction)> {
 }
 
 /// Möller–Trumbore; returns the ray parameter of the hit.
-fn ray_triangle(origin: Point, dir: Direction, a: Point, b: Point, c: Point) -> Option<f64> {
+pub(crate) fn ray_triangle(
+    origin: Point,
+    dir: Direction,
+    a: Point,
+    b: Point,
+    c: Point,
+) -> Option<f64> {
     let e1 = b - a;
     let e2 = c - a;
     let d = dir.vector();

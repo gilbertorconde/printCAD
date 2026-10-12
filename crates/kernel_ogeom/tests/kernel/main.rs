@@ -23,6 +23,7 @@ mod naming;
 mod print_checks;
 mod probes;
 mod progress;
+mod project_on_faces;
 mod queries;
 mod scripted_design;
 mod scripted_part;

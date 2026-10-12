@@ -3065,6 +3065,39 @@ pub fn feature_editor(
                 }
             }
         }
+        DesignFeature::Project {
+            sketch: _,
+            faces,
+            mode,
+            height,
+        } => {
+            changed |= face_list_editor(ui, ctx, faces, "Faces to project onto:");
+            ui.horizontal(|ui| {
+                label_cell(ui, "Mode");
+                egui::ComboBox::from_id_salt(("project_mode", feature_id))
+                    .selected_text(mode.label())
+                    .show_ui(ui, |ui| {
+                        for candidate in kernel_api::ProjectMode::ALL {
+                            if ui
+                                .selectable_label(*mode == candidate, candidate.label())
+                                .clicked()
+                                && *mode != candidate
+                            {
+                                *mode = candidate;
+                                changed = true;
+                            }
+                        }
+                    });
+            });
+            if *mode != kernel_api::ProjectMode::Split {
+                changed |= mm_drag(ui, fx, height, "Height:");
+            }
+            taper_note(
+                ui,
+                "The sketch's curves are carried along its normal onto the faces, landing \
+                 on the side nearest the sketch.",
+            );
+        }
         DesignFeature::DeleteFaces { faces } => {
             changed |= face_list_editor(ui, ctx, faces, "Faces to delete:");
             taper_note(

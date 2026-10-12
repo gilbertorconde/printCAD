@@ -169,6 +169,8 @@ mod tests {
         ("bevel the corners", &["design.chamfer"]),
         ("shell a box", &["design.thickness"]),
         ("hollow out the part", &["design.thickness"]),
+        ("emboss a logo", &["design.project"]),
+        ("engrave text on a curved face", &["design.project"]),
         // A solid's and a surface's command both say so.
         ("extrude a sketch", &["design.pad", "surface.extrude"]),
         ("cut a sketch into the body", &["design.pocket"]),

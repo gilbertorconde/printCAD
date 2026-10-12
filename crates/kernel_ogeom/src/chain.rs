@@ -757,6 +757,17 @@ pub fn execute_cached(
                 ops::dressup::move_faces_of(&mut model, &solid, faces, face_names, transform)
                     .map_err(&err)?
             }
+            SolidOp::Project {
+                profile,
+                faces,
+                mode,
+                height,
+            } => {
+                let solid =
+                    base.ok_or_else(|| err("projecting a sketch needs an existing solid".into()))?;
+                ops::project::apply(&mut model, &solid, profile, faces, *mode, *height)
+                    .map_err(&err)?
+            }
             SolidOp::RemoveFaces { faces, face_names } => {
                 let solid =
                     base.ok_or_else(|| err("removing faces needs an existing solid".into()))?;

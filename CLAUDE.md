@@ -731,6 +731,12 @@ radius into whole bores, each end an opening, a flat bottom or a coaxial
 cone, from the faces sharing its edges) and adds one Delete Faces for
 every hole's faces, then per set of alike holes a hidden sketch of their
 centres on the opening plane and a Hole feature.
+Design's Project (`DesignFeature::Project`, `SolidOp::Project`,
+`kernel_ogeom/src/ops/project.rs`) carries a sketch along its normal onto
+picked faces: `split_face` (`Projection::Along`) splits them, and for
+Emboss/Deboss each piece whose inner point falls in a profile region is
+thickened (`make_thick_sheet`, the side checked by a point) and fused on or
+cut away; the kernel's `offset_faces` refuses such regions.
 
 **Body placement.** A body has a `BodyPlacement` (`core_document/src/
 placement.rs`, set by the `SetBodyPlacement` op). Its features, sketches,

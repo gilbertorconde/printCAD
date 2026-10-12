@@ -1033,6 +1033,24 @@ fn plan_feature(
                 transform,
             });
         }
+        DesignFeature::Project {
+            sketch,
+            faces,
+            mode,
+            height,
+        } => {
+            if faces.is_empty() {
+                return Err(fail(
+                    "select at least one face to project the sketch onto".into(),
+                ));
+            }
+            plan.ops.push(SolidOp::Project {
+                profile: sketch_profile(document, *sketch).map_err(&fail)?,
+                faces: faces.iter().map(face_probe).collect(),
+                mode: *mode,
+                height: f64::from(*height),
+            });
+        }
         DesignFeature::DeleteFaces { faces } => {
             if faces.is_empty() {
                 return Err(fail("select at least one face to delete".into()));
