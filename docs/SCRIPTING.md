@@ -6554,6 +6554,108 @@ assert(math.abs(q[4]) < 1e-4, "half a turn")
 assert(math.abs(q[3]) < 1e-4, "about an axis square to the hinge's")
 ```
 
+`pc.asm.turn90`: Turn a joint's own turn a quarter turn, its body following.
+
+- `joint` (id): The hinge, alignment, slider or fixed joint
+- `back` (boolean, optional): Turn the other way round (false when left out)
+
+Notes:
+
+- The turn the joint keeps is turned 90° about the other end's axis or normal: a hinge's or an alignment's zero, a slider's or a fixed joint's held turn. The body turns with it, and what the joint reads stays as it was: a hinge held at 30° is held at 30° from its new zero, its limits turned round with it.
+- A joint that keeps no turn of its own is refused. A mate's turn in its plane is free, so `asm.turn` turns a mated body; it is the same for the other joints.
+
+See also `pc.asm.turn`, `pc.asm.travel`.
+
+Example: A hinge held at 30° whose zero is turned a quarter turn.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 3}
+local post = pc.doc.feature{id = pc.design.pad{sketch = s, length = 10}}.body
+local w = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = w, x = 0, y = -2, width = 20, height = 4}
+local arm = pc.doc.feature{id = pc.design.pad{sketch = w, length = 2}}.body
+assert(#pc.doc.rebuild() == 0)
+local z = {axis = {point = {0, 0, 0}, direction = {0, 0, 1}}}
+local h = pc.asm.hinge{body = arm, face = z, other = post, other_face = z,
+  drive = 30}
+pc.asm.turn90{joint = h}
+assert(math.abs(pc.asm.travel{joint = h} - 30) < 1e-3, "still 30° on the hinge")
+local q = pc.asm.placement{body = arm}.rotation
+assert(math.abs(math.deg(2 * math.acos(q[4])) - 120) < 1e-2,
+  "the arm a quarter turn further round")
+```
+
+`pc.asm.select_joints`: Select every joint that holds a body.
+
+- `body` (id): The body
+- Returns a list of {joint, name}, in history order
+
+Notes:
+
+- The joints the body moves by and those that hold another body to it, a ground on it too, suppressed ones as well. The tree selects them together, the first the active one; with none, the document is selected.
+
+See also `pc.asm.redundant`, `pc.asm.unmet`.
+
+Example: A lid mated to a grounded base, and a block mated onto the lid.
+
+```lua
+local function box(x, w, h, len)
+  local s = pc.sketch.new{plane = "XY"}
+  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
+  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
+end
+local function facing(body, z)
+  for _, f in ipairs(pc.doc.faces{body = body}) do
+    if f.normal and f.normal[3] * z > 0.99 then return f end
+  end
+end
+local base = box(0, 20, 20, 5)
+local lid = box(40, 10, 10, 3)
+local block = box(80, 4, 4, 3)
+assert(#pc.doc.rebuild() == 0)
+local g = pc.asm.ground{body = base}
+local m = pc.asm.mate{body = lid, face = facing(lid, -1),
+  other = base, other_face = facing(base, 1)}
+pc.asm.mate{body = block, face = facing(block, -1),
+  other = lid, other_face = facing(lid, 1)}
+local held = pc.asm.select_joints{body = base}
+assert(#held == 2 and held[1].joint == g and held[2].joint == m,
+  "the ground and the mate onto it")
+assert(#pc.asm.select_joints{body = lid} == 2, "the lid's mate and the one onto it")
+```
+
+`pc.asm.unmet`: The joints and couplings that do not hold where the bodies sit.
+
+- Returns a list of {joint, name}, in history order
+
+Notes:
+
+- What a solve left apart: joints asking more of their bodies than they can give at once, or a coupling its joints cannot follow. An assembly that holds lists nothing.
+
+See also `pc.asm.redundant`, `pc.asm.select_joints`.
+
+Example: A mate that holds.
+
+```lua
+local function box(x, w, h, len)
+  local s = pc.sketch.new{plane = "XY"}
+  pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
+  return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
+end
+local function facing(body, z)
+  for _, f in ipairs(pc.doc.faces{body = body}) do
+    if f.normal and f.normal[3] * z > 0.99 then return f end
+  end
+end
+local base = box(0, 20, 20, 5)
+local lid = box(40, 10, 10, 3)
+assert(#pc.doc.rebuild() == 0)
+pc.asm.mate{body = lid, face = facing(lid, -1),
+  other = base, other_face = facing(base, 1)}
+assert(#pc.asm.unmet{} == 0, "the mate holds")
+```
+
 `pc.asm.interference`: Where solid bodies share material: each pair that clashes, how much and where.
 
 - `bodies` (list, optional): Only these bodies; every visible one when left out

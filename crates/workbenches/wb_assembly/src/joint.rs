@@ -239,6 +239,19 @@ impl JointKind {
         }
     }
 
+    /// Whether the joint keeps a turn of its own that a quarter turn can
+    /// move: a hinge's or an alignment's zero, a slider's or a fixed
+    /// joint's held turn.
+    pub fn keeps_a_turn(&self) -> bool {
+        matches!(
+            self,
+            JointKind::Hinge { .. }
+                | JointKind::Align { .. }
+                | JointKind::Slider { .. }
+                | JointKind::Fixed { .. }
+        )
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             JointKind::Mate { .. } => "Mate",

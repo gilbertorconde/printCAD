@@ -1048,6 +1048,95 @@ fn a_joint_s_turn_and_delete_record_their_commands() {
     assert!(doc.get_feature_meta(id).is_none());
 }
 
+#[test]
+fn a_joint_s_quarter_turn_is_asm_turn90_and_offered_where_it_keeps_a_turn() {
+    let (_, mut doc, _, _, mate) = mated();
+    let wb = editing(&mut doc, mate);
+    assert!(
+        field(&widgets(&wb, &mut doc), "turn90").is_none(),
+        "a mate keeps no turn of its own"
+    );
+
+    let (mut doc, _, hinge) = geared();
+    let before = doc.clone();
+    let mut wb = editing(&mut doc, hinge);
+    assert!(field(&widgets(&wb, &mut doc), "turn90").is_some());
+    draws(&mut wb, &mut doc);
+    let (_, recorded) = send(&mut wb, &mut doc, button("turn90"));
+    assert_eq!(recorded.len(), 1, "{recorded:?}");
+    assert_eq!(recorded[0].id, "asm.turn90");
+    let mut by_command = before;
+    run(
+        &mut by_command,
+        "asm.turn90",
+        serde_json::Value::Object(recorded[0].args.clone()),
+    );
+    assert_eq!(
+        doc.get_feature_data(hinge),
+        by_command.get_feature_data(hinge)
+    );
+    for body in doc.bodies().iter().map(|b| b.id) {
+        let (a, b) = (doc.body_placement(body), by_command.body_placement(body));
+        assert!(close_to(a.translation, b.translation), "{a:?} {b:?}");
+        assert!(a.quat().angle_between(b.quat()) < 1e-4, "{a:?} {b:?}");
+    }
+}
+
+/// The joint panel lists the joints left apart and the redundant ones as
+/// `asm.unmet` and `asm.redundant` name them, and a click selects one.
+#[test]
+fn the_solver_messages_name_unmet_and_redundant_joints_and_select_them() {
+    let (_, mut doc, _, part, mate) = mated();
+    let wb = editing(&mut doc, mate);
+    assert!(
+        field(&widgets(&wb, &mut doc), "solver_messages").is_none(),
+        "every joint holds"
+    );
+
+    let mut extra = joint_of(&doc, mate);
+    extra.kind = JointKind::Parallel;
+    doc.add_feature_in_body(extra.clone(), "Extra".into(), Some(part))
+        .unwrap();
+    extra.kind = JointKind::Mate {
+        flip: false,
+        offset: 7.0,
+    };
+    let clash = doc
+        .add_feature_in_body(extra, "Clash".into(), Some(part))
+        .unwrap();
+    let mut wb = editing(&mut doc, mate);
+    let panel = widgets(&wb, &mut doc);
+    let Some(Widget::List { items, .. }) = field(&panel, "solver_messages") else {
+        panic!("a list of messages: {panel:?}");
+    };
+    let names: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+    let unmet = run(&mut doc, "asm.unmet", serde_json::json!({}));
+    let redundant = run(&mut doc, "asm.redundant", serde_json::json!({}));
+    let named: Vec<&str> = unmet
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(redundant.as_array().unwrap())
+        .map(|r| r["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, named);
+    assert!(names.contains(&"Clash"), "{names:?}");
+    assert!(names.contains(&"Extra"), "{names:?}");
+    draws(&mut wb, &mut doc);
+
+    let at = names.iter().position(|n| *n == "Clash").unwrap();
+    let mut ctx = context(&mut doc);
+    wb.task_event(&mut ctx, &select("solver_messages", at));
+    let requests = core_document::HookOutcome::take(&mut ctx).requests;
+    assert!(
+        requests.iter().any(|r| matches!(
+            r,
+            core_document::HostRequest::SelectFeatures(f) if f == &[clash]
+        )),
+        "{requests:?}"
+    );
+}
+
 fn studying(wb: &AssemblyWorkbench) -> &crate::Studying {
     match &wb.task {
         Some(Task::Motion(studying)) => studying,

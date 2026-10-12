@@ -986,6 +986,38 @@ pub fn redundant(document: &Document) -> Vec<(FeatureId, String)> {
     found
 }
 
+/// Joints and couplings that do not hold where the bodies sit now, in
+/// history order: what a solve left apart, each by its id and name.
+pub fn unmet(document: &Document) -> Vec<(FeatureId, String)> {
+    let all = usable(document);
+    let placements: HashMap<BodyId, Rigid> = rigid_placements(document);
+    let is_joint = |id: FeatureId| {
+        document
+            .get_feature_meta(id)
+            .is_some_and(|n| n.workbench_id.as_str() == JOINT_KIND)
+    };
+    let apart = all
+        .iter()
+        .filter(|j| j.feature.kind != JointKind::Ground && is_joint(j.id))
+        .filter(|j| {
+            worst(
+                &j.feature,
+                &placements[&j.body],
+                &placements[&j.feature.other_body],
+            ) > HOLDS_MM
+        })
+        .map(|j| (j.id, j.name.clone()));
+    let tied = links(document, &all, &placements)
+        .into_iter()
+        .filter(|l| {
+            let mut r = Vec::new();
+            l.residual(&placements, &mut r);
+            r.iter().any(|v| v.abs() > HOLDS_MM)
+        })
+        .map(|l| (l.id, l.name));
+    apart.chain(tied).collect()
+}
+
 /// A direction pointing its larger part the positive way, noise dropped.
 fn tidy(v: DVec3) -> [f64; 3] {
     let biggest = v

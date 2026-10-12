@@ -48,7 +48,7 @@ pub use motion::{MOTION_KIND, MotionStudy, TimedDrive};
 pub use parts::{Part, parts_csv, parts_list};
 pub use solve::{
     HOLDS_MM, Joint, Motion, SolveError, counted_couplings, drag, draggable, freedom, joints,
-    redundant, solve,
+    redundant, solve, unmet,
 };
 pub use states::{AssemblyState, STATE_KIND};
 pub use sweep_check::MotionClash;
@@ -215,6 +215,9 @@ pub struct AssemblyWorkbench {
     /// The joints that hold nothing the others do not, at an edit of the
     /// document, for the status bar and the joint panel.
     redundant: std::sync::Mutex<Option<(u64, Named)>>,
+    /// The joints and couplings that do not hold where the bodies sit, at
+    /// an edit of the document, for the joint panel's messages.
+    unmet: std::sync::Mutex<Option<(u64, Named)>>,
     /// A body held by the mouse, dragged with its joints holding.
     grab: Option<Grab>,
     /// Drags go through other bodies rather than stopping at them.
@@ -338,6 +341,35 @@ type Freedom = Vec<(BodyId, Vec<Motion>)>;
 /// Joints by id and name.
 type Named = Vec<(FeatureId, String)>;
 
+/// The body menus' entry selecting every joint that holds `body`, when
+/// one does.
+fn select_joints_item(
+    document: &core_document::Document,
+    body: BodyId,
+) -> Option<core_document::MenuItem> {
+    let count = commands::joints_holding(document, body).len();
+    (count > 0).then(|| {
+        core_document::MenuItem::new(
+            "asm.menu.select_joints",
+            if count == 1 {
+                "Select its joint".to_string()
+            } else {
+                format!("Select its {count} joints")
+            },
+        )
+        .icon("joint-mate")
+        .hint("Select every joint that holds this body, in the tree")
+    })
+}
+
+/// A joint as the view draws it: its lines, the dots at its ends and its
+/// name.
+type JointDrawing = (
+    Vec<core_document::ScreenSpaceOverlay>,
+    Vec<[f32; 2]>,
+    String,
+);
+
 impl AssemblyWorkbench {
     /// The redundant joints, worked out again only after an edit.
     pub(crate) fn redundant_now(&self, ctx: &WorkbenchRuntimeContext) -> Vec<(FeatureId, String)> {
@@ -347,6 +379,21 @@ impl AssemblyWorkbench {
             Some((at, found)) if *at == seq => found.clone(),
             _ => {
                 let found = redundant(ctx.document);
+                *cache = Some((seq, found.clone()));
+                found
+            }
+        }
+    }
+
+    /// The joints and couplings left apart, worked out again only after
+    /// an edit.
+    pub(crate) fn unmet_now(&self, ctx: &WorkbenchRuntimeContext) -> Vec<(FeatureId, String)> {
+        let seq = ctx.document.mutation_seq();
+        let mut cache = self.unmet.lock().unwrap();
+        match &*cache {
+            Some((at, found)) if *at == seq => found.clone(),
+            _ => {
+                let found = unmet(ctx.document);
                 *cache = Some((seq, found.clone()));
                 found
             }
@@ -589,23 +636,24 @@ impl AssemblyWorkbench {
             .collect()
     }
 
-    /// The joint selected or open in its task, drawn: at each end a dot
-    /// where it takes hold, its direction (a flat face's normal, an axis
-    /// both ways), a square in a flat face's plane, and a dashed link
-    /// between the ends.
-    fn joint_drawing(
-        &self,
-        ctx: &WorkbenchRuntimeContext,
-    ) -> Option<(
-        Vec<core_document::ScreenSpaceOverlay>,
-        Vec<[f32; 2]>,
-        String,
-    )> {
-        let id = match &self.task {
-            Some(Task::Joint { id, .. }) => *id,
-            _ => Self::selected_joint(ctx)?,
+    /// The joint open in its task, else the joints selected, drawn.
+    fn joint_drawings(&self, ctx: &WorkbenchRuntimeContext) -> Vec<JointDrawing> {
+        let ids: Vec<FeatureId> = match &self.task {
+            Some(Task::Joint { id, .. }) => vec![*id],
+            _ if !ctx.selected_features.is_empty() => ctx.selected_features.clone(),
+            _ => Self::selected_joint(ctx).into_iter().collect(),
         };
-        let joint = joints(ctx.document).into_iter().find(|j| j.id == id)?;
+        let all = joints(ctx.document);
+        ids.iter()
+            .filter_map(|id| all.iter().find(|j| j.id == *id))
+            .filter_map(|joint| Self::joint_drawing(ctx, joint))
+            .collect()
+    }
+
+    /// A joint drawn: at each end a dot where it takes hold, its direction
+    /// (a flat face's normal, an axis both ways), a square in a flat
+    /// face's plane, and a dashed link between the ends.
+    fn joint_drawing(ctx: &WorkbenchRuntimeContext, joint: &Joint) -> Option<JointDrawing> {
         if joint.feature.kind == JointKind::Ground {
             return None;
         }
@@ -664,7 +712,7 @@ impl AssemblyWorkbench {
                     .with_alpha(0.8),
             );
         }
-        Some((lines, dots, joint.name))
+        Some((lines, dots, joint.name.clone()))
     }
 
     /// The clashes shown, each where it sits on screen.
@@ -2158,14 +2206,24 @@ impl Workbench for AssemblyWorkbench {
         use core_document::MenuItem;
         let id = match scope {
             core_document::MenuScope::TreeFeature(id) => id,
+            core_document::MenuScope::ViewportBody(body) => {
+                return select_joints_item(document, *body)
+                    .map(MenuItem::separator_before)
+                    .into_iter()
+                    .collect();
+            }
             core_document::MenuScope::TreeBody(body) => {
                 let own = document.component_of(*body);
-                let mut items = vec![
+                let mut items: Vec<MenuItem> = select_joints_item(document, *body)
+                    .map(MenuItem::separator_before)
+                    .into_iter()
+                    .collect();
+                items.push(
                     MenuItem::new("asm.menu.component_new", "New component")
                         .icon("tree-group")
                         .hint("Put this body in a component of its own, inside the one it is in")
                         .separator_before(),
-                ];
+                );
                 for component in document.components() {
                     if Some(component.id) != own {
                         items.push(
@@ -2284,6 +2342,17 @@ impl Workbench for AssemblyWorkbench {
             }
             _ => None,
         };
+        if let (
+            "asm.menu.select_joints",
+            core_document::MenuScope::TreeBody(body) | core_document::MenuScope::ViewportBody(body),
+        ) = (id, scope)
+        {
+            let args = commands::object(serde_json::json!({"body": body.0.to_string()}));
+            if let Err(err) = commands::run("asm.select_joints", &args, ctx) {
+                ctx.log_warn(format!("Select joints: {err}"));
+            }
+            return true;
+        }
         if let Some((command, args, label)) = component_call {
             let args = commands::object(args);
             match commands::run(command, &args, ctx) {
@@ -3035,7 +3104,7 @@ impl Workbench for AssemblyWorkbench {
                 core_document::ScreenSpaceOverlay::new(a, b, ctx.sketch_palette.conflict, 2.0)
             })
             .collect();
-        if let Some((joint, _, _)) = self.joint_drawing(ctx) {
+        for (joint, _, _) in self.joint_drawings(ctx) {
             lines.extend(joint);
         }
         if let Some(body) = self.handled_body(ctx) {
@@ -3096,7 +3165,7 @@ impl Workbench for AssemblyWorkbench {
                 )
             })
             .collect();
-        if let Some((_, dots, _)) = self.joint_drawing(ctx) {
+        for (_, dots, _) in self.joint_drawings(ctx) {
             marks.extend(
                 dots.into_iter().map(|p| {
                     core_document::ScreenSpaceMark::dot(p, 4.0, ctx.sketch_palette.selected)
@@ -3165,19 +3234,23 @@ impl Workbench for AssemblyWorkbench {
             })
             .chain(com)
             .chain(near)
-            .chain(self.joint_drawing(ctx).and_then(|(_, dots, name)| {
-                let [a, b] = dots.as_slice().try_into().ok()?;
-                let [a, b]: [[f32; 2]; 2] = [a, b];
-                Some(
-                    core_document::ScreenSpaceLabel::new(
-                        [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 - 14.0],
-                        name,
-                        ctx.sketch_palette.selected,
-                        11.0,
-                    )
-                    .pill(),
-                )
-            }))
+            .chain(
+                self.joint_drawings(ctx)
+                    .into_iter()
+                    .filter_map(|(_, dots, name)| {
+                        let [a, b] = dots.as_slice().try_into().ok()?;
+                        let [a, b]: [[f32; 2]; 2] = [a, b];
+                        Some(
+                            core_document::ScreenSpaceLabel::new(
+                                [(a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0 - 14.0],
+                                name,
+                                ctx.sketch_palette.selected,
+                                11.0,
+                            )
+                            .pill(),
+                        )
+                    }),
+            )
             .chain(
                 self.handled_body(ctx)
                     .into_iter()
@@ -3484,7 +3557,10 @@ mod tests {
                 fixed: anchor,
             },
         );
-        let (lines, dots, name) = wb.joint_drawing(&ctx).expect("the new joint is drawn");
+        let [(lines, dots, name)] = wb
+            .joint_drawings(&ctx)
+            .try_into()
+            .expect("the new joint is drawn");
         assert_eq!(dots.len(), 2);
         assert_eq!(
             lines.len(),
@@ -3494,7 +3570,87 @@ mod tests {
         assert_eq!(name, "Mate 1");
         wb.task = None;
         ctx.active_document_object = None;
-        assert!(wb.joint_drawing(&ctx).is_none());
+        assert!(wb.joint_drawings(&ctx).is_empty());
+    }
+
+    /// A body's menus in the tree and the view offer to select its joints
+    /// when it has any; the entry selects them together and the view draws
+    /// each one selected.
+    #[test]
+    fn a_body_s_menus_select_its_joints_and_the_view_draws_them_all() {
+        let (mut doc, base, part) = scene();
+        let mut wb = AssemblyWorkbench::default();
+        for scope in [
+            core_document::MenuScope::TreeBody(part),
+            core_document::MenuScope::ViewportBody(part),
+        ] {
+            assert!(
+                !wb.menu_items(&scope, &doc)
+                    .iter()
+                    .any(|i| i.id == "asm.menu.select_joints"),
+                "no joints yet"
+            );
+        }
+        let anchor = Anchor::Plane {
+            point: [2.0, 2.0, 0.0],
+            normal: [0.0, 0.0, 1.0],
+        };
+        let joint = |kind| JointFeature {
+            second: None,
+            shape: Vec::new(),
+            ends: [0.0; 2],
+            names: [0; 2],
+            kind,
+            moving: anchor,
+            other_body: base,
+            fixed: anchor,
+        };
+        let mate = doc
+            .add_feature_in_body(
+                joint(JointKind::Mate {
+                    flip: false,
+                    offset: 0.0,
+                }),
+                "Mate 1".into(),
+                Some(part),
+            )
+            .unwrap();
+        let parallel = doc
+            .add_feature_in_body(joint(JointKind::Parallel), "Parallel 1".into(), Some(part))
+            .unwrap();
+        for scope in [
+            core_document::MenuScope::TreeBody(base),
+            core_document::MenuScope::ViewportBody(base),
+        ] {
+            let items = wb.menu_items(&scope, &doc);
+            let item = items
+                .iter()
+                .find(|i| i.id == "asm.menu.select_joints")
+                .expect("offered");
+            assert_eq!(item.label, "Select its 2 joints");
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            assert!(wb.on_command("asm.menu.select_joints", &scope, &mut ctx));
+            let requests = core_document::HookOutcome::take(&mut ctx).requests;
+            assert_eq!(
+                requests,
+                [HostRequest::SelectFeatures(vec![mate, parallel])]
+            );
+        }
+
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let eye = glam::Vec3::new(60.0, -80.0, 90.0);
+        let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Z);
+        let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
+        ctx.view_proj = Some((proj * view).to_cols_array_2d());
+        ctx.active_document_object = Some(mate);
+        ctx.selected_features = vec![mate, parallel];
+        let names: Vec<String> = wb
+            .joint_drawings(&ctx)
+            .into_iter()
+            .map(|(_, _, name)| name)
+            .collect();
+        assert_eq!(names, ["Mate 1", "Parallel 1"]);
     }
 
     /// Picking fades every body but the one under the cursor and the one

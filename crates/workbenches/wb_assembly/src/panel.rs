@@ -468,6 +468,59 @@ impl AssemblyWorkbench {
         }
     }
 
+    /// The assembly's joints left apart, then those it could do without,
+    /// one row each by name; a click selects the joint. Nothing while
+    /// every joint holds and none is redundant.
+    fn solver_messages(&self, ctx: &WorkbenchRuntimeContext) -> Option<Widget> {
+        let messages = self.messages(ctx);
+        if messages.is_empty() {
+            return None;
+        }
+        let items = messages
+            .into_iter()
+            .map(|(_, name, apart)| bench_api::ListItem {
+                label: name,
+                detail: Some(
+                    if apart {
+                        "Left apart: its bodies cannot sit as it asks"
+                    } else {
+                        "Redundant: other joints already hold all it holds"
+                    }
+                    .to_string(),
+                ),
+                icon: Some(if apart { "warning" } else { "info" }.to_string()),
+            })
+            .collect();
+        Some(Widget::Group {
+            title: "Solver messages".into(),
+            open: true,
+            children: vec![
+                w::text("Click one to select its joint."),
+                Widget::List {
+                    id: "solver_messages".into(),
+                    items,
+                    selected: None,
+                },
+            ],
+        })
+    }
+
+    /// The joints and couplings left apart, then the redundant joints:
+    /// each with its name and whether it is apart.
+    fn messages(&self, ctx: &WorkbenchRuntimeContext) -> Vec<(FeatureId, String, bool)> {
+        let mut messages: Vec<(FeatureId, String, bool)> = self
+            .unmet_now(ctx)
+            .into_iter()
+            .map(|(id, name)| (id, name, true))
+            .collect();
+        for (id, name) in self.redundant_now(ctx) {
+            if !messages.iter().any(|(a, _, _)| *a == id) {
+                messages.push((id, name, false));
+            }
+        }
+        messages
+    }
+
     /// What the last solve said, as a note.
     fn verdict_note(&self) -> Option<Widget> {
         match &self.verdict {
@@ -2437,6 +2490,13 @@ impl AssemblyWorkbench {
                 ),
             ]));
         }
+        if joint.kind.keeps_a_turn() {
+            widgets.push(w::hinted(
+                "Turn what the joint counts its turn from a quarter turn: the body \
+                 follows, and the joint reads as it did",
+                w::button("turn90", "Turn 90°", ButtonStyle::Secondary),
+            ));
+        }
         widgets.extend(self.verdict_note());
         if self.redundant_now(ctx).iter().any(|(j, _)| *j == id) {
             widgets.push(w::note(
@@ -2445,6 +2505,7 @@ impl AssemblyWorkbench {
                 "The body's other joints already hold everything this one does; it could go.",
             ));
         }
+        widgets.extend(self.solver_messages(ctx));
         widgets.extend(node.body.and_then(|body| freedom_text(ctx, body)));
         widgets.push(w::hinted(
             "Remove the joint; the bodies stay where they are",
@@ -2847,6 +2908,14 @@ impl AssemblyWorkbench {
                 self.turn_in_task(ctx, id, created, placements, by, false);
             }
             ("turn_over", _) => self.turn_in_task(ctx, id, created, placements, 0.0, true),
+            ("turn90", _) => {
+                let args = serde_json::json!({"joint": id.0.to_string()});
+                self.run_in_task(ctx, id, created, placements, "asm.turn90", args);
+            }
+            ("solver_messages", PanelEvent::Select { index, .. }) => {
+                let (joint, _, _) = self.messages(ctx).into_iter().nth(*index)?;
+                ctx.request(core_document::HostRequest::SelectFeatures(vec![joint]));
+            }
             ("delete", _) => {
                 ctx.document.remove_feature(id).ok()?;
                 self.playing = None;
@@ -2906,9 +2975,8 @@ impl AssemblyWorkbench {
         });
     }
 
-    /// Turn the joint's body from its task. A joint the task just made is
-    /// recorded first, so the recording has it to turn; the task goes on
-    /// as an edit of it from the turned place.
+    /// Turn the joint's body from its task, as `asm.turn` or `asm.flip`
+    /// turns it.
     fn turn_in_task(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -2918,25 +2986,36 @@ impl AssemblyWorkbench {
         degrees: f64,
         over: bool,
     ) {
-        let Some(joint) = crate::joints(ctx.document).into_iter().find(|j| j.id == id) else {
-            return;
-        };
-        if created {
-            crate::commands::record_joint(ctx, id, None, placements);
-        }
         let (command, args) = if over {
-            (
-                "asm.flip",
-                serde_json::json!({"joint": joint.id.0.to_string()}),
-            )
+            ("asm.flip", serde_json::json!({"joint": id.0.to_string()}))
         } else {
             (
                 "asm.turn",
-                serde_json::json!({"joint": joint.id.0.to_string(), "degrees": degrees}),
+                serde_json::json!({"joint": id.0.to_string(), "degrees": degrees}),
             )
         };
-        // As the command turns it: a hinge's motion moves on, a coupled
-        // one takes its partner along.
+        // A hinge's motion moves on, a coupled one taking its partner along.
+        self.run_in_task(ctx, id, created, placements, command, args);
+    }
+
+    /// Run `command` on the joint from its task. A joint the task just
+    /// made is recorded first, so the recording has it to turn; the task
+    /// goes on as an edit of it from where the command left it.
+    fn run_in_task(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        id: FeatureId,
+        created: bool,
+        placements: &[(BodyId, BodyPlacement)],
+        command: &str,
+        args: serde_json::Value,
+    ) {
+        if !crate::joints(ctx.document).iter().any(|j| j.id == id) {
+            return;
+        }
+        if created {
+            crate::commands::record_joint(ctx, id, None, placements);
+        }
         let args = crate::commands::object(args);
         if let Err(why) = crate::commands::run(command, &args, ctx) {
             ctx.log_warn(format!("Could not turn the body: {why}"));

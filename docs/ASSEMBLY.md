@@ -70,6 +70,15 @@ hinge keeping its angle. A fixed joint's shift, where the body sits from
 the other along the other's axes, is three fields that take formulas.
 `asm.turn` and `asm.flip` do the same from a script.
 
+A joint that keeps a turn of its own (a hinge's or an alignment's zero, a
+slider's or a fixed joint's held turn) has Turn 90° as well: what the
+joint counts its turn from moves a quarter turn about its axis or normal,
+and the body follows, the joint reading as it did. A hinge held at 30°
+ends a quarter turn further round, still held at 30° and its limits
+turned with it, where Turn would have moved its angle on to 120°.
+`asm.turn90` does the same (`back = true` the other way). A mate keeps no
+turn in its plane, which is left free: Turn turns a mated body.
+
 A joint keeps the names of the faces it was picked on. When a body is
 rebuilt (a pad made longer, a hole moved), each end is found again on its
 face by name and moves with it, and the bodies joined there follow. An end
@@ -78,6 +87,12 @@ picked on a face with no name, or on an edge, stays where it was picked.
 A selected joint is drawn in the view: a dot where each end takes hold,
 a flat face's normal and a square in its plane, an axis as a dashed line,
 and a dashed link between the ends with the joint's name.
+
+A body's menu, in the tree or on the body in the view, offers Select its
+joints when any joint holds it: the joints it moves by and those holding
+another body to it are selected together in the tree and each is drawn
+in the view, as joints Ctrl-clicked in the tree are. `asm.select_joints`
+does the same and answers them.
 
 Insert linked copies (Y) puts copies of the selected body in a row
 beside it, as many as you ask, a step apart, or turned about an axis
@@ -113,7 +128,10 @@ grounded yet. Solve joints (S) places every body its joints hold again.
 The status bar says how many motions the joints leave open, and for the
 selected body which ones, and counts the joints that hold nothing the
 body's other joints do not; such a joint's settings call it Redundant
-(`asm.redundant` lists them).
+(`asm.redundant` lists them). A joint's settings end with the solver's
+messages while there are any: every joint or coupling the bodies cannot
+hold where they sit, then every redundant joint, by name; a click selects
+it. `asm.unmet` lists the first.
 
 ## Driving and limits
 

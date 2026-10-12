@@ -1417,6 +1417,131 @@ pub fn register(context: &mut WorkbenchContext) {
     );
     context.register_command(
         CommandSpec::new(
+            "asm.turn90",
+            "Turn a joint's own turn a quarter turn, its body following",
+        )
+        .param(
+            "joint",
+            ParamKind::Id,
+            "The hinge, alignment, slider or fixed joint",
+        )
+        .optional(
+            "back",
+            ParamKind::Bool,
+            "Turn the other way round (false when left out)",
+        )
+        .note(
+            "The turn the joint keeps is turned 90° about the other end's axis or normal: a \
+             hinge's or an alignment's zero, a slider's or a fixed joint's held turn. The \
+             body turns with it, and what the joint reads stays as it was: a hinge held at \
+             30° is held at 30° from its new zero, its limits turned round with it.",
+        )
+        .note(
+            "A joint that keeps no turn of its own is refused. A mate's turn in its plane is \
+             free, so `asm.turn` turns a mated body; it is the same for the other joints.",
+        )
+        .see_also("asm.turn")
+        .see_also("asm.travel")
+        .example(
+            "A hinge held at 30° whose zero is turned a quarter turn",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 3}
+            local post = pc.doc.feature{id = pc.design.pad{sketch = s, length = 10}}.body
+            local w = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = w, x = 0, y = -2, width = 20, height = 4}
+            local arm = pc.doc.feature{id = pc.design.pad{sketch = w, length = 2}}.body
+            assert(#pc.doc.rebuild() == 0)
+            local z = {axis = {point = {0, 0, 0}, direction = {0, 0, 1}}}
+            local h = pc.asm.hinge{body = arm, face = z, other = post, other_face = z,
+              drive = 30}
+            pc.asm.turn90{joint = h}
+            assert(math.abs(pc.asm.travel{joint = h} - 30) < 1e-3, "still 30° on the hinge")
+            local q = pc.asm.placement{body = arm}.rotation
+            assert(math.abs(math.deg(2 * math.acos(q[4])) - 120) < 1e-2,
+              "the arm a quarter turn further round")
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new("asm.select_joints", "Select every joint that holds a body")
+            .param("body", ParamKind::Id, "The body")
+            .returns("a list of {joint, name}, in history order")
+            .read_only()
+            .note(
+                "The joints the body moves by and those that hold another body to it, a ground \
+             on it too, suppressed ones as well. The tree selects them together, the first \
+             the active one; with none, the document is selected.",
+            )
+            .see_also("asm.redundant")
+            .see_also("asm.unmet")
+            .example(
+                "A lid mated to a grounded base, and a block mated onto the lid",
+                r#"
+            local function box(x, w, h, len)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
+            end
+            local function facing(body, z)
+              for _, f in ipairs(pc.doc.faces{body = body}) do
+                if f.normal and f.normal[3] * z > 0.99 then return f end
+              end
+            end
+            local base = box(0, 20, 20, 5)
+            local lid = box(40, 10, 10, 3)
+            local block = box(80, 4, 4, 3)
+            assert(#pc.doc.rebuild() == 0)
+            local g = pc.asm.ground{body = base}
+            local m = pc.asm.mate{body = lid, face = facing(lid, -1),
+              other = base, other_face = facing(base, 1)}
+            pc.asm.mate{body = block, face = facing(block, -1),
+              other = lid, other_face = facing(lid, 1)}
+            local held = pc.asm.select_joints{body = base}
+            assert(#held == 2 and held[1].joint == g and held[2].joint == m,
+              "the ground and the mate onto it")
+            assert(#pc.asm.select_joints{body = lid} == 2, "the lid's mate and the one onto it")
+            "#,
+            ),
+    );
+    context.register_command(
+        CommandSpec::new(
+            "asm.unmet",
+            "The joints and couplings that do not hold where the bodies sit",
+        )
+        .returns("a list of {joint, name}, in history order")
+        .read_only()
+        .note(
+            "What a solve left apart: joints asking more of their bodies than they can give at \
+             once, or a coupling its joints cannot follow. An assembly that holds lists \
+             nothing.",
+        )
+        .see_also("asm.redundant")
+        .see_also("asm.select_joints")
+        .example(
+            "A mate that holds",
+            r#"
+            local function box(x, w, h, len)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = w, height = h}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = len}}.body
+            end
+            local function facing(body, z)
+              for _, f in ipairs(pc.doc.faces{body = body}) do
+                if f.normal and f.normal[3] * z > 0.99 then return f end
+              end
+            end
+            local base = box(0, 20, 20, 5)
+            local lid = box(40, 10, 10, 3)
+            assert(#pc.doc.rebuild() == 0)
+            pc.asm.mate{body = lid, face = facing(lid, -1),
+              other = base, other_face = facing(base, 1)}
+            assert(#pc.asm.unmet{} == 0, "the mate holds")
+            "#,
+        ),
+    );
+    context.register_command(
+        CommandSpec::new(
             "asm.interference",
             "Where solid bodies share material: each pair that clashes, how much \
              and where",
@@ -3235,6 +3360,50 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             crate::states::restore(ctx.document, &state);
             solved(ctx, Value::Null)
         }
+        "asm.unmet" => Ok(Value::Array(
+            crate::unmet(ctx.document)
+                .into_iter()
+                .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
+                .collect(),
+        )),
+        "asm.select_joints" => {
+            let body = body(&a, ctx)?;
+            let held = joints_holding(ctx.document, body);
+            ctx.request(core_document::HostRequest::SelectFeatures(
+                held.iter().map(|(id, _)| *id).collect(),
+            ));
+            Ok(Value::Array(
+                held.into_iter()
+                    .map(|(id, name)| json!({"joint": id.0.to_string(), "name": name}))
+                    .collect(),
+            ))
+        }
+        "asm.turn90" => {
+            let joint = FeatureId(a.id("joint")?);
+            let found = joints(ctx.document)
+                .into_iter()
+                .find(|j| j.id == joint)
+                .ok_or_else(|| CommandError::bad("joint", "is not a joint"))?;
+            if !found.feature.kind.keeps_a_turn() {
+                return Err(CommandError::bad(
+                    "joint",
+                    "keeps no turn of its own; asm.turn turns its body",
+                ));
+            }
+            if found.feature.fixed.parts().1 == glam::DVec3::ZERO {
+                return Err(CommandError::bad(
+                    "joint",
+                    "holds to a point, with no axis or normal to turn about",
+                ));
+            }
+            let degrees = if a.opt_bool("back")? == Some(true) {
+                -90.0
+            } else {
+                90.0
+            };
+            turn_joint(ctx, &found, degrees, false)?;
+            solved(ctx, Value::Null)
+        }
         "asm.redundant" => Ok(Value::Array(
             crate::redundant(ctx.document)
                 .into_iter()
@@ -3884,6 +4053,27 @@ fn solved(ctx: &mut WorkbenchRuntimeContext, value: Value) -> CommandResult {
     Ok(value)
 }
 
+/// Every joint that holds `body`, suppressed or not, in history order:
+/// those it owns and those that hold another body to it.
+pub(crate) fn joints_holding(
+    document: &core_document::Document,
+    body: BodyId,
+) -> Vec<(FeatureId, String)> {
+    let mut found: Vec<(u64, FeatureId, String)> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, node)| node.workbench_id.as_str() == crate::JOINT_KIND)
+        .filter(|(_, node)| {
+            node.body == Some(body)
+                || <JointFeature as core_document::WorkbenchFeature>::from_json(&node.data)
+                    .is_ok_and(|j| j.kind != JointKind::Ground && j.other_body == body)
+        })
+        .map(|(id, node)| (node.seq, *id, node.name.clone()))
+        .collect();
+    found.sort_by_key(|(seq, id, _)| (*seq, *id));
+    found.into_iter().map(|(_, id, name)| (id, name)).collect()
+}
+
 fn body(a: &Args, ctx: &WorkbenchRuntimeContext) -> Result<BodyId, CommandError> {
     let body = BodyId(a.id("body")?);
     if ctx.document.bodies().iter().any(|b| b.id == body) {
@@ -4178,6 +4368,168 @@ mod tests {
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
+    }
+
+    /// A quarter turn of a hinge's zero turns the body with it and leaves
+    /// the hinge reading and holding what it did; back undoes it. A fixed
+    /// joint's held turn turns its body about its normal; a mate, which
+    /// keeps no turn, is refused.
+    #[test]
+    fn a_quarter_turn_moves_a_joint_s_own_turn_and_its_body() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
+        let hinge = call(
+            &mut doc,
+            "asm.hinge",
+            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
+                   "drive": 30, "limits": [-45, 45]}),
+        )
+        .unwrap();
+        let angle = |doc: &Document| {
+            let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+            x[1].atan2(x[0]).to_degrees()
+        };
+        let travel = |doc: &mut Document| {
+            call(doc, "asm.travel", json!({"joint": hinge}))
+                .unwrap()
+                .as_f64()
+                .unwrap()
+        };
+        call(&mut doc, "asm.turn90", json!({"joint": hinge})).unwrap();
+        assert!((angle(&doc) - 120.0).abs() < 1e-2, "{}", angle(&doc));
+        assert!(
+            (travel(&mut doc) - 30.0).abs() < 1e-2,
+            "the hinge reads as it did"
+        );
+        let id = FeatureId(uuid::Uuid::parse_str(hinge.as_str().unwrap()).unwrap());
+        let data: JointFeature =
+            serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
+        let JointKind::Hinge { drive, .. } = data.kind else {
+            panic!("a hinge");
+        };
+        assert_eq!(drive.to, Some(30.0));
+        assert_eq!(drive.limits, Some([-45.0, 45.0]));
+        call(&mut doc, "asm.solve", json!({})).unwrap();
+        assert!((angle(&doc) - 120.0).abs() < 1e-2, "stays: {}", angle(&doc));
+        call(
+            &mut doc,
+            "asm.turn90",
+            json!({"joint": hinge, "back": true}),
+        )
+        .unwrap();
+        assert!((angle(&doc) - 30.0).abs() < 1e-2, "{}", angle(&doc));
+
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        call(
+            &mut doc,
+            "asm.move",
+            json!({"body": a.0.to_string(), "by": [5, 0, 0]}),
+        )
+        .unwrap();
+        let fixed = call(
+            &mut doc,
+            "asm.fix",
+            json!({"body": a.0.to_string(), "other": b.0.to_string()}),
+        )
+        .unwrap();
+        call(&mut doc, "asm.turn90", json!({"joint": fixed})).unwrap();
+        call(&mut doc, "asm.solve", json!({})).unwrap();
+        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
+        assert!(x[1] > 0.999, "a quarter turn about Z: {x:?}");
+        assert!(crate::unmet(&doc).is_empty(), "the joint holds it there");
+
+        let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let c = doc.create_body(None);
+        let mate = call(
+            &mut doc,
+            "asm.mate",
+            json!({"body": c.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
+        )
+        .unwrap();
+        assert!(call(&mut doc, "asm.turn90", json!({"joint": mate})).is_err());
+    }
+
+    /// Selecting a body's joints asks the tree for every joint it moves by
+    /// or is held to, in history order, and answers them.
+    #[test]
+    fn a_body_s_joints_are_selected_together() {
+        let mut doc = Document::new("t");
+        let [a, b, c] = [
+            doc.create_body(None),
+            doc.create_body(None),
+            doc.create_body(None),
+        ];
+        let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let mate = |doc: &mut Document, body: BodyId, other: BodyId| {
+            call(
+                doc,
+                "asm.mate",
+                json!({"body": body.0.to_string(), "face": top, "other": other.0.to_string(),
+                       "other_face": top}),
+            )
+            .unwrap()
+        };
+        let ground = call(&mut doc, "asm.ground", json!({"body": a.0.to_string()})).unwrap();
+        let ab = mate(&mut doc, b, a);
+        let cb = mate(&mut doc, c, b);
+        let id = |v: &Value| FeatureId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap());
+
+        let selected = |doc: &mut Document, body: BodyId| {
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let answer = run(
+                "asm.select_joints",
+                &object(json!({"body": body.0.to_string()})),
+                &mut ctx,
+            )
+            .unwrap();
+            let requests = core_document::HookOutcome::take(&mut ctx).requests;
+            let [core_document::HostRequest::SelectFeatures(features)] = requests.as_slice() else {
+                panic!("{requests:?}");
+            };
+            let answered: Vec<FeatureId> = answer
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| id(&r["joint"]))
+                .collect();
+            assert_eq!(&answered, features);
+            answered
+        };
+        assert_eq!(selected(&mut doc, a), [id(&ground), id(&ab)]);
+        assert_eq!(selected(&mut doc, b), [id(&ab), id(&cb)]);
+        assert_eq!(selected(&mut doc, c), [id(&cb)]);
+        let d = doc.create_body(None);
+        assert!(selected(&mut doc, d).is_empty(), "none: the document");
+    }
+
+    /// A joint the bodies cannot hold is listed as unmet; one that holds
+    /// is not.
+    #[test]
+    fn a_joint_left_apart_is_unmet() {
+        let mut doc = Document::new("t");
+        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let up = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
+        let down = json!({"point": [0, 0, 0], "normal": [0, 0, -1]});
+        call(
+            &mut doc,
+            "asm.distance",
+            json!({"body": b.0.to_string(), "face": down, "other": a.0.to_string(),
+                   "other_face": up, "offset": 5}),
+        )
+        .unwrap();
+        assert_eq!(call(&mut doc, "asm.unmet", json!({})).unwrap(), json!([]));
+        let mut clash = crate::joints(&doc)[0].feature.clone();
+        clash.kind = JointKind::Distance { offset: 9.0 };
+        let clash = doc
+            .add_feature_in_body(clash, "Clash".into(), Some(b))
+            .unwrap();
+        let found = call(&mut doc, "asm.unmet", json!({})).unwrap();
+        assert_eq!(
+            found,
+            json!([{"joint": clash.0.to_string(), "name": "Clash"}])
+        );
     }
 
     /// Turning either of two geared hinges turns both: the driver by what
