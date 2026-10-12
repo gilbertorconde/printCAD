@@ -280,6 +280,8 @@ pub struct ToolParams {
     pub mirror_linked: bool,
     /// The mirror reflects through a point rather than about a line.
     pub mirror_center: bool,
+    /// Trim and Extend cut against the sketch's two axes as well.
+    pub cut_at_axes: bool,
 }
 
 impl Default for ToolParams {
@@ -308,6 +310,7 @@ impl Default for ToolParams {
             mirror_keep: true,
             mirror_linked: false,
             mirror_center: false,
+            cut_at_axes: false,
         }
     }
 }
@@ -624,9 +627,9 @@ pub fn handle_click(
             modify::CornerCut::Bevel(params.chamfer_length),
             params.corner_keep,
         ),
-        "sketch.trim" => modify::trim(sketch, cursor, snap_tol),
+        "sketch.trim" => modify::trim(sketch, cursor, snap_tol, params.cut_at_axes),
         "sketch.bspline_knot" => crate::spline_edit::knot_at_click(sketch, cursor, snap_tol),
-        "sketch.extend" => modify::extend(sketch, cursor, snap_tol),
+        "sketch.extend" => modify::extend(sketch, cursor, snap_tol, params.cut_at_axes),
         "sketch.split" => modify::split(sketch, cursor, snap_tol),
         "sketch.offset" => modify::offset(
             sketch,

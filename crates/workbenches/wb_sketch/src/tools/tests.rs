@@ -1429,6 +1429,98 @@ fn trim_circle_span_becomes_arc_keeping_id() {
     ));
 }
 
+/// With the axes cutting, a line crossing the Y axis trims there and its
+/// new end is held on the axis; with them off the whole line goes.
+#[test]
+fn trim_cuts_at_the_axes_when_asked_and_holds_the_end_there() {
+    let crossing = || {
+        let mut sketch = Sketch::new("t");
+        let a = pt(&mut sketch, -6.0, 3.0);
+        let b = pt(&mut sketch, 10.0, 3.0);
+        line_between(&mut sketch, a, b);
+        (sketch, a)
+    };
+    let axes = ToolParams {
+        cut_at_axes: true,
+        ..ToolParams::default()
+    };
+
+    let (mut sketch, a) = crossing();
+    let fx = click_p(
+        &mut ToolState::default(),
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::new(5.0, 3.1),
+        0.5,
+        &axes,
+    );
+    assert!(fx.changed);
+    assert_eq!(lines(&sketch), 1);
+    let kept = sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some((l.start, l.end)),
+            _ => None,
+        })
+        .unwrap();
+    assert_eq!(kept.0, a, "the left part stays");
+    let end = sketch.point_position(kept.1).unwrap();
+    assert!(
+        end.x.abs() < 1e-4 && (end.y - 3.0).abs() < 1e-4,
+        "cut at the axis: {end:?}"
+    );
+    assert!(
+        sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::PointOnLine { point, line } if point == kept.1 && line == crate::sketch::Y_AXIS_ID
+        )),
+        "the new end is held on the Y axis"
+    );
+
+    let (mut sketch, _) = crossing();
+    handle_click(
+        &mut ToolState::default(),
+        "sketch.trim",
+        &mut sketch,
+        Vec2D::new(5.0, 3.1),
+        0.5,
+    );
+    assert_eq!(lines(&sketch), 0, "off, nothing cuts it");
+}
+
+/// With the axes cutting, Extend reaches the X axis when nothing else is
+/// in the way, and holds the end there.
+#[test]
+fn extend_reaches_an_axis_when_asked() {
+    let mut sketch = Sketch::new("t");
+    let a = pt(&mut sketch, 4.0, 8.0);
+    let b = pt(&mut sketch, 4.0, 3.0);
+    line_between(&mut sketch, a, b);
+    let axes = ToolParams {
+        cut_at_axes: true,
+        ..ToolParams::default()
+    };
+    let fx = click_p(
+        &mut ToolState::default(),
+        "sketch.extend",
+        &mut sketch,
+        Vec2D::new(4.1, 4.0),
+        0.5,
+        &axes,
+    );
+    assert!(fx.changed);
+    let end = sketch.point_position(b).unwrap();
+    assert!(
+        (end.x - 4.0).abs() < 1e-4 && end.y.abs() < 1e-4,
+        "on the X axis: {end:?}"
+    );
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::PointOnLine { point, line } if point == b && line == crate::sketch::X_AXIS_ID
+    )));
+}
+
 #[test]
 fn extend_line_reaches_nearest_intersection() {
     let mut sketch = Sketch::new("t");

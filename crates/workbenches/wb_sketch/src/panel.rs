@@ -618,6 +618,15 @@ impl SketchWorkbench {
                         ui.end_row();
                         corner_row(ui, &mut params.corner_keep);
                     }
+                    Some("sketch.trim" | "sketch.extend") => {
+                        ui_kit::widgets::field_label(ui, "Axes");
+                        check_row(ui, &mut params.cut_at_axes, "Cut at the axes (U)")
+                            .on_hover_text(
+                                "The sketch's two axes cut as curves do; an end left on one \
+                                 is held on it",
+                            );
+                        ui.end_row();
+                    }
                     Some("sketch.rect_frame") => {
                         ui_kit::widgets::field_label(ui, "Wall");
                         QtyField::mm(&mut params.offset_distance).show(ui);

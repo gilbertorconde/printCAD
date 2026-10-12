@@ -574,7 +574,7 @@ pub fn register(context: &mut WorkbenchContext) {
              copies_linked, \
              bspline_periodic, bspline_degree, bspline_interpolate, auto_constraints, \
              mirror_keep, mirror_linked, \
-             mirror_center",
+             mirror_center, cut_at_axes",
         )
         .optional(
             "construction",

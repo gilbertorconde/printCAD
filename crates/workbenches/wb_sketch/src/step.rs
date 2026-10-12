@@ -323,6 +323,11 @@ pub(crate) fn params_to_json(params: &ToolParams) -> Map<String, Value> {
         json!(params.mirror_center),
         json!(d.mirror_center),
     );
+    put(
+        "cut_at_axes",
+        json!(params.cut_at_axes),
+        json!(d.cut_at_axes),
+    );
     out
 }
 
@@ -364,6 +369,7 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
             }
             "bspline_interpolate" => p.bspline_interpolate = flag()?,
             "auto_constraints" => p.auto_constraints = flag()?,
+            "cut_at_axes" => p.cut_at_axes = flag()?,
             // The panel's array, not a tool's: its own command makes it.
             "array_rows" | "array_cols" | "array_dx" | "array_dy" => {
                 return Err(format!(

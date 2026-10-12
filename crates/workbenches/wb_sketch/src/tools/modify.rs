@@ -9,7 +9,9 @@ use uuid::Uuid;
 use super::{ToolEffect, ToolState};
 use crate::curves::Curve;
 use crate::geom2d::{self, Prim, prim_of, raw_hits, within};
-use crate::sketch::{Arc, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
+use crate::sketch::{
+    Arc, ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D, X_AXIS_ID, Y_AXIS_ID,
+};
 use crate::snap::{self, arc_angles};
 
 /// Relative slack in curve parameter space: intersections this close to a
@@ -534,7 +536,8 @@ fn finish(
     }
 }
 
-/// Intersections of `target` with every other curve in the sketch.
+/// Intersections of `target` with every other curve in the sketch, and
+/// with the sketch's two axes when `axes` is on.
 /// `bounded_target` restricts hits to the target's own extent (trim);
 /// extend wants the unbounded carrier.
 fn hits_with_others(
@@ -542,8 +545,23 @@ fn hits_with_others(
     target_id: Uuid,
     target: &Prim,
     bounded_target: bool,
+    axes: bool,
 ) -> Vec<Vec2> {
     let mut out = Vec::new();
+    if axes {
+        // Each axis as the unbounded line through the origin.
+        for along in [Vec2::X, Vec2::Y] {
+            let axis = Prim::Seg {
+                a: Vec2::ZERO,
+                b: along,
+            };
+            out.extend(
+                raw_hits(target, &axis)
+                    .into_iter()
+                    .filter(|p| !bounded_target || within(target, *p)),
+            );
+        }
+    }
     for geom in &sketch.geometry {
         if geom.id() == target_id {
             continue;
@@ -619,10 +637,10 @@ enum TrimPlan {
     CircleSpan { id: Uuid, lo: f32, hi: f32 },
 }
 
-fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<TrimPlan> {
+fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<TrimPlan> {
     let id = curve_under_cursor(sketch, cursor, tol, true)?;
     let prim = prim_of(sketch, sketch.get_geometry(id)?)?;
-    let hits = hits_with_others(sketch, id, &prim, true);
+    let hits = hits_with_others(sketch, id, &prim, true, axes);
     let p = cursor.to_glam();
     match prim {
         Prim::Seg { a, b } => {
@@ -751,12 +769,12 @@ fn general_stroke_crossings(sketch: &Sketch, a: Vec2, b: Vec2) -> Vec<Vec2> {
 
 /// Highlight polyline for the span a trim click at `cursor` would remove
 /// (overlay hover preview). `None` when nothing is trimmable there.
-pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec<Vec2D>> {
+pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<Vec<Vec2D>> {
     const SAMPLES: usize = 24;
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return Some(general_preview(sketch, id, &curve, cursor));
     }
-    let plan = plan_trim(sketch, cursor, tol)?;
+    let plan = plan_trim(sketch, cursor, tol, axes)?;
     let sample_arc = |c: Vec2, r: f32, from: f32, sweep: f32| -> Vec<Vec2D> {
         (0..=SAMPLES)
             .map(|i| {
@@ -798,11 +816,29 @@ pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec<Vec2
     }
 }
 
-pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
+/// Trim at the click, the sketch's axes cutting too when `axes` is on:
+/// an end the trim leaves on an axis is held there.
+pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
+    if !axes {
+        return trim_at(sketch, cursor, tol, false);
+    }
+    let before: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
+    let effect = trim_at(sketch, cursor, tol, true);
+    let made: Vec<Uuid> = sketch
+        .geometry
+        .iter()
+        .map(GeometryElement::id)
+        .filter(|id| !before.contains(id))
+        .collect();
+    hold_on_axes(sketch, &made);
+    effect
+}
+
+fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return trim_general(sketch, id, &curve, cursor);
     }
-    let Some(plan) = plan_trim(sketch, cursor, tol) else {
+    let Some(plan) = plan_trim(sketch, cursor, tol, axes) else {
         return ToolEffect::log("Nothing to trim here: click a curve's part to remove");
     };
     let new_point = |sketch: &mut Sketch, p: Vec2D| -> Uuid {
@@ -940,7 +976,43 @@ pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
     }
 }
 
-pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
+/// Extend the end nearest the click to the next curve it meets, or the
+/// next axis when `axes` is on: an end that lands on an axis is held
+/// there.
+pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
+    let curve = axes
+        .then(|| curve_under_cursor(sketch, cursor, tol, false))
+        .flatten();
+    let effect = extend_to(sketch, cursor, tol, axes);
+    if let Some(curve) = curve
+        && let Some(ends) = sketch.get_geometry(curve).map(Sketch::curve_point_ids)
+    {
+        hold_on_axes(sketch, &ends);
+    }
+    effect
+}
+
+/// Hold each of `points` that lies on a sketch axis, and is not held to
+/// it already, on that axis. Ids that are not points are passed over.
+fn hold_on_axes(sketch: &mut Sketch, points: &[Uuid]) {
+    const ON_AXIS: f32 = 1e-4;
+    for &point in points {
+        let Some(GeometryElement::Point(p)) = sketch.get_geometry(point) else {
+            continue;
+        };
+        let at = p.position;
+        for (line, off) in [(X_AXIS_ID, at.y), (Y_AXIS_ID, at.x)] {
+            let held = sketch.constraints.iter().any(|c| {
+                matches!(c.kind, ConstraintKind::PointOnLine { point: q, line: l } if q == point && l == line)
+            });
+            if off.abs() <= ON_AXIS && !held {
+                sketch.add_constraint(ConstraintKind::PointOnLine { point, line });
+            }
+        }
+    }
+}
+
+fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return extend_general(sketch, id, &curve, cursor);
     }
@@ -950,7 +1022,7 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect
     let Some(prim) = prim_of(sketch, sketch.get_geometry(id).unwrap()) else {
         return ToolEffect::none();
     };
-    let hits = hits_with_others(sketch, id, &prim, false);
+    let hits = hits_with_others(sketch, id, &prim, false, axes);
     let p = cursor.to_glam();
     match prim {
         Prim::Seg { a, b } => {

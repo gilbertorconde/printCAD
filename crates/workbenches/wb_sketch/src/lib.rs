@@ -1515,7 +1515,14 @@ impl SketchWorkbench {
             Some("sketch.trim") => {
                 self.trim_stroke = None;
                 self.flush_draw_record(ctx);
-                let result = if tools::trim_preview(&feature.sketch, cursor, tol).is_some() {
+                let result = if tools::trim_preview(
+                    &feature.sketch,
+                    cursor,
+                    tol,
+                    self.tool_params.cut_at_axes,
+                )
+                .is_some()
+                {
                     self.apply_tool_click(ctx, "sketch.trim", cursor, false)
                 } else {
                     InputResult::consumed()
@@ -2262,6 +2269,15 @@ impl SketchWorkbench {
                 InputResult::consumed()
             }
             KeyCode::Delete | KeyCode::Backspace => self.delete_selected(ctx),
+            KeyCode::U if matches!(tool, Some("sketch.trim" | "sketch.extend")) => {
+                self.tool_params.cut_at_axes = !self.tool_params.cut_at_axes;
+                ctx.log_info(if self.tool_params.cut_at_axes {
+                    "The axes cut"
+                } else {
+                    "The axes do not cut"
+                });
+                InputResult::consumed()
+            }
             _ => InputResult::ignored(),
         }
     }

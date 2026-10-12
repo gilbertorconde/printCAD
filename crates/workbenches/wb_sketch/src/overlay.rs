@@ -1511,7 +1511,7 @@ pub fn build_overlays(
             active_tool,
         );
         if active_tool == Some("sketch.trim")
-            && let Some(span) = tools::trim_preview(sketch, cursor, snap_tol)
+            && let Some(span) = tools::trim_preview(sketch, cursor, snap_tol, params.cut_at_axes)
         {
             push_polyline(&mut out.lines, proj, span.into_iter(), pal.trim, 3.0, false);
         }
