@@ -702,7 +702,17 @@ the source's frame) draws the source's mesh mirrored at once and waits for
 its snapshot, the kernel's mirror of the source's (`KernelQueries::mirror`),
 which `drive_mirrored_copies` asks the kernel worker for
 (`copies_awaiting_shape`, kept by `set_mirrored_shape` only while the
-source still has the snapshot it was made from).
+source still has the snapshot it was made from). Arrays of linked copies
+(`core_document/src/arrays.rs`: `CopyArray`, a source, an
+`ArrayPattern` (linear or polar, in the document's axes), a count and
+skipped occurrences, kept in `Document::copy_arrays`) own their copies:
+one op, `SetCopyArray`, carries the whole array with its copies' ids
+resolved, its apply making missing copies, dropping unlisted ones and
+placing each at `pattern.motion(index).after(source placement)`; moving
+the source re-places them inside `SetBodyPlacement`'s apply, and
+`remove_body` on a copy skips its occurrence instead. The body menu's
+Array of copies… is `ui/array_task.rs`; commands `doc.array` and
+`doc.set_array`.
 
 **Base solids.** An imported, converted or repaired solid takes features
 by becoming its body's base: `Document::set_body_base` (op `SetBodyBase`,
@@ -1206,7 +1216,7 @@ bench hooks (frame.rs, mesh.rs); `PRINTCAD_BENCH_SKETCH=1` opens a
 constrained sketch for editing and `=pad` pads it and opens the Pad task;
 `PRINTCAD_BENCH_SELECT=<n or name>` selects a body once it has geometry,
 the way a click on its tree row would, so a capture shows the selection
-overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout` opens that
+overlay; `PRINTCAD_BENCH_TASK=appearance|placement|history|print_layout|array` opens that
 application task on the first body; `PRINTCAD_BENCH_PREFS=<page label>`
 opens Preferences on that page once; `PRINTCAD_BENCH_CLICK=<fx>,<fy>` snaps to a corner view and makes
 one selection click at that fraction of the viewport, logging what the

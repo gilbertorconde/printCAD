@@ -259,11 +259,11 @@ See also `pc.doc.agent_rules`.
 
 `pc.doc.bodies`: List the bodies.
 
-- Returns a list of {id, name, visible, frozen, selectable, material, features}
+- Returns a list of {id, name, visible, frozen, selectable, material, array, features}
 
 Notes:
 
-- `features` are the body's feature ids in build order; `material` is nil until `pc.doc.set_body` gives it one.
+- `features` are the body's feature ids in build order; `material` is nil until `pc.doc.set_body` gives it one; `array` is the array that owns a copy (`pc.doc.array`), nil for any other body.
 - A sketch made without a `body` starts a body of its own, so one sketch and its pad are one body.
 
 See also `pc.doc.features`, `pc.doc.set_body`.
@@ -556,6 +556,87 @@ assert(math.abs(m.min[1] - 30) < 1e-4, "10 mm clear of the original along X")
 pc.doc.set_value{id = pad, parameter = "length", value = 8}
 assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
+```
+
+`pc.doc.array`: Repeat a body along a line or around an axis, each repeat a linked copy.
+
+- `body` (id): The body repeated, the array's source
+- `count` (integer): Occurrences, the source counted: 3 is the source and two copies
+- `kind` (string, optional): "linear" (along a line, the default) or "polar" (around an axis)
+- `direction` (any, optional): linear: {x, y, z}, the way the row runs; along X when left out
+- `spacing` (number, optional): linear: millimetres between neighbours; 10 mm clear of each other when left out
+- `axis` (any, optional): polar: {x, y, z}, the axis turned about; Z when left out
+- `center` (any, optional): polar: {x, y, z}, a point on the axis; the origin when left out
+- `angle` (number, optional): polar: degrees between neighbours; a whole turn shared out when left out
+- `skip` (list, optional): Occurrences left out, numbered from 1 (0 is the source)
+- Returns {id, instances}: the array's id and its copies' body ids, in order
+
+Notes:
+
+- The array owns its copies: each is a linked copy of the source, placed where its occurrence is from where the source sits, so moving the source carries them. They draw, pick, export and print as bodies; the parts list counts them with the source.
+- Directions and points are in the document's axes. A copy an array owns is refused as a source ("is a copy an array owns"); a count is from 1 to 1000.
+- Deleting one of its copies (`pc.doc.delete`) skips that occurrence; `pc.doc.set_array` changes the rest. `pc.doc.bodies()` gives each copy's `array`.
+
+See also `pc.doc.set_array`, `pc.doc.linked_copy`.
+
+Example: A row of four, then a ring.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local row = pc.doc.array{body = body, count = 4, spacing = 25}
+assert(#row.instances == 3 and #pc.doc.bodies() == 4)
+local last = pc.doc.measure{body = row.instances[3]}
+assert(math.abs(last.min[1] - 75) < 1e-4, "three spacings along X")
+assert(math.abs(last.volume - 500) < 1e-6, "the source's shape")
+pc.doc.set_array{array = row.id, remove = true}
+assert(#pc.doc.bodies() == 1, "its copies go with it")
+local ring = pc.doc.array{body = body, kind = "polar", count = 4,
+                          center = {x = -20, y = 0, z = 0}}
+local opposite = pc.doc.measure{body = ring.instances[2]}
+assert(math.abs(opposite.max[1] + 40) < 1e-4, "half a turn about the axis")
+```
+
+`pc.doc.set_array`: Change an array of linked copies: its count, spacing, angle, axis or skipped occurrences.
+
+- `array` (id)
+- `count` (integer, optional): Occurrences, the source counted
+- `kind` (string, optional): "linear" or "polar"; the other kind's values start afresh
+- `direction` (any, optional): linear: {x, y, z}
+- `spacing` (number, optional): linear: millimetres
+- `axis` (any, optional): polar: {x, y, z}
+- `center` (any, optional): polar: {x, y, z}
+- `angle` (number, optional): polar: degrees between neighbours
+- `skip` (list, optional): Occurrences left out, numbered from 1; replaces the list it had
+- `remove` (boolean, optional): true takes the array away with every copy it owns; the source stays
+- Returns {id, instances}, as the array stands after the change
+
+Notes:
+
+- Only what is given changes. More occurrences make new copies, fewer take the last ones away, and the copies it keeps keep their ids. The whole change is one undo step.
+- A skipped occurrence's copy goes; taken off the list, it is made again with a new id.
+
+See also `pc.doc.array`.
+
+Example: A row grown, one skipped, then brought back.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local row = pc.doc.array{body = body, count = 3, spacing = 20}
+local first = row.instances[1]
+row = pc.doc.set_array{array = row.id, count = 5, spacing = 30, skip = {2}}
+assert(#row.instances == 3 and row.instances[1] == first, "the copy it had is kept")
+local far = pc.doc.measure{body = row.instances[3]}
+assert(math.abs(far.min[1] - 120) < 1e-4, "occurrence 4, four spacings out")
+row = pc.doc.set_array{array = row.id, skip = {}}
+assert(#row.instances == 4 and #pc.doc.bodies() == 5)
 ```
 
 `pc.doc.move_after`: Move a feature in its body's history to just after another.

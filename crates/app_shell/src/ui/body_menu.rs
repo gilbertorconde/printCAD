@@ -42,6 +42,8 @@ pub enum OpenTask {
     AddNote(BodyId, Option<[f32; 3]>),
     /// A note's text and where its label stands.
     EditNote(NoteId),
+    /// The array that owns or repeats the body, or a new one of it.
+    Array(BodyId),
 }
 
 /// A body as a script names it: its id, with its name beside.
@@ -151,6 +153,32 @@ pub fn body_entries(
         .clicked()
     {
         edit(out, body, BodyEdit::LinkedCopy);
+        picked = true;
+    }
+    let array = document.array_instance(body).map(|(a, _)| a.id);
+    let label = if array.is_some() || !document.arrays_of_source(body).is_empty() {
+        "Edit array…"
+    } else {
+        "Array of copies…"
+    };
+    if ui
+        .button(label)
+        .on_hover_text(
+            "Copies of the body in a row or a ring, following every change to it, in the \
+             task panel",
+        )
+        .clicked()
+    {
+        *local = Some(MenuLocal::Task(OpenTask::Array(body)));
+        picked = true;
+    }
+    if array.is_some()
+        && ui
+            .button("Skip this copy")
+            .on_hover_text("Leave this occurrence out of its array; Edit array brings it back")
+            .clicked()
+    {
+        out.push(UiCommand::DeleteTreeItem(TreeItemId::Body(body)));
         picked = true;
     }
     if let Some(source) = entry.copy_of

@@ -244,6 +244,25 @@ impl DocumentTree {
                     node.tooltip = Some(text.clone());
                     node.detail = Some(text);
                 }
+                if let Some((array, instance)) = document.array_instance(body.id) {
+                    node.detail = Some(format!(
+                        "{}: copy {} of {}",
+                        array.name,
+                        instance.index,
+                        array.count.saturating_sub(1)
+                    ));
+                    node.tooltip = Some(format!(
+                        "A copy {} owns; Edit array changes it, Delete skips it",
+                        array.name
+                    ));
+                } else if let Some(array) = document
+                    .arrays_of_source(body.id)
+                    .first()
+                    .and_then(|id| document.copy_array(*id))
+                    && node.detail.is_none()
+                {
+                    node.detail = Some(format!("Repeated by {}", array.name));
+                }
                 node
             })
             .collect();

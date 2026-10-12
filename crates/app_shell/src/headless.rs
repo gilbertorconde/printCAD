@@ -196,6 +196,8 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.note_remove",
     "doc.notes",
     "doc.linked_copy",
+    "doc.array",
+    "doc.set_array",
     "doc.move_after",
     "doc.recompute",
     "doc.measure",

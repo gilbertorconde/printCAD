@@ -32,6 +32,7 @@ mod unsaved_modal;
 mod view_toolbar;
 pub use view_toolbar::PickFilter;
 
+mod array_task;
 mod body_menu;
 mod host_tasks;
 mod texture_task;
@@ -192,6 +193,9 @@ impl UiLayer {
                     return;
                 };
                 task
+            }
+            OpenTask::Array(body) => {
+                host_tasks::HostTask::Array(array_task::ArrayTask::open(document, body))
             }
         };
         self.host_task = Some((tab.into(), task));

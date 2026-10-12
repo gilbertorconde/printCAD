@@ -520,7 +520,7 @@ impl PrintCadApp {
         }
 
         // Dev/bench hook: `PRINTCAD_BENCH_TASK=appearance|placement|history|
-        // texture|print_layout` opens that task of the application's on the
+        // texture|print_layout|array` opens that task of the application's on the
         // first body (its first feature, for history) once it has geometry,
         // as its menu entry would, so a capture shows the task panel.
         if !self.bench_task_fired
@@ -543,6 +543,7 @@ impl PrintCadApp {
                 "history" => first.map(ui::OpenTask::History),
                 "texture" => Some(ui::OpenTask::Texture(body, None)),
                 "print_layout" => Some(ui::OpenTask::PrintLayout),
+                "array" => Some(ui::OpenTask::Array(body)),
                 _ => Some(ui::OpenTask::Appearance(body, None)),
             };
             if let Some(open) = open {

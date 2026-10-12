@@ -64,11 +64,14 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
         .note("It needs the app's window: a `printcad --script` run refuses it.")
         .see_also("doc.agent_rules"),
         CommandSpec::new("doc.bodies", "List the bodies")
-            .returns("a list of {id, name, visible, frozen, selectable, material, features}")
+            .returns(
+                "a list of {id, name, visible, frozen, selectable, material, array, features}",
+            )
             .read_only()
             .note(
                 "`features` are the body's feature ids in build order; `material` is nil \
-                 until `pc.doc.set_body` gives it one.",
+                 until `pc.doc.set_body` gives it one; `array` is the array that owns a \
+                 copy (`pc.doc.array`), nil for any other body.",
             )
             .note(
                 "A sketch made without a `body` starts a body of its own, so one sketch \
@@ -440,6 +443,146 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             pc.doc.set_value{id = pad, parameter = "length", value = 8}
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
+            "#,
+        ),
+        CommandSpec::new(
+            "doc.array",
+            "Repeat a body along a line or around an axis, each repeat a linked copy",
+        )
+        .param("body", ParamKind::Id, "The body repeated, the array's source")
+        .param(
+            "count",
+            ParamKind::Integer,
+            "Occurrences, the source counted: 3 is the source and two copies",
+        )
+        .optional(
+            "kind",
+            ParamKind::String,
+            "\"linear\" (along a line, the default) or \"polar\" (around an axis)",
+        )
+        .optional(
+            "direction",
+            ParamKind::Any,
+            "linear: {x, y, z}, the way the row runs; along X when left out",
+        )
+        .optional(
+            "spacing",
+            ParamKind::Number,
+            "linear: millimetres between neighbours; 10 mm clear of each other when left out",
+        )
+        .optional(
+            "axis",
+            ParamKind::Any,
+            "polar: {x, y, z}, the axis turned about; Z when left out",
+        )
+        .optional(
+            "center",
+            ParamKind::Any,
+            "polar: {x, y, z}, a point on the axis; the origin when left out",
+        )
+        .optional(
+            "angle",
+            ParamKind::Number,
+            "polar: degrees between neighbours; a whole turn shared out when left out",
+        )
+        .optional(
+            "skip",
+            ParamKind::List,
+            "Occurrences left out, numbered from 1 (0 is the source)",
+        )
+        .returns("{id, instances}: the array's id and its copies' body ids, in order")
+        .note(
+            "The array owns its copies: each is a linked copy of the source, placed where \
+             its occurrence is from where the source sits, so moving the source carries \
+             them. They draw, pick, export and print as bodies; the parts list counts them \
+             with the source.",
+        )
+        .note(
+            "Directions and points are in the document's axes. A copy an array owns is \
+             refused as a source (\"is a copy an array owns\"); a count is from 1 to 1000.",
+        )
+        .note(
+            "Deleting one of its copies (`pc.doc.delete`) skips that occurrence; \
+             `pc.doc.set_array` changes the rest. `pc.doc.bodies()` gives each copy's \
+             `array`.",
+        )
+        .see_also("doc.set_array")
+        .see_also("doc.linked_copy")
+        .example(
+            "A row of four, then a ring",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local row = pc.doc.array{body = body, count = 4, spacing = 25}
+            assert(#row.instances == 3 and #pc.doc.bodies() == 4)
+            local last = pc.doc.measure{body = row.instances[3]}
+            assert(math.abs(last.min[1] - 75) < 1e-4, "three spacings along X")
+            assert(math.abs(last.volume - 500) < 1e-6, "the source's shape")
+            pc.doc.set_array{array = row.id, remove = true}
+            assert(#pc.doc.bodies() == 1, "its copies go with it")
+            local ring = pc.doc.array{body = body, kind = "polar", count = 4,
+                                      center = {x = -20, y = 0, z = 0}}
+            local opposite = pc.doc.measure{body = ring.instances[2]}
+            assert(math.abs(opposite.max[1] + 40) < 1e-4, "half a turn about the axis")
+            "#,
+        ),
+        CommandSpec::new(
+            "doc.set_array",
+            "Change an array of linked copies: its count, spacing, angle, axis or skipped \
+             occurrences",
+        )
+        .param("array", ParamKind::Id, "")
+        .optional("count", ParamKind::Integer, "Occurrences, the source counted")
+        .optional(
+            "kind",
+            ParamKind::String,
+            "\"linear\" or \"polar\"; the other kind's values start afresh",
+        )
+        .optional("direction", ParamKind::Any, "linear: {x, y, z}")
+        .optional("spacing", ParamKind::Number, "linear: millimetres")
+        .optional("axis", ParamKind::Any, "polar: {x, y, z}")
+        .optional("center", ParamKind::Any, "polar: {x, y, z}")
+        .optional("angle", ParamKind::Number, "polar: degrees between neighbours")
+        .optional(
+            "skip",
+            ParamKind::List,
+            "Occurrences left out, numbered from 1; replaces the list it had",
+        )
+        .optional(
+            "remove",
+            ParamKind::Bool,
+            "true takes the array away with every copy it owns; the source stays",
+        )
+        .returns("{id, instances}, as the array stands after the change")
+        .note(
+            "Only what is given changes. More occurrences make new copies, fewer take the \
+             last ones away, and the copies it keeps keep their ids. The whole change is \
+             one undo step.",
+        )
+        .note(
+            "A skipped occurrence's copy goes; taken off the list, it is made again with a \
+             new id.",
+        )
+        .see_also("doc.array")
+        .example(
+            "A row grown, one skipped, then brought back",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 10, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local row = pc.doc.array{body = body, count = 3, spacing = 20}
+            local first = row.instances[1]
+            row = pc.doc.set_array{array = row.id, count = 5, spacing = 30, skip = {2}}
+            assert(#row.instances == 3 and row.instances[1] == first, "the copy it had is kept")
+            local far = pc.doc.measure{body = row.instances[3]}
+            assert(math.abs(far.min[1] - 120) < 1e-4, "occurrence 4, four spacings out")
+            row = pc.doc.set_array{array = row.id, skip = {}}
+            assert(#row.instances == 4 and #pc.doc.bodies() == 5)
             "#,
         ),
         CommandSpec::new(
@@ -3014,6 +3157,9 @@ pub(crate) fn document_command(
                             "name": m.name,
                             "density": m.density,
                         })),
+                        "array": document
+                            .array_instance(b.id)
+                            .map(|(array, _)| array.id.0.to_string()),
                         "features": features_in_order(document, Some(b.id))
                             .iter()
                             .map(|n| n.id.0.to_string())
@@ -3139,6 +3285,38 @@ pub(crate) fn document_command(
                 ),
             );
             Ok(json!(copy.0.to_string()))
+        }
+        "doc.array" => {
+            let body = body_arg(document, &a)?;
+            let count = count_arg(&a)?.ok_or_else(|| CommandError::bad("count", "is needed"))?;
+            let pattern = array_pattern(document, body, count, None, &a)?;
+            let id = document
+                .create_copy_array(body, pattern, count)
+                .map_err(|e| array_refusal(&e))?;
+            if let Some(skip) = skip_arg(&a)? {
+                document
+                    .set_copy_array(id, pattern, count, skip)
+                    .map_err(|e| array_refusal(&e))?;
+            }
+            Ok(array_answer(document, id))
+        }
+        "doc.set_array" => {
+            let id = core_document::ArrayId(a.id("array")?);
+            let array = document
+                .copy_array(id)
+                .cloned()
+                .ok_or_else(|| CommandError::bad("array", "is not an array of this document"))?;
+            if a.opt_bool("remove")?.unwrap_or(false) {
+                document.remove_copy_array(id);
+                return Ok(json!({"id": id.0.to_string(), "instances": []}));
+            }
+            let count = count_arg(&a)?.unwrap_or(array.count);
+            let pattern = array_pattern(document, array.source, count, Some(array.pattern), &a)?;
+            let skip = skip_arg(&a)?.unwrap_or(array.skipped);
+            document
+                .set_copy_array(id, pattern, count, skip)
+                .map_err(|e| array_refusal(&e))?;
+            Ok(array_answer(document, id))
         }
         "doc.move_after" => {
             let feature = FeatureId(a.id("id")?);
@@ -3808,6 +3986,126 @@ fn textures_arg(
             Ok(core_document::FaceTexture { texture, faces })
         })
         .collect()
+}
+
+/// An array command's `count`, when given.
+fn count_arg(a: &Args) -> Result<Option<u32>, CommandError> {
+    match a.opt_number("count")? {
+        None => Ok(None),
+        Some(n) if n >= 1.0 && n <= f64::from(core_document::arrays::MAX_ARRAY_COUNT) => {
+            Ok(Some(n as u32))
+        }
+        Some(_) => Err(CommandError::bad(
+            "count",
+            format!(
+                "must be from 1 to {}",
+                core_document::arrays::MAX_ARRAY_COUNT
+            ),
+        )),
+    }
+}
+
+/// An array command's `skip`, when given: occurrence numbers.
+fn skip_arg(a: &Args) -> Result<Option<Vec<u32>>, CommandError> {
+    let Some(value) = a.0.get("skip").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let items = match value {
+        Value::Array(items) => items.as_slice(),
+        // An empty Lua table arrives as an object.
+        Value::Object(map) if map.is_empty() => &[],
+        _ => return Err(CommandError::bad("skip", "is a list of occurrence numbers")),
+    };
+    items
+        .iter()
+        .map(|v| {
+            v.as_u64()
+                .filter(|n| *n >= 1)
+                .map(|n| n as u32)
+                .ok_or_else(|| CommandError::bad("skip", "holds occurrence numbers from 1"))
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(Some)
+}
+
+/// The pattern an array command describes: its `kind` and that kind's
+/// values, each taken from `current` (when the kind stays) or its default
+/// where it is not given.
+fn array_pattern(
+    document: &core_document::Document,
+    source: BodyId,
+    count: u32,
+    current: Option<core_document::ArrayPattern>,
+    a: &Args,
+) -> Result<core_document::ArrayPattern, CommandError> {
+    use core_document::ArrayPattern;
+    let vector = |name: &str| -> Result<Option<[f32; 3]>, CommandError> {
+        a.0.get(name)
+            .filter(|v| !v.is_null())
+            .map(|v| numbers_arg(v, name, ["x", "y", "z"]))
+            .transpose()
+    };
+    let polar = match a.opt_string("kind")? {
+        None => matches!(current, Some(ArrayPattern::Polar { .. })),
+        Some("linear") => false,
+        Some("polar") => true,
+        Some(_) => return Err(CommandError::bad("kind", "is \"linear\" or \"polar\"")),
+    };
+    let spacing = a.opt_number("spacing")?.map(|v| v as f32);
+    let angle = a.opt_number("angle")?.map(|v| v as f32);
+    let pattern = if polar {
+        let (center, axis, was) = match current {
+            Some(ArrayPattern::Polar {
+                center,
+                axis,
+                angle,
+            }) => (center, axis, Some(angle)),
+            _ => ([0.0; 3], [0.0, 0.0, 1.0], None),
+        };
+        ArrayPattern::Polar {
+            center: vector("center")?.unwrap_or(center),
+            axis: vector("axis")?.unwrap_or(axis),
+            angle: angle.or(was).unwrap_or(360.0 / count.max(1) as f32),
+        }
+    } else {
+        let (direction, was) = match current {
+            Some(ArrayPattern::Linear { direction, spacing }) => (direction, Some(spacing)),
+            _ => ([1.0, 0.0, 0.0], None),
+        };
+        let direction = vector("direction")?.unwrap_or(direction);
+        ArrayPattern::Linear {
+            direction,
+            spacing: spacing
+                .or(was)
+                .unwrap_or_else(|| document.spacing_clear_of(source, direction)),
+        }
+    };
+    if !pattern.is_valid() {
+        let name = if polar { "axis" } else { "direction" };
+        return Err(CommandError::bad(name, "has no length"));
+    }
+    Ok(pattern)
+}
+
+/// Why the document refused an array edit, as the argument it was about.
+fn array_refusal(error: &core_document::ArrayError) -> CommandError {
+    use core_document::ArrayError;
+    let name = match error {
+        ArrayError::NoSuchBody | ArrayError::SourceIsInstance => "body",
+        ArrayError::NoSuchArray => "array",
+        ArrayError::BadCount => "count",
+        ArrayError::BadPattern => "direction",
+    };
+    CommandError::bad(name, error.to_string())
+}
+
+/// An array as the array commands answer: its id and its copies' bodies.
+fn array_answer(document: &core_document::Document, id: core_document::ArrayId) -> Value {
+    let instances: Vec<String> = document
+        .copy_array(id)
+        .map(|a| a.instances.iter().map(|i| i.body.0.to_string()).collect())
+        .unwrap_or_default();
+    json!({"id": id.0.to_string(), "instances": instances})
 }
 
 fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {

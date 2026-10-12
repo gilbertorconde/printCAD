@@ -1,9 +1,10 @@
 //! The application's own tasks in the right panel, beside the benches':
 //! a body's placement, its appearance (colour, faces, see-through,
-//! material), a note on it, a feature's place in its body's history, and
-//! the print layout. Edits apply to the document as they are made, so the view
-//! shows them; OK keeps them as one undo step, Cancel puts back what was
-//! there when the task opened. The print layout edits nothing: the view
+//! material), a note on it, a feature's place in its body's history, an
+//! array of copies (`array_task`), and the print layout. Edits apply to
+//! the document as they are made, so the view shows them; OK keeps them
+//! as one undo step, Cancel puts back what was there when the task
+//! opened. The print layout edits nothing: the view
 //! shows the layout while it is open, and Close puts the model back.
 
 use core_document::{
@@ -68,6 +69,8 @@ pub enum HostTask {
     Note(NoteTask),
     /// Every part laid flat on the bed, for export or the slicer.
     PrintLayout,
+    /// A body repeated as linked copies in a row or a ring.
+    Array(super::array_task::ArrayTask),
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +340,7 @@ impl HostTask {
             Self::Texture(t) => format!("Surface texture · {}", body_name(document, t.body())),
             Self::Note(t) => format!("Note · {}", body_name(document, t.body)),
             Self::PrintLayout => "Print layout".to_string(),
+            Self::Array(t) => format!("Array · {}", body_name(document, t.source())),
             Self::History(t) => format!(
                 "Move · {}",
                 document
@@ -358,6 +362,7 @@ impl HostTask {
             Self::Texture(t) => document.bodies().iter().any(|b| b.id == t.body()),
             Self::Note(t) => !t.placed || document.note(t.note.id).is_some(),
             Self::PrintLayout => true,
+            Self::Array(t) => document.bodies().iter().any(|b| b.id == t.source()),
         }
     }
 
@@ -384,6 +389,7 @@ impl HostTask {
             ),
             Self::Note(t) => t.show(ui, inputs.document, accept, cancel),
             Self::PrintLayout => print_layout(ui, &inputs, accept || cancel, commands),
+            Self::Array(t) => t.show(ui, inputs.document, accept, cancel),
         }
     }
 

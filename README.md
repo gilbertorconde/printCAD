@@ -26,7 +26,7 @@ Parametric CAD for designing 3D-printed parts. Linux, Windows and macOS; Rust an
   with a continuity check.
 - **Assembly:** joints of every common kind (mate, align, hinge, slider,
   ball, cam, gears and more), components that move as one, linked copies
-  and parts linked from other files, motion over time, interference and
+  and arrays of them, parts linked from other files, motion over time, interference and
   clearance checks, exploded views and a parts list.
 - **Import:** STEP and IGES as solids, with the dimensions, tolerances,
   datums, notes and layers they carry; STL, OBJ, 3MF, PLY, glTF and VRML
@@ -158,7 +158,9 @@ what was there.
 - A body: Select, Rename, Hide, Show only this, Show all, Appearance,
   Placement, Freeze (its features are not rebuilt until it thaws; the row
   shows FROZEN), Make unselectable (clicks in the view pass through it),
-  Linked copy, Select the original of a copy, Replace shape…, Cut, Copy,
+  Linked copy, Array of copies… (a row or a ring of linked copies; Edit
+  array and Skip this copy on a copy), Select the original of a copy,
+  Replace shape…, Cut, Copy,
   Paste, Delete, Recompute, Send to console, Properties.
 - An imported body also offers Repair shape when the checker finds it
   broken, a mesh body Convert to solid, and a converted one Refine shape.
