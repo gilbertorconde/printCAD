@@ -1600,6 +1600,8 @@ assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "its own 5 mm
 
 `pc.view.origin_planes`: Origin planes.
 
+`pc.view.fullscreen`: Full screen.
+
 ### tab
 
 `pc.tab.new`: New tab.

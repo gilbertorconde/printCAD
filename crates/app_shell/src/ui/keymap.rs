@@ -58,6 +58,7 @@ pub enum HostAction {
     Annotations,
     Grid,
     OriginPlanes,
+    Fullscreen,
     Recompute,
     Repeat,
     Rename,
@@ -283,6 +284,13 @@ const HOST: &[HostSpec] = {
             "View",
             &[],
         ),
+        anywhere(spec(
+            Fullscreen,
+            "view.fullscreen",
+            "Full screen",
+            "View",
+            &["F11"],
+        )),
         anywhere(spec(NewTab, "tab.new", "New tab", "Tabs", &["Ctrl+T"])),
         anywhere(spec(
             CloseTab,
@@ -852,6 +860,7 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
         Annotations => C(UiCommand::ToggleAnnotations),
         Grid => C(UiCommand::ToggleGrid),
         OriginPlanes => C(UiCommand::ToggleOriginPlanes),
+        Fullscreen => C(UiCommand::ToggleFullscreen),
         Recompute => C(UiCommand::RecomputeAll),
         Repeat => C(UiCommand::RepeatLastTool),
         Rename => match state.tree_selection {

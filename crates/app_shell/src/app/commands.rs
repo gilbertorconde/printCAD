@@ -81,6 +81,17 @@ struct FrameIntents {
 }
 
 impl PrintCadApp {
+    /// The window fills the monitor it is on, borderless, or leaves it.
+    fn toggle_fullscreen(&mut self) {
+        let Some(gfx) = self.gfx.as_ref() else {
+            return;
+        };
+        let full = gfx.window.fullscreen().is_some();
+        gfx.window
+            .set_fullscreen((!full).then_some(winit::window::Fullscreen::Borderless(None)));
+        self.redraw_needed = true;
+    }
+
     pub(crate) fn apply_ui_commands(
         &mut self,
         commands: Vec<UiCommand>,
@@ -156,6 +167,7 @@ impl PrintCadApp {
                 UiCommand::ToggleAnnotations => intents.toggle_annotations = true,
                 UiCommand::ToggleGrid => intents.toggle_grid = true,
                 UiCommand::ToggleOriginPlanes => intents.toggle_origin_planes = true,
+                UiCommand::ToggleFullscreen => self.toggle_fullscreen(),
                 UiCommand::ToggleMeasure => intents.toggle_measure = true,
                 UiCommand::Edit(command) => intents.edit.push(command),
                 UiCommand::SetBodyDisplay { body, display } => {

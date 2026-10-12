@@ -551,6 +551,7 @@ impl UiLayer {
                     show_annotations: settings.rendering.show_annotations,
                     show_grid: settings.rendering.show_grid,
                     show_origin_planes: settings.rendering.show_origin_planes,
+                    fullscreen: window.fullscreen().is_some(),
                     show_console: self.console.open,
                     show_assistant: self.assistant.open,
                     projection,

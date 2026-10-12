@@ -87,6 +87,8 @@ pub enum UiCommand {
     ToggleGrid,
     /// The origin's planes drawn, or not.
     ToggleOriginPlanes,
+    /// The window fills the screen, or goes back to the size it had.
+    ToggleFullscreen,
     /// Arm the measure tool, or put it away.
     ToggleMeasure,
     Edit(EditCommand),

@@ -27,6 +27,8 @@ pub struct MenuBarInputs<'a> {
     /// The ground grid and the origin's planes are drawn.
     pub show_grid: bool,
     pub show_origin_planes: bool,
+    /// The window fills the screen.
+    pub fullscreen: bool,
     pub show_console: bool,
     pub show_assistant: bool,
     pub projection: ProjectionMode,
@@ -403,6 +405,16 @@ pub fn draw_menu_bar(
                                 key("view.origin_planes"),
                             ) {
                                 commands.push(UiCommand::ToggleOriginPlanes);
+                            }
+                            if crate::platform::offers("view.fullscreen")
+                                && choice(
+                                    ui,
+                                    inputs.fullscreen,
+                                    "Full screen",
+                                    key("view.fullscreen"),
+                                )
+                            {
+                                commands.push(UiCommand::ToggleFullscreen);
                             }
                             ui.separator();
                             ui.menu_button(RichText::new("Workbench").font(sans(FONT_SM)), |ui| {

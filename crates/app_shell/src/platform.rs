@@ -44,7 +44,14 @@ pub(crate) const ON_PAGE: bool = cfg!(target_arch = "wasm32");
 
 /// The application's commands a page cannot carry out, kept out of its
 /// menus, palette and keys.
-const DESKTOP_ONLY: &[&str] = &["file.send_to_slicer", "app.quit", "app.assistant"];
+/// Full screen is the browser's own (its F11), which a page's key cannot
+/// reach.
+const DESKTOP_ONLY: &[&str] = &[
+    "file.send_to_slicer",
+    "app.quit",
+    "app.assistant",
+    "view.fullscreen",
+];
 
 /// Whether command `id` is one this build carries out.
 pub(crate) fn offers(id: &str) -> bool {

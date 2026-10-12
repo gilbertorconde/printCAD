@@ -135,6 +135,7 @@ View keys:
 | Isometric, front, top, right | 0, 1, 2, 3 |
 | Rear, bottom, left | 4, 5, 6 |
 | Orthographic, perspective | O, P |
+| Full screen | F11 |
 
 ### Row and body menus
 
