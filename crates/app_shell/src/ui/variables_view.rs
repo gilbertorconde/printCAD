@@ -5,12 +5,14 @@
 //! opens the row to edit its name, formula (with what it comes to as you
 //! type) and comment, and the rows at the end add one. The configurations
 //! list theirs with the one in effect marked; a click opens a
-//! configuration's values. Everything answers with commands.
+//! configuration's values. Their table shows every value at once,
+//! configurations as rows or, switched, as columns. Everything answers
+//! with commands.
 
 use core_document::{Configuration, Configurations, Document, FeatureId, Variable};
 use egui::RichText;
 use ui_kit::tokens::*;
-use ui_kit::widgets::small_secondary_button;
+use ui_kit::widgets::{check_row, small_secondary_button};
 use ui_kit::{mono, sans, sans_medium};
 
 use super::{ConfigEdit, UiCommand};
@@ -26,6 +28,59 @@ pub struct VariablesState {
     new_name: String,
     new_formula: String,
     new_configuration: String,
+    /// The configurations table drawn with configurations as columns and
+    /// variables as rows.
+    vertical: bool,
+}
+
+/// The configurations table as drawn: the names along the top, those
+/// down the side, and the cell at each crossing (`cells[down][across]`).
+#[derive(Debug, PartialEq)]
+struct Grid<'a> {
+    across: Vec<&'a str>,
+    down: Vec<&'a str>,
+    cells: Vec<Vec<Cell<'a>>>,
+}
+
+/// One crossing of the table: the variable it sets and the
+/// configuration's value, empty where it keeps the variable's own.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Cell<'a> {
+    variable: &'a str,
+    value: &'a str,
+}
+
+/// `table` laid out with configurations down the side, or along the top
+/// when `vertical`.
+fn grid(table: &Configurations, vertical: bool) -> Grid<'_> {
+    let configurations: Vec<&str> = table.rows.iter().map(|r| r.name.as_str()).collect();
+    let variables: Vec<&str> = table.columns.iter().map(String::as_str).collect();
+    let cell = |row: usize, column: usize| Cell {
+        variable: variables[column],
+        value: table.rows[row]
+            .values
+            .get(column)
+            .map_or("", String::as_str),
+    };
+    if vertical {
+        let cells = (0..variables.len())
+            .map(|c| (0..configurations.len()).map(|r| cell(r, c)).collect())
+            .collect();
+        Grid {
+            across: configurations,
+            down: variables,
+            cells,
+        }
+    } else {
+        let cells = (0..configurations.len())
+            .map(|r| (0..variables.len()).map(|c| cell(r, c)).collect())
+            .collect();
+        Grid {
+            across: variables,
+            down: configurations,
+            cells,
+        }
+    }
 }
 
 /// An open variable's name, formula and comment, as typed.
@@ -548,6 +603,12 @@ pub fn configurations_section(
         }
     }
 
+    if !table.rows.is_empty() && !table.columns.is_empty() {
+        ui.add_space(SPACE_2);
+        group(ui, "Table");
+        table_view(ui, &mut state.vertical, &table, &own);
+    }
+
     ui.add_space(SPACE_2);
     group(ui, "Add a configuration");
     egui::Frame::new()
@@ -573,6 +634,72 @@ pub fn configurations_section(
                         .color(TEXT3),
                 );
             }
+        });
+}
+
+/// Every configuration's values at once, scrolling sideways when wider
+/// than the panel; the switch puts the configurations along the top.
+fn table_view(
+    ui: &mut egui::Ui,
+    vertical: &mut bool,
+    table: &Configurations,
+    own: &dyn Fn(&str) -> String,
+) {
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        check_row(ui, vertical, "Configurations as columns")
+            .on_hover_text("Lay the table out with a column per configuration, a row per variable");
+    });
+    let layout = grid(table, *vertical);
+    let configuration_name = |name: &str| {
+        let active = table.active.as_deref() == Some(name);
+        RichText::new(name)
+            .font(if active {
+                sans_medium(FONT_SM)
+            } else {
+                sans(FONT_SM)
+            })
+            .color(if active { SUCCESS } else { TEXT1 })
+    };
+    let variable_name = |name: &str| RichText::new(name).font(mono(FONT_XS)).color(TEXT2);
+    let header = |name: &str, configuration: bool| {
+        if configuration {
+            configuration_name(name)
+        } else {
+            variable_name(name)
+        }
+    };
+    egui::Frame::new()
+        .inner_margin(egui::Margin::symmetric(12, 6))
+        .show(ui, |ui| {
+            egui::ScrollArea::horizontal()
+                .id_salt("configurations_table")
+                .show(ui, |ui| {
+                    egui::Grid::new("configurations_table_grid")
+                        .striped(true)
+                        .spacing(egui::vec2(SPACE_3, SPACE_1))
+                        .show(ui, |ui| {
+                            ui.label("");
+                            for name in &layout.across {
+                                ui.label(header(name, *vertical));
+                            }
+                            ui.end_row();
+                            for (name, cells) in layout.down.iter().zip(&layout.cells) {
+                                ui.label(header(name, !*vertical));
+                                for cell in cells {
+                                    let text = if cell.value.is_empty() {
+                                        RichText::new(own(cell.variable))
+                                            .font(mono(FONT_XS))
+                                            .color(TEXT3)
+                                    } else {
+                                        RichText::new(cell.value).font(mono(FONT_SM)).color(TEXT1)
+                                    };
+                                    ui.label(text);
+                                }
+                                ui.end_row();
+                            }
+                        });
+                });
         });
 }
 
@@ -736,6 +863,46 @@ mod tests {
     }
 
     #[test]
+    fn the_table_turns_with_configurations_as_columns() {
+        let table = Configurations {
+            columns: vec!["Size.width".into(), "Size.height".into()],
+            rows: vec![
+                Configuration {
+                    name: "S".into(),
+                    values: vec!["30 mm".into()],
+                    left_out: Vec::new(),
+                },
+                Configuration {
+                    name: "L".into(),
+                    values: vec!["90 mm".into(), "20 mm".into()],
+                    left_out: Vec::new(),
+                },
+            ],
+            active: None,
+        };
+        let rows = grid(&table, false);
+        assert_eq!(rows.across, ["Size.width", "Size.height"]);
+        assert_eq!(rows.down, ["S", "L"]);
+        let columns = grid(&table, true);
+        assert_eq!(columns.across, ["S", "L"]);
+        assert_eq!(columns.down, ["Size.width", "Size.height"]);
+        for (r, row) in rows.cells.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                assert_eq!(*cell, columns.cells[c][r], "the same cell either way");
+            }
+        }
+        assert_eq!(
+            rows.cells[0][1],
+            Cell {
+                variable: "Size.height",
+                value: ""
+            },
+            "a value a configuration leaves out is empty, keeping the variable's own"
+        );
+        assert_eq!(columns.cells[1][1].value, "20 mm");
+    }
+
+    #[test]
     fn both_sections_draw_in_a_narrow_column() {
         let mut doc = Document::new("t");
         let set = doc.add_variable_set("Printer").unwrap();
@@ -745,6 +912,7 @@ mod tests {
         doc.add_configuration_column("Printer.nozzle").unwrap();
         let mut state = VariablesState {
             open: Some((set, "nozzle".into(), Draft::default())),
+            vertical: true,
             open_configuration: Some(("Small".into(), ConfigDraft::default())),
             ..Default::default()
         };

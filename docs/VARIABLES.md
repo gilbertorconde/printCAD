@@ -110,6 +110,10 @@ configurations themselves ("Add a configuration"). Click a configuration
 to give each variable a formula, or leave it empty to keep the variable's
 own, and Apply (or Enter); "Put in effect", or the selector at the top,
 switches to it, and everything that follows those variables rebuilds.
+Under them the Table shows every configuration's values at once, a row per
+configuration; "Configurations as columns" turns it to a column per
+configuration and a row per variable, which stays narrow when there are
+many variables. The choice is the view's, not the document's.
 
 A row's value takes the place of the variable's formula, so it cannot
 read that same variable (that would be a loop).
