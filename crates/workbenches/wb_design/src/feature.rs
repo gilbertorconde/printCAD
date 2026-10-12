@@ -1637,6 +1637,10 @@ pub enum DesignFeature {
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
         boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
     },
     LinearPattern {
         originals: Vec<FeatureId>,
@@ -1660,6 +1664,10 @@ pub enum DesignFeature {
         /// gives; an empty list spaces every occurrence evenly.
         #[serde(default)]
         spacings: Vec<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
     },
     PolarPattern {
         originals: Vec<FeatureId>,
@@ -1684,6 +1692,10 @@ pub enum DesignFeature {
         /// `angle_deg` gives; an empty list turns every occurrence evenly.
         #[serde(default)]
         angles: Vec<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
     },
     MultiTransform {
         originals: Vec<FeatureId>,
@@ -1695,6 +1707,10 @@ pub enum DesignFeature {
         /// of touching are joined. `None` or zero leaves it to the kernel.
         #[serde(default)]
         boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
     },
     /// Boolean against another body's built solid.
     BodyBoolean {
@@ -1879,6 +1895,39 @@ impl DesignFeature {
             | DesignFeature::MultiTransform { originals, .. } => Some(originals),
             _ => None,
         }
+    }
+
+    /// The occurrences a pattern or mirror leaves out (0 the original).
+    pub fn skipped(&self) -> Option<&[u32]> {
+        match self {
+            DesignFeature::Mirrored { skipped, .. }
+            | DesignFeature::LinearPattern { skipped, .. }
+            | DesignFeature::PolarPattern { skipped, .. }
+            | DesignFeature::MultiTransform { skipped, .. } => Some(skipped),
+            _ => None,
+        }
+    }
+
+    /// Leave occurrence `index` out, or bring it back when it was: whether
+    /// the feature is one with occurrences.
+    pub fn toggle_skipped(&mut self, index: u32) -> bool {
+        let skipped = match self {
+            DesignFeature::Mirrored { skipped, .. }
+            | DesignFeature::LinearPattern { skipped, .. }
+            | DesignFeature::PolarPattern { skipped, .. }
+            | DesignFeature::MultiTransform { skipped, .. } => skipped,
+            _ => return false,
+        };
+        match skipped.iter().position(|&i| i == index) {
+            Some(at) => {
+                skipped.remove(at);
+            }
+            None => {
+                skipped.push(index);
+                skipped.sort_unstable();
+            }
+        }
+        true
     }
 
     pub fn kind_label(&self) -> &'static str {
@@ -2707,6 +2756,7 @@ mod tests {
         assert_eq!(guided.dependencies(), vec![a, b, c, d]);
 
         let pattern = DesignFeature::LinearPattern {
+            skipped: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             originals: vec![a],
@@ -2718,6 +2768,29 @@ mod tests {
             spacings: Vec::new(),
         };
         assert_eq!(pattern.dependencies(), vec![a]);
+    }
+
+    #[test]
+    fn a_pattern_saved_before_skipping_skips_nothing_and_a_toggle_flips_one() {
+        let original = FeatureId::new();
+        let saved = serde_json::json!({
+            "LinearPattern": {
+                "originals": [original], "axis": "X", "length": 10.0, "occurrences": 3
+            }
+        });
+        let mut pattern = DesignFeature::from_json(&saved).unwrap();
+        assert_eq!(pattern.skipped(), Some(&[][..]));
+        assert!(pattern.toggle_skipped(2));
+        assert!(pattern.toggle_skipped(0));
+        assert_eq!(pattern.skipped(), Some(&[0, 2][..]));
+        assert!(pattern.toggle_skipped(2));
+        assert_eq!(pattern.skipped(), Some(&[0][..]));
+        let read = DesignFeature::from_json(&pattern.to_json()).unwrap();
+        assert_eq!(read.skipped(), Some(&[0][..]));
+        let mut fillet =
+            DesignFeature::from_json(&serde_json::json!({ "Fillet": { "radius": 1.0 } })).unwrap();
+        assert!(!fillet.toggle_skipped(0));
+        assert_eq!(fillet.skipped(), None);
     }
 
     #[test]

@@ -3754,6 +3754,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - The plane is YZ through the body's origin when left out; `plane = "XY"` or `"XZ"` takes another, and `face_point` with `face_normal` a flat face of the solid.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
@@ -3789,6 +3790,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - `axis` is X when left out (Y, Z, or `{Custom = {origin = {x, y, z}, dir = {x, y, z}}}`); `occurrences` (3) counts the original; `length` (30 mm) runs from the first to the last, or is the gap between them with `spacing_mode = true`.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.polar_pattern`.
@@ -3804,7 +3806,7 @@ local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
 pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 2}
 local hole = pc.design.pocket{sketch = at, through_all = true}
 -- Three holes 10 mm apart: 20 mm from the first to the last.
-pc.design.linear_pattern{body = body, originals = {hole}, axis = "X", length = 20, occurrences = 3}
+local pattern = pc.design.linear_pattern{body = body, originals = {hole}, axis = "X", length = 20, occurrences = 3}
 assert(#pc.doc.rebuild() == 0, "the pattern builds")
 local xs = {}
 for _, face in ipairs(pc.doc.faces{body = body}) do
@@ -3814,6 +3816,11 @@ table.sort(xs)
 assert(#xs == 3 and math.abs(xs[1] - 5) < 1e-6 and math.abs(xs[3] - 25) < 1e-6)
 local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (30 * 10 - 3 * math.pi * 4) * 4) < 1e-3, volume)
+-- The middle hole left out: the original is occurrence 0.
+pc.design.set{feature = pattern, skipped = {1}}
+assert(#pc.doc.rebuild() == 0, "the pattern builds")
+volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (30 * 10 - 2 * math.pi * 4) * 4) < 1e-3, volume)
 ```
 
 `pc.design.polar_pattern`: Repeat the last feature about an axis.
@@ -3831,6 +3838,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - `axis` is Z through the body's origin when left out; `occurrences` (4) counts the original. `angle_deg` of 360 (the default) spreads them evenly round the turn; less puts the first and the last at its two ends.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
@@ -3867,6 +3875,7 @@ Notes:
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
 - `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - It makes a Multi Transform whose fields are `originals` and `steps`, one `{Scale = {factor, center, occurrences}}`: 1.5 about the body's origin, 2 occurrences, when left out. The occurrences count the original and grow evenly up to `factor`. A `factor` given on its own is refused.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.

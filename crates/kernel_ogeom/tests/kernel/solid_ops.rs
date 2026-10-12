@@ -900,6 +900,86 @@ fn linear_pattern_repeats_the_tool_solid() {
     assert!(result.mesh.indices.len() / 3 > 24);
 }
 
+/// Copies without their original: the whole solid gives way to its
+/// copies, and a feature named an original leaves the solid as it was.
+#[test]
+fn transform_copies_leaves_the_original_out() {
+    let mut kernel = new_kernel();
+    let detail = TessellationSettings::default();
+    let translate = |d: f64| -> [[f64; 4]; 4] {
+        [
+            [1.0, 0.0, 0.0, d],
+            [0.0, 1.0, 0.0, 0.0],
+            [0.0, 0.0, 1.0, 0.0],
+            [0.0, 0.0, 0.0, 1.0],
+        ]
+    };
+    let block = blind_pad(
+        vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
+        5.0,
+        BooleanOp::NewSolid,
+    );
+    let moved = kernel
+        .execute_solid_chain(
+            &[
+                block.clone(),
+                SolidOp::TransformCopies {
+                    transforms: vec![translate(20.0), translate(40.0)],
+                    originals: vec![],
+                },
+            ],
+            &detail,
+        )
+        .expect("the block's copies");
+    let (min, max) = moved.bounds_mm.expect("bounds");
+    assert_close(min[0], 20.0, 1e-3, "the block itself gone");
+    assert_close(max[0], 50.0, 1e-3, "the last copy");
+
+    let refused = kernel.execute_solid_chain(
+        &[
+            block.clone(),
+            SolidOp::TransformCopies {
+                transforms: vec![],
+                originals: vec![],
+            },
+        ],
+        &detail,
+    );
+    assert!(refused.is_err(), "nothing left");
+
+    let boss = blind_pad(vec![circle_wire(5.0, 5.0, 2.0)], 10.0, BooleanOp::Fuse);
+    let copied = kernel
+        .execute_solid_chain(
+            &[
+                blind_pad(
+                    vec![rect_wire(0.0, 0.0, 10.0, 30.0)],
+                    5.0,
+                    BooleanOp::NewSolid,
+                ),
+                boss,
+                SolidOp::TransformCopies {
+                    transforms: vec![translate(20.0)],
+                    originals: vec![1],
+                },
+            ],
+            &detail,
+        )
+        .expect("the boss's copy");
+    let (min, max) = copied.bounds_mm.expect("bounds");
+    assert_close(min[0], 0.0, 1e-3, "the plate");
+    assert_close(max[0], 27.0, 1e-3, "the copy past the plate");
+    let volume = kernel
+        .physical_properties(&copied.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let want = 10.0 * 30.0 * 5.0 + std::f64::consts::PI * 4.0 * 10.0;
+    assert!(
+        (volume - want).abs() < 0.5,
+        "one boss: {volume} against {want}"
+    );
+}
+
 #[test]
 fn pattern_of_subtractive_tool_repeats_the_cut() {
     let mut kernel = new_kernel();

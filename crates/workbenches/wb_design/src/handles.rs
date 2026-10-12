@@ -140,7 +140,10 @@ pub(crate) fn set_value(feature: &mut DesignFeature, value: f32) -> bool {
 
 /// The middle of a sketch's drawing and its plane's normal, in its body's
 /// own frame.
-fn sketch_centre(document: &Document, sketch: FeatureId) -> Option<([f32; 3], [f32; 3])> {
+pub(crate) fn sketch_centre(
+    document: &Document,
+    sketch: FeatureId,
+) -> Option<([f32; 3], [f32; 3])> {
     let data = document
         .feature_values(sketch)
         .or_else(|| document.get_feature_data(sketch))?;

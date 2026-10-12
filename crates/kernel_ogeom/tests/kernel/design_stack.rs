@@ -573,6 +573,7 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         DesignFeature::LinearPattern {
+            skipped: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             originals: vec![boss_pad],
@@ -1310,6 +1311,7 @@ fn mirrored_copies_the_pad_across_every_plane_it_is_given() {
             .unwrap();
         doc.add_feature_in_body(
             DesignFeature::Mirrored {
+                skipped: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 originals: vec![pad],
@@ -1385,6 +1387,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
         if let Some(plane) = mirror {
             doc.add_feature_in_body(
                 DesignFeature::Mirrored {
+                    skipped: Vec::new(),
                     refine: false,
                     boolean_tolerance: None,
                     originals: vec![turn],
@@ -2723,6 +2726,7 @@ fn built_solid(doc: &Document, body: BodyId) -> (f64, [f32; 3], [f32; 3]) {
 fn linear_pattern(original: FeatureId, fields: serde_json::Value) -> DesignFeature {
     with(
         DesignFeature::LinearPattern {
+            skipped: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             originals: vec![original],
@@ -2851,6 +2855,7 @@ fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
         direction: [0.0, 0.0, 1.0],
     });
     let polar = |boss, step_mode: bool, angles: &[f32]| DesignFeature::PolarPattern {
+        skipped: Vec::new(),
         refine: false,
         boolean_tolerance: None,
         originals: vec![boss],
@@ -2883,6 +2888,99 @@ fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
     let (_, min, max) = built_solid(&doc, body);
     assert!(close(min[0], -1.0) && close(min[1], -1.0), "{min:?}");
     assert!(close(max[1], 60.0), "{max:?}");
+}
+
+/// Skipped occurrences are left out of the solid. Bosses at x = 1, 11
+/// and 21, the first overhanging the plate's near side by 2: a copy
+/// skipped leaves two bosses and the overhang, the original skipped takes
+/// the overhang with it, all three leave the plate alone.
+#[test]
+fn a_pattern_leaves_its_skipped_occurrences_out() {
+    let (mut doc, body, _, boss) = plate_with_boss(1.0, 10.0);
+    let pattern = doc
+        .add_feature_in_body(
+            linear_pattern(boss, serde_json::json!({"length": 20.0})),
+            "Pattern".into(),
+            Some(body),
+        )
+        .unwrap();
+    let cases: [(&[u32], f64, f32); 4] = [
+        (&[], 3.0, -2.0),
+        (&[1], 2.0, -2.0),
+        (&[0], 2.0, 0.0),
+        (&[0, 1, 2], 0.0, 0.0),
+    ];
+    for (skipped, bosses, min_x) in cases {
+        let data = linear_pattern(
+            boss,
+            serde_json::json!({"length": 20.0, "skipped": skipped}),
+        );
+        doc.update_feature_data(pattern, core_document::WorkbenchFeature::to_json(&data))
+            .unwrap();
+        let (volume, min, max) = built_solid(&doc, body);
+        assert!(
+            (volume - plate_and_bosses(bosses)).abs() < 1.0,
+            "{skipped:?}: volume {volume}"
+        );
+        assert!(close(min[0], min_x), "{skipped:?}: {min:?}");
+        let height = if bosses > 0.0 { 10.0 } else { 4.0 };
+        assert!(close(max[2], height), "{skipped:?}: {max:?}");
+    }
+}
+
+/// A pocket patterned with its original skipped: the original's hole is
+/// filled, the copies' cut. A mirror of the body's first solid cannot
+/// leave that solid out, and says so.
+#[test]
+fn a_skipped_original_leaves_its_cut_unmade_and_the_first_solid_stays() {
+    let (mut doc, body, plate) = setup(60.0, 20.0);
+    let pad = doc
+        .add_feature_in_body(
+            pad_feature(plate, 4.0, false, false),
+            "Plate".into(),
+            Some(body),
+        )
+        .unwrap();
+    let at = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 10.0, 10.0, 2.0),
+            "hole".into(),
+            Some(body),
+        )
+        .unwrap();
+    let hole = doc
+        .add_feature_in_body(pocket_feature(at, 4.0), "Hole".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        linear_pattern(hole, serde_json::json!({"length": 20.0, "skipped": [0]})),
+        "Pattern".into(),
+        Some(body),
+    )
+    .unwrap();
+    let hole_volume = std::f64::consts::PI * 4.0 * 4.0;
+    assert_built_volume(
+        &doc,
+        body,
+        60.0 * 20.0 * 4.0 - 2.0 * hole_volume,
+        "two holes",
+    );
+
+    doc.add_feature_in_body(
+        with(
+            DesignFeature::Mirrored {
+                refine: false,
+                originals: vec![pad],
+                plane: wb_design::MirrorPlane::YZ,
+                skipped: Vec::new(),
+            },
+            serde_json::json!({"skipped": [0]}),
+        ),
+        "Mirror".into(),
+        Some(body),
+    )
+    .unwrap();
+    let refused = built_volume(&doc, body).unwrap_err();
+    assert!(refused.contains("first solid"), "{refused}");
 }
 
 /// The block hollowed to walls of 1, open at the top, its walls joined as

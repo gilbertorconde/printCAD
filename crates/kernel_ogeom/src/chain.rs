@@ -186,16 +186,37 @@ fn hash_json(json: serde_json::Result<Vec<u8>>, hasher: &mut impl std::hash::Has
 /// Each op's key: the op and its tag.
 fn op_keys(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<u64> {
     use std::hash::{Hash, Hasher};
+    let withheld = withheld_originals(ops_list);
     ops_list
         .iter()
         .zip(tags)
-        .map(|(op, tag)| {
+        .zip(withheld)
+        .map(|((op, tag), withheld)| {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             hash_json(serde_json::to_vec(op), &mut hasher);
             tag.hash(&mut hasher);
+            // An op a later pattern leaves out builds another solid.
+            withheld.hash(&mut hasher);
             hasher.finish()
         })
         .collect()
+}
+
+/// Per op, whether a later [`SolidOp::TransformCopies`] names it among its
+/// originals: its tool is built for the copies but leaves the solid as it
+/// was.
+fn withheld_originals(ops_list: &[SolidOp]) -> Vec<bool> {
+    let mut withheld = vec![false; ops_list.len()];
+    for op in ops_list {
+        if let SolidOp::TransformCopies { originals, .. } = op {
+            for &index in originals {
+                if let Some(slot) = withheld.get_mut(index) {
+                    *slot = true;
+                }
+            }
+        }
+    }
+    withheld
 }
 
 /// The key of every prefix of a chain: `[k]` stands for its first `k`
@@ -351,6 +372,7 @@ pub fn execute_cached(
     let op_tags = op_tags(ops_list, tags);
     let mut names = NameMap::default();
     let mut tools: Vec<Option<ToolSnapshot>> = Vec::with_capacity(ops_list.len());
+    let withheld = withheld_originals(ops_list);
     // The previewed feature: the body before it, after it, and its tools.
     let previewing = |index: usize| preview.as_ref().is_some_and(|r| r.contains(&index));
     let mut before: Option<Shape> = None;
@@ -496,7 +518,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::SweepFace { face, kind, op } => {
                 let tool = ops::sweep::build_face_tool(&mut model, base.as_ref(), face, kind)
@@ -505,7 +527,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::SweepFaceOf {
                 shape,
@@ -527,7 +549,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::RevolveToFaceOf {
                 profile,
@@ -550,7 +572,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::Primitive {
                 kind,
@@ -562,7 +584,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::LoftThrough {
                 sections,
@@ -582,7 +604,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::Loft {
                 sections,
@@ -609,7 +631,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::Pipe {
                 profile,
@@ -626,7 +648,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, None);
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::PipeThrough {
                 profile,
@@ -650,7 +672,7 @@ pub fn execute_cached(
                 tool_snapshot = ToolSnapshot::of(solid_op, *op, Some(tool.clone()));
                 keep(&tool, *op);
 
-                combine(&mut model, base.as_ref(), tool, *op).map_err(&err)?
+                combine(&mut model, base.as_ref(), tool, *op, withheld[index]).map_err(&err)?
             }
             SolidOp::Fillet {
                 radius,
@@ -760,7 +782,18 @@ pub fn execute_cached(
                 )
                 .map_err(&err)?
             }
+            SolidOp::TransformCopies {
+                transforms,
+                originals,
+            } if originals.is_empty() => {
+                let solid = base.ok_or_else(|| err("pattern needs an existing solid".into()))?;
+                pattern::copies_of(&mut model, &solid, transforms).map_err(&err)?
+            }
             SolidOp::Transform {
+                transforms,
+                originals,
+            }
+            | SolidOp::TransformCopies {
                 transforms,
                 originals,
             } => {
@@ -822,6 +855,9 @@ pub fn execute_cached(
             SolidOp::WithTolerance { .. } => unreachable!("read out of its wrapper above"),
         };
 
+        if withheld[index] {
+            tool_names = None;
+        }
         // The result's faces take the names of the faces they came from.
         let (before_names, histories) = named.take_with_histories();
         touched = match current.as_ref() {
@@ -1098,12 +1134,21 @@ fn feature_preview(
 }
 
 /// Combine a freshly built tool with the running solid.
+/// The tool added to, cut from or kept in common with `base`; the base
+/// as it is when a later pattern `withheld` the op.
 fn combine(
     model: &mut Model,
     base: Option<&Shape>,
     tool: Shape,
     op: BooleanOp,
+    withheld: bool,
 ) -> Result<Shape, String> {
+    if withheld {
+        return base.cloned().ok_or_else(|| {
+            "the body's first solid cannot be left out of a pattern: skip another occurrence"
+                .to_string()
+        });
+    }
     match op {
         BooleanOp::NewSolid => Ok(tool),
         BooleanOp::Fuse => {

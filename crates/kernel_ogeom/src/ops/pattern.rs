@@ -40,48 +40,8 @@ pub fn apply(
 ) -> Result<Shape, String> {
     let mut acc = current;
     for matrix in transforms {
-        let rigid = rigid_of(matrix);
         for tool in tools {
-            let placed = match (&tool.tool, &rigid) {
-                // A primitive is placed by a frame a mirror would make
-                // left-handed: it is built where it is and mirrored whole.
-                (PatternTool::Op(op), None)
-                    if is_isometry(matrix) && matches!(**op, SolidOp::Primitive { .. }) =>
-                {
-                    let tool = build_tool_op(model, Some(&acc), op)?;
-                    transformed(model, &tool, reflection_of(matrix))
-                        .map_err(|e| format!("pattern mirror failed: {e}"))?
-                        .shape
-                }
-                // Isometries (rotations, translations, mirrors) re-run the
-                // op with mapped inputs: exact, analytic, concrete.
-                (PatternTool::Op(op), _) if is_isometry(matrix) => {
-                    let moved = transformed_op(op, matrix);
-                    build_tool_op(model, Some(&acc), &moved)?
-                }
-                (PatternTool::Op(op), _) => {
-                    let base_tool = build_tool_op(model, Some(&acc), op)?;
-                    general_transformed_shape(model, &base_tool, &general_of(matrix), tol())
-                        .map_err(|e| format!("pattern general transform failed: {e}"))?
-                        .shape
-                }
-                (PatternTool::Solid(shape), _) if is_isometry(matrix) => {
-                    // A fresh copy: the boolean must see an independent
-                    // operand, not the running solid under a placement.
-                    let fresh = copied(model, shape)
-                        .map_err(|e| format!("pattern copy failed: {e}"))?
-                        .shape;
-                    let t = rigid.unwrap_or_else(|| reflection_of(matrix));
-                    transformed(model, &fresh, t)
-                        .map_err(|e| format!("pattern transform failed: {e}"))?
-                        .shape
-                }
-                (PatternTool::Solid(shape), _) => {
-                    general_transformed_shape(model, shape, &general_of(matrix), tol())
-                        .map_err(|e| format!("pattern general transform failed: {e}"))?
-                        .shape
-                }
-            };
+            let placed = place(model, &acc, &tool.tool, matrix)?;
             let kind = if tool.subtractive {
                 kernel_api::BoolKind::Cut
             } else {
@@ -92,6 +52,79 @@ pub fn apply(
         }
     }
     Ok(acc)
+}
+
+/// The copies of `solid` under each transform, fused, without the solid
+/// itself.
+pub fn copies_of(
+    model: &mut Model,
+    solid: &Shape,
+    transforms: &[[[f64; 4]; 4]],
+) -> Result<Shape, String> {
+    let (first, rest) = transforms
+        .split_first()
+        .ok_or("every occurrence of the pattern is skipped: nothing is left of the body")?;
+    let tool = PatternTool::Solid(solid.clone());
+    let start = place(model, solid, &tool, first)?;
+    apply(
+        model,
+        start,
+        &[ToolInstance {
+            tool,
+            subtractive: false,
+        }],
+        rest,
+    )
+}
+
+/// One tool placed by `matrix`, built against the running solid `acc`.
+fn place(
+    model: &mut Model,
+    acc: &Shape,
+    tool: &PatternTool,
+    matrix: &[[f64; 4]; 4],
+) -> Result<Shape, String> {
+    let rigid = rigid_of(matrix);
+    Ok(match (tool, &rigid) {
+        // A primitive is placed by a frame a mirror would make
+        // left-handed: it is built where it is and mirrored whole.
+        (PatternTool::Op(op), None)
+            if is_isometry(matrix) && matches!(**op, SolidOp::Primitive { .. }) =>
+        {
+            let tool = build_tool_op(model, Some(acc), op)?;
+            transformed(model, &tool, reflection_of(matrix))
+                .map_err(|e| format!("pattern mirror failed: {e}"))?
+                .shape
+        }
+        // Isometries (rotations, translations, mirrors) re-run the
+        // op with mapped inputs: exact, analytic, concrete.
+        (PatternTool::Op(op), _) if is_isometry(matrix) => {
+            let moved = transformed_op(op, matrix);
+            build_tool_op(model, Some(acc), &moved)?
+        }
+        (PatternTool::Op(op), _) => {
+            let base_tool = build_tool_op(model, Some(acc), op)?;
+            general_transformed_shape(model, &base_tool, &general_of(matrix), tol())
+                .map_err(|e| format!("pattern general transform failed: {e}"))?
+                .shape
+        }
+        (PatternTool::Solid(shape), _) if is_isometry(matrix) => {
+            // A fresh copy: the boolean must see an independent
+            // operand, not the running solid under a placement.
+            let fresh = copied(model, shape)
+                .map_err(|e| format!("pattern copy failed: {e}"))?
+                .shape;
+            let t = rigid.unwrap_or_else(|| reflection_of(matrix));
+            transformed(model, &fresh, t)
+                .map_err(|e| format!("pattern transform failed: {e}"))?
+                .shape
+        }
+        (PatternTool::Solid(shape), _) => {
+            general_transformed_shape(model, shape, &general_of(matrix), tol())
+                .map_err(|e| format!("pattern general transform failed: {e}"))?
+                .shape
+        }
+    })
 }
 
 fn build_tool_op(model: &mut Model, base: Option<&Shape>, op: &SolidOp) -> Result<Shape, String> {

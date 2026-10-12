@@ -25,6 +25,51 @@ mod borrow;
 mod hole;
 
 /// The label column of a parameter row.
+/// The occurrences a pattern leaves out, each brought back by its button,
+/// all of them by Clear; the view's dots leave one out or bring it back.
+fn skipped_editor(ui: &mut Ui, skipped: &mut Vec<u32>) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        label_cell(ui, "Skipped");
+        if skipped.is_empty() {
+            ui.label(RichText::new("None").font(sans(FONT_SM)).color(TEXT2));
+        } else if small_secondary_button(ui, "Clear")
+            .on_hover_text("Bring every occurrence back")
+            .clicked()
+        {
+            skipped.clear();
+            changed = true;
+        }
+    });
+    if !skipped.is_empty() {
+        let mut back = None;
+        ui.horizontal_wrapped(|ui| {
+            label_cell(ui, "");
+            for (at, index) in skipped.iter().enumerate() {
+                if small_secondary_button(
+                    ui,
+                    &format!("{} ✕", crate::instances::occurrence_name(*index)),
+                )
+                .on_hover_text("Bring it back")
+                .clicked()
+                {
+                    back = Some(at);
+                }
+            }
+        });
+        if let Some(at) = back {
+            skipped.remove(at);
+            changed = true;
+        }
+    }
+    ui.label(
+        RichText::new("Click an occurrence's dot in the view to leave it out or bring it back")
+            .font(sans(FONT_SM))
+            .color(TEXT2),
+    );
+    changed
+}
+
 pub(crate) fn label_cell(ui: &mut Ui, label: &str) {
     // A long label is cut to the column, and whole on hover.
     let text = label.trim_end_matches(':');
@@ -3027,9 +3072,11 @@ pub fn feature_editor(
             plane,
             refine: _,
             boolean_tolerance: _,
+            skipped,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= mirror_plane_editor(ui, ctx, plane, ("mirror_plane", feature_id));
+            changed |= skipped_editor(ui, skipped);
         }
         DesignFeature::LinearPattern {
             refine: _,
@@ -3041,6 +3088,7 @@ pub fn feature_editor(
             spacing_mode,
             reversed,
             spacings,
+            skipped,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(
@@ -3073,6 +3121,7 @@ pub fn feature_editor(
                 },
             );
             changed |= check_row(ui, reversed, "Reversed").changed();
+            changed |= skipped_editor(ui, skipped);
         }
         DesignFeature::PolarPattern {
             refine: _,
@@ -3084,6 +3133,7 @@ pub fn feature_editor(
             reversed,
             step_mode,
             angles,
+            skipped,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= pattern_axis_editor(
@@ -3121,12 +3171,14 @@ pub fn feature_editor(
                 },
             );
             changed |= check_row(ui, reversed, "Reversed").changed();
+            changed |= skipped_editor(ui, skipped);
         }
         DesignFeature::MultiTransform {
             originals,
             steps,
             refine: _,
             boolean_tolerance: _,
+            skipped,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             ui.label(
@@ -3290,6 +3342,7 @@ pub fn feature_editor(
                     changed = true;
                 }
             });
+            changed |= skipped_editor(ui, skipped);
         }
         DesignFeature::Clone { source } => {
             let bodies: Vec<(BodyId, String)> = ctx

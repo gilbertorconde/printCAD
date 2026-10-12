@@ -84,7 +84,7 @@ impl Part {
             local p = pc.sketch.new{body = "BODY", plane = "XY", offset = 6}
             pc.sketch.rect{sketch = p, x = 4, y = 30, width = 3, height = 4}
             pc.design.pocket{sketch = p, depth = 2}
-            pc.design.linear_pattern{body = "BODY", length = 40, occurrences = 4}
+            pattern = pc.design.linear_pattern{body = "BODY", length = 40, occurrences = 4}
             local t = pc.sketch.new{body = "BODY", plane = "XY", offset = 11}
             pc.sketch.circle{sketch = t, x = 30, y = 28, radius = 2}
             last = pc.design.pad{sketch = t, length = 3}
@@ -114,6 +114,12 @@ impl Part {
             "set.lua",
             &mut self.host,
         );
+        assert_eq!(out.error, None);
+    }
+
+    /// Run `script`, which names features by the globals the part set.
+    fn run(&mut self, script: &str) {
+        let out = self.engine.run_script(script, "run.lua", &mut self.host);
         assert_eq!(out.error, None);
     }
 
@@ -255,4 +261,26 @@ fn an_edit_that_makes_the_same_solid_takes_the_rest_as_built() {
     let (fresh, cached) = part.build(&mut cache);
     same(&fresh, &cached, "shallower");
     assert!(!cache.reused(), "a different hole: built on");
+}
+
+/// Leaving a pattern's original out changes what the original's own op
+/// makes, before the pattern: a cached build goes back to it, and
+/// bringing the original back goes back again.
+#[test]
+fn skipping_a_pattern_s_original_builds_as_from_scratch() {
+    let mut part = Part::new();
+    let mut cache = ChainCache::default();
+    part.build(&mut cache);
+    for (skipped, what) in [
+        ("{2}", "a copy skipped"),
+        ("{0, 2}", "the original skipped too"),
+        ("{2}", "the original back"),
+        ("{}", "every occurrence back"),
+    ] {
+        part.run(&format!(
+            "pc.design.set{{feature = pattern, skipped = {skipped}}}"
+        ));
+        let (fresh, cached) = part.build(&mut cache);
+        same(&fresh, &cached, what);
+    }
 }

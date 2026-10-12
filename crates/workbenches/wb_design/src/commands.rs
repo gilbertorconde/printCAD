@@ -748,6 +748,12 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                 .note(
                     "A copy that lands outside the solid (a pocket repeated past the \
                      material) changes nothing, without an error.",
+                )
+                .note(
+                    "`skipped = {1, 3}` leaves occurrences out by index: 0 is the original, \
+                     then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the \
+                     originals' own material out, and is refused when an original is the \
+                     body's first solid.",
                 );
             match id {
                 "design.mirror" => spec
@@ -792,7 +798,7 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                         pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 2}
                         local hole = pc.design.pocket{sketch = at, through_all = true}
                         -- Three holes 10 mm apart: 20 mm from the first to the last.
-                        pc.design.linear_pattern{body = body, originals = {hole}, axis = "X", length = 20, occurrences = 3}
+                        local pattern = pc.design.linear_pattern{body = body, originals = {hole}, axis = "X", length = 20, occurrences = 3}
                         assert(#pc.doc.rebuild() == 0, "the pattern builds")
                         local xs = {}
                         for _, face in ipairs(pc.doc.faces{body = body}) do
@@ -802,6 +808,11 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                         assert(#xs == 3 and math.abs(xs[1] - 5) < 1e-6 and math.abs(xs[3] - 25) < 1e-6)
                         local volume = pc.doc.measure{body = body}.volume
                         assert(math.abs(volume - (30 * 10 - 3 * math.pi * 4) * 4) < 1e-3, volume)
+                        -- The middle hole left out: the original is occurrence 0.
+                        pc.design.set{feature = pattern, skipped = {1}}
+                        assert(#pc.doc.rebuild() == 0, "the pattern builds")
+                        volume = pc.doc.measure{body = body}.volume
+                        assert(math.abs(volume - (30 * 10 - 2 * math.pi * 4) * 4) < 1e-3, volume)
                         "#,
                     ),
                 "design.polar_pattern" => spec

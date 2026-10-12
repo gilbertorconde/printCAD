@@ -1062,85 +1062,42 @@ fn plan_feature(
             });
         }
         DesignFeature::Mirrored {
-            originals,
-            plane,
-            refine: _,
-            boolean_tolerance: _,
-        } => {
-            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
-            let (point, normal) = mirror_plane(document, plane).map_err(&fail)?;
-            plan.ops.push(SolidOp::Transform {
-                transforms: vec![mat_mirror(point, normal)],
-                originals,
-            });
+            originals, skipped, ..
         }
-        DesignFeature::LinearPattern {
-            refine: _,
-            boolean_tolerance: _,
-            originals,
-            axis,
-            length,
-            occurrences,
-            spacing_mode,
-            reversed,
-            spacings,
+        | DesignFeature::LinearPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PolarPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::MultiTransform {
+            originals, skipped, ..
         } => {
             let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
-            let axis = pattern_axis(document, axis).map_err(&fail)?;
-            let transforms = linear_transforms(
-                axis,
-                *length,
-                *occurrences,
-                *spacing_mode,
-                *reversed,
-                spacings,
-            )
-            .map_err(&fail)?;
-            if !transforms.is_empty() {
-                plan.ops.push(SolidOp::Transform {
+            let transforms: Vec<Mat4> = occurrence_transforms(document, feature)
+                .map_err(&fail)?
+                .into_iter()
+                .zip(0u32..)
+                .skip(1)
+                .filter(|(_, index)| !skipped.contains(index))
+                .map(|(transform, _)| transform)
+                .collect();
+            if skipped.contains(&0) {
+                let starts_body = originals.iter().any(|&op| {
+                    plan.ops.get(op).and_then(SolidOp::boolean_op) == Some(BooleanOp::NewSolid)
+                });
+                if starts_body {
+                    return Err(fail(
+                        "the body's first solid cannot be left out of a pattern: skip \
+                         another occurrence"
+                            .into(),
+                    ));
+                }
+                plan.ops.push(SolidOp::TransformCopies {
                     transforms,
                     originals,
                 });
-            }
-        }
-        DesignFeature::PolarPattern {
-            refine: _,
-            boolean_tolerance: _,
-            originals,
-            axis,
-            angle_deg,
-            occurrences,
-            reversed,
-            step_mode,
-            angles,
-        } => {
-            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
-            let axis = pattern_axis(document, axis).map_err(&fail)?;
-            let transforms = polar_transforms(
-                axis,
-                *angle_deg,
-                *occurrences,
-                *reversed,
-                *step_mode,
-                angles,
-            )
-            .map_err(&fail)?;
-            if !transforms.is_empty() {
-                plan.ops.push(SolidOp::Transform {
-                    transforms,
-                    originals,
-                });
-            }
-        }
-        DesignFeature::MultiTransform {
-            originals,
-            steps,
-            refine: _,
-            boolean_tolerance: _,
-        } => {
-            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
-            let transforms = multi_transforms(document, steps).map_err(&fail)?;
-            if !transforms.is_empty() {
+            } else if !transforms.is_empty() {
                 plan.ops.push(SolidOp::Transform {
                     transforms,
                     originals,
@@ -2863,7 +2820,7 @@ fn spine_segment(
 
 // Pattern transforms: row-major 4x4, last row 0 0 0 1.
 
-type Mat4 = [[f64; 4]; 4];
+pub(crate) type Mat4 = [[f64; 4]; 4];
 
 fn mat_identity() -> Mat4 {
     let mut m = [[0.0; 4]; 4];
@@ -3068,6 +3025,66 @@ fn polar_transforms(
         .into_iter()
         .map(|angle| mat_rotation(origin, dir, angle * sign))
         .collect()
+}
+
+/// Where every occurrence of a pattern or mirror stands, in its body's
+/// own frame: the original's (the identity) first, then each copy's, in
+/// the order `skipped` counts them. Empty for any other feature.
+pub(crate) fn occurrence_transforms(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Result<Vec<Mat4>, String> {
+    let copies = match feature {
+        DesignFeature::Mirrored { plane, .. } => {
+            let (point, normal) = mirror_plane(document, plane)?;
+            vec![mat_mirror(point, normal)]
+        }
+        DesignFeature::LinearPattern {
+            axis,
+            length,
+            occurrences,
+            spacing_mode,
+            reversed,
+            spacings,
+            ..
+        } => linear_transforms(
+            pattern_axis(document, axis)?,
+            *length,
+            *occurrences,
+            *spacing_mode,
+            *reversed,
+            spacings,
+        )?,
+        DesignFeature::PolarPattern {
+            axis,
+            angle_deg,
+            occurrences,
+            reversed,
+            step_mode,
+            angles,
+            ..
+        } => polar_transforms(
+            pattern_axis(document, axis)?,
+            *angle_deg,
+            *occurrences,
+            *reversed,
+            *step_mode,
+            angles,
+        )?,
+        DesignFeature::MultiTransform { steps, .. } => multi_transforms(document, steps)?,
+        _ => return Ok(Vec::new()),
+    };
+    Ok(std::iter::once(mat_identity()).chain(copies).collect())
+}
+
+/// `point` moved by `transform`.
+pub(crate) fn transform_point(transform: &Mat4, point: [f64; 3]) -> [f64; 3] {
+    let m = transform;
+    [
+        m[0][0] * point[0] + m[0][1] * point[1] + m[0][2] * point[2] + m[0][3],
+        m[1][0] * point[0] + m[1][1] * point[1] + m[1][2] * point[2] + m[1][3],
+        m[2][0] * point[0] + m[2][1] * point[1] + m[2][2] * point[2] + m[2][3],
+    ]
 }
 
 /// Cartesian composition: each step's occurrences (including the identity)
@@ -3547,6 +3564,7 @@ mod tests {
             .unwrap();
         let before = body_build_ops(&doc, body).unwrap().ops.len();
         let pattern = |occurrences| DesignFeature::LinearPattern {
+            skipped: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             originals: vec![pad_id],
@@ -3592,6 +3610,7 @@ mod tests {
         assert_eq!(plain.ops.len(), plain.op_features.len());
 
         let pattern = DesignFeature::LinearPattern {
+            skipped: Vec::new(),
             refine: false,
             boolean_tolerance: None,
             originals: vec![pad_id],
@@ -4696,6 +4715,7 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             DesignFeature::LinearPattern {
+                skipped: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 originals: vec![pad_id],
@@ -4776,6 +4796,60 @@ mod tests {
         assert!(refused.contains("cannot repeat"), "{refused}");
         // An adding feature offers no such switch.
         assert!(pad(sketch_id, 1.0).keep_inside_mut().is_none());
+    /// A skipped copy's transform is left out; a skipped original makes
+    /// the copies alone, and the body's first solid cannot be skipped.
+    #[test]
+    fn a_pattern_leaves_its_skipped_occurrences_out_of_the_plan() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let base = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let boss = doc
+            .add_feature_in_body(pad(sketch_id, 8.0), "Boss".into(), Some(body))
+            .unwrap();
+        let pattern = |originals: Vec<FeatureId>, skipped: Vec<u32>| DesignFeature::LinearPattern {
+            skipped,
+            refine: false,
+            originals,
+            axis: PatternAxis::X,
+            length: 30.0,
+            occurrences: 4,
+            spacing_mode: false,
+            spacings: Vec::new(),
+            reversed: false,
+        };
+        let id = doc
+            .add_feature_in_body(pattern(vec![boss], vec![2]), "Pattern".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::Transform { transforms, .. } = &plan.ops[2] else {
+            panic!("expected a transform: {:?}", plan.ops[2]);
+        };
+        let at: Vec<f64> = transforms.iter().map(|t| t[0][3]).collect();
+        assert_eq!(at, vec![10.0, 30.0], "the copy at 20 left out");
+
+        doc.update_feature_data(id, pattern(vec![boss], vec![0, 3]).to_json())
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::TransformCopies {
+            transforms,
+            originals,
+        } = &plan.ops[2]
+        else {
+            panic!("expected the copies alone: {:?}", plan.ops[2]);
+        };
+        assert_eq!(originals, &vec![1]);
+        let at: Vec<f64> = transforms.iter().map(|t| t[0][3]).collect();
+        assert_eq!(at, vec![10.0, 20.0]);
+
+        doc.update_feature_data(id, pattern(vec![base], vec![0]).to_json())
+            .unwrap();
+        let refused = body_build_ops(&doc, body).unwrap_err();
+        assert!(
+            refused.message.contains("first solid"),
+            "{}",
+            refused.message
+        );
     }
 
     #[test]
@@ -4907,6 +4981,7 @@ mod tests {
             .unwrap();
         doc.add_feature_in_body(
             DesignFeature::Mirrored {
+                skipped: Vec::new(),
                 refine: false,
                 boolean_tolerance: None,
                 originals: vec![ghost],
@@ -5045,6 +5120,7 @@ mod tests {
         let pattern = doc
             .add_feature_in_body(
                 DesignFeature::Mirrored {
+                    skipped: Vec::new(),
                     refine: false,
                     boolean_tolerance: None,
                     originals: vec![pad_a],

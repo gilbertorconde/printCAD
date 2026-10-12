@@ -17,6 +17,7 @@ mod feature;
 mod generators;
 mod handles;
 mod hole_tables;
+mod instances;
 mod params;
 mod recognize;
 mod references;
@@ -116,6 +117,8 @@ pub struct DesignWorkbench {
     clipboard: Option<clipboard::Clipboard>,
     /// The drag handle held, as it was taken and at the number it sets.
     held: Option<handles::Handle>,
+    /// The occurrence of the open pattern whose dot is under the pointer.
+    hovered_occurrence: Option<u32>,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -740,6 +743,7 @@ impl DesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     DesignFeature::Mirrored {
+                        skipped: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
                         originals: original.into_iter().collect(),
@@ -754,6 +758,7 @@ impl DesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     DesignFeature::LinearPattern {
+                        skipped: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
                         originals: original.into_iter().collect(),
@@ -773,6 +778,7 @@ impl DesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     DesignFeature::PolarPattern {
+                        skipped: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
                         originals: original.into_iter().collect(),
@@ -793,6 +799,7 @@ impl DesignWorkbench {
                 (
                     // One step to start from, so it builds as it opens.
                     DesignFeature::MultiTransform {
+                        skipped: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
                         originals: original.into_iter().collect(),
@@ -830,6 +837,7 @@ impl DesignWorkbench {
                     .or_else(|| Self::last_shape_feature(ctx, body));
                 (
                     DesignFeature::MultiTransform {
+                        skipped: Vec::new(),
                         refine: false,
                         boolean_tolerance: None,
                         originals: original.into_iter().collect(),
@@ -1206,6 +1214,52 @@ impl DesignWorkbench {
             let eye = glam::Vec3::from_array(ctx.camera_position);
             handles::handle_of(ctx.document, self.task_feature()?, eye)
         })
+    }
+
+    /// The occurrences of the open task's pattern, where their dots stand.
+    fn occurrences(&self, ctx: &WorkbenchRuntimeContext) -> Vec<instances::Occurrence> {
+        self.task_feature()
+            .map(|feature| instances::occurrences_of(ctx.document, feature))
+            .unwrap_or_default()
+    }
+
+    /// A click on an occurrence's dot of the open pattern leaves it out or
+    /// brings it back; moves keep which dot is under the pointer.
+    fn occurrence_input(
+        &mut self,
+        event: &WorkbenchInputEvent,
+        ctx: &mut WorkbenchRuntimeContext,
+    ) -> Option<InputResult> {
+        use core_document::MouseButton;
+        match event {
+            WorkbenchInputEvent::MouseMove { viewport_pos } => {
+                let occurrences = self.occurrences(ctx);
+                self.hovered_occurrence = instances::hit(ctx, &occurrences, *viewport_pos);
+                None
+            }
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Left,
+                viewport_pos,
+            } => {
+                let feature = self.task_feature()?;
+                let occurrences = instances::occurrences_of(ctx.document, feature);
+                let index = instances::hit(ctx, &occurrences, *viewport_pos)?;
+                let mut part = ctx
+                    .document
+                    .get_feature_data(feature)
+                    .and_then(|d| DesignFeature::from_json(d).ok())?;
+                if part.toggle_skipped(index)
+                    && ctx
+                        .document
+                        .update_feature_data(feature, part.to_json())
+                        .is_ok()
+                {
+                    ctx.document.mark_feature_dirty(feature);
+                }
+                Some(InputResult::consumed())
+            }
+            _ => None,
+        }
     }
 
     /// A press on the open task's handle takes hold of it; moves drag the
@@ -1818,6 +1872,9 @@ impl Workbench for DesignWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
+        if let Some(result) = self.occurrence_input(event, ctx) {
+            return result;
+        }
         if let Some(result) = self.handle_input(event, ctx) {
             return result;
         }
@@ -2047,6 +2104,11 @@ impl Workbench for DesignWorkbench {
         if let Some(handle) = self.handle(ctx) {
             marks.extend(handles::marks(ctx, &handle, self.held.is_some()));
         }
+        marks.extend(instances::marks(
+            ctx,
+            &self.occurrences(ctx),
+            self.hovered_occurrence,
+        ));
         marks
     }
 
@@ -2059,6 +2121,11 @@ impl Workbench for DesignWorkbench {
         if let Some(handle) = self.held {
             labels.extend(handles::labels(ctx, &handle));
         }
+        labels.extend(instances::labels(
+            ctx,
+            &self.occurrences(ctx),
+            self.hovered_occurrence,
+        ));
         labels
     }
 

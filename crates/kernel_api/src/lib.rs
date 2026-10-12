@@ -1354,6 +1354,14 @@ pub enum SolidOp {
         transforms: Vec<[[f64; 4]; 4]>,
         originals: Vec<usize>,
     },
+    /// [`SolidOp::Transform`] with the originals themselves left out: the
+    /// steps `originals` names build their tools without adding or cutting
+    /// them, so only the transformed copies go in. With `originals` empty
+    /// the running solid gives way to its copies.
+    TransformCopies {
+        transforms: Vec<[[f64; 4]; 4]>,
+        originals: Vec<usize>,
+    },
     /// Boolean against an external solid (another body's shape snapshot,
     /// ogeom native-format text bytes).
     Boolean {
