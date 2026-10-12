@@ -21,6 +21,7 @@ pub mod runtime;
 pub mod server;
 pub mod service;
 pub mod shortcut;
+pub mod stamp;
 pub mod units;
 pub mod variables;
 pub mod workbench;
@@ -65,6 +66,7 @@ pub use runtime::{
 };
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};
+pub use stamp::{CONTAINER_FORMAT, FileAge, FileStamp, file_age, set_writer_version};
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 #[cfg(feature = "egui")]
 pub use variables::{DocumentFormulas, formula_candidates};
@@ -101,6 +103,7 @@ impl WorkbenchStorage {
 /// The document is saved as a `.prtcad` file, which is a tar archive
 /// (optionally gzip- or zstd-compressed) containing:
 /// - `thumbnail.png` - A preview of the model, first when present
+/// - `meta.json` - What wrote the file ([`FileStamp`]), before the document
 /// - `document.json` - This document structure (serialized)
 /// - `assets/` - External files (STEP, STL, etc.) referenced by the document
 /// - `brep/` - Per-body shape snapshots (ogeom native text) and face-color sidecars
@@ -169,6 +172,11 @@ pub struct Document {
     /// rest. Derived state: set by the saving client, never an op.
     #[serde(skip)]
     thumbnail: Option<std::sync::Arc<Vec<u8>>>,
+    /// What wrote the container this document was read from; `None` for a
+    /// container from before stamps, and for a document never read from
+    /// one. Derived state: a save writes [`FileStamp::current`].
+    #[serde(skip)]
+    written_by: Option<FileStamp>,
     /// Reverse index for fast body->imported-object visibility checks.
     #[serde(skip)]
     imported_body_to_object: HashMap<BodyId, Uuid>,
@@ -693,6 +701,7 @@ impl Document {
             base_brep_blobs: HashMap::new(),
             base_face_colors: HashMap::new(),
             thumbnail: None,
+            written_by: None,
             local_meshes: HashMap::new(),
             imported_body_to_object: HashMap::new(),
             mutation_seq: 0,
@@ -717,6 +726,13 @@ impl Document {
     /// document keeps its clean or dirty state.
     pub fn set_thumbnail(&mut self, png: Option<Vec<u8>>) {
         self.thumbnail = png.map(std::sync::Arc::new);
+    }
+
+    /// What wrote the container this document was read from: `None` for
+    /// one from before files were stamped, or a document not read from a
+    /// container.
+    pub fn written_by(&self) -> Option<&FileStamp> {
+        self.written_by.as_ref()
     }
 
     /// Currently selected display unit for this document (mm by default).
@@ -3514,16 +3530,56 @@ impl Document {
         Self::thumbnail_in(file, compression)
     }
 
+    /// What wrote the `.prtcad` file at `path`, read from the front of the
+    /// container without unpacking the document: `Ok(None)` for a
+    /// container from before files were stamped, an error for a file that
+    /// is not a container or cannot be read.
+    pub fn read_stamp(path: &Path) -> DocumentResult<Option<FileStamp>> {
+        let (file, compression) = Self::open_container(path)?;
+        Self::stamp_in(file, compression)
+    }
+
+    /// [`Document::read_stamp`] of a container held in memory.
+    pub fn stamp_of_bytes(bytes: &[u8]) -> DocumentResult<Option<FileStamp>> {
+        Self::stamp_in(bytes, compression_of(bytes))
+    }
+
+    fn stamp_in<'a, R: Read + 'a>(
+        file: R,
+        compression: Compression,
+    ) -> DocumentResult<Option<FileStamp>> {
+        let reader: Box<dyn Read + 'a> = match compression {
+            Compression::None => Box::new(file),
+            Compression::Gzip => Box::new(flate2::read::GzDecoder::new(file)),
+            Compression::Zstd => Box::new(
+                zstd::Decoder::new(std::io::BufReader::new(file))
+                    .map_err(|e| DocumentError::Compression(e.to_string()))?,
+            ),
+        };
+        let mut archive = Archive::new(reader);
+        // The stamp comes before the document, after the preview if any.
+        for entry in archive.entries()? {
+            let mut entry = entry?;
+            let path = entry.path()?.to_path_buf();
+            if path == Path::new(THUMBNAIL_ENTRY) {
+                continue;
+            }
+            if path == Path::new(stamp::STAMP_ENTRY) {
+                let mut json = Vec::new();
+                entry.read_to_end(&mut json)?;
+                return Ok(Some(serde_json::from_slice(&json)?));
+            }
+            return Ok(None);
+        }
+        Err(DocumentError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "an empty archive",
+        )))
+    }
+
     /// [`Document::read_thumbnail`] of a container held in memory.
     pub fn thumbnail_of_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
-        let compression = if bytes.starts_with(&[0x1f, 0x8b]) {
-            Compression::Gzip
-        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
-            Compression::Zstd
-        } else {
-            Compression::None
-        };
-        Self::thumbnail_in(bytes, compression)
+        Self::thumbnail_in(bytes, compression_of(bytes))
     }
 
     fn thumbnail_in<'a, R: Read + 'a>(file: R, compression: Compression) -> Option<Vec<u8>> {
@@ -3579,13 +3635,7 @@ impl Document {
     /// byte-serving document server. Compression is detected from the magic
     /// bytes alone (no filename to consult).
     pub fn load_from_bytes(bytes: Vec<u8>) -> DocumentResult<Self> {
-        let compression = if bytes.starts_with(&[0x1f, 0x8b]) {
-            Compression::Gzip
-        } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
-            Compression::Zstd
-        } else {
-            Compression::None
-        };
+        let compression = compression_of(&bytes);
         Self::load_from_reader(std::io::Cursor::new(bytes), compression)
     }
 
@@ -3611,6 +3661,7 @@ impl Document {
         // archive path.
         let mut doc_json: Option<Vec<u8>> = None;
         let mut thumbnail: Option<Vec<u8>> = None;
+        let mut written_by: Option<FileStamp> = None;
         let mut blobs_by_path: HashMap<String, Vec<u8>> = HashMap::new();
         for entry in archive.entries()? {
             let mut entry = entry?;
@@ -3624,6 +3675,15 @@ impl Document {
                 let mut buf = Vec::new();
                 entry.read_to_end(&mut buf)?;
                 thumbnail = Some(buf);
+            } else if entry_path == Path::new(stamp::STAMP_ENTRY) {
+                let mut buf = Vec::new();
+                entry.read_to_end(&mut buf)?;
+                // A stamp that does not read is a stamp from a writer that
+                // knew more: the file is taken as newer than this one.
+                written_by = Some(serde_json::from_slice(&buf).unwrap_or(FileStamp {
+                    format: u32::MAX,
+                    app_version: String::new(),
+                }));
             } else if entry_path_str.starts_with("assets/")
                 || entry_path_str.starts_with("brep/")
                 || entry_path_str.starts_with("mesh/")
@@ -3642,6 +3702,7 @@ impl Document {
         })?;
         let mut doc: Document = serde_json::from_slice(&json)?;
         doc.thumbnail = thumbnail.map(std::sync::Arc::new);
+        doc.written_by = written_by;
         // Meshes kept as entries of their own; a document saved before
         // carries them in its JSON.
         for geom in doc
@@ -3753,6 +3814,15 @@ impl Document {
             header.set_cksum();
             builder.append(&header, png.as_slice())?;
         }
+        // What wrote the file, before the document: a reader learns it
+        // without unpacking the rest.
+        let stamp = serde_json::to_vec_pretty(&FileStamp::current())?;
+        let mut header = Header::new_gnu();
+        header.set_path(stamp::STAMP_ENTRY)?;
+        header.set_size(stamp.len() as u64);
+        header.set_mode(0o644);
+        header.set_cksum();
+        builder.append(&header, &stamp[..])?;
         let mut header = Header::new_gnu();
         header.set_path("document.json")?;
         header.set_size(json.len() as u64);
@@ -3930,6 +4000,17 @@ fn encode_face_colors_blob(colors: &[[f32; 3]]) -> Vec<u8> {
         }
     }
     v
+}
+
+/// The compression a container held in memory starts with.
+fn compression_of(bytes: &[u8]) -> Compression {
+    if bytes.starts_with(&[0x1f, 0x8b]) {
+        Compression::Gzip
+    } else if bytes.starts_with(&[0x28, 0xb5, 0x2f, 0xfd]) {
+        Compression::Zstd
+    } else {
+        Compression::None
+    }
 }
 
 fn decode_face_colors_blob(data: &[u8]) -> Option<Vec<[f32; 3]>> {

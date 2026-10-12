@@ -5,6 +5,7 @@
 
 mod base_solid;
 mod body_properties;
+mod file_stamp;
 mod history_position;
 mod notes;
 mod op_replay;

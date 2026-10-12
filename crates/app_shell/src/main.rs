@@ -95,6 +95,7 @@ fn init_tracing_subscriber() -> anyhow::Result<Option<tracing_appender::non_bloc
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> Result<()> {
+    core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
     let _camera_tracing_guard =
         init_tracing_subscriber().context("tracing subscriber init failed")?;
 
@@ -204,6 +205,7 @@ fn main() {
         return;
     }
     console_error_panic_hook::set_once();
+    core_document::set_writer_version(env!("CARGO_PKG_VERSION"));
     tracing_wasm::set_as_global_default_with_config(
         tracing_wasm::WASMLayerConfigBuilder::new()
             .set_max_level(tracing::Level::INFO)
