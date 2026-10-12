@@ -94,6 +94,10 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
         pinned.push(at + 1);
         at
     };
+    // A group holds its members' shape, so the relations among them alone
+    // that a rigid motion keeps rest: they would only say again what the
+    // group says. They join the skipped constraints with a probe's.
+    let skip = skipped(sketch, exclude);
     let (origin_var, x_tip_var, y_tip_var) = if references_used {
         (
             Some(reference_var(&mut vars, 0.0, 0.0)),
@@ -108,9 +112,17 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     let shaped: HashSet<CurveReference> = sketch
         .constraints
         .iter()
-        .filter(|c| exclude != Some(c.id))
+        .filter(|c| !skip.contains(&c.id))
         .flat_map(|c| match c.kind {
             ConstraintKind::InternalAlignment { curve, .. } => vec![curve],
+            // A group turns its members' axes with it.
+            ConstraintKind::Group { ref reference, .. } => reference
+                .iter()
+                .filter_map(|r| match *r {
+                    GroupReference::Axes { curve, .. } => Some(curve),
+                    _ => None,
+                })
+                .collect(),
             // Equal ellipses size each other, so their shapes are free.
             ConstraintKind::EqualEllipse { ellipse1, ellipse2 } => vec![ellipse1, ellipse2],
             ConstraintKind::EllipseRadius { ellipse, .. } => vec![ellipse],
@@ -198,7 +210,7 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     // A focus only its ellipse holds follows the shape after the solve,
     // so moving it costs the solve nothing: a radius dragged past the
     // other trades the axes as it does with the foci hidden.
-    let derived_foci = derived_foci(sketch, exclude, &sketch.held_points);
+    let derived_foci = derived_foci(sketch, &skip, &sketch.held_points);
     for id in &derived_foci {
         if let Some(&v) = point_vars.get(id) {
             pinned.extend([v, v + 1]);
@@ -318,7 +330,7 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     let mut specs = Vec::new();
     let mut origins = Vec::new();
     for constraint in &sketch.constraints {
-        if exclude == Some(constraint.id) {
+        if skip.contains(&constraint.id) {
             continue;
         }
         let start = specs.len();
@@ -890,6 +902,95 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                     });
                 }
             }
+            ConstraintKind::Group { ref reference, .. } => {
+                let points: Vec<(usize, Vector)> = reference
+                    .iter()
+                    .filter_map(|r| match *r {
+                        GroupReference::Point { point, position } => {
+                            point_var(point).map(|p| (p, position))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if points.is_empty() {
+                    continue;
+                }
+                let axes: Vec<(usize, Vector, Option<f64>)> = reference
+                    .iter()
+                    .filter_map(|r| match *r {
+                        GroupReference::Axes {
+                            curve,
+                            major,
+                            minor,
+                        } => {
+                            let parabola = matches!(
+                                sketch.get_geometry(curve),
+                                Some(GeometryElement::Conic(c)) if c.kind == ConicKind::Parabola
+                            );
+                            let k = shape_vars.get(&curve).copied()?;
+                            Some((k, major, (!parabola).then_some(f64::from(minor))))
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                // The frame starts where the members stand: their centroid,
+                // turned by the angle that best lays the reference onto
+                // them.
+                let n = points.len() as f64;
+                let (mut rx, mut ry, mut cx, mut cy) = (0.0, 0.0, 0.0, 0.0);
+                for &(p, r) in &points {
+                    rx += r.x / n;
+                    ry += r.y / n;
+                    cx += vars[p] / n;
+                    cy += vars[p + 1] / n;
+                }
+                let (mut dot, mut cross, mut spread) = (0.0, 0.0, 0.0);
+                let pairs = points
+                    .iter()
+                    .map(|&(p, r)| ((r.x - rx, r.y - ry), (vars[p] - cx, vars[p + 1] - cy)))
+                    .chain(
+                        axes.iter()
+                            .map(|&(k, major, _)| ((major.x, major.y), (vars[k], vars[k + 1]))),
+                    );
+                for ((ax, ay), (bx, by)) in pairs {
+                    dot += ax * bx + ay * by;
+                    cross += ax * by - ay * bx;
+                    spread += ax * ax + ay * ay;
+                }
+                let frame = base + aux.len();
+                aux.extend([cx, cy, cross.atan2(dot)]);
+                // Members all at one spot with no axis have no way to turn.
+                if spread <= sketch.settings.minimum_length.0.powi(2) {
+                    pinned.push(frame + 2);
+                }
+                for (p, r) in points {
+                    specs.push(ResidualSpec::Rigid {
+                        p,
+                        frame,
+                        x: r.x - rx,
+                        y: r.y - ry,
+                    });
+                }
+                for entry in reference {
+                    if let GroupReference::Radius { curve, radius } = *entry
+                        && let Some(&r) = radius_vars.get(&curve)
+                    {
+                        specs.push(ResidualSpec::Radius {
+                            r,
+                            radius: f64::from(radius),
+                        });
+                    }
+                }
+                for (k, major, minor) in axes {
+                    specs.push(ResidualSpec::RigidAxes {
+                        k,
+                        frame,
+                        x: major.x,
+                        y: major.y,
+                        minor,
+                    });
+                }
+            }
             ConstraintKind::Refraction {
                 ray1,
                 ray2,
@@ -929,9 +1030,12 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     // these residuals such an arc would silently become geometrically invalid.
     // When there are no user constraints the solver reports NothingToSolve and
     // never runs, so gating on "at least one constraint exists" costs nothing.
+    // An arc a group holds keeps its ends on it with the rest of its shape.
+    let rigid = rigid_curves(sketch, &skip);
     if arcs_always || !specs.is_empty() {
         for element in &sketch.geometry {
             if let GeometryElement::Arc(arc) = element
+                && !rigid.contains(&arc.id.into())
                 && let (Some(c), Some(s), Some(e), Some(r)) = (
                     point_var(arc.center),
                     point_var(arc.start),
@@ -954,11 +1058,11 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
     }
 
     vars.extend(aux);
-    let implicit = conic_end_residuals(sketch, &point_var, &shape_vars)
+    let implicit = conic_end_residuals(sketch, &point_var, &shape_vars, &rigid)
         .into_iter()
         .chain(internal_residuals(
             sketch,
-            exclude,
+            &skip,
             &point_var,
             &shape_vars,
             &derived_foci,
@@ -995,17 +1099,22 @@ enum ItemVars {
 
 /// A parabola's or hyperbola's arc ends on its curve whatever else holds:
 /// both ends of every one join every solve, so dragging an end slides it
-/// along the curve and dragging the centre takes the arc along.
+/// along the curve and dragging the centre takes the arc along. A conic a
+/// group holds keeps its ends with the rest of its shape instead.
 fn conic_end_residuals(
     sketch: &Sketch,
     point_var: &impl Fn(PointReference) -> Option<usize>,
     shape_vars: &HashMap<CurveReference, usize>,
+    rigid: &HashSet<CurveReference>,
 ) -> Vec<(ResidualSpec, EquationSource)> {
     let mut specs = Vec::new();
     for element in &sketch.geometry {
         let GeometryElement::Conic(conic) = element else {
             continue;
         };
+        if rigid.contains(&conic.id.into()) {
+            continue;
+        }
         let Some(c) = point_var(conic.center) else {
             continue;
         };
@@ -1064,7 +1173,7 @@ fn curve_shape(
 /// drawn through the spline's own points and needs none.
 fn internal_residuals(
     sketch: &Sketch,
-    exclude: Option<ConstraintId>,
+    skip: &HashSet<ConstraintId>,
     point_var: &impl Fn(PointReference) -> Option<usize>,
     shape_vars: &HashMap<CurveReference, usize>,
     derived_foci: &HashSet<PointReference>,
@@ -1083,7 +1192,7 @@ fn internal_residuals(
         else {
             continue;
         };
-        if exclude == Some(constraint.id) {
+        if skip.contains(&constraint.id) {
             continue;
         }
         let Some(geometry) = sketch.get_geometry(curve) else {
@@ -1187,7 +1296,7 @@ fn internal_residuals(
 /// names them, no curve runs through them, and they are not being dragged.
 fn derived_foci(
     sketch: &Sketch,
-    exclude: Option<ConstraintId>,
+    skip: &HashSet<ConstraintId>,
     held: &[PointReference],
 ) -> HashSet<PointReference> {
     let mut foci = std::collections::HashSet::new();
@@ -1197,7 +1306,7 @@ fn derived_foci(
             curve,
             role: InternalRole::Focus1 | InternalRole::Focus2,
         } = c.kind
-            && exclude != Some(c.id)
+            && !skip.contains(&c.id)
             && matches!(
                 sketch.get_geometry(curve),
                 Some(GeometryElement::Ellipse(_))
@@ -1213,7 +1322,7 @@ fn derived_foci(
         }
     }
     for c in &sketch.constraints {
-        if exclude == Some(c.id) || matches!(c.kind, ConstraintKind::InternalAlignment { .. }) {
+        if skip.contains(&c.id) || matches!(c.kind, ConstraintKind::InternalAlignment { .. }) {
             continue;
         }
         for id in c.kind.references() {
@@ -1228,6 +1337,64 @@ fn derived_foci(
         }
     }
     foci
+}
+
+/// The probe's excluded constraint and every relation resting in a group,
+/// naming only one group's members: one that keeps under a rigid motion,
+/// and every orientation after the first, which turns the whole group and
+/// so sets the rest as its shape has them.
+fn skipped(sketch: &Sketch, exclude: Option<ConstraintId>) -> HashSet<ConstraintId> {
+    let groups: Vec<HashSet<ItemReference>> = sketch
+        .constraints
+        .iter()
+        .filter(|c| exclude != Some(c.id) && matches!(c.kind, ConstraintKind::Group { .. }))
+        .map(|c| c.kind.references().into_iter().collect())
+        .collect();
+    let mut skip: HashSet<ConstraintId> = exclude.into_iter().collect();
+    if groups.is_empty() {
+        return skip;
+    }
+    // Which groups an orientation among their members already turns.
+    let mut oriented = vec![false; groups.len()];
+    for c in &sketch.constraints {
+        if skip.contains(&c.id) {
+            continue;
+        }
+        let named = c.kind.references();
+        let Some(group) = groups
+            .iter()
+            .position(|members| named.iter().all(|id| members.contains(id)))
+        else {
+            continue;
+        };
+        if c.kind.rests_in_group() || (c.kind.orients() && oriented[group]) {
+            skip.insert(c.id);
+        } else if c.kind.orients() {
+            oriented[group] = true;
+        }
+    }
+    skip
+}
+
+/// The circles, arcs, ellipses and conics a group holds.
+fn rigid_curves(sketch: &Sketch, skip: &HashSet<ConstraintId>) -> HashSet<CurveReference> {
+    sketch
+        .constraints
+        .iter()
+        .filter(|c| !skip.contains(&c.id))
+        .flat_map(|c| match c.kind {
+            ConstraintKind::Group { ref reference, .. } => reference
+                .iter()
+                .filter_map(|r| match *r {
+                    GroupReference::Radius { curve, .. } | GroupReference::Axes { curve, .. } => {
+                        Some(curve)
+                    }
+                    GroupReference::Point { .. } => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        })
+        .collect()
 }
 
 /// Resolve an optional point reference: absent is fine (measure from the

@@ -1,7 +1,8 @@
 //! Validation at the public semantic boundary.
 
 use crate::problem::{
-    ConstraintId, CurveReference, Geometry, ItemReference, PointReference, Problem, Relation,
+    ConstraintId, CurveReference, Geometry, GroupReference, ItemReference, PointReference, Problem,
+    Relation,
 };
 use std::collections::HashSet;
 
@@ -315,6 +316,10 @@ fn validate_relation(
                 }
             }
         }
+        Relation::Group {
+            elements,
+            reference,
+        } => group_valid(problem, elements, reference),
     };
     if valid {
         Ok(())
@@ -324,4 +329,69 @@ fn validate_relation(
             detail: "wrong geometry kind or numerical domain".to_owned(),
         })
     }
+}
+
+/// A group names each member once, none of them reference geometry, and
+/// its reference holds exactly the members' points, radii and axes, each
+/// once and finite.
+fn group_valid(
+    problem: &Problem,
+    elements: &[ItemReference],
+    reference: &[GroupReference],
+) -> bool {
+    let mut members = HashSet::new();
+    let mut points = HashSet::new();
+    let mut radii = HashSet::new();
+    let mut axes = HashSet::new();
+    for &element in elements {
+        if !members.insert(element) {
+            return false;
+        }
+        match (element, problem.get_geometry(element)) {
+            (ItemReference::Point(point), Some(Geometry::Point(_))) => {
+                points.insert(point);
+            }
+            (ItemReference::Curve(curve), Some(geometry)) => {
+                points.extend(geometry.point_references());
+                match geometry {
+                    Geometry::Circle(_) | Geometry::Arc(_) => {
+                        radii.insert(curve);
+                    }
+                    Geometry::Ellipse(_) | Geometry::Conic(_) => {
+                        axes.insert(curve);
+                    }
+                    _ => {}
+                }
+            }
+            _ => return false,
+        }
+    }
+    if members.is_empty() || points.contains(&PointReference::Origin) {
+        return false;
+    }
+    let mut seen = HashSet::new();
+    for entry in reference {
+        let held = match *entry {
+            GroupReference::Point { point, position } => {
+                points.contains(&point) && position.x.is_finite() && position.y.is_finite()
+            }
+            GroupReference::Radius { curve, radius } => {
+                radii.contains(&curve) && radius.0.is_finite()
+            }
+            GroupReference::Axes {
+                curve,
+                major,
+                minor,
+            } => {
+                axes.contains(&curve)
+                    && major.x.is_finite()
+                    && major.y.is_finite()
+                    && minor.0.is_finite()
+            }
+        };
+        if !held || !seen.insert(entry.item()) {
+            return false;
+        }
+    }
+    seen.len() == points.len() + radii.len() + axes.len()
 }

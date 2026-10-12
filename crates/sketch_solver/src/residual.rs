@@ -278,6 +278,26 @@ pub enum ResidualSpec {
         c: usize,
         shape: CurveShape,
     },
+    /// p - (centre + R(angle) · (x, y)) (2 residuals): a group's member
+    /// point where the group's frame puts the offset from the reference
+    /// centroid it was made at. The frame is three variables from `frame`
+    /// on: the centroid's x and y, and the angle it has turned.
+    Rigid {
+        p: usize,
+        frame: usize,
+        x: f64,
+        y: f64,
+    },
+    /// A group's member ellipse or conic: its axis (shape at `k`) the
+    /// reference axis `(x, y)` turned with the frame (2 residuals), and
+    /// its minor radius `minor` when it has one (a third).
+    RigidAxes {
+        k: usize,
+        frame: usize,
+        x: f64,
+        y: f64,
+        minor: Option<f64>,
+    },
 }
 
 /// An ellipse's or conic's shape: the vector along its axis (an ellipse's
@@ -368,6 +388,8 @@ impl ResidualSpec {
             | ResidualSpec::Internal { .. }
             | ResidualSpec::Focus { .. } => 2,
             ResidualSpec::CurvesMeet { .. } => 3,
+            ResidualSpec::Rigid { .. } => 2,
+            ResidualSpec::RigidAxes { minor, .. } => 2 + usize::from(minor.is_some()),
             _ => 1,
         }
     }
@@ -465,6 +487,25 @@ impl ResidualSpec {
                 out.push(segment_length(v, p1, p2) - d);
             }
             ResidualSpec::Radius { r, radius } => out.push(v[r] - radius),
+            ResidualSpec::Rigid { p, frame, x, y } => {
+                let (sin, cos) = v[frame + 2].sin_cos();
+                out.push(v[p] - (v[frame] + cos * x - sin * y));
+                out.push(v[p + 1] - (v[frame + 1] + sin * x + cos * y));
+            }
+            ResidualSpec::RigidAxes {
+                k,
+                frame,
+                x,
+                y,
+                minor,
+            } => {
+                let (sin, cos) = v[frame + 2].sin_cos();
+                out.push(v[k] - (cos * x - sin * y));
+                out.push(v[k + 1] - (sin * x + cos * y));
+                if let Some(minor) = minor {
+                    out.push(v[k + 2] - minor);
+                }
+            }
             ResidualSpec::Diameter { r, diameter } => out.push(2.0 * v[r] - diameter),
             ResidualSpec::CoordDistance { a, b, value } => {
                 let d = match b {

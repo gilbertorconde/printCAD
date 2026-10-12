@@ -63,6 +63,15 @@ callers should independently measure their stored geometry after rounding.
 Answers include failed-attempt iteration counts, residual norms and thresholds.
 The solver does not mutate a problem, refit splines or move text outlines.
 
+`Relation::Group` holds its members as one rigid unit. Each group adds three
+variables among the auxiliary parameters (its reference centroid's position and
+the angle it has turned), started from the best rigid fit of its stored
+reference shape onto the members' current points. Relations naming only one
+group's members that a rigid motion keeps (`Relation::rests_in_group`) rest,
+as do every orientation among them after the first (`Relation::orients`) and
+the implicit endpoint rows of a grouped arc or conic, so a free group has three
+degrees of freedom.
+
 `held_points`, `application_held_points` and `external` are separate pin sets.
 External curves' referenced points must also be present in `external` when the
 caller intends to hold them. Focus classification is repeated for every

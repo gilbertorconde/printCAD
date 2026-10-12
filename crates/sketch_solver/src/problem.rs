@@ -482,6 +482,46 @@ pub enum Relation {
         curve: CurveReference,
         role: InternalRole,
     },
+    /// `elements` move and turn as one rigid unit, three degrees of
+    /// freedom between them. `reference` is their shape as the group was
+    /// made: every point of every member where it stood, every member
+    /// circle's or arc's radius and every member ellipse's or conic's axes.
+    /// The relations among members alone that a rigid motion keeps rest
+    /// while the group holds them.
+    Group {
+        elements: Vec<ItemReference>,
+        reference: Vec<GroupReference>,
+    },
+}
+
+/// One entry of a group's shape as it was made.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum GroupReference {
+    Point {
+        point: PointReference,
+        position: Vector,
+    },
+    Radius {
+        curve: CurveReference,
+        radius: Length,
+    },
+    /// An ellipse's centre-to-major-vertex vector or a conic's axis, and
+    /// its minor radius (a parabola's is not held).
+    Axes {
+        curve: CurveReference,
+        major: Vector,
+        minor: Length,
+    },
+}
+
+impl GroupReference {
+    pub fn item(&self) -> ItemReference {
+        match *self {
+            Self::Point { point, .. } => point.into(),
+            Self::Radius { curve, .. } | Self::Axes { curve, .. } => curve.into(),
+        }
+    }
 }
 
 impl Relation {
@@ -567,6 +607,48 @@ impl Relation {
                 (*point).into(),
             ],
             Self::InternalAlignment { element, curve, .. } => vec![*element, (*curve).into()],
+            Self::Group {
+                elements,
+                reference,
+            } => elements
+                .iter()
+                .copied()
+                .chain(reference.iter().map(GroupReference::item))
+                .collect(),
+        }
+    }
+
+    /// Whether the relation holds only the way its items lie against the
+    /// sketch's axes: of these among one group's members, the first turns
+    /// the group and the rest rest.
+    pub fn orients(&self) -> bool {
+        matches!(
+            self,
+            Self::Horizontal { .. }
+                | Self::Vertical { .. }
+                | Self::HorizontalPoints { .. }
+                | Self::VerticalPoints { .. }
+                | Self::AngleToAxis { .. }
+        )
+    }
+
+    /// Whether the relation rests when a group holds everything it names:
+    /// it relates its items to one another, not to the sketch's frame, so
+    /// a rigid motion of them all keeps it true. A group never rests.
+    pub fn rests_in_group(&self) -> bool {
+        match self {
+            Self::FixedPoint { .. }
+            | Self::Horizontal { .. }
+            | Self::Vertical { .. }
+            | Self::HorizontalPoints { .. }
+            | Self::VerticalPoints { .. }
+            | Self::Block { .. }
+            | Self::DistanceX { .. }
+            | Self::DistanceY { .. }
+            | Self::AngleToAxis { .. }
+            | Self::Group { .. } => false,
+            Self::Pitch { direction, .. } => direction.is_none(),
+            _ => true,
         }
     }
 }
