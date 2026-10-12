@@ -2546,6 +2546,50 @@ fn typed_slot_width_sizes_the_caps() {
 }
 
 #[test]
+fn typed_arc_slot_sweep_and_width_size_the_slot() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(0.0, 0.0, "sketch.arc_slot"); // arc center
+    h.click(8.0, 0.0, "sketch.arc_slot"); // centerline start (r = 8)
+    h.mouse_move(5.0, 6.0, "sketch.arc_slot");
+    h.key(KeyCode::Key9, Some("sketch.arc_slot"));
+    h.key(KeyCode::Key0, Some("sketch.arc_slot"));
+    h.key(KeyCode::Tab, Some("sketch.arc_slot")); // width
+    h.key(KeyCode::Key3, Some("sketch.arc_slot"));
+    h.key(KeyCode::Enter, Some("sketch.arc_slot"));
+
+    let sketch = h.sketch();
+    let mut radii: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.radius),
+            _ => None,
+        })
+        .collect();
+    radii.sort_by(f32::total_cmp);
+    // Two caps half the width across, rails half the width either side of r = 8.
+    assert_eq!(radii.len(), 4, "{radii:?}");
+    for (r, want) in radii.iter().zip([1.5, 1.5, 6.5, 9.5]) {
+        assert!((r - want).abs() < 1e-3, "{radii:?}");
+    }
+    assert!(
+        has_point_near(&sketch, 0.0, 8.0),
+        "the centerline ends a quarter turn round: {:?}",
+        point_positions(&sketch)
+    );
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::Radius { radius, .. } if (radius - 1.5).abs() < 1e-5
+    )));
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::ArcAngle { angle_rad, .. }
+            if (angle_rad.to_degrees() - 90.0).abs() < 1e-3
+    )));
+}
+
+#[test]
 fn typed_x_and_y_place_the_first_point() {
     let mut h = Harness::new();
     h.create_sketch();
