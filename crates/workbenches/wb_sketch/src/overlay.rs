@@ -217,15 +217,20 @@ const SNAP_MARK_PX: f32 = POINT_RADIUS_PX + 3.0;
 /// to (a square on an endpoint, a ring on a centre, a ringed cross on the
 /// origin, an X on a crossing, a triangle on a midpoint, a square corner
 /// at a perpendicular's foot, a ring and a touching line at a tangent
-/// point, a diamond on a curve or an axis, a dashed guide back to the
-/// point being drawn from when level or plumb with it), and its name
-/// beside it.
+/// point, a diamond on a curve or an axis, two strokes for a parallel, an
+/// upturned T for a square direction, a ringed dash on an extension), its
+/// name beside it, and with `hint_lines` its guide: dashed back to the
+/// point being drawn from when level or plumb with it, dashed along a
+/// parallel or square direction with the line it follows lit, dashed from
+/// a line's end out along its extension.
 fn push_snap_marker(
     out: &mut Overlays,
     proj: &SketchProjector,
     pal: &SketchPalette,
+    sketch: &Sketch,
     snap: &crate::snap::Snap,
     from: Option<Vec2D>,
+    hint_lines: bool,
 ) {
     use crate::snap::SnapKind;
     let Some(kind) = snap.kind else {
@@ -293,11 +298,22 @@ fn push_snap_marker(
         SnapKind::OnCurve | SnapKind::OnAxis => {
             path(&[[x - h, y], [x, y - h], [x + h, y], [x, y + h], [x - h, y]]);
         }
-        SnapKind::Horizontal | SnapKind::Vertical => {
-            if let Some(start) = from.and_then(|f| proj.to_px(f)) {
-                push_segment_px(&mut out.lines, start, [x, y], color, 1.0, Some(GUIDE_DASH));
-            }
+        SnapKind::Horizontal | SnapKind::Vertical => {}
+        SnapKind::Parallel => {
+            path(&[[x - h, y + h * 0.7], [x - h * 0.2, y - h * 0.7]]);
+            path(&[[x + h * 0.2, y + h * 0.7], [x + h, y - h * 0.7]]);
         }
+        SnapKind::PerpendicularTo => {
+            path(&[[x - h, y + h], [x + h, y + h]]);
+            path(&[[x, y + h], [x, y - h]]);
+        }
+        SnapKind::OnExtension => {
+            path(&ring(h * 0.5));
+            path(&[[x - h * 1.3, y], [x + h * 1.3, y]]);
+        }
+    }
+    if hint_lines {
+        push_snap_guide(out, proj, pal, sketch, snap, kind, from, [x, y]);
     }
     out.labels.push(
         core_document::ScreenSpaceLabel::new(
@@ -308,6 +324,73 @@ fn push_snap_marker(
         )
         .pill(),
     );
+}
+
+/// How far a parallel or square direction's guide runs past the point
+/// drawn from and the point drawn to, in pixels.
+const GUIDE_REACH_PX: f32 = 60.0;
+
+/// The dashed guide a snap of `kind` at `at` (pixels) draws, if any.
+#[allow(clippy::too_many_arguments)]
+fn push_snap_guide(
+    out: &mut Overlays,
+    proj: &SketchProjector,
+    pal: &SketchPalette,
+    sketch: &Sketch,
+    snap: &crate::snap::Snap,
+    kind: crate::snap::SnapKind,
+    from: Option<Vec2D>,
+    at: [f32; 2],
+) {
+    use crate::snap::SnapKind;
+    let color = pal.preselect;
+    let start = from.and_then(|f| proj.to_px(f));
+    let line_ends = snap.curve.and_then(|id| match sketch.get_geometry(id) {
+        Some(GeometryElement::Line(l)) => sketch
+            .point_position(l.start)
+            .zip(sketch.point_position(l.end)),
+        _ => None,
+    });
+    match kind {
+        SnapKind::Horizontal | SnapKind::Vertical => {
+            if let Some(start) = start {
+                push_segment_px(&mut out.lines, start, at, color, 1.0, Some(GUIDE_DASH));
+            }
+        }
+        SnapKind::Parallel | SnapKind::PerpendicularTo => {
+            if let Some(start) = start {
+                let (a, b) = (glam::Vec2::from(start), glam::Vec2::from(at));
+                let u = (b - a).normalize_or_zero() * GUIDE_REACH_PX;
+                push_segment_px(
+                    &mut out.lines,
+                    (a - u).into(),
+                    (b + u).into(),
+                    color,
+                    1.0,
+                    Some(GUIDE_DASH),
+                );
+            }
+            if let Some((a, b)) = line_ends
+                && let (Some(a), Some(b)) = (proj.to_px(a), proj.to_px(b))
+            {
+                push_segment_px(&mut out.lines, a, b, color, 2.0, None);
+            }
+        }
+        SnapKind::OnExtension => {
+            if let Some((a, b)) = line_ends {
+                let p = snap.pos;
+                let near = if (a - p).to_glam().length() < (b - p).to_glam().length() {
+                    a
+                } else {
+                    b
+                };
+                if let Some(end) = proj.to_px(near) {
+                    push_segment_px(&mut out.lines, end, at, color, 1.0, Some(GUIDE_DASH));
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 fn push_element(
@@ -1460,6 +1543,7 @@ pub fn build_overlays(
     snap: Option<crate::snap::Snap>,
     construction_on_top: bool,
     look: &Appearance,
+    hint_lines: bool,
 ) -> Overlays {
     let mut out = Overlays::default();
     push_axes(&mut out, proj, pal, selected, hovered, look);
@@ -1535,7 +1619,7 @@ pub fn build_overlays(
         }
         if let Some(snap) = &snap {
             let from = crate::tools::snap_context(tool_state, sketch).from;
-            push_snap_marker(&mut out, proj, pal, snap, from);
+            push_snap_marker(&mut out, proj, pal, sketch, snap, from, hint_lines);
         }
         // A crosshair follows the cursor while a drawing tool is armed.
         if active_tool.is_some_and(|t| t != "sketch.select")

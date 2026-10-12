@@ -482,8 +482,9 @@ fn curve_attach_eps(snap_tol: f32) -> f32 {
 /// Like `materialize`, but a NEW point placed where a snap put it stays
 /// there: at a line's middle by a midpoint constraint, on the origin by a
 /// coincidence, on each curve it lies on (two at a crossing) by an on-curve
-/// constraint, found again within `curve_attach_eps`. Existing points are
-/// reused untouched: shared ids already imply coincidence.
+/// constraint, or, on none, on a line's extension by a point-on-line, found
+/// again within `curve_attach_eps`. Existing points are reused untouched:
+/// shared ids already imply coincidence.
 fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) -> Uuid {
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
@@ -536,6 +537,17 @@ fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) 
             _ => continue,
         };
         on.push(kind);
+    }
+    if on.is_empty()
+        && let Some(line) = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| Some((g.id(), snap::extension_foot(sketch, g, pos)?.1)))
+            .filter(|(id, d)| *id != point && *d <= eps)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    {
+        on.push(ConstraintKind::PointOnLine { point, line });
     }
     // Two are a crossing; a third would only over-constrain the point.
     for kind in on.into_iter().take(2) {

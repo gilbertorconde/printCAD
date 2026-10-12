@@ -4764,3 +4764,195 @@ mod double_click {
         assert!(h.view_turned);
     }
 }
+
+/// A slanted line from (1, 10) to (11, 15), its chain ended: what the
+/// direction and extension snaps below follow.
+fn slanted_line(h: &mut Harness) -> uuid::Uuid {
+    h.click(1.0, 10.0, "sketch.line");
+    h.click(11.0, 15.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    let sketch = h.sketch();
+    sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) => Some(l.id),
+            _ => None,
+        })
+        .expect("the line")
+}
+
+/// The direction of line `id`, unit length.
+fn direction(sketch: &Sketch, id: uuid::Uuid) -> glam::Vec2 {
+    let Some(GeometryElement::Line(l)) = sketch.get_geometry(id) else {
+        panic!("{id} is no line");
+    };
+    let a = sketch.point_position(l.start).unwrap().to_glam();
+    let b = sketch.point_position(l.end).unwrap().to_glam();
+    (b - a).normalize()
+}
+
+/// The line other than `id`.
+fn other_line(sketch: &Sketch, id: uuid::Uuid) -> uuid::Uuid {
+    sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) if l.id != id => Some(l.id),
+            _ => None,
+        })
+        .expect("a second line")
+}
+
+#[test]
+fn a_line_drawn_nearly_parallel_to_another_ends_parallel_and_held_so() {
+    use wb_sketch::sketch::ConstraintKind;
+    let mut h = Harness::new();
+    h.create_sketch();
+    let first = slanted_line(&mut h);
+    // Along (2, 1) from (2, -12) the end would be (12, -7): a little off.
+    h.click(2.0, -12.0, "sketch.line");
+    h.click(12.0, -6.7, "sketch.line");
+    let sketch = h.sketch();
+    let second = other_line(&sketch, first);
+    let cross = direction(&sketch, first).perp_dot(direction(&sketch, second));
+    assert!(cross.abs() < 1e-4, "parallel: {cross}");
+    assert!(
+        sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::Parallel { line1, line2 } if line1 == second && line2 == first
+        )),
+        "{:?}",
+        sketch.constraints
+    );
+}
+
+#[test]
+fn a_line_drawn_nearly_square_to_another_ends_square_and_held_so() {
+    use wb_sketch::sketch::ConstraintKind;
+    let mut h = Harness::new();
+    h.create_sketch();
+    let first = slanted_line(&mut h);
+    // Along (-1, 2) from (2, -12) the end would be (-2, -4): a little off.
+    h.click(2.0, -12.0, "sketch.line");
+    h.click(-2.3, -4.0, "sketch.line");
+    let sketch = h.sketch();
+    let second = other_line(&sketch, first);
+    let dot = direction(&sketch, first).dot(direction(&sketch, second));
+    assert!(dot.abs() < 1e-4, "square: {dot}");
+    assert!(
+        sketch.constraints.iter().any(|c| matches!(
+            c.kind,
+            ConstraintKind::Perpendicular { line1, line2 } if line1 == second && line2 == first
+        )),
+        "{:?}",
+        sketch.constraints
+    );
+}
+
+#[test]
+fn a_point_on_a_line_s_extension_is_held_on_the_line() {
+    use wb_sketch::sketch::ConstraintKind;
+    let mut h = Harness::new();
+    h.create_sketch();
+    let first = slanted_line(&mut h);
+    // A third of the line's length past its far end, 0.3 off to the side.
+    let off = glam::Vec2::new(-1.0, 2.0).normalize() * 0.3;
+    h.click(14.0 + off.x, 16.5 + off.y, "sketch.point");
+    // A line's start too, made only at the line's second click.
+    h.click(-2.0 - off.x, 8.5 - off.y, "sketch.line");
+    h.click(-10.0, -6.0, "sketch.line");
+    let sketch = h.sketch();
+    let held: Vec<uuid::Uuid> = sketch
+        .constraints
+        .iter()
+        .filter_map(|c| match c.kind {
+            ConstraintKind::PointOnLine { point, line } if line == first => Some(point),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(held.len(), 2, "{:?}", sketch.constraints);
+    let a = glam::Vec2::new(1.0, 10.0);
+    let along = glam::Vec2::new(2.0, 1.0).normalize();
+    for point in held {
+        let p = sketch.point_position(point).unwrap().to_glam();
+        assert!((p - a).perp_dot(along).abs() < 1e-3, "{p} on the line");
+    }
+}
+
+/// Two lines apart, the end of the second dragged onto the end of the
+/// first and rested there for `rest`.
+fn drag_end_onto_end(h: &mut Harness, rest: std::time::Duration) -> Sketch {
+    h.click(2.0, 3.0, "sketch.line");
+    h.click(8.0, 6.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(12.0, -5.0, "sketch.line");
+    h.click(18.0, -9.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(18.0, -9.0, "sketch.select");
+    h.mouse_move(8.0, 6.0, "sketch.select");
+    std::thread::sleep(rest);
+    h.mouse_move(8.05, 6.0, "sketch.select");
+    h.release(8.05, 6.0, "sketch.select");
+    h.sketch()
+}
+
+fn coincident_count(sketch: &Sketch) -> usize {
+    sketch
+        .constraints
+        .iter()
+        .filter(|c| matches!(c.kind, wb_sketch::sketch::ConstraintKind::Coincident { .. }))
+        .count()
+}
+
+#[test]
+fn a_point_dragged_onto_another_and_rested_there_joins_it() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.wb.options.drag_constraint_delay_ms = 40.0;
+    let sketch = drag_end_onto_end(&mut h, std::time::Duration::from_millis(80));
+    assert_eq!(coincident_count(&sketch), 1, "{:?}", sketch.constraints);
+    let at_target = sketch
+        .geometry
+        .iter()
+        .filter(|g| match g {
+            GeometryElement::Point(p) => {
+                (p.position.to_glam() - glam::Vec2::new(8.0, 6.0)).length() < 0.1
+            }
+            _ => false,
+        })
+        .count();
+    assert_eq!(at_target, 2, "both ends where the first line ends");
+}
+
+#[test]
+fn a_point_let_go_before_the_delay_stays_free() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    let sketch = drag_end_onto_end(&mut h, std::time::Duration::ZERO);
+    assert_eq!(coincident_count(&sketch), 0, "{:?}", sketch.constraints);
+}
+
+#[test]
+fn a_point_dragged_onto_a_line_is_held_on_it() {
+    use wb_sketch::sketch::ConstraintKind;
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.wb.options.drag_constraint_delay_ms = 0.0;
+    let first = slanted_line(&mut h);
+    h.click(12.0, -5.0, "sketch.line");
+    h.click(18.0, -9.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(18.0, -9.0, "sketch.select");
+    h.mouse_move(6.0, 12.6, "sketch.select");
+    h.release(6.0, 12.6, "sketch.select");
+    let sketch = h.sketch();
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::PointOnLine { line, .. } if line == first)),
+        "{:?}",
+        sketch.constraints
+    );
+}

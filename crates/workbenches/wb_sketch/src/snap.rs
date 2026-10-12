@@ -1,5 +1,6 @@
 //! Cursor snapping: endpoint reuse, curves (the sketch's origin and axes
-//! among them) and axis alignment.
+//! among them), lines' extensions, and alignment with the axes or with
+//! other lines.
 //!
 //! Snapping to an existing point *reuses* that point id instead of creating
 //! a coincident twin, so shared endpoints produce naturally connected
@@ -54,6 +55,12 @@ pub enum SnapKind {
     Horizontal,
     /// Plumb with the point being drawn from.
     Vertical,
+    /// The segment being drawn runs parallel to another line.
+    Parallel,
+    /// The segment being drawn runs square to another line.
+    PerpendicularTo,
+    /// On a line's extension past one of its ends.
+    OnExtension,
 }
 
 impl SnapKind {
@@ -71,6 +78,9 @@ impl SnapKind {
             SnapKind::OnAxis => "On axis",
             SnapKind::Horizontal => "Horizontal",
             SnapKind::Vertical => "Vertical",
+            SnapKind::Parallel => "Parallel",
+            SnapKind::PerpendicularTo => "Perpendicular to",
+            SnapKind::OnExtension => "On extension",
         }
     }
 }
@@ -82,8 +92,9 @@ pub struct Snap {
     pub target: SnapTarget,
     pub pos: Vec2D,
     pub kind: Option<SnapKind>,
-    /// The curve a perpendicular or tangent snap landed on: the new
-    /// segment is held square to it, or touching it.
+    /// The curve a perpendicular or tangent snap landed on (the new
+    /// segment is held square to it, or touching it), the line a parallel
+    /// or square direction follows, or the line an extension continues.
     pub curve: Option<Uuid>,
 }
 
@@ -98,7 +109,9 @@ pub struct SnapContext {
 
 /// Where `cursor` snaps, within `tol` (sketch units), in this order:
 /// an existing point (reused), the origin, a crossing of two curves, a
-/// line's middle, a curve or an axis, then alignment with `from`. The one
+/// line's middle, a curve or an axis, alignment with `from` (level or
+/// plumb, then parallel or square to another line), then a line's
+/// extension. The one
 /// function every drawing click and the cue before it go through, so what
 /// is shown is where the click lands.
 pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Snap {
@@ -185,8 +198,103 @@ pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Sn
             }
             _ => {}
         }
+        if let Some((id, pos, kind)) = along_a_line(sketch, from, cursor, tol, &cx.exclude) {
+            return Snap {
+                curve: Some(id),
+                ..at(SnapTarget::New(pos), pos, kind)
+            };
+        }
+    }
+    // A line through the point drawn from would only be continued.
+    let extension = sketch
+        .geometry
+        .iter()
+        .filter(|g| match g {
+            GeometryElement::Line(l) => {
+                !cx.exclude.contains(&l.start) && !cx.exclude.contains(&l.end)
+            }
+            _ => true,
+        })
+        .filter_map(|g| Some((g.id(), extension_foot(sketch, g, cursor)?)))
+        .filter(|(_, (_, d))| *d <= tol)
+        .min_by(|a, b| a.1.1.total_cmp(&b.1.1));
+    if let Some((id, (pos, _))) = extension {
+        return Snap {
+            curve: Some(id),
+            ..at(SnapTarget::New(pos), pos, SnapKind::OnExtension)
+        };
     }
     bare
+}
+
+/// From `from`, `cursor` turned onto the direction of another line or the
+/// direction square to it, when it lies within `tol` of that direction:
+/// the line, the turned point and which of the two it follows, the
+/// nearest direction first. A line through `from` itself only offers its
+/// square: along it, the segment would only continue it.
+fn along_a_line(
+    sketch: &Sketch,
+    from: Vec2D,
+    cursor: Vec2D,
+    tol: f32,
+    exclude: &[Uuid],
+) -> Option<(Uuid, Vec2D, SnapKind)> {
+    let (f, d) = (from.to_glam(), (cursor - from).to_glam());
+    let mut best: Option<(Uuid, glam::Vec2, SnapKind, f32)> = None;
+    for geom in &sketch.geometry {
+        let GeometryElement::Line(line) = geom else {
+            continue;
+        };
+        let (Some(a), Some(b)) = (
+            sketch.point_position(line.start),
+            sketch.point_position(line.end),
+        ) else {
+            continue;
+        };
+        let Some(dir) = (b - a).to_glam().try_normalize() else {
+            continue;
+        };
+        let through_from = exclude.contains(&line.start) || exclude.contains(&line.end);
+        for (u, kind) in [
+            (dir, SnapKind::Parallel),
+            (dir.perp(), SnapKind::PerpendicularTo),
+        ] {
+            if through_from && kind == SnapKind::Parallel {
+                continue;
+            }
+            let along = d.dot(u);
+            let off = d.dot(u.perp()).abs();
+            // Some reach along the direction, as level and plumb ask, so a
+            // click on `from` itself is not a direction.
+            if along.abs() > tol && off <= tol && best.is_none_or(|(.., bd)| off < bd) {
+                best = Some((line.id, f + u * along, kind, off));
+            }
+        }
+    }
+    best.map(|(id, p, kind, _)| (id, Vec2D::from_glam(p), kind))
+}
+
+/// Where `pos` falls on line `geom`'s extension past one of its ends, no
+/// further out than half the line's length: the foot and how far `pos` is
+/// from it. `None` for any other element, and along the line itself.
+pub fn extension_foot(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<(Vec2D, f32)> {
+    let GeometryElement::Line(line) = geom else {
+        return None;
+    };
+    let a = sketch.point_position(line.start)?.to_glam();
+    let b = sketch.point_position(line.end)?.to_glam();
+    let ab = b - a;
+    let len_sq = ab.length_squared();
+    if len_sq < 1e-12 {
+        return None;
+    }
+    let p = pos.to_glam();
+    let t = (p - a).dot(ab) / len_sq;
+    if (0.0..=1.0).contains(&t) || !(-0.5..=1.5).contains(&t) {
+        return None;
+    }
+    let foot = a + ab * t;
+    Some((Vec2D::from_glam(foot), (p - foot).length()))
 }
 
 /// From `from`, the foot of the perpendicular on a line, or a point where

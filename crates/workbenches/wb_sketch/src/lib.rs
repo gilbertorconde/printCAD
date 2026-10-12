@@ -252,6 +252,9 @@ struct DragState {
     /// what a recording of it says.
     elements: Vec<Uuid>,
     delta: Vec2D,
+    /// A point dragged alone: the point or curve it is over, and since
+    /// when. Let go there after the delay, the point is joined to it.
+    target: Option<(Uuid, Instant)>,
 }
 
 /// A shape the active tool is drawing, as a recording will say it: the
@@ -370,7 +373,9 @@ pub struct SketchOptions {
     pub grid_snap: bool,
     /// Constraint glyphs stay off the viewport.
     pub constraints_hidden: bool,
-    /// Axis-snapped lines get horizontal/vertical constraints as drawn.
+    /// Lines snapped level, plumb, parallel or square get the matching
+    /// constraint as drawn, and a dragged point let go over another point
+    /// or a curve is held there.
     pub auto_constraints: bool,
     /// An auto constraint the solver reports redundant is dropped again.
     pub avoid_redundant_auto: bool,
@@ -400,6 +405,13 @@ pub struct SketchOptions {
     pub shade_regions: bool,
     /// How the edited sketch draws.
     pub appearance: appearance::Appearance,
+    /// Snaps that align the segment being drawn (level, plumb, parallel,
+    /// square) or put a point on a line's extension draw their dashed
+    /// guide lines.
+    pub hint_lines: bool,
+    /// How long, in milliseconds, a dragged point rests over another point
+    /// or a curve before its release there joins it with a constraint.
+    pub drag_constraint_delay_ms: f32,
 }
 
 impl Default for SketchOptions {
@@ -423,6 +435,8 @@ impl Default for SketchOptions {
             section_on_open: false,
             shade_regions: true,
             appearance: appearance::Appearance::default(),
+            hint_lines: true,
+            drag_constraint_delay_ms: 400.0,
         }
     }
 }
@@ -945,6 +959,7 @@ impl SketchWorkbench {
             moved: false,
             elements: moving,
             delta: Vec2D::new(0.0, 0.0),
+            target: None,
         });
     }
 
@@ -1776,6 +1791,7 @@ impl SketchWorkbench {
         // by the cursor delta and let the solver settle the rest: whatever
         // shares those points comes along, and the dimensions that are not
         // driving adjust. Consumed so the camera doesn't orbit underneath.
+        let joins = self.options.auto_constraints && !self.snap_off;
         if let Some(drag) = self.dragging.as_mut() {
             let Some(cursor) = self.cursor else {
                 return InputResult::consumed();
@@ -1792,6 +1808,20 @@ impl SketchWorkbench {
             // The dragged points stay under the cursor and the rest gives
             // way; constraints hold during a drag whatever auto update says.
             let held: Vec<Uuid> = drag.points.iter().map(|(id, _)| *id).collect();
+            // A point dragged alone rests on what it is over, lit, the
+            // rest timed from when it got there.
+            let over = match drag.points.as_slice() {
+                [(point, _)] if joins && drag.elements == [*point] => {
+                    step::drag_target(&feature.sketch, *point, cursor, tol)
+                }
+                _ => None,
+            };
+            drag.target = match (drag.target, over) {
+                (Some((was, since)), Some(now)) if was == now => Some((was, since)),
+                (_, Some(now)) => Some((now, Instant::now())),
+                _ => None,
+            };
+            self.hovered = over;
             self.last_solve = Some(solver::solve_holding(&mut feature.sketch, &held));
             self.last_diagnosis = None;
             self.store_sketch(ctx, feature);
@@ -1885,10 +1915,56 @@ impl SketchWorkbench {
                     })),
                     serde_json::Value::Null,
                 );
+                self.join_dropped(ctx, sketch_id, &drag);
             }
             return InputResult::consumed();
         }
         InputResult::ignored()
+    }
+
+    /// A point dragged alone and let go on what it rested over for the
+    /// delay is joined to it, recorded after the drag as the constraint
+    /// tool's call.
+    fn join_dropped(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        sketch_id: FeatureId,
+        drag: &DragState,
+    ) {
+        let Some((target, since)) = drag.target else {
+            return;
+        };
+        let delay = std::time::Duration::from_secs_f32(
+            self.options.drag_constraint_delay_ms.max(0.0) / 1000.0,
+        );
+        let ([point], true) = (drag.elements.as_slice(), self.options.auto_constraints) else {
+            return;
+        };
+        if since.elapsed() < delay {
+            return;
+        }
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some((kind, made)) = step::join_dragged(
+            &mut feature.sketch,
+            *point,
+            target,
+            self.options.avoid_redundant_auto,
+        ) else {
+            return;
+        };
+        ctx.record(
+            "sketch.constrain",
+            commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "kind": kind,
+                "items": ids_json(&[*point, target]),
+            })),
+            serde_json::json!(made),
+        );
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 
     /// Resolve a released box selection. A drag beyond the snap tolerance
@@ -3849,7 +3925,18 @@ impl Workbench for SketchWorkbench {
             "Solver & constraints",
             vec![
                 PrefRow::toggle("Auto constraints", &mut self.options.auto_constraints)
-                    .hint("Horizontal and vertical on axis-snapped lines while drawing"),
+                    .hint("Horizontal, vertical, parallel and perpendicular on snapped lines while drawing, and coincident or on-object where a drag lets go"),
+                PrefRow::qty(
+                    "Drag constraint delay",
+                    ui_kit::widgets::QtyField::new(&mut self.options.drag_constraint_delay_ms)
+                        .unit("ms")
+                        .decimals(0)
+                        .speed(10.0)
+                        .range(0.0..=5000.0),
+                )
+                .hint("How long a dragged point rests on a target before letting go constrains it there"),
+                PrefRow::toggle("Hint lines", &mut self.options.hint_lines)
+                    .hint("Dashed guides for level, plumb, parallel, perpendicular and extension snaps"),
                 PrefRow::toggle(
                     "Avoid redundant auto constraints",
                     &mut self.options.avoid_redundant_auto,
@@ -4618,6 +4705,7 @@ impl SketchWorkbench {
             snap,
             self.options.construction_on_top,
             &self.options.appearance,
+            self.options.hint_lines,
         )
     }
 

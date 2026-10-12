@@ -224,6 +224,44 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
     assert_replays(&s.recorded, before, id, &done);
 }
 
+/// Lines snapped parallel and square to another, a point on its extension,
+/// and an end dragged onto another end replay with the constraints they
+/// left: the drag as `sketch.drag` and then `sketch.constrain`.
+#[test]
+fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    s.wb.options.drag_constraint_delay_ms = 0.0;
+    s.click(1.0, 10.0, "sketch.line");
+    s.click(11.0, 15.0, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+    s.click(2.0, -12.0, "sketch.line");
+    s.click(12.0, -6.7, "sketch.line");
+    s.click(6.4, 4.1, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+    s.click(14.1, 16.8, "sketch.point");
+    s.press(6.5, 4.0, "sketch.select");
+    s.move_to(1.0, 10.0, "sketch.select");
+    s.release(1.0, 10.0, "sketch.select");
+
+    let done = summary(&s.sketch(id));
+    for kind in ["Parallel", "Perpendicular", "PointOnLine", "Coincident"] {
+        let held = s
+            .sketch(id)
+            .constraints
+            .iter()
+            .any(|c| format!("{:?}", c.kind).starts_with(kind));
+        assert!(held, "{kind}: {:?}", s.sketch(id).constraints);
+    }
+    let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
+    assert_eq!(
+        kinds[kinds.len() - 2..],
+        ["sketch.drag", "sketch.constrain"],
+        "{:#?}",
+        s.recorded
+    );
+    assert_replays(&s.recorded, before, id, &done);
+}
+
 /// A line tool's arc, dragged from the end it draws from, records with the
 /// line's other points and replays to the same arc.
 #[test]

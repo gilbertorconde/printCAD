@@ -276,7 +276,9 @@ pub(super) fn polyline(
 }
 
 /// A segment drawn to a perpendicular or tangent snap, held square to or
-/// touching the curve it landed on; what was added, for the log.
+/// touching the curve it landed on, or drawn along a parallel or square
+/// direction, held parallel or square to the line it follows; what was
+/// added, for the log.
 fn square_or_touching(
     sketch: &mut Sketch,
     line: Uuid,
@@ -284,12 +286,17 @@ fn square_or_touching(
 ) -> Option<&'static str> {
     let curve = snapped.curve?;
     let kind = match (snapped.kind?, sketch.get_geometry(curve)?) {
-        (snap::SnapKind::Perpendicular, GeometryElement::Line(_)) => {
-            ConstraintKind::Perpendicular {
-                line1: line,
-                line2: curve,
-            }
-        }
+        (
+            snap::SnapKind::Perpendicular | snap::SnapKind::PerpendicularTo,
+            GeometryElement::Line(_),
+        ) => ConstraintKind::Perpendicular {
+            line1: line,
+            line2: curve,
+        },
+        (snap::SnapKind::Parallel, GeometryElement::Line(_)) => ConstraintKind::Parallel {
+            line1: line,
+            line2: curve,
+        },
         (snap::SnapKind::Tangent, GeometryElement::Circle(_) | GeometryElement::Arc(_)) => {
             ConstraintKind::Tangent {
                 line_or_circle1: line,
@@ -298,10 +305,10 @@ fn square_or_touching(
         }
         _ => return None,
     };
-    let said = if matches!(kind, ConstraintKind::Perpendicular { .. }) {
-        " [auto: perpendicular]"
-    } else {
-        " [auto: tangent]"
+    let said = match kind {
+        ConstraintKind::Perpendicular { .. } => " [auto: perpendicular]",
+        ConstraintKind::Parallel { .. } => " [auto: parallel]",
+        _ => " [auto: tangent]",
     };
     sketch.add_constraint(kind);
     Some(said)
