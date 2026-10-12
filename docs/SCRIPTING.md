@@ -2005,7 +2005,7 @@ Notes:
 - Each click is in the sketch's millimetres and snaps as a click in the view does: one on the origin is held there and one on an axis is held on it, the constraints coming with what is made.
 - A tool takes the clicks its shape needs: line, circle (centre, then a point on it) and slot (the ends of its centre line) two; rect_center its centre, then a corner; ellipse its centre, an end of the major axis, then a point on it. Clicks short of a shape make nothing, without an error.
 - Sizes not clicked come from `params`: `slot_width` 4 mm, `polygon_sides` 6, `fillet_radius` and `chamfer_length` 2 mm when not given. A fillet or chamfer takes one click on the corner. A bspline ends with the word "finish" in `points`.
-- A value typed at a click (`typed = {length = 20}`) sets the shape's size; with `constrain = true` it is kept as a dimension.
+- A value typed at a click (`typed = {length = 20}`) sets the shape's size; with `constrain = true` it is kept as a dimension. The names are length, angle, width, height, diameter, radius, major_radius, minor_radius, sweep (an arc's turn, degrees counter-clockwise) and x and y (a shape's first point).
 - It returns every element made, end points and centres included, and every constraint made with them.
 
 See also `pc.sketch.polyline`, `pc.sketch.rect`, `pc.sketch.circle`.

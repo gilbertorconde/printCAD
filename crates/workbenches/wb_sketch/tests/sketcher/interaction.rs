@@ -143,8 +143,41 @@ impl Harness {
         );
     }
 
+    /// A key press, followed as the app follows it by the text it types
+    /// while the bench takes typed values.
     fn key(&mut self, key: KeyCode, tool: Option<&str>) {
+        let text = number_text(key).filter(|_| self.wb.takes_numeric_input());
         self.event(WorkbenchInputEvent::KeyPress { key }, tool);
+        if let Some(text) = text {
+            self.event(
+                WorkbenchInputEvent::Text {
+                    text: text.to_string(),
+                },
+                tool,
+            );
+        }
+    }
+
+    /// Typing `text` one character at a time, none of them a shortcut.
+    fn type_text(&mut self, text: &str, tool: Option<&str>) {
+        for c in text.chars() {
+            self.event(
+                WorkbenchInputEvent::Text {
+                    text: c.to_string(),
+                },
+                tool,
+            );
+        }
+    }
+
+    /// A paste of `text`.
+    fn paste(&mut self, text: &str, tool: Option<&str>) {
+        self.event(
+            WorkbenchInputEvent::Text {
+                text: text.to_string(),
+            },
+            tool,
+        );
     }
 
     /// Create a sketch feature directly (the interactive path goes through
@@ -2409,6 +2442,190 @@ fn backspace_edits_typed_buffer_before_deleting_geometry() {
     h.key(KeyCode::Key0, Some("sketch.line")); // "20"
     h.key(KeyCode::Enter, Some("sketch.line"));
     assert_eq!(distance_constraints(&h.sketch()), vec![(20.0, true)]);
+}
+
+/// Every point of the sketch, where it is.
+fn point_positions(sketch: &Sketch) -> Vec<glam::Vec2> {
+    sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some(p.position.to_glam()),
+            _ => None,
+        })
+        .collect()
+}
+
+fn has_point_near(sketch: &Sketch, x: f32, y: f32) -> bool {
+    point_positions(sketch)
+        .iter()
+        .any(|p| (*p - glam::Vec2::new(x, y)).length() < 1e-3)
+}
+
+#[test]
+fn typed_arc_sweep_turns_the_end_and_holds_the_angle() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(2.0, 3.0, "sketch.arc"); // centre
+    h.click(12.0, 3.0, "sketch.arc"); // start
+    h.mouse_move(5.0, -4.0, "sketch.arc");
+    h.key(KeyCode::Key9, Some("sketch.arc"));
+    h.key(KeyCode::Key0, Some("sketch.arc"));
+    h.key(KeyCode::Enter, Some("sketch.arc"));
+
+    let sketch = h.sketch();
+    assert_eq!(h.counts().3, 1, "the arc is made");
+    assert!(
+        has_point_near(&sketch, 2.0, 13.0),
+        "ends a quarter turn on: {:?}",
+        point_positions(&sketch)
+    );
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::ArcAngle { angle_rad, .. }
+            if (angle_rad.to_degrees() - 90.0).abs() < 1e-3
+    ) && c.driving));
+}
+
+#[test]
+fn typed_polygon_rotation_turns_its_first_vertex() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(2.0, 3.0, "sketch.polygon");
+    h.key(KeyCode::Key1, Some("sketch.polygon"));
+    h.key(KeyCode::Key0, Some("sketch.polygon"));
+    h.key(KeyCode::Tab, Some("sketch.polygon"));
+    h.key(KeyCode::Key3, Some("sketch.polygon"));
+    h.key(KeyCode::Key0, Some("sketch.polygon"));
+    h.key(KeyCode::Enter, Some("sketch.polygon"));
+
+    let sketch = h.sketch();
+    let (cos, sin) = (30f32.to_radians().cos(), 30f32.to_radians().sin());
+    assert!(
+        has_point_near(&sketch, 2.0 + 10.0 * cos, 3.0 + 10.0 * sin),
+        "a vertex 30° round: {:?}",
+        point_positions(&sketch)
+    );
+    // A hexagon's first side runs at the turn + 90° + 30°.
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::AngleToAxis { angle_rad, .. }
+            if (angle_rad.to_degrees() - 150.0).abs() < 1e-3
+    )));
+}
+
+#[test]
+fn typed_slot_width_sizes_the_caps() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(2.0, 3.0, "sketch.slot");
+    h.mouse_move(10.0, 3.5, "sketch.slot");
+    h.key(KeyCode::Key2, Some("sketch.slot"));
+    h.key(KeyCode::Key0, Some("sketch.slot"));
+    h.key(KeyCode::Tab, Some("sketch.slot")); // angle
+    h.key(KeyCode::Tab, Some("sketch.slot")); // width
+    h.key(KeyCode::Key6, Some("sketch.slot"));
+    h.key(KeyCode::Enter, Some("sketch.slot"));
+
+    let sketch = h.sketch();
+    let caps: Vec<f32> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.radius),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(caps.len(), 2);
+    assert!(caps.iter().all(|r| (r - 3.0).abs() < 1e-3), "{caps:?}");
+    assert!(sketch.constraints.iter().any(|c| matches!(
+        c.kind,
+        ConstraintKind::Radius { radius, .. } if (radius - 3.0).abs() < 1e-5
+    )));
+    assert_eq!(distance_constraints(&sketch), vec![(20.0, true)]);
+}
+
+#[test]
+fn typed_x_and_y_place_the_first_point() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.mouse_move(30.0, 20.0, "sketch.line");
+    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.key(KeyCode::Tab, Some("sketch.line"));
+    h.key(KeyCode::Minus, Some("sketch.line"));
+    h.key(KeyCode::Key7, Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.click(20.0, 13.0, "sketch.line");
+
+    let sketch = h.sketch();
+    assert_eq!(h.counts().1, 1, "one line");
+    assert!(
+        has_point_near(&sketch, 5.0, -7.0),
+        "it starts at the typed point: {:?}",
+        point_positions(&sketch)
+    );
+}
+
+#[test]
+fn a_formula_or_a_paste_types_a_length() {
+    let mut h = Harness::new();
+    let sizes = h.doc.add_variable_set("Sizes").unwrap();
+    h.doc.set_variable(sizes, "w", "12 mm", None).unwrap();
+    h.create_sketch();
+    let mut registry = core_document::DocumentService::default();
+    registry
+        .register_workbench(Box::new(SketchWorkbench::default()))
+        .unwrap();
+    registry.evaluate(&mut h.doc);
+
+    h.click(3.0, 4.0, "sketch.line");
+    h.mouse_move(13.0, 4.5, "sketch.line");
+    h.type_text("Sizes.w * 2", Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    assert_eq!(distance_constraints(&h.sketch()), vec![(24.0, true)]);
+
+    // On from the line's end, a pasted length with a decimal comma.
+    h.mouse_move(20.0, 20.0, "sketch.line");
+    h.paste("7,5", Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    assert_eq!(
+        distance_constraints(&h.sketch()),
+        vec![(24.0, true), (7.5, true)]
+    );
+}
+
+#[test]
+fn an_unfinished_formula_commits_nothing() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.type_text("2 *", Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    assert_eq!(h.counts().1, 0, "kept to be mended");
+    h.type_text(" 6", Some("sketch.line"));
+    h.key(KeyCode::Enter, Some("sketch.line"));
+    assert_eq!(distance_constraints(&h.sketch()), vec![(12.0, true)]);
+}
+
+#[test]
+fn a_typed_length_keeps_its_way_as_the_cursor_crosses_the_start() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.mouse_move(13.0, 4.5, "sketch.line");
+    h.key(KeyCode::Key8, Some("sketch.line"));
+    // Back over the start and out the other side.
+    h.mouse_move(3.5, 4.1, "sketch.line");
+    h.mouse_move(-7.0, 3.5, "sketch.line");
+    h.key(KeyCode::Enter, Some("sketch.line"));
+
+    let sketch = h.sketch();
+    let end = point_positions(&sketch)
+        .into_iter()
+        .find(|p| (*p - glam::Vec2::new(3.0, 4.0)).length() > 1.0)
+        .expect("the line's end");
+    assert!(end.x > 10.0, "still to the right of the start: {end:?}");
+    assert_eq!(distance_constraints(&sketch), vec![(8.0, true)]);
 }
 
 // ---------------------------------------------------------------------------
@@ -4982,4 +5199,25 @@ fn a_point_dragged_onto_a_line_is_held_on_it() {
         "{:?}",
         sketch.constraints
     );
+}
+
+
+/// The character a number key types, as the app sends it after the key.
+fn number_text(key: KeyCode) -> Option<&'static str> {
+    Some(match key {
+        KeyCode::Key0 => "0",
+        KeyCode::Key1 => "1",
+        KeyCode::Key2 => "2",
+        KeyCode::Key3 => "3",
+        KeyCode::Key4 => "4",
+        KeyCode::Key5 => "5",
+        KeyCode::Key6 => "6",
+        KeyCode::Key7 => "7",
+        KeyCode::Key8 => "8",
+        KeyCode::Key9 => "9",
+        KeyCode::Period => ".",
+        KeyCode::Comma => ",",
+        KeyCode::Minus => "-",
+        _ => return None,
+    })
 }

@@ -52,7 +52,7 @@ pub(crate) fn click(
     settings: &StepSettings,
     selected: &HashSet<Uuid>,
 ) -> StepOutcome {
-    capture.sync(state);
+    capture.sync(state, Some(tool));
     // A plain click lands where the snap cue said; typed values place it
     // themselves.
     let snapped = typed.is_empty() && crate::is_draw_tool(tool);
@@ -78,7 +78,8 @@ pub(crate) fn click(
         .then(|| sketch.geometry.iter().map(GeometryElement::id).collect());
     let state_before = state.clone();
     let constraints_before: HashSet<Uuid> = sketch.constraints.iter().map(|c| c.id).collect();
-    let effect = tools::handle_click(state, tool, sketch, cursor, tol, &settings.params, selected);
+    let params = ovp::typed_params(&settings.params, state, typed);
+    let effect = tools::handle_click(state, tool, sketch, cursor, tol, &params, selected);
     if let Some(before) = before {
         let made: Vec<Uuid> = sketch
             .geometry
@@ -155,12 +156,16 @@ pub(crate) fn click(
 
 /// The line tool's arc to `cursor`: tangent to the curve that ends where
 /// the line tool draws from, made as the polyline makes its arcs, after
-/// which the line tool draws on from the arc's end.
+/// which the line tool draws on from the arc's end. `typed` values (a
+/// radius, a sweep) shape it as they shape a polyline's.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn line_arc_click(
     state: &mut ToolState,
     capture: &mut DimCapture,
     sketch: &mut Sketch,
     cursor: Vec2D,
+    typed: &[(FieldKind, f32)],
+    constrain: bool,
     settings: &StepSettings,
     selected: &HashSet<Uuid>,
 ) -> StepOutcome {
@@ -178,8 +183,8 @@ pub(crate) fn line_arc_click(
         "sketch.polyline",
         sketch,
         cursor,
-        &[],
-        false,
+        typed,
+        constrain,
         settings,
         selected,
     );
@@ -332,6 +337,9 @@ pub(crate) fn field_name(kind: FieldKind) -> &'static str {
         FieldKind::Radius => "radius",
         FieldKind::MajorRadius => "major_radius",
         FieldKind::MinorRadius => "minor_radius",
+        FieldKind::Sweep => "sweep",
+        FieldKind::X => "x",
+        FieldKind::Y => "y",
     }
 }
 
@@ -345,6 +353,9 @@ pub(crate) fn field_of(name: &str) -> Option<FieldKind> {
         "radius" => FieldKind::Radius,
         "major_radius" => FieldKind::MajorRadius,
         "minor_radius" => FieldKind::MinorRadius,
+        "sweep" => FieldKind::Sweep,
+        "x" => FieldKind::X,
+        "y" => FieldKind::Y,
         _ => return None,
     })
 }

@@ -637,7 +637,9 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .note(
             "A value typed at a click (`typed = {length = 20}`) sets the shape's size; with \
-             `constrain = true` it is kept as a dimension.",
+             `constrain = true` it is kept as a dimension. The names are length, angle, \
+             width, height, diameter, radius, major_radius, minor_radius, sweep (an arc's \
+             turn, degrees counter-clockwise) and x and y (a shape's first point).",
         )
         .note(
             "It returns every element made, end points and centres included, and every \
@@ -3685,12 +3687,14 @@ fn draw(
                 if tool == "sketch.line"
                     && click.get("arc").and_then(Value::as_bool) == Some(true) =>
             {
-                let (at, _, _) = click_of(click)?;
+                let (at, typed, constrain) = click_of(click)?;
                 let outcome = step::line_arc_click(
                     &mut state,
                     &mut capture,
                     sketch,
                     at,
+                    &typed,
+                    constrain,
                     &settings,
                     &selected,
                 );

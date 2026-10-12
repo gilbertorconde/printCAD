@@ -1316,30 +1316,46 @@ impl SketchWorkbench {
         }
         // The copy tool is the move tool with at least one copy.
         let params = ToolParams {
-            copies: self.effective_copies(),
+            copies: self.effective_copies(&self.tool_params),
             auto_constraints: self.options.auto_constraints,
             ..self.tool_params
         };
-        self.dim_capture.sync(&self.tool_state);
-        let typed = self.dim_capture.typed();
+        self.dim_capture.sync(&self.tool_state, Some(tool));
+        let typed = self.dim_capture.typed(ctx.document);
+        if let Some(why) = self.dim_capture.error(ctx.document) {
+            ctx.log_warn(format!("Not used: {why}"));
+        }
+        // Typed values read the cursor as keeping the way it was going.
+        let cursor = self
+            .dim_capture
+            .steer(&self.tool_state, &feature.sketch, cursor);
         let settings = step::StepSettings {
             tol,
             params,
             construction: self.construction_mode(),
             avoid_redundant: self.options.avoid_redundant_auto,
         };
+        // The line tool's arc: let go after a drag from its end, or typed
+        // while the drag is under way.
+        let arc = tool == "sketch.line"
+            && (std::mem::take(&mut self.arc_click)
+                || matches!(self.tool_state, ToolState::PolylineFrom { .. }));
         self.note_draw_click(ctx, &feature, tool, cursor, &typed, constrain, &settings);
-        let arc = tool == "sketch.line" && std::mem::take(&mut self.arc_click);
         let outcome = if arc {
             // Recorded as the arc it is.
             if let Some(event) = self.draw_record.as_mut().and_then(|r| r.events.last_mut()) {
-                *event = serde_json::json!({"x": cursor.x, "y": cursor.y, "arc": true});
+                if !event.is_object() {
+                    *event = serde_json::json!({"x": cursor.x, "y": cursor.y});
+                }
+                event["arc"] = serde_json::json!(true);
             }
             step::line_arc_click(
                 &mut self.tool_state,
                 &mut self.dim_capture,
                 &mut feature.sketch,
                 cursor,
+                &typed,
+                constrain,
                 &settings,
                 &self.selected,
             )
@@ -1764,6 +1780,10 @@ impl SketchWorkbench {
         };
         let plane = feature.plane;
         self.cursor = Self::cursor_to_sketch(ctx, &plane, viewport_pos);
+        if let Some(cursor) = self.cursor {
+            self.dim_capture
+                .track(&self.tool_state, &feature.sketch, cursor);
+        }
 
         // A line tool press that moves far enough is a drag; from an end
         // something runs into, the drag draws a tangent arc.
@@ -2053,12 +2073,12 @@ impl SketchWorkbench {
 
     /// The copy count the transform tools take: the copy tool makes one
     /// copy at least (two elements, when the count includes the original).
-    fn effective_copies(&self) -> u32 {
-        let least = if self.tool_params.copies_total { 2 } else { 1 };
+    fn effective_copies(&self, params: &ToolParams) -> u32 {
+        let least = if params.copies_total { 2 } else { 1 };
         if self.copy_mode {
-            self.tool_params.copies.max(least)
+            params.copies.max(least)
         } else {
-            self.tool_params.copies
+            params.copies
         }
     }
 
@@ -2434,6 +2454,14 @@ impl SketchWorkbench {
         let Some(tool) = tool.filter(|t| *t != "sketch.select") else {
             return InputResult::ignored();
         };
+        // A value that does not work out is said, and kept to be mended.
+        if let Some(why) = self.dim_capture.error(ctx.document) {
+            ctx.log_warn(why);
+            return InputResult::consumed();
+        }
+        // A press held through the typing lands here: its release is no
+        // second click.
+        self.line_press = None;
         // Anchor the derived position on the last known cursor; the
         // override falls back to the +x direction when it is degenerate.
         let cursor = self.cursor.unwrap_or(Vec2D::new(0.0, 0.0));
@@ -2457,6 +2485,28 @@ impl SketchWorkbench {
 
     /// Consolidated key handling: on-view parameter capture first (typing
     /// digits into the focused dimension field), then the global keys.
+    /// Text typed or pasted while a drawing tool takes values: into the
+    /// focused field.
+    fn handle_text(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        tool: Option<&str>,
+        text: &str,
+    ) -> InputResult {
+        self.dim_capture.sync(&self.tool_state, tool);
+        if !self.dim_capture.has_typed_input()
+            && let (Some(cursor), Some(feature)) = (self.cursor, self.get_active_sketch(ctx))
+        {
+            self.dim_capture
+                .track(&self.tool_state, &feature.sketch, cursor);
+        }
+        if self.dim_capture.handle_text(text) {
+            InputResult::consumed()
+        } else {
+            InputResult::ignored()
+        }
+    }
+
     fn handle_key_press(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
@@ -2466,7 +2516,7 @@ impl SketchWorkbench {
         // A key between two clicks makes them two clicks, not a double.
         self.last_geometry_click = None;
         self.last_empty_click = None;
-        self.dim_capture.sync(&self.tool_state);
+        self.dim_capture.sync(&self.tool_state, tool);
         if self.dim_capture.is_active() {
             match key {
                 KeyCode::Enter if self.dim_capture.has_typed_input() => {
@@ -2849,7 +2899,12 @@ impl Workbench for SketchWorkbench {
     }
 
     fn takes_numeric_input(&self) -> bool {
-        !ovp::fields_for(&self.tool_state).is_empty()
+        self.active_sketch_id.is_some()
+            && !ovp::fields_for(&self.tool_state, self.last_tool.as_deref()).is_empty()
+    }
+
+    fn takes_text_input(&self) -> bool {
+        self.active_sketch_id.is_some() && self.dim_capture.takes_text()
     }
 
     fn settings_json(&self) -> Option<serde_json::Value> {
@@ -3830,7 +3885,7 @@ impl Workbench for SketchWorkbench {
                 self.tool_state = ToolState::Idle;
             }
             self.dim_capture.clear_buffers();
-            self.dim_capture.sync(&self.tool_state);
+            self.dim_capture.sync(&self.tool_state, active_tool);
             self.flush_draw_record(ctx);
             if let Some(tool) = active_tool {
                 self.apply_variant_settings(tool);
@@ -3898,6 +3953,7 @@ impl Workbench for SketchWorkbench {
                 self.handle_mouse_move(ctx, tool, *viewport_pos)
             }
             WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
+            WorkbenchInputEvent::Text { text } => self.handle_text(ctx, tool, text),
             WorkbenchInputEvent::Action { id } => self.handle_action(id),
             _ => InputResult::ignored(),
         }
@@ -4270,14 +4326,21 @@ impl Workbench for SketchWorkbench {
         };
         let mut keys: Vec<(String, &'static str)> = Vec::new();
         let mut key = |key: &str, meaning: &'static str| keys.push((key.to_string(), meaning));
+        // Enter locks a typed value, and otherwise finishes a chain.
+        let typed = self.dim_capture.has_typed_input();
         if self.dim_capture.is_active() {
             key("Tab", "next field");
+        }
+        if typed {
             key("Enter", "lock value");
-        } else if matches!(
+        }
+        if matches!(
             self.tool_state,
             ToolState::LineFrom { chain: true, .. } | ToolState::BSplineDraw { .. }
         ) {
-            key("Enter", "finish");
+            if !typed {
+                key("Enter", "finish");
+            }
         } else if let ToolState::PolylineFrom {
             segment, heading, ..
         } = self.tool_state
@@ -4295,7 +4358,9 @@ impl Workbench for SketchWorkbench {
                     },
                 );
             }
-            key("Enter", "finish");
+            if !typed {
+                key("Enter", "finish");
+            }
         }
         // Selecting is what the view does at rest: it takes no card.
         let resting = tool == "sketch.select" && self.tool_state.hint().is_none();
@@ -4306,13 +4371,17 @@ impl Workbench for SketchWorkbench {
         let zoom = 1.0 / proj.units_per_px().max(1e-6);
         let ovp = self.cursor.and_then(|cursor| {
             let px = proj.to_px(cursor)?;
-            let rows =
-                ovp::readout_rows(&self.dim_capture, &self.tool_state, &feature.sketch, cursor);
-            // An ellipse's axes take no constraint: typed, they only size it.
-            let hint = if matches!(
-                self.tool_state,
-                ToolState::EllipseCenter { .. } | ToolState::EllipseMajor { .. }
-            ) {
+            let rows = ovp::readout_rows(
+                &self.dim_capture,
+                &self.tool_state,
+                self.last_tool.as_deref(),
+                &feature.sketch,
+                cursor,
+                &self.tool_params,
+                ctx.document,
+            );
+            // Some steps take no constraint: typed, they only place the click.
+            let hint = if ovp::only_places(&self.tool_state) {
                 "Tab next · Enter places it"
             } else {
                 "Tab next · Enter constrains · click keeps free"
@@ -4652,7 +4721,7 @@ impl SketchWorkbench {
             (Some(tool), Some(cursor))
                 if is_draw_tool(tool)
                     && self.box_select.is_none()
-                    && self.dim_capture.typed().is_empty() =>
+                    && self.dim_capture.typed(ctx.document).is_empty() =>
             {
                 let (cursor, tol) = self.landing(ctx, feature, tool, cursor);
                 Some(tools::snap_at(
@@ -4674,7 +4743,7 @@ impl SketchWorkbench {
             }
         }
         // Typed values place the preview where they will place the click.
-        let typed = self.dim_capture.typed();
+        let typed = self.dim_capture.typed(ctx.document);
         let preview_cursor = self.cursor.map(|cursor| {
             if typed.is_empty() {
                 // A transform's ghost goes where its click would.
@@ -4685,9 +4754,13 @@ impl SketchWorkbench {
                     _ => cursor,
                 }
             } else {
+                let cursor = self
+                    .dim_capture
+                    .steer(&self.tool_state, &feature.sketch, cursor);
                 ovp::override_cursor(&self.tool_state, &feature.sketch, cursor, &typed)
             }
         });
+        let params = ovp::typed_params(&self.tool_params, &self.tool_state, &typed);
         overlay::build_overlays(
             proj,
             pal,
@@ -4699,8 +4772,8 @@ impl SketchWorkbench {
             preview_cursor,
             &ToolParams {
                 // The copy tool makes one copy at least.
-                copies: self.effective_copies(),
-                ..self.tool_params
+                copies: self.effective_copies(&params),
+                ..params
             },
             self.box_select.as_ref().map(|b| (b.anchor, b.current)),
             self.last_tool.as_deref(),
@@ -5278,7 +5351,7 @@ impl SketchWorkbench {
         if self.activated_tool.take().is_some() {
             self.tool_state = ToolState::Idle;
             self.dim_capture.clear_buffers();
-            self.dim_capture.sync(&self.tool_state);
+            self.dim_capture.sync(&self.tool_state, None);
             self.flush_draw_record(ctx);
         }
         let minimum = f64::from(self.options.min_wall);

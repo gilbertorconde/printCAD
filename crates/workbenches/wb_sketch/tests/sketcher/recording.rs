@@ -97,8 +97,19 @@ impl Session {
         self.event(WorkbenchInputEvent::MouseMove { viewport_pos }, Some(tool));
     }
 
+    /// A key press, followed as the app follows it by the text it types
+    /// while the bench takes typed values.
     fn key(&mut self, key: KeyCode, tool: Option<&str>) {
+        let text = number_text(key).filter(|_| self.wb.takes_numeric_input());
         self.event(WorkbenchInputEvent::KeyPress { key }, tool);
+        if let Some(text) = text {
+            self.event(
+                WorkbenchInputEvent::Text {
+                    text: text.to_string(),
+                },
+                tool,
+            );
+        }
     }
 
     fn sketch(&self, id: FeatureId) -> Sketch {
@@ -384,6 +395,41 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
     assert_replays(&s.recorded, before, id, &done);
 }
 
+#[test]
+fn typed_sweeps_widths_and_a_first_point_replay_too() {
+    let (mut s, id, before) = session_on_a_sketch();
+    // A line from a typed first point.
+    s.move_to(4.0, 4.0, "sketch.line");
+    s.key(KeyCode::Key3, Some("sketch.line"));
+    s.key(KeyCode::Tab, Some("sketch.line"));
+    s.key(KeyCode::Key2, Some("sketch.line"));
+    s.key(KeyCode::Enter, Some("sketch.line"));
+    s.click(9.0, 5.0, "sketch.line");
+    s.key(KeyCode::Escape, Some("sketch.line"));
+    // An arc turned through a typed sweep.
+    s.click(-8.0, 3.0, "sketch.arc");
+    s.click(-3.0, 3.0, "sketch.arc");
+    s.key(KeyCode::Key4, Some("sketch.arc"));
+    s.key(KeyCode::Key5, Some("sketch.arc"));
+    s.key(KeyCode::Enter, Some("sketch.arc"));
+    // A slot of a typed width, the cursor crossing back over its start
+    // after its length is typed.
+    s.click(2.0, -6.0, "sketch.slot");
+    s.move_to(8.0, -5.5, "sketch.slot");
+    s.key(KeyCode::Key9, Some("sketch.slot"));
+    s.move_to(-4.0, -6.5, "sketch.slot");
+    s.key(KeyCode::Tab, Some("sketch.slot"));
+    s.key(KeyCode::Tab, Some("sketch.slot"));
+    s.key(KeyCode::Key2, Some("sketch.slot"));
+    s.key(KeyCode::Enter, Some("sketch.slot"));
+    s.key(KeyCode::A, None);
+
+    let sketch = s.sketch(id);
+    let done = summary(&sketch);
+    assert!(done.1.contains(&"arc"), "{done:?}");
+    assert_replays(&s.recorded, before, id, &done);
+}
+
 impl Session {
     /// A menu command of the bench, as the Edit menu runs it.
     fn edit_menu(&mut self, id: &str) {
@@ -643,4 +689,24 @@ fn editing_aids_replay_too() {
         s.recorded
     );
     assert_replays(&s.recorded, before, id, &done);
+}
+
+/// The character a number key types, as the app sends it after the key.
+fn number_text(key: KeyCode) -> Option<&'static str> {
+    Some(match key {
+        KeyCode::Key0 => "0",
+        KeyCode::Key1 => "1",
+        KeyCode::Key2 => "2",
+        KeyCode::Key3 => "3",
+        KeyCode::Key4 => "4",
+        KeyCode::Key5 => "5",
+        KeyCode::Key6 => "6",
+        KeyCode::Key7 => "7",
+        KeyCode::Key8 => "8",
+        KeyCode::Key9 => "9",
+        KeyCode::Period => ".",
+        KeyCode::Comma => ",",
+        KeyCode::Minus => "-",
+        _ => return None,
+    })
 }
