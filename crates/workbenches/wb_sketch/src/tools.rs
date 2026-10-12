@@ -25,6 +25,7 @@ pub use draw::{
 };
 pub use join::{JOIN_TOLERANCE, join};
 pub use modify::{next_stroke_crossing, trim_preview};
+pub(crate) use transform::adapt_constraints;
 pub use transform::{
     Similarity, array, copy_constraints, copy_from, copy_mapped, remove_axis_alignment,
 };

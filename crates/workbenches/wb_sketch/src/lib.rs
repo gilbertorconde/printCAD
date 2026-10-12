@@ -5925,7 +5925,7 @@ impl SketchWorkbench {
                 .collect(),
             feature.sketch.constraints.iter().map(|c| c.id).collect(),
         );
-        let (count, constraints, xf) =
+        let (count, constraints) =
             match commands::carbon_copy(ctx.document, target, &mut feature.sketch, source) {
                 Ok(done) => done,
                 Err(why) => {
@@ -5944,7 +5944,7 @@ impl SketchWorkbench {
         self.sketch_picker = None;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
-        ctx.log_info(carbon_copy_log(&name, count, constraints, &xf));
+        ctx.log_info(carbon_copy_log(&name, count, constraints));
     }
 
     /// A new sketch on the edited one's plane holding its geometry and the
@@ -6666,39 +6666,34 @@ pub(crate) fn plane_map(
     ))
 }
 
-/// Copy all of `source` into `target` under `xf`, and its constraints when
-/// `xf` only moves (under a turn or a mirror, a constraint stated against
-/// the sketch axes would no longer hold). Returns the elements and the
-/// constraints copied.
+/// Copy all of `source` into `target` under `xf`, with its constraints:
+/// those stated against the sketch axes follow a turn or a mirror as the
+/// transform tools' copies do (swapped on a quarter turn, made relative to
+/// one another at any other angle). Geometry projected from a solid,
+/// another sketch or a datum stays projected from it, at the place `xf`
+/// carries it to until the sketch is edited and it is projected again.
+/// Returns the elements and the constraints copied.
 pub(crate) fn copy_sketch_into(
     source: &Sketch,
     target: &mut Sketch,
     xf: &tools::Similarity,
 ) -> (usize, usize) {
     let all: HashSet<Uuid> = source.geometry.iter().map(GeometryElement::id).collect();
+    let before = target.constraints.len();
     let map = tools::copy_mapped(source, target, &all, xf);
-    let constraints = if xf.is_translation() {
-        tools::copy_constraints(source, target, &map, xf)
-    } else {
-        0
-    };
-    (map.len(), constraints)
+    for (old, new) in &map {
+        if let Some(external) = source.external.get(old) {
+            target.external.insert(*new, *external);
+        }
+    }
+    tools::copy_constraints(source, target, &map, xf);
+    let copied: HashSet<Uuid> = map.values().copied().collect();
+    tools::adapt_constraints(target, &copied, xf);
+    (map.len(), target.constraints.len().saturating_sub(before))
 }
 
-pub(crate) fn carbon_copy_log(
-    name: &str,
-    count: usize,
-    constraints: usize,
-    xf: &tools::Similarity,
-) -> String {
-    if xf.is_translation() {
-        format!("Carbon copy of {name}: {count} elements, {constraints} constraints")
-    } else {
-        format!(
-            "Carbon copy of {name}: {count} elements; its constraints stay behind, as its \
-             axes are turned against this sketch's"
-        )
-    }
+pub(crate) fn carbon_copy_log(name: &str, count: usize, constraints: usize) -> String {
+    format!("Carbon copy of {name}: {count} elements, {constraints} constraints")
 }
 
 #[cfg(test)]
@@ -7012,7 +7007,7 @@ mod sketch_picker {
     }
 
     #[test]
-    fn a_carbon_copy_from_a_facing_plane_is_mirrored_and_leaves_its_constraints() {
+    fn a_carbon_copy_from_a_facing_plane_is_mirrored_with_its_constraints() {
         let facing = SketchPlane {
             normal: [0.0, 0.0, -1.0],
             x_axis: [-1.0, 0.0, 0.0],
@@ -7023,8 +7018,80 @@ mod sketch_picker {
         wb.carbon_copy(&mut ctx, other);
         let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
         assert_eq!(copy.geometry.len(), 3);
-        assert!(copy.constraints.is_empty());
         assert!(points(&copy).iter().any(|p| (p.x + 10.0).abs() < 1e-4));
+        // Mirrored about the y axis, a horizontal line stays horizontal.
+        assert!(
+            copy.constraints
+                .iter()
+                .any(|c| matches!(c.kind, ConstraintKind::Horizontal { .. }))
+        );
+        assert!(copy.constraints.iter().any(
+            |c| matches!(c.kind, ConstraintKind::Length { length, .. } if (length - 10.0).abs() < 1e-4)
+        ));
+    }
+
+    /// From a plane turned a quarter against this one, the horizontal line
+    /// comes vertical, and its constraint with it.
+    #[test]
+    fn a_carbon_copy_from_a_quarter_turned_plane_turns_its_constraints() {
+        let turned = SketchPlane {
+            x_axis: [0.0, 1.0, 0.0],
+            y_axis: [-1.0, 0.0, 0.0],
+            ..SketchPlane::xy()
+        };
+        let (mut doc, mut wb, other) = scene(turned, SketchPlane::xy());
+        let mut ctx = ctx(&mut doc);
+        wb.carbon_copy(&mut ctx, other);
+        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
+        assert!(
+            points(&copy)
+                .iter()
+                .any(|p| p.x.abs() < 1e-4 && (p.y - 10.0).abs() < 1e-4)
+        );
+        assert_eq!(copy.constraints.len(), 2);
+        assert!(
+            copy.constraints
+                .iter()
+                .any(|c| matches!(c.kind, ConstraintKind::Vertical { .. }))
+        );
+        assert!(matches!(
+            crate::solver::solve(&mut copy.clone()),
+            crate::solver::SolveOutcome::Converged { .. }
+        ));
+    }
+
+    /// Geometry the other sketch projected from elsewhere is projected in
+    /// the copy too, from the same source.
+    #[test]
+    fn a_carbon_copy_keeps_projected_geometry_projected() {
+        let (mut doc, mut wb, other) = scene(shifted(0.0, 0.0, 5.0), SketchPlane::xy());
+        let source = sketch::ExternalSource::of_reference(sketch::ExternalReference::Datum {
+            datum: Uuid::new_v4(),
+        });
+        let mut data = SketchFeature::from_json(doc.get_feature_data(other).unwrap()).unwrap();
+        let line = data
+            .sketch
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Line(l) => Some(l.id),
+                _ => None,
+            })
+            .unwrap();
+        data.sketch.external.insert(line, source);
+        doc.update_feature_data(other, data.to_json()).unwrap();
+        let mut ctx = ctx(&mut doc);
+        wb.carbon_copy(&mut ctx, other);
+        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
+        let copied = copy
+            .geometry
+            .iter()
+            .find_map(|g| match g {
+                GeometryElement::Line(l) => Some(l.id),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(copy.external.get(&copied), Some(&source));
     }
 
     #[test]

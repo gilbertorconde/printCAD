@@ -1440,7 +1440,10 @@ pub fn register(context: &mut WorkbenchContext) {
         .note(
             "It makes a new sketch, named after this one with \"merged\", on this one's plane \
              and in its body; the sketches merged are left as they are. Constraints come \
-             with the geometry.",
+             with the geometry; under a turn or a mirror those stated against the sketch \
+             axes follow it (swapped on a quarter turn, made parallel or perpendicular to \
+             one another at any other angle). Projected geometry stays projected from its \
+             solid, sketch or datum.",
         )
         .note(
             "Each sketch in `with` must lie on a plane parallel to this one (\"its plane is \
@@ -1475,8 +1478,10 @@ pub fn register(context: &mut WorkbenchContext) {
         .param("from", ParamKind::Id, "The sketch to copy")
         .returns("{elements, constraints}: what it made")
         .note(
-            "The geometry comes with its constraints, as plain geometry of this sketch: free \
-             to edit, not tied to the sketch it came from.",
+            "The geometry comes with its constraints, as geometry of this sketch: free to \
+             edit, not tied to the sketch it came from. Under a turn or a mirror the \
+             constraints stated against the sketch axes follow it, and projected geometry \
+             stays projected from its solid, sketch or datum.",
         )
         .note(
             "`from` must lie on a plane parallel to this one (\"its plane is not parallel to \
@@ -3306,21 +3311,20 @@ fn placed(document: &core_document::Document, id: FeatureId) -> Option<SketchFea
 
 /// Copy sketch `from`'s geometry into `target`, the geometry of sketch
 /// `target_id`, mapped from its plane onto the target's (both where their
-/// bodies sit). How many elements and constraints came, and the map.
+/// bodies sit). How many elements and constraints came.
 pub(crate) fn carbon_copy(
     document: &core_document::Document,
     target_id: FeatureId,
     target: &mut Sketch,
     from: FeatureId,
-) -> Result<(usize, usize, crate::tools::Similarity), String> {
+) -> Result<(usize, usize), String> {
     let onto = placed(document, target_id).ok_or("the sketch is not in this document")?;
     let source = placed(document, from).ok_or("`from` is not a sketch of this document")?;
     if from == target_id {
         return Err("a sketch cannot copy itself".to_string());
     }
     let xf = crate::plane_map(&source.plane, &onto.plane)?;
-    let (count, constraints) = crate::copy_sketch_into(&source.sketch, target, &xf);
-    Ok((count, constraints, xf))
+    Ok(crate::copy_sketch_into(&source.sketch, target, &xf))
 }
 
 /// A new sketch on `sketch`'s plane and body holding its geometry and

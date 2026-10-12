@@ -71,17 +71,6 @@ impl Similarity {
         Self { m, t }
     }
 
-    /// Whether the transform only moves: no turn, scale or mirror, so
-    /// anything stated against the sketch axes (horizontal, a distance in
-    /// x) still holds after it.
-    pub fn is_translation(&self) -> bool {
-        (self.m - Mat2::IDENTITY)
-            .abs()
-            .to_cols_array()
-            .iter()
-            .all(|v| *v < 1e-5)
-    }
-
     pub fn apply(&self, p: Vec2D) -> Vec2D {
         Vec2D::from_glam(self.m * p.to_glam() + self.t)
     }

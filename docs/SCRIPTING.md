@@ -2615,7 +2615,7 @@ assert(math.abs(m.min[1] + 15) < 1e-6 and math.abs(m.max[1] + 5) < 1e-6, "across
 
 Notes:
 
-- It makes a new sketch, named after this one with "merged", on this one's plane and in its body; the sketches merged are left as they are. Constraints come with the geometry.
+- It makes a new sketch, named after this one with "merged", on this one's plane and in its body; the sketches merged are left as they are. Constraints come with the geometry; under a turn or a mirror those stated against the sketch axes follow it (swapped on a quarter turn, made parallel or perpendicular to one another at any other angle). Projected geometry stays projected from its solid, sketch or datum.
 - Each sketch in `with` must lie on a plane parallel to this one ("its plane is not parallel to this one"); its geometry is laid onto this plane, the distance between them dropped.
 
 See also `pc.sketch.carbon_copy`, `pc.sketch.mirror_sketch`.
@@ -2645,7 +2645,7 @@ assert(math.abs(m.max[3] - 1) < 1e-6, "on the first sketch's plane")
 
 Notes:
 
-- The geometry comes with its constraints, as plain geometry of this sketch: free to edit, not tied to the sketch it came from.
+- The geometry comes with its constraints, as geometry of this sketch: free to edit, not tied to the sketch it came from. Under a turn or a mirror the constraints stated against the sketch axes follow it, and projected geometry stays projected from its solid, sketch or datum.
 - `from` must lie on a plane parallel to this one ("its plane is not parallel to this one"); a sketch cannot copy itself.
 
 See also `pc.sketch.merge`, `pc.sketch.external_from`.
