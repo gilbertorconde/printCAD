@@ -25,6 +25,9 @@ use tracing::info;
 use uuid::Uuid;
 
 /// Job submitted from the UI thread to the kernel worker.
+/// A least distance and the closest points on each of the two shapes.
+pub type LeastDistance = (f64, [f64; 3], [f64; 3]);
+
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum KernelRequest {
     /// Read a model file and return its bodies, meshed as they are read,
@@ -32,6 +35,18 @@ pub enum KernelRequest {
     ImportStep {
         path: PathBuf,
         detail: TessellationSettings,
+    },
+    /// The least distance between two faces of solids: each the face of
+    /// its snapshot nearest a point in the solid's own frame, the second
+    /// solid placed in the first's frame by `second_in_first`.
+    MinDistance {
+        body_id: Uuid,
+        token: u64,
+        first: Arc<Vec<u8>>,
+        first_near: [f64; 3],
+        second: Arc<Vec<u8>>,
+        second_near: [f64; 3],
+        second_in_first: [[f64; 4]; 4],
     },
     /// Measure a body's snapshot: volume, area, centre of mass.
     Measure {
@@ -161,6 +176,13 @@ pub enum KernelResponse {
         body_id: Uuid,
         revision: u64,
         result: Result<kernel_api::PhysicalProperties, String>,
+    },
+    /// The least distance between two faces, and the closest points on
+    /// each, in the first face's solid's own frame.
+    MinDistance {
+        body_id: Uuid,
+        token: u64,
+        result: Result<LeastDistance, String>,
     },
     MeshSolidBuilt {
         body_id: Uuid,
@@ -505,6 +527,14 @@ impl KernelWorker {
             })
             .is_ok()
         {
+            self.in_flight = self.in_flight.saturating_add(1);
+        }
+    }
+
+    /// Submit a least-distance measure between two faces; one response
+    /// arrives, tagged with `token`.
+    pub fn request_min_distance(&mut self, request: KernelRequest) {
+        if matches!(request, KernelRequest::MinDistance { .. }) && self.tx.send(request).is_ok() {
             self.in_flight = self.in_flight.saturating_add(1);
         }
     }
@@ -1046,6 +1076,31 @@ fn serve_request(
                         body_id,
                         error: err.to_string(),
                     },
+                }
+            }
+            KernelRequest::MinDistance {
+                body_id,
+                token,
+                first,
+                first_near,
+                second,
+                second_near,
+                second_in_first,
+            } => {
+                use kernel_api::KernelQueries;
+                let queries = &kernel_ogeom::QUERIES;
+                let result = queries
+                    .face_of(&first, first_near)
+                    .and_then(|a| {
+                        let b = queries.face_of(&second, second_near)?;
+                        queries.gap(&a, &b, &second_in_first)
+                    })
+                    .map(|gap| (gap.distance_mm, gap.on_a, gap.on_b))
+                    .map_err(|e| e.to_string());
+                KernelResponse::MinDistance {
+                    body_id,
+                    token,
+                    result,
                 }
             }
             KernelRequest::Measure {

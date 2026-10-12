@@ -128,6 +128,9 @@ pub(crate) struct DocumentSession {
     /// The measure tool: armed with the points, edges or faces picked so
     /// far (up to two).
     pub measure: Option<Vec<crate::app::measure::MeasurePick>>,
+    /// The least distance between the measure tool's two faces, asked of
+    /// the kernel.
+    pub measure_gap: Option<crate::app::measure::MeasureGap>,
     /// The edge under the cursor, found on the CPU against the hovered
     /// body's outline segments.
     pub hovered_edge: Option<crate::app::edges::EdgeHit>,
@@ -293,6 +296,7 @@ impl DocumentSession {
             task_open: false,
             dimension_cache: None,
             measure: None,
+            measure_gap: None,
             hovered_edge: None,
             hovered_face: None,
             face_colored: Default::default(),

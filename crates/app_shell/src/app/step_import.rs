@@ -95,6 +95,7 @@ impl PrintCadApp {
                 | KernelResponse::SolidRead { body_id, .. }
                 | KernelResponse::RepairFailed { body_id, .. }
                 | KernelResponse::Measured { body_id, .. }
+                | KernelResponse::MinDistance { body_id, .. }
                 | KernelResponse::MeshSolidBuilt { body_id, .. }
                 | KernelResponse::MeshSolidFailed { body_id, .. }
                 | KernelResponse::ShapeRefined { body_id, .. }
@@ -295,6 +296,16 @@ impl PrintCadApp {
                                 self.body_name(BodyId(body_id))
                             ));
                         }
+                    }
+                }
+                KernelResponse::MinDistance { token, result, .. } => {
+                    if let Some(gap) = self
+                        .session
+                        .measure_gap
+                        .as_mut()
+                        .filter(|gap| gap.token == token)
+                    {
+                        gap.found = Some(result);
                     }
                 }
                 KernelResponse::Measured {

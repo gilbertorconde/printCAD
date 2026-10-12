@@ -1523,11 +1523,44 @@ impl PrintCadApp {
                     color,
                 ));
             }
-            let lines = match picks.as_slice() {
+            let mut lines = match picks.as_slice() {
                 [a, b] => crate::app::measure::describe_pair(a, b, unit),
                 [one] => one.describe(unit),
                 _ => Vec::new(),
             };
+            // The kernel's least distance between two faces, with the
+            // closest points joined.
+            if let Some(gap) = &self.session.measure_gap {
+                match (&gap.found, gap.in_world()) {
+                    (_, Some((distance, a, b))) => {
+                        lines.insert(
+                            0,
+                            format!(
+                                "Least distance {}",
+                                core_document::format_length_mm(distance, unit, 3)
+                            ),
+                        );
+                        let camera = &self.session.camera;
+                        if let (Some(a), Some(b)) =
+                            (camera.world_to_viewport(a), camera.world_to_viewport(b))
+                        {
+                            let mut line = core_document::ScreenSpaceOverlay::new(
+                                [a.0, a.1],
+                                [b.0, b.1],
+                                color,
+                                2.0,
+                            );
+                            line.dash = Some((5.0, 3.0));
+                            data.overlays.push(line);
+                        }
+                    }
+                    (None, _) => lines.insert(0, "Least distance …".to_string()),
+                    (Some(Err(why)), _) => {
+                        lines.insert(0, format!("Least distance unknown: {why}"));
+                    }
+                    _ => {}
+                }
+            }
             if let [pa, pb] = px.as_slice() {
                 data.overlays.push(core_document::ScreenSpaceOverlay::new(
                     [pa.0, pa.1],

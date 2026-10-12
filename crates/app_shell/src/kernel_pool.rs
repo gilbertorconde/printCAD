@@ -405,6 +405,14 @@ fn failure_of(request: &KernelRequest) -> Failed {
                 error,
             })
         }
+        KernelRequest::MinDistance { body_id, token, .. } => {
+            let (body_id, token) = (*body_id, *token);
+            Box::new(move |error| KernelResponse::MinDistance {
+                body_id,
+                token,
+                result: Err(error),
+            })
+        }
         KernelRequest::Measure {
             body_id, revision, ..
         } => {

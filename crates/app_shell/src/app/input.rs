@@ -511,13 +511,16 @@ impl PrintCadApp {
                 .document
                 .imported_geometry(core_document::BodyId(body))
         });
-        let Some(pick) = pick_at(
+        let Some(mut pick) = pick_at(
             edge,
             mesh.map(|geometry| &*geometry.mesh),
             self.session.hovered_world_pos,
         ) else {
             return false;
         };
+        if let MeasurePick::Face { body, .. } = &mut pick {
+            *body = self.session.hovered_body.map(core_document::BodyId);
+        }
         let unit = self.session.document.display_unit();
         let Some(picks) = self.session.measure.as_mut() else {
             return false;
@@ -532,7 +535,66 @@ impl PrintCadApp {
             _ => Vec::new(),
         };
         app_log::info(format!("Measured {}", lines.join(", ")));
+        self.ask_measure_gap();
         true
+    }
+
+    /// With two faces of solids picked, ask the kernel for the least
+    /// distance between them; otherwise drop the last answer.
+    fn ask_measure_gap(&mut self) {
+        use crate::app::measure::{MeasureGap, MeasurePick};
+        let token = self.session.measure_gap.as_ref().map_or(1, |g| g.token + 1);
+        self.session.measure_gap = None;
+        let Some(
+            [
+                MeasurePick::Face {
+                    point: pa,
+                    body: Some(a),
+                    ..
+                },
+                MeasurePick::Face {
+                    point: pb,
+                    body: Some(b),
+                    ..
+                },
+            ],
+        ) = self.session.measure.as_deref()
+        else {
+            return;
+        };
+        let (a, b, pa, pb) = (*a, *b, *pa, *pb);
+        let document = &self.session.document;
+        let (Some(first), Some(second)) = (
+            document.imported_brep_blob_arc(a),
+            document.imported_brep_blob_arc(b),
+        ) else {
+            return;
+        };
+        let (place_a, place_b) = (document.body_placement(a), document.body_placement(b));
+        let local = |placement: core_document::BodyPlacement, p: [f32; 3]| {
+            placement.inverse().point(p).map(f64::from)
+        };
+        let relative = place_a.inverse().after(&place_b);
+        let m = glam::Mat4::from_rotation_translation(relative.quat(), relative.offset());
+        let rows = m
+            .transpose()
+            .to_cols_array_2d()
+            .map(|row| row.map(f64::from));
+        self.kernel_worker
+            .request_min_distance(crate::kernel_worker::KernelRequest::MinDistance {
+                body_id: a.0,
+                token,
+                first,
+                first_near: local(place_a, pa),
+                second,
+                second_near: local(place_b, pb),
+                second_in_first: rows,
+            });
+        self.session.measure_gap = Some(MeasureGap {
+            token,
+            first_placement: place_a,
+            found: None,
+        });
     }
 
     /// A right click that did not pan: over a body, the menu for that body
