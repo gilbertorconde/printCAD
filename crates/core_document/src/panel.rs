@@ -223,11 +223,17 @@ fn show_one(
             enabled,
         } => {
             let clicked = ui
-                .add_enabled_ui(*enabled, |ui| match style {
-                    ButtonStyle::Primary => widgets::primary_button(ui, label),
-                    ButtonStyle::Secondary => widgets::secondary_button(ui, label),
-                    ButtonStyle::Destructive => widgets::destructive_button(ui, label),
-                    ButtonStyle::Small => widgets::small_secondary_button(ui, label),
+                .add_enabled_ui(*enabled, |ui| {
+                    // A button's label stays on one line: in a row too full
+                    // for it, it moves to the next line rather than wrap a
+                    // letter or two a line.
+                    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+                    match style {
+                        ButtonStyle::Primary => widgets::primary_button(ui, label),
+                        ButtonStyle::Secondary => widgets::secondary_button(ui, label),
+                        ButtonStyle::Destructive => widgets::destructive_button(ui, label),
+                        ButtonStyle::Small => widgets::small_secondary_button(ui, label),
+                    }
                 })
                 .inner
                 .clicked();
@@ -1078,6 +1084,46 @@ mod tests {
                 assert!(value.contains('5') && value.contains('6'), "{value}");
             }
             other => panic!("one cell event: {other:?}"),
+        }
+    }
+
+    /// A button after long text in a narrow row keeps its label on one
+    /// line, at every width the right panel takes.
+    #[test]
+    fn a_button_in_a_full_row_keeps_its_label_on_one_line() {
+        let widgets = vec![Widget::Row {
+            children: vec![
+                Widget::Text {
+                    text: "Hinge 1 turning from 0 to 90 degrees over the motion".into(),
+                    mono: false,
+                },
+                Widget::Button {
+                    id: "remove".into(),
+                    label: "Remove".into(),
+                    style: ButtonStyle::Small,
+                    enabled: true,
+                },
+            ],
+        }];
+        let ctx = egui::Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        for width in (200..=480).step_by(4) {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                ui.set_max_width(width as f32);
+                show(ui, egui::Id::new("rows"), &widgets, None);
+            });
+            output.textures_delta.clear();
+            let rows: Vec<usize> = output
+                .shapes
+                .iter()
+                .filter_map(|clipped| match &clipped.shape {
+                    egui::Shape::Text(text) if text.galley.job.text == "Remove" => {
+                        Some(text.galley.rows.len())
+                    }
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(rows, vec![1], "at {width} px");
         }
     }
 
