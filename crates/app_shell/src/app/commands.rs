@@ -532,6 +532,12 @@ impl PrintCadApp {
                 UiCommand::RemoveRecent(path) => intents.remove_recent.push(path),
                 UiCommand::DownloadDocument => self.download_document(),
                 UiCommand::AnswerUnsaved(answer) => intents.unsaved_answer = Some(answer),
+                UiCommand::AnswerSaveOver(answer) => {
+                    if self.answer_save_over(answer) {
+                        intents.persist_settings = true;
+                    }
+                }
+                UiCommand::DismissFileNotice => self.session.file_safety.newer_notice = false,
             }
         }
 

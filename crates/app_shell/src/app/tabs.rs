@@ -31,6 +31,7 @@ impl PrintCadApp {
                     dirty: session.document.metadata().dirty(),
                     active: slot.tab == self.session.tab,
                     blank: self.tab_is_blank(session),
+                    read_only: session.file_safety.read_only,
                 }
             })
             .collect()

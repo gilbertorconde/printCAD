@@ -317,6 +317,54 @@ pub fn draw_release_notice(
     (details, dismiss)
 }
 
+/// The card saying a newer printCAD wrote the document's file, at the
+/// view's bottom right `lift` above its corner, with `text` and a Save As.
+/// Whether Save As or the close button was pressed.
+pub fn draw_file_notice(
+    ctx: &Context,
+    viewport: egui::Rect,
+    lift: f32,
+    text: &str,
+) -> (bool, bool) {
+    let mut save_as = false;
+    let mut dismiss = false;
+    Area::new(egui::Id::new("file_notice"))
+        .order(VIEW_LAYER)
+        .pivot(Align2::RIGHT_BOTTOM)
+        .fixed_pos(viewport.right_bottom() - Vec2::new(SPACE_4, SPACE_4 + lift))
+        .show(ctx, |ui| {
+            Card::floating()
+                .border(with_alpha(WARNING, 0.6))
+                .padding(SPACE_3)
+                .show(ui, |ui| {
+                    ui.set_max_width(420.0);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_2;
+                        ui_kit::icon::draw(ui, "warning", 16.0, WARNING);
+                        ui.add(
+                            egui::Label::new(
+                                RichText::new(text).font(ui_kit::sans(FONT_SM)).color(TEXT1),
+                            )
+                            .wrap(),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = SPACE_2;
+                        save_as = ui_kit::widgets::small_secondary_button(ui, "Save As…")
+                            .on_hover_text("Keep the file as it is and save under another name")
+                            .clicked();
+                        dismiss = ui
+                            .add(
+                                egui::Button::new(RichText::new("Put away").color(TEXT3))
+                                    .frame(false),
+                            )
+                            .clicked();
+                    });
+                });
+        });
+    (save_as, dismiss)
+}
+
 /// Good news, warnings and errors from the last few seconds, as cards under
 /// the view toolbar, so they are seen without reading the log. They draw
 /// over dialogs too: an install finishing in Preferences shows there.
@@ -395,6 +443,33 @@ mod toast_tests {
             let card = card.expect("the notice is on screen");
             assert!(viewport.contains_rect(card), "inside the view: {card:?}");
         }
+    }
+
+    /// The card for a file from a newer version stands inside the view,
+    /// above the release card when both are up.
+    #[test]
+    fn a_newer_file_draws_as_a_card_above_the_release_card() {
+        let ctx = Context::default();
+        ui_kit::theme::apply_theme(&ctx);
+        let viewport = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(800.0, 600.0));
+        let text = "Written by printCAD 9.0.0, newer than this one";
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                draw_release_notice(ui.ctx(), viewport, "v9.0.0", "https://example.org");
+                let lift = ui
+                    .ctx()
+                    .memory(|m| m.area_rect(egui::Id::new("release_notice")))
+                    .map_or(0.0, |card| card.height() + SPACE_2);
+                let (save_as, dismiss) = draw_file_notice(ui.ctx(), viewport, lift, text);
+                assert!(!save_as && !dismiss);
+            });
+            output.textures_delta.clear();
+        }
+        let release = ctx.memory(|m| m.area_rect(egui::Id::new("release_notice")));
+        let file = ctx.memory(|m| m.area_rect(egui::Id::new("file_notice")));
+        let (release, file) = (release.expect("release card"), file.expect("file card"));
+        assert!(viewport.contains_rect(file), "inside the view: {file:?}");
+        assert!(file.bottom() <= release.top(), "{file:?} above {release:?}");
     }
 
     #[test]

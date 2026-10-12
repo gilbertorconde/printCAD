@@ -1173,7 +1173,14 @@ hacks, no silently degraded feature). Instead:
   assembly's meshes as JSON text passed what one buffer may hold on a
   32-bit target; a document whose JSON holds them still loads. A plain
   `.prtcad` is an uncompressed tar on a desktop; a page saves zstd, and
-  both read either by its first bytes.
+  both read either by its first bytes. Every save writes `meta.json`
+  (`core_document::stamp`: the app version `main` names through
+  `set_writer_version`, and `CONTAINER_FORMAT`) after the preview and
+  before the document; a file without it reads as older (`file_age`). The
+  app keeps what it learnt on open per tab (`app/file_safety.rs`:
+  a newer file's card offering Save As, a read-only file's marks on its
+  tab and tree row with Save turned into Save As, the question before
+  saving over another version's file, `UserSettings.files`).
 - Persisted shape blobs (`brep/<uuid>.bin` in `.prtcad`, `SolidOp::Boolean`
   tools) are ogeom native-format text ("ogeom" magic); pre-migration blobs are
   dropped on load with a warning.

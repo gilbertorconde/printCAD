@@ -30,6 +30,8 @@ pub(crate) struct Links {
     /// until reloaded.
     failed: std::collections::HashSet<BodyId>,
     checked: Option<web_time::Instant>,
+    /// Linked parts whose file cannot be written in place, as last looked.
+    pub(crate) read_only: Vec<BodyId>,
 }
 
 impl Links {
@@ -152,11 +154,15 @@ impl PrintCadApp {
                 .iter()
                 .filter_map(|b| Some((b.id, b.link.clone()?)))
                 .collect();
+            self.session.links.read_only.clear();
             for (body, link) in linked {
                 let now = stamp(Path::new(&link.path));
                 self.session
                     .document
                     .set_link_stale(body, now != link.stamp);
+                if crate::platform::read_only(Path::new(&link.path)) {
+                    self.session.links.read_only.push(body);
+                }
             }
         }
     }

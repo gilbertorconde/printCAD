@@ -142,6 +142,39 @@ pub(crate) fn exists(path: &Path) -> bool {
     web::exists(path)
 }
 
+/// Whether the file at `path` cannot be written in place: marked read-only,
+/// or closed to this user for writing. A file that is not there is not; a
+/// page's own files never are.
+pub(crate) fn read_only(path: &Path) -> bool {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Ok(meta) = std::fs::metadata(path) else {
+            return false;
+        };
+        if !meta.is_file() {
+            return false;
+        }
+        if meta.permissions().readonly() {
+            return true;
+        }
+        // Write bits for others alone (another user's file): opening it to
+        // write, which changes nothing, asks the system whether this user
+        // may.
+        #[cfg(unix)]
+        return matches!(
+            std::fs::OpenOptions::new().write(true).open(path),
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied
+        );
+        #[cfg(not(unix))]
+        false
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = path;
+        false
+    }
+}
+
 /// Where the app keeps its own files when the system names no folder for
 /// them: on a page, the files it keeps between visits.
 pub(crate) fn kept_dir() -> Option<PathBuf> {
@@ -233,5 +266,33 @@ pub(crate) fn process_id() -> u32 {
             static VISIT: u32 = (js_sys::Math::random() * f64::from(u32::MAX)) as u32;
         }
         VISIT.with(|id| *id)
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod read_only_tests {
+    use super::read_only;
+
+    #[test]
+    fn a_file_marked_read_only_is_and_a_missing_one_is_not() {
+        let path = std::env::temp_dir().join(format!(
+            "printcad_read_only_{}_{:?}.prtcad",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::write(&path, b"x").expect("write");
+        assert!(!read_only(&path));
+
+        let mut permissions = std::fs::metadata(&path).expect("metadata").permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(&path, permissions.clone()).expect("mark read-only");
+        assert!(read_only(&path));
+
+        #[allow(clippy::permissions_set_readonly_false)]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions).expect("mark writable");
+        assert!(!read_only(&path));
+        let _ = std::fs::remove_file(&path);
+        assert!(!read_only(&path));
     }
 }

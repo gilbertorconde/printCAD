@@ -21,6 +21,7 @@ mod overlays;
 mod preferences;
 mod property_panel;
 mod release_notes;
+mod save_over_modal;
 mod start_page;
 pub(crate) mod status_bar;
 mod step_import_modal;
@@ -37,7 +38,7 @@ mod texture_task;
 pub use body_menu::{MenuLocal, OpenTask};
 pub use commands::{BodyEdit, ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
-pub use inputs::{HoverCard, Physical, UiFrameInputs};
+pub use inputs::{FileMarks, HoverCard, Physical, UiFrameInputs};
 pub use step_import_modal::StepImportDialogAction;
 pub use tab_bar::TabInfo;
 
@@ -345,6 +346,7 @@ impl UiLayer {
 
     /// A newer printCAD is out: a card at the view's bottom right, kept
     /// until put away, with the release and the Updates page a click away.
+    /// Whether the card is up.
     fn release_notice(
         preferences: &mut preferences::PreferencesState,
         dismissed_release: &mut Option<String>,
@@ -353,17 +355,17 @@ impl UiLayer {
         viewport: egui::Rect,
         settings: &settings::UserSettings,
         unit: core_document::Unit,
-    ) {
+    ) -> bool {
         let crate::app::updates::ReleaseCheck::Found {
             tag,
             page,
             newer: true,
         } = release
         else {
-            return;
+            return false;
         };
         if dismissed_release.as_ref() == Some(tag) {
-            return;
+            return false;
         }
         let (details, dismiss) = hud::draw_release_notice(ctx, viewport, tag, page);
         if details {
@@ -371,6 +373,32 @@ impl UiLayer {
         }
         if dismiss || details {
             *dismissed_release = Some(tag.clone());
+        }
+        true
+    }
+
+    /// A newer printCAD wrote the document's file: a card at the view's
+    /// bottom right, above the release card when that is up, offering
+    /// Save As.
+    fn file_notice(
+        ctx: &Context,
+        viewport: egui::Rect,
+        text: &str,
+        release_up: bool,
+        commands: &mut Vec<UiCommand>,
+    ) {
+        let lift = if release_up {
+            ctx.memory(|m| m.area_rect(egui::Id::new("release_notice")))
+                .map_or(0.0, |card| card.height() + ui_kit::tokens::SPACE_2)
+        } else {
+            0.0
+        };
+        let (save_as, dismiss) = hud::draw_file_notice(ctx, viewport, lift, text);
+        if save_as {
+            commands.push(UiCommand::File(FileCommand::SaveAs));
+        }
+        if save_as || dismiss {
+            commands.push(UiCommand::DismissFileNotice);
         }
     }
 
@@ -484,6 +512,7 @@ impl UiLayer {
             approvals,
             assistant_attention,
             print_layout,
+            file,
         } = inputs;
 
         let mut raw_input = self.state.take_egui_input(window);
@@ -735,6 +764,9 @@ impl UiLayer {
                 if let Some(name) = &unsaved_question {
                     unsaved_modal::draw(ui.ctx(), name, &mut commands);
                 }
+                if let Some(question) = &file.save_over {
+                    save_over_modal::draw(ui.ctx(), question, &mut commands);
+                }
                 Self::release_notice(
                     &mut self.preferences,
                     &mut self.dismissed_release,
@@ -911,6 +943,8 @@ impl UiLayer {
                     tree_share: &mut self.tree_share,
                     physical: physical.as_ref(),
                     keymap: &keymap,
+                    read_only: file.read_only,
+                    read_only_links: file.read_only_links,
                 },
             );
             apply_writeback(&combo.writeback, &mut commands, &mut tree_selection);
@@ -1138,7 +1172,10 @@ impl UiLayer {
             if let Some(name) = &unsaved_question {
                 unsaved_modal::draw(ui.ctx(), name, &mut commands);
             }
-            Self::release_notice(
+            if let Some(question) = &file.save_over {
+                save_over_modal::draw(ui.ctx(), question, &mut commands);
+            }
+            let release_up = Self::release_notice(
                 &mut self.preferences,
                 &mut self.dismissed_release,
                 ui.ctx(),
@@ -1147,6 +1184,15 @@ impl UiLayer {
                 settings,
                 unit,
             );
+            if let Some(text) = &file.newer_notice {
+                Self::file_notice(
+                    ui.ctx(),
+                    viewport_rect_logical,
+                    text,
+                    release_up,
+                    &mut commands,
+                );
+            }
 
             if let Some(input) = orientation_input {
                 cube_result =

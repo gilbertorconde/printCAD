@@ -63,6 +63,8 @@ pub(crate) struct DocumentSession {
     /// once that row is no longer the selection.
     pub tree_also: Option<(TreeItemId, Vec<FeatureId>)>,
     pub current_file: Option<PathBuf>,
+    /// What wrote the tab's file and whether it can be written in place.
+    pub file_safety: crate::app::file_safety::FileSafety,
     /// Start page or workspace: a fresh tab shows the start page.
     pub screen: Screen,
     /// The worker packing a `.prtcad` archive, and how far it has got.
@@ -288,6 +290,7 @@ impl DocumentSession {
             tree_selection: Some(TreeItemId::DocumentRoot),
             tree_also: None,
             current_file: None,
+            file_safety: Default::default(),
             screen,
             document_save_rx: None,
             document_open_rx: None,

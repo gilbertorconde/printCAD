@@ -945,6 +945,21 @@ fn general_page(
                     filter,
                 );
             }
+            pref_group(
+                ui,
+                "Files",
+                vec![
+                    PrefRow::toggle(
+                        "Ask before saving over a file from an older version",
+                        &mut draft.files.ask_before_saving_older,
+                    )
+                    .hint(
+                        "Once saved by this version, the older one may no longer open it; a file \
+                         from a newer version always asks",
+                    ),
+                ],
+                filter,
+            );
             // The report is written to the temp dir, which a page has not.
             if !crate::platform::ON_PAGE {
                 pref_group(

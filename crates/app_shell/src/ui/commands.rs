@@ -160,6 +160,11 @@ pub enum UiCommand {
     DownloadDocument,
     /// The user answered the unsaved-edits question.
     AnswerUnsaved(crate::app::unsaved::Unsaved),
+    /// The user answered the question about saving over a file another
+    /// version wrote.
+    AnswerSaveOver(crate::app::file_safety::SaveOverAnswer),
+    /// Put away the card saying a newer printCAD wrote the file.
+    DismissFileNotice,
     CloseTab(uuid::Uuid),
     SelectTab(uuid::Uuid),
     /// The next (`1`) or previous (`-1`) tab, wrapping.

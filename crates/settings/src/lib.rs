@@ -81,6 +81,9 @@ pub struct UserSettings {
     /// What the next start brings back of this run.
     #[serde(default)]
     pub session: SessionSettings,
+    /// What the app asks before it writes a document's file.
+    #[serde(default)]
+    pub files: FileSettings,
 }
 
 /// The status bar's readouts, each shown or left out from the bar's own
@@ -137,6 +140,23 @@ impl Default for SessionSettings {
     fn default() -> Self {
         Self {
             reopen_documents: true,
+        }
+    }
+}
+
+/// What the app asks before it writes a document's file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FileSettings {
+    /// Ask before saving over a file an older printCAD wrote, which that
+    /// version may then no longer open.
+    pub ask_before_saving_older: bool,
+}
+
+impl Default for FileSettings {
+    fn default() -> Self {
+        Self {
+            ask_before_saving_older: true,
         }
     }
 }
@@ -390,6 +410,7 @@ impl Default for UserSettings {
             updates: UpdateSettings::default(),
             status_bar: StatusBarSettings::default(),
             session: SessionSettings::default(),
+            files: FileSettings::default(),
         }
     }
 }

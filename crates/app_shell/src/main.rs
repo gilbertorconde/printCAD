@@ -447,6 +447,8 @@ struct PrintCadApp {
     recoverable: Vec<app::recovery::Recoverable>,
     /// The unsaved-edits question on screen, and what waits for it.
     unsaved_asking: Option<app::unsaved::Asking>,
+    /// A save over a file from another version, waiting for the user.
+    save_over_asking: Option<app::file_safety::SaveOver>,
     /// Tabs whose edits the user answered for while quitting.
     quit_answered: std::collections::HashSet<Uuid>,
     /// The MCP server agents reach the document through.
@@ -585,6 +587,7 @@ impl PrintCadApp {
             autosave_jobs: Vec::new(),
             recoverable: app::recovery::left_behind(),
             unsaved_asking: None,
+            save_over_asking: None,
             quit_answered: Default::default(),
             mcp: None,
             approvals: Vec::new(),

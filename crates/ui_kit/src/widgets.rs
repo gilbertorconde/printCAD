@@ -986,6 +986,9 @@ pub struct Tab<'a> {
     dirty: bool,
     /// Closable, with this hover text on its close.
     close: Option<&'a str>,
+    /// An icon before the label, in its tint: something to know about
+    /// what the tab holds.
+    mark: Option<(&'a str, Color32)>,
 }
 
 /// What a click on a tab asked for.
@@ -1000,6 +1003,7 @@ pub struct TabResponse {
 
 const TAB_CLOSE: f32 = 16.0;
 const TAB_PAD: f32 = 10.0;
+const TAB_MARK: f32 = 12.0;
 
 impl<'a> Tab<'a> {
     pub fn new(label: &'a str, active: bool) -> Self {
@@ -1010,6 +1014,7 @@ impl<'a> Tab<'a> {
             height: TAB_BAR - 4.0,
             dirty: false,
             close: None,
+            mark: None,
         }
     }
 
@@ -1028,6 +1033,12 @@ impl<'a> Tab<'a> {
         self
     }
 
+    /// Draw icon `mark.0` in tint `mark.1` before the label; `None`, none.
+    pub fn marked(mut self, mark: Option<(&'a str, Color32)>) -> Self {
+        self.mark = mark;
+        self
+    }
+
     pub fn closable(mut self, hint: &'a str) -> Self {
         self.close = Some(hint);
         self
@@ -1043,11 +1054,16 @@ impl<'a> Tab<'a> {
         // Room right of the label: the close, and the dot before it.
         let trailing =
             self.close.map_or(0.0, |_| TAB_CLOSE + 4.0) + if self.dirty { 12.0 } else { 0.0 };
+        let leading = if self.mark.is_some() {
+            TAB_MARK + 4.0
+        } else {
+            0.0
+        };
         let width = self.width.unwrap_or_else(|| {
             let text =
                 ui.painter()
                     .layout_no_wrap(self.label.to_string(), font.clone(), text_color);
-            text.size().x + 2.0 * TAB_PAD + trailing
+            text.size().x + 2.0 * TAB_PAD + leading + trailing
         });
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(width, self.height), Sense::click());
@@ -1077,14 +1093,22 @@ impl<'a> Tab<'a> {
             painter.circle_filled(egui::pos2(text_right - 4.0, rect.center().y), 3.0, WARNING);
             text_right -= 12.0;
         }
-        let max_width = (text_right - rect.left() - TAB_PAD).max(0.0);
+        let text_left = rect.left() + TAB_PAD + leading;
+        if let Some((name, tint)) = self.mark {
+            let mark = egui::Rect::from_center_size(
+                egui::pos2(rect.left() + TAB_PAD + TAB_MARK / 2.0, rect.center().y),
+                Vec2::splat(TAB_MARK),
+            );
+            if let Some(texture) = crate::icon::texture(ui.ctx(), name) {
+                let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                painter.image(texture.id(), mark, uv, tint);
+            }
+        }
+        let max_width = (text_right - text_left).max(0.0);
         let galley = painter.layout(self.label.to_string(), font, text_color, max_width);
         let clip = egui::Rect::from_min_max(rect.min, egui::pos2(text_right, rect.max.y));
         painter.with_clip_rect(clip).galley(
-            egui::pos2(
-                rect.left() + TAB_PAD,
-                rect.center().y - galley.size().y / 2.0,
-            ),
+            egui::pos2(text_left, rect.center().y - galley.size().y / 2.0),
             galley,
             text_color,
         );

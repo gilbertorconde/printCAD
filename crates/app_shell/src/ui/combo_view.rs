@@ -74,6 +74,10 @@ pub struct ComboViewInputs<'a> {
     /// The tree's share of the height below the header; the property
     /// panel has the rest. The divider between them drags it.
     pub tree_share: &'a mut f32,
+    /// The document's file cannot be written in place.
+    pub read_only: bool,
+    /// Linked parts whose file cannot be written in place.
+    pub read_only_links: &'a [core_document::BodyId],
 }
 
 pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboViewResult {
@@ -94,6 +98,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         keymap,
         variables,
         tree_share,
+        read_only,
+        read_only_links,
     } = inputs;
     let mut result = ComboViewResult::default();
 
@@ -200,7 +206,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                         .with_also(tree_also)
                         .revealing(reveal_body)
                         .with_bench_menus(document, registry)
-                        .with_keys(keymap),
+                        .with_keys(keymap)
+                        .with_file_marks(read_only, read_only_links),
                     );
                     result.bench_command = tree_ui.bench_command;
                     result.tree_selection = tree_ui.selection;

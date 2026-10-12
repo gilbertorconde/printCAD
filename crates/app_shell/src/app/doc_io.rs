@@ -142,8 +142,14 @@ impl PrintCadApp {
 
     /// Save to [`Self::current_file`] or prompt for a path. Returns false if cancelled or save fails.
     pub(crate) fn save_document_interactive(&mut self) -> bool {
-        let path = if let Some(ref p) = self.session.current_file {
-            p.clone()
+        // A read-only file is not written in place: it asks for a name.
+        let in_place = if self.current_file_read_only() {
+            None
+        } else {
+            self.session.current_file.clone()
+        };
+        let path = if let Some(p) = in_place {
+            p
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             {
@@ -297,6 +303,7 @@ impl PrintCadApp {
             .server
             .send(core_document::server::ClientMessage::Rebase);
         app_log::info(format!("Opened document from {}", path.display()));
+        self.note_opened_file(&path);
         self.report_missing_packages();
     }
 
@@ -483,6 +490,7 @@ impl PrintCadApp {
                         crate::app::recovery::forget(self.session.tab);
                     }
                     self.session.current_file = Some(path.clone());
+                    self.note_saved_file();
                     // Its chats are kept with the file it is saved as.
                     self.persist_chats();
                     self.touch_recent(&path);
@@ -496,6 +504,12 @@ impl PrintCadApp {
     }
 
     pub(crate) fn save_document_at(&mut self, path: &Path) -> Result<()> {
+        if crate::platform::read_only(path) {
+            return Err(anyhow::anyhow!(
+                "{} is read-only: save the document under another name",
+                path.display()
+            ));
+        }
         let file_name = path
             .file_name()
             .and_then(|s| s.to_str())
@@ -560,6 +574,7 @@ impl PrintCadApp {
         }
 
         self.session.current_file = Some(path.to_path_buf());
+        self.note_saved_file();
         // Its chats are kept with the file it is saved as.
         self.persist_chats();
         self.touch_recent(path);
@@ -1006,10 +1021,8 @@ impl PrintCadApp {
                 }
             }
             FileDialogKind::Save | FileDialogKind::SaveAs => {
-                if let Some(path) = path
-                    && let Err(err) = self.save_document_at(&path)
-                {
-                    app_log::error(format!("Failed to save document: {err}"));
+                if let Some(path) = path {
+                    self.save_document_asking(path);
                 }
             }
             FileDialogKind::ImportStep => {
@@ -1078,6 +1091,17 @@ impl PrintCadApp {
         if self.file_dialog_rx.is_some() {
             return;
         }
+        // A read-only file is not written in place: Save becomes Save As.
+        let kind = match kind {
+            FileDialogKind::Save if self.current_file_read_only() => {
+                app_log::warn(format!(
+                    "`{}` is read-only: save it under another name",
+                    self.session.document.name()
+                ));
+                FileDialogKind::SaveAs
+            }
+            kind => kind,
+        };
 
         let (tx, rx) = mpsc::channel::<FileDialogResult>();
         self.file_dialog_rx = Some(rx);

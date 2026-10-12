@@ -19,6 +19,8 @@ pub struct TabInfo {
     /// Nothing has happened in the tab: it shows the start page and New
     /// or Open take it over instead of opening another.
     pub blank: bool,
+    /// Its file cannot be written in place: a lock before its name.
+    pub read_only: bool,
 }
 
 const TAB_MIN: f32 = 96.0;
@@ -39,11 +41,17 @@ pub fn draw_tab_bar(ui: &mut Ui, tabs: &[TabInfo], commands: &mut Vec<UiCommand>
                 let available = ui.available_width() - 32.0;
                 let width = (available / tabs.len().max(1) as f32).clamp(TAB_MIN, TAB_MAX);
                 for tab in tabs {
-                    let shown = Tab::new(&tab.name, tab.active)
+                    let mut shown = Tab::new(&tab.name, tab.active)
                         .width(width)
                         .dirty(tab.dirty)
+                        .marked(tab.read_only.then_some(("lock", WARNING)))
                         .closable("Close tab  (Ctrl+W)")
                         .show(ui);
+                    if tab.read_only {
+                        shown.response = shown
+                            .response
+                            .on_hover_text(crate::app::file_safety::READ_ONLY_TIP);
+                    }
                     if shown.closed {
                         commands.push(UiCommand::CloseTab(tab.tab));
                     } else if shown.selected {

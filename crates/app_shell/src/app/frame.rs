@@ -813,6 +813,8 @@ impl PrintCadApp {
         {
             let tabs = self.tab_infos();
             let unsaved_question = self.unsaved_question();
+            let save_over = self.save_over_question();
+            let read_only_file = self.current_file_read_only();
             let Some(gfx) = self.gfx.as_mut() else {
                 return;
             };
@@ -926,6 +928,16 @@ impl PrintCadApp {
                         approvals: &self.approvals,
                         assistant_attention: std::mem::take(&mut self.assistant_attention),
                         print_layout: self.session.print_layout.as_ref().map(|s| &s.layout),
+                        file: crate::ui::FileMarks {
+                            read_only: read_only_file,
+                            read_only_links: &self.session.links.read_only,
+                            newer_notice: self
+                                .session
+                                .file_safety
+                                .newer_notice
+                                .then(|| self.session.file_safety.newer_text()),
+                            save_over,
+                        },
                     },
                 );
                 self.frame_phase_accum.0 += ui_started.elapsed().as_secs_f32() * 1000.0;

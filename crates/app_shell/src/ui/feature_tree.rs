@@ -933,6 +933,10 @@ pub struct TreeDrawOptions<'a> {
     bench_menus: Option<(&'a Document, &'a DocumentService)>,
     /// The keys the row menus name beside their entries.
     keymap: Option<&'a Keymap>,
+    /// The document's file cannot be written in place: its row says so.
+    read_only: bool,
+    /// Linked parts whose file cannot be written in place.
+    read_only_links: &'a [BodyId],
 }
 
 impl<'a> TreeDrawOptions<'a> {
@@ -946,6 +950,8 @@ impl<'a> TreeDrawOptions<'a> {
             scroll_to: None,
             bench_menus: None,
             keymap: None,
+            read_only: false,
+            read_only_links: &[],
         }
     }
 
@@ -971,6 +977,14 @@ impl<'a> TreeDrawOptions<'a> {
         } else {
             vec![feature]
         }
+    }
+
+    /// Mark the document's row when its file is `read_only`, and the
+    /// rows of the linked parts in `read_only_links`.
+    pub fn with_file_marks(mut self, read_only: bool, read_only_links: &'a [BodyId]) -> Self {
+        self.read_only = read_only;
+        self.read_only_links = read_only_links;
+        self
     }
 
     /// Name each menu entry's key beside it.
@@ -1046,9 +1060,15 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         muted: false,
         strikethrough: false,
         alert: false,
-        badges: Vec::new(),
+        badges: if options.read_only {
+            vec![read_only_badge(crate::app::file_safety::READ_ONLY_TIP)]
+        } else {
+            Vec::new()
+        },
         eye: None,
-        tooltip: None,
+        tooltip: options
+            .read_only
+            .then_some(crate::app::file_safety::READ_ONLY_TIP),
     };
     let open = draw_row(ui, &root, &options, &mut result, None);
     if open || !options.filter.is_empty() {
@@ -1059,6 +1079,16 @@ pub fn draw_tree(ui: &mut Ui, model: &DocumentTree, options: TreeDrawOptions<'_>
         }
     }
     result
+}
+
+/// The mark of a file that cannot be written in place.
+fn read_only_badge(tip: &str) -> Badge {
+    Badge {
+        text: "READ-ONLY",
+        color: WARNING,
+        tooltip: Some(tip.to_string()),
+        opens_details: false,
+    }
 }
 
 /// A badge at the row's end.
@@ -1437,6 +1467,13 @@ fn draw_node(
             }),
             opens_details: false,
         });
+    }
+    if node.linked_file
+        && node
+            .body
+            .is_some_and(|body| options.read_only_links.contains(&body))
+    {
+        badges.push(read_only_badge(crate::app::file_safety::READ_ONLY_LINK_TIP));
     }
     if node.frozen {
         badges.push(Badge {

@@ -151,6 +151,22 @@ pub struct UiFrameInputs<'a> {
     pub assistant_attention: bool,
     /// The print layout the view shows, while its task is open.
     pub print_layout: Option<&'a crate::app::print_layout::Layout>,
+    /// What the active tab's file and its linked files ask of the user.
+    pub file: FileMarks<'a>,
+}
+
+/// What the active tab's file, and the files its parts link to, ask of
+/// the user.
+#[derive(Debug, Clone, Default)]
+pub struct FileMarks<'a> {
+    /// The document's file cannot be written in place.
+    pub read_only: bool,
+    /// Linked parts whose file cannot be written in place.
+    pub read_only_links: &'a [core_document::BodyId],
+    /// A newer printCAD wrote the file: what the card says, while it is up.
+    pub newer_notice: Option<String>,
+    /// Saving over a file another version wrote, waiting for an answer.
+    pub save_over: Option<crate::app::file_safety::SaveOverQuestion>,
 }
 
 /// A body's measure as the property panel shows it.
