@@ -1624,13 +1624,14 @@ impl SketchWorkbench {
         }
         if hit.dimensional {
             let proj = SketchProjector::new(ctx, feature.plane);
-            let base = glyphs::default_label_offset(proj.units_per_px());
-            let original = constraint.and_then(|c| c.label_offset);
+            let base = constraint.map(|c| {
+                glyphs::label_offset(&feature.sketch, &proj, c, self.options.dimension_labels)
+            });
             self.label_drag = Some(LabelDrag {
                 constraint: hit.constraint,
                 moved: false,
                 grab: cursor,
-                base: original.unwrap_or(base),
+                base: base.unwrap_or(Vec2D::new(0.0, 0.0)),
                 current: None,
             });
         }

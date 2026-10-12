@@ -4560,3 +4560,112 @@ fn cancelling_a_sketch_session_puts_the_sketch_back() {
         "{recorded:?}"
     );
 }
+
+/// A dimension the user has not placed keeps its pill off what it
+/// measures: a line's length at any slant, a distance, and a wide arc's
+/// length.
+mod default_label_placement {
+    use super::*;
+    use wb_sketch::sketch::{Arc, ConstraintKind, Line, Point, Vec2D};
+
+    /// The painter's pill around a label: the monospace advance plus its
+    /// padding.
+    fn pill_box(label: &core_document::ScreenSpaceLabel) -> ([f32; 2], [f32; 2]) {
+        let hw = 0.3 * label.size * label.text.chars().count() as f32 + 5.0;
+        let hh = 0.65 * label.size + 2.0;
+        (
+            [label.pos[0] - hw, label.pos[1] - hh],
+            [label.pos[0] + hw, label.pos[1] + hh],
+        )
+    }
+
+    fn assert_clear(h: &mut Harness, text: &str, along: &[(f32, f32)]) {
+        let labels = h.labels();
+        let label = labels
+            .iter()
+            .find(|l| l.background && l.text.contains(text))
+            .unwrap_or_else(|| panic!("a pill reading {text}"));
+        let (lo, hi) = pill_box(label);
+        for &(x, y) in along {
+            let (px, py) = h.px_of(x, y);
+            let inside = (lo[0]..=hi[0]).contains(&px) && (lo[1]..=hi[1]).contains(&py);
+            assert!(!inside, "{text}: the pill {lo:?}..{hi:?} covers ({px}, {py})");
+        }
+    }
+
+    fn samples(from: (f32, f32), to: (f32, f32)) -> Vec<(f32, f32)> {
+        (0..=100)
+            .map(|i| {
+                let t = i as f32 / 100.0;
+                (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
+            })
+            .collect()
+    }
+
+    fn sketch_with(h: &mut Harness, build: impl FnOnce(&mut Sketch)) {
+        let id = h.create_sketch();
+        let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
+        build(&mut feature.sketch);
+        h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    }
+
+    fn point(sketch: &mut Sketch, x: f32, y: f32) -> uuid::Uuid {
+        sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+    }
+
+    #[test]
+    fn a_line_length_at_any_slant_sits_off_the_line() {
+        for degrees in [0.0f32, 30.0, 45.0, 60.0, 90.0, 135.0] {
+            let mut h = Harness::new();
+            let (s, c) = degrees.to_radians().sin_cos();
+            let end = (12.0 * c - 6.0, 12.0 * s - 6.0);
+            sketch_with(&mut h, |sketch| {
+                let a = point(sketch, -6.0, -6.0);
+                let b = point(sketch, end.0, end.1);
+                let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+                sketch.add_constraint(ConstraintKind::Length { line, length: 12.0 });
+            });
+            assert_clear(&mut h, "12", &samples((-6.0, -6.0), end));
+        }
+    }
+
+    #[test]
+    fn a_distance_sits_off_the_line_between_its_points() {
+        let mut h = Harness::new();
+        sketch_with(&mut h, |sketch| {
+            let a = point(sketch, -5.0, -3.0);
+            let b = point(sketch, 4.0, 6.0);
+            sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+            sketch.add_constraint(ConstraintKind::Distance {
+                point1: a,
+                point2: b,
+                distance: 12.73,
+            });
+        });
+        assert_clear(&mut h, "12.73", &samples((-5.0, -3.0), (4.0, 6.0)));
+    }
+
+    #[test]
+    fn a_wide_arc_length_sits_outside_the_arc() {
+        let mut h = Harness::new();
+        let radius = 8.0f32;
+        let (start, sweep) = (0.0f32, 290f32.to_radians());
+        sketch_with(&mut h, |sketch| {
+            let c = point(sketch, 0.0, 0.0);
+            let s = point(sketch, radius * start.cos(), radius * start.sin());
+            let e = point(sketch, radius * sweep.cos(), radius * sweep.sin());
+            let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, radius)));
+            sketch.add_constraint(ConstraintKind::ArcLength {
+                arc,
+                length: 40.49,
+            });
+        });
+        let along: Vec<(f32, f32)> = (0..=200)
+            .map(|i| {
+                let a = start + sweep * i as f32 / 200.0;
+                (radius * a.cos(), radius * a.sin())
+            })
+            .collect();
+        assert_clear(&mut h, "40.49", &along);
+    }
+}

@@ -25,6 +25,9 @@ const LEADER_MIN_PX: f32 = 40.0;
 /// Default dimension-label offset from its anchor, in px (converted to
 /// sketch units at the current zoom, so labels stay put when zooming).
 const DEFAULT_LABEL_OFFSET_PX: f32 = 14.0;
+/// Space between a default-placed label's pill and the element it
+/// measures, in px.
+const LABEL_CLEARANCE_PX: f32 = 6.0;
 /// Extension lines overshoot the dimension line by this much.
 const EXTENSION_OVERSHOOT_PX: f32 = 5.0;
 const ANGLE_ARC_SEGMENTS: usize = 24;
@@ -116,10 +119,113 @@ pub fn fmt_num(v: f32) -> String {
     s
 }
 
-/// Default label offset in sketch units at the current zoom.
-pub fn default_label_offset(units_per_px: f32) -> Vec2D {
+/// Where a dimension's label sits from its anchor, in sketch units: where
+/// the user put it, else [`default_label_offset`].
+pub fn label_offset(
+    sketch: &Sketch,
+    proj: &SketchProjector,
+    constraint: &sketch::Constraint,
+    labels: DimensionLabels,
+) -> Vec2D {
+    constraint.label_offset.unwrap_or_else(|| {
+        let chars = label_text(sketch, constraint, labels).chars().count();
+        default_label_offset(sketch, proj, &constraint.kind, chars)
+    })
+}
+
+/// A label the user has not placed, in sketch units at the current zoom.
+/// A line's length or a distance sits square off the line, on the side
+/// away from the rest of the sketch, and an arc's length outside the arc
+/// along the radius through its middle, each far enough that the whole
+/// pill (`chars` long) clears what it measures. The rest sit a fixed
+/// diagonal step off their anchor.
+fn default_label_offset(
+    sketch: &Sketch,
+    proj: &SketchProjector,
+    kind: &ConstraintKind,
+    chars: usize,
+) -> Vec2D {
+    let units_per_px = proj.units_per_px();
     let d = DEFAULT_LABEL_OFFSET_PX * units_per_px;
-    Vec2D::new(d, d)
+    let diagonal = Vec2D::new(d, d);
+    let (Some(away), Some(anchor)) = (clear_side(sketch, kind), dim_anchor(sketch, kind)) else {
+        return diagonal;
+    };
+    // The side's direction on screen, which the pill's box is square to.
+    let (Some(a), Some(b)) = (
+        proj.to_px(anchor),
+        proj.to_px(Vec2D::from_glam(anchor.to_glam() + away * units_per_px)),
+    ) else {
+        return diagonal;
+    };
+    let on_screen = glam::Vec2::new(b[0] - a[0], b[1] - a[1]).normalize_or_zero();
+    let (hw, hh) = pill_half_extents(LABEL_SIZE, chars);
+    let reach = hw * on_screen.x.abs() + hh * on_screen.y.abs() + LABEL_CLEARANCE_PX;
+    Vec2D::from_glam(away * reach * units_per_px)
+}
+
+/// The unit direction, in sketch space, a default label leaves its
+/// element by, for the dimensions whose label would otherwise sit on it.
+fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::Vec2> {
+    let square_off = |p: Vec2D, q: Vec2D| {
+        let (p, q) = (p.to_glam(), q.to_glam());
+        let along = q - p;
+        let length = along.length();
+        if length < 1e-6 {
+            return None;
+        }
+        let normal = along.perp() / length;
+        // Away from the middle of the sketch's points, the outside of a
+        // profile; a lone line goes up, or right when upright.
+        let side = middle_of_points(sketch)
+            .map(|m| (m - (p + q) * 0.5).dot(normal))
+            .filter(|side| side.abs() > 1e-3 * length)
+            .unwrap_or(if normal.y.abs() > 1e-6 {
+                -normal.y
+            } else {
+                -normal.x
+            });
+        Some(if side > 0.0 { -normal } else { normal })
+    };
+    match *kind {
+        ConstraintKind::Length { line, .. } => {
+            let GeometryElement::Line(l) = sketch.get_geometry(line)? else {
+                return None;
+            };
+            square_off(
+                sketch.point_position(l.start)?,
+                sketch.point_position(l.end)?,
+            )
+        }
+        ConstraintKind::Distance { point1, point2, .. } => square_off(
+            sketch.point_position(point1)?,
+            sketch.point_position(point2)?,
+        ),
+        ConstraintKind::ArcLength { arc, .. } => {
+            let GeometryElement::Arc(a) = sketch.get_geometry(arc)? else {
+                return None;
+            };
+            let centre = sketch.point_position(a.center)?.to_glam();
+            let middle = element_anchor(sketch, arc)?.to_glam();
+            (middle - centre).try_normalize()
+        }
+        _ => None,
+    }
+}
+
+/// The mean of the sketch's points that are not construction.
+fn middle_of_points(sketch: &Sketch) -> Option<glam::Vec2> {
+    let (sum, n) = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) if !sketch.construction.contains(&p.id) => {
+                Some(p.position.to_glam())
+            }
+            _ => None,
+        })
+        .fold((glam::Vec2::ZERO, 0usize), |(sum, n), p| (sum + p, n + 1));
+    (n > 0).then(|| sum / n as f32)
 }
 
 /// Representative sketch-space anchor of an element (glyph placement).
@@ -739,7 +845,6 @@ pub fn build(
     let mut counters: HashMap<&'static str, usize> = HashMap::new();
 
     let mut out = Vec::new();
-    let units_per_px = proj.units_per_px();
     for c in shown() {
         let color = if selected.contains(&c.id) {
             pal.selected
@@ -757,9 +862,7 @@ pub fn build(
             let Some(anchor) = dim_anchor(sketch, &c.kind) else {
                 continue;
             };
-            let offset = c
-                .label_offset
-                .unwrap_or_else(|| default_label_offset(units_per_px));
+            let offset = label_offset(sketch, proj, c, labels);
             let (Some(pos), Some(anchor_px)) = (proj.to_px(anchor + offset), proj.to_px(anchor))
             else {
                 continue;
