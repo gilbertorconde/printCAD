@@ -285,6 +285,20 @@ struct LabelDrag {
     current: Option<Vec2D>,
 }
 
+/// A picture's calibration under way: the points picked on it so far,
+/// and the real length and options the panel holds.
+#[derive(Debug, Clone)]
+pub(crate) struct Calibrating {
+    pub image: Uuid,
+    pub from: Option<Vec2D>,
+    pub to: Option<Vec2D>,
+    /// The real distance between the points, as typed: a value or a
+    /// formula.
+    pub length: String,
+    pub straighten: bool,
+    pub centre: bool,
+}
+
 /// An in-viewport dimension edit (opened by double-clicking a dimensional
 /// glyph, or as a tool adds a dimension; drawn from the task panel).
 #[derive(Debug, Clone)]
@@ -548,6 +562,8 @@ pub struct SketchWorkbench {
     /// Each sketch's external elements whose edge, face, element or datum
     /// could not be found, with what that was worked out for.
     lost_external: std::sync::Mutex<HashMap<FeatureId, (u64, Vec<Uuid>)>>,
+    /// A picture being calibrated from two points picked on it.
+    calibrating: Option<Calibrating>,
     /// On-view parameter capture for the active drawing tool.
     dim_capture: DimCapture,
     /// Object snapping is off (the toolbar toggle).
@@ -947,6 +963,7 @@ impl SketchWorkbench {
         self.last_glyph_click = None;
         self.last_geometry_click = None;
         self.last_empty_click = None;
+        self.calibrating = None;
         self.dim_capture = DimCapture::default();
     }
 
@@ -1484,6 +1501,21 @@ impl SketchWorkbench {
         self.dragging = None;
         self.box_select = None;
         self.line_press = None;
+
+        // A picture's calibration takes its two points before anything
+        // else takes a click.
+        if let Some(calibrating) = self.calibrating.as_mut()
+            && calibrating.to.is_none()
+        {
+            match calibrating.from {
+                None => calibrating.from = Some(cursor),
+                Some(from) => {
+                    calibrating.to = Some(cursor);
+                    calibrating.length = glyphs::fmt_num((cursor - from).to_glam().length());
+                }
+            }
+            return InputResult::consumed();
+        }
 
         // The line tool: a press on the end it draws from, dragged, is an
         // arc tangent to what ends there; a press anywhere else clicks, and
@@ -2251,6 +2283,9 @@ impl SketchWorkbench {
 
     fn handle_escape(&mut self, ctx: &mut WorkbenchRuntimeContext) -> InputResult {
         if self.dim_edit.take().is_some() {
+            return InputResult::consumed();
+        }
+        if self.calibrating.take().is_some() {
             return InputResult::consumed();
         }
         if self.label_drag.take().is_some() {
@@ -4048,7 +4083,13 @@ impl Workbench for SketchWorkbench {
         let proj = SketchProjector::new(ctx, feature.plane);
         let pal = ctx.sketch_palette;
         let tool = self.last_tool.as_deref().unwrap_or("sketch.select");
+        let calibrating = self.calibrating.as_ref().map(|c| match (c.from, c.to) {
+            (None, _) => "Click the first end of a length you know on the picture",
+            (Some(_), None) => "Click the other end",
+            _ => "Type the real length in the panel and apply it",
+        });
         let (name, prompt) = match self.tool_state.hint() {
+            _ if calibrating.is_some() => ("Calibrate picture", calibrating.unwrap_or_default()),
             Some((name, prompt)) => (name, prompt),
             None if tool == "sketch.external" && self.external_intersection => (
                 "Intersection",
@@ -4299,6 +4340,19 @@ impl Workbench for SketchWorkbench {
         let pal = ctx.sketch_palette;
         let mut out = self.grid_lines(ctx, &feature.plane, &proj, &pal);
         out.extend(self.build_overlays(ctx, &feature, &proj, &pal).lines);
+        // The calibration's line, to the cursor until its second point.
+        if let Some(calibrating) = &self.calibrating
+            && let Some(from) = calibrating.from
+            && let Some(to) = calibrating.to.or(self.cursor)
+            && let (Some(a), Some(b)) = (proj.to_px(from), proj.to_px(to))
+        {
+            out.push(core_document::ScreenSpaceOverlay::new(
+                a,
+                b,
+                pal.preview,
+                2.0,
+            ));
+        }
         if let Some(check) = self.shown_wall_check() {
             out.extend(walls::overlays(check, &proj, &pal));
         }

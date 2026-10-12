@@ -997,8 +997,38 @@ impl SketchWorkbench {
                         }));
                     }
                 });
-            if secondary_button(ui, "Remove").clicked() {
-                change = Some(serde_json::json!({"image": id, "remove": true}));
+            let calibrating_this = self
+                .calibrating
+                .as_ref()
+                .is_some_and(|c| c.image == image.id);
+            if calibrating_this {
+                if let Some(placed) = self.calibration_rows(ui, ctx, image) {
+                    change = Some(serde_json::json!({
+                        "image": id, "x": placed.center.x, "y": placed.center.y,
+                        "width": placed.width, "angle": placed.angle_deg,
+                    }));
+                }
+            } else {
+                ui.horizontal(|ui| {
+                    if secondary_button(ui, "Calibrate")
+                        .on_hover_text(
+                            "Pick two points on the picture and say how far apart they really are",
+                        )
+                        .clicked()
+                    {
+                        self.calibrating = Some(crate::Calibrating {
+                            image: image.id,
+                            from: None,
+                            to: None,
+                            length: String::new(),
+                            straighten: false,
+                            centre: false,
+                        });
+                    }
+                    if secondary_button(ui, "Remove").clicked() {
+                        change = Some(serde_json::json!({"image": id, "remove": true}));
+                    }
+                });
             }
             ui.add_space(SPACE_1);
         }
@@ -1009,6 +1039,96 @@ impl SketchWorkbench {
                 ctx.record("sketch.set_image", args, serde_json::Value::Null);
             }
         }
+    }
+
+    /// The calibration of `image` under way: what to pick next, then the
+    /// real length (a value or a formula) and the options. The picture as
+    /// it is to lie once applied; the calibration ends then, or on Cancel.
+    fn calibration_rows(
+        &mut self,
+        ui: &mut egui::Ui,
+        ctx: &WorkbenchRuntimeContext,
+        image: &sketch::ReferenceImage,
+    ) -> Option<sketch::ReferenceImage> {
+        let calibrating = self.calibrating.as_mut()?;
+        let mut applied = None;
+        let mut cancel = false;
+        match (calibrating.from, calibrating.to) {
+            (Some(from), Some(to)) => {
+                egui::Grid::new(("sketch_image_calibration", image.id))
+                    .num_columns(2)
+                    .spacing([SPACE_2, SPACE_1])
+                    .show(ui, |ui| {
+                        ui_kit::widgets::field_label(ui, "Real length");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut calibrating.length)
+                                .desired_width(120.0)
+                                .font(mono(FONT_SM))
+                                .hint_text("A value, or a formula"),
+                        );
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Turn");
+                        check_row(ui, &mut calibrating.straighten, "Straighten to 45°")
+                            .on_hover_text(
+                                "Turn the picture so the line lies along the nearest 45° direction",
+                            );
+                        ui.end_row();
+                        ui_kit::widgets::field_label(ui, "Move");
+                        check_row(ui, &mut calibrating.centre, "Centre on the line").on_hover_text(
+                            "Move the picture so the line's middle is the sketch's origin",
+                        );
+                        ui.end_row();
+                    });
+                let length = ctx.document.evaluate_formula(
+                    calibrating.length.trim(),
+                    Some(core_document::expr::Dim::LENGTH),
+                );
+                let placed = length.as_ref().ok().and_then(|q| {
+                    crate::images::calibrate(
+                        image,
+                        &crate::images::Calibration {
+                            from,
+                            to,
+                            length: q.value as f32,
+                            straighten: calibrating.straighten,
+                            centre: calibrating.centre,
+                        },
+                    )
+                });
+                if let Err(why) = &length
+                    && !calibrating.length.trim().is_empty()
+                {
+                    ui.label(RichText::new(why).font(sans(FONT_XS)).color(DANGER));
+                }
+                ui.horizontal(|ui| {
+                    if ui
+                        .add_enabled_ui(placed.is_some(), |ui| {
+                            ui_kit::widgets::primary_button(ui, "Apply")
+                        })
+                        .inner
+                        .clicked()
+                    {
+                        applied = placed;
+                    }
+                    if secondary_button(ui, "Cancel").clicked() {
+                        cancel = true;
+                    }
+                });
+            }
+            (from, _) => {
+                let step = if from.is_none() {
+                    "Click the first end of a length you know on the picture"
+                } else {
+                    "Click the other end"
+                };
+                ui.label(RichText::new(step).font(sans(FONT_XS)).color(TEXT2));
+                cancel = secondary_button(ui, "Cancel").clicked();
+            }
+        }
+        if applied.is_some() || cancel {
+            self.calibrating = None;
+        }
+        applied
     }
 
     fn solver_section(
