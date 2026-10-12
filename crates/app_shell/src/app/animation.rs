@@ -1,7 +1,7 @@
 //! Animations a bench records (a joint's motion swept through its range):
 //! the scene drawn once per frame, as the camera sees it, into an animated
-//! PNG, a GIF, or a folder of numbered PNG frames, by the kind of file
-//! saved. Frames are drawn on the CPU, on a thread of their own, all framed
+//! PNG, a GIF, a folder of numbered PNG frames, or with `ffmpeg` on the
+//! system a WebM or MP4 video, by the kind of file saved. Frames are drawn on the CPU, on a thread of their own, all framed
 //! alike so the view holds still while the model moves.
 
 use std::path::PathBuf;
@@ -96,17 +96,26 @@ pub(crate) fn write_in_background(animation: Animation, path: PathBuf) {
     }
 }
 
-/// Write the animation where `path` says, in its kind; where it went.
+/// Write the animation where `path` says, in its kind (an animated PNG
+/// for a path without an extension, which it is given); where it went.
 fn write(animation: &Animation, path: &std::path::Path) -> Result<PathBuf, String> {
     let extension = path
         .extension()
         .and_then(|e| e.to_str())
         .map(str::to_ascii_lowercase);
+    let path = &match extension {
+        Some(_) => path.to_path_buf(),
+        None => path.with_extension("png"),
+    };
     let save = |target: &std::path::Path, bytes: Vec<u8>| {
         crate::platform::write(target, &bytes)
             .map_err(|err| format!("could not save {}: {err}", target.display()))
     };
     match extension.as_deref() {
+        Some(kind @ ("webm" | "mp4")) => {
+            encode_video(animation, path, kind)?;
+            Ok(path.to_path_buf())
+        }
         Some("gif") => {
             save(path, encode_gif(animation)?)?;
             Ok(path.to_path_buf())
@@ -164,6 +173,72 @@ fn frames(animation: &Animation) -> Result<Vec<Vec<u8>>, String> {
             .ok_or_else(|| "a frame had nothing to draw".to_string())
         })
         .collect()
+}
+
+/// Where `ffmpeg` is on this system, when it is: what a video is made
+/// with.
+pub(crate) fn ffmpeg() -> Option<PathBuf> {
+    if cfg!(target_arch = "wasm32") {
+        return None;
+    }
+    let name = local_ipc::program_name("ffmpeg");
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(&name))
+        .find(|candidate| candidate.is_file())
+}
+
+/// The frames as a `kind` video (`webm`, VP9; `mp4`, H.264) at `path`,
+/// through `ffmpeg`, the frames handed to it raw.
+fn encode_video(animation: &Animation, path: &std::path::Path, kind: &str) -> Result<(), String> {
+    use std::io::Write as _;
+    let ffmpeg = ffmpeg().ok_or("a video needs ffmpeg, which is not on this system")?;
+    let frames = frames(animation)?;
+    let rate = format!("{:.3}", 1000.0 / f64::from(animation.frame_ms.max(1)));
+    let codec: &[&str] = match kind {
+        "mp4" => &["-c:v", "libx264", "-crf", "20"],
+        _ => &["-c:v", "libvpx-vp9", "-b:v", "0", "-crf", "32"],
+    };
+    let mut child = std::process::Command::new(ffmpeg)
+        .args([
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgba",
+        ])
+        .args([
+            "-s",
+            &format!("{WIDTH}x{HEIGHT}"),
+            "-framerate",
+            &rate,
+            "-i",
+            "-",
+        ])
+        .args(codec)
+        .args(["-pix_fmt", "yuv420p"])
+        .arg(path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not start ffmpeg: {e}"))?;
+    if let Some(mut input) = child.stdin.take() {
+        for rgba in &frames {
+            input
+                .write_all(rgba)
+                .map_err(|e| format!("ffmpeg stopped taking frames: {e}"))?;
+        }
+    }
+    let done = child
+        .wait_with_output()
+        .map_err(|e| format!("ffmpeg did not finish: {e}"))?;
+    if !done.status.success() {
+        let said = String::from_utf8_lossy(&done.stderr);
+        return Err(format!("ffmpeg could not make the video: {}", said.trim()));
+    }
+    Ok(())
 }
 
 /// The frames put together as an animated PNG, played on a loop.
@@ -291,6 +366,36 @@ mod tests {
         assert_eq!(folder, dir.join("shot"));
         for i in 1..=3 {
             assert!(folder.join(format!("shot-{i:04}.png")).exists());
+        }
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A path with no extension becomes an animated PNG; with ffmpeg on
+    /// the system, a `.webm` is a WebM video (its EBML header first) and an
+    /// `.mp4` an MP4 (an `ftyp` box first).
+    #[test]
+    fn frames_become_a_video_where_ffmpeg_can_make_one() {
+        let animation = Animation {
+            name: "slide".into(),
+            frames: (0..4).map(|i| vec![triangle(i as f32 * 5.0)]).collect(),
+            forward: Vec3::new(0.0, 0.0, -1.0),
+            up: Vec3::Y,
+            frame_ms: 40,
+        };
+        let dir = std::env::temp_dir().join(format!("printcad-video-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let plain = write(&animation, &dir.join("plain")).unwrap();
+        assert_eq!(plain, dir.join("plain.png"));
+        assert!(std::fs::read(&plain).unwrap().starts_with(b"\x89PNG"));
+        if ffmpeg().is_some() {
+            let webm = write(&animation, &dir.join("slide.webm")).unwrap();
+            assert!(
+                std::fs::read(webm)
+                    .unwrap()
+                    .starts_with(&[0x1A, 0x45, 0xDF, 0xA3])
+            );
+            let mp4 = write(&animation, &dir.join("slide.mp4")).unwrap();
+            assert_eq!(&std::fs::read(mp4).unwrap()[4..8], b"ftyp");
         }
         std::fs::remove_dir_all(&dir).ok();
     }

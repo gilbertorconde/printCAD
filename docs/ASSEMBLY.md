@@ -144,7 +144,9 @@ driven joint through its limits (or a whole turn, or 25 mm either way) to
 show the motion, and puts it back when stopped; a drive set by a formula
 has no Play. Record saves the same
 sweep, there and back, seen from the current view: as an animated PNG, a
-GIF, or a folder of numbered PNG frames, by the kind of file chosen.
+GIF, or a folder of numbered PNG frames, by the kind of file chosen, and
+with `ffmpeg` on the system as a WebM or MP4 video. A name without an
+extension is saved as an animated PNG.
 
 Check collisions through the motion, in a hinge's or a slider's
 settings, steps the drive across its limits (a whole turn, or 25 mm either
