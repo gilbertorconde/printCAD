@@ -195,3 +195,106 @@ fn a_region_with_a_hole_embosses_around_the_hole() {
     let gained = volume(&result) - plain;
     assert!((gained - added).abs() < 0.1 * added, "{gained} vs {added}");
 }
+
+/// A Ø30 × 30 cylinder with a 10 × 12 rectangle sketched 10 mm in front of
+/// the side facing `(dx, dy)`, square to it and facing away, projected onto
+/// that side 1.5 mm high; the plain cylinder's volume and the result.
+fn onto_the_side_facing(
+    dx: f64,
+    dy: f64,
+    mode: ProjectMode,
+) -> (f64, Result<SolidBuildResult, kernel_api::ChainError>) {
+    let (radius, height) = (15.0, 30.0);
+    let line = |start: [f64; 2], end: [f64; 2]| ProfileSegment::Line { start, end };
+    let (u0, u1, v0, v1) = (-5.0, 5.0, -6.0, 6.0);
+    let profile = Profile {
+        plane: ProfilePlane {
+            origin: [25.0 * dx, 25.0 * dy, 15.0],
+            x_axis: [-dy, dx, 0.0],
+            y_axis: [0.0, 0.0, 1.0],
+            normal: [dx, dy, 0.0],
+        },
+        wires: vec![ProfileWire::new(vec![
+            line([u0, v0], [u1, v0]),
+            line([u1, v0], [u1, v1]),
+            line([u1, v1], [u0, v1]),
+            line([u0, v1], [u0, v0]),
+        ])],
+    };
+    let probe = FaceProbe {
+        point: [radius * dx, radius * dy, 15.0],
+        normal: [dx, dy, 0.0],
+        name: 0,
+    };
+    let cylinder = SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius,
+            height,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    };
+    let result = OgeomKernel::new().execute_solid_chain(
+        &[
+            cylinder,
+            SolidOp::Project {
+                profile,
+                faces: vec![probe],
+                mode,
+                height: 1.5,
+            },
+        ],
+        &TessellationSettings::default(),
+    );
+    (std::f64::consts::PI * radius * radius * height, result)
+}
+
+/// The volume `onto_the_side_facing` adds (an emboss) or takes away (a
+/// deboss): a ring sector over the rectangle's span, 12 mm tall.
+fn rectangle_slab(mode: ProjectMode) -> f64 {
+    let span = 2.0 * (5.0f64 / 15.0).asin();
+    let (inner, outer): (f64, f64) = match mode {
+        ProjectMode::Emboss => (15.0, 16.5),
+        _ => (13.5, 15.0),
+    };
+    span * (outer.powi(2) - inner.powi(2)) / 2.0 * 12.0
+}
+
+#[test]
+fn a_projection_marks_only_the_side_facing_the_sketch() {
+    // Facing -X the side's far half carries the rectangle too, carried
+    // back along the plane's normal, and must stay untouched.
+    for (dx, dy) in [(-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+        for (mode, sign) in [(ProjectMode::Emboss, 1.0), (ProjectMode::Deboss, -1.0)] {
+            let (plain, result) = onto_the_side_facing(dx, dy, mode);
+            let result = result.unwrap_or_else(|e| panic!("({dx}, {dy}) {mode:?}: {}", e.message));
+            let (_, sound) = faces_and_soundness(&result);
+            assert!(sound, "({dx}, {dy}) {mode:?} checks sound");
+            let moved = volume(&result) - plain;
+            let expected = sign * rectangle_slab(mode);
+            assert!(
+                (moved - expected).abs() < 0.02 * expected.abs(),
+                "({dx}, {dy}) {mode:?}: {moved} vs {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "kernel: split_face refuses a closed curve projected across a periodic face's seam, \"a curve to split along runs along the face's boundary\""]
+fn a_projection_across_the_cylinders_seam() {
+    // The cylinder's seam runs up its +X side, through the rectangle.
+    for mode in [ProjectMode::Emboss, ProjectMode::Deboss] {
+        let (plain, result) = onto_the_side_facing(1.0, 0.0, mode);
+        let result = result.unwrap_or_else(|e| panic!("{mode:?}: {}", e.message));
+        let (_, sound) = faces_and_soundness(&result);
+        assert!(sound, "{mode:?} checks sound");
+        let moved = (volume(&result) - plain).abs();
+        let expected = rectangle_slab(mode);
+        assert!(
+            (moved - expected).abs() < 0.02 * expected,
+            "{mode:?}: {moved} vs {expected}"
+        );
+    }
+}

@@ -4,7 +4,8 @@
 //! pieces the sketch's regions cover are what an emboss raises and a
 //! deboss sinks: each piece thickened into a slab of its own, out of the
 //! solid or into it, then fused on or cut away. A piece is told to be in a
-//! region by a point inside it carried back onto the sketch's plane.
+//! region by a point inside it, where it faces the sketch's plane, carried
+//! back onto that plane.
 
 use kernel_api::{FaceProbe, Profile, ProjectMode};
 use ogeom::algo::{Containment, classify_in_solid, classify_on_face, copied};
@@ -83,7 +84,7 @@ pub fn apply(
 
     let mut covered = Vec::new();
     for piece in pieces {
-        let Some(inside) = point_inside(model, &piece) else {
+        let Some(inside) = point_inside(model, &piece, sketch, along) else {
             continue;
         };
         let on_plane = onto_plane(sketch, along, inside);
@@ -132,25 +133,44 @@ fn reaches(model: &Model, face: &Shape, wire: &BuiltWire, along: Direction) -> b
     })
 }
 
-/// A point well inside `face`: the middle of its largest drawn triangle.
-fn point_inside(model: &Model, face: &Shape) -> Option<Point> {
+/// A point well inside `face` where it faces the sketch's plane: the middle
+/// of its largest drawn triangle turned toward the plane, or of its largest
+/// one where none is.
+///
+/// A piece wrapping round a solid also covers the far side, whose points
+/// carried onto the plane land in the same regions as the near side's: a
+/// point there would take the whole wrap for a region. The far side faces
+/// away from the plane, so it is passed over.
+fn point_inside(model: &Model, face: &Shape, sketch: &Profile, along: Direction) -> Option<Point> {
     let drawn = triangulate_face(model, face, Deflection::default(), tol()).ok()?;
-    drawn
+    let o = sketch.plane.origin;
+    let origin = Point::new(o[0], o[1], o[2]);
+    let n = along.vector();
+    let triangles: Vec<(Point, f64, bool)> = drawn
         .triangles
         .iter()
-        .map(|t| t.map(|i| drawn.positions[i as usize]))
-        .max_by(|x, y| area(x).total_cmp(&area(y)))
-        .map(|[a, b, c]| {
-            Point::new(
+        .map(|t| {
+            let [a, b, c] = t.map(|i| drawn.positions[i as usize]);
+            let middle = Point::new(
                 (a.x + b.x + c.x) / 3.0,
                 (a.y + b.y + c.y) / 3.0,
                 (a.z + b.z + c.z) / 3.0,
-            )
+            );
+            // Wound outward, so its normal faces the plane where it points
+            // back across the plane's normal from the side it stands on.
+            let normal = (b - a).cross(c - a);
+            let facing = (middle - origin).dot(n) * normal.dot(n) <= 0.0;
+            (middle, normal.magnitude(), facing)
         })
-}
-
-fn area([a, b, c]: &[Point; 3]) -> f64 {
-    (*b - *a).cross(*c - *a).magnitude()
+        .collect();
+    let largest = |facing_only: bool| {
+        triangles
+            .iter()
+            .filter(|t| t.2 || !facing_only)
+            .max_by(|x, y| x.1.total_cmp(&y.1))
+            .map(|t| t.0)
+    };
+    largest(true).or_else(|| largest(false))
 }
 
 /// `p` carried along `along` onto the sketch's plane.
