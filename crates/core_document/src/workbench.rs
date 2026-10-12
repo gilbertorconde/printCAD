@@ -675,6 +675,19 @@ pub trait Workbench: Send {
         None
     }
 
+    /// A problem an owned feature has that does not stop it building (a
+    /// sketch whose projected edges are gone), which the tree warns of on
+    /// its row. Asked whenever the tree is drawn, so it answers from what
+    /// it worked out last for the same inputs.
+    fn feature_warning(
+        &self,
+        _document: &Document,
+        _kernel: Option<&dyn kernel_api::KernelQueries>,
+        _id: FeatureId,
+    ) -> Option<String> {
+        None
+    }
+
     /// How far, in pixels, the cursor is from an owned feature, when it is
     /// close enough to count as over it. `None` when it is not.
     fn pick_feature(

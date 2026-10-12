@@ -4725,6 +4725,44 @@ mod tests {
             .unwrap()
     }
 
+    /// A sketch whose projected line's source is deleted warns of it on its
+    /// row, through the registry as the tree asks.
+    #[test]
+    fn a_projection_whose_source_is_gone_warns() {
+        let registry = registry();
+        let mut doc = Document::new("t");
+        let base = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let line = call(
+            &mut doc,
+            "sketch.line",
+            json!({"sketch": base, "x1": 0, "y1": 0, "x2": 5, "y2": 1}),
+        )
+        .unwrap();
+        let top = call(&mut doc, "sketch.new", json!({"offset": 10})).unwrap();
+        call(
+            &mut doc,
+            "sketch.external_from",
+            json!({"sketch": top, "from": base}),
+        )
+        .unwrap();
+        let warning = |doc: &mut Document| {
+            registry.evaluate(doc);
+            let id = feature_id(&top);
+            let node = doc.feature_tree().get_node(id).unwrap().clone();
+            registry.feature_warning(doc, None, id, &node)
+        };
+        assert_eq!(warning(&mut doc), None, "its source stands");
+
+        call(
+            &mut doc,
+            "sketch.delete",
+            json!({"sketch": base, "items": [line]}),
+        )
+        .unwrap();
+        let said = warning(&mut doc).expect("a warning");
+        assert!(said.starts_with("1 projected element"), "{said}");
+    }
+
     /// A circle copied from another sketch takes the source's new radius
     /// when the document is worked out, set by hand or by a formula, with
     /// the copy never opened; its own stored data is the projection it was

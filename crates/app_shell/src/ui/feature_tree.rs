@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use core_document::{
     Body, BodyId, ComponentId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode,
-    FeatureTree, MenuScope, WorkbenchId,
+    MenuScope, WorkbenchId,
 };
 use egui::{Response, Ui, Vec2};
 use ui_kit::sans;
@@ -104,6 +104,9 @@ struct TreeNode {
     visible: bool,
     suppressed: bool,
     error: Option<String>,
+    /// A problem that does not stop the feature building, which its bench
+    /// warns of: drawn as a warning badge with this as its tooltip.
+    warning: Option<String>,
     /// The kernel's checker calls this body's shape broken, or one below
     /// this row: the row draws in the danger colour.
     defect: bool,
@@ -179,13 +182,8 @@ impl DocumentTree {
         for &root_id in feature_tree.roots() {
             if let Some(node) = feature_tree.get_node(root_id) {
                 let body = node.body;
-                let tree_node = build_feature_node(
-                    feature_tree,
-                    node,
-                    &mut visited,
-                    &tip_seq_by_body,
-                    registry,
-                );
+                let tree_node =
+                    build_feature_node(document, node, &mut visited, &tip_seq_by_body, registry);
                 push_root(body, tree_node, &mut roots_by_body);
             }
         }
@@ -195,13 +193,8 @@ impl DocumentTree {
         for (&id, node) in feature_tree.all_nodes() {
             if !visited.contains(&id) {
                 let body = node.body;
-                let tree_node = build_feature_node(
-                    feature_tree,
-                    node,
-                    &mut visited,
-                    &tip_seq_by_body,
-                    registry,
-                );
+                let tree_node =
+                    build_feature_node(document, node, &mut visited, &tip_seq_by_body, registry);
                 push_root(body, tree_node, &mut roots_by_body);
             }
         }
@@ -325,13 +318,14 @@ impl DocumentTree {
 }
 
 fn build_feature_node(
-    feature_tree: &FeatureTree,
+    document: &Document,
     node: &FeatureNode,
     visited: &mut HashSet<FeatureId>,
     tip_seq_by_body: &HashMap<BodyId, (FeatureId, u64)>,
     registry: &DocumentService,
 ) -> TreeNode {
     visited.insert(node.id);
+    let feature_tree = document.feature_tree();
 
     let mut children = Vec::new();
     for child_id in feature_tree.dependents(node.id) {
@@ -340,7 +334,7 @@ fn build_feature_node(
         }
         if let Some(child) = feature_tree.get_node(child_id) {
             children.push(build_feature_node(
-                feature_tree,
+                document,
                 child,
                 visited,
                 tip_seq_by_body,
@@ -371,6 +365,7 @@ fn build_feature_node(
                 .then(|| FeatureInfo::missing_package(node))
                 .flatten()
         }),
+        warning: registry.feature_warning(document, Some(&kernel_ogeom::QUERIES), node.id, node),
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
@@ -426,6 +421,7 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 visible: true,
                 suppressed: feature.suppressed,
                 error: None,
+                warning: None,
                 defect: false,
                 repairable: Vec::new(),
                 convertible: Vec::new(),
@@ -559,6 +555,7 @@ fn build_body_node_blank() -> TreeNode {
         visible: true,
         suppressed: false,
         error: None,
+        warning: None,
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
@@ -592,6 +589,7 @@ fn build_body_node(body: &Body) -> TreeNode {
         visible: !body.hidden,
         suppressed: false,
         error: None,
+        warning: None,
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
@@ -823,6 +821,7 @@ fn build_imported_node(
         visible: imported.visible,
         suppressed: false,
         error: None,
+        warning: None,
         defect: false,
         repairable: Vec::new(),
         convertible: Vec::new(),
@@ -1365,6 +1364,13 @@ fn draw_node(
             tooltip: Some(error.clone()),
             opens_details: true,
         });
+    } else if let Some(warning) = &node.warning {
+        badges.push(Badge {
+            text: "!",
+            color: WARNING,
+            tooltip: Some(warning.clone()),
+            opens_details: true,
+        });
     }
     let dimmed_by_edit = options.editing.is_some() && !editing_here;
     let eye = match node.id {
@@ -1383,6 +1389,8 @@ fn draw_node(
         ACCENT
     } else if node.error.is_some() {
         DANGER
+    } else if node.warning.is_some() {
+        WARNING
     } else if node.is_tip {
         SUCCESS
     } else {

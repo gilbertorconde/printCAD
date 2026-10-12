@@ -527,6 +527,19 @@ impl DocumentService {
         Some(geometry)
     }
 
+    /// What the bench that claimed `node`'s kind warns of on it, if
+    /// anything.
+    pub fn feature_warning(
+        &self,
+        document: &Document,
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+        id: FeatureId,
+        node: &FeatureNode,
+    ) -> Option<String> {
+        self.owner_of(&node.workbench_id)?
+            .feature_warning(document, kernel, id)
+    }
+
     /// The visible feature nearest the cursor within `tolerance_px`, asked
     /// of the bench that claimed each feature's kind.
     pub fn pick_feature(

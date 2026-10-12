@@ -545,6 +545,9 @@ pub struct SketchWorkbench {
     /// double-click detection.
     last_geometry_click: Option<(Uuid, Instant)>,
     last_empty_click: Option<Instant>,
+    /// Each sketch's external elements whose edge, face, element or datum
+    /// could not be found, with what that was worked out for.
+    lost_external: std::sync::Mutex<HashMap<FeatureId, (u64, Vec<Uuid>)>>,
     /// On-view parameter capture for the active drawing tool.
     dim_capture: DimCapture,
     /// Object snapping is off (the toolbar toggle).
@@ -1946,6 +1949,30 @@ impl SketchWorkbench {
         ));
     }
 
+    /// Sketch `id`'s external elements whose source is gone, worked out
+    /// again only when what they were worked out from changed.
+    pub(crate) fn lost_external(
+        &self,
+        document: &core_document::Document,
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+        id: FeatureId,
+    ) -> Vec<Uuid> {
+        let Some(stamp) = external_stamp(document, id) else {
+            return Vec::new();
+        };
+        let Ok(mut cache) = self.lost_external.lock() else {
+            return Vec::new();
+        };
+        if let Some((at, lost)) = cache.get(&id)
+            && *at == stamp
+        {
+            return lost.clone();
+        }
+        let lost = lost_external_elements(document, kernel, id);
+        cache.insert(id, (stamp, lost.clone()));
+        lost
+    }
+
     /// The `sketch.construction` action. With a selection: flip each
     /// selected element's construction flag individually (mixed selections
     /// end up mixed-inverted). With nothing selected: toggle construction
@@ -2649,6 +2676,22 @@ impl Workbench for SketchWorkbench {
         .icon("workbench-sketcher")
         .feature_kinds(["wb.sketch"])
         .modal()
+    }
+
+    fn feature_warning(
+        &self,
+        document: &core_document::Document,
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+        id: FeatureId,
+    ) -> Option<String> {
+        let lost = self.lost_external(document, kernel, id).len();
+        (lost > 0).then(|| {
+            format!(
+                "{lost} projected element(s) lost: the edge, face, element or datum they came \
+                 from is gone. They stay where they were; edit the sketch to remove or replace \
+                 them."
+            )
+        })
     }
 
     fn feature_info(&self, node: &core_document::FeatureNode) -> FeatureInfo {
@@ -6248,18 +6291,27 @@ pub(crate) fn project_source(
     plane: &SketchPlane,
     source: &sketch::ExternalSource,
 ) -> Result<Vec<kernel_api::ProjectedEdge>, String> {
+    project_source_in(ctx.document, ctx.kernel, plane, source)
+}
+
+/// [`project_source`] with the document and kernel given.
+fn project_source_in(
+    document: &core_document::Document,
+    kernel: Option<&dyn kernel_api::KernelQueries>,
+    plane: &SketchPlane,
+    source: &sketch::ExternalSource,
+) -> Result<Vec<kernel_api::ProjectedEdge>, String> {
     if let Some(reference) = source.reference {
-        return external_ref::project(ctx.document, plane, reference);
+        return external_ref::project(document, plane, reference);
     }
-    let kernel = ctx.kernel.ok_or("no kernel to project with")?;
+    let kernel = kernel.ok_or("no kernel to project with")?;
     let body = BodyId(source.body);
-    let brep = ctx
-        .document
+    let brep = document
         .imported_brep_blob(body)
         .ok_or("that body has no solid shape")?;
     // The kernel works in the body's own frame: the plane goes there too,
     // and the projection keeps the sketch's own coordinates.
-    let local = placed_plane(plane, &ctx.document.body_placement(body).inverse());
+    let local = placed_plane(plane, &document.body_placement(body).inverse());
     let f = |v: [f32; 3]| v.map(f64::from);
     let plane = kernel_api::ProfilePlane {
         origin: f(local.origin),
@@ -6280,6 +6332,68 @@ pub(crate) fn project_source(
         .project_edge(brep, f(source.point), &plane)
         .map(|edge| vec![edge])
         .map_err(|e| e.to_string())
+}
+
+/// What sketch `id`'s lost external elements were worked out from: its
+/// plane, its external elements' sources and where its body sits, the
+/// solids they were projected from as they stand, and for elements from
+/// other sketches or datums the document's edit count. `None` when it has
+/// no external geometry.
+fn external_stamp(document: &core_document::Document, id: FeatureId) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let values = document.feature_values(id)?;
+    let external = values.get("sketch")?.get("external")?;
+    let sources: HashMap<Uuid, sketch::ExternalSource> =
+        serde_json::from_value(external.clone()).ok()?;
+    if sources.is_empty() {
+        return None;
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    core_document::data_revision(external).hash(&mut hasher);
+    values
+        .get("plane")
+        .map(core_document::data_revision)
+        .hash(&mut hasher);
+    format!("{:?}", sketch_placement(document, id)).hash(&mut hasher);
+    let mut bodies: Vec<Uuid> = sources
+        .values()
+        .filter(|s| s.reference.is_none())
+        .map(|s| s.body)
+        .collect();
+    bodies.sort();
+    bodies.dedup();
+    for body in bodies {
+        let body = BodyId(body);
+        document
+            .imported_geometry(body)
+            .map(|g| g.revision)
+            .hash(&mut hasher);
+        format!("{:?}", document.body_placement(body)).hash(&mut hasher);
+    }
+    if sources.values().any(|s| s.reference.is_some()) {
+        document.mutation_seq().hash(&mut hasher);
+    }
+    Some(hasher.finish())
+}
+
+/// The external elements of sketch `id` whose source cannot be projected
+/// again: an edge or face gone from its solid, a sketch element or datum
+/// deleted. Solids' edges are passed over without a kernel.
+fn lost_external_elements(
+    document: &core_document::Document,
+    kernel: Option<&dyn kernel_api::KernelQueries>,
+    id: FeatureId,
+) -> Vec<Uuid> {
+    let Some(feature) = stored_sketch(document, id) else {
+        return Vec::new();
+    };
+    let plane = placed_plane(&feature.plane, &sketch_placement(document, id));
+    external::groups(&feature.sketch)
+        .into_iter()
+        .filter(|(source, _)| source.reference.is_some() || kernel.is_some())
+        .filter(|(source, _)| project_source_in(document, kernel, &plane, source).is_err())
+        .flat_map(|(_, group)| group)
+        .collect()
 }
 
 /// Move the sketch's geometry from other sketches' elements and datums to

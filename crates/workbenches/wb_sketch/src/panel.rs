@@ -1461,6 +1461,13 @@ impl SketchWorkbench {
             }
         }
 
+        // Projected elements whose edge, face, element or datum is gone.
+        let lost: std::collections::HashSet<Uuid> = self
+            .active_sketch_id
+            .map(|sketch_id| self.lost_external(ctx.document, ctx.kernel, sketch_id))
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
         for geom in &sketch.geometry {
             let id = geom.id();
             if !self.element_filter.accepts(sketch, id) {
@@ -1485,6 +1492,11 @@ impl SketchWorkbench {
                 }
                 ui.label(RichText::new(name).font(sans(FONT_SM)).color(color));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if lost.contains(&id) {
+                        mono_label(ui, "lost", FONT_XS, WARNING).on_hover_text(
+                            "What it was projected from is gone: it stays where it was",
+                        );
+                    }
                     mono_label(ui, element_kind(geom), FONT_XS, TEXT3);
                 });
             });
