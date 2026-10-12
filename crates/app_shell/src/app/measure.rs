@@ -205,7 +205,7 @@ pub(crate) fn pick_at(
     let point = point?;
     let face = body_mesh.and_then(|mesh| {
         let face = crate::app::input::face_ref_from_mesh(mesh, Vec3::from_array(point))?;
-        let sub = crate::app::input::face_submesh(mesh, face.point, face.normal)?;
+        let (_, sub) = crate::app::input::face_submesh(mesh, 0, None, face.point, face.normal)?;
         Some(MeasurePick::Face {
             point: face.point,
             normal: face.normal,
