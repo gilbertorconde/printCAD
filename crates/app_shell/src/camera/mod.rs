@@ -685,6 +685,26 @@ impl CameraController {
         self.after_scene_or_settings_touch(settings);
     }
 
+    /// Frame the sphere without turning the view or leaving the focal
+    /// plane: the centre slides along the view onto it. What an edit
+    /// session that holds the view square to its plane fits with, the
+    /// plane being where the session put the focal point.
+    pub fn fit_keeping_orientation(
+        &mut self,
+        center: Vec3,
+        radius: f32,
+        settings: &CameraSettings,
+    ) {
+        self.forget_released([false; 3]);
+        // A turn under way (onto the plane, as a session opens) is the
+        // orientation to keep.
+        self.tween.finish(&mut self.state, &self.axes);
+        let (forward, _) = self.view_basis();
+        let center = center - forward * (center - self.focal_point_world()).dot(forward);
+        ops::fit_sphere_as_oriented(&mut self.state, &self.axes, center, radius, settings);
+        self.after_scene_or_settings_touch(settings);
+    }
+
     /// The box around what the scene draws, which the clip planes enclose.
     /// The host sets it every frame; a change re-derives the planes.
     pub fn set_scene_bounds(&mut self, bounds: Option<(Vec3, Vec3)>) {

@@ -983,6 +983,9 @@ impl PrintCadApp {
     /// Frame the selected body (else the active one); the whole scene when
     /// neither has geometry.
     fn fit_view_to_selection(&mut self) {
+        if self.fit_edit_session() {
+            return;
+        }
         let body = self
             .session
             .selected_body
@@ -1006,7 +1009,37 @@ impl PrintCadApp {
     /// Frame the camera around the imported geometry (or the default box).
     fn fit_view_to_scene(&mut self) {
         app_log::info("Fit View requested");
+        if self.fit_edit_session() {
+            return;
+        }
         self.frame_scene();
+    }
+
+    /// While an edit session holds the view square to its plane, frame
+    /// what it edits without turning the view: the edited feature's
+    /// geometry, else the bodies, else 50 mm about where the view is.
+    /// False when no such session is open.
+    fn fit_edit_session(&mut self) -> bool {
+        if !self.sketch_editing_active() {
+            return false;
+        }
+        let edited = self
+            .registry
+            .workbench(&self.session.active_workbench.0)
+            .ok()
+            .and_then(|wb| wb.editing_feature())
+            .and_then(|id| self.registry.feature_geometry(&self.session.document, id))
+            .and_then(|geometry| geometry.mesh.bounds())
+            .map(|(mn, mx)| (Vec3::from_array(mn), Vec3::from_array(mx)));
+        let (center, radius) =
+            match edited.or_else(|| document_imported_aabb(&self.session.document)) {
+                Some((mn, mx)) => aabb_fit_center_radius(mn, mx),
+                None => (self.session.camera.focal_point_world(), 50.0),
+            };
+        self.session
+            .camera
+            .fit_keeping_orientation(center, radius, &self.user_settings.camera);
+        true
     }
 
     /// [`Self::fit_view_to_scene`] without the log line.

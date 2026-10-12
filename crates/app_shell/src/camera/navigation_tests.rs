@@ -810,3 +810,44 @@ fn a_framed_view_looks_down_from_above() {
     assert!(forward.z < -0.3, "looks down: forward {forward}");
     assert!(up.z > 0.5, "Z stands up on screen: up {up}");
 }
+
+/// Fit while a sketch session holds the view square to its plane: the
+/// view keeps looking square on, even pressed while the turn onto the
+/// plane is still under way, and the sketch's box lands centred on screen
+/// and whole, on the plane.
+#[test]
+fn fit_keeping_orientation_stays_square_on_the_plane() {
+    use super::CameraController;
+    use glam::Vec3;
+    let settings = CameraSettings::default();
+    // A sketch on a face at x = 20, its geometry spanning y 40..80, z 10..30.
+    let (origin, normal, up) = (Vec3::new(20.0, 0.0, 0.0), Vec3::X, Vec3::Z);
+    let (mn, mx) = (Vec3::new(20.0, 40.0, 10.0), Vec3::new(20.0, 80.0, 30.0));
+
+    let mut cam = CameraController::new(&settings, (800, 600));
+    cam.update_viewport((0, 0), (800, 600));
+    cam.orient_to_plane(origin, normal, up, None, &settings);
+    cam.update(0.016, &settings);
+    assert!(cam.is_animating(), "pressed mid-turn");
+    let (center, radius) = ((mn + mx) * 0.5, (mx - mn).length() * 0.5);
+    cam.fit_keeping_orientation(center, radius, &settings);
+    assert!(!cam.is_animating());
+
+    let (forward, view_up) = cam.view_basis();
+    assert!(forward.dot(-normal) > 0.9999, "square on: {forward:?}");
+    assert!(view_up.dot(up) > 0.9999, "upright: {view_up:?}");
+    let focal = cam.focal_point_world();
+    assert!((focal.x - 20.0).abs() < 1e-3, "on the plane: {focal:?}");
+    let (x, y) = cam.world_to_screen(center).expect("centre in view");
+    assert!(
+        (x - 400.0).abs() < 1.0 && (y - 300.0).abs() < 1.0,
+        "centred: {x}, {y}"
+    );
+    for corner in [mn, mx] {
+        let (x, y) = cam.world_to_screen(corner).expect("corner in view");
+        assert!(
+            (0.0..800.0).contains(&x) && (0.0..600.0).contains(&y),
+            "whole: {x}, {y}"
+        );
+    }
+}

@@ -45,6 +45,14 @@ impl CameraTween {
         self.running = None;
     }
 
+    /// Put the camera where the transition ends and stop it.
+    pub(crate) fn finish(&mut self, state: &mut CadCameraState, axes: &AxisSystem) {
+        if let Some((origin, mut transition)) = self.running.take() {
+            transition.advance(Duration::MAX);
+            core::apply(state, axes, origin, transition.sample());
+        }
+    }
+
     pub(crate) fn tick(
         &mut self,
         dt_secs: f32,

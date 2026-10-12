@@ -123,12 +123,23 @@ pub fn fit_sphere(
     _scene_aabb: Option<(Vec3, Vec3)>,
     settings: &CameraSettings,
 ) {
-    state.height_angle_rad = f64::from(settings.fov_degrees).to_radians();
     state.orientation = super::state::orientation_from_yaw_pitch(
         axes,
         super::state::CORNER_YAW_RAD,
         super::state::CORNER_PITCH_RAD,
     );
+    fit_sphere_as_oriented(state, axes, center, radius, settings);
+}
+
+/// [`fit_sphere`] looking the way the view already does.
+pub fn fit_sphere_as_oriented(
+    state: &mut CadCameraState,
+    axes: &axes::AxisSystem,
+    center: Vec3,
+    radius: f32,
+    settings: &CameraSettings,
+) {
+    state.height_angle_rad = f64::from(settings.fov_degrees).to_radians();
     let origin = center.as_dvec3();
     let camera = core::camera(state, axes, origin);
     let fitted = fit(

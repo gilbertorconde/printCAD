@@ -485,34 +485,46 @@ impl DocumentService {
             .feature_tree()
             .all_nodes()
             .filter(|(id, node)| node.visible && Some(**id) != editing)
-            .filter_map(|(id, node)| {
-                let mut geometry = self
-                    .owner_of(&node.workbench_id)?
-                    .passive_geometry(document, *id, node)?;
-                // A bench draws in its body's frame; the scene has it where
-                // the body sits.
-                let placement = node
-                    .body
-                    .map(|body| document.body_placement(body))
-                    .unwrap_or_default();
-                if !placement.is_identity() {
-                    geometry.mesh = placement.mesh(&geometry.mesh);
-                    geometry.revision = mix_placement(geometry.revision, &placement);
-                    if let Some(region) = &mut geometry.region {
-                        let plane = &mut region.profile.plane;
-                        let point =
-                            |p: [f64; 3]| placement.point(p.map(|c| c as f32)).map(f64::from);
-                        let turn =
-                            |d: [f64; 3]| placement.direction(d.map(|c| c as f32)).map(f64::from);
-                        plane.origin = point(plane.origin);
-                        plane.x_axis = turn(plane.x_axis);
-                        plane.y_axis = turn(plane.y_axis);
-                        plane.normal = turn(plane.normal);
-                    }
-                }
-                Some((*id, geometry))
-            })
+            .filter_map(|(id, node)| Some((*id, self.placed_geometry(document, *id, node)?)))
             .collect()
+    }
+
+    /// A feature's 3D presence where its body sits, visible or not and
+    /// under edit or not: what framing the feature measures.
+    pub fn feature_geometry(&self, document: &Document, id: FeatureId) -> Option<PassiveGeometry> {
+        let node = document.feature_tree().get_node(id)?;
+        self.placed_geometry(document, id, node)
+    }
+
+    fn placed_geometry(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &FeatureNode,
+    ) -> Option<PassiveGeometry> {
+        let mut geometry = self
+            .owner_of(&node.workbench_id)?
+            .passive_geometry(document, id, node)?;
+        // A bench draws in its body's frame; the scene has it where the
+        // body sits.
+        let placement = node
+            .body
+            .map(|body| document.body_placement(body))
+            .unwrap_or_default();
+        if !placement.is_identity() {
+            geometry.mesh = placement.mesh(&geometry.mesh);
+            geometry.revision = mix_placement(geometry.revision, &placement);
+            if let Some(region) = &mut geometry.region {
+                let plane = &mut region.profile.plane;
+                let point = |p: [f64; 3]| placement.point(p.map(|c| c as f32)).map(f64::from);
+                let turn = |d: [f64; 3]| placement.direction(d.map(|c| c as f32)).map(f64::from);
+                plane.origin = point(plane.origin);
+                plane.x_axis = turn(plane.x_axis);
+                plane.y_axis = turn(plane.y_axis);
+                plane.normal = turn(plane.normal);
+            }
+        }
+        Some(geometry)
     }
 
     /// The visible feature nearest the cursor within `tolerance_px`, asked
