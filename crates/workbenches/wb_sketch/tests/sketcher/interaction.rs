@@ -4589,7 +4589,10 @@ mod default_label_placement {
         for &(x, y) in along {
             let (px, py) = h.px_of(x, y);
             let inside = (lo[0]..=hi[0]).contains(&px) && (lo[1]..=hi[1]).contains(&py);
-            assert!(!inside, "{text}: the pill {lo:?}..{hi:?} covers ({px}, {py})");
+            assert!(
+                !inside,
+                "{text}: the pill {lo:?}..{hi:?} covers ({px}, {py})"
+            );
         }
     }
 
@@ -4655,10 +4658,7 @@ mod default_label_placement {
             let s = point(sketch, radius * start.cos(), radius * start.sin());
             let e = point(sketch, radius * sweep.cos(), radius * sweep.sin());
             let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, radius)));
-            sketch.add_constraint(ConstraintKind::ArcLength {
-                arc,
-                length: 40.49,
-            });
+            sketch.add_constraint(ConstraintKind::ArcLength { arc, length: 40.49 });
         });
         let along: Vec<(f32, f32)> = (0..=200)
             .map(|i| {
