@@ -113,12 +113,15 @@ pub enum ResidualSpec {
     /// Two arcs joined smoothly at their shared end `p`: both centres on
     /// one line through it, cross(unit(p - c1), unit(p - c2)).
     TangentArcsAtEnd { p: usize, c1: usize, c2: usize },
-    /// |perpendicular distance(center, infinite line)| - r.
+    /// side · perpendicular distance(center, infinite line) - r. The side
+    /// of the line the centre stays on is picked once per solve, from the
+    /// configuration at solve start.
     TangentLineCircle {
         s: usize,
         e: usize,
         c: usize,
         r: usize,
+        side: f64,
     },
     /// |c1 - c2| - (r1 + r2) (external) or |c1 - c2| - |r1 - r2| (internal).
     /// The branch is picked once per solve, from the configuration at solve
@@ -167,11 +170,13 @@ pub enum ResidualSpec {
         b: usize,
         angle: f64,
     },
-    /// |perpendicular distance(p, infinite line)| - d.
+    /// side · perpendicular distance(p, infinite line) - d, the side the
+    /// point stays on picked once per solve.
     GapPointLine {
         p: usize,
         s: usize,
         e: usize,
+        side: f64,
         d: f64,
     },
     /// |p - c| - r - d, or r - |p - c| - d for a point inside the circle
@@ -206,12 +211,14 @@ pub enum ResidualSpec {
         b0: usize,
         b1: usize,
     },
-    /// |perpendicular distance(center, infinite line)| - r - d.
+    /// side · perpendicular distance(center, infinite line) - r - d, the
+    /// side the centre stays on picked once per solve.
     GapLineCircle {
         s: usize,
         e: usize,
         c: usize,
         r: usize,
+        side: f64,
         d: f64,
     },
     /// |c1 - c2| - (r1 + r2) - d apart, or |r1 - r2| - |c1 - c2| - d for
@@ -532,8 +539,8 @@ impl ResidualSpec {
                 let q = ((u / a).powi(2) + (w / b).powi(2)).sqrt();
                 out.push((q - 1.0) * b);
             }
-            ResidualSpec::TangentLineCircle { s, e, c, r } => {
-                out.push(point_line_distance(v, c, s, e, minimum_length).abs() - v[r]);
+            ResidualSpec::TangentLineCircle { s, e, c, r, side } => {
+                out.push(side * point_line_distance(v, c, s, e, minimum_length) - v[r]);
             }
             ResidualSpec::TangentAtEnd { p, c, s, e } => {
                 let radial = unit_direction(v, c, p, minimum_length);
@@ -584,8 +591,8 @@ impl ResidualSpec {
                 }
                 out.push(v[r] * sweep - len);
             }
-            ResidualSpec::GapPointLine { p, s, e, d } => {
-                out.push(point_line_distance(v, p, s, e, minimum_length).abs() - d);
+            ResidualSpec::GapPointLine { p, s, e, side, d } => {
+                out.push(side * point_line_distance(v, p, s, e, minimum_length) - d);
             }
             ResidualSpec::EqualEllipse { a, b } => {
                 let major = |k: usize| (v[k] * v[k] + v[k + 1] * v[k + 1]).sqrt();
@@ -616,8 +623,15 @@ impl ResidualSpec {
                     from_center - v[r] - d
                 });
             }
-            ResidualSpec::GapLineCircle { s, e, c, r, d } => {
-                out.push(point_line_distance(v, c, s, e, minimum_length).abs() - v[r] - d);
+            ResidualSpec::GapLineCircle {
+                s,
+                e,
+                c,
+                r,
+                side,
+                d,
+            } => {
+                out.push(side * point_line_distance(v, c, s, e, minimum_length) - v[r] - d);
             }
             ResidualSpec::GapLines { s1, e1, s2, e2, d } => {
                 let (mx, my) = ((v[s2] + v[e2]) * 0.5, (v[s2 + 1] + v[e2 + 1]) * 0.5);

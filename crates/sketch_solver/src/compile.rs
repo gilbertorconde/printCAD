@@ -232,6 +232,17 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
         _ => None,
     };
     let radius_var = |id: CurveReference| circle_vars(id).map(|(_, r)| r);
+    // The side of line s → e the point at `p` stands on as the solve
+    // starts: what a signed distance to the line keeps.
+    let line_side = |p: usize, s: usize, e: usize| {
+        crate::contact::side_of_line(crate::residual::point_line_distance(
+            &vars,
+            p,
+            s,
+            e,
+            sketch.settings.minimum_length.0,
+        ))
+    };
     // Any item a gap, angle or refraction reaches: a point, a line or a
     // circle (an arc counting as its circle).
     let item_vars = |id: ItemReference| match id {
@@ -589,7 +600,13 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                     }
                     // Line ↔ circle/arc, in either selection order.
                     (Some((s, e)), _, _, Some((c, r))) | (_, Some((c, r)), Some((s, e)), _) => {
-                        Some(ResidualSpec::TangentLineCircle { s, e, c, r })
+                        Some(ResidualSpec::TangentLineCircle {
+                            s,
+                            e,
+                            c,
+                            r,
+                            side: line_side(c, s, e),
+                        })
                     }
                     // Circle/arc ↔ circle/arc: choose the external or
                     // internal branch ONCE, from the configuration at solve
@@ -703,7 +720,13 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                 let spec = match (item_vars(item1), item_vars(item2)) {
                     (Some(ItemVars::Point(p)), Some(ItemVars::Line(s, e)))
                     | (Some(ItemVars::Line(s, e)), Some(ItemVars::Point(p))) => {
-                        Some(ResidualSpec::GapPointLine { p, s, e, d })
+                        Some(ResidualSpec::GapPointLine {
+                            p,
+                            s,
+                            e,
+                            side: line_side(p, s, e),
+                            d,
+                        })
                     }
                     (Some(ItemVars::Point(p)), Some(ItemVars::Circle(c, r)))
                     | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Point(p))) => {
@@ -723,7 +746,14 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                     }
                     (Some(ItemVars::Line(s, e)), Some(ItemVars::Circle(c, r)))
                     | (Some(ItemVars::Circle(c, r)), Some(ItemVars::Line(s, e))) => {
-                        Some(ResidualSpec::GapLineCircle { s, e, c, r, d })
+                        Some(ResidualSpec::GapLineCircle {
+                            s,
+                            e,
+                            c,
+                            r,
+                            side: line_side(c, s, e),
+                            d,
+                        })
                     }
                     (Some(ItemVars::Circle(c1, r1)), Some(ItemVars::Circle(c2, r2))) => {
                         Some(ResidualSpec::GapCircles {

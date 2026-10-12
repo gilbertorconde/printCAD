@@ -370,3 +370,113 @@ fn gap_branches_are_chosen_from_geometry_on_both_sides() {
         assert!((answer.values[p].hypot(answer.values[p + 1]) - from_center).abs() < 1e-8);
     }
 }
+
+/// A point's or circle's distance from a line, and a circle's tangency to
+/// it, keep the side of the line each starts on, however far the value
+/// moves: never across the line to the nearer solution there.
+#[test]
+fn line_gaps_and_tangency_keep_the_side_they_start_on() {
+    for side in [1.0, -1.0] {
+        let input = Problem {
+            geometry: vec![
+                point(1, 0.0, 0.0),
+                point(2, 10.0, 0.0),
+                Geometry::Line(Line {
+                    id: CurveId(3),
+                    start: PointId(1).into(),
+                    end: PointId(2).into(),
+                }),
+                point(4, 5.0, 0.5 * side),
+                point(5, 2.0, 1.5 * side),
+                Geometry::Circle(Circle {
+                    id: CurveId(6),
+                    center: PointId(5).into(),
+                    radius: Length(1.0),
+                }),
+                point(7, 8.0, 2.5 * side),
+                Geometry::Circle(Circle {
+                    id: CurveId(8),
+                    center: PointId(7).into(),
+                    radius: Length(1.0),
+                }),
+            ],
+            external: vec![PointId(1).into(), PointId(2).into(), CurveId(3).into()],
+            constraints: vec![
+                constraint(
+                    1,
+                    Relation::Gap {
+                        item1: PointId(4).into(),
+                        item2: CurveId(3).into(),
+                        distance: Length(40.0),
+                    },
+                ),
+                constraint(
+                    2,
+                    Relation::Tangent {
+                        line_or_circle1: CurveId(3).into(),
+                        item2: CurveId(6).into(),
+                    },
+                ),
+                constraint(
+                    3,
+                    Relation::Radius {
+                        circle: CurveId(6).into(),
+                        radius: Length(30.0),
+                    },
+                ),
+                constraint(
+                    4,
+                    Relation::Gap {
+                        item1: CurveId(8).into(),
+                        item2: CurveId(3).into(),
+                        distance: Length(25.0),
+                    },
+                ),
+                constraint(
+                    5,
+                    Relation::Radius {
+                        circle: CurveId(8).into(),
+                        radius: Length(1.0),
+                    },
+                ),
+            ],
+            ..Problem::default()
+        };
+        let system = compile(&input).unwrap();
+        let answer = solve(&input).unwrap();
+        assert!(
+            matches!(answer.outcome, SolveOutcome::Converged { .. }),
+            "{:?}",
+            answer.outcome
+        );
+        let at = |id: u128| system.point_variable(PointId(id).into()).unwrap().0 + 1;
+        let y = |id: u128| answer.values[at(id)];
+        assert!((y(4) - 40.0 * side).abs() < 1e-8, "the point: {}", y(4));
+        assert!(
+            (y(5) - 30.0 * side).abs() < 1e-8,
+            "the tangent circle: {}",
+            y(5)
+        );
+        assert!(
+            (y(7) - 26.0 * side).abs() < 1e-8,
+            "the circle apart: {}",
+            y(7)
+        );
+
+        // The same answer mirrored across the line is no answer: each of
+        // the three equations says the side is wrong.
+        let mut mirrored = answer.values.clone();
+        for id in [4, 5, 7] {
+            mirrored[at(id)] = -mirrored[at(id)];
+        }
+        let worst = |values: &[f64]| {
+            let mut out = Vec::new();
+            for spec in &system.specs {
+                spec.eval(values, &mut out);
+            }
+            out.iter().fold(0.0f64, |m, r| m.max(r.abs()))
+        };
+        assert!(worst(&answer.values) < 1e-8);
+        assert!(worst(&mirrored) > 1.0, "the mirror image is no solution");
+    }
+}

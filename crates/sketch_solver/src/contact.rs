@@ -10,3 +10,10 @@ pub fn circles_nest(distance: f64, radius1: f64, radius2: f64) -> bool {
 pub fn point_inside(distance: f64, radius: f64) -> bool {
     distance < radius
 }
+
+/// The side of a line a point stands on, from its signed distance to the
+/// line: `-1` on the negative side, `1` on the positive side or on the
+/// line itself.
+pub fn side_of_line(signed_distance: f64) -> f64 {
+    if signed_distance < 0.0 { -1.0 } else { 1.0 }
+}
