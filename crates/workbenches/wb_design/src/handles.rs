@@ -1,6 +1,8 @@
 //! Drag handles on the feature under edit: a dot at a pad's or pocket's
 //! end, or beside a fillet's or chamfer's first edge, that drags the
-//! number it stands for along its axis.
+//! number it stands for along its axis in steps. A pad's or pocket's
+//! turns the feature the other way when clicked, or dragged through its
+//! start.
 
 use core_document::{
     Document, FeatureId, ScreenSpaceLabel, ScreenSpaceMark, ScreenSpaceOverlay, WorkbenchFeature,
@@ -25,6 +27,8 @@ pub(crate) struct Handle {
     pub dir: Vec3,
     pub scale: f32,
     pub value: f32,
+    /// A pad's or pocket's: it can go the other way.
+    pub reversible: bool,
 }
 
 impl Handle {
@@ -33,8 +37,9 @@ impl Handle {
     }
 
     /// The number with the handle at the point of its axis nearest the
-    /// ray, rounded to a tenth.
-    pub fn value_at(&self, ray_origin: Vec3, ray_dir: Vec3) -> Option<f32> {
+    /// ray, in whole `step`s: below zero, through its start, for one that
+    /// can go the other way, else never under the least.
+    pub fn value_at(&self, ray_origin: Vec3, ray_dir: Vec3, step: f32) -> Option<f32> {
         let d = ray_dir.normalize_or_zero();
         let w = self.origin - ray_origin;
         let b = self.dir.dot(d);
@@ -43,8 +48,16 @@ impl Handle {
             return None;
         }
         let t = (b * d.dot(w) - self.dir.dot(w)) / denom;
-        let value = (t / self.scale * 10.0).round() / 10.0;
-        Some(value.max(LEAST))
+        let raw = t / self.scale;
+        let step = step.max(LEAST);
+        let value = (raw / step).round() * step;
+        Some(if !self.reversible {
+            value.max(LEAST)
+        } else if value.abs() < LEAST {
+            LEAST.copysign(raw)
+        } else {
+            value
+        })
     }
 }
 
@@ -76,6 +89,7 @@ pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> O
             dir: world_dir(normal) * sign,
             scale: if symmetric { 0.5 } else { 1.0 },
             value,
+            reversible: true,
         })
     };
     let edge_handle = |edges: &EdgeSel, value: f32| {
@@ -93,6 +107,7 @@ pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> O
             dir,
             scale: 1.0,
             value,
+            reversible: false,
         })
     };
     match &part {
@@ -123,6 +138,17 @@ pub(crate) fn handle_of(document: &Document, feature: FeatureId, eye: Vec3) -> O
         }
         DesignFeature::Chamfer { size, edges, .. } if free("size") => edge_handle(edges, *size),
         _ => None,
+    }
+}
+
+/// Turn a pad or a pocket the other way.
+pub(crate) fn reverse(feature: &mut DesignFeature) -> bool {
+    match feature {
+        DesignFeature::Pad { reversed, .. } | DesignFeature::Pocket { reversed, .. } => {
+            *reversed = !*reversed;
+            true
+        }
+        _ => false,
     }
 }
 
@@ -234,10 +260,11 @@ mod tests {
             dir: Vec3::Z,
             scale: 1.0,
             value: 10.0,
+            reversible: false,
         };
         // Looking along -X at height 25.
         let value = handle
-            .value_at(Vec3::new(100.0, 0.0, 25.04), Vec3::NEG_X)
+            .value_at(Vec3::new(100.0, 0.0, 25.04), Vec3::NEG_X, 0.1)
             .unwrap();
         assert!((value - 25.0).abs() < 1e-4);
         // Half the length shows on each side of a symmetric one.
@@ -246,17 +273,43 @@ mod tests {
             ..handle
         };
         let value = half
-            .value_at(Vec3::new(100.0, 0.0, 6.0), Vec3::NEG_X)
+            .value_at(Vec3::new(100.0, 0.0, 6.0), Vec3::NEG_X, 0.1)
             .unwrap();
         assert!((value - 12.0).abs() < 1e-4);
         // Never below the least, and nothing along the axis itself.
         assert_eq!(
-            handle.value_at(Vec3::new(9.0, 0.0, -5.0), Vec3::NEG_X),
+            handle.value_at(Vec3::new(9.0, 0.0, -5.0), Vec3::NEG_X, 0.1),
             Some(LEAST)
         );
         assert_eq!(
-            handle.value_at(Vec3::new(0.0, 0.0, 50.0), Vec3::NEG_Z),
+            handle.value_at(Vec3::new(0.0, 0.0, 50.0), Vec3::NEG_Z, 0.1),
             None
         );
+    }
+
+    /// Coarse steps take whole millimetres, fine ones tenths; a pad's
+    /// handle goes below zero, through its start, where it turns round.
+    #[test]
+    fn a_drag_steps_and_a_reversible_one_goes_through_zero() {
+        let pad = Handle {
+            feature: FeatureId(uuid::Uuid::nil()),
+            origin: Vec3::ZERO,
+            dir: Vec3::Z,
+            scale: 1.0,
+            value: 10.0,
+            reversible: true,
+        };
+        let at = |z: f32, step: f32| pad.value_at(Vec3::new(100.0, 0.0, z), Vec3::NEG_X, step);
+        assert_eq!(at(12.34, 1.0), Some(12.0));
+        assert!((at(12.34, 0.1).unwrap() - 12.3).abs() < 1e-4);
+        assert_eq!(at(-7.6, 1.0), Some(-8.0));
+        assert_eq!(at(-0.2, 1.0), Some(-LEAST), "just past the start");
+        let mut part = DesignFeature::from_json(&serde_json::json!({"Pad": {
+            "sketch": uuid::Uuid::nil(), "length": 5.0, "reversed": false,
+        }}));
+        if let Ok(part) = part.as_mut() {
+            assert!(reverse(part));
+            assert!(matches!(part, DesignFeature::Pad { reversed: true, .. }));
+        }
     }
 }

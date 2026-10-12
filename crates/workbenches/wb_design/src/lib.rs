@@ -85,6 +85,10 @@ pub struct DesignOptions {
     pub hide_used_sketches: bool,
     /// A new feature that fuses or cuts merges the coplanar faces it leaves.
     pub refine_result: bool,
+    /// The step a view handle's drag moves in, mm.
+    pub handle_step: f32,
+    /// The step while Shift is held, mm.
+    pub handle_fine_step: f32,
 }
 
 impl Default for DesignOptions {
@@ -93,6 +97,8 @@ impl Default for DesignOptions {
             update_while_editing: true,
             hide_used_sketches: true,
             refine_result: true,
+            handle_step: 1.0,
+            handle_fine_step: 0.1,
         }
     }
 }
@@ -119,6 +125,9 @@ pub struct DesignWorkbench {
     held: Option<handles::Handle>,
     /// The occurrence of the open pattern whose dot is under the pointer.
     hovered_occurrence: Option<u32>,
+    /// The held handle has been dragged: a release then keeps the number
+    /// rather than turning the feature round.
+    held_moved: bool,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -1280,6 +1289,7 @@ impl DesignWorkbench {
                     && handles::within_reach(ctx, &handle, *viewport_pos)
                 {
                     self.held = Some(handle);
+                    self.held_moved = false;
                     return Some(InputResult::consumed());
                 }
                 // A click on a region of the open task's sketch chooses it.
@@ -1287,17 +1297,33 @@ impl DesignWorkbench {
                 region_pick::click(ctx, task, *viewport_pos).then(InputResult::consumed)
             }
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
+                let step = if ctx.shift_down {
+                    self.options.handle_fine_step
+                } else {
+                    self.options.handle_step
+                };
                 let held = self.held.as_mut()?;
                 let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
-                let value =
-                    held.value_at(glam::Vec3::from_array(origin), glam::Vec3::from_array(dir))?;
-                if value != held.value {
+                let mut value = held.value_at(
+                    glam::Vec3::from_array(origin),
+                    glam::Vec3::from_array(dir),
+                    step,
+                )?;
+                // Through its start, a pad or pocket turns round.
+                let flip = value < 0.0;
+                if flip {
+                    value = -value;
+                    held.dir = -held.dir;
+                }
+                if value != held.value || flip {
                     held.value = value;
+                    self.held_moved = true;
                     let feature = held.feature;
                     if let Some(mut part) = ctx
                         .document
                         .get_feature_data(feature)
                         .and_then(|d| DesignFeature::from_json(d).ok())
+                        && (!flip || handles::reverse(&mut part))
                         && handles::set_value(&mut part, value)
                         && ctx
                             .document
@@ -1315,6 +1341,20 @@ impl DesignWorkbench {
                 ..
             } => {
                 let held = self.held.take()?;
+                // A click on a pad's or pocket's handle turns it round.
+                if !self.held_moved
+                    && held.reversible
+                    && let Some(mut part) = ctx
+                        .document
+                        .get_feature_data(held.feature)
+                        .and_then(|d| DesignFeature::from_json(d).ok())
+                    && handles::reverse(&mut part)
+                    && let Err(e) = ctx
+                        .document
+                        .update_feature_data(held.feature, part.to_json())
+                {
+                    ctx.log_warn(format!("Could not turn the feature round: {e}"));
+                }
                 ctx.document.mark_feature_dirty(held.feature);
                 Some(InputResult::consumed())
             }
@@ -2229,6 +2269,22 @@ impl Workbench for DesignWorkbench {
                     &mut self.options.hide_used_sketches,
                 )
                 .hint("Keep used sketches out of the viewport"),
+                PrefRow::qty(
+                    "Handle step",
+                    ui_kit::widgets::QtyField::new(&mut self.options.handle_step)
+                        .unit("mm")
+                        .decimals(2)
+                        .range(0.01..=100.0),
+                )
+                .hint("A view handle's drag moves the number in these steps"),
+                PrefRow::qty(
+                    "Fine handle step",
+                    ui_kit::widgets::QtyField::new(&mut self.options.handle_fine_step)
+                        .unit("mm")
+                        .decimals(2)
+                        .range(0.01..=100.0),
+                )
+                .hint("The step while Shift is held"),
             ],
             filter,
         );
