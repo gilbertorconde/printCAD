@@ -166,7 +166,7 @@ pub fn bool_once(
             let retried = match kind {
                 BoolKind::Fuse => ogeom::boolean::fuse_fuzzy(model, a, b, fuzz, t),
                 BoolKind::Cut => ogeom::boolean::cut_fuzzy(model, a, b, fuzz, t),
-                BoolKind::Common => Err(e),
+                BoolKind::Common => ogeom::boolean::common_fuzzy(model, a, b, fuzz, t),
             };
             retried
                 .map(|built| {

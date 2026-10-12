@@ -1593,6 +1593,239 @@ fn a_spline_edge_projects_as_its_spline() {
     assert!(forward || backward, "{control_points:?}");
 }
 
+/// Where a plane cuts a cone, the edge projects as the conic it is: a
+/// plane parallel to the axis leaves a hyperbola's branch, one parallel to
+/// a ruling a parabola, each exact rather than points along it.
+#[test]
+#[ignore = "kernel: a boolean of a plane and a cone stores the section edge as a fitted B-spline, not the exact hyperbola or parabola intersect_surfaces returns for the pair"]
+fn a_cone_cut_by_a_plane_projects_as_its_conic() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    let cone = SolidOp::Primitive {
+        kind: PrimitiveKind::Cone {
+            radius1: 10.0,
+            radius2: 0.0,
+            height: 10.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    };
+    let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
+
+    // Everything past x = 3 cut away: on that plane (y, z) the rim is
+    // (10 - z)² - y² = 9, the branch about (0, 10) opening down.
+    let mut kernel = new_kernel();
+    let past_x = SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 20.0,
+            width: 40.0,
+            height: 20.0,
+        },
+        placement: Placement {
+            origin: [3.0, -20.0, -5.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::Cut,
+    };
+    let solid = kernel
+        .execute_solid_chain(&[cone.clone(), past_x], &TessellationSettings::default())
+        .expect("the cone is cut square to x");
+    let side = ProfilePlane {
+        origin: [30.0, 0.0, 0.0],
+        x_axis: [0.0, 1.0, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [1.0, 0.0, 0.0],
+    };
+    let rim = kernel_ogeom::QUERIES
+        .project_edge(&solid.brep_blob, [3.0, 4.0, 5.0], &side)
+        .expect("the rim projects");
+    let ProjectedEdge::Hyperbola {
+        centre,
+        major,
+        minor,
+        range,
+    } = rim
+    else {
+        panic!("{rim:?}");
+    };
+    assert!(near(centre, [0.0, 10.0]), "{centre:?}");
+    assert!(near(major, [0.0, -3.0]), "{major:?}");
+    assert!(
+        (minor[0].abs() - 3.0).abs() < 1e-6 && minor[1].abs() < 1e-6,
+        "{minor:?}"
+    );
+    let at = |s: f64| {
+        [
+            centre[0] + major[0] * s.cosh() + minor[0] * s.sinh(),
+            centre[1] + major[1] * s.cosh() + minor[1] * s.sinh(),
+        ]
+    };
+    let ends = [at(range.0), at(range.1)];
+    let half = 91f64.sqrt();
+    assert!(
+        ends.iter()
+            .all(|e| e[1].abs() < 1e-6 && (e[0].abs() - half).abs() < 1e-6),
+        "{ends:?}"
+    );
+
+    // Everything past x + z = 5 cut away: the plane runs parallel to the
+    // ruling on the -x side, and the rim on it is a parabola whose vertex
+    // stands at (-2.5, 0, 7.5) and whose ends sit on the base circle.
+    let mut kernel = new_kernel();
+    let s = std::f64::consts::FRAC_1_SQRT_2;
+    let x_axis = [s, 0.0, -s];
+    let z_axis = [s, 0.0, s];
+    let past_slant = SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 40.0,
+            width: 40.0,
+            height: 30.0,
+        },
+        placement: Placement {
+            origin: [2.5 - 20.0 * x_axis[0], -20.0, 2.5 - 20.0 * x_axis[2]],
+            x_axis,
+            z_axis,
+        },
+        op: BooleanOp::Cut,
+    };
+    let solid = kernel
+        .execute_solid_chain(&[cone, past_slant], &TessellationSettings::default())
+        .expect("the cone is cut along a ruling");
+    let slant = ProfilePlane {
+        origin: [2.5, 0.0, 2.5],
+        x_axis,
+        y_axis: [0.0, 1.0, 0.0],
+        normal: z_axis,
+    };
+    let rim = kernel_ogeom::QUERIES
+        .project_edge(&solid.brep_blob, [0.0, 5.0, 5.0], &slant)
+        .expect("the rim projects");
+    let ProjectedEdge::Parabola {
+        vertex,
+        axis,
+        focal,
+        range,
+    } = rim
+    else {
+        panic!("{rim:?}");
+    };
+    assert!(near(vertex, [-10.0 * s, 0.0]), "{vertex:?}");
+    assert!(near(axis, [1.0, 0.0]), "{axis:?}");
+    let at = |t: f64| {
+        let along = t * t / (4.0 * focal);
+        [
+            vertex[0] + axis[0] * along - axis[1] * t,
+            vertex[1] + axis[1] * along + axis[0] * t,
+        ]
+    };
+    // The base circle meets x = 5 at y = ±√75, which stands 5/√2 along
+    // the plane's x.
+    let ends = [at(range.0), at(range.1)];
+    let half = 75f64.sqrt();
+    assert!(
+        ends.iter()
+            .all(|e| (e[0] - 5.0 * s).abs() < 1e-6 && (e[1].abs() - half).abs() < 1e-6),
+        "{ends:?}"
+    );
+}
+
+/// A parabola or a hyperbola edge projects as that conic, exact: every
+/// point along the edge, dropped onto the plane, lies on the curve the
+/// projection gives, between its ends.
+#[test]
+fn a_conic_edge_projects_as_its_conic() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    use ogeom::core::Tolerances;
+    use ogeom::geom::{Curve, Curve3d as _, HyperbolaCurve, ParabolaCurve};
+    use ogeom::math::{Direction, Frame, Hyperbola, Parabola, Point, Vector};
+    let tol = Tolerances::millimetres();
+    // Each conic in a plane tilted 30° about X, projected onto XY.
+    let tilt = Direction::new(Vector::new(0.0, -0.5, 0.75f64.sqrt()), tol).unwrap();
+    let frame = Frame::new(Point::new(1.0, 2.0, 5.0), tilt, Direction::X, tol).unwrap();
+    let curves = [
+        Curve::Parabola(
+            ParabolaCurve::new(Parabola::new(frame, 2.0, tol).unwrap(), 100.0).unwrap(),
+        ),
+        Curve::Hyperbola(
+            HyperbolaCurve::new(Hyperbola::new(frame, 4.0, 2.0, tol).unwrap(), 10.0).unwrap(),
+        ),
+    ];
+    for curve in curves {
+        let range = (-1.0, 1.5);
+        let mut model = ogeom::topo::Model::new();
+        let edge = ogeom::algo::make_edge(&mut model, curve.clone(), range, tol)
+            .unwrap()
+            .shape;
+        let blob = ogeom::io::native::write(
+            &model,
+            std::slice::from_ref(&edge),
+            ogeom::io::native::WriteOptions {
+                triangulations: false,
+            },
+        )
+        .unwrap()
+        .into_bytes();
+        let along: Vec<[f64; 2]> = (0..=20)
+            .map(|i| {
+                let t = range.0 + (range.1 - range.0) * f64::from(i) / 20.0;
+                let p = curve.point_at(t, tol).unwrap();
+                [p.x, p.y]
+            })
+            .collect();
+        let mid = curve.point_at(0.25, tol).unwrap();
+        let projected = kernel_ogeom::QUERIES
+            .project_edge(&blob, [mid.x, mid.y, mid.z], &xy_plane())
+            .expect("the conic projects");
+        let dot = |a: [f64; 2], b: [f64; 2]| a[0] * b[0] + a[1] * b[1];
+        // Each point's parameter on the projected curve, and how far off
+        // the curve it stands.
+        let (on, ends): (Vec<(f64, f64)>, (f64, f64)) = match &projected {
+            ProjectedEdge::Parabola {
+                vertex,
+                axis,
+                focal,
+                range,
+            } => {
+                let side = [-axis[1], axis[0]];
+                let on = along
+                    .iter()
+                    .map(|p| {
+                        let d = [p[0] - vertex[0], p[1] - vertex[1]];
+                        let (u, s) = (dot(d, *axis), dot(d, side));
+                        (s, (u - s * s / (4.0 * focal)).abs())
+                    })
+                    .collect();
+                (on, *range)
+            }
+            ProjectedEdge::Hyperbola {
+                centre,
+                major,
+                minor,
+                range,
+            } => {
+                let on = along
+                    .iter()
+                    .map(|p| {
+                        let d = [p[0] - centre[0], p[1] - centre[1]];
+                        let c = dot(d, *major) / dot(*major, *major);
+                        let s = (dot(d, *minor) / dot(*minor, *minor)).asinh();
+                        (s, (c - s.cosh()).abs())
+                    })
+                    .collect();
+                (on, *range)
+            }
+            other => panic!("{other:?}"),
+        };
+        for (s, off) in on {
+            assert!(off < 1e-9, "{off} off {projected:?}");
+            assert!(
+                s >= ends.0 - 1e-9 && s <= ends.1 + 1e-9,
+                "{s} past {ends:?}"
+            );
+        }
+    }
+}
+
 /// A profile's regions mesh where they stand, holes left open: a 10 × 10
 /// square with a 4 × 4 hole covers 84 mm², all of it in the plane.
 #[test]

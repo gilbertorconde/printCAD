@@ -1669,6 +1669,24 @@ pub enum ProjectedEdge {
         ratio: f64,
         range: (f64, f64),
     },
+    /// A piece of a parabola, `vertex + axis s² / (4 focal) + side s`,
+    /// `axis` a unit vector the way it opens and `side` it turned a quarter
+    /// counter-clockwise, from `s = range.0` to `range.1`.
+    Parabola {
+        vertex: [f64; 2],
+        axis: [f64; 2],
+        focal: f64,
+        range: (f64, f64),
+    },
+    /// A piece of one branch of a hyperbola, `centre + major cosh s +
+    /// minor sinh s`, `major` (centre to the branch's vertex) square to
+    /// `minor`, from `s = range.0` to `range.1`.
+    Hyperbola {
+        centre: [f64; 2],
+        major: [f64; 2],
+        minor: [f64; 2],
+        range: (f64, f64),
+    },
     /// A B-spline, as the kernel projects it: `degree`, its clamped
     /// `knots` (`control_points + degree + 1` of them), and a weight per
     /// control point when rational (empty when every weight is one).

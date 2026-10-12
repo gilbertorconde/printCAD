@@ -2,9 +2,9 @@
 //! curves where its faces cross the sketch plane (intersection references).
 //!
 //! The kernel gives each as the exact curve it is on the sketch plane (a
-//! line, a circle or arc, an ellipse or arc of one, a spline, a point); a
-//! curve with no closed form comes as points along it and is kept as a
-//! chain of lines. Each element remembers its edge or face (`ExternalSource`), so the
+//! line, a circle or arc, an ellipse or arc of one, an arc of a parabola or
+//! of a hyperbola's branch, a spline, a point); a curve with no closed form
+//! comes as points along it and is kept as a chain of lines. Each element remembers its edge or face (`ExternalSource`), so the
 //! sketch brings it up to the solid again when it is edited and the solid
 //! has changed: in place where the shapes are the same kinds, keeping the
 //! constraints that refer to them, and afresh where they are not.
@@ -16,7 +16,8 @@ use kernel_api::ProjectedEdge;
 use uuid::Uuid;
 
 use crate::sketch::{
-    Arc, BSpline, Circle, Ellipse, ExternalSource, GeometryElement, Line, Point, Sketch, Vec2D,
+    Arc, BSpline, Circle, Conic, ConicKind, Ellipse, ExternalSource, GeometryElement, Line, Point,
+    Sketch, Vec2D,
 };
 
 fn v(p: [f64; 2]) -> Vec2D {
@@ -38,6 +39,69 @@ fn ellipse_point(centre: [f64; 2], major: [f64; 2], ratio: f64, t: f64) -> [f64;
         centre[0] + major[0] * t.cos() + minor[0] * t.sin(),
         centre[1] + major[1] * t.cos() + minor[1] * t.sin(),
     ]
+}
+
+/// A projected parabola or hyperbola in the sketch's terms.
+struct ProjectedConic {
+    kind: ConicKind,
+    /// The parabola's vertex, the hyperbola's centre.
+    origin: [f64; 2],
+    /// Along the axis, as long as the focal distance or the semi-major axis.
+    axis: Vec2D,
+    /// The hyperbola's semi-minor axis.
+    minor: f32,
+    start: [f64; 2],
+    end: [f64; 2],
+}
+
+fn conic_of(projected: &ProjectedEdge) -> Option<ProjectedConic> {
+    match projected {
+        ProjectedEdge::Parabola {
+            vertex,
+            axis,
+            focal,
+            range,
+        } => {
+            let side = [-axis[1], axis[0]];
+            let at = |s: f64| {
+                let along = s * s / (4.0 * focal);
+                [
+                    vertex[0] + axis[0] * along + side[0] * s,
+                    vertex[1] + axis[1] * along + side[1] * s,
+                ]
+            };
+            Some(ProjectedConic {
+                kind: ConicKind::Parabola,
+                origin: *vertex,
+                axis: v([axis[0] * focal, axis[1] * focal]),
+                minor: 0.0,
+                start: at(range.0),
+                end: at(range.1),
+            })
+        }
+        ProjectedEdge::Hyperbola {
+            centre,
+            major,
+            minor,
+            range,
+        } => {
+            let at = |s: f64| {
+                [
+                    centre[0] + major[0] * s.cosh() + minor[0] * s.sinh(),
+                    centre[1] + major[1] * s.cosh() + minor[1] * s.sinh(),
+                ]
+            };
+            Some(ProjectedConic {
+                kind: ConicKind::Hyperbola,
+                origin: *centre,
+                axis: v(*major),
+                minor: minor[0].hypot(minor[1]) as f32,
+                start: at(range.0),
+                end: at(range.1),
+            })
+        }
+        _ => None,
+    }
 }
 
 /// Add a projected edge to the sketch as external geometry from `source`.
@@ -83,6 +147,20 @@ pub fn add(sketch: &mut Sketch, projected: &ProjectedEdge, source: ExternalSourc
                 GeometryElement::Ellipse(Ellipse::new_arc(c, v(*major), *ratio as f32, s, e))
             };
             made.push(sketch.add_geometry(element));
+        }
+        ProjectedEdge::Parabola { .. } | ProjectedEdge::Hyperbola { .. } => {
+            if let Some(conic) = conic_of(projected) {
+                let c = point(sketch, conic.origin);
+                let (s, e) = (point(sketch, conic.start), point(sketch, conic.end));
+                made.push(sketch.add_geometry(GeometryElement::Conic(Conic::new(
+                    conic.kind,
+                    c,
+                    conic.axis,
+                    conic.minor,
+                    s,
+                    e,
+                ))));
+            }
         }
         ProjectedEdge::Spline {
             degree,
@@ -197,6 +275,21 @@ fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> boo
             }
         }
         (
+            ProjectedEdge::Parabola { .. } | ProjectedEdge::Hyperbola { .. },
+            [GeometryElement::Conic(conic)],
+        ) => {
+            let Some(now) = conic_of(projected).filter(|now| now.kind == conic.kind) else {
+                return false;
+            };
+            place(sketch, conic.center, now.origin);
+            place(sketch, conic.start, now.start);
+            place(sketch, conic.end, now.end);
+            if let Some(GeometryElement::Conic(c)) = sketch.get_geometry_mut(conic.id) {
+                c.axis = now.axis;
+                c.minor = now.minor;
+            }
+        }
+        (
             ProjectedEdge::Spline {
                 degree,
                 knots,
@@ -303,6 +396,7 @@ pub fn already_holds(sketch: &Sketch, group: &[Uuid], projected: &[ProjectedEdge
             GeometryElement::Circle(c) => c.radius,
             GeometryElement::Arc(a) => a.radius,
             GeometryElement::Ellipse(e) => e.major.to_glam().length() * (1.0 + e.ratio),
+            GeometryElement::Conic(c) => c.axis.to_glam().length() + c.minor,
             _ => 0.0,
         };
         (size(was) - size(now)).abs() <= REPEAT_MM
@@ -575,5 +669,67 @@ mod tests {
             sketch.get_geometry(now[0]),
             Some(GeometryElement::Circle(_))
         ));
+    }
+
+    /// A projected parabola or hyperbola is one conic arc of the sketch, of
+    /// that kind, its ends on the curve where the projection's range puts
+    /// them; a fresh projection of the same kind moves it in place.
+    #[test]
+    fn a_projected_conic_stays_a_conic() {
+        let r = 2f64.sqrt() / 2.0;
+        let parabola = |lift: f64| ProjectedEdge::Parabola {
+            vertex: [1.0, lift],
+            axis: [r, r],
+            focal: 2.0,
+            range: (-3.0, 1.5),
+        };
+        let hyperbola = |lift: f64| ProjectedEdge::Hyperbola {
+            centre: [0.0, lift],
+            major: [0.0, -3.0],
+            minor: [-2.0, 0.0],
+            range: (-1.0, 0.5),
+        };
+        type Lifted<'a> = &'a dyn Fn(f64) -> ProjectedEdge;
+        let cases: [(Lifted, ConicKind, [f64; 2]); 2] = [
+            (
+                &parabola,
+                ConicKind::Parabola,
+                [1.0 + 9.0 / 8.0 * r + 3.0 * r, 9.0 / 8.0 * r - 3.0 * r],
+            ),
+            (
+                &hyperbola,
+                ConicKind::Hyperbola,
+                [-2.0 * (-1f64).sinh(), -3.0 * 1f64.cosh()],
+            ),
+        ];
+        for (edge, kind, start) in cases {
+            let mut sketch = Sketch::new("t");
+            assert_eq!(add(&mut sketch, &edge(0.0), source()), 1);
+            let (_, group) = groups(&sketch).remove(0);
+            let Some(GeometryElement::Conic(conic)) = sketch.get_geometry(group[0]).cloned() else {
+                panic!("{:?}", sketch.get_geometry(group[0]));
+            };
+            assert_eq!(conic.kind, kind);
+            let shape = crate::conic::Shape::of(&conic, &sketch).expect("a whole conic");
+            for end in [conic.start, conic.end] {
+                let p = sketch.point_position(end).expect("an end");
+                let off = shape.distance([f64::from(p.x), f64::from(p.y)]);
+                assert!(off.abs() < 1e-5, "{kind:?} end {off} off");
+            }
+            let at = sketch.point_position(conic.start).expect("the start");
+            assert!(
+                (f64::from(at.x) - start[0]).abs() < 1e-5
+                    && (f64::from(at.y) - start[1]).abs() < 1e-5,
+                "{kind:?} starts at {at:?}, not {start:?}"
+            );
+            assert!(already_holds(&sketch, &group, &[edge(0.0)]));
+            assert!(refresh_in_place(&mut sketch, &group, &[edge(2.0)]));
+            assert!(already_holds(&sketch, &group, &[edge(2.0)]));
+        }
+        // A parabola's arc is not a hyperbola's, so it is made again.
+        let mut sketch = Sketch::new("t");
+        add(&mut sketch, &parabola(0.0), source());
+        let (_, group) = groups(&sketch).remove(0);
+        assert!(!refresh_in_place(&mut sketch, &group, &[hyperbola(0.0)]));
     }
 }

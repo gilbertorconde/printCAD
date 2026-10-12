@@ -9,7 +9,6 @@ use kernel_api::{
 use ogeom::algo::{MedialGraph, linear_properties, medial_graph, volume_properties};
 use ogeom::algo::{ProjectedCurve, distance_between_shapes, project_edge_onto_plane};
 use ogeom::core::Tolerances;
-use ogeom::geom::Curve2d as _;
 use ogeom::geom::Curve3d as _;
 use ogeom::math::{Direction, Frame, Plane, Point, Vector};
 use ogeom::mesh::{Deflection, discretize};
@@ -23,9 +22,6 @@ pub struct OgeomQueries;
 
 /// The instance the application hands its workbenches.
 pub static QUERIES: OgeomQueries = OgeomQueries;
-
-/// Points taken along a curve with no closed form in a sketch.
-const POLYLINE_POINTS: usize = 64;
 
 fn other(message: impl std::fmt::Display) -> KernelError {
     KernelError::Other(anyhow::anyhow!("{message}"))
@@ -594,9 +590,8 @@ pub(crate) fn edge_samples(
 }
 
 /// A curve projected onto a plane, in the plane's own coordinates: the
-/// exact curve it is there, or points along one with no closed form.
+/// exact curve it is there.
 fn in_plane(projected: ProjectedCurve) -> KernelResult<ProjectedEdge> {
-    let tol = tess::tolerances();
     Ok(match projected {
         ProjectedCurve::Point(p) => ProjectedEdge::Point([p.x, p.y]),
         ProjectedCurve::Line { start, end } => ProjectedEdge::Line {
@@ -623,9 +618,34 @@ fn in_plane(projected: ProjectedCurve) -> KernelResult<ProjectedEdge> {
             ratio,
             range,
         },
-        // A clamped spline goes across whole, so a profile drawn on it is
-        // the same curve as the edge it came from.
-        ProjectedCurve::BSpline { curve, .. } if curve.knots().is_clamped() => {
+        ProjectedCurve::Parabola {
+            vertex,
+            axis,
+            focal,
+            range,
+        } => ProjectedEdge::Parabola {
+            vertex: [vertex.x, vertex.y],
+            axis: [axis.x, axis.y],
+            focal,
+            range,
+        },
+        ProjectedCurve::Hyperbola {
+            centre,
+            major,
+            minor,
+            range,
+        } => ProjectedEdge::Hyperbola {
+            centre: [centre.x, centre.y],
+            major: [major.x, major.y],
+            minor: [minor.x, minor.y],
+            range,
+        },
+        // The kernel hands every spline over clamped, so a profile drawn on
+        // it is the same curve as the edge it came from.
+        ProjectedCurve::BSpline { curve, .. } => {
+            if !curve.knots().is_clamped() {
+                return Err(other("the kernel projected a spline with unclamped knots"));
+            }
             let control: Vec<_> = curve
                 .control_points()
                 .iter()
@@ -641,16 +661,6 @@ fn in_plane(projected: ProjectedCurve) -> KernelResult<ProjectedEdge> {
                     Vec::new()
                 },
             }
-        }
-        ProjectedCurve::BSpline { curve, .. } => {
-            let (a, b) = curve.domain();
-            let points = (0..=POLYLINE_POINTS)
-                .map(|i| {
-                    let t = a + (b - a) * i as f64 / POLYLINE_POINTS as f64;
-                    curve.point_at(t, tol).map(|p| [p.x, p.y]).map_err(other)
-                })
-                .collect::<KernelResult<Vec<_>>>()?;
-            ProjectedEdge::Polyline(points)
         }
     })
 }
