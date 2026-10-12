@@ -4759,6 +4759,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::LinearPattern {
                 refine: false,
+                boolean_tolerance: None,
                 originals: vec![pocket_id],
                 axis: PatternAxis::X,
                 length: 30.0,
