@@ -45,6 +45,11 @@ fn scripted_session(doc: &mut Document) {
     assert!(doc.move_feature_in_history(d2, true), "swap d1/d2");
     doc.remove_feature(d1).expect("remove");
     doc.set_body_tip(body, Some(d2));
+    let note = core_document::Note::pinned("Wall".into(), [1.0, 2.0, 3.0], [1.0, 2.0, 9.0], None);
+    let note = doc.add_note(body, note).expect("a note on the body");
+    let mut edited = doc.note(note).expect("the note").1.clone();
+    edited.text = "=1 mm + 2 mm".into();
+    assert!(doc.set_note(edited));
     assert!(doc.remove_body(other), "the second body goes away");
     let op = doc.add_feature_of_kind(
         core_document::WorkbenchId::new("acme.cam.op"),

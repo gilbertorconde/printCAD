@@ -147,6 +147,11 @@ pub enum DocumentOp {
         id: BodyId,
         textures: Vec<crate::FaceTexture>,
     },
+    /// The notes pinned to a body, all of them.
+    SetBodyNotes {
+        id: BodyId,
+        notes: Vec<crate::Note>,
+    },
     /// A face's own colour, `None` to take it away. `face` names the face;
     /// its colour field is not read.
     SetFaceColor {

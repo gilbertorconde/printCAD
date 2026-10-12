@@ -8,6 +8,7 @@ pub mod evaluate;
 pub mod expr;
 pub mod feature;
 pub mod history;
+pub mod notes;
 pub mod op;
 pub mod palette;
 #[cfg(feature = "egui")]
@@ -53,6 +54,7 @@ pub use feature::{
     data_revision, node_revision,
 };
 pub use kernel_api::TriMesh;
+pub use notes::{Note, NoteId};
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
 pub use rebuild::{BuildError, BuildPlan, PlanProbe, ProbedReferences, RebuildJob};
@@ -310,6 +312,9 @@ pub struct Body {
     /// as it is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub textures: Vec<FaceTexture>,
+    /// Notes pinned to points on it, in its own frame.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub notes: Vec<Note>,
 }
 
 /// A texture on some faces of a body. Each face is found by its name when
@@ -326,6 +331,7 @@ impl Body {
             material: None,
             face_colors: Vec::new(),
             textures: Vec::new(),
+            notes: Vec::new(),
             link: None,
             mirror: None,
             id,
@@ -841,6 +847,10 @@ impl Document {
                 id: *id,
                 textures: self.bodies.iter().find(|b| b.id == *id)?.textures.clone(),
             },
+            Op::SetBodyNotes { id, .. } => Op::SetBodyNotes {
+                id: *id,
+                notes: self.bodies.iter().find(|b| b.id == *id)?.notes.clone(),
+            },
             Op::SetBodyMaterial { id, .. } => Op::SetBodyMaterial {
                 id: *id,
                 material: self.bodies.iter().find(|b| b.id == *id)?.material.clone(),
@@ -1061,6 +1071,7 @@ impl Document {
                     material: None,
                     face_colors: Vec::new(),
                     textures: Vec::new(),
+                    notes: Vec::new(),
                 });
                 self.refresh_copy(*id);
             }
@@ -1091,6 +1102,7 @@ impl Document {
                     material: None,
                     face_colors: Vec::new(),
                     textures: Vec::new(),
+                    notes: Vec::new(),
                 });
             }
             Op::SetBodyLink { id, link } => {
@@ -1122,6 +1134,11 @@ impl Document {
             Op::SetBodyTextures { id, textures } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.textures.clone_from(textures);
+                }
+            }
+            Op::SetBodyNotes { id, notes } => {
+                if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
+                    entry.notes.clone_from(notes);
                 }
             }
             Op::SetBodyMaterial { id, material } => {
@@ -1368,6 +1385,7 @@ impl Document {
                         material: None,
                         face_colors: Vec::new(),
                         textures: Vec::new(),
+                        notes: Vec::new(),
                         link: None,
                         mirror: None,
                         copy_of: None,

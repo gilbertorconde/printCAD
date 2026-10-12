@@ -6,6 +6,7 @@
 mod base_solid;
 mod body_properties;
 mod history_position;
+mod notes;
 mod op_replay;
 mod placement;
 mod seam;

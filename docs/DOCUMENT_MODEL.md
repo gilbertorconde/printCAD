@@ -10,7 +10,7 @@ workbench reads and writes its own.
 | --- | --- | --- |
 | Metadata | `DocumentMetadata` | Id, name, revision |
 | Features | `FeatureTree` | Every feature, with its dependencies |
-| Bodies | `Vec<Body>` | Id, name, tip, placement, display colour, material, face colours and textures, hidden and frozen flags, linked copy or file link |
+| Bodies | `Vec<Body>` | Id, name, tip, placement, display colour, material, face colours and textures, notes, hidden and frozen flags, linked copy or file link |
 | Components | `Vec<Component>` | Groups of bodies, nested, that move as one |
 | Workbench storage | `WorkbenchId -> JSON` | Data a workbench keeps outside features |
 | Assets | `AssetReference` | Files an import came from, kept verbatim |
@@ -87,6 +87,21 @@ document. Two things a STEP or IGES file carries ride on those nodes:
   name (an IGES level reads as `level 7`). The property panel shows them.
 
 They come from the file, so a reload does not re-derive them.
+
+## Notes
+
+A note is text the user pins to a point on a body (Add note on a body's
+menu, or `pc.doc.note_add`): a leader from the point to a label. It is a
+`Note` on the `Body`, its point and label in the body's own frame, so it
+moves with the body, and it names the face its point is on: when a
+rebuild moves that face, the point goes to the nearest point of the face
+found by its name, and the label with it. A text starting with `=` is a
+formula, and the label shows what it comes to (`=Pad.length`). A body's
+notes are listed in an `Annotations` group under its row, drawn with the
+imported annotations (View › Annotations turns both off), hide with the
+body or by their own eye, and go to STEP as drawn callouts named by
+their text. Every change is one `SetBodyNotes` op holding all of the
+body's notes.
 
 ## Edits, undo and replay
 
