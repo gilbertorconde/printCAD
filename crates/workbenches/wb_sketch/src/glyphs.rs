@@ -126,10 +126,11 @@ pub fn label_offset(
     proj: &SketchProjector,
     constraint: &sketch::Constraint,
     labels: DimensionLabels,
+    label_size: f32,
 ) -> Vec2D {
     constraint.label_offset.unwrap_or_else(|| {
         let chars = label_text(sketch, constraint, labels).chars().count();
-        default_label_offset(sketch, proj, &constraint.kind, chars)
+        default_label_offset(sketch, proj, &constraint.kind, chars, label_size)
     })
 }
 
@@ -137,13 +138,14 @@ pub fn label_offset(
 /// A line's length or a distance sits square off the line, on the side
 /// away from the rest of the sketch, and an arc's length outside the arc
 /// along the radius through its middle, each far enough that the whole
-/// pill (`chars` long) clears what it measures. The rest sit a fixed
+/// pill (`chars` long at `label_size`) clears what it measures. The rest sit a fixed
 /// diagonal step off their anchor.
 fn default_label_offset(
     sketch: &Sketch,
     proj: &SketchProjector,
     kind: &ConstraintKind,
     chars: usize,
+    label_size: f32,
 ) -> Vec2D {
     let units_per_px = proj.units_per_px();
     let d = DEFAULT_LABEL_OFFSET_PX * units_per_px;
@@ -159,7 +161,7 @@ fn default_label_offset(
         return diagonal;
     };
     let on_screen = glam::Vec2::new(b[0] - a[0], b[1] - a[1]).normalize_or_zero();
-    let (hw, hh) = pill_half_extents(LABEL_SIZE, chars);
+    let (hw, hh) = pill_half_extents(label_size, chars);
     let reach = hw * on_screen.x.abs() + hh * on_screen.y.abs() + LABEL_CLEARANCE_PX;
     Vec2D::from_glam(away * reach * units_per_px)
 }
@@ -824,7 +826,9 @@ fn curve_dimension_lines(
 /// Build every glyph for the sketch's constraints on one layer, in
 /// viewport pixels: the parked constraints' (`parked`) or the others'.
 /// `bound` are the dimensions a formula sets: drawn in the formula colour,
-/// their value marked `ƒ`.
+/// their value marked `ƒ`; `label_size` sizes the pills a default
+/// placement keeps clear.
+#[allow(clippy::too_many_arguments)]
 pub fn build(
     sketch: &Sketch,
     proj: &SketchProjector,
@@ -833,6 +837,7 @@ pub fn build(
     pal: &SketchPalette,
     parked: bool,
     labels: DimensionLabels,
+    label_size: f32,
 ) -> Vec<Glyph> {
     let shown = || sketch.constraints.iter().filter(|c| c.parked == parked);
     // Repeated relational kinds get a shared 1-based index suffix.
@@ -862,7 +867,7 @@ pub fn build(
             let Some(anchor) = dim_anchor(sketch, &c.kind) else {
                 continue;
             };
-            let offset = label_offset(sketch, proj, c, labels);
+            let offset = label_offset(sketch, proj, c, labels, label_size);
             let (Some(pos), Some(anchor_px)) = (proj.to_px(anchor + offset), proj.to_px(anchor))
             else {
                 continue;

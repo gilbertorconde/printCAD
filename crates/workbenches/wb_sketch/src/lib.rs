@@ -1714,7 +1714,13 @@ impl SketchWorkbench {
         if hit.dimensional {
             let proj = SketchProjector::new(ctx, feature.plane);
             let base = constraint.map(|c| {
-                glyphs::label_offset(&feature.sketch, &proj, c, self.options.dimension_labels)
+                glyphs::label_offset(
+                    &feature.sketch,
+                    &proj,
+                    c,
+                    self.options.dimension_labels,
+                    self.options.appearance.label_size,
+                )
             });
             self.label_drag = Some(LabelDrag {
                 constraint: hit.constraint,
@@ -4532,6 +4538,7 @@ impl SketchWorkbench {
             &ctx.sketch_palette,
             self.parked_layer,
             self.options.dimension_labels,
+            self.options.appearance.label_size,
         )
     }
 
