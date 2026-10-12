@@ -3336,7 +3336,7 @@ pub fn feature_editor(
                             ui.horizontal(|ui| {
                                 changed |=
                                     count_drag(ui, fx, count, &format!("Ring {}:", ring + 1));
-                                if ring > 0 && small_secondary_button(ui, "✕").clicked() {
+                                if ring > 0 && small_secondary_button(ui, "×").clicked() {
                                     drop = Some(ring);
                                 }
                             });
