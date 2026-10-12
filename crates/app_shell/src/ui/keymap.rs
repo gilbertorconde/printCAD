@@ -684,12 +684,15 @@ pub struct KeyFocus {
     pub typing: bool,
     /// The active workbench is taking a typed number.
     pub numeric: bool,
+    /// The active workbench is in the middle of a typed value, letters and
+    /// all.
+    pub text: bool,
     /// A document is on screen.
     pub have_document: bool,
 }
 
 /// Whether `chord` is a key that types a number.
-fn types_number(chord: Chord) -> bool {
+pub(crate) fn types_number(chord: Chord) -> bool {
     use KeyCode::*;
     !chord.ctrl
         && !chord.alt
@@ -722,6 +725,7 @@ pub fn take_pressed(
     let KeyFocus {
         typing,
         numeric,
+        text,
         have_document,
     } = focus;
     ctx.input_mut(|i| {
@@ -747,6 +751,9 @@ pub fn take_pressed(
                 return true;
             }
             if numeric && types_number(chord) {
+                return true;
+            }
+            if text && chord.types_text() {
                 return true;
             }
             if binding.needs_document && !have_document {
@@ -1038,6 +1045,7 @@ mod tests {
         let focus = KeyFocus {
             typing,
             numeric: false,
+            text: false,
             have_document,
         };
         press_in(keymap, keys, focus)
@@ -1127,6 +1135,7 @@ mod tests {
         let numeric = KeyFocus {
             typing: false,
             numeric: true,
+            text: false,
             have_document: true,
         };
         let (hits, left) = press_in(&keymap, &keys, numeric);
@@ -1134,6 +1143,26 @@ mod tests {
         assert_eq!(left, 2);
         let (hits, _) = press(&keymap, &keys[..1], false, true);
         assert_eq!(hits, ["view.front"]);
+    }
+
+    #[test]
+    fn a_workbench_in_the_middle_of_a_value_keeps_the_letters_too() {
+        use egui::{Key, Modifiers};
+        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
+        let keys = [
+            (Key::L, Modifiers::NONE, false),
+            (Key::L, Modifiers::SHIFT, false),
+            (Key::S, Modifiers::CTRL, false),
+        ];
+        let text = KeyFocus {
+            typing: false,
+            numeric: true,
+            text: true,
+            have_document: true,
+        };
+        let (hits, left) = press_in(&keymap, &keys, text);
+        assert_eq!(hits, ["file.save"], "a chord with Ctrl still runs");
+        assert_eq!(left, 2);
     }
 
     #[test]

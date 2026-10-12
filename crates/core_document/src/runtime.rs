@@ -819,6 +819,13 @@ pub enum WorkbenchInputEvent {
     Action {
         id: String,
     },
+    /// Text for a value the workbench is taking (`takes_numeric_input`):
+    /// the characters a key typed, right after its `KeyPress`, or what a
+    /// paste put in. A key that runs a shortcut types nothing, unless the
+    /// workbench is in the middle of a value (`takes_text_input`).
+    Text {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

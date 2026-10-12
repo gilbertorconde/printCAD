@@ -663,6 +663,13 @@ pub trait Workbench: Send {
         false
     }
 
+    /// Whether the bench is in the middle of a typed value (a formula):
+    /// every key that types text without Ctrl or Alt stays with it, letters
+    /// included, rather than running its shortcut.
+    fn takes_text_input(&self) -> bool {
+        false
+    }
+
     /// What the scene draws for an owned feature that is visible and not
     /// under edit. Called on the owner whichever bench is active; the host
     /// colours it and skips the feature under edit.

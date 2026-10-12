@@ -134,10 +134,11 @@ fn button(b: MouseButton) -> bench_api::Button {
     }
 }
 
-/// The event and where it happened.
-pub(crate) fn event(event: &WorkbenchInputEvent) -> (bench_api::Event, Option<(f32, f32)>) {
+/// The event and where it happened; `None` for one a package is not sent
+/// (typed text, which goes only to a bench taking typed values).
+pub(crate) fn event(event: &WorkbenchInputEvent) -> Option<(bench_api::Event, Option<(f32, f32)>)> {
     use bench_api::Event;
-    match event {
+    Some(match event {
         WorkbenchInputEvent::MousePress {
             button: b,
             viewport_pos,
@@ -163,7 +164,8 @@ pub(crate) fn event(event: &WorkbenchInputEvent) -> (bench_api::Event, Option<(f
         ),
         WorkbenchInputEvent::ToolActivated => (Event::ToolActivated, None),
         WorkbenchInputEvent::Action { id } => (Event::Action { id: id.clone() }, None),
-    }
+        WorkbenchInputEvent::Text { .. } => return None,
+    })
 }
 
 /// What a bench asked for, as the host's request; `None` for one the

@@ -229,7 +229,19 @@ impl PrintCadApp {
             self.redraw_needed = true;
             return;
         }
-        let wb = self.dispatch_workbench_input_without_select(&event);
+        let text = self.typed_text_of(&event);
+        let mut wb = self.dispatch_workbench_input_without_select(&event);
+        if let Some(text) = text {
+            let wb_id = self.active_workbench_id();
+            let active_tool = self.session.active_tool.active_ids.iter().next().cloned();
+            let typed = self.call_workbench_input(
+                &wb_id,
+                &WorkbenchInputEvent::Text { text },
+                active_tool.as_deref(),
+            );
+            wb.consumed |= typed.consumed;
+            wb.redraw |= typed.redraw;
+        }
         let mut redraw = wb.redraw;
         // A key the workbench consumed must not also reach egui's widgets
         // (Tab would move focus, Enter would accept the open task).
@@ -408,6 +420,51 @@ impl PrintCadApp {
         }
     }
 
+    /// The text a key press types for the active workbench, while it takes
+    /// typed values and no text field has the keyboard: what the key types,
+    /// unless it runs a shortcut and the workbench is not yet in the middle
+    /// of a value; for Ctrl+V, what the clipboard holds.
+    fn typed_text_of(&mut self, event: &WindowEvent) -> Option<String> {
+        let WindowEvent::KeyboardInput { event: ke, .. } = event else {
+            return None;
+        };
+        if ke.state != ElementState::Pressed {
+            return None;
+        }
+        let wb_id = self.active_workbench_id();
+        let (numeric, mid_value) = self
+            .registry
+            .workbench(&wb_id)
+            .map(|wb| (wb.takes_numeric_input(), wb.takes_text_input()))
+            .unwrap_or_default();
+        let gfx = self.gfx.as_mut()?;
+        if !numeric || gfx.ui_layer.wants_keyboard_input() {
+            return None;
+        }
+        let ctrl = self.modifiers.control_key() || self.modifiers.super_key();
+        let alt = self.modifiers.alt_key();
+        let key = key_code_of(&ke.logical_key);
+        if ctrl && !alt && key == core_document::KeyCode::V {
+            return gfx.ui_layer.clipboard_text();
+        }
+        if ctrl || alt {
+            return None;
+        }
+        let text = ke.text.as_ref()?.to_string();
+        if text.is_empty() || text.chars().any(char::is_control) {
+            return None;
+        }
+        let chord = core_document::Chord {
+            ctrl: false,
+            shift: self.modifiers.shift_key(),
+            alt: false,
+            key,
+        };
+        let shortcut =
+            !crate::ui::keymap::types_number(chord) && gfx.ui_layer.is_shortcut(chord, &wb_id);
+        (mid_value || !shortcut).then_some(text)
+    }
+
     fn convert_to_wb_event(&self, event: &WindowEvent) -> Option<WorkbenchInputEvent> {
         match event {
             WindowEvent::MouseInput { state, button, .. } => {
@@ -435,58 +492,7 @@ impl PrintCadApp {
                 Some(WorkbenchInputEvent::MouseMove { viewport_pos })
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                use winit::keyboard::{Key, NamedKey};
-                let key = match &event.logical_key {
-                    Key::Named(NamedKey::Escape) => core_document::KeyCode::Escape,
-                    Key::Named(NamedKey::Enter) => core_document::KeyCode::Enter,
-                    Key::Named(NamedKey::Space) => core_document::KeyCode::Space,
-                    Key::Named(NamedKey::Delete) => core_document::KeyCode::Delete,
-                    Key::Named(NamedKey::Backspace) => core_document::KeyCode::Backspace,
-                    Key::Named(NamedKey::Tab) => core_document::KeyCode::Tab,
-                    Key::Character(c) => match c.as_str() {
-                        "a" | "A" => core_document::KeyCode::A,
-                        "b" | "B" => core_document::KeyCode::B,
-                        "c" | "C" => core_document::KeyCode::C,
-                        "d" | "D" => core_document::KeyCode::D,
-                        "e" | "E" => core_document::KeyCode::E,
-                        "f" | "F" => core_document::KeyCode::F,
-                        "g" | "G" => core_document::KeyCode::G,
-                        "h" | "H" => core_document::KeyCode::H,
-                        "i" | "I" => core_document::KeyCode::I,
-                        "j" | "J" => core_document::KeyCode::J,
-                        "k" | "K" => core_document::KeyCode::K,
-                        "l" | "L" => core_document::KeyCode::L,
-                        "m" | "M" => core_document::KeyCode::M,
-                        "n" | "N" => core_document::KeyCode::N,
-                        "o" | "O" => core_document::KeyCode::O,
-                        "p" | "P" => core_document::KeyCode::P,
-                        "q" | "Q" => core_document::KeyCode::Q,
-                        "r" | "R" => core_document::KeyCode::R,
-                        "s" | "S" => core_document::KeyCode::S,
-                        "t" | "T" => core_document::KeyCode::T,
-                        "u" | "U" => core_document::KeyCode::U,
-                        "v" | "V" => core_document::KeyCode::V,
-                        "w" | "W" => core_document::KeyCode::W,
-                        "x" | "X" => core_document::KeyCode::X,
-                        "y" | "Y" => core_document::KeyCode::Y,
-                        "z" | "Z" => core_document::KeyCode::Z,
-                        "0" => core_document::KeyCode::Key0,
-                        "1" => core_document::KeyCode::Key1,
-                        "2" => core_document::KeyCode::Key2,
-                        "3" => core_document::KeyCode::Key3,
-                        "4" => core_document::KeyCode::Key4,
-                        "5" => core_document::KeyCode::Key5,
-                        "6" => core_document::KeyCode::Key6,
-                        "7" => core_document::KeyCode::Key7,
-                        "8" => core_document::KeyCode::Key8,
-                        "9" => core_document::KeyCode::Key9,
-                        "." => core_document::KeyCode::Period,
-                        "," => core_document::KeyCode::Comma,
-                        "-" => core_document::KeyCode::Minus,
-                        _ => core_document::KeyCode::Unknown,
-                    },
-                    _ => core_document::KeyCode::Unknown,
-                };
+                let key = key_code_of(&event.logical_key);
                 match event.state {
                     ElementState::Pressed => Some(WorkbenchInputEvent::KeyPress { key }),
                     ElementState::Released => Some(WorkbenchInputEvent::KeyRelease { key }),
@@ -1311,6 +1317,62 @@ fn point_triangle_distance_sq(p: glam::Vec3, a: glam::Vec3, b: glam::Vec3, c: gl
     let v = vb * denom;
     let w = vc * denom;
     (p - (a + ab * v + ac * w)).length_squared()
+}
+
+/// The key a workbench is told of for a key the keyboard sent.
+fn key_code_of(key: &winit::keyboard::Key) -> core_document::KeyCode {
+    use winit::keyboard::{Key, NamedKey};
+    match key {
+        Key::Named(NamedKey::Escape) => core_document::KeyCode::Escape,
+        Key::Named(NamedKey::Enter) => core_document::KeyCode::Enter,
+        Key::Named(NamedKey::Space) => core_document::KeyCode::Space,
+        Key::Named(NamedKey::Delete) => core_document::KeyCode::Delete,
+        Key::Named(NamedKey::Backspace) => core_document::KeyCode::Backspace,
+        Key::Named(NamedKey::Tab) => core_document::KeyCode::Tab,
+        Key::Character(c) => match c.as_str() {
+            "a" | "A" => core_document::KeyCode::A,
+            "b" | "B" => core_document::KeyCode::B,
+            "c" | "C" => core_document::KeyCode::C,
+            "d" | "D" => core_document::KeyCode::D,
+            "e" | "E" => core_document::KeyCode::E,
+            "f" | "F" => core_document::KeyCode::F,
+            "g" | "G" => core_document::KeyCode::G,
+            "h" | "H" => core_document::KeyCode::H,
+            "i" | "I" => core_document::KeyCode::I,
+            "j" | "J" => core_document::KeyCode::J,
+            "k" | "K" => core_document::KeyCode::K,
+            "l" | "L" => core_document::KeyCode::L,
+            "m" | "M" => core_document::KeyCode::M,
+            "n" | "N" => core_document::KeyCode::N,
+            "o" | "O" => core_document::KeyCode::O,
+            "p" | "P" => core_document::KeyCode::P,
+            "q" | "Q" => core_document::KeyCode::Q,
+            "r" | "R" => core_document::KeyCode::R,
+            "s" | "S" => core_document::KeyCode::S,
+            "t" | "T" => core_document::KeyCode::T,
+            "u" | "U" => core_document::KeyCode::U,
+            "v" | "V" => core_document::KeyCode::V,
+            "w" | "W" => core_document::KeyCode::W,
+            "x" | "X" => core_document::KeyCode::X,
+            "y" | "Y" => core_document::KeyCode::Y,
+            "z" | "Z" => core_document::KeyCode::Z,
+            "0" => core_document::KeyCode::Key0,
+            "1" => core_document::KeyCode::Key1,
+            "2" => core_document::KeyCode::Key2,
+            "3" => core_document::KeyCode::Key3,
+            "4" => core_document::KeyCode::Key4,
+            "5" => core_document::KeyCode::Key5,
+            "6" => core_document::KeyCode::Key6,
+            "7" => core_document::KeyCode::Key7,
+            "8" => core_document::KeyCode::Key8,
+            "9" => core_document::KeyCode::Key9,
+            "." => core_document::KeyCode::Period,
+            "," => core_document::KeyCode::Comma,
+            "-" => core_document::KeyCode::Minus,
+            _ => core_document::KeyCode::Unknown,
+        },
+        _ => core_document::KeyCode::Unknown,
+    }
 }
 
 #[cfg(test)]

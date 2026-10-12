@@ -855,7 +855,9 @@ impl Workbench for WasmWorkbench {
         active_tool: Option<&str>,
         ctx: &mut WorkbenchRuntimeContext,
     ) -> InputResult {
-        let (event, position) = convert::event(event);
+        let Some((event, position)) = convert::event(event) else {
+            return InputResult::ignored();
+        };
         let input = bench_api::Input {
             event,
             tool: active_tool.map(str::to_string),

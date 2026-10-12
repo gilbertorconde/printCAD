@@ -121,6 +121,8 @@ pub struct UiLayer {
     details: Option<(String, String)>,
     /// The workbench keys last sent to the workbenches.
     workbench_keys: Option<std::collections::HashMap<String, Vec<core_document::Chord>>>,
+    /// The keys in effect as of the last frame.
+    keymap: keymap::Keymap,
     recent_thumbnails: start_page::ThumbnailCache,
     /// Keys the workbench consumed that egui also queued; egui must not
     /// act on them (Tab would move focus, Enter would accept the task).
@@ -224,6 +226,7 @@ impl UiLayer {
             start_view: Default::default(),
             details: None,
             workbench_keys: None,
+            keymap: keymap::Keymap::default(),
             recent_thumbnails: Default::default(),
             swallowed_keys: Vec::new(),
             console: console_view::ConsoleState::load(),
@@ -289,6 +292,17 @@ impl UiLayer {
         if dismiss || details {
             *dismissed_release = Some(tag.clone());
         }
+    }
+
+    /// Whether `chord` runs a command while `active` is the workbench, as
+    /// the keys stood at the last frame.
+    pub fn is_shortcut(&self, chord: core_document::Chord, active: &WorkbenchId) -> bool {
+        self.keymap.lookup(chord, active).is_some()
+    }
+
+    /// What the system clipboard holds as text.
+    pub fn clipboard_text(&mut self) -> Option<String> {
+        self.state.clipboard_text()
     }
 
     /// The workbench consumed `key`: keep egui from acting on it too.
@@ -476,6 +490,9 @@ impl UiLayer {
                     numeric: registry
                         .workbench(&active_workbench.0)
                         .is_ok_and(|wb| wb.takes_numeric_input()),
+                    text: registry
+                        .workbench(&active_workbench.0)
+                        .is_ok_and(|wb| wb.takes_text_input()),
                     have_document: screen == Screen::Workspace,
                 };
                 let active_tab = tabs.iter().find(|t| t.active).map(|t| t.tab);
@@ -1143,6 +1160,8 @@ impl UiLayer {
                 to: active_workbench.clone(),
             });
         }
+
+        self.keymap = keymap;
 
         let repaint_delay = full_output
             .viewport_output
