@@ -47,7 +47,7 @@ pub struct StatusBarInputs<'a> {
     /// The view's picks, when several: shown when the bench names no
     /// selection of its own.
     pub picks: Option<&'a str>,
-    /// "w × h × d" of the selection, already formatted.
+    /// "x × y × z" of the selection, already formatted.
     pub dimensions: Option<&'a str>,
     /// The script running, by name, while one is.
     pub script_running: Option<&'a str>,
@@ -294,12 +294,25 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
             text(ui, "Size", TEXT3);
         })
         .response
-        .on_hover_text("The selection's bounding box");
+        .on_hover_text("The selection's bounding box along X, Y and Z");
     }
     if let Some(coords) = coords {
         mono_label(ui, coords, FONT_XS, TEXT2).on_hover_text("The point under the cursor");
     }
     result
+}
+
+/// The extent of `bounds` (millimetres, document axes) along X, Y and Z,
+/// in that order whatever way up the view is, in `unit`.
+pub fn size_text(bounds: ([f32; 3], [f32; 3]), unit: Unit) -> String {
+    let size = (Vec3::from_array(bounds.1) - Vec3::from_array(bounds.0)).abs();
+    format!(
+        "{:.1} × {:.1} × {:.1} {}",
+        unit.from_mm(size.x),
+        unit.from_mm(size.y),
+        unit.from_mm(size.z),
+        unit.short_label()
+    )
 }
 
 /// The document server: a dot while all is well, words when it is not.
@@ -498,6 +511,14 @@ mod tests {
         });
         out.textures_delta.clear();
         result
+    }
+
+    #[test]
+    fn the_size_reads_x_then_y_then_z() {
+        // A 20 × 30 × 40 box standing up Z, which the default view puts up.
+        let bounds = ([5.0, -10.0, 0.0], [25.0, 20.0, 40.0]);
+        assert_eq!(size_text(bounds, Unit::Mm), "20.0 × 30.0 × 40.0 mm");
+        assert_eq!(size_text(bounds, Unit::Cm), "2.0 × 3.0 × 4.0 cm");
     }
 
     #[test]

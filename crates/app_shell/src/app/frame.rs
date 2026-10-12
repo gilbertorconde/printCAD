@@ -2085,7 +2085,7 @@ impl PrintCadApp {
         Some(ui::HoverCard { title, point_mm })
     }
 
-    /// "w × h × d" of the selected (else active) body in the display unit.
+    /// "x × y × z" of the selected (else active) body in the display unit.
     fn selection_dimensions(&mut self) -> Option<String> {
         let body = self
             .session
@@ -2111,17 +2111,9 @@ impl PrintCadApp {
                 }
             }
         };
-        let unit = self.session.document.display_unit();
-        let axes = self.session.camera.axis_system();
-        let lo = axes.world_to_canonical(Vec3::from_array(bounds.0));
-        let hi = axes.world_to_canonical(Vec3::from_array(bounds.1));
-        let size = (hi - lo).abs();
-        Some(format!(
-            "{:.1} × {:.1} × {:.1} {}",
-            unit.from_mm(size.x),
-            unit.from_mm(size.y),
-            unit.from_mm(size.z),
-            unit.short_label()
+        Some(ui::status_bar::size_text(
+            bounds,
+            self.session.document.display_unit(),
         ))
     }
 }
