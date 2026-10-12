@@ -1,11 +1,11 @@
 //! The entries a body's menu has, in the tree (on the body's row and its
-//! features') and in the view alike: its appearance and placement (tasks in
-//! the right panel), freezing, whether clicks pick it, copies and a
+//! features') and in the view alike: its appearance, placement and notes
+//! (tasks in the right panel), freezing, whether clicks pick it, copies and a
 //! rebuild. What only changes the window (a task, the property panel's
 //! page, the console's input) comes back as a [`MenuLocal`] for the UI to
 //! act on.
 
-use core_document::{BodyId, Document, FeatureId};
+use core_document::{BodyId, Document, FeatureId, NoteId};
 use egui::Ui;
 
 use super::property_panel::PropertyTab;
@@ -37,6 +37,11 @@ pub enum OpenTask {
     Texture(BodyId, Option<u32>),
     /// Every part laid flat on the bed, for export or the slicer.
     PrintLayout,
+    /// A new note on the body, at a point where it sits in the document
+    /// (the one the menu was opened on), or where the body offers one.
+    AddNote(BodyId, Option<[f32; 3]>),
+    /// A note's text and where its label stands.
+    EditNote(NoteId),
 }
 
 /// A body as a script names it: its id, with its name beside.
@@ -49,13 +54,15 @@ fn edit(out: &mut Vec<UiCommand>, body: BodyId, edit: BodyEdit) {
 }
 
 /// The body entries of a menu, after whatever came before. `face` is the
-/// face the menu was opened on, when it was. Returns whether an entry was
-/// picked, so the caller can close the menu.
+/// face the menu was opened on and `at` the point, where it sits in the
+/// document, when it was. Returns whether an entry was picked, so the
+/// caller can close the menu.
 pub fn body_entries(
     ui: &mut Ui,
     document: &Document,
     body: BodyId,
     face: Option<u32>,
+    at: Option<[f32; 3]>,
     out: &mut Vec<UiCommand>,
     local: &mut Option<MenuLocal>,
 ) -> bool {
@@ -88,6 +95,18 @@ pub fn body_entries(
         .clicked()
     {
         *local = Some(MenuLocal::Task(OpenTask::Texture(body, face)));
+        picked = true;
+    }
+    if ui
+        .button("Add note")
+        .on_hover_text(if at.is_some() {
+            "A note at the point under the pointer: a leader to a label, in the task panel"
+        } else {
+            "A note on the body: a leader to a label, in the task panel"
+        })
+        .clicked()
+    {
+        *local = Some(MenuLocal::Task(OpenTask::AddNote(body, at)));
         picked = true;
     }
     if ui

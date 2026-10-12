@@ -1,18 +1,19 @@
 //! The application's own tasks in the right panel, beside the benches':
 //! a body's placement, its appearance (colour, faces, see-through,
-//! material), a feature's place in its body's history, and the print
-//! layout. Edits apply to the document as they are made, so the view
+//! material), a note on it, a feature's place in its body's history, and
+//! the print layout. Edits apply to the document as they are made, so the view
 //! shows them; OK keeps them as one undo step, Cancel puts back what was
 //! there when the task opened. The print layout edits nothing: the view
 //! shows the layout while it is open, and Close puts the model back.
 
 use core_document::{
-    BodyDisplay, BodyId, BodyPlacement, Document, FaceColor, FeatureId, Material, Recorded,
+    BodyDisplay, BodyId, BodyPlacement, Document, FaceColor, FeatureId, Material, Note, NoteId,
+    Recorded,
 };
 use egui::{RichText, Ui, Vec2};
 use serde_json::{Value, json};
 use ui_kit::tokens::*;
-use ui_kit::widgets::{QtyField, overline, secondary_button, small_secondary_button};
+use ui_kit::widgets::{QtyField, check_row, overline, secondary_button, small_secondary_button};
 use ui_kit::{sans, sans_semibold};
 
 use super::UiCommand;
@@ -64,8 +65,21 @@ pub enum HostTask {
     Appearance(AppearanceTask),
     History(HistoryTask),
     Texture(super::texture_task::TextureTask),
+    Note(NoteTask),
     /// Every part laid flat on the bed, for export or the slicer.
     PrintLayout,
+}
+
+#[derive(Debug, Clone)]
+pub struct NoteTask {
+    body: BodyId,
+    /// The note as it was when the task opened; `None` when the task
+    /// makes it.
+    start: Option<Note>,
+    note: Note,
+    /// The note is in the document: a new one goes in on the task's
+    /// first frame.
+    placed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -283,6 +297,28 @@ impl HostTask {
         })
     }
 
+    /// A new note on `body` at `at`, where the body sits in the
+    /// document, or where the body offers one.
+    pub fn add_note(document: &Document, body: BodyId, at: Option<[f32; 3]>) -> Self {
+        Self::Note(NoteTask {
+            body,
+            start: None,
+            note: document.new_note(body, "Note".to_string(), at),
+            placed: false,
+        })
+    }
+
+    /// Note `id` to edit; `None` when there is no such note.
+    pub fn edit_note(document: &Document, id: NoteId) -> Option<Self> {
+        let (body, note) = document.note(id)?;
+        Some(Self::Note(NoteTask {
+            body,
+            start: Some(note.clone()),
+            note: note.clone(),
+            placed: true,
+        }))
+    }
+
     pub fn history(document: &Document, feature: FeatureId) -> Self {
         let order = document.body_history_of(feature);
         let at = order.iter().position(|f| *f == feature).unwrap_or(0);
@@ -299,6 +335,7 @@ impl HostTask {
             Self::Placement(t) => format!("Placement · {}", body_name(document, t.body)),
             Self::Appearance(t) => format!("Appearance · {}", body_name(document, t.body)),
             Self::Texture(t) => format!("Surface texture · {}", body_name(document, t.body())),
+            Self::Note(t) => format!("Note · {}", body_name(document, t.body)),
             Self::PrintLayout => "Print layout".to_string(),
             Self::History(t) => format!(
                 "Move · {}",
@@ -319,6 +356,7 @@ impl HostTask {
             }
             Self::History(t) => document.get_feature_meta(t.feature).is_some(),
             Self::Texture(t) => document.bodies().iter().any(|b| b.id == t.body()),
+            Self::Note(t) => !t.placed || document.note(t.note.id).is_some(),
             Self::PrintLayout => true,
         }
     }
@@ -344,6 +382,7 @@ impl HostTask {
                 cancel,
                 commands,
             ),
+            Self::Note(t) => t.show(ui, inputs.document, accept, cancel),
             Self::PrintLayout => print_layout(ui, &inputs, accept || cancel, commands),
         }
     }
@@ -448,6 +487,123 @@ fn print_layout(
         }
     });
     None
+}
+
+impl NoteTask {
+    fn show(
+        &mut self,
+        ui: &mut Ui,
+        document: &mut Document,
+        accept: bool,
+        cancel: bool,
+    ) -> Option<HostTaskEnd> {
+        if !self.placed {
+            if document.add_note(self.body, self.note.clone()).is_none() {
+                return Some(HostTaskEnd::Cancelled);
+            }
+            self.placed = true;
+        }
+        if cancel {
+            match &self.start {
+                Some(start) => {
+                    document.set_note(start.clone());
+                }
+                None => {
+                    document.remove_note(self.note.id);
+                }
+            }
+            return Some(HostTaskEnd::Cancelled);
+        }
+        if accept {
+            return Some(self.accepted(document));
+        }
+        note(
+            ui,
+            "A leader from the point on the body to the label. It moves with the body, \
+             and follows its face when the body is rebuilt.",
+        );
+        let mut changed = false;
+        heading(ui, "Text");
+        let id = ui.id().with(("host_note_text", self.note.id));
+        let candidates = || core_document::formula_candidates(document);
+        let edit = ui_kit::completion::completing_text_edit(
+            ui,
+            id,
+            &mut self.note.text,
+            &candidates,
+            |e| e.font(sans(FONT_MD)).desired_width(f32::INFINITY),
+        );
+        changed |= edit.response.changed();
+        if self.note.text.trim_start().starts_with('=') {
+            note(ui, &format!("Shows {}", document.note_text(&self.note)));
+        } else {
+            note(
+                ui,
+                "Start with = to show what a formula comes to, as =Pad.length does.",
+            );
+        }
+        heading(ui, "Label");
+        note(
+            ui,
+            "Where the label stands from the point, in the body's own axes.",
+        );
+        let mut offset: [f32; 3] = std::array::from_fn(|i| self.note.label[i] - self.note.at[i]);
+        egui::Grid::new("host_note_label")
+            .num_columns(2)
+            .spacing([SPACE_3, SPACE_1])
+            .show(ui, |ui| {
+                for (i, axis) in ["X", "Y", "Z"].iter().enumerate() {
+                    ui.label(RichText::new(*axis).font(sans(FONT_SM)).color(TEXT2));
+                    if QtyField::offset(&mut offset[i]).show(ui) {
+                        self.note.label[i] = self.note.at[i] + offset[i];
+                        changed = true;
+                    }
+                    ui.end_row();
+                }
+            });
+        ui.add_space(SPACE_2);
+        let mut shown = !self.note.hidden;
+        if check_row(ui, &mut shown, "Shown in the view").changed() {
+            self.note.hidden = !shown;
+            changed = true;
+        }
+        if changed {
+            document.set_note(self.note.clone());
+        }
+        None
+    }
+
+    /// The task kept: its undo step's label and the call a recording
+    /// keeps, with the point and label where the body sits.
+    fn accepted(&self, document: &Document) -> HostTaskEnd {
+        let (at, label) = document.note_placed(self.body, &self.note);
+        match &self.start {
+            None => HostTaskEnd::Accepted(
+                format!("Add note to {}", body_name(document, self.body)),
+                vec![call(
+                    "doc.note_add",
+                    json!({
+                        "body": self.body.0.to_string(),
+                        "text": self.note.text,
+                        "point": at,
+                        "label": label,
+                    }),
+                )],
+            ),
+            Some(_) => HostTaskEnd::Accepted(
+                "Edit note".to_string(),
+                vec![call(
+                    "doc.note_set",
+                    json!({
+                        "id": self.note.id.0.to_string(),
+                        "text": self.note.text,
+                        "label": label,
+                        "visible": !self.note.hidden,
+                    }),
+                )],
+            ),
+        }
+    }
 }
 
 impl PlacementTask {
@@ -1118,6 +1274,57 @@ mod tests {
             );
         });
         end
+    }
+
+    #[test]
+    fn a_new_note_goes_in_while_its_task_is_open_and_out_on_cancel() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut task = HostTask::add_note(&doc, body, Some([1.0, 2.0, 3.0]));
+        assert!(show(&mut task, &mut doc, false, false).is_none());
+        assert_eq!(doc.body_notes(body).len(), 1, "drawn while it is edited");
+        assert!(matches!(
+            show(&mut task, &mut doc, false, true),
+            Some(HostTaskEnd::Cancelled)
+        ));
+        assert!(doc.body_notes(body).is_empty());
+
+        let mut task = HostTask::add_note(&doc, body, Some([1.0, 2.0, 3.0]));
+        show(&mut task, &mut doc, false, false);
+        let Some(HostTaskEnd::Accepted(_, calls)) = show(&mut task, &mut doc, true, false) else {
+            panic!("accepted");
+        };
+        assert_eq!(calls[0].id, "doc.note_add");
+        assert_eq!(calls[0].args["point"], json!([1.0, 2.0, 3.0]));
+    }
+
+    #[test]
+    fn editing_a_note_records_its_change_and_cancel_puts_it_back() {
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let note = Note::pinned("Before".into(), [0.0; 3], [0.0, 0.0, 5.0], None);
+        let id = doc.add_note(body, note.clone()).unwrap();
+        let mut task = HostTask::edit_note(&doc, id).expect("the note");
+        if let HostTask::Note(t) = &mut task {
+            t.note.text = "After".into();
+            doc.set_note(t.note.clone());
+        }
+        assert!(matches!(
+            show(&mut task, &mut doc, false, true),
+            Some(HostTaskEnd::Cancelled)
+        ));
+        assert_eq!(doc.note(id).unwrap().1, &note);
+
+        let mut task = HostTask::edit_note(&doc, id).expect("the note");
+        if let HostTask::Note(t) = &mut task {
+            t.note.text = "After".into();
+            doc.set_note(t.note.clone());
+        }
+        let Some(HostTaskEnd::Accepted(_, calls)) = show(&mut task, &mut doc, true, false) else {
+            panic!("accepted");
+        };
+        assert_eq!(calls[0].id, "doc.note_set");
+        assert_eq!(calls[0].args["text"], json!("After"));
     }
 
     #[test]

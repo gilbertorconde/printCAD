@@ -225,6 +225,11 @@ pub enum UiCommand {
         body: core_document::BodyId,
         visible: bool,
     },
+    /// Show or hide a note, from its tree row or the property panel.
+    SetNoteVisible {
+        note: core_document::NoteId,
+        visible: bool,
+    },
     ConfirmStepImport,
     CancelStepImport,
     ConfirmExport,

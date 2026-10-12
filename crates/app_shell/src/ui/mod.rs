@@ -185,6 +185,13 @@ impl UiLayer {
                 host_tasks::HostTask::Texture(texture_task::TextureTask::open(document, body, face))
             }
             OpenTask::PrintLayout => host_tasks::HostTask::PrintLayout,
+            OpenTask::AddNote(body, at) => host_tasks::HostTask::add_note(document, body, at),
+            OpenTask::EditNote(note) => {
+                let Some(task) = host_tasks::HostTask::edit_note(document, note) else {
+                    return;
+                };
+                task
+            }
         };
         self.host_task = Some((tab.into(), task));
     }

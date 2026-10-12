@@ -23,6 +23,8 @@ pub struct ViewportMenu {
     /// The face it was opened on, when there was one: its index in the
     /// body's mesh.
     pub face: Option<u32>,
+    /// The point it was opened on, where the body sits in the document.
+    pub point: Option<[f32; 3]>,
     /// The last tool started, by name, which the menu offers to repeat.
     pub repeat: Option<String>,
 }
@@ -157,7 +159,7 @@ pub fn draw(
                             }
                             ui.separator();
                             if super::body_menu::body_entries(
-                                ui, document, menu.body, menu.face, commands, local,
+                                ui, document, menu.body, menu.face, menu.point, commands, local,
                             ) {
                                 commands.push(UiCommand::CloseViewportMenu);
                             }

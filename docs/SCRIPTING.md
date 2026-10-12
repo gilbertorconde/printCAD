@@ -380,7 +380,7 @@ assert(math.abs(pc.doc.measure{body = lid}.volume - 400) < 1e-6)
 assert(pc.doc.bodies()[1].name == "Lid")
 ```
 
-`pc.doc.rename`: Rename a body or a feature.
+`pc.doc.rename`: Rename a body, a feature or a note (its text).
 
 - `id` (id)
 - `name` (string)
@@ -617,7 +617,7 @@ assert(not ok and tostring(why):find("is frozen"), tostring(why))
 assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "kept")
 ```
 
-`pc.doc.set_visible`: Show or hide a body or a feature.
+`pc.doc.set_visible`: Show or hide a body, a feature or a note.
 
 - `id` (id)
 - `visible` (boolean)
@@ -644,7 +644,7 @@ assert(#pc.doc.rebuild() == 0)
 assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "hidden, still built")
 ```
 
-`pc.doc.delete`: Delete a body or a feature.
+`pc.doc.delete`: Delete a body, a feature or a note.
 
 - `id` (id)
 
@@ -830,6 +830,101 @@ local pad = pc.design.pad{sketch = s, length = 5}
 local failed = pc.doc.rebuild()
 assert(#failed == 1 and failed[1].feature == pad, "the pad failed")
 assert(failed[1].error:find("not closed"), failed[1].error)
+```
+
+`pc.doc.note_add`: Pin a note to a body: a leader from a point on it to a label, drawn in the view and written to STEP.
+
+- `body` (id)
+- `text` (string): What the label says; starting with = it shows what a formula comes to (=Pad.length)
+- `point` (any, optional): {x, y, z} where the body sits: the note goes to the point of the body nearest it; without one, to the top of the body's middle
+- `label` (any, optional): {x, y, z} where the label stands; without one, out from the face the point is on
+- Returns the note's id
+
+Notes:
+
+- The note is kept in the body's own frame and names the face its point is on: it moves with the body, and when a rebuild moves that face the point goes to the nearest point of the face and the label with it.
+- A body not yet built has no faces to put the point on: the note stays where it was given.
+
+See also `pc.doc.notes`, `pc.doc.note_set`, `pc.doc.note_remove`.
+
+Example: A note on a pad's top follows it as the pad grows.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+local pad = pc.design.pad{sketch = s, length = 5}
+local body = pc.doc.feature{id = pad}.body
+assert(#pc.doc.rebuild() == 0)
+local note = pc.doc.note_add{body = body, text = "=Pad.length", point = {10, 5, 6}}
+local n = pc.doc.notes{body = body}[1]
+assert(n.id == note and n.text == "=Pad.length" and n.shows == "5 mm")
+assert(math.abs(n.point[3] - 5) < 1e-4, "taken to the top face")
+pc.doc.set_value{id = pad, parameter = "length", value = 8}
+assert(#pc.doc.rebuild() == 0)
+n = pc.doc.notes{body = body}[1]
+assert(math.abs(n.point[3] - 8) < 1e-4, "the note follows the face")
+assert(n.label[3] > n.point[3] and n.shows == "8 mm")
+```
+
+`pc.doc.note_set`: Change a note's text, label or visibility.
+
+- `id` (id): The note
+- `text` (string, optional): What the label says
+- `label` (any, optional): {x, y, z} where the label stands, where the body sits
+- `visible` (boolean, optional): false keeps it off the view
+
+Notes:
+
+- Only what is given changes.
+
+See also `pc.doc.note_add`, `pc.doc.notes`.
+
+Example: A note reworded and hidden.
+
+```lua
+local body = pc.doc.new_body{name = "Plate"}
+local note = pc.doc.note_add{body = body, text = "Draft"}
+pc.doc.note_set{id = note, text = "Final", visible = false}
+local n = pc.doc.notes{body = body}[1]
+assert(n.text == "Final" and not n.visible)
+```
+
+`pc.doc.note_remove`: Take a note away.
+
+- `id` (id): The note
+
+See also `pc.doc.note_add`.
+
+Example: A note added and taken away.
+
+```lua
+local body = pc.doc.new_body{}
+local note = pc.doc.note_add{body = body, text = "Temporary"}
+pc.doc.note_remove{id = note}
+assert(#pc.doc.notes{body = body} == 0)
+```
+
+`pc.doc.notes`: List the notes pinned to bodies.
+
+- `body` (id, optional): Only this body's
+- Returns a list of {id, body, text, shows, point, label, visible, on_face}: point and label where the body sits, as built now; shows is what the label says
+
+Notes:
+
+- `on_face` says whether the note names the face its point is on, which it follows through a rebuild.
+
+See also `pc.doc.note_add`.
+
+Example: Every note, with its body.
+
+```lua
+local a = pc.doc.new_body{}
+local b = pc.doc.new_body{}
+pc.doc.note_add{body = a, text = "A", point = {0, 0, 0}, label = {0, 0, 10}}
+pc.doc.note_add{body = b, text = "B"}
+local all = pc.doc.notes()
+assert(#all == 2 and all[1].body == a and all[2].text == "B")
+assert(all[1].label[3] == 10 and all[1].visible and not all[1].on_face)
 ```
 
 `pc.doc.faces`: The faces of a body's solid, where it sits.

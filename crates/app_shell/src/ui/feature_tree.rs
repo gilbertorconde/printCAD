@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 
 use core_document::{
     Body, BodyId, ComponentId, Document, DocumentService, FeatureId, FeatureInfo, FeatureNode,
-    MenuScope, WorkbenchId,
+    MenuScope, NoteId, WorkbenchId,
 };
 use egui::{Response, Ui, Vec2};
 use ui_kit::sans;
@@ -19,6 +19,9 @@ pub enum TreeItemId {
     Feature(FeatureId),
     ImportedObject(Uuid),
     Component(ComponentId),
+    /// The group of a body's notes.
+    Notes(BodyId),
+    Note(NoteId),
 }
 
 impl From<FeatureId> for TreeItemId {
@@ -262,6 +265,7 @@ impl DocumentTree {
         }
 
         attach_links(&mut body_nodes, document, registry);
+        attach_notes(&mut body_nodes, document, &mut HashSet::new());
         mark_shape_health(&mut body_nodes, document);
         mark_meshes(&mut body_nodes, document);
 
@@ -446,6 +450,58 @@ fn attach_links(nodes: &mut [TreeNode], document: &Document, registry: &Document
                 faceted: false,
             });
         }
+    }
+}
+
+/// Under the row that stands for a body, its notes in a group of their
+/// own, as an imported model's annotations are.
+fn attach_notes(nodes: &mut [TreeNode], document: &Document, done: &mut HashSet<BodyId>) {
+    for node in nodes {
+        attach_notes(&mut node.children, document, done);
+        let Some(body) = node.body else {
+            continue;
+        };
+        if !matches!(node.id, TreeItemId::Body(_) | TreeItemId::ImportedObject(_))
+            || !done.insert(body)
+        {
+            continue;
+        }
+        let notes = document.body_notes(body);
+        if notes.is_empty() {
+            continue;
+        }
+        let rows: Vec<TreeNode> = notes
+            .iter()
+            .map(|note| {
+                let shown = document.note_text(note);
+                TreeNode {
+                    id: TreeItemId::Note(note.id),
+                    label: shown.lines().next().unwrap_or_default().to_string(),
+                    detail: Some(if shown == note.text {
+                        "Note".to_string()
+                    } else {
+                        format!("Note: {}", note.text)
+                    }),
+                    tooltip: Some(shown),
+                    visible: !note.hidden,
+                    icon: "info",
+                    ..build_body_node_blank()
+                }
+            })
+            .collect();
+        node.children.push(TreeNode {
+            id: TreeItemId::Notes(body),
+            label: "Annotations".to_string(),
+            detail: Some(format!(
+                "{} note{} on this body",
+                rows.len(),
+                if rows.len() == 1 { "" } else { "s" }
+            )),
+            visible: notes.iter().any(|n| !n.hidden),
+            icon: "tree-group",
+            children: rows,
+            ..build_body_node_blank()
+        });
     }
 }
 
@@ -1192,6 +1248,25 @@ fn draw_row(
                 TreeItemId::Body(id) => {
                     result.body_visibility_change = Some((id, !visible));
                 }
+                TreeItemId::Note(note) => {
+                    result.commands.push(super::UiCommand::SetNoteVisible {
+                        note,
+                        visible: !visible,
+                    });
+                }
+                TreeItemId::Notes(_) => {
+                    if let Some(node) = node {
+                        result.commands.extend(node.children.iter().filter_map(
+                            |row| match row.id {
+                                TreeItemId::Note(note) => Some(super::UiCommand::SetNoteVisible {
+                                    note,
+                                    visible: !visible,
+                                }),
+                                _ => None,
+                            },
+                        ));
+                    }
+                }
                 TreeItemId::Component(_) => {
                     let mut bodies = Vec::new();
                     if let Some(node) = node {
@@ -1408,7 +1483,9 @@ fn draw_node(
         TreeItemId::ImportedObject(_)
         | TreeItemId::Feature(_)
         | TreeItemId::Body(_)
-        | TreeItemId::Component(_) => Some(node.visible),
+        | TreeItemId::Component(_)
+        | TreeItemId::Notes(_)
+        | TreeItemId::Note(_) => Some(node.visible),
         _ => None,
     };
     let icon_tint = if editing_here {
@@ -1782,6 +1859,58 @@ fn attach_body_menu(
     options: &TreeDrawOptions<'_>,
     result: &mut TreeUiResult,
 ) -> Response {
+    match node.id {
+        TreeItemId::Note(note) => {
+            let mut delete = false;
+            response.context_menu(|ui| {
+                ui_kit::widgets::fitted_menu(ui, |ui| {
+                    if ui
+                        .button("Edit note…")
+                        .on_hover_text("Its text and where its label stands, in the task panel")
+                        .clicked()
+                    {
+                        result.local =
+                            Some(super::MenuLocal::Task(super::OpenTask::EditNote(note)));
+                        ui.close();
+                    }
+                    let visible_label = if node.visible { "Hide" } else { "Show" };
+                    if menu_entry(ui, visible_label, options.key("view.toggle_visibility"))
+                        .clicked()
+                    {
+                        result.commands.push(super::UiCommand::SetNoteVisible {
+                            note,
+                            visible: !node.visible,
+                        });
+                        ui.close();
+                    }
+                    if menu_entry(ui, "Delete", options.key("edit.delete")).clicked() {
+                        delete = true;
+                        ui.close();
+                    }
+                });
+            });
+            if delete {
+                result.delete_item = Some(node.id);
+            }
+            return response;
+        }
+        TreeItemId::Notes(_) => {
+            let mut delete = false;
+            response.context_menu(|ui| {
+                ui_kit::widgets::fitted_menu(ui, |ui| {
+                    if menu_entry(ui, "Delete all notes", options.key("edit.delete")).clicked() {
+                        delete = true;
+                        ui.close();
+                    }
+                });
+            });
+            if delete {
+                result.delete_item = Some(node.id);
+            }
+            return response;
+        }
+        _ => {}
+    }
     if let TreeItemId::Component(component) = node.id {
         let mut delete = false;
         let mut bench_command = None;
@@ -1932,6 +2061,7 @@ fn attach_body_menu(
                     document,
                     body,
                     None,
+                    None,
                     &mut result.commands,
                     &mut local,
                 ) {
@@ -1994,7 +2124,12 @@ fn handle_response(response: Response, id: TreeItemId, result: &mut TreeUiResult
         }
     }
     if response.double_clicked() {
-        result.activation = Some(id);
+        // A note's double click opens it for editing, as a feature's does.
+        if let TreeItemId::Note(note) = id {
+            result.local = Some(super::MenuLocal::Task(super::OpenTask::EditNote(note)));
+        } else {
+            result.activation = Some(id);
+        }
     }
 }
 
@@ -2403,6 +2538,46 @@ mod tests {
             visible(&doc),
             Some(false),
             "its eye is shut and its row muted"
+        );
+    }
+
+    #[test]
+    fn a_bodys_notes_sit_in_its_annotations_group() {
+        let mut doc = Document::new("tree");
+        let body = doc.create_body(Some("Body".into()));
+        let tree = |doc: &Document| DocumentTree::build(doc, &DocumentService::default());
+        let groups = |tree: &DocumentTree| {
+            let row = tree
+                .nodes()
+                .iter()
+                .find(|n| n.id == TreeItemId::Body(body))
+                .expect("the body's row");
+            row.children
+                .iter()
+                .filter(|c| c.id == TreeItemId::Notes(body))
+                .map(|c| {
+                    let notes: Vec<(TreeItemId, String, bool)> = c
+                        .children
+                        .iter()
+                        .map(|n| (n.id, n.label.clone(), n.visible))
+                        .collect();
+                    notes
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(groups(&tree(&doc)).is_empty(), "no group without notes");
+        let note = core_document::Note::pinned("=1 mm + 1 mm".into(), [0.0; 3], [0.0; 3], None);
+        let id = doc.add_note(body, note).unwrap();
+        let mut hidden = core_document::Note::pinned("Hidden".into(), [0.0; 3], [0.0; 3], None);
+        hidden.hidden = true;
+        let other = doc.add_note(body, hidden).unwrap();
+        assert_eq!(
+            groups(&tree(&doc)),
+            [vec![
+                (TreeItemId::Note(id), "2 mm".to_string(), true),
+                (TreeItemId::Note(other), "Hidden".to_string(), false),
+            ]],
+            "one group, each note labelled as it reads, its eye its own"
         );
     }
 

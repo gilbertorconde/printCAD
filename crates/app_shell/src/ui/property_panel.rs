@@ -446,6 +446,15 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
+/// A body's name, or a dash for none.
+fn body_label(document: &Document, body: BodyId) -> String {
+    document
+        .bodies()
+        .iter()
+        .find(|b| b.id == body)
+        .map_or_else(|| "-".to_string(), |b| b.name.clone())
+}
+
 /// The rows of the Data tab for `selected`.
 fn data_groups(
     document: &Document,
@@ -560,6 +569,40 @@ fn data_groups(
             let data = without_fields(&node.data, &covered);
             let (group, rows) = flatten_feature_json(&data, document, &hints, unit);
             vec![("Base".to_string(), base), (group, rows)]
+        }
+        TreeItemId::Notes(body) => vec![(
+            "Annotations".to_string(),
+            vec![
+                PropRow::text("On", body_label(document, body)),
+                PropRow::mono("Notes", document.body_notes(body).len().to_string()),
+            ],
+        )],
+        TreeItemId::Note(id) => {
+            let Some((body, note)) = document.note(id) else {
+                return Vec::new();
+            };
+            let (at, label) = document.note_placed(body, note);
+            let point = |p: [f32; 3]| p.map(|c| format_length_mm(c, unit, 2)).join(", ");
+            let formula = note.text.trim_start().starts_with('=');
+            vec![(
+                "Note".to_string(),
+                vec![
+                    PropRow::text("Text", &note.text),
+                    PropRow::text("Shows", document.note_text(note)).dim(!formula),
+                    PropRow::text("On", body_label(document, body)),
+                    PropRow::text(
+                        "Face",
+                        if note.face.is_some() {
+                            "Followed through rebuilds"
+                        } else {
+                            "-"
+                        },
+                    )
+                    .dim(note.face.is_none()),
+                    PropRow::mono("Point", point(at)),
+                    PropRow::mono("Label", point(label)),
+                ],
+            )]
         }
         TreeItemId::ImportedObject(id) => {
             let Some(obj) = document.imported_object(id) else {
@@ -677,6 +720,11 @@ pub fn draw_property_panel(
         TreeItemId::Component(id) => document
             .component(id)
             .map(|c| c.name.clone())
+            .unwrap_or_default(),
+        TreeItemId::Notes(_) => "Annotations".to_string(),
+        TreeItemId::Note(id) => document
+            .note(id)
+            .map(|(_, n)| n.text.clone())
             .unwrap_or_default(),
     };
 

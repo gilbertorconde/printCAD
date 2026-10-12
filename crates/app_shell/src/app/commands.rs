@@ -310,6 +310,20 @@ impl PrintCadApp {
                     });
                     self.close_gesture();
                 }
+                UiCommand::SetNoteVisible { note, visible } => {
+                    let document = &mut self.session.document;
+                    if let Some((_, found)) = document.note(note) {
+                        let mut changed = found.clone();
+                        changed.hidden = !visible;
+                        document.set_note(changed);
+                        self.session.journal.label_next(if visible {
+                            "Show note"
+                        } else {
+                            "Hide note"
+                        });
+                        self.close_gesture();
+                    }
+                }
                 UiCommand::ConfirmStepImport => intents.confirm_step_import = true,
                 UiCommand::CancelStepImport => intents.cancel_step_import = true,
                 // A panel's requests take the same paths the UI's own
@@ -601,7 +615,15 @@ impl PrintCadApp {
                         }
                     }
                 }
-                TreeItemId::DocumentRoot | TreeItemId::ImportedObject(_) => {}
+                TreeItemId::Note(id) => {
+                    if let Some((_, note)) = self.session.document.note(id) {
+                        let mut changed = note.clone();
+                        changed.text = name;
+                        self.session.document.set_note(changed);
+                    }
+                }
+                TreeItemId::DocumentRoot | TreeItemId::ImportedObject(_) | TreeItemId::Notes(_) => {
+                }
             }
         }
         if let Some(wb) = intents.request_workbench
@@ -1220,6 +1242,18 @@ impl PrintCadApp {
                 self.session.active_body_id = None;
                 self.session.selected_body = None;
             }
+            // A note draws in the selection paint itself; its body stays
+            // the target without its overlay.
+            TreeItemId::Notes(body) => {
+                self.session.active_document_object = None;
+                self.session.active_body_id = Some(body);
+                self.session.selected_body = None;
+            }
+            TreeItemId::Note(id) => {
+                self.session.active_document_object = None;
+                self.session.active_body_id = self.session.document.note(id).map(|(b, _)| b);
+                self.session.selected_body = None;
+            }
         }
     }
 
@@ -1349,6 +1383,17 @@ impl PrintCadApp {
                     }
                     Err(err) => app_log::warn(format!("Could not take {name} apart: {err}")),
                 }
+            }
+            TreeItemId::Note(note) => {
+                if self.session.document.remove_note(note) {
+                    self.session.journal.label_next("Delete note");
+                    self.session.tree_selection = Some(TreeItemId::DocumentRoot);
+                }
+            }
+            TreeItemId::Notes(body) => {
+                self.session.document.set_body_notes(body, Vec::new());
+                self.session.journal.label_next("Delete notes");
+                self.session.tree_selection = Some(TreeItemId::DocumentRoot);
             }
             TreeItemId::DocumentRoot => {}
         }
@@ -1858,6 +1903,8 @@ impl PrintCadApp {
             TreeItemId::Component(id) => {
                 self.session.document.component_bodies(id).first().copied()
             }
+            TreeItemId::Notes(body) => Some(body),
+            TreeItemId::Note(id) => self.session.document.note(id).map(|(b, _)| b),
             TreeItemId::DocumentRoot => None,
         }
     }

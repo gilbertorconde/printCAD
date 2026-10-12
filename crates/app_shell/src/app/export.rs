@@ -8,7 +8,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
 
 use kernel_api::{LinearDeflectionMode, TessellationSettings, TriMesh};
-use kernel_ogeom::export::{ExportBody, ExportFormat, export};
+use kernel_ogeom::export::{ExportBody, ExportFormat, ExportNote, export_with_notes};
 
 use crate::PrintCadApp;
 use crate::app_log;
@@ -60,6 +60,43 @@ struct OwnedBody {
     mesh: Arc<TriMesh>,
     /// The body's surface textures, to press into its mesh.
     pressing: Option<crate::app::textures::Pressing>,
+    /// The body's shown notes, in its own frame: text, point and label.
+    notes: Vec<(String, [f32; 3], [f32; 3])>,
+}
+
+/// The notes a body's export carries: those shown, each as its label
+/// reads, on its face as the body is built now, in the body's frame.
+fn body_notes(
+    document: &core_document::Document,
+    body: core_document::BodyId,
+) -> Vec<(String, [f32; 3], [f32; 3])> {
+    let local = document.local_geometry(body);
+    let mesh = local.as_ref().map(|(mesh, _)| mesh.as_ref());
+    document
+        .body_notes(body)
+        .iter()
+        .filter(|note| !note.hidden)
+        .map(|note| {
+            let (at, label) = note.resolved(mesh);
+            (document.note_text(note), at, label)
+        })
+        .collect()
+}
+
+/// Every owned body's notes, as the kernel's export takes them.
+fn export_notes(bodies: &[OwnedBody]) -> Vec<ExportNote> {
+    bodies
+        .iter()
+        .enumerate()
+        .flat_map(|(i, b)| {
+            b.notes.iter().map(move |(text, at, label)| ExportNote {
+                body: i,
+                text: text.clone(),
+                at: *at,
+                label: *label,
+            })
+        })
+        .collect()
 }
 
 impl OwnedBody {
@@ -267,7 +304,8 @@ impl PrintCadApp {
         let started = crate::platform::spawn("printcad-export", move || {
             let finishes: Vec<_> = bodies.iter().map(OwnedBody::finish).collect();
             let borrowed = borrowed(&bodies, &finishes);
-            let result = export(&borrowed, draft.format, &draft.detail)
+            let notes = export_notes(&bodies);
+            let result = export_with_notes(&borrowed, &notes, draft.format, &draft.detail)
                 .map_err(|e| e.to_string())
                 .and_then(|exported| {
                     crate::platform::write(&path, &exported.bytes)
@@ -414,6 +452,7 @@ fn layout_bodies(
                     transform: Some(piece.placement.rows()),
                     mesh: local,
                     pressing,
+                    notes: body_notes(document, piece.body),
                 },
                 // A mesh body has only its triangles: pressed in its own
                 // frame, then moved to the bed.
@@ -428,6 +467,7 @@ fn layout_bodies(
                         transform: None,
                         mesh: Arc::new(piece.placement.mesh(&pressed)),
                         pressing: None,
+                        notes: Vec::new(),
                     }
                 }
             })
@@ -582,7 +622,9 @@ pub(crate) fn export_document(
     let finishes: Vec<_> = owned.iter().map(OwnedBody::finish).collect();
     let borrowed = borrowed(&owned, &finishes);
     let path = with_extension(&path, format);
-    let exported = export(&borrowed, format, &detail).map_err(|e| e.to_string())?;
+    let notes = export_notes(&owned);
+    let exported =
+        export_with_notes(&borrowed, &notes, format, &detail).map_err(|e| e.to_string())?;
     std::fs::write(&path, &exported.bytes).map_err(|e| format!("could not write the file: {e}"))?;
     Ok((path, exported))
 }
@@ -622,6 +664,7 @@ fn bodies_to_export(
                     pressing: textured
                         .then(|| crate::app::textures::Pressing::of(document, *id, &mut pictures))
                         .flatten(),
+                    notes: body_notes(document, *id),
                 },
             )
         })

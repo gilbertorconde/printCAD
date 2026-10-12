@@ -198,7 +198,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 assert(pc.doc.bodies()[1].name == "Lid")
                 "#,
             ),
-        CommandSpec::new("doc.rename", "Rename a body or a feature")
+        CommandSpec::new("doc.rename", "Rename a body, a feature or a note (its text)")
             .param("id", ParamKind::Id, "")
             .param("name", ParamKind::String, "")
             .note(
@@ -515,7 +515,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "kept")
                 "#,
             ),
-        CommandSpec::new("doc.set_visible", "Show or hide a body or a feature")
+        CommandSpec::new("doc.set_visible", "Show or hide a body, a feature or a note")
             .param("id", ParamKind::Id, "")
             .param("visible", ParamKind::Bool, "")
             .note(
@@ -543,7 +543,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                 assert(math.abs(pc.doc.measure{body = body}.volume - 1000) < 1e-6, "hidden, still built")
                 "#,
             ),
-        CommandSpec::new("doc.delete", "Delete a body or a feature")
+        CommandSpec::new("doc.delete", "Delete a body, a feature or a note")
             .param("id", ParamKind::Id, "")
             .note("A body goes with every feature in it.")
             .note(
@@ -765,6 +765,119 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             assert(failed[1].error:find("not closed"), failed[1].error)
             "#,
         ),
+        CommandSpec::new(
+            "doc.note_add",
+            "Pin a note to a body: a leader from a point on it to a label, drawn in the view \
+             and written to STEP",
+        )
+        .param("body", ParamKind::Id, "")
+        .param(
+            "text",
+            ParamKind::String,
+            "What the label says; starting with = it shows what a formula comes to \
+             (=Pad.length)",
+        )
+        .optional(
+            "point",
+            ParamKind::Any,
+            "{x, y, z} where the body sits: the note goes to the point of the body nearest \
+             it; without one, to the top of the body's middle",
+        )
+        .optional(
+            "label",
+            ParamKind::Any,
+            "{x, y, z} where the label stands; without one, out from the face the point is on",
+        )
+        .returns("the note's id")
+        .note(
+            "The note is kept in the body's own frame and names the face its point is on: \
+             it moves with the body, and when a rebuild moves that face the point goes to \
+             the nearest point of the face and the label with it.",
+        )
+        .note(
+            "A body not yet built has no faces to put the point on: the note stays where \
+             it was given.",
+        )
+        .see_also("doc.notes")
+        .see_also("doc.note_set")
+        .see_also("doc.note_remove")
+        .example(
+            "A note on a pad's top follows it as the pad grows",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 5}
+            local body = pc.doc.feature{id = pad}.body
+            assert(#pc.doc.rebuild() == 0)
+            local note = pc.doc.note_add{body = body, text = "=Pad.length", point = {10, 5, 6}}
+            local n = pc.doc.notes{body = body}[1]
+            assert(n.id == note and n.text == "=Pad.length" and n.shows == "5 mm")
+            assert(math.abs(n.point[3] - 5) < 1e-4, "taken to the top face")
+            pc.doc.set_value{id = pad, parameter = "length", value = 8}
+            assert(#pc.doc.rebuild() == 0)
+            n = pc.doc.notes{body = body}[1]
+            assert(math.abs(n.point[3] - 8) < 1e-4, "the note follows the face")
+            assert(n.label[3] > n.point[3] and n.shows == "8 mm")
+            "#,
+        ),
+        CommandSpec::new("doc.note_set", "Change a note's text, label or visibility")
+            .param("id", ParamKind::Id, "The note")
+            .optional("text", ParamKind::String, "What the label says")
+            .optional(
+                "label",
+                ParamKind::Any,
+                "{x, y, z} where the label stands, where the body sits",
+            )
+            .optional("visible", ParamKind::Bool, "false keeps it off the view")
+            .note("Only what is given changes.")
+            .see_also("doc.note_add")
+            .see_also("doc.notes")
+            .example(
+                "A note reworded and hidden",
+                r#"
+                local body = pc.doc.new_body{name = "Plate"}
+                local note = pc.doc.note_add{body = body, text = "Draft"}
+                pc.doc.note_set{id = note, text = "Final", visible = false}
+                local n = pc.doc.notes{body = body}[1]
+                assert(n.text == "Final" and not n.visible)
+                "#,
+            ),
+        CommandSpec::new("doc.note_remove", "Take a note away")
+            .param("id", ParamKind::Id, "The note")
+            .see_also("doc.note_add")
+            .example(
+                "A note added and taken away",
+                r#"
+                local body = pc.doc.new_body{}
+                local note = pc.doc.note_add{body = body, text = "Temporary"}
+                pc.doc.note_remove{id = note}
+                assert(#pc.doc.notes{body = body} == 0)
+                "#,
+            ),
+        CommandSpec::new("doc.notes", "List the notes pinned to bodies")
+            .optional("body", ParamKind::Id, "Only this body's")
+            .returns(
+                "a list of {id, body, text, shows, point, label, visible, on_face}: point \
+                 and label where the body sits, as built now; shows is what the label says",
+            )
+            .read_only()
+            .note(
+                "`on_face` says whether the note names the face its point is on, which it \
+                 follows through a rebuild.",
+            )
+            .see_also("doc.note_add")
+            .example(
+                "Every note, with its body",
+                r#"
+                local a = pc.doc.new_body{}
+                local b = pc.doc.new_body{}
+                pc.doc.note_add{body = a, text = "A", point = {0, 0, 0}, label = {0, 0, 10}}
+                pc.doc.note_add{body = b, text = "B"}
+                local all = pc.doc.notes()
+                assert(#all == 2 and all[1].body == a and all[2].text == "B")
+                assert(all[1].label[3] == 10 and all[1].visible and not all[1].on_face)
+                "#,
+            ),
         CommandSpec::new("doc.faces", "The faces of a body's solid, where it sits")
             .param("body", ParamKind::Id, "")
             .optional(
@@ -2501,7 +2614,10 @@ impl PrintCadApp {
                         self.apply_ui_commands(commands, event_loop);
                         return Ok(Value::Null);
                     }
-                    TreeItemId::DocumentRoot => {
+                    TreeItemId::Note(note) => {
+                        crate::ui::UiCommand::SetNoteVisible { note, visible }
+                    }
+                    TreeItemId::DocumentRoot | TreeItemId::Notes(_) => {
                         return Err(CommandError::bad("id", "cannot be hidden"));
                     }
                 };
@@ -2634,6 +2750,10 @@ pub(crate) fn recorded_of(command: &crate::ui::UiCommand) -> Option<core_documen
         UiCommand::SetBodyVisible { body, visible } => Some(call(
             "doc.set_visible",
             json!({"id": body.0.to_string(), "visible": visible}),
+        )),
+        UiCommand::SetNoteVisible { note, visible } => Some(call(
+            "doc.set_visible",
+            json!({"id": note.0.to_string(), "visible": visible}),
         )),
         UiCommand::SetImportedVisibility { node, visible } => Some(call(
             "doc.set_visible",
@@ -3065,9 +3185,81 @@ pub(crate) fn document_command(
                             .map_err(|e| CommandError::failed(e.to_string()))?;
                     }
                 }
+                TreeItemId::Note(id) => {
+                    if let Some((_, note)) = document.note(id) {
+                        let mut note = note.clone();
+                        note.text = name;
+                        document.set_note(note);
+                    }
+                }
                 _ => return Err(CommandError::bad("id", "cannot be renamed")),
             }
             Ok(Value::Null)
+        }
+        "doc.note_add" => {
+            let body = body_arg(document, &a)?;
+            let text = a.string("text")?.to_string();
+            let point = match a.0.get("point") {
+                None | Some(Value::Null) => None,
+                Some(v) => Some(numbers_arg(v, "point", ["x", "y", "z"])?),
+            };
+            let mut note = document.new_note(body, text, point);
+            if let Some(label) = a.0.get("label").filter(|v| !v.is_null()) {
+                let label = numbers_arg(label, "label", ["x", "y", "z"])?;
+                note.label = document.body_placement(body).inverse().point(label);
+            }
+            let id = document
+                .add_note(body, note)
+                .ok_or_else(|| CommandError::bad("body", "is not a body of this document"))?;
+            Ok(json!(id.0.to_string()))
+        }
+        "doc.note_set" => {
+            let id = core_document::NoteId(a.id("id")?);
+            let (body, note) = document
+                .note(id)
+                .ok_or_else(|| CommandError::bad("id", "is not a note of this document"))?;
+            let mut note = note.clone();
+            if let Some(text) = a.opt_string("text")? {
+                note.text = text.to_string();
+            }
+            if let Some(label) = a.0.get("label").filter(|v| !v.is_null()) {
+                let label = numbers_arg(label, "label", ["x", "y", "z"])?;
+                note.label = document.body_placement(body).inverse().point(label);
+            }
+            if let Some(visible) = a.opt_bool("visible")? {
+                note.hidden = !visible;
+            }
+            document.set_note(note);
+            Ok(Value::Null)
+        }
+        "doc.note_remove" => {
+            let id = core_document::NoteId(a.id("id")?);
+            if !document.remove_note(id) {
+                return Err(CommandError::bad("id", "is not a note of this document"));
+            }
+            Ok(Value::Null)
+        }
+        "doc.notes" => {
+            let only = a.opt_id("body")?.map(BodyId);
+            Ok(Value::Array(
+                document
+                    .notes()
+                    .filter(|(body, _)| only.is_none_or(|o| o == *body))
+                    .map(|(body, note)| {
+                        let (point, label) = document.note_placed(body, note);
+                        json!({
+                            "id": note.id.0.to_string(),
+                            "body": body.0.to_string(),
+                            "text": note.text,
+                            "shows": document.note_text(note),
+                            "point": point,
+                            "label": label,
+                            "visible": !note.hidden,
+                            "on_face": note.face.is_some(),
+                        })
+                    })
+                    .collect(),
+            ))
         }
         "doc.faces" | "doc.edges" => {
             let body = body_arg(document, &a)?;
@@ -3653,7 +3845,8 @@ fn kind_of(registry: &core_document::DocumentService, node: &core_document::Feat
         .unwrap_or_else(|| node.workbench_id.as_str().to_string())
 }
 
-/// The tree row an id names: a body, a feature or an imported part.
+/// The tree row an id names: a body, a feature, an imported part, a
+/// component or a note.
 pub(crate) fn tree_item(
     document: &core_document::Document,
     id: Uuid,
@@ -3666,6 +3859,8 @@ pub(crate) fn tree_item(
         Ok(TreeItemId::ImportedObject(id))
     } else if document.component(core_document::ComponentId(id)).is_some() {
         Ok(TreeItemId::Component(core_document::ComponentId(id)))
+    } else if document.note(core_document::NoteId(id)).is_some() {
+        Ok(TreeItemId::Note(core_document::NoteId(id)))
     } else {
         Err(CommandError::bad("id", "is not in this document"))
     }
@@ -3831,7 +4026,8 @@ fn item_id(item: TreeItemId) -> Option<Uuid> {
         TreeItemId::Feature(f) => Some(f.0),
         TreeItemId::ImportedObject(n) => Some(n),
         TreeItemId::Component(c) => Some(c.0),
-        TreeItemId::DocumentRoot => None,
+        TreeItemId::Note(n) => Some(n.0),
+        TreeItemId::DocumentRoot | TreeItemId::Notes(_) => None,
     }
 }
 

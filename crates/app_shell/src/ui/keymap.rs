@@ -881,7 +881,9 @@ pub fn host_outcome(action: HostAction, state: &HostState<'_>) -> HostOutcome {
                 item @ (TreeItemId::Feature(_)
                 | TreeItemId::Body(_)
                 | TreeItemId::ImportedObject(_)
-                | TreeItemId::Component(_)),
+                | TreeItemId::Component(_)
+                | TreeItemId::Notes(_)
+                | TreeItemId::Note(_)),
             ) if !state.editing => C(UiCommand::DeleteTreeItem(item)),
             _ => HostOutcome::Nothing,
         },
@@ -926,7 +928,14 @@ fn toggle_visibility(document: &core_document::Document, item: TreeItemId) -> Op
         // A component has no visibility of its own: it shows when any
         // body in it shows.
         TreeItemId::Component(_) => None,
-        TreeItemId::DocumentRoot => None,
+        TreeItemId::Note(note) => {
+            let hidden = document.note(note)?.1.hidden;
+            Some(UiCommand::SetNoteVisible {
+                note,
+                visible: hidden,
+            })
+        }
+        TreeItemId::Notes(_) | TreeItemId::DocumentRoot => None,
     }
 }
 

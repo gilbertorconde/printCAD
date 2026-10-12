@@ -191,6 +191,10 @@ const DOC_COMMANDS: &[&str] = &[
     "doc.set_body",
     "doc.set_face_color",
     "doc.set_textures",
+    "doc.note_add",
+    "doc.note_set",
+    "doc.note_remove",
+    "doc.notes",
     "doc.linked_copy",
     "doc.move_after",
     "doc.recompute",
@@ -296,6 +300,13 @@ impl Headless {
                     TreeItemId::Feature(feature) => {
                         self.document.set_feature_visible(feature, visible)
                     }
+                    TreeItemId::Note(id) => {
+                        if let Some((_, note)) = self.document.note(id) {
+                            let mut note = note.clone();
+                            note.hidden = !visible;
+                            self.document.set_note(note);
+                        }
+                    }
                     _ => return Err(CommandError::bad("id", "cannot be hidden here")),
                 }
                 Ok(Value::Null)
@@ -306,6 +317,9 @@ impl Headless {
                         self.document.remove_body(body);
                     }
                     TreeItemId::Feature(feature) => self.delete_feature(feature)?,
+                    TreeItemId::Note(note) => {
+                        self.document.remove_note(note);
+                    }
                     _ => return Err(CommandError::bad("id", "cannot be deleted here")),
                 }
                 Ok(Value::Null)
