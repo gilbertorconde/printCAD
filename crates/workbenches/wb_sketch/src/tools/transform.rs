@@ -146,11 +146,10 @@ pub(super) fn apply_to_selection(
 /// the constraints that bind nothing else say what the shape now is, so
 /// the solver keeps the move rather than undoing it: a dimension takes the
 /// value it measures after the move, a fixed point is fixed where it has
-/// gone, a group holds the shape it now has, and horizontal and vertical
-/// follow the turn. They stay as they
-/// are when the axes do, swap on a quarter turn, and at any other angle
-/// become parallel or perpendicular to one of the lines, which keeps a
-/// rectangle a rectangle at any angle.
+/// gone, a group holds the moved shape, and horizontal and vertical
+/// follow the turn. They stay as they are when the axes do, swap on a
+/// quarter turn, and at any other angle become parallel or perpendicular
+/// to one of the lines, which keeps a rectangle a rectangle at any angle.
 pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: &Similarity) {
     use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID, measured_value, with_dimension_value};
     let bound = |kind: &ConstraintKind| {
