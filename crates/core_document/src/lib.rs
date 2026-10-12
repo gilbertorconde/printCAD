@@ -1,3 +1,4 @@
+pub mod arrays;
 pub mod asset;
 pub mod attach;
 pub mod command;
@@ -37,6 +38,7 @@ use tar::{Archive, Builder, Header};
 use thiserror::Error;
 use uuid::Uuid;
 
+pub use arrays::{ArrayError, ArrayId, ArrayInstance, ArrayPattern, CopyArray};
 pub use asset::{AssetReference, AssetType};
 pub use command::{
     AgentAccess, Args, CommandArgs, CommandError, CommandResult, CommandSpec, Example, ParamKind,
@@ -115,6 +117,9 @@ pub struct Document {
     /// Bodies grouped into components, nested.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     components: Vec<Component>,
+    /// Bodies repeated as linked copies, each array owning its copies.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    copy_arrays: Vec<arrays::CopyArray>,
     /// Workbench-specific data storage (type-erased).
     workbench_storage: HashMap<String, WorkbenchStorage>,
     /// References to external files stored in the .prtcad archive.
@@ -686,6 +691,7 @@ impl Document {
             feature_tree: FeatureTree::new(),
             bodies: Vec::new(),
             components: Vec::new(),
+            copy_arrays: Vec::new(),
             workbench_storage: HashMap::new(),
             assets: HashMap::new(),
             imported_meshes: HashMap::new(),
@@ -834,7 +840,7 @@ impl Document {
             // was made; one that carried anything cannot.
             Op::RemoveBody { id } => {
                 let body = self.bodies.iter().find(|b| b.id == *id)?;
-                if !self.body_is_bare(body) {
+                if !self.body_is_bare(body) || !self.arrays_of_source(*id).is_empty() {
                     return None;
                 }
                 Op::CreateBody {
@@ -843,6 +849,10 @@ impl Document {
                     created_at: body.created_at,
                 }
             }
+            Op::SetCopyArray { id, .. } => Op::SetCopyArray {
+                id: *id,
+                array: self.copy_array(*id).cloned(),
+            },
             Op::SetComponent { id, .. } => Op::SetComponent {
                 id: *id,
                 component: self.component(*id).cloned(),
@@ -1136,6 +1146,9 @@ impl Document {
             Op::SetComponent { id, component } => {
                 self.apply_set_component(*id, component.as_ref());
             }
+            Op::SetCopyArray { id, array } => {
+                self.apply_set_copy_array(*id, array.as_ref());
+            }
             Op::SetBodyFrozen { id, frozen } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
                     entry.frozen = *frozen;
@@ -1216,6 +1229,11 @@ impl Document {
                     entry.placement = *placement;
                 }
                 self.place_geometry(*id);
+                // An array's copies stand where it puts them from its
+                // source.
+                for array in self.arrays_of_source(*id) {
+                    self.place_array(array);
+                }
             }
             Op::RequestMeshSolid { id } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -1228,25 +1246,8 @@ impl Document {
                 }
             }
             Op::RemoveBody { id } => {
-                self.bodies.retain(|b| b.id != *id);
-                let orphaned: Vec<FeatureId> = self
-                    .feature_tree
-                    .all_nodes()
-                    .filter(|(_, n)| n.body == Some(*id))
-                    .map(|(fid, _)| *fid)
-                    .collect();
-                for fid in orphaned {
-                    self.feature_tree.remove_node(fid);
-                }
-                self.imported_meshes.remove(id);
-                self.local_meshes.remove(id);
-                self.imported_brep_blobs.remove(id);
-                self.imported_brep_face_colors.remove(id);
-                self.base_solids.remove(id);
-                self.base_brep_blobs.remove(id);
-                self.base_face_colors.remove(id);
-                // Its copies have no shape to take any more.
-                self.refresh_copies_of(*id);
+                self.drop_body(*id);
+                self.arrays_lose_body(*id);
             }
             Op::SetBodyTip { id, tip } => {
                 if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == *id) {
@@ -2717,13 +2718,43 @@ impl Document {
 
     /// Remove a body with every feature attached to it and the geometry it
     /// carried. A bare body's removal undoes; any other has no inverse, so
-    /// the entry it records is a history barrier.
+    /// the entry it records is a history barrier. A copy an array owns is
+    /// not removed but skipped by its array.
     pub fn remove_body(&mut self, body: BodyId) -> bool {
         if !self.bodies.iter().any(|b| b.id == body) {
             return false;
         }
+        // A copy an array owns is its occurrence skipped, which undoes.
+        if self.array_instance(body).is_some() {
+            return self.skip_array_instance(body);
+        }
         self.record_and_apply(op::DocumentOp::RemoveBody { id: body });
         true
+    }
+
+    /// Take `body` away with its features and the geometry it carried,
+    /// its copies left without a shape: what `RemoveBody` does to the body
+    /// itself, and to an array's copies the array lets go.
+    fn drop_body(&mut self, id: BodyId) {
+        self.bodies.retain(|b| b.id != id);
+        let orphaned: Vec<FeatureId> = self
+            .feature_tree
+            .all_nodes()
+            .filter(|(_, n)| n.body == Some(id))
+            .map(|(fid, _)| *fid)
+            .collect();
+        for fid in orphaned {
+            self.feature_tree.remove_node(fid);
+        }
+        self.imported_meshes.remove(&id);
+        self.local_meshes.remove(&id);
+        self.imported_brep_blobs.remove(&id);
+        self.imported_brep_face_colors.remove(&id);
+        self.base_solids.remove(&id);
+        self.base_brep_blobs.remove(&id);
+        self.base_face_colors.remove(&id);
+        // Its copies have no shape to take any more.
+        self.refresh_copies_of(id);
     }
 
     pub fn dirty_features(&self) -> Vec<FeatureId> {

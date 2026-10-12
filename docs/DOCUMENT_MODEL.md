@@ -12,6 +12,7 @@ workbench reads and writes its own.
 | Features | `FeatureTree` | Every feature, with its dependencies |
 | Bodies | `Vec<Body>` | Id, name, tip, placement, display colour, material, face colours and textures, notes, hidden and frozen flags, linked copy or file link |
 | Components | `Vec<Component>` | Groups of bodies, nested, that move as one |
+| Arrays | `Vec<CopyArray>` | A body repeated in a row or a ring, each repeat a linked copy the array owns |
 | Workbench storage | `WorkbenchId -> JSON` | Data a workbench keeps outside features |
 | Assets | `AssetReference` | Files an import came from, kept verbatim |
 | Geometry | `ImportedGeometry` per body | The mesh, and for solids the kernel shape |

@@ -118,6 +118,13 @@ pub enum DocumentOp {
         id: BodyId,
         link: crate::FileLink,
     },
+    /// An array of linked copies made, changed, or (for `None`) taken
+    /// away, whole: the copies it lists are made where missing, the ones it
+    /// no longer lists go, and every one is placed by the pattern.
+    SetCopyArray {
+        id: crate::ArrayId,
+        array: Option<crate::CopyArray>,
+    },
     /// A component made, changed, or (for `None`) taken away.
     SetComponent {
         id: crate::ComponentId,

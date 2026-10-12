@@ -800,6 +800,40 @@ mod tests {
         }
     }
 
+    /// An array's copies share their source's snapshot, so the list
+    /// counts every occurrence the array has as the one part.
+    #[test]
+    fn an_array_counts_its_occurrences_as_one_part() {
+        let mut document = Document::new("t");
+        let peg = document.create_body(Some("Peg".into()));
+        document.set_imported_geometry(
+            peg,
+            core_document::ImportedGeometry {
+                mesh: std::sync::Arc::new(cube(5.0)),
+                source_asset: None,
+                revision: 0,
+                bounds_mm: None,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        document.set_imported_brep_data(peg, b"peg".to_vec(), Vec::new());
+        let row = core_document::ArrayPattern::Linear {
+            direction: [1.0, 0.0, 0.0],
+            spacing: 10.0,
+        };
+        let array = document.create_copy_array(peg, row, 5).unwrap();
+        document
+            .set_copy_array(array, row, 5, vec![2])
+            .expect("one skipped");
+        let parts = parts_list(&document, &[]);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].bodies.len(), 4, "five occurrences, one skipped");
+        assert_eq!(parts[0].print, 4);
+    }
+
     #[test]
     fn a_closed_mesh_encloses_its_volume_wherever_it_sits() {
         let mut mesh = cube(10.0);
