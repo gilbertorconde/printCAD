@@ -4796,6 +4796,8 @@ mod tests {
         assert!(refused.contains("cannot repeat"), "{refused}");
         // An adding feature offers no such switch.
         assert!(pad(sketch_id, 1.0).keep_inside_mut().is_none());
+    }
+
     /// A skipped copy's transform is left out; a skipped original makes
     /// the copies alone, and the body's first solid cannot be skipped.
     #[test]
