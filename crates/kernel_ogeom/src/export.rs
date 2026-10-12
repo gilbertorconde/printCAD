@@ -1,7 +1,8 @@
 //! Export: the document's bodies written as STEP, STL or 3MF.
 //!
 //! STEP carries the exact shapes, one part per body, gathered into one
-//! kernel model. The mesh formats carry triangles: a body with a shape is
+//! kernel model, and the bodies' notes as drawn callouts: a leader from
+//! the point to the label, named by the note's text. The mesh formats carry triangles: a body with a shape is
 //! meshed afresh at the export's own tolerance (a print wants a finer mesh
 //! than the viewport), and a mesh body goes out as the mesh it is. Each
 //! body's mesh is welded by position, so a closed solid arrives as a
@@ -88,6 +89,17 @@ pub struct ExportBody<'a> {
     pub finish: Option<&'a (dyn Fn(TriMesh) -> TriMesh + Sync)>,
 }
 
+/// A note written with a body to STEP: its text, the point its leader
+/// starts at and where its label stands, in the body's own frame.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExportNote {
+    /// Which of the bodies it is on, by index.
+    pub body: usize,
+    pub text: String,
+    pub at: [f32; 3],
+    pub label: [f32; 3],
+}
+
 /// What an export wrote.
 #[derive(Debug)]
 pub struct Exported {
@@ -106,9 +118,20 @@ pub fn export(
     format: ExportFormat,
     detail: &TessellationSettings,
 ) -> KernelResult<Exported> {
+    export_with_notes(bodies, &[], format, detail)
+}
+
+/// Write `bodies` as `format`, with `notes` on them where the format
+/// carries them (STEP); `detail` sets the mesh formats' tolerance.
+pub fn export_with_notes(
+    bodies: &[ExportBody<'_>],
+    notes: &[ExportNote],
+    format: ExportFormat,
+    detail: &TessellationSettings,
+) -> KernelResult<Exported> {
     match format {
-        ExportFormat::Step => export_step(bodies, false),
-        ExportFormat::StepNurbs => export_step(bodies, true),
+        ExportFormat::Step => export_step(bodies, notes, false),
+        ExportFormat::StepNurbs => export_step(bodies, notes, true),
         ExportFormat::Stl | ExportFormat::ThreeMf => export_mesh(bodies, format, detail),
     }
 }
@@ -116,7 +139,11 @@ pub fn export(
 /// A rigid row-major 4×4 matrix.
 type Matrix = [[f64; 4]; 4];
 
-fn export_step(bodies: &[ExportBody<'_>], nurbs: bool) -> KernelResult<Exported> {
+fn export_step(
+    bodies: &[ExportBody<'_>],
+    notes: &[ExportNote],
+    nurbs: bool,
+) -> KernelResult<Exported> {
     progress::context("Writing STEP");
     let mut model = Model::new();
     let mut skipped = Vec::new();
@@ -220,6 +247,29 @@ fn export_step(bodies: &[ExportBody<'_>], nurbs: bool) -> KernelResult<Exported>
                 .add_instance(root, products[part], at, Some(name))
                 .map_err(fail)?;
         }
+    }
+    // Each note where its body sits: the drawing's coordinates are the
+    // document's, the bodies' placements applied.
+    for note in notes {
+        let Some(body) = bodies.get(note.body).filter(|b| b.brep.is_some()) else {
+            continue;
+        };
+        let place = |p: [f32; 3]| {
+            let p = p.map(f64::from);
+            let p = match &body.transform {
+                Some(m) => std::array::from_fn(|r| {
+                    m[r][0] * p[0] + m[r][1] * p[1] + m[r][2] * p[2] + m[r][3]
+                }),
+                None => p,
+            };
+            Point::new(p[0], p[1], p[2])
+        };
+        document.pmi_mut().callouts.push(ogeom::doc::Callout {
+            name: note.text.clone(),
+            plane: None,
+            polylines: vec![vec![place(note.at), place(note.label)]],
+            annotates: None,
+        });
     }
     let text = ogeom::io::write_step(&document, tess::tolerances())
         .map_err(|e| KernelError::Other(anyhow::anyhow!("STEP writing failed: {e}")))?;

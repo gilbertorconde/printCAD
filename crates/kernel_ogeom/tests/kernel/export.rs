@@ -315,3 +315,74 @@ fn bodies_of_one_shape_are_written_as_one_part_placed_twice() {
         "{lows:?}"
     );
 }
+
+/// A placed box with a note written as STEP, and read back.
+fn noted_box_round_trip() -> ImportedModel {
+    use kernel_ogeom::export::{ExportNote, export_with_notes};
+    let source = import(&fixture("box_native.step"));
+    let body = &source.bodies[0];
+    let mut shift = [[0.0; 4]; 4];
+    for (i, row) in shift.iter_mut().enumerate() {
+        row[i] = 1.0;
+    }
+    shift[0][3] = 100.0;
+    let bodies = [ExportBody {
+        name: "box".into(),
+        brep: Some(&body.brep_blob),
+        transform: Some(shift),
+        mesh: &body.mesh,
+        finish: None,
+    }];
+    let notes = [ExportNote {
+        body: 0,
+        text: "Deburr this edge".into(),
+        at: [1.0, 2.0, 3.0],
+        label: [1.0, 2.0, 13.0],
+    }];
+    let out = export_with_notes(
+        &bodies,
+        &notes,
+        ExportFormat::Step,
+        &TessellationSettings::default(),
+    )
+    .unwrap();
+    let text = String::from_utf8(out.bytes.clone()).unwrap();
+    assert!(text.contains("DRAUGHTING_CALLOUT('Deburr this edge'"));
+    let path =
+        std::env::temp_dir().join(format!("printcad-export-note-{}.step", std::process::id()));
+    std::fs::write(&path, &out.bytes).unwrap();
+    let back = import(&path);
+    let _ = std::fs::remove_file(&path);
+    back
+}
+
+/// A note goes out as a drawn callout: its leader where the body sits,
+/// its words read back as the annotation's text.
+#[test]
+fn a_note_is_written_to_step_as_a_callout_where_its_body_sits() {
+    let back = noted_box_round_trip();
+    let note = back
+        .annotations
+        .iter()
+        .find(|a| a.text == "Deburr this edge")
+        .expect("the note reads back");
+    let leader = &note.polylines[0];
+    assert_eq!(leader.len(), 2);
+    for (got, want) in leader.iter().zip([[101.0, 2.0, 3.0], [101.0, 2.0, 13.0]]) {
+        for i in 0..3 {
+            assert!((got[i] - want[i]).abs() < 1e-4, "{got:?} against {want:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "kernel: a callout carries no text of its own (no TEXT_LITERAL written or read), so a note's words ride in its name and read back as an unclassified annotation"]
+fn a_note_written_to_step_reads_back_as_a_note() {
+    let back = noted_box_round_trip();
+    let note = back
+        .annotations
+        .iter()
+        .find(|a| a.text == "Deburr this edge")
+        .expect("the note reads back");
+    assert_eq!(note.kind, kernel_api::AnnotationKind::Note);
+}
