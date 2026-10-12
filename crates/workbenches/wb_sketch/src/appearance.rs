@@ -73,9 +73,7 @@ mod tests {
             dimensional: true,
             pos: [10.0, 10.0],
             anchor: [0.0, 0.0],
-            visual: GlyphVisual::Pill {
-                text: "12".into(),
-            },
+            visual: GlyphVisual::Pill { text: "12".into() },
             color: [1.0; 3],
             lines: vec![([0.0, 0.0], [10.0, 0.0])],
         };
