@@ -464,6 +464,55 @@ mod tests {
         assert!(widest > 5.0 + 18.0, "two letters at 20 mm: {widest}");
     }
 
+    /// Copied and pasted, a text stays text: a second block on its own
+    /// point and outlines, which follow that point as the first's do.
+    #[test]
+    fn a_pasted_text_is_text_of_its_own() {
+        let mut sketch = Sketch::new("t");
+        add(&mut sketch, Vec2D::new(0.0, 0.0), &spec("L")).unwrap();
+        let first = sketch.texts[0].clone();
+        let outline: std::collections::HashSet<Uuid> = first
+            .elements
+            .iter()
+            .copied()
+            .filter(|e| !matches!(sketch.get_geometry(*e), Some(GeometryElement::Point(_))))
+            .collect();
+        let mut clip = Sketch::new("clipboard");
+        crate::tools::copy_from(
+            &sketch,
+            &mut clip,
+            &outline,
+            &crate::tools::Similarity::translation(glam::Vec2::ZERO),
+        );
+        assert_eq!(clip.texts.len(), 1, "the clipboard holds the text");
+        crate::commands::paste(&mut sketch, &clip, Vec2D::new(30.0, 0.0));
+
+        assert_eq!(sketch.texts.len(), 2);
+        let pasted = sketch.texts[1].clone();
+        assert_ne!(pasted.anchor, first.anchor);
+        assert!(pasted.elements.iter().all(|e| !first.elements.contains(e)));
+        let at = sketch.point_position(pasted.anchor).unwrap();
+        assert!((at.x - 30.0).abs() < 1e-4 && at.y.abs() < 1e-4, "{at:?}");
+
+        // Its point moved, its outlines go with it, the first's stay.
+        let left = |sketch: &Sketch, elements: &[Uuid]| {
+            elements
+                .iter()
+                .filter_map(|p| sketch.point_position(*p))
+                .fold(f32::MAX, |m, p| m.min(p.x))
+        };
+        let (before, other) = (
+            left(&sketch, &pasted.elements),
+            left(&sketch, &first.elements),
+        );
+        if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(pasted.anchor) {
+            p.position = Vec2D::new(40.0, 0.0);
+        }
+        follow(&mut sketch);
+        assert!((left(&sketch, &pasted.elements) - before - 10.0).abs() < 1e-3);
+        assert!((left(&sketch, &first.elements) - other).abs() < 1e-6);
+    }
+
     #[test]
     fn deleting_the_point_takes_the_text() {
         let mut sketch = Sketch::new("t");

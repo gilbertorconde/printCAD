@@ -2557,12 +2557,14 @@ assert(count.other == 1, "by one spline")
 - `items` (list): The constraints
 - `driving` (boolean, optional): false: a reference dimension that only measures
 - `active` (boolean, optional): false: kept but not solved
+- `as` (string, optional): "radius" or "diameter": a circle's or arc's dimension measures that instead
 - `parked` (boolean, optional): true: its symbol moves to the parked layer, drawn only while that layer shows; it still solves
 
 Notes:
 
 - `items` are constraint ids; an element's id among them is refused. Only the flags given change, and `driving = false` is refused for a constraint that is not a dimension.
 - A dimension that is not driving measures and conflicts with nothing; a constraint that is not active is kept but left out of solving.
+- `as` turns a radius into a diameter or back, keeping the constraint and the size it holds: its value doubles or halves, as does what a formula on it gives.
 
 See also `pc.sketch.set_value`, `pc.sketch.status`.
 

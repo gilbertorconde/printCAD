@@ -5976,7 +5976,7 @@ impl SketchWorkbench {
     /// Remove every element (and the constraints on them), or every
     /// constraint, then re-solve.
     fn delete_all(&mut self, ctx: &mut WorkbenchRuntimeContext, geometry: bool) -> InputResult {
-        let Some(mut feature) = self.get_active_sketch(ctx) else {
+        let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
         let ids: Vec<Uuid> = if geometry {
@@ -5988,6 +5988,15 @@ impl SketchWorkbench {
                 .collect()
         } else {
             feature.sketch.constraints.iter().map(|c| c.id).collect()
+        };
+        self.delete_items(ctx, ids)
+    }
+
+    /// Delete `ids` (elements or constraints) from the edited sketch, as
+    /// `sketch.delete` does, and record it.
+    fn delete_items(&mut self, ctx: &mut WorkbenchRuntimeContext, ids: Vec<Uuid>) -> InputResult {
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return InputResult::ignored();
         };
         let removed = commands::delete_items(&mut feature.sketch, &ids);
         ctx.log_info(format!("Deleted {removed} item(s)"));

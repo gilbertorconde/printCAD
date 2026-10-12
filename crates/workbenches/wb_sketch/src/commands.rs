@@ -14,7 +14,9 @@ use uuid::Uuid;
 
 use crate::feature::DatumSupport;
 use crate::feature::SketchFeature;
-use crate::sketch::{Arc, Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+use crate::sketch::{
+    Arc, Circle, ConstraintKind, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
+};
 
 /// Register every command this module runs.
 pub fn register(context: &mut WorkbenchContext) {
@@ -1357,6 +1359,11 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .optional("active", ParamKind::Bool, "false: kept but not solved")
         .optional(
+            "as",
+            ParamKind::String,
+            "\"radius\" or \"diameter\": a circle's or arc's dimension measures that instead",
+        )
+        .optional(
             "parked",
             ParamKind::Bool,
             "true: its symbol moves to the parked layer, drawn only while that layer shows; \
@@ -1370,6 +1377,10 @@ pub fn register(context: &mut WorkbenchContext) {
         .note(
             "A dimension that is not driving measures and conflicts with nothing; a \
              constraint that is not active is kept but left out of solving.",
+        )
+        .note(
+            "`as` turns a radius into a diameter or back, keeping the constraint and the size \
+             it holds: its value doubles or halves, as does what a formula on it gives.",
         )
         .see_also("sketch.set_value")
         .see_also("sketch.status")
@@ -2484,7 +2495,33 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     ));
                 }
             }
+            let switch = match a.opt_string("as")? {
+                None => None,
+                Some("radius") => Some(false),
+                Some("diameter") => Some(true),
+                Some(_) => return Err(CommandError::bad("as", "must be radius or diameter")),
+            };
             set_constraints(sketch, &items, flags);
+            if let Some(diameter) = switch {
+                let circular = |id: &Uuid| {
+                    sketch.constraints.iter().any(|c| {
+                        c.id == *id
+                            && matches!(
+                                c.kind,
+                                ConstraintKind::Radius { .. } | ConstraintKind::Diameter { .. }
+                            )
+                    })
+                };
+                if let Some(id) = items.iter().find(|id| !circular(id)) {
+                    return Err(CommandError::bad(
+                        "as",
+                        format!("applies to radius and diameter dimensions, not {id}"),
+                    ));
+                }
+                for id in &items {
+                    switch_dimension(ctx.document, sketch_id, sketch, *id, diameter);
+                }
+            }
             Value::Null
         }
         "sketch.paste" => {
@@ -3181,6 +3218,82 @@ pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
         &all,
         &crate::tools::Similarity::translation(glam::Vec2::new(by.x, by.y)),
     )
+}
+
+/// Turn constraint `id` into a diameter (or a radius) of the same circle,
+/// its value converted. The factor its value was multiplied by; `None`
+/// when it is no radius or diameter dimension. A dimension already of the
+/// kind asked for stays as it is.
+pub(crate) fn switch_circle_dimension(
+    sketch: &mut Sketch,
+    id: Uuid,
+    diameter: bool,
+) -> Option<f32> {
+    let c = sketch.constraints.iter_mut().find(|c| c.id == id)?;
+    let (kind, scale) = match (&c.kind, diameter) {
+        (ConstraintKind::Radius { circle, radius }, true) => (
+            ConstraintKind::Diameter {
+                circle: *circle,
+                diameter: radius * 2.0,
+            },
+            2.0,
+        ),
+        (ConstraintKind::Diameter { circle, diameter }, false) => (
+            ConstraintKind::Radius {
+                circle: *circle,
+                radius: diameter * 0.5,
+            },
+            0.5,
+        ),
+        (ConstraintKind::Radius { .. }, false) | (ConstraintKind::Diameter { .. }, true) => {
+            return Some(1.0);
+        }
+        _ => return None,
+    };
+    c.kind = kind;
+    Some(scale)
+}
+
+/// [`switch_circle_dimension`] on sketch `sketch_id`'s `sketch`, the
+/// formula on the dimension, if any, scaled with its value.
+pub(crate) fn switch_dimension(
+    document: &mut core_document::Document,
+    sketch_id: FeatureId,
+    sketch: &mut Sketch,
+    id: Uuid,
+    diameter: bool,
+) -> Option<f32> {
+    let scale = switch_circle_dimension(sketch, id, diameter)?;
+    let key = id.to_string();
+    if let Some(formula) = document.feature_formula(sketch_id, &key) {
+        let scaled = scaled_formula(formula, scale);
+        document
+            .set_feature_formula(sketch_id, key, Some(scaled))
+            .ok()?;
+    }
+    Some(scale)
+}
+
+/// `formula` giving `scale` times what it gave, undoing the opposite
+/// switch rather than stacking on it.
+pub(crate) fn scaled_formula(formula: &str, scale: f32) -> String {
+    let formula = formula.trim();
+    let (undo, apply) = if scale > 1.0 {
+        (" / 2", " * 2")
+    } else {
+        (" * 2", " / 2")
+    };
+    if scale == 1.0 {
+        return formula.to_string();
+    }
+    if let Some(inner) = formula
+        .strip_suffix(undo)
+        .and_then(|f| f.strip_prefix('('))
+        .and_then(|f| f.strip_suffix(')'))
+    {
+        return inner.to_string();
+    }
+    format!("({formula}){apply}")
 }
 
 /// Sketch `id` with its plane where its body sits.
@@ -4730,6 +4843,75 @@ mod tests {
             json!({"sketch": top, "from": base}),
         );
         assert!(again.is_err(), "{again:?}");
+    }
+
+    /// A radius turned into a diameter keeps its id and the circle's size,
+    /// its formula doubled; turned back, the formula is what it was.
+    #[test]
+    fn a_radius_turns_into_a_diameter_and_back() {
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let circle = call(
+            &mut doc,
+            "sketch.circle",
+            json!({"sketch": s, "x": 0, "y": 0, "radius": 2}),
+        )
+        .unwrap();
+        let dim = call(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "radius", "items": [circle], "value": 2}),
+        )
+        .unwrap()[0]
+            .clone();
+        let key = dim.as_str().unwrap().to_string();
+        doc.set_feature_formula(feature_id(&s), &key, Some("1 mm + 1 mm".into()))
+            .unwrap();
+        let switch = |doc: &mut Document, to: &str| {
+            call(
+                doc,
+                "sketch.set_constraint",
+                json!({"sketch": s, "items": [dim], "as": to}),
+            )
+        };
+        switch(&mut doc, "diameter").unwrap();
+        let held = sketch_of(&doc, &s)
+            .constraints
+            .iter()
+            .find(|c| c.id.to_string() == key)
+            .map(|c| c.kind.clone());
+        assert!(
+            matches!(held, Some(ConstraintKind::Diameter { diameter, .. }) if (diameter - 4.0).abs() < 1e-5),
+            "{held:?}"
+        );
+        assert_eq!(
+            doc.feature_formula(feature_id(&s), &key),
+            Some("(1 mm + 1 mm) * 2")
+        );
+        switch(&mut doc, "radius").unwrap();
+        assert_eq!(
+            doc.feature_formula(feature_id(&s), &key),
+            Some("1 mm + 1 mm")
+        );
+        assert!(switch(&mut doc, "chord").is_err());
+        let line = call(
+            &mut doc,
+            "sketch.line",
+            json!({"sketch": s, "x1": 0, "y1": 0, "x2": 5, "y2": 1}),
+        )
+        .unwrap();
+        let length = call(
+            &mut doc,
+            "sketch.constrain",
+            json!({"sketch": s, "kind": "distance", "items": [line], "value": 5}),
+        )
+        .unwrap();
+        let refused = call(
+            &mut doc,
+            "sketch.set_constraint",
+            json!({"sketch": s, "items": length, "as": "diameter"}),
+        );
+        assert!(refused.is_err(), "a length is no circle's size");
     }
 
     #[test]

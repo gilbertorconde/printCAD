@@ -1209,8 +1209,18 @@ impl SketchWorkbench {
             return;
         }
         let diagnosis = self.last_diagnosis.clone().unwrap_or_default();
-        let listed: std::collections::HashSet<Uuid> =
-            self.listed_constraints(sketch).into_iter().collect();
+        let shown = self.listed_constraints(sketch);
+        // While a filter narrows the list, what it shows can go at once.
+        if !shown.is_empty()
+            && shown.len() < sketch.constraints.len()
+            && ui_kit::widgets::small_secondary_button(ui, &format!("Delete {} shown", shown.len()))
+                .on_hover_text("Delete every constraint the filter shows")
+                .clicked()
+        {
+            self.delete_items(ctx, shown);
+            return;
+        }
+        let listed: std::collections::HashSet<Uuid> = shown.into_iter().collect();
         let mut delete: Option<usize> = None;
         let mut edited: Option<(usize, Constraint)> = None;
         let mut typed: Option<(Uuid, String)> = None;
@@ -1593,6 +1603,7 @@ impl SketchWorkbench {
         let suffix = unit_suffix(unit);
         let mut commit = false;
         let mut cancel = false;
+        let mut switch: Option<bool> = None;
         egui::Area::new(egui::Id::new("sketch_dim_edit"))
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
@@ -1609,6 +1620,31 @@ impl SketchWorkbench {
                                     .font(ui_kit::sans_medium(FONT_SM))
                                     .color(TEXT1),
                             );
+                            // A circle's size, as its radius or its diameter.
+                            let diameter = match kind {
+                                sketch::ConstraintKind::Radius { .. } => Some(false),
+                                sketch::ConstraintKind::Diameter { .. } => Some(true),
+                                _ => None,
+                            };
+                            if let Some(diameter) = diameter {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    for (label, as_diameter, hint) in
+                                        [("Ø", true, "Dimension the diameter"), ("R", false, "Dimension the radius")]
+                                    {
+                                        if ui
+                                            .selectable_label(
+                                                diameter == as_diameter,
+                                                RichText::new(label).font(mono(FONT_SM)),
+                                            )
+                                            .on_hover_text(hint)
+                                            .clicked()
+                                            && diameter != as_diameter
+                                        {
+                                            switch = Some(as_diameter);
+                                        }
+                                    }
+                                });
+                            }
                         });
 
                         // The value, or a formula; names complete as they
@@ -1845,11 +1881,57 @@ impl SketchWorkbench {
                         }
                     });
             });
+        if let Some(diameter) = switch {
+            self.switch_edited_dimension(ctx, diameter);
+        }
         if commit {
             self.commit_dim_edit(ctx);
         } else if cancel {
             self.dim_edit = None;
         }
+    }
+
+    /// The open dimension made a diameter (or a radius) of its circle, as
+    /// `sketch.set_constraint` with `as` does, and recorded so; what the
+    /// editor holds is converted with it.
+    fn switch_edited_dimension(&mut self, ctx: &mut WorkbenchRuntimeContext, diameter: bool) {
+        let (Some(constraint), Some(sketch_id)) = (
+            self.dim_edit.as_ref().map(|e| e.constraint),
+            self.active_sketch_id,
+        ) else {
+            return;
+        };
+        let Some(mut feature) = self.get_active_sketch(ctx) else {
+            return;
+        };
+        let Some(scale) = crate::commands::switch_dimension(
+            ctx.document,
+            sketch_id,
+            &mut feature.sketch,
+            constraint,
+            diameter,
+        ) else {
+            return;
+        };
+        if let Some(edit) = self.dim_edit.as_mut() {
+            let text = edit.text.trim();
+            edit.text = match text.parse::<f32>() {
+                Ok(value) => crate::glyphs::fmt_num(value * scale),
+                Err(_) if text.is_empty() => String::new(),
+                Err(_) => crate::commands::scaled_formula(text, scale),
+            };
+        }
+        ctx.record(
+            "sketch.set_constraint",
+            crate::commands::args(serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "items": [constraint.to_string()],
+                "as": if diameter { "diameter" } else { "radius" },
+            })),
+            serde_json::Value::Null,
+        );
+        self.solve(ctx, &mut feature);
+        self.store_sketch(ctx, feature);
     }
 }
 

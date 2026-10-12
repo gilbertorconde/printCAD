@@ -602,7 +602,52 @@ pub fn copy_mapped(
         sketch.set_construction(new_id, flag);
         map.insert(geom.id(), new_id);
     }
+    copy_texts(source, sketch, &mut map, xf);
     map
+}
+
+/// The text blocks whose outlines were all copied stay text in the copy:
+/// a block of their own, on its point carried by `xf` (made when its point
+/// was not among the copied), turned and sized with the outlines. A mirror
+/// leaves the copied outlines plain curves, since no text reads backwards.
+fn copy_texts(
+    source: &Sketch,
+    sketch: &mut Sketch,
+    map: &mut HashMap<Uuid, Uuid>,
+    xf: &Similarity,
+) {
+    if xf.flips_orientation() {
+        return;
+    }
+    let turn = xf.apply_vec(Vec2D::new(1.0, 0.0)).to_glam();
+    let turn = turn.y.atan2(turn.x).to_degrees();
+    for block in &source.texts {
+        if block.elements.is_empty() || !block.elements.iter().all(|e| map.contains_key(e)) {
+            continue;
+        }
+        let anchor = match map.get(&block.anchor) {
+            Some(id) => *id,
+            None => {
+                let Some(at) = source.point_position(block.anchor) else {
+                    continue;
+                };
+                let id = sketch.add_geometry(GeometryElement::Point(Point::new(xf.apply(at))));
+                sketch.set_construction(id, source.is_construction(block.anchor));
+                map.insert(block.anchor, id);
+                id
+            }
+        };
+        sketch.texts.push(crate::sketch::TextBlock {
+            id: Uuid::new_v4(),
+            anchor,
+            elements: block.elements.iter().map(|e| map[e]).collect(),
+            placed: xf.apply(block.placed),
+            size: block.size * xf.scale_factor(),
+            spacing: block.spacing * xf.scale_factor(),
+            angle: block.angle + turn,
+            ..block.clone()
+        });
+    }
 }
 
 /// Copy the constraints of `source` among the elements `map` copied into

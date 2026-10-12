@@ -158,6 +158,18 @@ pub const TOOLS: &[&str] = &[
     "refraction",
 ];
 
+/// The two ends of a line, an arc or an open spline.
+fn open_curve_ends(sketch: &Sketch, curve: Uuid) -> Option<[Uuid; 2]> {
+    match sketch.get_geometry(curve)? {
+        GeometryElement::Line(l) => Some([l.start, l.end]),
+        GeometryElement::Arc(a) => Some([a.start, a.end]),
+        GeometryElement::BSpline(b) if !b.periodic => {
+            Some([*b.control_points.first()?, *b.control_points.last()?])
+        }
+        _ => None,
+    }
+}
+
 fn axis_distance(horizontal: bool, a: Uuid, b: Option<Uuid>, value: f32) -> ConstraintKind {
     if horizontal {
         ConstraintKind::DistanceX { a, b, value }
@@ -346,6 +358,27 @@ pub fn kinds_for(
             point2: p[1],
             line: l[0],
         }],
+        // A curve and a line, the line picked last: the curve's two ends
+        // mirror each other about it.
+        "symmetric"
+            if p.is_empty()
+                && shape.total() == 2
+                && shape.picked.last().is_some_and(|id| l.contains(id))
+                && [l, &shape.arcs, &shape.others]
+                    .iter()
+                    .any(|kind| kind.contains(&shape.picked[0])) =>
+        {
+            let (curve, line) = (shape.picked[0], shape.picked[1]);
+            // A closed spline has no ends to mirror.
+            open_curve_ends(sketch, curve)
+                .map(|[point1, point2]| ConstraintKind::Symmetric {
+                    point1,
+                    point2,
+                    line,
+                })
+                .into_iter()
+                .collect()
+        }
         // The centre is the point picked last.
         "symmetric" if shape.only(3, 0, 0, 0) => {
             let p = shape.points_picked();
@@ -838,6 +871,35 @@ mod tests {
         let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 5.0))));
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
         (sketch, a, b, line, circle)
+    }
+
+    /// A curve and a line picked after it: the curve's ends mirror about
+    /// the line. Of two lines, the one picked last is the axis.
+    #[test]
+    fn symmetric_takes_a_curve_and_its_symmetry_line() {
+        let (mut sketch, a, b, line, _) = sketch_with_line_and_circle();
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, -5.0))));
+        let d = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 9.0))));
+        let axis = sketch.add_geometry(GeometryElement::Line(Line::new(c, d)));
+        let picked = |order: &[Uuid]| {
+            SelectionShape::picked_in(&sketch, &order.iter().copied().collect(), order)
+        };
+        let kinds = kinds_for("symmetric", &picked(&[line, axis]), &sketch).unwrap();
+        assert!(matches!(
+            kinds[..],
+            [ConstraintKind::Symmetric { point1, point2, line: l }]
+                if point1 == a && point2 == b && l == axis
+        ));
+        assert!(fits("symmetric", &picked(&[line, axis])));
+        let flipped = kinds_for("symmetric", &picked(&[axis, line]), &sketch).unwrap();
+        assert!(
+            matches!(
+                flipped[..],
+                [ConstraintKind::Symmetric { point1, point2, line: l }]
+                    if point1 == c && point2 == d && l == line
+            ),
+            "the line picked last is the axis"
+        );
     }
 
     #[test]
