@@ -2902,6 +2902,7 @@ mod icon_coverage {
     #[test]
     fn a_cosmetic_thread_names_its_designation_in_the_feature_kind() {
         let hole = |cosmetic_thread: bool| DesignFeature::Hole {
+            boolean_tolerance: None,
             cosmetic_thread,
             clearance: None,
             thread_length: Default::default(),

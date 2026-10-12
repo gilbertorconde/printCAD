@@ -4466,6 +4466,7 @@ mod tests {
             .add_feature_in_body(SketchFeature::new(holes, plane), "holes".into(), Some(body))
             .unwrap();
         let mut hole = DesignFeature::Hole {
+            boolean_tolerance: None,
             cosmetic_thread: true,
             clearance: None,
             thread_length: Default::default(),
@@ -4528,6 +4529,7 @@ mod tests {
             .add_feature_in_body(SketchFeature::new(holes, plane), "holes".into(), Some(body))
             .unwrap();
         let hole = |thread_depth: f32| DesignFeature::Hole {
+            boolean_tolerance: None,
             cosmetic_thread: true,
             clearance: None,
             thread_length: Default::default(),
