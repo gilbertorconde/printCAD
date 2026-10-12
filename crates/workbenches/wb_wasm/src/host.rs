@@ -175,6 +175,9 @@ impl Reach {
                 "`{command}` changes the document, which this call may only read"
             ));
         };
+        if command == calls::GEOM_HOLES || command == calls::GEOM_FACE_EDGES {
+            return geometry_call(ctx, command, &args);
+        }
         let document = &mut *ctx.document;
         match command {
             calls::ADD_FEATURE => {
@@ -451,6 +454,64 @@ impl Reach {
         }
         crate::jobs::run_helper(&self.package.helpers, &name, &input, &job.cancelled)
     }
+}
+
+/// A read-only geometry question: the kernel asked of a body's solid in
+/// its own frame, the answer put where the body sits.
+fn geometry_call(
+    ctx: &WorkbenchRuntimeContext<'static>,
+    command: &str,
+    args: &Value,
+) -> Result<Value, String> {
+    let kernel = ctx.kernel.ok_or("no kernel is at hand to answer")?;
+    let text = str_arg(args, "body")?;
+    let body = body_id(text)?;
+    let document = &*ctx.document;
+    let brep = document
+        .imported_brep_blob(body)
+        .ok_or_else(|| format!("body {text} has no solid shape"))?;
+    let placement = document.body_placement(body);
+    let point = |p: [f64; 3]| placement.point(p.map(|v| v as f32));
+    let direction = |d: [f64; 3]| placement.direction(d.map(|v| v as f32));
+    if command == calls::GEOM_HOLES {
+        let (holes, _) = kernel.recognize_holes(brep).map_err(|e| e.to_string())?;
+        return Ok(Value::Array(
+            holes
+                .into_iter()
+                .map(|h| {
+                    json!({
+                        "entry": point(h.entry),
+                        "direction": direction(h.direction),
+                        "diameter": h.diameter,
+                        "depth": h.depth,
+                        "through": h.through,
+                        "drill_point_deg": h.drill_point_deg,
+                    })
+                })
+                .collect(),
+        ));
+    }
+    let at: Vec<f32> = args
+        .get("point")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_f64)
+                .map(|v| v as f32)
+                .collect()
+        })
+        .unwrap_or_default();
+    let [x, y, z] = at[..] else {
+        return Err("argument `point` must be [x, y, z]".into());
+    };
+    let near = placement.inverse().point([x, y, z]).map(f64::from);
+    let edges = kernel.face_edges(brep, near).map_err(|e| e.to_string())?;
+    Ok(Value::Array(
+        edges
+            .into_iter()
+            .map(|(p, d)| json!({"point": point(p), "direction": direction(d)}))
+            .collect(),
+    ))
 }
 
 fn str_arg<'a>(args: &'a Value, name: &str) -> Result<&'a str, String> {

@@ -472,6 +472,9 @@ pub struct Pointer {
     pub selected_body: Option<String>,
     #[serde(default)]
     pub face: Option<FaceRef>,
+    /// Every face picked, in the order picked; `face` is the last.
+    #[serde(default)]
+    pub faces: Vec<FaceRef>,
     #[serde(default)]
     pub edges: Vec<EdgeRef>,
     /// The feature selected in the tree.
@@ -496,6 +499,18 @@ pub struct EdgeRef {
     pub point: [f32; 3],
     pub direction: [f32; 3],
     pub length: f32,
+    /// A circle's or an arc's centre, axis and radius, when the edge is
+    /// one.
+    #[serde(default)]
+    pub circle: Option<EdgeCircle>,
+}
+
+/// A circular edge's centre and axis (world space) and radius, mm.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct EdgeCircle {
+    pub center: [f32; 3],
+    pub normal: [f32; 3],
+    pub radius: f32,
 }
 
 #[cfg_attr(not(feature = "exhaustive"), non_exhaustive)]
@@ -1282,6 +1297,15 @@ pub mod calls {
     pub const JOB_START: &str = "job.start";
     /// `{job}`
     pub const JOB_CANCEL: &str = "job.cancel";
+    /// `{body}` → the round holes in the body's solid, where it sits:
+    /// `[{entry, direction, diameter, depth, through, drill_point_deg}]`.
+    /// Read only; answered where the call may change the document (an
+    /// event, a panel change, a command), refused elsewhere.
+    pub const GEOM_HOLES: &str = "geom.holes";
+    /// `{body, point}` → the edges round the face of the body's solid at
+    /// `point` (world), each `{point, direction}` halfway along it, where
+    /// the body sits. Read only, answered as `geom.holes` is.
+    pub const GEOM_FACE_EDGES: &str = "geom.face_edges";
 }
 
 #[cfg(test)]

@@ -236,6 +236,12 @@ hiding it, placing a body). Calls are allowed while the bench handles an
 event, a panel change, a menu entry or a command, and refused while it
 draws or plans. A feature's data is any JSON the bench likes.
 
+Two calls only read: `geom.holes {body}` lists the round holes in a
+body's solid (each `{entry, direction, diameter, depth, through,
+drill_point_deg}`), and `geom.face_edges {body, point}` the edges round
+the face at a point (each `{point, direction}` halfway along it), both
+where the body sits. They are answered when the other calls are.
+
 **Bought parts.** `Registration::bought_kinds` names those of its kinds
 whose bodies are bought rather than made, such as catalog screws and
 bearings. The parts list marks such a body bought until the user clears
@@ -299,7 +305,9 @@ splines. The CAM package reads a pocket's outline this way.
 
 **Input.** `input` gets clicks, key presses, tool activations and actions,
 with what is under the cursor and what is selected (`Pointer`: the ray,
-the point and body hit, the picked face and edges, the active feature).
+the point and body hit, the picked face and every face picked (`faces`,
+in the order picked), the picked edges (a circular one with its
+`circle`: centre, axis and radius), the active feature).
 A double click on a feature's tree row arrives as `Event::EditFeature`,
 the cue to open its task; selecting a feature alone never opens one.
 
