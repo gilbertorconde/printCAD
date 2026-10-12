@@ -90,7 +90,7 @@ pub fn plane_of(plane: &SketchPlane) -> ProfilePlane {
 /// solid's edges meet at a vertex only within its tolerance, and a sketch
 /// keeps points in single precision, a few millionths of a millimetre
 /// apart at part sizes.
-const PROJECTED_JOIN: f64 = 1e-4;
+pub(crate) const PROJECTED_JOIN: f64 = 1e-4;
 
 /// A sketch feature's closed loops on its plane, in its body's frame, as
 /// its formulas leave it; `None` for a feature that is not a sketch or a
@@ -511,21 +511,8 @@ pub fn loose_ends(sketch: &Sketch) -> Vec<Uuid> {
         if sketch.is_construction(geom.id()) || guide {
             continue;
         }
-        let ends = match geom {
-            GeometryElement::Line(l) => [l.start, l.end],
-            GeometryElement::Arc(a) => [a.start, a.end],
-            GeometryElement::Conic(c) => [c.start, c.end],
-            GeometryElement::Ellipse(e) => match e.arc {
-                Some(arc) => [arc.start, arc.end],
-                None => continue,
-            },
-            GeometryElement::BSpline(b) if !b.periodic => {
-                match (b.control_points.first(), b.control_points.last()) {
-                    (Some(&a), Some(&z)) => [a, z],
-                    _ => continue,
-                }
-            }
-            _ => continue,
+        let Some(ends) = Sketch::curve_ends(geom) else {
+            continue;
         };
         for end in ends {
             // Projected ends at one spot are one end, as the profile joins

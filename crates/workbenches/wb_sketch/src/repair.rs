@@ -50,21 +50,7 @@ impl Repaired {
 fn curve_ends(sketch: &Sketch) -> Vec<Uuid> {
     let mut ends = Vec::new();
     for g in &sketch.geometry {
-        match g {
-            GeometryElement::Line(l) => ends.extend([l.start, l.end]),
-            GeometryElement::Arc(a) => ends.extend([a.start, a.end]),
-            GeometryElement::Conic(c) => ends.extend([c.start, c.end]),
-            GeometryElement::Ellipse(e) => {
-                if let Some(arc) = e.arc {
-                    ends.extend([arc.start, arc.end]);
-                }
-            }
-            GeometryElement::BSpline(b) if !b.periodic => {
-                ends.extend(b.control_points.first().copied());
-                ends.extend(b.control_points.last().copied());
-            }
-            _ => {}
-        }
+        ends.extend(Sketch::curve_ends(g).into_iter().flatten());
     }
     let mut seen = HashSet::new();
     ends.retain(|id| seen.insert(*id));

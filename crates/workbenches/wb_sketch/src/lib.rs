@@ -541,6 +541,10 @@ pub struct SketchWorkbench {
     dim_edit: Option<DimEdit>,
     /// Last glyph press, for double-click detection.
     last_glyph_click: Option<(Uuid, Instant)>,
+    /// Last select-mode press on geometry, and on empty space, for
+    /// double-click detection.
+    last_geometry_click: Option<(Uuid, Instant)>,
+    last_empty_click: Option<Instant>,
     /// On-view parameter capture for the active drawing tool.
     dim_capture: DimCapture,
     /// Object snapping is off (the toolbar toggle).
@@ -659,6 +663,7 @@ const TOOL_KEYS: &[(&str, &str)] = &[
     ("sketch.trim", "T"),
     ("sketch.external", "X"),
     ("sketch.construction", "N"),
+    ("sketch.view_sketch", "V"),
     ("sketch.internal_geometry", "I"),
     ("sketch.constrain.coincident", "Shift+C"),
     ("sketch.constrain.point_on_object", "Shift+O"),
@@ -937,6 +942,8 @@ impl SketchWorkbench {
         self.label_drag = None;
         self.dim_edit = None;
         self.last_glyph_click = None;
+        self.last_geometry_click = None;
+        self.last_empty_click = None;
         self.dim_capture = DimCapture::default();
     }
 
@@ -1537,12 +1544,39 @@ impl SketchWorkbench {
                 if let Some(hit) = self.glyph_hit(ctx, &feature, viewport_pos) {
                     return self.handle_glyph_press(ctx, &feature, hit, cursor);
                 }
+                let now = Instant::now();
                 match snap::hit_test(&feature.sketch, cursor, tol) {
                     Some(id) => {
+                        // A double click on a curve takes the chain it is
+                        // part of, drawn and projected alike.
+                        let double = self.last_geometry_click.take().is_some_and(|(last, t)| {
+                            last == id && now.duration_since(t) < DOUBLE_CLICK_WINDOW
+                        });
+                        if double
+                            && !matches!(
+                                feature.sketch.get_geometry(id),
+                                Some(sketch::GeometryElement::Point(_)) | None
+                            )
+                        {
+                            self.selected.extend(connected_curves(&feature.sketch, id));
+                            return InputResult::consumed();
+                        }
+                        self.last_geometry_click = Some((id, now));
                         self.begin_drag(&feature.sketch, id, cursor);
                         InputResult::consumed()
                     }
                     None => {
+                        // A double click on empty space turns the view
+                        // square onto the sketch again.
+                        if self
+                            .last_empty_click
+                            .take()
+                            .is_some_and(|t| now.duration_since(t) < DOUBLE_CLICK_WINDOW)
+                        {
+                            Self::view_sketch(ctx, &feature);
+                        } else {
+                            self.last_empty_click = Some(now);
+                        }
                         // Empty space: begin a box selection. The release
                         // decides between a real box (which adds what it
                         // covers) and a plain click (which clears).
@@ -1617,6 +1651,15 @@ impl SketchWorkbench {
                     c.driving,
                 ));
             }
+            self.label_drag = None;
+            return InputResult::consumed();
+        }
+
+        // A geometric constraint's double click names it, in its row of
+        // the constraint list.
+        if double && !hit.dimensional {
+            self.selected_constraints.insert(hit.constraint);
+            self.renaming_constraint = Some(hit.constraint);
             self.label_drag = None;
             return InputResult::consumed();
         }
@@ -1888,6 +1931,19 @@ impl SketchWorkbench {
         } else {
             self.tool_params.copies
         }
+    }
+
+    /// Turn the view square onto the sketch's plane, as opening it does.
+    fn view_sketch(ctx: &mut WorkbenchRuntimeContext, feature: &SketchFeature) {
+        let plane = feature.plane;
+        ctx.request(HostRequest::OrientCamera(
+            core_document::CameraOrientRequest {
+                plane_origin: plane.origin,
+                plane_normal: plane.normal,
+                plane_up: plane.y_axis,
+                centre: None,
+            },
+        ));
     }
 
     /// The `sketch.construction` action. With a selection: flip each
@@ -2251,6 +2307,9 @@ impl SketchWorkbench {
         tool: Option<&str>,
         key: KeyCode,
     ) -> InputResult {
+        // A key between two clicks makes them two clicks, not a double.
+        self.last_geometry_click = None;
+        self.last_empty_click = None;
         self.dim_capture.sync(&self.tool_state);
         if self.dim_capture.is_active() {
             match key {
@@ -3336,6 +3395,15 @@ impl Workbench for SketchWorkbench {
             .icon("show-hide-constraints")
             .row(2),
         );
+        context.register_tool(keyed(
+            ToolDescriptor::new_action(
+                "sketch.view_sketch",
+                "View sketch",
+                Some("constraints.view"),
+            )
+            .icon("sketch-view")
+            .row(2),
+        ));
         context.register_tool(
             ToolDescriptor::new_action(
                 "sketch.section_view",
@@ -3468,6 +3536,12 @@ impl Workbench for SketchWorkbench {
                 "sketch.remove_axis_alignment" => return self.remove_axis_alignment(ctx),
                 "sketch.snap" => {
                     self.snap_off = !self.snap_off;
+                    return InputResult::consumed();
+                }
+                "sketch.view_sketch" => {
+                    if let Some(feature) = self.get_active_sketch(ctx) {
+                        Self::view_sketch(ctx, &feature);
+                    }
                     return InputResult::consumed();
                 }
                 "sketch.show_constraints" => {
@@ -6028,6 +6102,40 @@ pub(crate) fn is_draw_tool(tool: &str) -> bool {
 
 fn point_in_rect(p: Vec2D, min: Vec2D, max: Vec2D) -> bool {
     p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y
+}
+
+/// The curves joined to `start` end to end, `start` included: through
+/// the points they share, or ends at one spot, as projected curves meet.
+fn connected_curves(sketch: &Sketch, start: Uuid) -> Vec<Uuid> {
+    let at = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
+    let curves: Vec<(Uuid, Vec<glam::Vec2>)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| {
+            let ends = Sketch::curve_ends(g)?;
+            Some((g.id(), ends.into_iter().filter_map(at).collect()))
+        })
+        .collect();
+    let meets = |a: &[glam::Vec2], b: &[glam::Vec2]| {
+        a.iter().any(|p| {
+            b.iter()
+                .any(|q| f64::from(p.distance(*q)) < profile::PROJECTED_JOIN)
+        })
+    };
+    let mut found = vec![start];
+    let mut frontier = vec![start];
+    while let Some(id) = frontier.pop() {
+        let Some((_, ends)) = curves.iter().find(|(c, _)| *c == id) else {
+            continue;
+        };
+        for (other, other_ends) in &curves {
+            if !found.contains(other) && meets(ends, other_ends) {
+                found.push(*other);
+                frontier.push(*other);
+            }
+        }
+    }
+    found
 }
 
 /// Whether `geom` lies FULLY inside the axis-aligned rectangle `min`..`max`

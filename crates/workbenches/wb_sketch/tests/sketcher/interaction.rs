@@ -51,6 +51,8 @@ struct Harness {
     vp: [[f32; 4]; 4],
     /// The tool the workbench last asked the host to make active.
     tool_request: Option<String>,
+    /// Whether the workbench has asked the host to turn the view.
+    view_turned: bool,
 }
 
 impl Harness {
@@ -61,6 +63,7 @@ impl Harness {
             active_object: None,
             vp: view_proj(),
             tool_request: None,
+            view_turned: false,
         }
     }
 
@@ -78,7 +81,11 @@ impl Harness {
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
         self.wb.on_input(&event, tool, &mut ctx);
         self.active_object = ctx.active_document_object;
-        self.tool_request = ctx.take_requests().into_iter().find_map(|r| match r {
+        let requests = ctx.take_requests();
+        self.view_turned |= requests
+            .iter()
+            .any(|r| matches!(r, core_document::HostRequest::OrientCamera(_)));
+        self.tool_request = requests.into_iter().find_map(|r| match r {
             core_document::HostRequest::ActivateTool(tool) => Some(tool),
             _ => None,
         });
@@ -4704,5 +4711,56 @@ mod default_label_placement {
             })
             .collect();
         assert_clear(&mut h, "40.49", &along);
+    }
+}
+
+/// Double clicks in select mode: on a curve, the chain it is part of; on
+/// empty space, the view square onto the sketch again.
+mod double_click {
+    use super::*;
+
+    fn double_click(h: &mut Harness, x: f32, y: f32) {
+        for _ in 0..2 {
+            h.click(x, y, "sketch.select");
+            h.release(x, y, "sketch.select");
+        }
+    }
+
+    #[test]
+    fn a_curve_takes_its_chain_and_leaves_what_it_does_not_touch() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        // A two-segment polyline and a stray line apart from it.
+        h.click(-10.0, 0.0, "sketch.line");
+        h.click(0.0, 0.0, "sketch.line");
+        h.click(0.0, 8.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.click(6.0, -6.0, "sketch.line");
+        h.click(12.0, -6.0, "sketch.line");
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.key(KeyCode::Escape, Some("sketch.line"));
+        assert_eq!(h.counts().1, 3);
+
+        double_click(&mut h, -5.0, 0.0);
+        h.key(KeyCode::Delete, None);
+        assert_eq!(
+            h.counts().1,
+            1,
+            "both joined segments went, the stray one stayed"
+        );
+    }
+
+    #[test]
+    fn empty_space_turns_the_view_square_on() {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.view_turned = false;
+        h.click(5.0, 5.0, "sketch.select");
+        h.release(5.0, 5.0, "sketch.select");
+        assert!(!h.view_turned, "one click only clears the selection");
+        h.click(5.0, 5.0, "sketch.select");
+        h.release(5.0, 5.0, "sketch.select");
+        assert!(h.view_turned);
     }
 }

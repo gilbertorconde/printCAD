@@ -298,6 +298,21 @@ impl Sketch {
         }
     }
 
+    /// The two points an open curve runs between, where outlines join:
+    /// `None` for points and closed curves.
+    pub fn curve_ends(element: &GeometryElement) -> Option<[Uuid; 2]> {
+        match element {
+            GeometryElement::Line(l) => Some([l.start, l.end]),
+            GeometryElement::Arc(a) => Some([a.start, a.end]),
+            GeometryElement::Conic(c) => Some([c.start, c.end]),
+            GeometryElement::Ellipse(e) => e.arc.map(|arc| [arc.start, arc.end]),
+            GeometryElement::BSpline(b) if !b.periodic => {
+                Some([*b.control_points.first()?, *b.control_points.last()?])
+            }
+            _ => None,
+        }
+    }
+
     /// Every point id a curve references (empty for points).
     pub fn curve_point_ids(element: &GeometryElement) -> Vec<Uuid> {
         match element {
