@@ -1526,14 +1526,29 @@ mod tests {
         assert!(worker.drop_build(serial, None));
         assert!(cancelled(&answers(&mut worker, 1)[0]), "it stopped");
 
-        let serial =
-            worker.request_build_solid(body, slow_chain(), Vec::new(), detail, None, Vec::new());
-        while !running(&worker) {
+        // Another body, so nothing the stopped build kept shortens this one;
+        // dropped once it has run past half its usual time by its own clock,
+        // and long before a cold build of the chain could end.
+        let usual = Duration::from_millis(10);
+        let serial = worker.request_build_solid(
+            Uuid::new_v4(),
+            slow_chain(),
+            Vec::new(),
+            detail,
+            None,
+            Vec::new(),
+        );
+        let since = loop {
+            if let Some((since, _)) = lock(&worker.builds.book).running.get(&serial) {
+                break *since;
+            }
             std::thread::sleep(Duration::from_millis(1));
+        };
+        while since.elapsed() * 2 <= usual + Duration::from_millis(1) {
+            std::thread::sleep(Duration::from_micros(200));
         }
-        std::thread::sleep(Duration::from_millis(20));
         assert!(
-            !worker.drop_build(serial, Some(Duration::from_millis(10))),
+            !worker.drop_build(serial, Some(usual)),
             "past half of its usual time: it finishes"
         );
         let out = answers(&mut worker, 1);
