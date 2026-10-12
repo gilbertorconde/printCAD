@@ -1,6 +1,6 @@
 # Solver equation inventory
 
-This inventory covers all **42** `ConstraintKind` variants at the captured
+This inventory covers all **43** `ConstraintKind` variants at the captured
 application baseline. The compiler and evaluator are in
 [solver.rs](../../crates/workbenches/wb_sketch/src/solver.rs); geometric
 solver tests are in that file, with internal geometry tests in
@@ -11,9 +11,10 @@ The [problem contract](0003-solver-contract.md) defines the migration seam.
 
 `L` means the caller's length unit, `rad` radians, `1` dimensionless.
 `P` is a point (two coordinates), `R` a scalar radius, `S` a shape
-(major/axis x and y, minor), and `t` an auxiliary curve parameter.
+(major/axis x and y, minor), `t` an auxiliary curve parameter and `F` a
+group's frame (reference centroid x and y, angle turned).
 The variables column describes dependencies, not how many free variables
-the relation adds. Only `t` columns add auxiliary variables. A shape enters
+the relation adds. Only `t` and `F` columns add auxiliary variables. A shape enters
 the numerical array only for radius/equality/internal-alignment relations;
 otherwise it remains fixed during solve but contributes uncompiled DoF.
 
@@ -67,13 +68,15 @@ Internal hidden rows are counted separately below.
 | AngleThreePoints | 1; rad | Three P; wrapped angle of two vertex arms | Periodic directed angle, floor-free atan2 | `an_arc_opens_to_its_angle_and_three_points_hold_theirs` |
 | Refraction | 1; 1 | Interface tangent and two ray directions; sin-in minus ratio*sin-out | Rays ordered near/far once; interface line/circle; no membership rows | `a_refraction_bends_the_ray_leaving_the_interface` |
 | InternalAlignment | 0/2/4; L | Internal points P and curve S; offset positions or focus square plus opposite midpoint | Major/minor endpoints deduplicated and own curve points omitted; standalone derived ellipse focus/control polygon zero | `a_dimension_on_an_axis_sizes_the_ellipse`, conic tests, focus drag/circle-crossing tests |
+| Group | `2n + r + 2s (+1 per non-parabola S)`; L, 1 | n member P, r member R, s member S and **3 F**; P minus the frame's image of its reference offset, R minus reference, S axis minus the turned reference axis and minor minus reference | Reference shape stored on the relation; F starts at the best rigid fit, its angle pinned when the members span no direction; members' rigid-invariant relations and all but the first orientation rest | `a_free_group_has_three_degrees_of_freedom`, `a_turned_group_keeps_its_shape`, `a_grouped_arc_turns_whole` |
 
 ## Hidden rules and precision
 
-- Every circular arc adds two L rows `|endpoint-centre|-R` when at least
-  one regular user spec exists. DoF always adds them. Internal alignment
+- Every circular arc a group does not hold adds two L rows
+  `|endpoint-centre|-R` when at least one regular user spec exists. DoF always adds them. Internal alignment
   is appended after this gate and alone does not activate circular rules.
-- Every conic endpoint adds one L row regardless of user specs: hyperbola
+- Every endpoint of a conic a group does not hold adds one L row
+  regardless of user specs: hyperbola
   implicit-function error divided by gradient length, or parabola error
   divided by its slope factor. Ellipse arcs rely on explicit membership
   constraints rather than an extra automatic rule.

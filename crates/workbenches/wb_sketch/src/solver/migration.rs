@@ -524,6 +524,7 @@ fn relation_name(kind: &ConstraintKind) -> &'static str {
         ConstraintKind::AngleThreePoints { .. } => "AngleThreePoints",
         ConstraintKind::Refraction { .. } => "Refraction",
         ConstraintKind::InternalAlignment { .. } => "InternalAlignment",
+        ConstraintKind::Group { .. } => "Group",
     }
 }
 
@@ -828,6 +829,7 @@ fn every_relation_has_an_equation_inventory_entry() {
             },
             2,
         ),
+        (crate::sketch::group_of(&sketch, &[la]).unwrap(), 4),
     ];
     let inventory = include_str!("../../../../../docs/rfcs/0003-solver-equations.md");
     let mut names = std::collections::HashSet::new();
@@ -840,7 +842,7 @@ fn every_relation_has_an_equation_inventory_entry() {
         let sys = build_system_with(&probe, None, &[], true);
         assert_eq!(sys.residual_len - base_rows, rows, "{name}");
     }
-    assert_eq!(names.len(), 42);
+    assert_eq!(names.len(), 43);
 }
 
 fn outcome(value: SolveOutcome) -> Value {

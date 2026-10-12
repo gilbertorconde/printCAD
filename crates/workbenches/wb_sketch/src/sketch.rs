@@ -544,6 +544,18 @@ pub fn constraint_refs(kind: &ConstraintKind) -> Vec<Uuid> {
             ..
         } => vec![*ray1, *ray2, *interface, *point],
         ConstraintKind::InternalAlignment { element, curve, .. } => vec![*element, *curve],
+        ConstraintKind::Group {
+            elements,
+            reference,
+        } => {
+            let mut refs = elements.clone();
+            for id in reference.iter().map(GroupReference::id) {
+                if !refs.contains(&id) {
+                    refs.push(id);
+                }
+            }
+            refs
+        }
     }
 }
 
@@ -605,6 +617,7 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
         ConstraintKind::InternalAlignment { role, .. } => {
             format!("Internal alignment ({})", role.label())
         }
+        ConstraintKind::Group { elements, .. } => format!("Group ({})", elements.len()),
     }
 }
 
@@ -1571,6 +1584,106 @@ pub enum ConstraintKind {
         curve: Uuid,
         role: InternalRole,
     },
+    /// `elements` move and turn as one rigid unit, keeping the shape
+    /// `reference` records: every point of every member where it stood when
+    /// the group was made, and each member's radius or axes. The
+    /// constraints among the members alone that a rigid motion keeps rest
+    /// while the group holds.
+    Group {
+        elements: Vec<Uuid>,
+        #[serde(default)]
+        reference: Vec<GroupReference>,
+    },
+}
+
+/// One entry of a group's shape as it was made.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum GroupReference {
+    /// A member point, or a point of a member curve, where it stood.
+    Point { point: Uuid, at: Vec2D },
+    /// A member circle's or arc's radius.
+    Radius { curve: Uuid, radius: f32 },
+    /// A member ellipse's centre-to-major-vertex vector or a conic's axis,
+    /// and its minor radius.
+    Axes {
+        curve: Uuid,
+        major: Vec2D,
+        minor: f32,
+    },
+}
+
+impl GroupReference {
+    pub fn id(&self) -> Uuid {
+        match *self {
+            GroupReference::Point { point, .. } => point,
+            GroupReference::Radius { curve, .. } | GroupReference::Axes { curve, .. } => curve,
+        }
+    }
+}
+
+/// The shape a group of `elements` holds, taken from where they stand:
+/// `None` when one is missing, reference geometry or drawn through the
+/// origin.
+pub fn group_reference(sketch: &Sketch, elements: &[Uuid]) -> Option<Vec<GroupReference>> {
+    let mut points: Vec<Uuid> = Vec::new();
+    let mut sizes = Vec::new();
+    for &id in elements {
+        let element = sketch.get_geometry(id)?;
+        match element {
+            GeometryElement::Point(p) => points.push(p.id),
+            other => points.extend(Sketch::curve_point_ids(other)),
+        }
+        match element {
+            GeometryElement::Circle(c) => sizes.push(GroupReference::Radius {
+                curve: c.id,
+                radius: c.radius,
+            }),
+            GeometryElement::Arc(a) => sizes.push(GroupReference::Radius {
+                curve: a.id,
+                radius: a.radius,
+            }),
+            GeometryElement::Ellipse(e) => sizes.push(GroupReference::Axes {
+                curve: e.id,
+                major: e.major,
+                minor: e.major.to_glam().length() * e.ratio,
+            }),
+            GeometryElement::Conic(c) => sizes.push(GroupReference::Axes {
+                curve: c.id,
+                major: c.axis,
+                minor: c.minor,
+            }),
+            _ => {}
+        }
+    }
+    let mut reference = Vec::new();
+    for point in points {
+        if reference.iter().any(|r: &GroupReference| r.id() == point) {
+            continue;
+        }
+        let at = sketch.stored_point_position(point)?;
+        reference.push(GroupReference::Point { point, at });
+    }
+    reference.extend(sizes);
+    Some(reference)
+}
+
+/// A group of the elements among `ids`, each once, its shape where they
+/// stand: `None` when there are none or one cannot be grouped.
+pub fn group_of(sketch: &Sketch, ids: &[Uuid]) -> Option<ConstraintKind> {
+    let mut elements: Vec<Uuid> = Vec::new();
+    for &id in ids {
+        if !elements.contains(&id) {
+            elements.push(id);
+        }
+    }
+    if elements.is_empty() {
+        return None;
+    }
+    let reference = group_reference(sketch, &elements)?;
+    Some(ConstraintKind::Group {
+        elements,
+        reference,
+    })
 }
 
 /// What a piece of internal geometry stands for on its curve.
@@ -1642,6 +1755,47 @@ impl ConstraintKind {
 #[cfg(test)]
 mod construction_tests {
     use super::*;
+
+    #[test]
+    fn a_group_round_trips_and_one_without_its_shape_holds_the_shape_it_has() {
+        let mut sketch = Sketch::new("t");
+        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(4.0, 0.0))));
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(1.0, 2.0))));
+        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 1.5)));
+        let group = group_of(&sketch, &[line, circle, line]).expect("a group");
+        let ConstraintKind::Group {
+            elements,
+            reference,
+        } = &group
+        else {
+            unreachable!()
+        };
+        assert_eq!(elements, &vec![line, circle], "each member once");
+        assert_eq!(reference.len(), 4, "three points and a radius");
+        sketch.add_constraint(group.clone());
+        let json = serde_json::to_value(&sketch).unwrap();
+        let restored: Sketch = serde_json::from_value(json).unwrap();
+        assert!(matches!(
+            &restored.constraints[0].kind,
+            ConstraintKind::Group { reference: r, .. } if r == reference
+        ));
+
+        // A group written without its shape loads, and holds the one its
+        // members have.
+        let mut json = serde_json::to_value(&sketch).unwrap();
+        json["constraints"][0]["kind"]["Group"]
+            .as_object_mut()
+            .unwrap()
+            .remove("reference");
+        let mut bare: Sketch = serde_json::from_value(json).unwrap();
+        crate::solver::solve(&mut bare);
+        assert_eq!(bare.point_position(b), Some(Vec2D::new(4.0, 0.0)));
+        assert_eq!(crate::solver::dof_estimate(&bare), 3);
+        // Nothing groups with the origin.
+        assert!(group_of(&sketch, &[ORIGIN_ID]).is_none());
+    }
 
     #[test]
     fn construction_flag_round_trips() {

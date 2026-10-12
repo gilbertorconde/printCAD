@@ -188,11 +188,13 @@ pub(crate) fn line_arc_click(
 }
 
 /// The points a drag of `elements` carries, where they are now: each
-/// element's own points, external geometry left where its edge is.
+/// element's own points and those of every group it is in, which moves
+/// as one; external geometry left where its edge is.
 pub(crate) fn drag_targets(sketch: &Sketch, elements: &[Uuid]) -> Vec<(Uuid, Vec2D)> {
     let external = sketch.external_ids();
+    let elements = with_groups(sketch, elements);
     let mut points: Vec<(Uuid, Vec2D)> = Vec::new();
-    for element in elements {
+    for element in &elements {
         for pid in crate::drag_point_ids(sketch, *element) {
             if external.contains(&pid) || points.iter().any(|(seen, _)| *seen == pid) {
                 continue;
@@ -203,6 +205,44 @@ pub(crate) fn drag_targets(sketch: &Sketch, elements: &[Uuid]) -> Vec<(Uuid, Vec
         }
     }
     points
+}
+
+/// `elements` and the members of every group holding one of them or a
+/// point of one, and of the groups those members are in, in turn.
+fn with_groups(sketch: &Sketch, elements: &[Uuid]) -> Vec<Uuid> {
+    let mut all: Vec<Uuid> = elements.to_vec();
+    let mut touched: HashSet<Uuid> = HashSet::new();
+    let mut taken = vec![false; sketch.constraints.len()];
+    loop {
+        for id in &all {
+            touched.insert(*id);
+            if let Some(element) = sketch.get_geometry(*id) {
+                touched.extend(Sketch::curve_point_ids(element));
+            }
+        }
+        let mut grew = false;
+        for (i, c) in sketch.constraints.iter().enumerate() {
+            if taken[i] || !c.is_solved() {
+                continue;
+            }
+            if let ConstraintKind::Group { elements, .. } = &c.kind
+                && crate::sketch::constraint_refs(&c.kind)
+                    .iter()
+                    .any(|id| touched.contains(id))
+            {
+                taken[i] = true;
+                for member in elements {
+                    if !all.contains(member) {
+                        all.push(*member);
+                        grew = true;
+                    }
+                }
+            }
+        }
+        if !grew {
+            return all;
+        }
+    }
 }
 
 /// Carry `targets` (from [`drag_targets`]) by `delta` from where they

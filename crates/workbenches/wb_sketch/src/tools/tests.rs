@@ -4443,3 +4443,161 @@ fn a_linked_array_is_spaced_by_its_two_pitches() {
         );
     }
 }
+
+/// A 3-4-5 triangle's corners, its sides grouped from a selection as the
+/// toolbar's Group does.
+fn grouped_triangle(sketch: &mut Sketch) -> ([Uuid; 3], [Uuid; 3]) {
+    let corners = [
+        pt(sketch, 0.0, 0.0),
+        pt(sketch, 4.0, 0.0),
+        pt(sketch, 0.0, 3.0),
+    ];
+    let sides = [
+        line_between(sketch, corners[0], corners[1]),
+        line_between(sketch, corners[1], corners[2]),
+        line_between(sketch, corners[2], corners[0]),
+    ];
+    let selected: HashSet<Uuid> = sides.into_iter().collect();
+    let shape = crate::constrain::SelectionShape::of(sketch, &selected);
+    let kinds = crate::constrain::kinds_for("group", &shape, sketch).expect("sides group");
+    assert_eq!(kinds.len(), 1);
+    for kind in kinds {
+        sketch.add_constraint(kind);
+    }
+    (corners, sides)
+}
+
+fn side_lengths(sketch: &Sketch, corners: [Uuid; 3]) -> [f32; 3] {
+    let at = |i: usize| sketch.point_position(corners[i]).unwrap().to_glam();
+    [
+        at(0).distance(at(1)),
+        at(1).distance(at(2)),
+        at(2).distance(at(0)),
+    ]
+}
+
+#[test]
+fn a_group_made_from_a_selection_has_three_degrees_of_freedom_and_drags_whole() {
+    let mut sketch = Sketch::new("t");
+    let (corners, sides) = grouped_triangle(&mut sketch);
+    assert_eq!(crate::solver::dof_estimate(&sketch), 3);
+
+    // A drag of one corner carries every member by the same step.
+    let before: Vec<Vec2D> = corners
+        .iter()
+        .map(|c| sketch.point_position(*c).unwrap())
+        .collect();
+    let targets = crate::step::drag_targets(&sketch, &[corners[0]]);
+    assert_eq!(targets.len(), 3, "every member's point is carried");
+    crate::step::drag(&mut sketch, &targets, Vec2D::new(5.0, 1.0));
+    let held: Vec<Uuid> = targets.iter().map(|(id, _)| *id).collect();
+    let outcome = crate::solver::solve_holding(&mut sketch, &held);
+    assert!(matches!(
+        outcome,
+        crate::solver::SolveOutcome::Converged { .. }
+    ));
+    for (corner, was) in corners.iter().zip(before) {
+        let now = sketch.point_position(*corner).unwrap();
+        assert!((now.x - was.x - 5.0).abs() < 1e-4 && (now.y - was.y - 1.0).abs() < 1e-4);
+    }
+
+    // An angle on one side turns the whole group, its shape kept.
+    sketch.add_constraint(ConstraintKind::AngleToAxis {
+        line: sides[0],
+        axis: crate::sketch::AxisDirection::Horizontal,
+        angle_rad: 0.5,
+    });
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(matches!(
+        outcome,
+        crate::solver::SolveOutcome::Converged { .. }
+    ));
+    let [a, b, c] = side_lengths(&sketch, corners);
+    assert!((a - 4.0).abs() < 1e-4 && (b - 5.0).abs() < 1e-4 && (c - 3.0).abs() < 1e-4);
+    assert_eq!(crate::solver::dof_estimate(&sketch), 2);
+}
+
+#[test]
+fn copies_of_a_group_hold_their_own_shape_where_they_land() {
+    let mut sketch = Sketch::new("t");
+    let (_, sides) = grouped_triangle(&mut sketch);
+    let selected: HashSet<Uuid> = sides.into_iter().collect();
+
+    // Copied to the clipboard and pasted elsewhere, and copied turned.
+    let mut clip = Sketch::new("clipboard");
+    copy_from(
+        &sketch,
+        &mut clip,
+        &selected,
+        &Similarity::translation(glam::Vec2::ZERO),
+    );
+    crate::commands::paste(&mut sketch, &clip, Vec2D::new(10.0, 2.0));
+    let turn = Similarity::rotation_about(glam::Vec2::new(1.0, 1.0), 0.8);
+    copy_from(&sketch.clone(), &mut sketch, &selected, &turn);
+
+    let groups: Vec<&ConstraintKind> = sketch
+        .constraints
+        .iter()
+        .map(|c| &c.kind)
+        .filter(|k| matches!(k, ConstraintKind::Group { .. }))
+        .collect();
+    assert_eq!(groups.len(), 3, "each copy carries a group");
+    for kind in &groups {
+        let ConstraintKind::Group {
+            elements,
+            reference,
+        } = kind
+        else {
+            unreachable!()
+        };
+        assert_eq!(elements.len(), 3);
+        // Each group holds its own members where they stand.
+        for entry in reference {
+            let crate::sketch::GroupReference::Point { point, at } = entry else {
+                panic!("a triangle of lines holds only points");
+            };
+            let now = sketch.point_position(*point).unwrap();
+            assert!((now - *at).to_glam().length() < 1e-4);
+        }
+    }
+    assert_eq!(crate::solver::dof_estimate(&sketch), 9);
+    let before = sketch.geometry.clone();
+    let outcome = crate::solver::solve(&mut sketch);
+    assert!(matches!(
+        outcome,
+        crate::solver::SolveOutcome::Converged { .. }
+    ));
+    for (was, now) in before.iter().zip(&sketch.geometry) {
+        if let (GeometryElement::Point(was), GeometryElement::Point(now)) = (was, now) {
+            assert!((was.position - now.position).to_glam().length() < 1e-4);
+        }
+    }
+}
+
+#[test]
+fn copying_a_group_moves_its_reference_with_the_copy() {
+    // Taken through `copy_constraints` alone, as a carbon copy onto
+    // another plane does: the shape goes through the transform.
+    let mut sketch = Sketch::new("t");
+    let (corners, sides) = grouped_triangle(&mut sketch);
+    let selected: HashSet<Uuid> = sides.into_iter().collect();
+    let turn = Similarity::rotation_about(glam::Vec2::ZERO, std::f32::consts::FRAC_PI_2);
+    let mut target = Sketch::new("target");
+    let map = copy_mapped(&sketch, &mut target, &selected, &turn);
+    assert_eq!(copy_constraints(&sketch, &mut target, &map, &turn), 1);
+    let Some(ConstraintKind::Group { reference, .. }) = target.constraints.first().map(|c| &c.kind)
+    else {
+        panic!("the group was copied");
+    };
+    for entry in reference {
+        let crate::sketch::GroupReference::Point { point, at } = entry else {
+            panic!("only points");
+        };
+        let original = corners
+            .iter()
+            .find(|c| map[*c] == *point)
+            .expect("a copied corner");
+        let want = turn.apply(sketch.point_position(*original).unwrap());
+        assert!((*at - want).to_glam().length() < 1e-5);
+    }
+}

@@ -422,7 +422,7 @@ pub fn register(context: &mut WorkbenchContext) {
             "kind",
             ParamKind::String,
             "coincident, point_on_object, midpoint, horizontal, vertical, \
-             horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, \
+             horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, group, lock, dimension, distance, \
              distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, \
              angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: \
              arm, corner, arm), ellipse_minor or refraction; radius on an ellipse is its \
@@ -471,6 +471,13 @@ pub fn register(context: &mut WorkbenchContext) {
              the size of a coordinate (a point at x = -5 takes 5 and stays at -5).",
         )
         .note(
+            "\"group\" makes its items one rigid unit, keeping the shape they have now: it \
+             moves and turns as a whole, three degrees of freedom, and a drag of any member \
+             carries all of it. Constraints among the members alone that say nothing of the \
+             axes rest while the group holds; of those that do (horizontal, vertical, an angle \
+             to an axis), the first turns the whole group and the rest rest.",
+        )
+        .note(
             "A constraint that contradicts others is still added; `pc.sketch.status` names \
              the conflict. While it stands the sketch does not solve, gives no profile, and \
              what is built from it fails at `pc.doc.rebuild()` (\"the sketch does not solve: \
@@ -500,6 +507,23 @@ pub fn register(context: &mut WorkbenchContext) {
             local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
             assert(math.abs(m.volume - 40 * 25 * 2) < 1e-3)
             assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.min[2]) < 1e-6, "its corner on the origin")
+            "#,
+        )
+        .example(
+            "A rectangle grouped and dragged as one",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local sides = pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            pc.sketch.constrain{sketch = s, kind = "group", items = sides}
+            local status = pc.sketch.status{sketch = s}
+            assert(status.dof == 2, "square to the axes, free to slide")
+            assert(#status.redundant == 0, "its sides' alignments rest in the group")
+            pc.sketch.drag{sketch = s, items = {sides[1]}, by = {5, 3}}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
+            assert(math.abs(m.volume - 20 * 10) < 1e-2, "the same rectangle")
+            assert(math.abs(m.min[1] - 5) < 1e-4 and math.abs(m.min[2] - 3) < 1e-4, "moved whole")
             "#,
         ),
     );

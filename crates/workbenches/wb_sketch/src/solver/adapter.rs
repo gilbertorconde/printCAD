@@ -327,6 +327,58 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
                 }
             },
         },
+        C::Group {
+            ref elements,
+            ref reference,
+        } => R::Group {
+            elements: elements.iter().map(|id| item(sketch, *id)).collect(),
+            reference: group_reference(sketch, elements, reference)
+                .iter()
+                .map(|entry| match *entry {
+                    sketch::GroupReference::Point { point: p, at } => core::GroupReference::Point {
+                        point: point(p),
+                        position: vector(at),
+                    },
+                    sketch::GroupReference::Radius { curve: c, radius } => {
+                        core::GroupReference::Radius {
+                            curve: curve(c),
+                            radius: length(radius),
+                        }
+                    }
+                    sketch::GroupReference::Axes {
+                        curve: c,
+                        major,
+                        minor,
+                    } => core::GroupReference::Axes {
+                        curve: curve(c),
+                        major: vector(major),
+                        minor: length(minor),
+                    },
+                })
+                .collect(),
+        },
+    }
+}
+
+/// The shape a group holds: the one stored with it, unless it no longer
+/// covers the members (one was redrawn with other points since), when
+/// the shape they have now stands in.
+fn group_reference(
+    sketch: &Sketch,
+    elements: &[Uuid],
+    stored: &[sketch::GroupReference],
+) -> Vec<sketch::GroupReference> {
+    let same = |a: &sketch::GroupReference, b: &sketch::GroupReference| {
+        a.id() == b.id() && std::mem::discriminant(a) == std::mem::discriminant(b)
+    };
+    match sketch::group_reference(sketch, elements) {
+        Some(now)
+            if now.len() != stored.len()
+                || !now.iter().all(|n| stored.iter().any(|s| same(n, s))) =>
+        {
+            now
+        }
+        _ => stored.to_vec(),
     }
 }
 

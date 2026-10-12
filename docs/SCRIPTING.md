@@ -1923,7 +1923,7 @@ assert(count.point == 3, "the line's ends and the centre are points of their own
 `pc.sketch.constrain`: Constrain elements, as the constraint's toolbar button does for a selection.
 
 - `sketch` (id): The sketch to draw in
-- `kind` (string): coincident, point_on_object, midpoint, horizontal, vertical, horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, lock, dimension, distance, distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: arm, corner, arm), ellipse_minor or refraction; radius on an ellipse is its major radius, arc_length on a spline or conic its length
+- `kind` (string): coincident, point_on_object, midpoint, horizontal, vertical, horizontal_vertical, parallel, perpendicular, tangent, equal, symmetric, block, group, lock, dimension, distance, distance_x, distance_y, gap, arc_length, radius, diameter, radius_diameter, angle, angle_x, angle_y, angle_at_point, arc_angle, angle_three_points (items: arm, corner, arm), ellipse_minor or refraction; radius on an ellipse is its major radius, arc_length on a spline or conic its length
 - `items` (list): Element ids, or "origin", "x_axis" and "y_axis"
 - `value` (number, optional): A dimension's value (mm, degrees for an angle, the ratio of indices for a refraction); the measured one when left out
 - `remove_redundant` (boolean, optional): Take away the older constraints the new ones make redundant
@@ -1936,6 +1936,7 @@ Notes:
 - "distance" on one line is its length (listed as Length), on two points the distance between them, on a point and a curve or two curves the gap. "dimension" picks as the toolbar does: a line's length, a circle's diameter, an arc's radius, two lines' angle (their distance when parallel).
 - Nothing stays put until constrained: a dimension on free geometry moves every item it names, so tie a corner to "origin" first to keep it where it was drawn.
 - "lock" holds a point by its distances along X and Y from the origin, each the size of a coordinate (a point at x = -5 takes 5 and stays at -5).
+- "group" makes its items one rigid unit, keeping the shape they have now: it moves and turns as a whole, three degrees of freedom, and a drag of any member carries all of it. Constraints among the members alone that say nothing of the axes rest while the group holds; of those that do (horizontal, vertical, an angle to an axis), the first turns the whole group and the rest rest.
 - A constraint that contradicts others is still added; `pc.sketch.status` names the conflict. While it stands the sketch does not solve, gives no profile, and what is built from it fails at `pc.doc.rebuild()` ("the sketch does not solve: its constraints conflict"). `remove_redundant` takes away only older constraints the new one repeats, never one it contradicts.
 - A kind that does not fit the items is refused ("the ... constraint does not fit these items"), one that is no kind at all is refused with the list of kinds, and so is a `value` for a kind that takes none.
 

@@ -696,6 +696,7 @@ const TOOL_KEYS: &[(&str, &str)] = &[
     ("sketch.constrain.equal", "Shift+E"),
     ("sketch.constrain.symmetric", "Shift+S"),
     ("sketch.constrain.block", "Shift+B"),
+    ("sketch.constrain.group", "Shift+G"),
     ("sketch.constrain.dimension", "Shift+D"),
     ("sketch.constrain.lock", "Shift+K"),
     ("sketch.constrain.distance_x", "Shift+L"),
@@ -3314,6 +3315,7 @@ impl Workbench for SketchWorkbench {
             ("equal", "Equal", "constraint-equal"),
             ("symmetric", "Symmetric", "constraint-symmetric"),
             ("block", "Block", "constraint-block"),
+            ("group", "Group", "tree-group"),
         ] {
             let mut tool = constraint(id, label, icon, "constraints.geometric");
             if id == "horizontal" {

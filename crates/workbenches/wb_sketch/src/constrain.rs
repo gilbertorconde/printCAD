@@ -139,6 +139,7 @@ pub const TOOLS: &[&str] = &[
     "equal",
     "symmetric",
     "block",
+    "group",
     "lock",
     "distance_x",
     "distance_y",
@@ -393,6 +394,9 @@ pub fn kinds_for(
             .iter()
             .map(|id| ConstraintKind::Block { element: *id })
             .collect(),
+        // The selection held as one rigid unit; the origin and the axes
+        // take no part in one.
+        "group" if shape.total() >= 1 => vec![sketch::group_of(sketch, &shape.all)?],
         // Where the point is, as two distances from the origin that show,
         // edit and take formulas like any dimension.
         "lock" if shape.only(1, 0, 0, 0) => {

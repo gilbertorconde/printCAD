@@ -9,8 +9,8 @@ use uuid::Uuid;
 
 use super::{ToolEffect, ToolParams, ToolState};
 use crate::sketch::{
-    Arc, BSpline, Circle, Conic, ConstraintKind, Ellipse, GeometryElement, Line, Point, Sketch,
-    Vec2D,
+    Arc, BSpline, Circle, Conic, ConstraintKind, Ellipse, GeometryElement, GroupReference, Line,
+    Point, Sketch, Vec2D,
 };
 use crate::snap;
 
@@ -146,7 +146,8 @@ pub(super) fn apply_to_selection(
 /// the constraints that bind nothing else say what the shape now is, so
 /// the solver keeps the move rather than undoing it: a dimension takes the
 /// value it measures after the move, a fixed point is fixed where it has
-/// gone, and horizontal and vertical follow the turn. They stay as they
+/// gone, a group holds the shape it now has, and horizontal and vertical
+/// follow the turn. They stay as they
 /// are when the axes do, swap on a quarter turn, and at any other angle
 /// become parallel or perpendicular to one of the lines, which keeps a
 /// rectangle a rectangle at any angle.
@@ -177,6 +178,11 @@ pub(crate) fn adapt_constraints(sketch: &mut Sketch, moved: &HashSet<Uuid>, xf: 
             ConstraintKind::FixedPoint { point, .. } => {
                 if let Some(position) = snapshot.point_position(point) {
                     constraint.kind = ConstraintKind::FixedPoint { point, position };
+                }
+            }
+            ConstraintKind::Group { ref elements, .. } => {
+                if let Some(kind) = crate::sketch::group_of(&snapshot, elements) {
+                    constraint.kind = kind;
                 }
             }
             ConstraintKind::Horizontal { element } | ConstraintKind::Vertical { element } => {
@@ -641,8 +647,9 @@ fn copy_texts(
 
 /// Copy the constraints of `source` among the elements `map` copied into
 /// `sketch`, their references renamed through `map`; a constraint that
-/// names anything not copied stays behind. A fixed point's position goes
-/// through `xf` as its point did. Returns how many were copied.
+/// names anything not copied stays behind. A fixed point's position and a
+/// group's shape go through `xf` as their geometry did. Returns how many
+/// were copied.
 pub fn copy_constraints(
     source: &Sketch,
     sketch: &mut Sketch,
@@ -674,8 +681,21 @@ pub fn copy_constraints(
         let Ok(mut kind) = serde_json::from_value::<ConstraintKind>(value) else {
             continue;
         };
-        if let ConstraintKind::FixedPoint { position, .. } = &mut kind {
-            *position = xf.apply(*position);
+        match &mut kind {
+            ConstraintKind::FixedPoint { position, .. } => *position = xf.apply(*position),
+            ConstraintKind::Group { reference, .. } => {
+                for entry in reference {
+                    match entry {
+                        GroupReference::Point { at, .. } => *at = xf.apply(*at),
+                        GroupReference::Radius { radius, .. } => *radius *= xf.scale_factor(),
+                        GroupReference::Axes { major, minor, .. } => {
+                            *major = xf.apply_vec(*major);
+                            *minor *= xf.scale_factor();
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
         sketch.add_constraint(kind);
         count += 1;

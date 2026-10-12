@@ -56,6 +56,7 @@ pub fn constraint_icon(kind: &ConstraintKind) -> &'static str {
             "constraint-symmetric"
         }
         ConstraintKind::InternalAlignment { .. } => "show-hide-internal-geometry",
+        ConstraintKind::Group { .. } => "tree-group",
     }
 }
 
