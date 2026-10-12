@@ -539,7 +539,7 @@ fn face_list_editor(
                 FONT_XS,
                 TEXT1,
             );
-            if small_secondary_button(ui, "✕").clicked() {
+            if small_secondary_button(ui, "×").clicked() {
                 remove = Some(i);
             }
         });
@@ -647,7 +647,7 @@ fn edge_list_editor(ui: &mut Ui, ctx: &WorkbenchRuntimeContext, picks: &mut Vec<
                 FONT_XS,
                 TEXT1,
             );
-            if small_secondary_button(ui, "✕").clicked() {
+            if small_secondary_button(ui, "×").clicked() {
                 remove = Some(i);
             }
         });
@@ -2468,7 +2468,7 @@ pub fn feature_editor(
                 };
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "✕").clicked() && sections.len() > 1 {
+                    if small_secondary_button(ui, "×").clicked() && sections.len() > 1 {
                         remove = Some(i);
                     }
                 });
@@ -2583,7 +2583,7 @@ pub fn feature_editor(
                     .unwrap_or_else(|| "(missing)".into());
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {name}", i + 1), FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "✕").clicked() {
+                    if small_secondary_button(ui, "×").clicked() {
                         remove = Some(i);
                     }
                 });
@@ -3023,7 +3023,7 @@ pub fn feature_editor(
                 };
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {label}", i + 1), FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "✕").clicked() {
+                    if small_secondary_button(ui, "×").clicked() {
                         remove = Some(i);
                     }
                 });
@@ -3248,7 +3248,7 @@ pub fn feature_editor(
                 ui.horizontal(|ui| {
                     label_cell(ui, "");
                     mono_label(ui, name, FONT_XS, TEXT1);
-                    if small_secondary_button(ui, "✕").clicked() {
+                    if small_secondary_button(ui, "×").clicked() {
                         remove = Some(i);
                     }
                 });

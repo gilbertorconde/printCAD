@@ -242,7 +242,7 @@ fn picks_editor(
                 FONT_XS,
                 TEXT1,
             );
-            if small_secondary_button(ui, "✕").clicked() {
+            if small_secondary_button(ui, "×").clicked() {
                 remove_face = Some(i);
             }
         });
@@ -264,7 +264,7 @@ fn picks_editor(
                 FONT_XS,
                 TEXT1,
             );
-            if small_secondary_button(ui, "✕").clicked() {
+            if small_secondary_button(ui, "×").clicked() {
                 remove_edge = Some(i);
             }
         });
