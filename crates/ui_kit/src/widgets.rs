@@ -658,7 +658,11 @@ impl<'a> QtyField<'a> {
             .show(ui, |ui| {
                 ui.set_min_size(Vec2::new(self.width, INPUT - 2.0));
                 ui.set_max_width(self.width);
-                ui.horizontal_centered(|ui| {
+                // Left-aligned, so the value sits at the start of the box it
+                // is stretched across.
+                let row =
+                    Layout::left_to_right(egui::Align::Center).with_main_align(egui::Align::Min);
+                ui.with_layout(row, |ui| {
                     ui.spacing_mut().item_spacing.x = SPACE_1;
                     let focus = ui.visuals_mut();
                     focus.widgets.inactive.bg_fill = Color32::TRANSPARENT;
@@ -676,6 +680,11 @@ impl<'a> QtyField<'a> {
                     } else {
                         format!(" {}", self.unit)
                     };
+                    if self.error.is_none() {
+                        // The whole box takes the click that starts typing,
+                        // not only the digits drawn in it.
+                        ui.spacing_mut().interact_size.x = ui.available_width();
+                    }
                     let mut v = *self.value as f64;
                     let resp = ui.add_enabled(
                         !self.dim,
@@ -1534,5 +1543,62 @@ mod qty_field_tests {
         out.textures_delta.clear();
         assert_eq!(value, 0.0, "0 is not raised to the range's 0.001");
         assert!(!changed);
+    }
+
+    /// A click anywhere in the box starts typing, not only one on the
+    /// digits: a one-digit count leaves most of its box empty.
+    #[test]
+    fn a_click_at_the_end_of_the_box_types_into_it() {
+        let ctx = egui::Context::default();
+        crate::theme::apply_theme(&ctx);
+        let mut value = 3.0_f32;
+        // One frame; the box the field drew.
+        let frame = |time: f64, events: Vec<egui::Event>, value: &mut f32| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(800.0, 600.0),
+                )),
+                time: Some(time),
+                events,
+                ..Default::default()
+            };
+            let mut boxed = egui::Rect::NOTHING;
+            let mut out = ctx.run_ui(input, |ui| {
+                boxed = ui
+                    .horizontal(|ui| {
+                        QtyField::new(value)
+                            .range(1.0..=1000.0)
+                            .decimals(0)
+                            .show(ui);
+                    })
+                    .response
+                    .rect;
+            });
+            out.textures_delta.clear();
+            boxed
+        };
+        let boxed = frame(0.0, vec![], &mut value);
+        let at = egui::pos2(boxed.right() - 6.0, boxed.center().y);
+        let press = |pressed| egui::Event::PointerButton {
+            pos: at,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        frame(1.0, vec![egui::Event::PointerMoved(at)], &mut value);
+        frame(1.1, vec![press(true)], &mut value);
+        frame(1.2, vec![press(false)], &mut value);
+        frame(1.3, vec![], &mut value);
+        frame(1.4, vec![egui::Event::Text("5".into())], &mut value);
+        let enter = egui::Event::Key {
+            key: egui::Key::Enter,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        frame(1.5, vec![enter], &mut value);
+        assert_eq!(value, 5.0, "clicked at {at:?} in the box {boxed:?}");
     }
 }
