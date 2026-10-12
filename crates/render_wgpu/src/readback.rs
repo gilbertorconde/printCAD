@@ -1,5 +1,6 @@
-//! What the GPU writes for the host to read: a pick's id and the depths
-//! around the cursor, and a picture of the scene. Each is a copy into a
+//! What the GPU writes for the host to read: a pick's id, the triangle
+//! under the cursor where the device numbers them, the depths around the
+//! cursor, and a picture of the scene. Each is a copy into a
 //! buffer of its own, mapped once the frame that recorded it is done, so
 //! nothing ever waits on the GPU: the answer trails the request by a frame
 //! or two.
@@ -8,9 +9,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use egui_wgpu::wgpu;
+use uuid::Uuid;
 
 use crate::mesh::u32s_to_uuid;
-use crate::{CapturedImage, DepthWindow, PickResult, ViewportRect};
+use crate::{CapturedImage, DepthWindow, PickResult, PickedTriangle, ViewportRect};
 
 /// Texels the depth window reaches either side of the cursor: the edge
 /// pick's widest reach at twice the display scale, and a pixel over for
@@ -20,8 +22,12 @@ pub(crate) const PICK_WINDOW_RADIUS: u32 = 13;
 /// Rows of a texture copy are padded to this many bytes.
 const ROW_ALIGN: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
 
-/// Where the depth window starts in a pick's buffer, after the id texel.
-const PICK_WINDOW_OFFSET: u64 = ROW_ALIGN as u64;
+/// Where the triangle texel sits in a pick's buffer, after the id texel.
+const PICK_PRIMITIVE_OFFSET: u64 = ROW_ALIGN as u64;
+
+/// Where the depth window starts in a pick's buffer, after the id and
+/// triangle texels.
+const PICK_WINDOW_OFFSET: u64 = 2 * ROW_ALIGN as u64;
 
 const WAITING: u8 = 0;
 const MAPPED: u8 = 1;
@@ -43,13 +49,17 @@ pub(crate) fn window_around(x: u32, y: u32, width: u32, height: u32) -> (u32, u3
 }
 
 /// A pick: the cursor, the camera it was drawn with, and the window copied.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub(crate) struct PickRequest {
     pub x: u32,
     pub y: u32,
     pub view_proj: [[f32; 4]; 4],
     pub viewport: ViewportRect,
     pub window: (u32, u32, u32, u32),
+    /// Where the pass wrote triangles: each pickable body drawn and the
+    /// revision of the mesh it was drawn with, which the triangle's index
+    /// counts in. `None` where the device does not number primitives.
+    pub drawn: Option<Vec<(Uuid, u64)>>,
 }
 
 /// A picture: the scene's size and texel order, and the viewport to keep.
@@ -87,12 +97,14 @@ pub(crate) enum Done {
 }
 
 impl Readback {
-    /// Record the pick's copies: the id texel under the cursor and the
-    /// depth window around it, from the pick pass's depth colour target.
+    /// Record the pick's copies: the id texel under the cursor, the
+    /// triangle texel where the pass wrote `primitives`, and the depth
+    /// window around it, from the pick pass's depth colour target.
     pub(crate) fn pick(
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         ids: &wgpu::Texture,
+        primitives: Option<&wgpu::Texture>,
         depth: &wgpu::Texture,
         request: PickRequest,
     ) -> Self {
@@ -104,31 +116,37 @@ impl Readback {
             usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        encoder.copy_texture_to_buffer(
-            wgpu::TexelCopyTextureInfo {
-                texture: ids,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: request.x,
-                    y: request.y,
-                    z: 0,
+        let texel = |encoder: &mut wgpu::CommandEncoder, texture, offset| {
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: request.x,
+                        y: request.y,
+                        z: 0,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyBufferInfo {
-                buffer: &buffer,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(ROW_ALIGN),
-                    rows_per_image: None,
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset,
+                        bytes_per_row: Some(ROW_ALIGN),
+                        rows_per_image: None,
+                    },
                 },
-            },
-            wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-        );
+                wgpu::Extent3d {
+                    width: 1,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        };
+        texel(encoder, ids, 0);
+        if let Some(primitives) = primitives {
+            texel(encoder, primitives, PICK_PRIMITIVE_OFFSET);
+        }
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {
                 texture: depth,
@@ -216,9 +234,9 @@ impl Readback {
                     let Ok(bytes) = self.buffer.get_mapped_range(..) else {
                         return Polled::Failed;
                     };
-                    match self.kind {
-                        Kind::Pick(request) => Done::Pick(decode_pick(&bytes, &request)),
-                        Kind::Capture(request) => Done::Capture(decode_capture(&bytes, &request)),
+                    match &self.kind {
+                        Kind::Pick(request) => Done::Pick(decode_pick(&bytes, request)),
+                        Kind::Capture(request) => Done::Capture(decode_capture(&bytes, request)),
                     }
                 };
                 self.buffer.unmap();
@@ -237,7 +255,7 @@ fn word(bytes: &[u8], at: usize) -> u32 {
 }
 
 /// The pick's buffer, decoded: the body under the cursor, if any, where it
-/// lies, and the depths around it.
+/// lies, the triangle drawn there, and the depths around it.
 pub(crate) fn decode_pick(bytes: &[u8], request: &PickRequest) -> PickResult {
     let id = [
         word(bytes, 0),
@@ -272,8 +290,15 @@ pub(crate) fn decode_pick(bytes: &[u8], request: &PickRequest) -> PickResult {
             ..PickResult::default()
         };
     }
+    let body = u32s_to_uuid(id);
+    // Zero is the cleared texel; the pass writes the index plus one.
+    let triangle = request.drawn.as_ref().and_then(|drawn| {
+        let index = word(bytes, PICK_PRIMITIVE_OFFSET as usize).checked_sub(1)?;
+        let revision = drawn.iter().find(|(b, _)| *b == body)?.1;
+        Some(PickedTriangle { index, revision })
+    });
     PickResult {
-        body_id: Some(u32s_to_uuid(id)),
+        body_id: Some(body),
         world_position: Some(crate::unproject(
             request.x as f32,
             request.y as f32,
@@ -283,6 +308,7 @@ pub(crate) fn decode_pick(bytes: &[u8], request: &PickRequest) -> PickResult {
         )),
         depth,
         depth_window,
+        triangle,
     }
 }
 
@@ -330,10 +356,9 @@ mod tests {
         assert_eq!(padded_row(65, 4), 512);
     }
 
-    #[test]
-    fn a_pick_decodes_its_body_and_the_depth_under_the_cursor() {
-        let id = uuid::Uuid::new_v4();
-        let request = PickRequest {
+    /// A pick at the middle of a 3 × 3 viewport, with the camera at rest.
+    fn pick_at_the_middle(drawn: Option<Vec<(Uuid, u64)>>) -> PickRequest {
+        PickRequest {
             x: 1,
             y: 1,
             view_proj: [
@@ -349,11 +374,19 @@ mod tests {
                 height: 3,
             },
             window: (0, 0, 3, 3),
-        };
+            drawn,
+        }
+    }
+
+    /// The buffer such a pick fills: `id` under the cursor, `primitive` as
+    /// the triangle texel, a depth of 0.25 under the cursor and 1 around.
+    fn filled(id: Uuid, primitive: u32) -> Vec<u8> {
         let mut bytes = vec![0u8; PICK_WINDOW_OFFSET as usize + 3 * 256];
         for (i, w) in crate::mesh::uuid_to_u32s(id).iter().enumerate() {
             bytes[i * 4..i * 4 + 4].copy_from_slice(&w.to_le_bytes());
         }
+        let at = PICK_PRIMITIVE_OFFSET as usize;
+        bytes[at..at + 4].copy_from_slice(&primitive.to_le_bytes());
         for r in 0..3 {
             for c in 0..3 {
                 let at = PICK_WINDOW_OFFSET as usize + r * 256 + c * 4;
@@ -361,9 +394,16 @@ mod tests {
                 bytes[at..at + 4].copy_from_slice(&d.to_bits().to_le_bytes());
             }
         }
-        let result = decode_pick(&bytes, &request);
+        bytes
+    }
+
+    #[test]
+    fn a_pick_decodes_its_body_and_the_depth_under_the_cursor() {
+        let id = uuid::Uuid::new_v4();
+        let result = decode_pick(&filled(id, 0), &pick_at_the_middle(None));
         assert_eq!(result.body_id, Some(id));
         assert_eq!(result.depth, 0.25);
+        assert_eq!(result.triangle, None);
         let window = result.depth_window.unwrap();
         assert_eq!(window.depths.len(), 9);
         assert_eq!(window.depths[4], 0.25);
@@ -376,6 +416,30 @@ mod tests {
             "{p:?}"
         );
         assert!((p[2] - 0.25).abs() < 1e-6);
+    }
+
+    #[test]
+    fn a_pick_names_the_triangle_with_the_revision_it_was_drawn_at() {
+        let (id, other) = (Uuid::new_v4(), Uuid::new_v4());
+        let drawn = Some(vec![(other, 3), (id, 7)]);
+        let result = decode_pick(&filled(id, 42), &pick_at_the_middle(drawn.clone()));
+        assert_eq!(
+            result.triangle,
+            Some(PickedTriangle {
+                index: 41,
+                revision: 7
+            })
+        );
+        // The cleared texel names none, nor does a body not drawn.
+        assert_eq!(
+            decode_pick(&filled(id, 0), &pick_at_the_middle(drawn)).triangle,
+            None
+        );
+        let only_other = Some(vec![(other, 3)]);
+        assert_eq!(
+            decode_pick(&filled(id, 42), &pick_at_the_middle(only_other)).triangle,
+            None
+        );
     }
 
     #[test]

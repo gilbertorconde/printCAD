@@ -1447,6 +1447,7 @@ impl PrintCadApp {
         if self.session.hovered_body == Some(body.0) {
             self.session.hovered_body = None;
             self.session.hovered_world_pos = None;
+            self.session.hovered_triangle = None;
         }
         if self.session.face_highlight.as_ref().map(|f| f.body) == Some(body.0) {
             self.session.face_highlight = None;

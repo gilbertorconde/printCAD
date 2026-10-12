@@ -488,9 +488,15 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (id, revision). Edges are instanced screen-space quads (`vs_edge`), any
   width on any backend; the clipping plane discards per fragment. The pick
   pass writes depth into a colour target as well, since a depth texture
-  cannot be copied in part. The window takes a plain format, as egui
-  blends for; the scene draws into an sRGB texture that the blit encodes
-  onto it.
+  cannot be copied in part, and, where the device has
+  `Features::PRIMITIVE_INDEX` (never on a page), the triangle drawn
+  (`pick_primitive.wgsl`, `PickResult::triangle` with the revision the
+  body was drawn at); the host takes it as the face under the cursor when
+  that body was drawn with its document mesh at that revision
+  (`DocumentSession::drawn_meshes`, not a textured body), and otherwise
+  searches for the triangle nearest the picked point. The window takes a
+  plain format, as egui blends for; the scene draws into an sRGB texture
+  that the blit encodes onto it.
   `FrameSubmission.grids` (`GridSubmission`, `grid.rs`): a patch of any
   plane whose lines `grid.wgsl` works out per pixel, three decades at once,
   each faded by its spacing on screen, depth-tested and never picked.

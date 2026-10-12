@@ -12,6 +12,7 @@ use winit::window::Window;
 
 use crate::mesh::{
     DEPTH_FORMAT, DrawStats, MeshCache, MeshRenderer, PICK_DEPTH_FORMAT, PICK_ID_FORMAT,
+    PICK_PRIMITIVE_FORMAT,
 };
 use crate::readback::{self, CaptureRequest, Done, PickRequest, Polled, Readback};
 use crate::{
@@ -40,6 +41,8 @@ struct Targets {
     pick_ids_view: wgpu::TextureView,
     pick_depth: wgpu::Texture,
     pick_depth_view: wgpu::TextureView,
+    /// The triangle under each texel, where the device numbers primitives.
+    pick_primitives: Option<(wgpu::Texture, wgpu::TextureView)>,
     /// The pick pass's depth test.
     pick_depth_test_view: wgpu::TextureView,
 }
@@ -171,8 +174,14 @@ impl RendererCore {
         let adapter_formats = adapter
             .features()
             .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+        // The pick pass writes the triangle under the cursor where the
+        // device numbers primitives; elsewhere, and on a page, the host
+        // finds it from the picked point.
+        let picks_primitives = cfg!(not(target_arch = "wasm32"))
+            && adapter.features().contains(wgpu::Features::PRIMITIVE_INDEX);
         let mut required_features = wgpu::Features::empty();
         required_features.set(wgpu::Features::POLYGON_MODE_LINE, polygon_line);
+        required_features.set(wgpu::Features::PRIMITIVE_INDEX, picks_primitives);
         required_features.set(
             wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
             adapter_formats,
@@ -288,8 +297,29 @@ impl RendererCore {
             }],
         });
         let blit_pipeline = blit_pipeline(&device, &blit_layout, &blit_shader, format);
-        let targets = create_targets(&device, &blit_layout, &config, scene_format, msaa_samples);
-        let mesh_renderer = MeshRenderer::new(&device, scene_format, msaa_samples, polygon_line);
+        info!(
+            "Pick pass: {}",
+            if picks_primitives {
+                "triangles from the GPU"
+            } else {
+                "triangles found from the picked point"
+            }
+        );
+        let targets = create_targets(
+            &device,
+            &blit_layout,
+            &config,
+            scene_format,
+            msaa_samples,
+            picks_primitives,
+        );
+        let mesh_renderer = MeshRenderer::new(
+            &device,
+            scene_format,
+            msaa_samples,
+            polygon_line,
+            picks_primitives,
+        );
         let grid_renderer = crate::grid::GridPipeline::new(&device, scene_format, msaa_samples);
         let egui_renderer = egui_wgpu::Renderer::new(
             &device,
@@ -342,6 +372,7 @@ impl RendererCore {
             &self.config,
             self.scene_format,
             self.msaa_samples,
+            self.mesh_renderer.picks_primitives(),
         );
         self.last_scene_fingerprint = None;
     }
@@ -497,35 +528,39 @@ impl RendererCore {
         // The pick pass and its readback, only when the app asked for one.
         if let Some((x, y)) = pick {
             {
+                let attachment = |view, clear| {
+                    Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })
+                };
+                let mut color_attachments = vec![
+                    attachment(&self.targets.pick_ids_view, wgpu::Color::TRANSPARENT),
+                    // Nothing drawn reads as the far plane: the bits of a
+                    // depth of 1.
+                    attachment(
+                        &self.targets.pick_depth_view,
+                        wgpu::Color {
+                            r: f64::from(1.0f32.to_bits()),
+                            g: 0.0,
+                            b: 0.0,
+                            a: 0.0,
+                        },
+                    ),
+                ];
+                // Zero, the cleared texel, is no triangle: the pass writes
+                // the index plus one.
+                if let Some((_, view)) = &self.targets.pick_primitives {
+                    color_attachments.push(attachment(view, wgpu::Color::TRANSPARENT));
+                }
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("pick"),
-                    color_attachments: &[
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &self.targets.pick_ids_view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        }),
-                        Some(wgpu::RenderPassColorAttachment {
-                            view: &self.targets.pick_depth_view,
-                            depth_slice: None,
-                            resolve_target: None,
-                            ops: wgpu::Operations {
-                                // Nothing drawn reads as the far plane: the
-                                // bits of a depth of 1.
-                                load: wgpu::LoadOp::Clear(wgpu::Color {
-                                    r: f64::from(1.0f32.to_bits()),
-                                    g: 0.0,
-                                    b: 0.0,
-                                    a: 0.0,
-                                }),
-                                store: wgpu::StoreOp::Store,
-                            },
-                        }),
-                    ],
+                    color_attachments: &color_attachments,
                     depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                         view: &self.targets.pick_depth_test_view,
                         depth_ops: Some(wgpu::Operations {
@@ -548,11 +583,23 @@ impl RendererCore {
                 view_proj: frame.view_proj,
                 viewport: frame.viewport_rect.unwrap_or(full),
                 window: readback::window_around(x, y, width, height),
+                drawn: self.targets.pick_primitives.is_some().then(|| {
+                    frame
+                        .bodies
+                        .iter()
+                        .filter(|b| b.pickable)
+                        .map(|b| (b.id, b.revision))
+                        .collect()
+                }),
             };
             new_readbacks.push(Readback::pick(
                 &self.device,
                 &mut encoder,
                 &self.targets.pick_ids,
+                self.targets
+                    .pick_primitives
+                    .as_ref()
+                    .map(|(texture, _)| texture),
                 &self.targets.pick_depth,
                 request,
             ));
@@ -751,6 +798,7 @@ fn create_targets(
     config: &wgpu::SurfaceConfiguration,
     scene_format: wgpu::TextureFormat,
     msaa_samples: u32,
+    picks_primitives: bool,
 ) -> Targets {
     let size = wgpu::Extent3d {
         width: config.width,
@@ -796,6 +844,11 @@ fn create_targets(
     let pick_ids_view = pick_ids.create_view(&Default::default());
     let pick_depth = texture("pick depth", PICK_DEPTH_FORMAT, 1, readable);
     let pick_depth_view = pick_depth.create_view(&Default::default());
+    let pick_primitives = picks_primitives.then(|| {
+        let texture = texture("pick primitives", PICK_PRIMITIVE_FORMAT, 1, readable);
+        let view = texture.create_view(&Default::default());
+        (texture, view)
+    });
     let pick_depth_test_view =
         texture("pick depth test", DEPTH_FORMAT, 1, attachment).create_view(&Default::default());
     Targets {
@@ -808,6 +861,7 @@ fn create_targets(
         pick_ids_view,
         pick_depth,
         pick_depth_view,
+        pick_primitives,
         pick_depth_test_view,
     }
 }

@@ -639,10 +639,11 @@ impl PrintCadApp {
                 BENCH_CLICK_FRAME => {
                     tracing::info!(
                         target: "printcad.frame",
-                        "bench click at ({cx}, {cy}) of {:?}: body {:?} at {:?}, edge {:?}, face {:?}",
+                        "bench click at ({cx}, {cy}) of {:?}: body {:?} at {:?}, triangle {:?}, edge {:?}, face {:?}",
                         (vp.2, vp.3),
                         self.session.hovered_body,
                         self.session.hovered_world_pos,
+                        self.session.hovered_triangle,
                         self.session.hovered_edge,
                         self.session.hovered_face.as_ref().map(|f| f.face),
                     );
@@ -1048,6 +1049,15 @@ impl PrintCadApp {
             let pick_result = renderer.latest_pick_result();
             self.session.hovered_body = pick_result.body_id.filter(|_| over_scene);
             self.session.hovered_world_pos = pick_result.world_position.filter(|_| over_scene);
+            self.session.hovered_triangle = pick_result
+                .triangle
+                .zip(self.session.hovered_body)
+                .and_then(|(triangle, body)| {
+                    crate::app::input::document_triangle(
+                        triangle,
+                        self.session.drawn_meshes.get(&body).copied(),
+                    )
+                });
             self.session.pick_depths = pick_result.depth_window;
         }
         let hovered_plane = self.base_plane_under_cursor().filter(|_| over_scene);
@@ -1401,6 +1411,25 @@ impl PrintCadApp {
                 }
             })
             .collect();
+        // What a pick's triangle numbers: each body drawn with the
+        // document's mesh, or a copy of it in its order with faces
+        // coloured; a textured body's triangles are split.
+        self.session.drawn_meshes.clear();
+        for submitted in &imported_meshes {
+            let body = core_document::BodyId(submitted.id);
+            let textured = self
+                .session
+                .textured
+                .get(&body)
+                .is_some_and(|p| p.made.is_some());
+            if let Some(geometry) = self.session.document.imported_geometry(body)
+                && !textured
+            {
+                self.session
+                    .drawn_meshes
+                    .insert(submitted.id, (submitted.revision, geometry.revision));
+            }
+        }
         // While the Print layout task is open the scene is the layout: the
         // copies on the bed, drawn but not picked, the bodies left where
         // they are.
@@ -2031,7 +2060,12 @@ impl PrintCadApp {
             .document
             .imported_geometry(core_document::BodyId(body))
             .and_then(|geometry| {
-                let face = crate::app::input::face_id_at(&geometry.mesh, point)?;
+                let face = crate::app::input::face_id_at_pick(
+                    &geometry.mesh,
+                    geometry.revision,
+                    self.session.hovered_triangle,
+                    point,
+                )?;
                 if let Some(h) = &self.session.hovered_face
                     && h.body == body
                     && h.face == face

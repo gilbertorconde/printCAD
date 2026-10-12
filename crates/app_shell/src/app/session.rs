@@ -39,6 +39,15 @@ pub(crate) struct DocumentSession {
     pub selected_body: Option<Uuid>,
     pub hovered_body: Option<Uuid>,
     pub hovered_world_pos: Option<[f32; 3]>,
+    /// The triangle of `hovered_body`'s mesh the pick pass drew under the
+    /// cursor, where the GPU numbers them and the mesh drawn was the one
+    /// the document holds.
+    pub hovered_triangle: Option<crate::app::input::HoveredTriangle>,
+    /// The bodies last drawn with their document mesh's triangles, in its
+    /// order: by body, the revision it was submitted with and its
+    /// geometry's revision. A textured body is drawn with its triangles
+    /// split, and is not here.
+    pub drawn_meshes: std::collections::HashMap<Uuid, (u64, u64)>,
     /// The origin plane under the cursor, while the active bench shows them
     /// to be picked from (`Workbench::shows_origin_planes`).
     pub hovered_base_plane: Option<core_document::BasePlane>,
@@ -263,6 +272,8 @@ impl DocumentSession {
             selected_body: None,
             hovered_body: None,
             hovered_world_pos: None,
+            hovered_triangle: None,
+            drawn_meshes: Default::default(),
             hovered_base_plane: None,
             active_workbench: landing,
             active_document_object: None,

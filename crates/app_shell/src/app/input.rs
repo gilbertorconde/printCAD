@@ -170,6 +170,7 @@ impl PrintCadApp {
                 // hover state instead of letting the highlight linger.
                 self.session.hovered_body = None;
                 self.session.hovered_world_pos = None;
+                self.session.hovered_triangle = None;
                 self.session.hovered_edge = None;
             }
         }
@@ -835,7 +836,13 @@ impl PrintCadApp {
             .session
             .document
             .imported_geometry(core_document::BodyId(body))?;
-        let submesh = face_submesh(&geometry.mesh, face.point, face.normal)?;
+        let (id, submesh) = face_submesh(
+            &geometry.mesh,
+            geometry.revision,
+            self.hovered_triangle_of(body),
+            face.point,
+            face.normal,
+        )?;
         let revision = self
             .session
             .face_highlight
@@ -844,7 +851,7 @@ impl PrintCadApp {
             .unwrap_or(0);
         Some(FaceHighlight {
             body,
-            face: face_id_at(&geometry.mesh, face.point),
+            face: id,
             mesh: std::sync::Arc::new(submesh),
             revision,
         })
@@ -888,15 +895,108 @@ impl PrintCadApp {
     }
 
     /// Derive the face (surface point + normal) under the cursor from the
-    /// picked body's mesh. Runs only on selection clicks, so a linear scan
-    /// is fine.
+    /// picked body's mesh: the triangle the pick pass drew there, else the
+    /// one nearest the picked point.
     fn face_hit_under_cursor(&self, body: Uuid) -> Option<core_document::FaceRef> {
         let point = glam::Vec3::from_array(self.session.hovered_world_pos?);
         let geometry = self
             .session
             .document
             .imported_geometry(core_document::BodyId(body))?;
-        face_ref_from_mesh(&geometry.mesh, point)
+        face_ref_at_pick(
+            &geometry.mesh,
+            geometry.revision,
+            self.hovered_triangle_of(body),
+            point,
+        )
+    }
+
+    /// The triangle the pick drew under the cursor, when `body` is the one
+    /// it found there.
+    pub(crate) fn hovered_triangle_of(&self, body: Uuid) -> Option<HoveredTriangle> {
+        self.session
+            .hovered_triangle
+            .filter(|_| self.session.hovered_body == Some(body))
+    }
+}
+
+/// A triangle the pick pass drew under the cursor, as an index into the
+/// mesh the document holds for the picked body at `revision`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct HoveredTriangle {
+    pub index: u32,
+    pub revision: u64,
+}
+
+/// The picked triangle as one of the document's: `drawn` is the body's
+/// entry in `DocumentSession::drawn_meshes`, the revision it was last
+/// submitted with and its geometry's. A pick drawn with another revision,
+/// or a body drawn with a mesh of its own, names no triangle of the
+/// document's.
+pub(crate) fn document_triangle(
+    picked: render_wgpu::PickedTriangle,
+    drawn: Option<(u64, u64)>,
+) -> Option<HoveredTriangle> {
+    let (submitted, geometry) = drawn?;
+    (submitted == picked.revision).then_some(HoveredTriangle {
+        index: picked.index,
+        revision: geometry,
+    })
+}
+
+/// The triangle `pick` names in `mesh`, the document's mesh at `revision`:
+/// its index, one vertex and unit normal. `None` when the pick was taken
+/// against another revision, or names no triangle of the mesh with an
+/// area.
+fn picked_triangle(
+    mesh: &kernel_api::TriMesh,
+    revision: u64,
+    pick: Option<HoveredTriangle>,
+) -> Option<(usize, glam::Vec3, glam::Vec3)> {
+    let pick = pick.filter(|p| p.revision == revision)?;
+    let index = pick.index as usize;
+    let tri = mesh.indices.as_chunks::<3>().0.get(index)?;
+    let corner = |i: u32| {
+        mesh.positions
+            .get(i as usize)
+            .map(|p| glam::Vec3::from_array(*p))
+    };
+    let (a, b, c) = (corner(tri[0])?, corner(tri[1])?, corner(tri[2])?);
+    let normal = (b - a).cross(c - a);
+    (normal.length_squared() >= 1e-12).then(|| (index, a, normal.normalize()))
+}
+
+/// The face under the cursor on `mesh`, the document's mesh at `revision`:
+/// on the triangle `pick` names, else on the one nearest `point`.
+pub(crate) fn face_ref_at_pick(
+    mesh: &kernel_api::TriMesh,
+    revision: u64,
+    pick: Option<HoveredTriangle>,
+    point: glam::Vec3,
+) -> Option<core_document::FaceRef> {
+    match picked_triangle(mesh, revision, pick) {
+        Some((triangle, anchor, normal)) => {
+            Some(face_ref_on(mesh, triangle, anchor, normal, point))
+        }
+        None => face_ref_from_mesh(mesh, point),
+    }
+}
+
+/// The kernel face under the cursor on `mesh`, the document's mesh at
+/// `revision`, when the mesh records faces: the face of the triangle
+/// `pick` names, else of the one nearest `point`.
+pub(crate) fn face_id_at_pick(
+    mesh: &kernel_api::TriMesh,
+    revision: u64,
+    pick: Option<HoveredTriangle>,
+    point: [f32; 3],
+) -> Option<u32> {
+    if mesh.faces.len() != mesh.indices.len() / 3 || mesh.faces.is_empty() {
+        return None;
+    }
+    match picked_triangle(mesh, revision, pick) {
+        Some((triangle, _, _)) => Some(mesh.faces[triangle]),
+        None => face_id_at(mesh, point),
     }
 }
 
@@ -923,7 +1023,17 @@ pub(crate) fn face_ref_from_mesh(
     if dist_sq > limit * limit {
         return None;
     }
+    Some(face_ref_on(mesh, triangle, anchor, normal, point))
+}
 
+/// The face of `triangle` (one vertex `anchor`, unit `normal`) at `point`.
+fn face_ref_on(
+    mesh: &kernel_api::TriMesh,
+    triangle: usize,
+    anchor: glam::Vec3,
+    normal: glam::Vec3,
+    point: glam::Vec3,
+) -> core_document::FaceRef {
     // Project the noisy picked point onto the triangle's exact plane so the
     // face plane (and any sketch placed on it) is depth-error free.
     let projected = point - normal * (point - anchor).dot(normal);
@@ -938,12 +1048,12 @@ pub(crate) fn face_ref_from_mesh(
         .and_then(|face| mesh.face_names.get(*face as usize))
         .copied()
         .unwrap_or(0);
-    Some(core_document::FaceRef {
+    core_document::FaceRef {
         name,
         point: projected.to_array(),
         normal: normal.to_array(),
         surface,
-    })
+    }
 }
 
 /// The triangle of `mesh` nearest to `point`: its index, squared distance,
@@ -975,16 +1085,20 @@ fn nearest_triangle(
 /// is the one under the hit, whole: a cylinder wall as much as a flat side.
 /// A mesh without that (a sketch, a document saved before faces were
 /// recorded) falls back to the plane through the hit, which is exact for a
-/// flat face and one strip of a curved one.
+/// flat face and one strip of a curved one. The face is the one `pick`
+/// names on the document's mesh at `revision` ([`face_id_at_pick`]);
+/// returned with the sub-mesh, when the mesh records faces.
 pub(crate) fn face_submesh(
     mesh: &kernel_api::TriMesh,
+    revision: u64,
+    pick: Option<HoveredTriangle>,
     point: [f32; 3],
     normal: [f32; 3],
-) -> Option<kernel_api::TriMesh> {
-    if let Some(face) = face_id_at(mesh, point) {
-        return face_submesh_by_id(mesh, face);
+) -> Option<(Option<u32>, kernel_api::TriMesh)> {
+    if let Some(face) = face_id_at_pick(mesh, revision, pick, point) {
+        return Some((Some(face), face_submesh_by_id(mesh, face)?));
     }
-    coplanar_face_submesh(mesh, point, normal)
+    Some((None, coplanar_face_submesh(mesh, point, normal)?))
 }
 
 /// The kernel face the triangle nearest `point` was cut from, when the mesh
@@ -1283,6 +1397,98 @@ mod tests {
         assert_eq!(sub.indices.len(), 6);
     }
 
+    /// A point between the two faces of [`two_face_mesh`], nearer the
+    /// bottom: where depth noise could put a pick on the top face of a thin
+    /// wall.
+    const BETWEEN: glam::Vec3 = glam::Vec3::new(0.5, 0.5, 0.3);
+
+    fn top_and_bottom() -> TriMesh {
+        TriMesh {
+            faces: vec![1, 1, 2, 2],
+            ..two_face_mesh()
+        }
+    }
+
+    #[test]
+    fn a_picked_triangle_names_its_face_wherever_the_point_lies() {
+        use super::{HoveredTriangle, face_id_at_pick, face_ref_at_pick};
+        let mesh = top_and_bottom();
+        let top = Some(HoveredTriangle {
+            index: 1,
+            revision: 5,
+        });
+        let face = face_ref_at_pick(&mesh, 5, top, BETWEEN).unwrap();
+        assert!((glam::Vec3::from_array(face.normal) - glam::Vec3::Z).length() < 1e-4);
+        assert!(
+            (face.point[2] - 1.0).abs() < 1e-6,
+            "projected onto the picked triangle's plane: {:?}",
+            face.point
+        );
+        assert_eq!(face_id_at_pick(&mesh, 5, top, BETWEEN.to_array()), Some(1));
+        let (id, sub) =
+            super::face_submesh(&mesh, 5, top, BETWEEN.to_array(), face.normal).unwrap();
+        assert_eq!(id, Some(1));
+        assert!(
+            sub.positions.iter().all(|p| p[2] == 1.0),
+            "the highlight is the top face"
+        );
+    }
+
+    #[test]
+    fn a_stale_or_foreign_triangle_falls_back_to_the_nearest() {
+        use super::{HoveredTriangle, face_id_at_pick, face_ref_at_pick};
+        let mesh = top_and_bottom();
+        let picks = [
+            // Taken against another revision of the mesh.
+            Some(HoveredTriangle {
+                index: 1,
+                revision: 4,
+            }),
+            // Past the mesh's triangles.
+            Some(HoveredTriangle {
+                index: 4,
+                revision: 5,
+            }),
+            None,
+        ];
+        for pick in picks {
+            let face = face_ref_at_pick(&mesh, 5, pick, BETWEEN).unwrap();
+            assert!(face.point[2].abs() < 1e-6, "{pick:?}: the bottom, nearest");
+            assert_eq!(
+                face_id_at_pick(&mesh, 5, pick, BETWEEN.to_array()),
+                Some(2),
+                "{pick:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_pick_counts_in_the_document_mesh_only_as_it_was_drawn() {
+        use super::{HoveredTriangle, document_triangle};
+        let picked = render_wgpu::PickedTriangle {
+            index: 3,
+            revision: 9,
+        };
+        assert_eq!(
+            document_triangle(picked, Some((9, 2))),
+            Some(HoveredTriangle {
+                index: 3,
+                revision: 2
+            }),
+            "drawn as submitted: the geometry's revision"
+        );
+        assert_eq!(
+            document_triangle(picked, Some((10, 2))),
+            None,
+            "re-meshed since"
+        );
+        assert_eq!(
+            document_triangle(picked, None),
+            None,
+            "drawn with its own mesh"
+        );
+    }
+
     #[test]
     fn wildly_stale_point_is_rejected() {
         use super::face_ref_from_mesh;
@@ -1318,7 +1524,8 @@ mod tests {
         // A hit on the middle strip, with that strip's normal.
         let hit = [45f32.to_radians().cos(), 45f32.to_radians().sin(), 0.5];
         let normal = [hit[0], hit[1], 0.0];
-        let sub = face_submesh(&mesh, hit, normal).unwrap();
+        let (face, sub) = face_submesh(&mesh, 0, None, hit, normal).unwrap();
+        assert_eq!(face, Some(7));
         assert_eq!(
             sub.indices.len(),
             3 * 6,
@@ -1333,7 +1540,8 @@ mod tests {
         mesh.faces.clear();
         let hit = [45f32.to_radians().cos(), 45f32.to_radians().sin(), 0.5];
         let normal = [hit[0], hit[1], 0.0];
-        let sub = face_submesh(&mesh, hit, normal).unwrap();
+        let (face, sub) = face_submesh(&mesh, 0, None, hit, normal).unwrap();
+        assert_eq!(face, None);
         assert_eq!(
             sub.indices.len(),
             6,

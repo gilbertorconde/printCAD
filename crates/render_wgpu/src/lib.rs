@@ -111,6 +111,20 @@ pub struct PickResult {
     pub depth: f32,
     /// The depths around the cursor, whether or not anything is under it.
     pub depth_window: Option<DepthWindow>,
+    /// The triangle under the cursor, where the device numbers primitives;
+    /// `None` on one that does not, and where nothing was hit.
+    pub triangle: Option<PickedTriangle>,
+}
+
+/// The triangle the pick pass drew under the cursor, in the picked body's
+/// mesh as it was submitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PickedTriangle {
+    /// Its place in the mesh: indices `3 * index .. 3 * index + 3`.
+    pub index: u32,
+    /// The [`BodySubmission::revision`] the body was drawn with: the index
+    /// counts that mesh's triangles, which a later revision may not share.
+    pub revision: u64,
 }
 
 /// Trait used by the app shell to talk to any renderer implementation.
@@ -531,21 +545,38 @@ pub enum RenderError {
 mod tests {
     use super::*;
 
-    fn validate(name: &str, source: &str) {
+    fn validate(name: &str, source: &str, capabilities: naga::valid::Capabilities) {
         let module = naga::front::wgsl::parse_str(source)
             .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
-        naga::valid::Validator::new(
-            naga::valid::ValidationFlags::all(),
-            naga::valid::Capabilities::empty(),
-        )
-        .validate(&module)
-        .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
+        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), capabilities)
+            .validate(&module)
+            .unwrap_or_else(|e| panic!("{name}: {}", e.emit_to_string(source)));
     }
 
     #[test]
     fn the_shaders_parse_and_validate_for_every_backend() {
-        validate("scene.wgsl", include_str!("../shaders/scene.wgsl"));
-        validate("blit.wgsl", include_str!("../shaders/blit.wgsl"));
+        let none = naga::valid::Capabilities::empty();
+        validate("scene.wgsl", include_str!("../shaders/scene.wgsl"), none);
+        validate("blit.wgsl", include_str!("../shaders/blit.wgsl"), none);
+    }
+
+    #[test]
+    fn the_primitive_pick_validates_where_the_device_numbers_primitives() {
+        validate(
+            "scene.wgsl + pick_primitive.wgsl",
+            mesh::PRIMITIVE_PICK_SOURCE,
+            naga::valid::Capabilities::PRIMITIVE_INDEX,
+        );
+        let module = naga::front::wgsl::parse_str(mesh::PRIMITIVE_PICK_SOURCE).unwrap();
+        assert!(
+            naga::valid::Validator::new(
+                naga::valid::ValidationFlags::all(),
+                naga::valid::Capabilities::empty(),
+            )
+            .validate(&module)
+            .is_err(),
+            "a device without the primitive index must not be handed it"
+        );
     }
 
     #[test]

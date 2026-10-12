@@ -514,6 +514,8 @@ pub(crate) struct MeshRenderer {
     translucent_front: wgpu::RenderPipeline,
     on_top: wgpu::RenderPipeline,
     pick: wgpu::RenderPipeline,
+    /// Whether `pick` also writes the triangle drawn.
+    picks_primitives: bool,
     frame_buffer: wgpu::Buffer,
     frame_bind_group: wgpu::BindGroup,
     draw_layout: wgpu::BindGroupLayout,
@@ -528,7 +530,18 @@ pub(crate) struct MeshRenderer {
 /// Both integer formats, which every backend renders to.
 pub(crate) const PICK_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
 pub(crate) const PICK_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
+/// The pick pass's third attachment, where the device numbers primitives:
+/// the triangle under each texel, plus one.
+pub(crate) const PICK_PRIMITIVE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Uint;
 pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// The scene's shaders with the pick stage that writes the triangle drawn,
+/// which needs the device's primitive index.
+pub(crate) const PRIMITIVE_PICK_SOURCE: &str = concat!(
+    "enable primitive_index;\n",
+    include_str!("../shaders/scene.wgsl"),
+    include_str!("../shaders/pick_primitive.wgsl"),
+);
 
 impl MeshRenderer {
     pub(crate) fn new(
@@ -536,6 +549,7 @@ impl MeshRenderer {
         color_format: wgpu::TextureFormat,
         msaa_samples: u32,
         polygon_line: bool,
+        picks_primitives: bool,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("scene shaders"),
@@ -601,7 +615,15 @@ impl MeshRenderer {
                 polygon_line,
             )
         };
-        let pick = pick_pipeline(device, &layout, &shader);
+        let pick = if picks_primitives {
+            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("pick shaders"),
+                source: wgpu::ShaderSource::Wgsl(PRIMITIVE_PICK_SOURCE.into()),
+            });
+            pick_pipeline(device, &layout, &shader, true)
+        } else {
+            pick_pipeline(device, &layout, &shader, false)
+        };
         Self {
             solid: pipeline(MeshPipelineMode::Solid),
             wireframe: pipeline(MeshPipelineMode::WireframeTriangles),
@@ -610,6 +632,7 @@ impl MeshRenderer {
             translucent_front: pipeline(MeshPipelineMode::TranslucentFront),
             on_top: pipeline(MeshPipelineMode::OnTop),
             pick,
+            picks_primitives,
             frame_buffer,
             frame_bind_group,
             draw_layout,
@@ -833,6 +856,12 @@ impl MeshRenderer {
         stats
     }
 
+    /// Whether the pick pass writes the triangle drawn, into a third
+    /// attachment of [`PICK_PRIMITIVE_FORMAT`].
+    pub(crate) fn picks_primitives(&self) -> bool {
+        self.picks_primitives
+    }
+
     /// Draw every pickable body's id into the pick pass. Only what the host
     /// marked pickable: a selection overlay sits on or above the face it
     /// marks and would take the pick from it.
@@ -1018,7 +1047,20 @@ fn pick_pipeline(
     device: &wgpu::Device,
     layout: &wgpu::PipelineLayout,
     shader: &wgpu::ShaderModule,
+    primitives: bool,
 ) -> wgpu::RenderPipeline {
+    let target = |format| {
+        Some(wgpu::ColorTargetState {
+            format,
+            blend: None,
+            write_mask: wgpu::ColorWrites::ALL,
+        })
+    };
+    let targets = [
+        target(PICK_ID_FORMAT),
+        target(PICK_DEPTH_FORMAT),
+        target(PICK_PRIMITIVE_FORMAT),
+    ];
     device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("pick"),
         layout: Some(layout),
@@ -1049,20 +1091,13 @@ fn pick_pipeline(
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
             module: shader,
-            entry_point: Some("fs_pick"),
+            entry_point: Some(if primitives {
+                "fs_pick_primitive"
+            } else {
+                "fs_pick"
+            }),
             compilation_options: Default::default(),
-            targets: &[
-                Some(wgpu::ColorTargetState {
-                    format: PICK_ID_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: PICK_DEPTH_FORMAT,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-            ],
+            targets: if primitives { &targets } else { &targets[..2] },
         }),
         multiview_mask: None,
         cache: None,
