@@ -2359,6 +2359,7 @@ pub fn feature_editor(
             changed |= extrude_extras_rows(ui, fx, extras, two_sided, *direction);
         }
         DesignFeature::Pocket {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             regions,
@@ -2464,6 +2465,7 @@ pub fn feature_editor(
             up_to_face,
         }
         | DesignFeature::Groove {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             regions,
@@ -2551,6 +2553,7 @@ pub fn feature_editor(
             changed |= check_row(ui, reversed, "Reversed").changed();
         }
         DesignFeature::Loft {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             sections,
@@ -2642,6 +2645,7 @@ pub fn feature_editor(
             changed |= check_row(ui, subtractive, "Subtractive").changed();
         }
         DesignFeature::Pipe {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             profile,
@@ -2820,6 +2824,7 @@ pub fn feature_editor(
             }
         }
         DesignFeature::Primitive {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             kind,
@@ -3406,6 +3411,14 @@ pub fn feature_editor(
                 }
             });
         }
+    }
+    // A cutting feature can keep what it shares with the body instead.
+    if let Some(keep_inside) = feature.keep_inside_mut() {
+        changed |= check_row(ui, keep_inside, "Keep what it shares")
+            .on_hover_text(
+                "Keep only the material the feature and the body share, cutting the rest away",
+            )
+            .changed();
     }
     // Every feature that fuses or cuts can merge the coplanar faces it
     // leaves; new ones take the preference, this switch changes one.

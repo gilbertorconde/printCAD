@@ -136,6 +136,11 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
             ),
         "design.pocket" => spec
             .note(
+                "`keep_inside = true` keeps only what the pocket's prism shares with the \
+                 body instead of cutting it away (Groove, and a cutting Loft, Pipe or \
+                 primitive take it too); a pattern cannot repeat such a feature.",
+            )
+            .note(
                 "It cuts against its sketch's normal: from a sketch at the top face's height \
                  it digs down into the solid. From a sketch on the bottom (XY at 0 under a \
                  pad) it cuts away from the material and removes nothing, without an \

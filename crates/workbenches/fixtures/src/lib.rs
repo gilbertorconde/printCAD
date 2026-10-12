@@ -128,6 +128,7 @@ pub fn open_sketch_scene(
         .map_err(|err| format!("face sketch: {err}"))?;
     let pocket = DesignFeature::Pocket {
         regions: Vec::new(),
+        keep_inside: false,
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,

@@ -25,6 +25,7 @@ fn registry() -> DocumentService {
 
 fn cylinder(radius: f64, height: f64) -> DesignFeature {
     DesignFeature::Primitive {
+        keep_inside: false,
         attached: None,
         kind: PrimitiveKind::Cylinder {
             radius,
@@ -433,6 +434,7 @@ fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
 fn pocket(sketch: FeatureId, depth: f32) -> DesignFeature {
     DesignFeature::Pocket {
         regions: Vec::new(),
+        keep_inside: false,
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -796,6 +798,7 @@ fn a_primitive_attached_by_a_mode_follows_what_it_stands_on() {
         name: mesh.face_names[top_id],
     };
     let cube = DesignFeature::Primitive {
+        keep_inside: false,
         kind: kernel_api::PrimitiveKind::Box {
             length: 4.0,
             width: 4.0,

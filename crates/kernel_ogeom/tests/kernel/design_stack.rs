@@ -90,6 +90,7 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
 fn pocket_feature(sketch: FeatureId, depth: f32) -> DesignFeature {
     DesignFeature::Pocket {
         regions: Vec::new(),
+        keep_inside: false,
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
@@ -913,6 +914,7 @@ fn bore_rim_fillets() {
     doc.add_feature_in_body(
         DesignFeature::Pocket {
             regions: Vec::new(),
+            keep_inside: false,
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -1541,6 +1543,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
         doc.add_feature_in_body(
             DesignFeature::Pocket {
                 regions: Vec::new(),
+                keep_inside: false,
                 profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
@@ -3180,6 +3183,7 @@ fn pipe_of(
     sections: Vec<FeatureId>,
 ) -> DesignFeature {
     DesignFeature::Pipe {
+        keep_inside: false,
         path_borrowed: Vec::new(),
         path_edges: Vec::new(),
         profile_face: None,
@@ -4253,6 +4257,7 @@ fn a_fixed_pipe_carries_its_section_without_turning_it() {
 
 fn loft_of(sections: Vec<wb_design::LoftSection>) -> DesignFeature {
     DesignFeature::Loft {
+        keep_inside: false,
         sections,
         ruled: false,
         closed: false,

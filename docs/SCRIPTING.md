@@ -3087,6 +3087,7 @@ assert(math.abs(m.min[1]) < 1e-6 and math.abs(m.max[1] - 10) < 1e-6)
 Notes:
 
 - It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `keep_inside = true` keeps only what the pocket's prism shares with the body instead of cutting it away (Groove, and a cutting Loft, Pipe or primitive take it too); a pattern cannot repeat such a feature.
 - It cuts against its sketch's normal: from a sketch at the top face's height it digs down into the solid. From a sketch on the bottom (XY at 0 under a pad) it cuts away from the material and removes nothing, without an error; `reversed = true` turns it.
 - `through_all = true` cuts through everything; else `depth`, 5 mm when left out.
 - It is refused in a body with no solid feature yet. Its sketch must be in the padded body: `pc.sketch.new{body = ...}`, since a sketch made without `body` starts a new one.

@@ -605,12 +605,15 @@ fn plan_feature(
     } else {
         BooleanOp::Fuse
     };
+    // What a cutting feature does to the body: cut its tool away, or keep
+    // only what the two share.
+    let cut = if feature.keeps_inside() {
+        BooleanOp::Common
+    } else {
+        BooleanOp::Cut
+    };
     let shape_boolean = |subtractive: bool| {
-        if subtractive {
-            BooleanOp::Cut
-        } else {
-            additive_boolean
-        }
+        if subtractive { cut } else { additive_boolean }
     };
 
     let start_index = plan.ops.len();
@@ -622,7 +625,7 @@ fn plan_feature(
                 ));
             }
             let boolean = if matches!(feature, DesignFeature::Pocket { .. }) {
-                BooleanOp::Cut
+                cut
             } else {
                 additive_boolean
             };
@@ -688,7 +691,7 @@ fn plan_feature(
             )
             .map_err(&fail)?;
             let op = if matches!(feature, DesignFeature::Groove { .. }) {
-                BooleanOp::Cut
+                cut
             } else {
                 additive_boolean
             };
@@ -707,6 +710,7 @@ fn plan_feature(
             }
         }
         DesignFeature::Loft {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             sections,
@@ -746,6 +750,7 @@ fn plan_feature(
             });
         }
         DesignFeature::Pipe {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             profile,
@@ -840,7 +845,7 @@ fn plan_feature(
             reversed,
             subtractive,
             growth,
-            keep_inside,
+            keep_inside: _,
         } => {
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
             let profile = profile_of(&sketch_feature, &[]).map_err(&fail)?;
@@ -875,14 +880,11 @@ fn plan_feature(
             plan.ops.push(SolidOp::Sweep {
                 profile,
                 kind,
-                op: if *subtractive && *keep_inside {
-                    BooleanOp::Common
-                } else {
-                    shape_boolean(*subtractive)
-                },
+                op: shape_boolean(*subtractive),
             });
         }
         DesignFeature::Primitive {
+            keep_inside: _,
             refine: _,
             boolean_tolerance: _,
             kind,
@@ -1065,7 +1067,7 @@ fn plan_feature(
             refine: _,
             boolean_tolerance: _,
         } => {
-            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
             let (point, normal) = mirror_plane(document, plane).map_err(&fail)?;
             plan.ops.push(SolidOp::Transform {
                 transforms: vec![mat_mirror(point, normal)],
@@ -1083,7 +1085,7 @@ fn plan_feature(
             reversed,
             spacings,
         } => {
-            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
             let axis = pattern_axis(document, axis).map_err(&fail)?;
             let transforms = linear_transforms(
                 axis,
@@ -1112,7 +1114,7 @@ fn plan_feature(
             step_mode,
             angles,
         } => {
-            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
             let axis = pattern_axis(document, axis).map_err(&fail)?;
             let transforms = polar_transforms(
                 axis,
@@ -1136,7 +1138,7 @@ fn plan_feature(
             refine: _,
             boolean_tolerance: _,
         } => {
-            let originals = original_ops(feature_ops, originals).map_err(&fail)?;
+            let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
             let transforms = multi_transforms(document, steps).map_err(&fail)?;
             if !transforms.is_empty() {
                 plan.ops.push(SolidOp::Transform {
@@ -1241,12 +1243,28 @@ fn plan_feature(
 
 /// Resolve pattern `originals` (feature ids) into chain op indices. An empty
 /// list means "transform the whole body".
+/// A feature that keeps only what it shares with the body cannot be
+/// repeated: each copy would keep only what it shares with the last.
 fn original_ops(
+    document: &Document,
     feature_ops: &std::collections::HashMap<FeatureId, Vec<usize>>,
     originals: &[FeatureId],
 ) -> Result<Vec<usize>, String> {
     let mut indices = Vec::new();
     for original in originals {
+        let keeps_inside = document
+            .feature_values(*original)
+            .and_then(|data| DesignFeature::from_json(data).ok())
+            .is_some_and(|feature| feature.keeps_inside());
+        if keeps_inside {
+            let name = document
+                .get_feature_meta(*original)
+                .map_or("an original", |n| n.name.as_str());
+            return Err(format!(
+                "{name} keeps only what it shares with the body, which a pattern cannot \
+                 repeat; cut it away instead to pattern it"
+            ));
+        }
         let ops = feature_ops
             .get(original)
             .ok_or("a pattern original is missing or comes after the pattern (or is suppressed)")?;
@@ -3333,6 +3351,7 @@ mod tests {
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> DesignFeature {
         DesignFeature::Pocket {
             regions: Vec::new(),
+            keep_inside: false,
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
@@ -3791,6 +3810,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Groove {
                 regions: Vec::new(),
+                keep_inside: false,
                 refine: false,
                 boolean_tolerance: None,
                 sketch: sketch_id,
@@ -4704,6 +4724,42 @@ mod tests {
         assert!((transforms[2][0][3] - 30.0).abs() < 1e-9);
     }
 
+    /// A pocket kept inside keeps what it shares with the body: its op is
+    /// the common, and a pattern refuses to repeat it.
+    #[test]
+    fn a_pocket_kept_inside_keeps_the_common_and_does_not_pattern() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut kept = pocket(sketch_id, 5.0, false, false);
+        *kept.keep_inside_mut().expect("a pocket offers it") = true;
+        let pocket_id = doc
+            .add_feature_in_body(kept, "Pocket".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Common);
+
+        doc.add_feature_in_body(
+            DesignFeature::LinearPattern {
+                refine: false,
+                originals: vec![pocket_id],
+                axis: PatternAxis::X,
+                length: 30.0,
+                occurrences: 3,
+                spacing_mode: false,
+                spacings: Vec::new(),
+                reversed: false,
+            },
+            "Pattern".into(),
+            Some(body),
+        )
+        .unwrap();
+        let refused = body_build_ops(&doc, body).unwrap_err().to_string();
+        assert!(refused.contains("cannot repeat"), "{refused}");
+        // An adding feature offers no such switch.
+        assert!(pad(sketch_id, 1.0).keep_inside_mut().is_none());
+    }
+
     #[test]
     fn polar_full_circle_spacing_avoids_overlap() {
         let z = ([0.0; 3], [0.0, 0.0, 1.0]);
@@ -5004,6 +5060,7 @@ mod tests {
             .add_feature_in_body(
                 DesignFeature::Pocket {
                     regions: Vec::new(),
+                    keep_inside: false,
                     profile_borrowed: None,
                     extras: Default::default(),
                     refine: false,
@@ -5690,6 +5747,7 @@ mod tests {
             .add_feature_in_body(rect_sketch(), "section".into(), Some(body))
             .unwrap();
         let pipe = |orientation: PipeOrientation| DesignFeature::Pipe {
+            keep_inside: false,
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,

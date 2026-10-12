@@ -1254,6 +1254,10 @@ pub enum DesignFeature {
     /// subtract it (cuts against the sketch normal by default: a face
     /// sketch's normal points out of the material).
     Pocket {
+        /// A cutting feature keeps only what it shares with the body
+        /// instead of cutting it away.
+        #[serde(default)]
+        keep_inside: bool,
         /// The sketch whose profile it cuts; `None` when the profile is
         /// `profile_face`.
         #[serde(default)]
@@ -1347,6 +1351,10 @@ pub enum DesignFeature {
     },
     /// Revolve the sketch profile and subtract it.
     Groove {
+        /// A cutting feature keeps only what it shares with the body
+        /// instead of cutting it away.
+        #[serde(default)]
+        keep_inside: bool,
         sketch: FeatureId,
         angle_deg: f32,
         #[serde(default)]
@@ -1381,6 +1389,10 @@ pub enum DesignFeature {
     /// sketches of a single point) at either end, and flat faces of the
     /// solid.
     Loft {
+        /// A cutting feature keeps only what it shares with the body
+        /// instead of cutting it away.
+        #[serde(default)]
+        keep_inside: bool,
         sections: Vec<LoftSection>,
         ruled: bool,
         closed: bool,
@@ -1395,6 +1407,10 @@ pub enum DesignFeature {
     },
     /// Sweep a profile sketch along a spine sketch's path.
     Pipe {
+        /// A cutting feature keeps only what it shares with the body
+        /// instead of cutting it away.
+        #[serde(default)]
+        keep_inside: bool,
         profile: FeatureId,
         spine: FeatureId,
         /// How the section turns down the path; files that hold only the
@@ -1465,6 +1481,10 @@ pub enum DesignFeature {
     },
     /// Parametric primitive fused into (or cut from) the body.
     Primitive {
+        /// A cutting feature keeps only what it shares with the body
+        /// instead of cutting it away.
+        #[serde(default)]
+        keep_inside: bool,
         kind: kernel_api::PrimitiveKind,
         placement: kernel_api::Placement,
         subtractive: bool,
@@ -2130,6 +2150,39 @@ impl DesignFeature {
     }
 
     /// True when this feature removes material (must not be a body's first).
+    /// A cutting feature that keeps what it shares with the body (the
+    /// common) rather than cutting it away.
+    pub fn keeps_inside(&self) -> bool {
+        match self {
+            DesignFeature::Pocket { keep_inside, .. }
+            | DesignFeature::Groove { keep_inside, .. }
+            | DesignFeature::Loft { keep_inside, .. }
+            | DesignFeature::Pipe { keep_inside, .. }
+            | DesignFeature::Helix { keep_inside, .. }
+            | DesignFeature::Primitive { keep_inside, .. } => *keep_inside && self.is_subtractive(),
+            _ => false,
+        }
+    }
+
+    /// The keep-inside switch of a cutting feature that offers it in
+    /// the task with the rest: Pocket, Groove, and a cutting Loft, Pipe or
+    /// Primitive.
+    pub fn keep_inside_mut(&mut self) -> Option<&mut bool> {
+        let cutting = self.is_subtractive();
+        match self {
+            DesignFeature::Pocket { keep_inside, .. }
+            | DesignFeature::Groove { keep_inside, .. } => Some(keep_inside),
+            DesignFeature::Loft { keep_inside, .. }
+            | DesignFeature::Pipe { keep_inside, .. }
+            | DesignFeature::Primitive { keep_inside, .. }
+                if cutting =>
+            {
+                Some(keep_inside)
+            }
+            _ => None,
+        }
+    }
+
     pub fn is_subtractive(&self) -> bool {
         match self {
             DesignFeature::Pocket { .. }
@@ -2573,6 +2626,7 @@ mod tests {
     #[test]
     fn a_pipe_orientation_round_trips() {
         let feature = DesignFeature::Pipe {
+            keep_inside: false,
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
@@ -2620,6 +2674,7 @@ mod tests {
         let a = FeatureId::new();
         let b = FeatureId::new();
         let pipe = DesignFeature::Pipe {
+            keep_inside: false,
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,
@@ -2636,6 +2691,7 @@ mod tests {
 
         let (c, d) = (FeatureId::new(), FeatureId::new());
         let guided = DesignFeature::Pipe {
+            keep_inside: false,
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
             profile_face: None,

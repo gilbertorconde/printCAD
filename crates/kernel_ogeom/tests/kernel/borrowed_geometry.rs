@@ -414,6 +414,7 @@ fn a_pad_stops_on_a_curved_borrowed_face() {
     let a = doc.create_body(Some("A".into()));
     doc.add_feature_in_body(
         DesignFeature::Primitive {
+            keep_inside: false,
             attached: None,
             kind: kernel_api::PrimitiveKind::Cylinder {
                 radius: 10.0,

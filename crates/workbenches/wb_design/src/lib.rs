@@ -339,6 +339,7 @@ impl DesignWorkbench {
     ) -> Result<(DesignFeature, &'static str), String> {
         let sketch = Self::selected_sketch(ctx);
         let primitive = |subtractive: bool| DesignFeature::Primitive {
+            keep_inside: false,
             attached: None,
             refine: false,
             boolean_tolerance: None,
@@ -438,6 +439,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Pocket {
                         regions: Vec::new(),
+                        keep_inside: false,
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
@@ -485,6 +487,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Groove {
                         regions: Vec::new(),
+                        keep_inside: false,
                         refine: false,
                         boolean_tolerance: None,
                         sketch: need_sketch(sketch)?,
@@ -507,6 +510,7 @@ impl DesignWorkbench {
                 }
                 (
                     DesignFeature::Loft {
+                        keep_inside: false,
                         refine: false,
                         boolean_tolerance: None,
                         sections: vec![crate::feature::LoftSection::Feature(need_sketch(sketch)?)],
@@ -549,6 +553,7 @@ impl DesignWorkbench {
                     })?;
                 (
                     DesignFeature::Pipe {
+                        keep_inside: false,
                         path_borrowed: Vec::new(),
                         path_edges: Vec::new(),
                         profile_face: None,
@@ -2570,6 +2575,7 @@ mod body_tool {
             let pad = doc
                 .add_feature_in_body(
                     DesignFeature::Primitive {
+                        keep_inside: false,
                         attached: None,
                         refine: false,
                         boolean_tolerance: None,
@@ -2642,6 +2648,7 @@ mod body_tool {
         let body = doc.create_body(None);
         doc.add_feature_in_body(
             DesignFeature::Primitive {
+                keep_inside: false,
                 attached: None,
                 refine: false,
                 boolean_tolerance: None,
