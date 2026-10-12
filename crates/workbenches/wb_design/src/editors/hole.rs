@@ -42,6 +42,7 @@ pub(super) fn hole_editor(
     // What the hole drills as it stands, before this frame's edits.
     let drilled = crate::build::hole_diameter(feature);
     let DesignFeature::Hole {
+        cosmetic_thread,
         refine: _,
         boolean_tolerance: _,
         sketch,
@@ -162,6 +163,13 @@ pub(super) fn hole_editor(
             .on_hover_text("Use the tap-drill diameter for later thread cutting")
             .changed();
         if *threaded {
+            if !*modeled_thread {
+                changed |= check_row(ui, cosmetic_thread, "Cosmetic thread")
+                    .on_hover_text(
+                        "Drill the tap size and show the thread down the bore: tap it after printing",
+                    )
+                    .changed();
+            }
             if check_row(ui, modeled_thread, "Modeled thread")
                 .on_hover_text("Cut the thread itself into the wall, to print it")
                 .changed()

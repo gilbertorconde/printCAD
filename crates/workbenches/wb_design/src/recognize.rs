@@ -156,6 +156,7 @@ fn drill(
     ctx.document.set_feature_visible(sketch_id, false);
 
     let hole = DesignFeature::Hole {
+        cosmetic_thread: false,
         clearance: None,
         thread_length: Default::default(),
         refine: false,

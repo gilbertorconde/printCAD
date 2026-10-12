@@ -374,6 +374,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
         .unwrap();
     doc.add_feature_in_body(
         DesignFeature::Hole {
+            cosmetic_thread: false,
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -434,6 +435,7 @@ fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f
         .unwrap();
     doc.add_feature_in_body(
         DesignFeature::Hole {
+            cosmetic_thread: false,
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -1228,6 +1230,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         )
         .unwrap();
     let hole = |modeled_thread: bool| DesignFeature::Hole {
+        cosmetic_thread: false,
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -1970,6 +1973,7 @@ fn drilled_block_solid(
 /// change.
 fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
     DesignFeature::Hole {
+        cosmetic_thread: false,
         clearance: None,
         thread_length: Default::default(),
         refine: false,

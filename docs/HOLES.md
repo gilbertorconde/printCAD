@@ -43,6 +43,12 @@ flank angle, out to its major diameter, along a cone for a taper thread.
 leaves at the bottom. A through hole's thread needs the solid built
 first, to know how far it runs.
 
+**Cosmetic thread** (on a threaded hole that is not modeled) keeps the
+bore at its tap drill and shows the thread instead: a helix of the
+thread's pitch down the bore, and the designation in the hole's name in
+the tree ("Hole · M6 thread"). Nothing of it reaches an export: drill the
+tap size, print, and tap the hole afterwards.
+
 ## Depth and bottom
 
 **Through all** or a **Depth**. A blind hole's **Drill point** is flat or
