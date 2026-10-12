@@ -4318,7 +4318,10 @@ impl Workbench for SketchWorkbench {
                 "Tab next · Enter constrains · click keeps free"
             };
             (!rows.is_empty()).then(|| core_document::OvpWidget {
-                anchor: [px[0] + 22.0, px[1] - 12.0],
+                anchor: [
+                    px[0] + ovp::CARD_OFFSET_PX[0],
+                    px[1] + ovp::CARD_OFFSET_PX[1],
+                ],
                 rows,
                 hint,
             })

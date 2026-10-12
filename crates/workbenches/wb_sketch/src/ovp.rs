@@ -8,6 +8,10 @@ use crate::sketch::{AxisDirection, ConstraintKind, GeometryElement, Sketch, Vec2
 use crate::snap::SnapTarget;
 use crate::tools::ToolState;
 
+/// Where the readout card's top-left corner sits from the cursor, in
+/// pixels: right of it, its top a little above.
+pub const CARD_OFFSET_PX: [f32; 2] = [22.0, -12.0];
+
 /// A dimension field the active tool exposes in its current state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FieldKind {

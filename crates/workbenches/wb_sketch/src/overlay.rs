@@ -213,16 +213,23 @@ pub fn element_style(
 /// Half the size of a snap marker, in pixels.
 const SNAP_MARK_PX: f32 = POINT_RADIUS_PX + 3.0;
 
+/// Half the height of a snap's name pill (11 px text and its padding),
+/// and the room kept between it and the readout card, in pixels.
+const SNAP_LABEL_HALF_HEIGHT_PX: f32 = 10.0;
+const SNAP_LABEL_GAP_PX: f32 = 4.0;
+
 /// The cue for where a click will land: a mark shaped for what it snapped
 /// to (a square on an endpoint, a ring on a centre, a ringed cross on the
 /// origin, an X on a crossing, a triangle on a midpoint, a square corner
 /// at a perpendicular's foot, a ring and a touching line at a tangent
 /// point, a diamond on a curve or an axis, two strokes for a parallel, an
 /// upturned T for a square direction, a ringed dash on an extension), its
-/// name beside it, and with `hint_lines` its guide: dashed back to the
-/// point being drawn from when level or plumb with it, dashed along a
-/// parallel or square direction with the line it follows lit, dashed from
-/// a line's end out along its extension.
+/// name beside it, clear of the readout card at the cursor (`cursor_px`),
+/// and with `hint_lines` its guide: dashed back to the point being drawn
+/// from when level or plumb with it, dashed along a parallel or square
+/// direction with the line it follows lit, dashed from a line's end out
+/// along its extension.
+#[allow(clippy::too_many_arguments)]
 fn push_snap_marker(
     out: &mut Overlays,
     proj: &SketchProjector,
@@ -231,6 +238,7 @@ fn push_snap_marker(
     snap: &crate::snap::Snap,
     from: Option<Vec2D>,
     hint_lines: bool,
+    cursor_px: Option<[f32; 2]>,
 ) {
     use crate::snap::SnapKind;
     let Some(kind) = snap.kind else {
@@ -315,14 +323,16 @@ fn push_snap_marker(
     if hint_lines {
         push_snap_guide(out, proj, pal, sketch, snap, kind, from, [x, y]);
     }
+    // Above the marker, and above the readout card beside the cursor so
+    // neither covers the other.
+    let mut label_y = y - h - 8.0;
+    if let Some([_, cy]) = cursor_px {
+        let card_top = cy + crate::ovp::CARD_OFFSET_PX[1];
+        label_y = label_y.min(card_top - SNAP_LABEL_GAP_PX - SNAP_LABEL_HALF_HEIGHT_PX);
+    }
     out.labels.push(
-        core_document::ScreenSpaceLabel::new(
-            [x + h + 30.0, y - h - 8.0],
-            kind.label(),
-            color,
-            11.0,
-        )
-        .pill(),
+        core_document::ScreenSpaceLabel::new([x + h + 30.0, label_y], kind.label(), color, 11.0)
+            .pill(),
     );
 }
 
@@ -1619,7 +1629,16 @@ pub fn build_overlays(
         }
         if let Some(snap) = &snap {
             let from = crate::tools::snap_context(tool_state, sketch).from;
-            push_snap_marker(&mut out, proj, pal, sketch, snap, from, hint_lines);
+            push_snap_marker(
+                &mut out,
+                proj,
+                pal,
+                sketch,
+                snap,
+                from,
+                hint_lines,
+                proj.to_px(raw),
+            );
         }
         // A crosshair follows the cursor while a drawing tool is armed.
         if active_tool.is_some_and(|t| t != "sketch.select")

@@ -3333,6 +3333,33 @@ fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
     assert_eq!(held, 2, "held on both lines");
 }
 
+/// A snap's name stands above the readout card beside the cursor, not
+/// under it.
+#[test]
+fn the_snap_cue_clears_the_readout_card() {
+    let mut h = Harness::new();
+    h.create_sketch();
+    h.click(3.0, 4.0, "sketch.line");
+    h.click(23.0, 4.0, "sketch.line");
+    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.click(10.0, 20.0, "sketch.line");
+    h.mouse_move(23.2, 4.2, "sketch.line");
+
+    let cue = h
+        .labels()
+        .into_iter()
+        .find(|l| l.text == "Endpoint")
+        .expect("the endpoint cue");
+    let card = h.hud().and_then(|hud| hud.ovp).expect("the readout card");
+    // The pill: 11 px text and its padding, about 20 px tall.
+    let cue_bottom = cue.pos[1] + 10.0;
+    assert!(
+        cue_bottom <= card.anchor[1],
+        "the cue's bottom {cue_bottom} runs below the card's top {}",
+        card.anchor[1]
+    );
+}
+
 /// The cue names what the cursor would snap to, and the click lands there:
 /// the same answer for both.
 #[test]
