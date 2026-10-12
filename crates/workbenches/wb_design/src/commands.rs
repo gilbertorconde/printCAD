@@ -979,8 +979,8 @@ pub fn register(context: &mut WorkbenchContext) {
             "mode",
             ParamKind::String,
             "What it attaches to: base_plane (the default), face, three_points, \
-             normal_to_edge, along_edge, two_points, plane_intersection, curve_centre \
-             or inertia; references are in the body's own frame and follow its solid",
+             normal_to_edge, along_edge, two_points, plane_intersection, midplane, \
+             curve_centre or inertia; references are in the body's own frame and follow its solid",
         )
         .optional(
             "plane",
@@ -1022,7 +1022,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .optional(
             "planes",
             ParamKind::List,
-            "plane_intersection: two of XY, XZ, YZ, a datum's id, or {face_point, face_normal}",
+            "plane_intersection, midplane: two of XY, XZ, YZ, a datum's id, or \
+             {face_point, face_normal}",
         )
         .optional(
             "offset",
@@ -1073,6 +1074,29 @@ pub fn register(context: &mut WorkbenchContext) {
             pc.design.set{feature = pad, length = 8}
             assert(#pc.doc.rebuild() == 0)
             assert(math.abs(pc.doc.measure{body = body}.max[3] - 11) < 1e-6)
+            "#,
+        )
+        .example(
+            "A post standing on the plane midway between a block's top and bottom",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 8}
+            local body = pc.doc.feature{id = pad}.body
+            -- Halfway between the top and the bottom: z = 4, its origin
+            -- between the points the faces were given at.
+            local middle = pc.design.datum{kind = "plane", body = body, mode = "midplane",
+              planes = {{face_point = {10, 5, 8}, face_normal = {0, 0, 1}},
+                        {face_point = {10, 5, 0}, face_normal = {0, 0, -1}}}}
+            local on = pc.sketch.new{body = body, on = middle}
+            pc.sketch.circle{sketch = on, x = 0, y = 0, radius = 2}
+            pc.design.pad{sketch = on, length = 10}
+            assert(#pc.doc.rebuild() == 0, "the post builds")
+            assert(math.abs(pc.doc.measure{body = body}.max[3] - 14) < 1e-6)
+            -- A taller block moves the middle, and the post, up by half.
+            pc.design.set{feature = pad, length = 12}
+            assert(#pc.doc.rebuild() == 0)
+            assert(math.abs(pc.doc.measure{body = body}.max[3] - 16) < 1e-6)
             "#,
         ),
     );

@@ -59,6 +59,10 @@ pub const MODES: &[(&str, &str)] = &[
         "where a line meets a plane (line, plane)",
     ),
     ("two_lines", "where two lines cross (lines)"),
+    (
+        "midplane",
+        "midway between two planes, or bisecting them (planes)",
+    ),
 ];
 
 /// Where a sketch's point or line ends stand, in its body's frame.
@@ -439,6 +443,9 @@ pub fn attachment_from_args(
         "plane_intersection" => DatumAttachment::PlaneIntersection {
             planes: anchors(a, "planes", |v, name| plane_from(v, name, ctx, body))?,
         },
+        "midplane" => DatumAttachment::Midplane {
+            planes: anchors(a, "planes", |v, name| plane_from(v, name, ctx, body))?,
+        },
         "inertia" => DatumAttachment::Inertia {
             centre: [0.0; 3],
             axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
@@ -575,7 +582,7 @@ pub fn attachment_args(attachment: &DatumAttachment) -> Map<String, Value> {
         DatumAttachment::AlongEdge { edge } | DatumAttachment::CurveCentre { edge } => {
             edge_args(edge)
         }
-        DatumAttachment::PlaneIntersection { planes } => {
+        DatumAttachment::PlaneIntersection { planes } | DatumAttachment::Midplane { planes } => {
             let mut args = Map::new();
             args.insert("planes".into(), planes.iter().map(plane_args).collect());
             args
@@ -945,6 +952,10 @@ mod tests {
             json!({"mode": "plane_intersection", "planes": [
                 base.0.to_string(),
                 {"face_point": [0, 5, 0], "face_normal": [0, 1, 0]},
+            ]}),
+            json!({"mode": "midplane", "planes": [
+                base.0.to_string(),
+                {"face_point": [0, 0, 7], "face_normal": [0, 0, -1]},
             ]}),
             json!({"mode": "normal_to_edge", "edge_point": [1, 0, 0],
                    "edge_direction": [1, 0, 0], "along": 0.25}),

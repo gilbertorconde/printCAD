@@ -626,7 +626,7 @@ pub fn attachment_editor(
         DatumAttachment::AlongEdge { edge } | DatumAttachment::CurveCentre { edge } => {
             picks_changed |= edge_row(ui, edge, &picked);
         }
-        DatumAttachment::PlaneIntersection { planes } => {
+        DatumAttachment::PlaneIntersection { planes } | DatumAttachment::Midplane { planes } => {
             for (i, plane) in planes.iter_mut().enumerate() {
                 picks_changed |= plane_row(ui, ctx, (salt, i), body, plane, &picked);
             }

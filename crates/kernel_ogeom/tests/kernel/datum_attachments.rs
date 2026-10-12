@@ -826,3 +826,75 @@ fn a_primitive_attached_by_a_mode_follows_what_it_stands_on() {
     let (_, hi) = settle(&registry, &mut doc, body);
     assert!((hi[2] - 24.0).abs() < 1e-3, "went up with the top: {hi:?}");
 }
+
+/// A plane midway between a pad's top and bottom, both found by name,
+/// stays halfway up when the pad grows.
+#[test]
+fn a_midplane_stays_halfway_between_the_faces_it_was_made_from() {
+    let registry = registry();
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let base = doc
+        .add_feature_in_body(rect_sketch(20.0, 20.0), "base".into(), Some(body))
+        .unwrap();
+    let pad_id = doc
+        .add_feature_in_body(pad(base, 10.0), "Pad".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+
+    // The top and the bottom, as clicks pick them.
+    let mesh = doc.imported_geometry(body).unwrap().mesh.clone();
+    let face_at = |up: f32, height: f32| {
+        let id = mesh
+            .face_surfaces
+            .iter()
+            .position(|s| {
+                matches!(s, kernel_api::FaceSurface::Plane { origin, normal }
+                    if normal[2] * up > 0.99 && (origin[2] - height).abs() < 1e-3)
+            })
+            .expect("the face");
+        assert_ne!(mesh.face_names[id], 0, "the face is named");
+        core_document::PlaneAnchor::Face {
+            face: FaceAnchor {
+                name: mesh.face_names[id],
+                point: [5.0, 15.0, height],
+                normal: [0.0, 0.0, up],
+                surface: None,
+                follows: true,
+            },
+        }
+    };
+    let middle = doc
+        .add_feature_in_body(
+            datum(
+                DatumShape::Plane { size: 20.0 },
+                DatumAttachment::Midplane {
+                    planes: [face_at(1.0, 10.0), face_at(-1.0, 0.0)],
+                },
+            ),
+            "Middle".into(),
+            Some(body),
+        )
+        .unwrap();
+    settle(&registry, &mut doc, body);
+    let frame = frame_of(&doc, middle);
+    assert!(near(frame.origin, [5.0, 15.0, 5.0]), "{frame:?}");
+    assert!(near(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
+
+    let mut data = doc.get_feature_data(pad_id).unwrap().clone();
+    data["Pad"]["length"] = serde_json::json!(20.0);
+    doc.update_feature_data(pad_id, data).unwrap();
+    doc.mark_feature_dirty(pad_id);
+    settle(&registry, &mut doc, body);
+    let frame = frame_of(&doc, middle);
+    assert!(
+        (frame.origin[2] - 10.0).abs() < 1e-3,
+        "halfway up the taller pad: {frame:?}"
+    );
+    assert!(near(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
+    assert!(
+        doc.get_feature_meta(middle).unwrap().error.is_none(),
+        "both faces were found"
+    );
+}

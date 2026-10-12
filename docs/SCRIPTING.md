@@ -3954,7 +3954,7 @@ assert(math.abs(volume - 20 * 10 * 8) < 1e-3, volume)
 
 - `kind` (string): plane, line, point or coordinate_system
 - `body` (id): The body it belongs to
-- `mode` (string, optional): What it attaches to: base_plane (the default), face, three_points, normal_to_edge, along_edge, two_points, plane_intersection, curve_centre or inertia; references are in the body's own frame and follow its solid
+- `mode` (string, optional): What it attaches to: base_plane (the default), face, three_points, normal_to_edge, along_edge, two_points, plane_intersection, midplane, curve_centre or inertia; references are in the body's own frame and follow its solid
 - `plane` (string, optional): base_plane: the base plane it sits on, XY (the default), XZ or YZ
 - `face_point` (list, optional): face: a point of the face, {x, y, z}; without a mode, a flat face kept as given
 - `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
@@ -3962,7 +3962,7 @@ assert(math.abs(volume - 20 * 10 * 8) < 1e-3, volume)
 - `edge_direction` (list, optional): With edge_point: the way the edge runs there, {x, y, z}
 - `spot` (string, optional): normal_to_edge: where on the edge, picked (the default), start, end, middle or centre
 - `points` (list, optional): three_points, two_points: each {x, y, z}, or {face_point, face_normal}, or {edge_point, edge_direction, spot}
-- `planes` (list, optional): plane_intersection: two of XY, XZ, YZ, a datum's id, or {face_point, face_normal}
+- `planes` (list, optional): plane_intersection, midplane: two of XY, XZ, YZ, a datum's id, or {face_point, face_normal}
 - `offset` (list, optional): Moved along its own x, y and normal, {x, y, z} in mm
 - `rotation` (number, optional): Turned about its normal, degrees
 - `flip` (boolean, optional): Turned to face the other way

@@ -69,6 +69,42 @@ progress first: a typed value, a half-drawn shape, the selection.
 
 ![The sketcher's task panel: what the solver says, its settings and the constraints](images/sketch-panel.png)
 
+## Datums
+
+Design's datum tools add a plane, line, point or coordinate system to the
+active body. The task panel's **Attached to** list places it: on a base
+plane, or by a mode built from what is selected on the body. A mode whose
+picks are missing is greyed, its tooltip saying what to select first.
+
+| Mode | Select first | Places it |
+| --- | --- | --- |
+| On a face | A face | On the face, tangent to it where it is curved |
+| Through three points, through two points | Edges or a face, if any | Through the points, the unpicked ones near the datum |
+| Square to an edge, along an edge, tangent to an edge | An edge | At or along the edge |
+| Where two planes meet | | On the line two planes share |
+| Midway between two planes | Two faces | Halfway between parallel faces; between faces at an angle, on the plane bisecting it |
+| Centre of a curve | A circular edge | At the circle's centre, square to it |
+| Centre of mass | | At the body's centre of mass, on its axes of inertia |
+| On a datum, another body's origin | | On that datum or origin plane |
+| Square to a face | A face | Along the face's normal |
+| Through a line and a point, where a line meets a plane | An edge | Through the line |
+| Where two lines cross | Two edges | Where the lines pass nearest |
+
+Each reference row in the panel swaps what the datum stands on: **Use
+selected face** or **Use selected edge** takes the current pick, and a
+plane row also takes a base plane or an earlier datum plane. The midway
+plane's two rows each take a face, a base plane or a datum plane, so it
+can stand between a face and a datum. Between faces at an angle it takes
+the bisector passing between them, through the material where they are
+two faces of one solid, its x-axis along the line where they meet.
+
+References on the body's own solid follow it: when a feature before the
+datum changes, the rebuild finds each face and edge again, by name, and
+the datum moves with them, along with the sketches and features built on
+it. The offset, turn, tilt and flip in the panel move the datum from where
+its mode places it. `pc.design.datum` makes the same datums from a script
+([Scripting](SCRIPTING.md)).
+
 ## Design features
 
 1. A tool such as Pad adds the feature, hides the sketch it uses, and opens

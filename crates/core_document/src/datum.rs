@@ -145,6 +145,11 @@ pub enum DatumAttachment {
     /// Where two lines cross: the middle of where they pass nearest, the
     /// x-axis along the first, the normal square to both.
     TwoLines { lines: [LineAnchor; 2] },
+    /// Midway between two planes: halfway between parallel ones, else the
+    /// bisector of their angle that passes between where each was taken;
+    /// its origin the middle of the two planes' origins, brought onto it,
+    /// its normal to the first plane's side.
+    Midplane { planes: [PlaneAnchor; 2] },
 }
 
 /// A frame as it was last seen, which a datum follows.
@@ -489,6 +494,7 @@ impl DatumAttachment {
             DatumAttachment::LineAndPoint { .. } => "Through a line and a point",
             DatumAttachment::LineMeetsPlane { .. } => "Where a line meets a plane",
             DatumAttachment::TwoLines { .. } => "Where two lines cross",
+            DatumAttachment::Midplane { .. } => "Midway between two planes",
         }
     }
 
@@ -512,6 +518,7 @@ impl DatumAttachment {
             DatumAttachment::LineAndPoint { .. } => "line_and_point",
             DatumAttachment::LineMeetsPlane { .. } => "line_meets_plane",
             DatumAttachment::TwoLines { .. } => "two_lines",
+            DatumAttachment::Midplane { .. } => "midplane",
         }
     }
 
@@ -522,9 +529,8 @@ impl DatumAttachment {
             _ => None,
         };
         match self {
-            DatumAttachment::PlaneIntersection { planes } => {
-                planes.iter().filter_map(plane).collect()
-            }
+            DatumAttachment::PlaneIntersection { planes }
+            | DatumAttachment::Midplane { planes } => planes.iter().filter_map(plane).collect(),
             DatumAttachment::ThreePoints { points } => {
                 points.iter().filter_map(PointAnchor::feature).collect()
             }
@@ -570,6 +576,9 @@ impl DatumAttachment {
                 let [(_, n1), (_, n2)] = planes.map(|p| p.plane());
                 (length(cross(n1, n2)) < LEAST).then_some("the two planes are parallel")
             }
+            DatumAttachment::Midplane { planes } => midplane(planes)
+                .is_none()
+                .then_some("the two planes are one plane"),
             DatumAttachment::CurveCentre { edge } => edge.circle.is_none().then_some(not_round),
             DatumAttachment::NormalToEdge {
                 edge,
@@ -775,8 +784,59 @@ impl DatumAttachment {
                 let (a, c) = (scale_add(p1, d1, s), scale_add(p2, d2, t));
                 (scale(add(a, c), 0.5), normalize(n), d1)
             }
+            DatumAttachment::Midplane { planes } => midplane(&planes).unwrap_or_else(|| {
+                let (o, n) = planes[0].plane();
+                (o, n, stable_x_axis(n))
+            }),
         }
     }
+}
+
+/// (origin, normal, x_axis) of the plane midway between two planes, `None`
+/// when they are one plane. Parallel planes give the plane halfway between
+/// them; others meet in a line, about which they have two bisectors, and
+/// the one taken leaves each plane's origin on its own side of it, so it
+/// passes between the faces the planes were taken from. Its x-axis runs
+/// along the line the planes meet in.
+fn midplane(planes: &[PlaneAnchor; 2]) -> Option<([f32; 3], [f32; 3], [f32; 3])> {
+    const LEAST: f32 = 1e-4;
+    let [(o1, n1), (o2, n2)] = planes.map(|p| p.plane());
+    let (d1, d2) = (dot(n1, o1), dot(n2, o2));
+    // How far each origin stands off the other plane.
+    let (off1, off2) = (dot(n2, o1) - d2, dot(n1, o2) - d1);
+    let meet = cross(n1, n2);
+    if length(meet) < LEAST && off1.abs() < LEAST && off2.abs() < LEAST {
+        return None;
+    }
+    // Points as far off both planes on the same side lie on n1 - n2, on
+    // opposite sides on n1 + n2; the first separates the two origins when
+    // each stands on the same side of the other plane.
+    let apart = (sub(n1, n2), d1 - d2);
+    let together = (add(n1, n2), d1 + d2);
+    let same_side = if (off1 * off2).abs() > LEAST * LEAST {
+        off1 * off2 > 0.0
+    } else {
+        dot(n1, n2) < 0.0
+    };
+    let (mut chosen, mut other) = if same_side {
+        (apart, together)
+    } else {
+        (together, apart)
+    };
+    if length(chosen.0) < LEAST {
+        std::mem::swap(&mut chosen, &mut other);
+    }
+    let (normal, height) = chosen;
+    let size = length(normal);
+    let (normal, height) = (scale(normal, 1.0 / size), height / size);
+    let middle = scale(add(o1, o2), 0.5);
+    let origin = scale_add(middle, normal, height - dot(normal, middle));
+    let x = if length(meet) < LEAST {
+        stable_x_axis(normal)
+    } else {
+        normalize(reject(meet, normal))
+    };
+    Some((origin, normal, x))
 }
 
 /// A frame whose x-axis runs along `x` through `origin`, the normal square
@@ -1029,7 +1089,8 @@ impl DatumFeature {
             | DatumAttachment::TangentToEdge { edge, .. } => {
                 followed.push(Followed::Edge(edge, None));
             }
-            DatumAttachment::PlaneIntersection { planes } => {
+            DatumAttachment::PlaneIntersection { planes }
+            | DatumAttachment::Midplane { planes } => {
                 for plane in planes.iter_mut() {
                     push_plane(plane, &mut followed);
                 }
@@ -1172,9 +1233,8 @@ impl DatumFeature {
             }
         };
         match &mut self.attachment {
-            DatumAttachment::PlaneIntersection { planes } => {
-                planes.iter_mut().for_each(follow_plane)
-            }
+            DatumAttachment::PlaneIntersection { planes }
+            | DatumAttachment::Midplane { planes } => planes.iter_mut().for_each(follow_plane),
             DatumAttachment::ThreePoints { points } => points.iter_mut().for_each(follow_point),
             DatumAttachment::TwoPoints { points } => points.iter_mut().for_each(follow_point),
             DatumAttachment::OnDatum {
@@ -1661,6 +1721,146 @@ mod tests {
         assert!(parallel_planes.problem().is_some());
     }
 
+    fn flat(point: [f32; 3], normal: [f32; 3]) -> PlaneAnchor {
+        PlaneAnchor::Face {
+            face: FaceAnchor {
+                name: 0,
+                point,
+                normal,
+                surface: None,
+                follows: true,
+            },
+        }
+    }
+
+    #[test]
+    fn a_midplane_of_parallel_faces_sits_halfway_whichever_way_they_face() {
+        // A slab's two sides, facing away from each other.
+        let slab = DatumAttachment::Midplane {
+            planes: [
+                flat([1.0, 2.0, 10.0], [0.0, 0.0, 1.0]),
+                flat([5.0, 6.0, 0.0], [0.0, 0.0, -1.0]),
+            ],
+        };
+        assert!(slab.problem().is_none());
+        let frame = plane(slab);
+        orthonormal(&frame);
+        assert!(close(frame.origin, [3.0, 4.0, 5.0]), "{frame:?}");
+        assert!(close(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
+
+        // Two steps of a staircase, facing the same way.
+        let steps = DatumAttachment::Midplane {
+            planes: [
+                flat([0.0, 0.0, 2.0], [0.0, 0.0, 1.0]),
+                flat([4.0, 0.0, 8.0], [0.0, 0.0, 1.0]),
+            ],
+        };
+        let frame = plane(steps);
+        orthonormal(&frame);
+        assert!(close(frame.origin, [2.0, 0.0, 5.0]), "{frame:?}");
+        assert!(close(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
+
+        // A gap's two walls, facing each other, and a datum plane.
+        let gap = DatumAttachment::Midplane {
+            planes: [
+                PlaneAnchor::Base(BasePlane::YZ),
+                flat([6.0, 1.0, 1.0], [-1.0, 0.0, 0.0]),
+            ],
+        };
+        let frame = plane(gap);
+        assert!((frame.origin[0] - 3.0).abs() < 1e-5, "{frame:?}");
+        assert!(close(frame.normal, [1.0, 0.0, 0.0]), "{frame:?}");
+    }
+
+    #[test]
+    fn a_midplane_of_faces_at_an_angle_bisects_the_angle_between_them() {
+        // A box's top and its side at x = 10, both facing out: the plane
+        // through their common edge, leaning into the box.
+        let corner = DatumAttachment::Midplane {
+            planes: [
+                flat([5.0, 5.0, 10.0], [0.0, 0.0, 1.0]),
+                flat([10.0, 5.0, 5.0], [1.0, 0.0, 0.0]),
+            ],
+        };
+        assert!(corner.problem().is_none());
+        let frame = plane(corner);
+        orthonormal(&frame);
+        let h = std::f32::consts::FRAC_1_SQRT_2;
+        assert!(close(frame.normal, [-h, 0.0, h]), "{frame:?}");
+        assert!(parallel(frame.x_axis, [0.0, 1.0, 0.0]), "along the edge");
+        assert!(close(frame.origin, [7.5, 5.0, 7.5]), "{frame:?}");
+        // Every point of it stands as far from one face as from the other.
+        let p = scale_add(frame.origin, frame.y_axis(), 3.0);
+        assert!(((10.0 - p[2]) - (10.0 - p[0])).abs() < 1e-4, "{p:?}");
+
+        // A ridge's two faces, each 60° from level and picked below the
+        // ridge: the upright plane through the material between them, not
+        // the level one outside it.
+        let (s, c) = 60f32.to_radians().sin_cos();
+        let ridge = DatumAttachment::Midplane {
+            planes: [
+                flat([4.0 * c, 0.0, -4.0 * s], [s, 0.0, c]),
+                flat([-4.0 * c, 2.0, -4.0 * s], [-s, 0.0, c]),
+            ],
+        };
+        let frame = plane(ridge);
+        assert!(close(frame.normal, [1.0, 0.0, 0.0]), "{frame:?}");
+        assert!(close(frame.origin, [0.0, 1.0, -4.0 * s]), "{frame:?}");
+    }
+
+    #[test]
+    fn a_midplane_of_one_plane_twice_is_refused() {
+        let same = DatumAttachment::Midplane {
+            planes: [
+                PlaneAnchor::Base(BasePlane::XY),
+                flat([3.0, 4.0, 0.0], [0.0, 0.0, -1.0]),
+            ],
+        };
+        assert!(same.problem().is_some());
+        let frame = plane(same);
+        assert!(close(frame.normal, [0.0, 0.0, 1.0]), "{frame:?}");
+    }
+
+    #[test]
+    fn a_midplane_follows_both_faces_and_the_datums_it_is_made_from() {
+        let other = FeatureId(uuid::Uuid::new_v4());
+        let mut middle = datum(
+            DatumShape::Plane { size: 20.0 },
+            DatumAttachment::Midplane {
+                planes: [
+                    flat([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
+                    PlaneAnchor::Datum {
+                        datum: other,
+                        origin: [0.0; 3],
+                        normal: [0.0, 0.0, 1.0],
+                    },
+                ],
+            },
+        );
+        assert_eq!(middle.attachment.datums(), vec![other]);
+        assert_eq!(middle.probes().len(), 1);
+        middle.take_answers(&[Ok(ProbeAnswer::Face {
+            point: [0.0, 0.0, 20.0],
+            normal: [0.0, 0.0, 1.0],
+            surface: kernel_api::FaceSurface::Other,
+        })]);
+        let moved = DatumFeature {
+            shape: DatumShape::Plane { size: 20.0 },
+            attachment: DatumAttachment::BasePlane(BasePlane::XY),
+            offset: AttachmentOffset {
+                tilt: [0.0; 2],
+                translation: [0.0, 0.0, 4.0],
+                rotation_deg: 0.0,
+                flip: false,
+            },
+        };
+        let values_of = |id: FeatureId| (id == other).then(|| moved.to_json());
+        let mut values = middle.to_json();
+        assert!(derive(&mut values, None, &values_of, &|_, _| None));
+        let frame = DatumFeature::from_json(&values).unwrap().frame();
+        assert!((frame.origin[2] - 12.0).abs() < 1e-5, "{frame:?}");
+    }
+
     #[test]
     fn a_point_at_a_curve_s_centre_sits_on_the_circle_s_centre() {
         let frame = datum(
@@ -1842,6 +2042,14 @@ mod tests {
                 ],
             },
             DatumAttachment::CurveCentre { edge: rim() },
+            DatumAttachment::Midplane {
+                planes: [
+                    PlaneAnchor::Base(BasePlane::XY),
+                    PlaneAnchor::Face {
+                        face: cylinder_face(),
+                    },
+                ],
+            },
             DatumAttachment::Inertia {
                 centre: [1.0; 3],
                 axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],

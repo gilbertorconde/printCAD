@@ -30,11 +30,15 @@ pub const PICK_MODES: &[(&str, &str)] = &[
     ("line_and_point", "Click an edge first"),
     ("line_meets_plane", "Click an edge first"),
     ("two_lines", "Click two edges first"),
+    ("midplane", "Click two faces first"),
 ];
 
 /// What is picked in the viewport, as references in the datum's body.
 pub struct Picked {
+    /// The face picked last.
     pub face: Option<FaceAnchor>,
+    /// Every picked face, in the order picked.
+    pub faces: Vec<FaceAnchor>,
     pub edges: Vec<EdgeAnchor>,
     /// Datums a datum may stand on: their id, frame and whether they are a
     /// coordinate system. Empty unless the caller says which.
@@ -47,6 +51,11 @@ impl Picked {
         let face = ctx
             .selected_face_in(body)
             .map(|face| face_anchor(&face, on_body));
+        let faces = ctx
+            .selected_faces_in(body)
+            .iter()
+            .map(|face| face_anchor(face, on_body))
+            .collect();
         let edges = ctx
             .selected_edges_in(body)
             .iter()
@@ -54,6 +63,7 @@ impl Picked {
             .collect();
         Self {
             face,
+            faces,
             edges,
             datums: Vec::new(),
         }
@@ -228,6 +238,16 @@ pub fn candidate(
         "curve_centre" => DatumAttachment::CurveCentre {
             edge: edge.filter(|e| e.circle.is_some())?,
         },
+        "midplane" => DatumAttachment::Midplane {
+            planes: [
+                PlaneAnchor::Face {
+                    face: *picked.faces.first()?,
+                },
+                PlaneAnchor::Face {
+                    face: *picked.faces.get(1)?,
+                },
+            ],
+        },
         "plane_intersection" => {
             let first = match picked.face {
                 Some(face) => PlaneAnchor::Face { face },
@@ -316,6 +336,7 @@ pub fn mode_label(mode: &str) -> &'static str {
         "along_edge" => DatumAttachment::AlongEdge { edge },
         "two_points" => DatumAttachment::TwoPoints { points: [point; 2] },
         "plane_intersection" => DatumAttachment::PlaneIntersection { planes: [plane; 2] },
+        "midplane" => DatumAttachment::Midplane { planes: [plane; 2] },
         "curve_centre" => DatumAttachment::CurveCentre { edge },
         _ => DatumAttachment::Inertia {
             centre: [0.0; 3],
