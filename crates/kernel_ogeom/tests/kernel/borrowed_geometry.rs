@@ -427,6 +427,7 @@ fn a_pad_stops_on_a_curved_borrowed_face() {
             },
             subtractive: false,
             refine: false,
+            boolean_tolerance: None,
         },
         "Roller".into(),
         Some(a),

@@ -17,6 +17,7 @@ fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: Some(sketch),
         length,
         reversed: false,
@@ -39,6 +40,7 @@ fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
 fn revolve(sketch: FeatureId) -> DesignFeature {
     DesignFeature::Revolution {
         refine: false,
+        boolean_tolerance: None,
         sketch,
         angle_deg: 360.0,
         axis: wb_design::RevolveAxis::SketchY,

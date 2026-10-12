@@ -43,6 +43,7 @@ pub(super) fn hole_editor(
     let drilled = crate::build::hole_diameter(feature);
     let DesignFeature::Hole {
         refine: _,
+        boolean_tolerance: _,
         sketch,
         diameter,
         depth,

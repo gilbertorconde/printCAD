@@ -4,6 +4,7 @@
 //! and its dependencies again, which costs far more than running the tests.
 
 mod annotations;
+mod boolean_tolerance;
 mod borrowed_geometry;
 mod chain_cache;
 mod datum_attachments;

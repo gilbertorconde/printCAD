@@ -340,6 +340,7 @@ impl DesignWorkbench {
         let primitive = |subtractive: bool| DesignFeature::Primitive {
             attached: None,
             refine: false,
+            boolean_tolerance: None,
             kind: variant
                 .and_then(primitive_preset)
                 .unwrap_or_else(|| primitive_preset("box").expect("box preset")),
@@ -408,6 +409,7 @@ impl DesignWorkbench {
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
+                        boolean_tolerance: None,
                         sketch,
                         length: 10.0,
                         reversed: false,
@@ -436,6 +438,7 @@ impl DesignWorkbench {
                         profile_borrowed,
                         extras: Default::default(),
                         refine: false,
+                        boolean_tolerance: None,
                         sketch,
                         depth: 5.0,
                         reversed: false,
@@ -460,6 +463,7 @@ impl DesignWorkbench {
             "design.revolve" => (
                 DesignFeature::Revolution {
                     refine: false,
+                    boolean_tolerance: None,
                     sketch: need_sketch(sketch)?,
                     angle_deg: 360.0,
                     axis: RevolveAxis::default(),
@@ -476,6 +480,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Groove {
                         refine: false,
+                        boolean_tolerance: None,
                         sketch: need_sketch(sketch)?,
                         angle_deg: 360.0,
                         axis: RevolveAxis::default(),
@@ -496,6 +501,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Loft {
                         refine: false,
+                        boolean_tolerance: None,
                         sections: vec![crate::feature::LoftSection::Feature(need_sketch(sketch)?)],
                         ruled: false,
                         closed: false,
@@ -540,6 +546,7 @@ impl DesignWorkbench {
                         path_edges: Vec::new(),
                         profile_face: None,
                         refine: false,
+                        boolean_tolerance: None,
                         profile,
                         spine,
                         orientation: PipeOrientation::Standard,
@@ -558,6 +565,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Helix {
                         refine: false,
+                        boolean_tolerance: None,
                         sketch: need_sketch(sketch)?,
                         axis: RevolveAxis::default(),
                         mode: HelixMode::PitchHeight,
@@ -586,6 +594,7 @@ impl DesignWorkbench {
                         clearance: None,
                         thread_length: Default::default(),
                         refine: false,
+                        boolean_tolerance: None,
                         sketch: need_sketch(sketch)?,
                         diameter: 5.0,
                         depth: 10.0,
@@ -719,6 +728,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Mirrored {
                         refine: false,
+                        boolean_tolerance: None,
                         originals: original.into_iter().collect(),
                         plane: Self::selected_mirror_face(ctx, body).unwrap_or(MirrorPlane::YZ),
                     },
@@ -732,6 +742,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::LinearPattern {
                         refine: false,
+                        boolean_tolerance: None,
                         originals: original.into_iter().collect(),
                         axis: PatternAxis::X,
                         length: 30.0,
@@ -750,6 +761,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::PolarPattern {
                         refine: false,
+                        boolean_tolerance: None,
                         originals: original.into_iter().collect(),
                         axis: PatternAxis::Z,
                         angle_deg: 360.0,
@@ -769,6 +781,7 @@ impl DesignWorkbench {
                     // One step to start from, so it builds as it opens.
                     DesignFeature::MultiTransform {
                         refine: false,
+                        boolean_tolerance: None,
                         originals: original.into_iter().collect(),
                         steps: vec![TransformStep::Linear {
                             axis: PatternAxis::X,
@@ -805,6 +818,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::MultiTransform {
                         refine: false,
+                        boolean_tolerance: None,
                         originals: original.into_iter().collect(),
                         steps: vec![TransformStep::Scale {
                             factor: 1.5,
@@ -836,6 +850,7 @@ impl DesignWorkbench {
                     DesignFeature::BodyBoolean {
                         more_tools: Vec::new(),
                         refine: false,
+                        boolean_tolerance: None,
                         tool_body: other,
                         kind: kernel_api::BoolKind::Fuse,
                     },
@@ -2542,6 +2557,7 @@ mod body_tool {
                     DesignFeature::Primitive {
                         attached: None,
                         refine: false,
+                        boolean_tolerance: None,
                         kind: primitive_preset("box").unwrap(),
                         placement: kernel_api::Placement::default(),
                         subtractive: false,
@@ -2613,6 +2629,7 @@ mod body_tool {
             DesignFeature::Primitive {
                 attached: None,
                 refine: false,
+                boolean_tolerance: None,
                 kind: primitive_preset("box").unwrap(),
                 placement: kernel_api::Placement::default(),
                 subtractive: false,
@@ -2738,6 +2755,7 @@ mod icon_coverage {
                 profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
+                boolean_tolerance: None,
                 sketch: Some(FeatureId(uuid::Uuid::new_v4())),
                 length: 10.0,
                 reversed: false,

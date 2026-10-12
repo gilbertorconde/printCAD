@@ -16,6 +16,34 @@ pub fn tol() -> Tolerances {
     tess::tolerances()
 }
 
+thread_local! {
+    /// The tolerance the op being built states for its booleans.
+    static STATED: std::cell::Cell<Option<f64>> = const { std::cell::Cell::new(None) };
+}
+
+/// The tolerance the op being built on this thread states for its
+/// booleans, if any.
+pub fn stated_tolerance() -> Option<f64> {
+    STATED.with(|s| s.get())
+}
+
+/// While held, the booleans on this thread run at `tolerance` (none: the
+/// kernel's own, with its fuzzy retry); dropping it puts back the one
+/// before.
+pub struct ToleranceScope(Option<f64>);
+
+impl ToleranceScope {
+    pub fn state(tolerance: Option<f64>) -> Self {
+        ToleranceScope(STATED.with(|s| s.replace(tolerance)))
+    }
+}
+
+impl Drop for ToleranceScope {
+    fn drop(&mut self) {
+        STATED.with(|s| s.set(self.0));
+    }
+}
+
 /// Whether two shapes' bounding boxes come anywhere near each other.
 pub fn bounds_overlap(model: &Model, a: &Shape, b: &Shape) -> bool {
     let (Some((alo, ahi)), Some((blo, bhi))) =
@@ -23,13 +51,14 @@ pub fn bounds_overlap(model: &Model, a: &Shape, b: &Shape) -> bool {
     else {
         return true;
     };
-    const M: f64 = 1e-6;
-    alo.x <= bhi.x + M
-        && blo.x <= ahi.x + M
-        && alo.y <= bhi.y + M
-        && blo.y <= ahi.y + M
-        && alo.z <= bhi.z + M
-        && blo.z <= ahi.z + M
+    // Shapes a stated tolerance would join count as meeting.
+    let m = stated_tolerance().unwrap_or(0.0).max(1e-6);
+    alo.x <= bhi.x + m
+        && blo.x <= ahi.x + m
+        && alo.y <= bhi.y + m
+        && blo.y <= ahi.y + m
+        && alo.z <= bhi.z + m
+        && blo.z <= ahi.z + m
 }
 
 /// Fuse two solids, or compound them when they are clearly disjoint (the
@@ -136,8 +165,12 @@ pub(crate) fn wrap_pieces(model: &mut Model, mut pieces: Vec<Shape>) -> Result<S
     }
 }
 
-/// One solid-vs-solid boolean with a fuzzy retry when the kernel says a
-/// looser tolerance could resolve a near-coincidence.
+/// One solid-vs-solid boolean. At a stated tolerance (see
+/// [`ToleranceScope`]) it runs fuzzy at that tolerance from the start,
+/// since an exact boolean that succeeds can still leave the sliver the
+/// user stated it to close; otherwise it runs exact, with a fuzzy retry at
+/// a hundred times the confusion when the kernel says a looser tolerance
+/// could resolve a near-coincidence.
 pub fn bool_once(
     model: &mut Model,
     a: &Shape,
@@ -146,35 +179,38 @@ pub fn bool_once(
 ) -> Result<Shape, String> {
     use kernel_api::BoolKind;
     let t = tol();
-    let run = |model: &mut Model| match kind {
-        BoolKind::Fuse => ogeom::boolean::fuse(model, a, b, t),
-        BoolKind::Cut => ogeom::boolean::cut(model, a, b, t),
-        BoolKind::Common => ogeom::boolean::common(model, a, b, t),
+    let fuzzy = |model: &mut Model, fuzz: f64| match kind {
+        BoolKind::Fuse => ogeom::boolean::fuse_fuzzy(model, a, b, fuzz, t),
+        BoolKind::Cut => ogeom::boolean::cut_fuzzy(model, a, b, fuzz, t),
+        BoolKind::Common => ogeom::boolean::common_fuzzy(model, a, b, fuzz, t),
     };
     let verb = match kind {
         BoolKind::Fuse => "fuse",
         BoolKind::Cut => "cut",
         BoolKind::Common => "common",
     };
-    match run(model) {
-        Ok(built) => {
-            crate::naming::record(&built.history);
-            Ok(normalized(model, built.shape))
-        }
-        Err(e) if e.is_tolerance_sensitive() => {
-            let fuzz = t.confusion() * 100.0;
-            let retried = match kind {
-                BoolKind::Fuse => ogeom::boolean::fuse_fuzzy(model, a, b, fuzz, t),
-                BoolKind::Cut => ogeom::boolean::cut_fuzzy(model, a, b, fuzz, t),
-                BoolKind::Common => ogeom::boolean::common_fuzzy(model, a, b, fuzz, t),
-            };
-            retried
-                .map(|built| {
-                    crate::naming::record(&built.history);
-                    normalized(model, built.shape)
-                })
-                .map_err(|e| format!("boolean {verb} failed: {e}"))
-        }
+    let done = |model: &mut Model, built: ogeom::algo::Built| {
+        crate::naming::record(&built.history);
+        normalized(model, built.shape)
+    };
+    if let Some(stated) = stated_tolerance() {
+        return match fuzzy(model, stated) {
+            Ok(built) => Ok(done(model, built)),
+            Err(e) => Err(format!(
+                "boolean {verb} at a tolerance of {stated} mm failed: {e}"
+            )),
+        };
+    }
+    let exact = match kind {
+        BoolKind::Fuse => ogeom::boolean::fuse(model, a, b, t),
+        BoolKind::Cut => ogeom::boolean::cut(model, a, b, t),
+        BoolKind::Common => ogeom::boolean::common(model, a, b, t),
+    };
+    match exact {
+        Ok(built) => Ok(done(model, built)),
+        Err(e) if e.is_tolerance_sensitive() => fuzzy(model, t.confusion() * 100.0)
+            .map(|built| done(model, built))
+            .map_err(|e| format!("boolean {verb} failed: {e}")),
         Err(e) => Err(format!("boolean {verb} failed: {e}")),
     }
 }

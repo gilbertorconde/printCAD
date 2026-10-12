@@ -298,6 +298,19 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
         }
         _ => {}
     }
+    // A stated boolean tolerance, while the feature states one.
+    if body
+        .get("boolean_tolerance")
+        .and_then(Value::as_f64)
+        .is_some_and(|t| t > 0.0)
+    {
+        out.push(parameter(
+            format!("/{variant}/boolean_tolerance"),
+            "boolean_tolerance",
+            "Boolean tolerance",
+            Some(LENGTH),
+        ));
+    }
     out
 }
 
@@ -331,6 +344,7 @@ pub(crate) fn every_name() -> Vec<&'static str> {
     )
     .chain(["x", "y", "z", "radius", "height", "length", "angle"])
     .chain(["direction_x", "direction_y", "direction_z"])
+    .chain(["boolean_tolerance"])
     .chain(
         datum_parameters()
             .into_iter()

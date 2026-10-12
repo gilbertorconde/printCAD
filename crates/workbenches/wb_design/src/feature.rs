@@ -1217,6 +1217,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// A flat face of the solid extruded in place of a sketch: its
         /// boundaries are the profile and its outward normal the sketch's.
         #[serde(default)]
@@ -1273,6 +1277,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// A flat face of the solid cut in place of a sketch's profile.
         #[serde(default)]
         profile_face: Option<FacePick>,
@@ -1312,6 +1320,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         #[serde(default)]
         mode: RevolveMode,
         #[serde(default)]
@@ -1332,6 +1344,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         #[serde(default)]
         mode: RevolveMode,
         #[serde(default)]
@@ -1348,6 +1364,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
     },
     /// Sweep a profile sketch along a spine sketch's path.
     Pipe {
@@ -1373,6 +1393,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// A flat face of the solid as the profile, in place of `profile`.
         #[serde(default)]
         profile_face: Option<FacePick>,
@@ -1406,6 +1430,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
     },
     /// Parametric primitive fused into (or cut from) the body.
     Primitive {
@@ -1415,6 +1443,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// Placed as a datum is, by a mode on what was picked, in place of
         /// `placement`, and following what it stands on.
         #[serde(default)]
@@ -1467,6 +1499,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
     },
     Fillet {
         radius: f32,
@@ -1549,6 +1585,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
     },
     LinearPattern {
         originals: Vec<FeatureId>,
@@ -1563,6 +1603,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// Uneven spacing: the gap from each occurrence to the next, first
         /// to last. A gap past the list's end is the even spacing `length`
         /// gives; an empty list spaces every occurrence evenly.
@@ -1579,6 +1623,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
         /// `angle_deg` is the angle between occurrences instead of the
         /// overall one.
         #[serde(default)]
@@ -1595,6 +1643,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
     },
     /// Boolean against another body's built solid.
     BodyBoolean {
@@ -1606,6 +1658,10 @@ pub enum DesignFeature {
         /// Merge the coplanar faces the fuse or cut leaves behind.
         #[serde(default)]
         refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
     },
     /// Geometry of another body lent to this one, where the two bodies
     /// sit: a sketch whose profile features here take, faces they stop on
@@ -1924,6 +1980,107 @@ impl DesignFeature {
         }
     }
 
+    /// The tolerance the feature's fuse or cut runs at, when the user
+    /// stated one: a positive length, zero and `None` meaning none.
+    pub fn boolean_tolerance(&self) -> Option<f32> {
+        match self {
+            DesignFeature::Pad {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Pocket {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Revolution {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Groove {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Loft {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Pipe {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Helix {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Primitive {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Hole {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Mirrored {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::LinearPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PolarPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::MultiTransform {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::BodyBoolean {
+                boolean_tolerance, ..
+            } => boolean_tolerance.filter(|t| t.is_finite() && *t > 0.0),
+            _ => None,
+        }
+    }
+
+    /// State the tolerance the feature's fuse or cut runs at, or leave it
+    /// to the kernel with `None`. A feature with no fuse or cut is left as
+    /// it is.
+    pub fn set_boolean_tolerance(&mut self, tolerance: Option<f32>) {
+        match self {
+            DesignFeature::Pad {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Pocket {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Revolution {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Groove {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Loft {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Pipe {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Helix {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Primitive {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Hole {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::Mirrored {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::LinearPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PolarPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::MultiTransform {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::BodyBoolean {
+                boolean_tolerance, ..
+            } => *boolean_tolerance = tolerance,
+            _ => {}
+        }
+    }
+
     /// Whether the feature has a refine switch at all.
     pub fn can_refine(&self) -> bool {
         let mut probe = self.clone();
@@ -2228,6 +2385,29 @@ mod tests {
         ));
     }
 
+    /// A feature saved before it had a boolean tolerance reads as leaving
+    /// it automatic, and a stated one goes through a save and a load.
+    #[test]
+    fn a_boolean_tolerance_reads_automatic_when_absent_and_keeps_when_stated() {
+        let old = serde_json::json!({
+            "Pocket": { "sketch": FeatureId::new(), "depth": 5.0, "reversed": false }
+        });
+        let mut feature = DesignFeature::from_json(&old).unwrap();
+        assert_eq!(feature.boolean_tolerance(), None);
+        feature.set_boolean_tolerance(Some(0.02));
+        let again = DesignFeature::from_json(&feature.to_json()).unwrap();
+        assert_eq!(again.boolean_tolerance(), Some(0.02));
+        // Zero is automatic too, and a feature with no fuse or cut has none.
+        feature.set_boolean_tolerance(Some(0.0));
+        assert_eq!(feature.boolean_tolerance(), None);
+        let mut fillet = DesignFeature::from_json(&serde_json::json!({
+            "Fillet": { "radius": 1.0, "edges": "All" }
+        }))
+        .unwrap();
+        fillet.set_boolean_tolerance(Some(0.02));
+        assert_eq!(fillet.boolean_tolerance(), None);
+    }
+
     #[test]
     fn old_pocket_json_still_deserializes() {
         let old = serde_json::json!({
@@ -2356,6 +2536,7 @@ mod tests {
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,
+            boolean_tolerance: None,
             profile: FeatureId::new(),
             spine: FeatureId::new(),
             orientation: PipeOrientation::Binormal {
@@ -2402,6 +2583,7 @@ mod tests {
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,
+            boolean_tolerance: None,
             profile: a,
             spine: b,
             orientation: PipeOrientation::Standard,
@@ -2417,6 +2599,7 @@ mod tests {
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,
+            boolean_tolerance: None,
             profile: a,
             spine: b,
             orientation: PipeOrientation::Auxiliary { path: c },
@@ -2428,6 +2611,7 @@ mod tests {
 
         let pattern = DesignFeature::LinearPattern {
             refine: false,
+            boolean_tolerance: None,
             originals: vec![a],
             axis: PatternAxis::X,
             length: 10.0,

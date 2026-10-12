@@ -382,7 +382,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`feature.rs`; every one that fuses or cuts carries `refine`, which the
   build follows with a `SolidOp::Refine` merging coplanar faces; the
   Preferences switch is only the default for new features, so geometry
-  never depends on who rebuilds it), per-feature panel editors (`editors.rs`), the task
+  never depends on who rebuilds it; and an optional `boolean_tolerance`,
+  the Advanced group's, which wraps each of the feature's ops in
+  `SolidOp::WithTolerance` in place, so `kernel_ogeom::ops::bool_once`
+  runs that op's booleans fuzzy at it, through a thread-local
+  `ToleranceScope` the chain holds per op), per-feature panel editors (`editors.rs`), the task
   lifecycle (`task.rs`: snapshot on open, live edits, Cancel restores or
   deletes a tool-created feature); `build.rs` translates a body's feature
   history into kernel `SolidOp` chains (`BuildPlan` maps op index → feature

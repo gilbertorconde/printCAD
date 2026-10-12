@@ -607,6 +607,7 @@ mod tests {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: Some(sketch),
             length,
             reversed: false,

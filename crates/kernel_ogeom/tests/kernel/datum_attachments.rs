@@ -34,6 +34,7 @@ fn cylinder(radius: f64, height: f64) -> DesignFeature {
         placement: Placement::default(),
         subtractive: false,
         refine: false,
+        boolean_tolerance: None,
     }
 }
 
@@ -167,6 +168,7 @@ fn a_tangent_plane_and_the_pad_on_it_follow_the_cylinder_s_radius() {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: Some(sketch),
             length: 3.0,
             reversed: false,
@@ -356,6 +358,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
     doc.add_feature_in_body(
         DesignFeature::Revolution {
             refine: false,
+            boolean_tolerance: None,
             sketch: ring,
             angle_deg: 360.0,
             axis: wb_design::RevolveAxis::Datum(axis),
@@ -403,6 +406,7 @@ fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: Some(sketch),
         length,
         reversed: false,
@@ -427,6 +431,7 @@ fn pocket(sketch: FeatureId, depth: f32) -> DesignFeature {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: Some(sketch),
         depth,
         reversed: false,
@@ -794,6 +799,7 @@ fn a_primitive_attached_by_a_mode_follows_what_it_stands_on() {
         placement: kernel_api::Placement::default(),
         subtractive: false,
         refine: false,
+        boolean_tolerance: None,
         attached: Some(Box::new(wb_design::Attached {
             attachment: core_document::DatumAttachment::Face {
                 face: core_document::attach::face_anchor(&top, true),

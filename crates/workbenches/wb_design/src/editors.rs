@@ -2197,6 +2197,7 @@ pub fn feature_editor(
         }
         DesignFeature::Pad {
             refine: _,
+            boolean_tolerance: _,
             sketch: _,
             length,
             reversed,
@@ -2267,6 +2268,7 @@ pub fn feature_editor(
         }
         DesignFeature::Pocket {
             refine: _,
+            boolean_tolerance: _,
             sketch: _,
             depth,
             reversed,
@@ -2353,6 +2355,7 @@ pub fn feature_editor(
         }
         DesignFeature::Revolution {
             refine: _,
+            boolean_tolerance: _,
             sketch,
             angle_deg,
             axis,
@@ -2364,6 +2367,7 @@ pub fn feature_editor(
         }
         | DesignFeature::Groove {
             refine: _,
+            boolean_tolerance: _,
             sketch,
             angle_deg,
             axis,
@@ -2446,6 +2450,7 @@ pub fn feature_editor(
         }
         DesignFeature::Loft {
             refine: _,
+            boolean_tolerance: _,
             sections,
             ruled,
             closed,
@@ -2536,6 +2541,7 @@ pub fn feature_editor(
         }
         DesignFeature::Pipe {
             refine: _,
+            boolean_tolerance: _,
             profile,
             spine,
             orientation,
@@ -2634,6 +2640,7 @@ pub fn feature_editor(
         }
         DesignFeature::Helix {
             refine: _,
+            boolean_tolerance: _,
             sketch,
             axis,
             mode,
@@ -2710,6 +2717,7 @@ pub fn feature_editor(
         }
         DesignFeature::Primitive {
             refine: _,
+            boolean_tolerance: _,
             kind,
             placement,
             subtractive,
@@ -2909,12 +2917,14 @@ pub fn feature_editor(
             originals,
             plane,
             refine: _,
+            boolean_tolerance: _,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             changed |= mirror_plane_editor(ui, ctx, plane, ("mirror_plane", feature_id));
         }
         DesignFeature::LinearPattern {
             refine: _,
+            boolean_tolerance: _,
             originals,
             axis,
             length,
@@ -2957,6 +2967,7 @@ pub fn feature_editor(
         }
         DesignFeature::PolarPattern {
             refine: _,
+            boolean_tolerance: _,
             originals,
             axis,
             angle_deg,
@@ -3006,6 +3017,7 @@ pub fn feature_editor(
             originals,
             steps,
             refine: _,
+            boolean_tolerance: _,
         } => {
             changed |= originals_editor(ui, ctx, body, feature_id, originals);
             ui.label(
@@ -3209,6 +3221,7 @@ pub fn feature_editor(
             kind,
             more_tools,
             refine: _,
+            boolean_tolerance: _,
         } => {
             let bodies: Vec<(BodyId, String)> = ctx
                 .document
@@ -3298,8 +3311,110 @@ pub fn feature_editor(
             feature.set_refine(refine);
             changed = true;
         }
+        changed |= advanced_editor(ui, fx, feature_id, feature);
     }
     changed
+}
+
+/// The Advanced group of a feature that fuses or cuts: the tolerance its
+/// boolean runs at.
+fn advanced_editor(
+    ui: &mut Ui,
+    fx: &mut Formulas,
+    feature_id: FeatureId,
+    feature: &mut DesignFeature,
+) -> bool {
+    let mut changed = false;
+    egui::CollapsingHeader::new("Advanced")
+        .id_salt(("design_advanced", feature_id))
+        .default_open(feature.boolean_tolerance().is_some())
+        .show_unindented(ui, |ui| {
+            changed |= tolerance_editor(ui, fx, feature_id, feature);
+            taper_note(
+                ui,
+                "Faces this close to touching are joined by the fuse or cut, closing \
+                 a gap or a sliver between them. Empty leaves it automatic.",
+            );
+        });
+    changed
+}
+
+/// The boolean tolerance: a length while one is stated, with a button
+/// putting it back to automatic; else an empty field, a length typed
+/// into it stating one.
+fn tolerance_editor(
+    ui: &mut Ui,
+    fx: &mut Formulas,
+    feature_id: FeatureId,
+    feature: &mut DesignFeature,
+) -> bool {
+    const LABEL: &str = "Tolerance";
+    const NAME: &str = "boolean_tolerance";
+    if let Some(stated) = feature.boolean_tolerance() {
+        let mut changed = false;
+        let mut value = stated;
+        let edited = match fx.show_named(ui, LABEL, NAME, f64::from(stated)) {
+            Some((edited, v)) => {
+                value = v as f32;
+                edited
+            }
+            None => field(ui, LABEL, |ui| {
+                QtyField::mm(&mut value).speed(0.001).decimals(3).show(ui)
+            }),
+        };
+        if edited {
+            feature.set_boolean_tolerance(Some(value));
+            changed = true;
+        }
+        if field(ui, "", |ui| {
+            small_secondary_button(ui, "Automatic").clicked()
+        }) {
+            if let Some(key) = fx
+                .params
+                .iter()
+                .find(|p| p.name.as_deref() == Some(NAME))
+                .map(|p| p.key.clone())
+            {
+                fx.edits.push((key, None));
+            }
+            feature.set_boolean_tolerance(None);
+            changed = true;
+        }
+        return changed;
+    }
+    let id = egui::Id::new(("boolean_tolerance_draft", feature_id));
+    let mut draft: String = ui.data(|d| d.get_temp(id)).unwrap_or_default();
+    let mut stated = None;
+    field(ui, LABEL, |ui| {
+        let response = ui.add(
+            egui::TextEdit::singleline(&mut draft)
+                .hint_text("Automatic")
+                .desired_width(120.0),
+        );
+        if response.lost_focus() {
+            stated = parse_tolerance(&draft);
+        }
+        false
+    });
+    if stated.is_some() {
+        draft.clear();
+    }
+    ui.data_mut(|d| d.insert_temp(id, draft));
+    if stated.is_some() {
+        feature.set_boolean_tolerance(stated);
+        return true;
+    }
+    false
+}
+
+/// A tolerance as typed: a positive length in mm, the unit optional.
+fn parse_tolerance(text: &str) -> Option<f32> {
+    text.trim()
+        .trim_end_matches("mm")
+        .trim()
+        .parse::<f32>()
+        .ok()
+        .filter(|t| t.is_finite() && *t > 0.0)
 }
 
 /// The body of the feature the task panel edits.

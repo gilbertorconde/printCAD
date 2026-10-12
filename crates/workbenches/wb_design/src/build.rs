@@ -705,6 +705,7 @@ fn plan_feature(
         }
         DesignFeature::Loft {
             refine: _,
+            boolean_tolerance: _,
             sections,
             ruled,
             closed,
@@ -743,6 +744,7 @@ fn plan_feature(
         }
         DesignFeature::Pipe {
             refine: _,
+            boolean_tolerance: _,
             profile,
             spine,
             orientation,
@@ -822,6 +824,7 @@ fn plan_feature(
         }
         DesignFeature::Helix {
             refine: _,
+            boolean_tolerance: _,
             sketch,
             axis,
             mode,
@@ -876,6 +879,7 @@ fn plan_feature(
         }
         DesignFeature::Primitive {
             refine: _,
+            boolean_tolerance: _,
             kind,
             placement,
             subtractive,
@@ -1054,6 +1058,7 @@ fn plan_feature(
             originals,
             plane,
             refine: _,
+            boolean_tolerance: _,
         } => {
             let originals = original_ops(feature_ops, originals).map_err(&fail)?;
             let (point, normal) = mirror_plane(document, plane).map_err(&fail)?;
@@ -1064,6 +1069,7 @@ fn plan_feature(
         }
         DesignFeature::LinearPattern {
             refine: _,
+            boolean_tolerance: _,
             originals,
             axis,
             length,
@@ -1092,6 +1098,7 @@ fn plan_feature(
         }
         DesignFeature::PolarPattern {
             refine: _,
+            boolean_tolerance: _,
             originals,
             axis,
             angle_deg,
@@ -1122,6 +1129,7 @@ fn plan_feature(
             originals,
             steps,
             refine: _,
+            boolean_tolerance: _,
         } => {
             let originals = original_ops(feature_ops, originals).map_err(&fail)?;
             let transforms = multi_transforms(document, steps).map_err(&fail)?;
@@ -1163,6 +1171,7 @@ fn plan_feature(
             kind,
             more_tools,
             refine: _,
+            boolean_tolerance: _,
         } => {
             for tool_body in std::iter::once(tool_body).chain(more_tools) {
                 if *tool_body == body {
@@ -1203,6 +1212,14 @@ fn plan_feature(
         }
     }
 
+    // A stated tolerance holds for every op the feature made, each keeping
+    // its place, so a pattern's originals still count them.
+    if let Some(tolerance) = feature.boolean_tolerance() {
+        for op in &mut plan.ops[start_index..] {
+            let inner = std::mem::replace(op, SolidOp::Refine);
+            *op = inner.with_boolean_tolerance(Some(f64::from(tolerance)));
+        }
+    }
     let indices: Vec<usize> = (start_index..plan.ops.len()).collect();
     for _ in &indices {
         plan.op_features.push(feature_id);
@@ -3236,6 +3253,7 @@ mod tests {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: Some(sketch),
             length,
             reversed: false,
@@ -3260,6 +3278,7 @@ mod tests {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: Some(sketch),
             depth,
             reversed,
@@ -3450,6 +3469,7 @@ mod tests {
         let before = body_build_ops(&doc, body).unwrap().ops.len();
         let pattern = |occurrences| DesignFeature::LinearPattern {
             refine: false,
+            boolean_tolerance: None,
             originals: vec![pad_id],
             axis: PatternAxis::X,
             length: 30.0,
@@ -3494,6 +3514,7 @@ mod tests {
 
         let pattern = DesignFeature::LinearPattern {
             refine: false,
+            boolean_tolerance: None,
             originals: vec![pad_id],
             axis: PatternAxis::X,
             length: 30.0,
@@ -3524,6 +3545,51 @@ mod tests {
             }
             .can_refine()
         );
+    }
+
+    /// A stated boolean tolerance wraps each op the feature makes, in its
+    /// place, so a pattern still counts the original's op and the refine
+    /// after it runs as it is.
+    #[test]
+    fn a_stated_tolerance_wraps_the_feature_s_ops_in_place() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 7.0), "Base".into(), Some(body))
+            .unwrap();
+        let mut padded = pad(sketch_id, 3.0);
+        padded.set_refine(true);
+        padded.set_boolean_tolerance(Some(0.05));
+        let pad_id = doc
+            .add_feature_in_body(padded, "Pad".into(), Some(body))
+            .unwrap();
+        let mut pattern = DesignFeature::LinearPattern {
+            refine: false,
+            boolean_tolerance: None,
+            originals: vec![pad_id],
+            axis: PatternAxis::X,
+            length: 30.0,
+            occurrences: 2,
+            spacing_mode: false,
+            spacings: Vec::new(),
+            reversed: false,
+        };
+        pattern.set_boolean_tolerance(Some(0.02));
+        doc.add_feature_in_body(pattern, "Pattern".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        assert_eq!(plan.ops.len(), plan.op_features.len());
+        assert_eq!(
+            plan.ops[0].boolean_tolerance(),
+            None,
+            "the base states none"
+        );
+        assert_eq!(plan.ops[1].boolean_tolerance(), Some(0.05_f32.into()));
+        assert!(matches!(plan.ops[1].inner(), SolidOp::Sweep { .. }));
+        assert!(matches!(plan.ops[2], SolidOp::Refine));
+        assert_eq!(plan.ops[3].boolean_tolerance(), Some(0.02_f32.into()));
+        match plan.ops[3].inner() {
+            SolidOp::Transform { originals, .. } => assert_eq!(originals, &vec![1]),
+            other => panic!("the pattern ends the chain, not {other:?}"),
+        }
     }
 
     #[test]
@@ -3648,6 +3714,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Revolution {
                 refine: false,
+                boolean_tolerance: None,
                 sketch: sketch_id,
                 angle_deg: 270.0,
                 axis: RevolveAxis::SketchY,
@@ -3664,6 +3731,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Groove {
                 refine: false,
+                boolean_tolerance: None,
                 sketch: sketch_id,
                 angle_deg: 90.0,
                 axis: RevolveAxis::SketchX,
@@ -3772,6 +3840,7 @@ mod tests {
                 clearance: None,
                 thread_length: Default::default(),
                 refine: false,
+                boolean_tolerance: None,
                 sketch: hole_sketch_id,
                 diameter: 3.0,
                 depth: 4.0,
@@ -3820,6 +3889,7 @@ mod tests {
             DesignFeature::BodyBoolean {
                 more_tools: Vec::new(),
                 refine: false,
+                boolean_tolerance: None,
                 tool_body: body,
                 kind: kernel_api::BoolKind::Cut,
             },
@@ -3861,6 +3931,7 @@ mod tests {
             DesignFeature::BodyBoolean {
                 more_tools: vec![tools[1]],
                 refine: false,
+                boolean_tolerance: None,
                 tool_body: tools[0],
                 kind: kernel_api::BoolKind::Cut,
             },
@@ -3901,6 +3972,7 @@ mod tests {
             clearance,
             thread_length: length,
             refine: false,
+            boolean_tolerance: None,
             sketch,
             diameter: 3.0,
             depth: 10.0,
@@ -4082,6 +4154,7 @@ mod tests {
                     clearance: None,
                     thread_length: Default::default(),
                     refine: false,
+                    boolean_tolerance: None,
                     sketch: hole_sketch_id,
                     diameter: 3.0,
                     depth: 4.0,
@@ -4134,6 +4207,7 @@ mod tests {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: hole_sketch_id,
             diameter: 3.0,
             depth: 6.0,
@@ -4479,6 +4553,7 @@ mod tests {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: FeatureId::new(),
             diameter: 99.0,
             depth: 4.0,
@@ -4503,6 +4578,7 @@ mod tests {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: FeatureId::new(),
             diameter: 99.0,
             depth: 4.0,
@@ -4537,6 +4613,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::LinearPattern {
                 refine: false,
+                boolean_tolerance: None,
                 originals: vec![pad_id],
                 axis: PatternAxis::X,
                 length: 30.0,
@@ -4695,6 +4772,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Mirrored {
                 refine: false,
+                boolean_tolerance: None,
                 originals: vec![ghost],
                 plane: MirrorPlane::YZ,
             },
@@ -4832,6 +4910,7 @@ mod tests {
             .add_feature_in_body(
                 DesignFeature::Mirrored {
                     refine: false,
+                    boolean_tolerance: None,
                     originals: vec![pad_a],
                     plane: MirrorPlane::YZ,
                 },
@@ -4865,6 +4944,7 @@ mod tests {
                     profile_borrowed: None,
                     extras: Default::default(),
                     refine: false,
+                    boolean_tolerance: None,
                     sketch: Some(cut_sketch),
                     depth: 2.0,
                     reversed: false,
@@ -5277,6 +5357,7 @@ mod tests {
         let revolution =
             |mode: RevolveMode, up_to_face: Option<FacePick>, sketch| DesignFeature::Revolution {
                 refine: false,
+                boolean_tolerance: None,
                 sketch,
                 angle_deg: 360.0,
                 axis: RevolveAxis::SketchY,
@@ -5402,6 +5483,7 @@ mod tests {
     fn helix(sketch: FeatureId, mode: HelixMode, height: f32, growth: f32) -> DesignFeature {
         DesignFeature::Helix {
             refine: false,
+            boolean_tolerance: None,
             sketch,
             axis: RevolveAxis::SketchY,
             mode,
@@ -5532,6 +5614,7 @@ mod tests {
             path_edges: Vec::new(),
             profile_face: None,
             refine: false,
+            boolean_tolerance: None,
             profile,
             spine,
             orientation,

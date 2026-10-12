@@ -2521,6 +2521,7 @@ mod tests {
             midplane: false,
             second_angle_deg: None,
             refine: false,
+            boolean_tolerance: None,
             mode: Default::default(),
             up_to_face: None,
         };
@@ -2600,6 +2601,45 @@ mod tests {
         let data = fields(&doc, &pad);
         assert_eq!(data["Pad"]["length"], json!(40.0));
         assert_eq!(data["Pad"]["reversed"], json!(true));
+    }
+
+    /// A script states a feature's boolean tolerance by its field name,
+    /// which then lists as a parameter, and zero puts it back to automatic.
+    #[test]
+    fn a_script_states_and_clears_a_boolean_tolerance() {
+        let mut doc = Document::new("t");
+        let (_, sketch) = sketch_in(&mut doc);
+        let mut bench = DesignWorkbench::default();
+        let pad = call(
+            &mut bench,
+            &mut doc,
+            "design.pad",
+            json!({"sketch": sketch.0.to_string(), "length": 5.0, "boolean_tolerance": 0.05}),
+        )
+        .unwrap();
+        let id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
+        let read = |doc: &Document| {
+            DesignFeature::from_json(doc.get_feature_data(id).unwrap())
+                .unwrap()
+                .boolean_tolerance()
+        };
+        assert_eq!(read(&doc), Some(0.05));
+        let listed = |doc: &Document| {
+            crate::params::feature_parameters(doc.get_feature_meta(id).unwrap())
+                .iter()
+                .any(|p| p.name.as_deref() == Some("boolean_tolerance"))
+        };
+        assert!(listed(&doc), "a stated tolerance is a parameter");
+
+        call(
+            &mut bench,
+            &mut doc,
+            "design.set",
+            json!({"feature": pad, "boolean_tolerance": 0}),
+        )
+        .unwrap();
+        assert_eq!(read(&doc), None);
+        assert!(!listed(&doc), "an automatic tolerance is no parameter");
     }
 
     /// A pad moved to another body takes its sketch along, and the tree

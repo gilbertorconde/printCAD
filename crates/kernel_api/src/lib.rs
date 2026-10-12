@@ -1367,6 +1367,12 @@ pub enum SolidOp {
     /// A surface step: a sheet added to the body, or the body's sheets
     /// joined, trimmed or mirrored.
     Surface(SurfaceOp),
+    /// `op` with its booleans run at a stated tolerance: geometry within
+    /// `tolerance` mm of touching counts as touching, so faces that nearly
+    /// meet are joined rather than left with a gap or a sliver between
+    /// them. The op keeps its place in the chain, as a pattern's
+    /// `originals` count it.
+    WithTolerance { tolerance: f64, op: Box<SolidOp> },
 }
 
 /// A curve a surface is built from.
@@ -1548,10 +1554,38 @@ impl SurfaceOp {
 }
 
 impl SolidOp {
+    /// The op itself, out of any [`SolidOp::WithTolerance`] around it.
+    pub fn inner(&self) -> &SolidOp {
+        match self {
+            SolidOp::WithTolerance { op, .. } => op.inner(),
+            op => op,
+        }
+    }
+
+    /// The tolerance the op's booleans run at, when one is stated: the
+    /// outermost [`SolidOp::WithTolerance`]'s.
+    pub fn boolean_tolerance(&self) -> Option<f64> {
+        match self {
+            SolidOp::WithTolerance { tolerance, .. } => Some(*tolerance),
+            _ => None,
+        }
+    }
+
+    /// The op with its booleans run at `tolerance`, or as it is with none.
+    pub fn with_boolean_tolerance(self, tolerance: Option<f64>) -> SolidOp {
+        match tolerance {
+            Some(tolerance) => SolidOp::WithTolerance {
+                tolerance,
+                op: Box::new(self),
+            },
+            None => self,
+        }
+    }
+
     /// Whether the step makes a shape of its own, so a chain may begin with
     /// it: a new solid, or a surface step that adds a sheet.
     pub fn starts_shape(&self) -> bool {
-        match self {
+        match self.inner() {
             SolidOp::Surface(op) => op.constructs(),
             _ => self.boolean_op() == Some(BooleanOp::NewSolid),
         }
@@ -1559,7 +1593,7 @@ impl SolidOp {
 
     /// The boolean role of a shape-producing step; `None` for modifiers.
     pub fn boolean_op(&self) -> Option<BooleanOp> {
-        match self {
+        match self.inner() {
             SolidOp::Sweep { op, .. }
             | SolidOp::SweepFace { op, .. }
             | SolidOp::SweepFaceOf { op, .. }

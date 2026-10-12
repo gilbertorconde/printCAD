@@ -66,6 +66,7 @@ fn pad_feature(sketch: FeatureId, length: f32, reversed: bool, symmetric: bool) 
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: Some(sketch),
         length,
         reversed,
@@ -90,6 +91,7 @@ fn pocket_feature(sketch: FeatureId, depth: f32) -> DesignFeature {
         profile_borrowed: None,
         extras: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: Some(sketch),
         depth,
         reversed: false,
@@ -270,6 +272,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
     doc.add_feature_in_body(
         wb_design::DesignFeature::Revolution {
             refine: false,
+            boolean_tolerance: None,
             sketch: sketch_id,
             angle_deg: 360.0,
             axis: wb_design::RevolveAxis::SketchY,
@@ -369,6 +372,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
             clearance: None,
             thread_length: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: holes_id,
             diameter: 4.0,
             depth: 3.0,
@@ -428,6 +432,7 @@ fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f
             clearance: None,
             thread_length: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: holes_id,
             diameter: 3.4,
             depth: depth.unwrap_or(6.0),
@@ -564,6 +569,7 @@ fn linear_pattern_feature_repeats_a_boss_through_the_full_stack() {
     doc.add_feature_in_body(
         DesignFeature::LinearPattern {
             refine: false,
+            boolean_tolerance: None,
             originals: vec![boss_pad],
             axis: wb_design::PatternAxis::X,
             length: 40.0,
@@ -905,6 +911,7 @@ fn bore_rim_fillets() {
             profile_borrowed: None,
             extras: Default::default(),
             refine: false,
+            boolean_tolerance: None,
             sketch: Some(bore),
             depth: 12.0,
             reversed: false,
@@ -1216,6 +1223,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         clearance: None,
         thread_length: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: holes_id,
         diameter: 5.0,
         depth: 8.0,
@@ -1296,6 +1304,7 @@ fn mirrored_copies_the_pad_across_every_plane_it_is_given() {
         doc.add_feature_in_body(
             DesignFeature::Mirrored {
                 refine: false,
+                boolean_tolerance: None,
                 originals: vec![pad],
                 plane,
             },
@@ -1350,6 +1359,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
             .add_feature_in_body(
                 DesignFeature::Revolution {
                     refine: false,
+                    boolean_tolerance: None,
                     sketch: sketch_id,
                     angle_deg: 90.0,
                     axis: wb_design::RevolveAxis::SketchY,
@@ -1367,6 +1377,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
             doc.add_feature_in_body(
                 DesignFeature::Mirrored {
                     refine: false,
+                    boolean_tolerance: None,
                     originals: vec![turn],
                     plane,
                 },
@@ -1525,6 +1536,7 @@ fn a_symmetric_pocket_cuts_half_its_depth_each_way() {
                 profile_borrowed: None,
                 extras: Default::default(),
                 refine: false,
+                boolean_tolerance: None,
                 sketch: Some(hole),
                 depth: 4.0,
                 reversed: false,
@@ -1626,6 +1638,7 @@ fn a_boolean_follows_its_tool_body() {
         DesignFeature::BodyBoolean {
             more_tools: Vec::new(),
             refine: false,
+            boolean_tolerance: None,
             tool_body: tool,
             kind: kernel_api::BoolKind::Cut,
         },
@@ -1700,6 +1713,7 @@ fn bodies_that_take_each_other_as_tools_fail_once() {
             DesignFeature::BodyBoolean {
                 more_tools: Vec::new(),
                 refine: false,
+                boolean_tolerance: None,
                 tool_body: tool,
                 kind: kernel_api::BoolKind::Fuse,
             },
@@ -1945,6 +1959,7 @@ fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
         clearance: None,
         thread_length: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch,
         diameter,
         depth,
@@ -2524,6 +2539,7 @@ fn revolution(sketch: FeatureId, fields: serde_json::Value) -> DesignFeature {
     with(
         DesignFeature::Revolution {
             refine: false,
+            boolean_tolerance: None,
             sketch,
             angle_deg: 360.0,
             axis: wb_design::RevolveAxis::SketchY,
@@ -2695,6 +2711,7 @@ fn linear_pattern(original: FeatureId, fields: serde_json::Value) -> DesignFeatu
     with(
         DesignFeature::LinearPattern {
             refine: false,
+            boolean_tolerance: None,
             originals: vec![original],
             axis: wb_design::PatternAxis::X,
             length: 50.0,
@@ -2822,6 +2839,7 @@ fn a_polar_pattern_by_step_turns_each_occurrence_by_its_angle() {
     });
     let polar = |boss, step_mode: bool, angles: &[f32]| DesignFeature::PolarPattern {
         refine: false,
+        boolean_tolerance: None,
         originals: vec![boss],
         axis,
         angle_deg: 90.0,
@@ -3156,6 +3174,7 @@ fn pipe_of(
         path_edges: Vec::new(),
         profile_face: None,
         refine: false,
+        boolean_tolerance: None,
         profile,
         spine,
         orientation,
@@ -3436,6 +3455,7 @@ fn coil_section() -> SketchFeature {
 fn growing_helix(sketch: FeatureId, height: f32, turns: f32, growth: f32) -> DesignFeature {
     DesignFeature::Helix {
         refine: false,
+        boolean_tolerance: None,
         sketch,
         axis: wb_design::RevolveAxis::SketchY,
         mode: wb_design::HelixMode::HeightTurnsGrowth,
@@ -4227,6 +4247,7 @@ fn loft_of(sections: Vec<wb_design::LoftSection>) -> DesignFeature {
         closed: false,
         subtractive: false,
         refine: false,
+        boolean_tolerance: None,
     }
 }
 
@@ -4588,6 +4609,7 @@ fn a_boolean_takes_several_tool_bodies() {
             kind: kernel_api::BoolKind::Cut,
             more_tools: vec![b],
             refine: false,
+            boolean_tolerance: None,
         },
         "Cut".into(),
         Some(target),

@@ -449,6 +449,10 @@ pub fn execute_cached(
             });
         }
         let tag = op_tags[index];
+        // A stated tolerance holds for the op's booleans, the op itself
+        // read out of the wrapper that states it.
+        let _tolerance = ops::ToleranceScope::state(solid_op.boolean_tolerance());
+        let solid_op = solid_op.inner();
         // What the op and the probes asked before it look up by name is
         // found in the solid as it stands.
         let named = naming::set_current(std::mem::take(&mut names));
@@ -815,6 +819,7 @@ pub fn execute_cached(
                 }
                 made.shape
             }
+            SolidOp::WithTolerance { .. } => unreachable!("read out of its wrapper above"),
         };
 
         // The result's faces take the names of the faces they came from.

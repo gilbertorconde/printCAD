@@ -159,6 +159,7 @@ fn drill(
         clearance: None,
         thread_length: Default::default(),
         refine: false,
+        boolean_tolerance: None,
         sketch: sketch_id,
         diameter: first.diameter as f32,
         depth: first.depth as f32,
