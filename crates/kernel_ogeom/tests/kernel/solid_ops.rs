@@ -2105,6 +2105,153 @@ fn a_face_cut_by_a_plane_gives_the_curves_where_they_cross() {
     }
 }
 
+/// A 10 mm cube with a 4 mm bore down its middle, along Z.
+fn bored_cube(kernel: &mut OgeomKernel) -> kernel_api::SolidBuildResult {
+    let ops = [
+        SolidOp::Primitive {
+            kind: PrimitiveKind::Box {
+                length: 10.0,
+                width: 10.0,
+                height: 10.0,
+            },
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        },
+        SolidOp::Primitive {
+            kind: PrimitiveKind::Cylinder {
+                radius: 2.0,
+                height: 12.0,
+                angle_deg: 360.0,
+            },
+            placement: Placement {
+                origin: [5.0, 5.0, -1.0],
+                ..Placement::default()
+            },
+            op: BooleanOp::Cut,
+        },
+    ];
+    kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .expect("the bored cube builds")
+}
+
+/// The length of a polyline.
+fn run_length(points: &[[f64; 3]]) -> f64 {
+    points
+        .windows(2)
+        .map(|w| {
+            (0..3)
+                .map(|i| (w[1][i] - w[0][i]).powi(2))
+                .sum::<f64>()
+                .sqrt()
+        })
+        .sum()
+}
+
+fn same_point(a: [f64; 3], b: [f64; 3]) -> bool {
+    (0..3).all(|i| (a[i] - b[i]).abs() < 1e-6)
+}
+
+/// A plane across a bored cube cuts it into two closed loops, its square
+/// outside and the bore's circle, each curve running on from the last;
+/// asked of one face, only that face's line comes back, open; a plane
+/// that misses cuts nothing.
+#[test]
+fn a_shape_cut_by_a_plane_gives_its_section_as_loops() {
+    use kernel_api::{KernelQueries, ProjectedEdge};
+    let mut kernel = new_kernel();
+    let cube = bored_cube(&mut kernel);
+    let runs = kernel_ogeom::QUERIES
+        .section(&cube.brep_blob, &plane_at_z(4.0), None)
+        .expect("the cube is cut");
+    assert_eq!(runs.len(), 2, "{runs:?}");
+    let mut lengths: Vec<f64> = runs
+        .iter()
+        .map(|run| {
+            assert!(run.closed, "{run:?}");
+            for pair in run.curves.windows(2) {
+                assert!(same_point(
+                    *pair[0].points.last().unwrap(),
+                    pair[1].points[0]
+                ));
+            }
+            for curve in &run.curves {
+                assert!(curve.points.iter().all(|p| (p[2] - 4.0).abs() < 1e-7));
+            }
+            run.curves.iter().map(|c| run_length(&c.points)).sum()
+        })
+        .collect();
+    lengths.sort_by(f64::total_cmp);
+    assert!(
+        (lengths[0] - 4.0 * std::f64::consts::PI).abs() < 0.1,
+        "{lengths:?}"
+    );
+    assert!((lengths[1] - 40.0).abs() < 1e-6, "{lengths:?}");
+    let bore = runs
+        .iter()
+        .find(|run| {
+            run.curves
+                .iter()
+                .all(|c| matches!(c.curve, ProjectedEdge::Circle { .. }))
+        })
+        .expect("the bore's run is circles");
+    let ProjectedEdge::Circle { centre, radius, .. } = bore.curves[0].curve else {
+        unreachable!()
+    };
+    assert!((centre[0] - 5.0).abs() < 1e-7 && (centre[1] - 5.0).abs() < 1e-7);
+    assert!((radius - 2.0).abs() < 1e-7);
+
+    let side = kernel_ogeom::QUERIES
+        .section(&cube.brep_blob, &plane_at_z(4.0), Some([0.0, 5.0, 5.0]))
+        .expect("the side is cut");
+    let [run] = side.as_slice() else {
+        panic!("{side:?}");
+    };
+    assert!(!run.closed && run.curves.len() == 1, "{run:?}");
+    assert!(matches!(run.curves[0].curve, ProjectedEdge::Line { .. }));
+
+    let missed = kernel_ogeom::QUERIES
+        .section(&cube.brep_blob, &plane_at_z(40.0), None)
+        .expect("a plane that misses cuts nothing");
+    assert!(missed.is_empty(), "{missed:?}");
+}
+
+/// A bored cube's top has two loops, its square first and then the bore's
+/// rim, each edge running on from the last; the bore's own face has its
+/// seam twice, once each way.
+#[test]
+fn a_face_s_loops_come_outer_first_each_edge_in_turn() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let cube = bored_cube(&mut kernel);
+    let top = kernel_ogeom::QUERIES
+        .face_loops(&cube.brep_blob, [1.0, 1.0, 10.0])
+        .expect("the top's loops");
+    assert_eq!(top.len(), 2, "{top:?}");
+    let length = |edges: &[kernel_api::LoopEdge]| -> f64 {
+        edges.iter().map(|e| run_length(&e.points)).sum()
+    };
+    assert_eq!(top[0].len(), 4);
+    assert!((length(&top[0]) - 40.0).abs() < 1e-6);
+    assert!((length(&top[1]) - 4.0 * std::f64::consts::PI).abs() < 0.1);
+    for edges in &top {
+        assert!(edges.iter().all(|e| !e.seam));
+        for (a, b) in edges.iter().zip(edges.iter().cycle().skip(1)) {
+            assert!(
+                same_point(*a.points.last().unwrap(), b.points[0]),
+                "{edges:?}"
+            );
+            assert!(a.points.iter().all(|p| (p[2] - 10.0).abs() < 1e-7));
+        }
+    }
+
+    let bore = kernel_ogeom::QUERIES
+        .face_loops(&cube.brep_blob, [7.0, 5.0, 5.0])
+        .expect("the bore's loops");
+    let seams = bore.iter().flatten().filter(|e| e.seam).count();
+    assert_eq!(seams, 2, "{bore:?}");
+}
+
 /// Two boxes where they overlap share a solid of the overlap's volume, in
 /// the first box's frame; flush or apart, they share none.
 #[test]

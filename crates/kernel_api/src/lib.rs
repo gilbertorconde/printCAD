@@ -1779,6 +1779,39 @@ pub enum ProjectedEdge {
     Polyline(Vec<[f64; 2]>),
 }
 
+/// One curve where a plane crosses a shape.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionCurve {
+    /// The exact curve, in the plane's own 2D coordinates.
+    pub curve: ProjectedEdge,
+    /// Points along it, in the shape's own frame, in the order its run
+    /// goes.
+    pub points: Vec<[f64; 3]>,
+    /// The run goes against the way `curve` runs.
+    #[serde(default)]
+    pub reversed: bool,
+}
+
+/// Curves where a plane crosses a shape, end to end: a closed loop round
+/// a solid's cut, or an open run where a sheet's edge stops it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionRun {
+    pub curves: Vec<SectionCurve>,
+    pub closed: bool,
+}
+
+/// One edge of a face's boundary loop.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopEdge {
+    /// Points along it, in the shape's own frame, in the order the loop
+    /// walks it.
+    pub points: Vec<[f64; 3]>,
+    /// The edge a round face meets itself along: it turns up twice in
+    /// its loop, once each way.
+    #[serde(default)]
+    pub seam: bool,
+}
+
 /// The curves of a 2D drawing file, in the drawing's own coordinates.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Drawing2d {
@@ -2133,6 +2166,25 @@ pub trait KernelQueries: Send + Sync {
         _plane: &ProfilePlane,
     ) -> KernelResult<Vec<ProjectedEdge>> {
         Err(KernelError::Unsupported("face section".into()))
+    }
+
+    /// Where `plane` crosses `brep`, chained end to end, each curve exact
+    /// in the plane's own 2D coordinates and drawn in the shape's own
+    /// frame: the whole shape's section, or with `near` only the face
+    /// nearest it. Empty when the plane misses.
+    fn section(
+        &self,
+        _brep: &[u8],
+        _plane: &ProfilePlane,
+        _near: Option<[f64; 3]>,
+    ) -> KernelResult<Vec<SectionRun>> {
+        Err(KernelError::Unsupported("section".into()))
+    }
+
+    /// The boundary loops of the face of `brep` nearest `near`, the outer
+    /// one first, each edge in loop order, in the shape's own frame.
+    fn face_loops(&self, _brep: &[u8], _near: [f64; 3]) -> KernelResult<Vec<Vec<LoopEdge>>> {
+        Err(KernelError::Unsupported("face loops".into()))
     }
 
     /// The curves of a DXF drawing, given as its text.
