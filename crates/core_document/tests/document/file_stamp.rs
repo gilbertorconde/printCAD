@@ -5,6 +5,7 @@
 
 use std::io::Read;
 
+use crate::support::pack;
 use core_document::{
     CONTAINER_FORMAT, Compression, Document, FileAge, FileStamp, file_age, set_writer_version,
 };
@@ -34,20 +35,6 @@ fn entries(bytes: &[u8]) -> Vec<(String, Vec<u8>)> {
             (path, data)
         })
         .collect()
-}
-
-/// A container of `entries`, in order.
-fn pack(entries: &[(String, Vec<u8>)]) -> Vec<u8> {
-    let mut builder = tar::Builder::new(Vec::new());
-    for (path, data) in entries {
-        let mut header = tar::Header::new_gnu();
-        header.set_path(path).expect("path");
-        header.set_size(data.len() as u64);
-        header.set_mode(0o644);
-        header.set_cksum();
-        builder.append(&header, data.as_slice()).expect("append");
-    }
-    builder.into_inner().expect("finish")
 }
 
 #[test]

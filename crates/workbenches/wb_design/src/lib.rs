@@ -24,6 +24,8 @@ mod references;
 mod region_pick;
 #[cfg(feature = "egui")]
 mod task;
+#[cfg(test)]
+mod test_support;
 
 pub use borrow::freeze;
 pub use build::{
@@ -2991,6 +2993,21 @@ mod body_tool {
     use super::*;
     use core_document::{Document, WorkbenchInputEvent, WorkbenchRuntimeContext};
 
+    /// The box primitive at the origin, added to `body`.
+    fn add_box(doc: &mut Document, body: BodyId) -> FeatureId {
+        let cube = DesignFeature::Primitive {
+            keep_inside: false,
+            attached: None,
+            refine: false,
+            boolean_tolerance: None,
+            kind: primitive_preset("box").unwrap(),
+            placement: kernel_api::Placement::default(),
+            subtractive: false,
+        };
+        doc.add_feature_in_body(cube, "Box".into(), Some(body))
+            .unwrap()
+    }
+
     #[test]
     fn the_body_tool_creates_a_body_and_asks_the_host_to_select_and_label_it() {
         let mut wb = DesignWorkbench::default();
@@ -3021,21 +3038,7 @@ mod body_tool {
             let mut wb = DesignWorkbench::default();
             let mut doc = Document::new("t");
             let body = doc.create_body(None);
-            let pad = doc
-                .add_feature_in_body(
-                    DesignFeature::Primitive {
-                        keep_inside: false,
-                        attached: None,
-                        refine: false,
-                        boolean_tolerance: None,
-                        kind: primitive_preset("box").unwrap(),
-                        placement: kernel_api::Placement::default(),
-                        subtractive: false,
-                    },
-                    "Box".into(),
-                    Some(body),
-                )
-                .unwrap();
+            let pad = add_box(&mut doc, body);
             let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
             ctx.selected_body_id = Some(body.0);
             ctx.active_document_object = Some(pad);
@@ -3095,20 +3098,7 @@ mod body_tool {
         let mut wb = DesignWorkbench::default();
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        doc.add_feature_in_body(
-            DesignFeature::Primitive {
-                keep_inside: false,
-                attached: None,
-                refine: false,
-                boolean_tolerance: None,
-                kind: primitive_preset("box").unwrap(),
-                placement: kernel_api::Placement::default(),
-                subtractive: false,
-            },
-            "Box".into(),
-            Some(body),
-        )
-        .unwrap();
+        add_box(&mut doc, body);
         let top = |surface| core_document::FaceRef {
             name: 0,
             point: [5.0, 5.0, 10.0],
@@ -3260,32 +3250,19 @@ mod icon_coverage {
             };
             let icon = datum_icon(&datum);
             assert!(ui_kit::icon::exists(icon), "unknown icon {icon}");
+            // Design presents the core datums it claims.
+            let info = wb.feature_info(&core_document::FeatureNode::new(
+                FeatureId(uuid::Uuid::new_v4()),
+                &datum,
+            ));
+            assert_eq!(
+                (info.icon, info.kind_label.as_str(), info.builds_solid),
+                (icon, "Datum", false)
+            );
         }
         let node = core_document::FeatureNode::new(
             FeatureId(uuid::Uuid::new_v4()),
-            &DesignFeature::Pad {
-                regions: Vec::new(),
-                profile_borrowed: None,
-                extras: Default::default(),
-                refine: false,
-                boolean_tolerance: None,
-                sketch: Some(FeatureId(uuid::Uuid::new_v4())),
-                length: 10.0,
-                reversed: false,
-                symmetric: false,
-                mode: ExtrudeMode::Dimension,
-                length2: 0.0,
-                taper_deg: 0.0,
-                up_to_face: None,
-                up_to_offset: 0.0,
-                profile_face: None,
-                direction: Default::default(),
-                up_to_shape: Vec::new(),
-                mode2: None,
-                up_to_face2: None,
-                up_to_offset2: 0.0,
-                up_to_shape2: Vec::new(),
-            },
+            &crate::test_support::pad(FeatureId(uuid::Uuid::new_v4()), 10.0),
         );
         let info = wb.feature_info(&node);
         assert!(
@@ -3310,31 +3287,18 @@ mod icon_coverage {
     /// not.
     #[test]
     fn a_cosmetic_thread_names_its_designation_in_the_feature_kind() {
-        let hole = |cosmetic_thread: bool| DesignFeature::Hole {
-            boolean_tolerance: None,
-            cosmetic_thread,
-            start: Default::default(),
-            clearance: None,
-            thread_length: Default::default(),
-            refine: false,
-            sketch: FeatureId(uuid::Uuid::new_v4()),
-            diameter: 10.2,
-            depth: 10.0,
-            through_all: true,
-            cut: crate::feature::HoleCut::None,
-            thread: Some(crate::feature::ThreadSpec::new(
-                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                "M12",
-            )),
-            threaded: true,
-            modeled_thread: false,
-            thread_depth: 0.0,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: crate::feature::DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
+        let hole = |cosmetic_thread: bool| {
+            crate::test_support::hole(FeatureId(uuid::Uuid::new_v4()), |h| {
+                *h.cosmetic_thread = cosmetic_thread;
+                *h.diameter = 10.2;
+                *h.depth = 10.0;
+                *h.through_all = true;
+                *h.thread = Some(crate::feature::ThreadSpec::new(
+                    crate::hole_tables::ThreadStandard::IsoMetricCoarse,
+                    "M12",
+                ));
+                *h.threaded = true;
+            })
         };
         let kind = |feature: &DesignFeature| {
             let node = core_document::FeatureNode::new(FeatureId(uuid::Uuid::new_v4()), feature);

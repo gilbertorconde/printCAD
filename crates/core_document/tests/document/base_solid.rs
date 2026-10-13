@@ -2,34 +2,20 @@
 //! from what an import made, put back when it is dropped, undone as one
 //! step, and saved with the document.
 
-use std::sync::Arc;
-
 use core_document::history::OpJournal;
-use core_document::{BodyId, Document, ImportedGeometry, TriMesh};
+use core_document::{BodyId, Document, ImportedGeometry};
+
+use crate::support::{geometry, reloaded, triangle};
 
 const BLOB: &[u8] = b"ogeom native text standing in for a solid";
 
 fn imported_body(doc: &mut Document) -> BodyId {
     let body = doc.create_body(None);
-    let mesh = Arc::new(TriMesh {
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        normals: vec![[0.0, 0.0, 1.0]; 3],
-        indices: vec![0, 1, 2],
-        ..Default::default()
-    });
-    doc.set_imported_geometry(
-        body,
-        ImportedGeometry {
-            bounds_mm: mesh.bounds(),
-            mesh,
-            source_asset: Some(uuid::Uuid::new_v4()),
-            revision: 0,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    let from_a_file = ImportedGeometry {
+        source_asset: Some(uuid::Uuid::new_v4()),
+        ..geometry(triangle())
+    };
+    doc.set_imported_geometry(body, from_a_file);
     doc.set_imported_brep_data(body, BLOB.to_vec(), vec![[0.5, 0.5, 0.5]]);
     body
 }
@@ -98,13 +84,7 @@ fn a_base_is_saved_and_read_back() {
     let body = imported_body(&mut doc);
     doc.set_body_base(body, true);
     doc.set_imported_brep_data(body, b"ogeom built".to_vec(), Vec::new());
-    let dir = std::env::temp_dir().join(format!("printcad-base-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("based.prtcad");
-    doc.save_to_file(&path, core_document::Compression::None)
-        .unwrap();
-    let back = Document::load_from_file(&path).unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
+    let back = reloaded(&mut doc);
     assert!(back.has_base_solid(body));
     assert_eq!(back.base_brep_blob(body), Some(BLOB));
     assert_eq!(back.base_face_colors(body), Some(&[[0.5, 0.5, 0.5]][..]));

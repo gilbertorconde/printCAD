@@ -2,32 +2,11 @@
 //! by the pattern from where the source sits; an edit is one op and one
 //! undo step, whatever copies it makes or takes away; the ops replay.
 
-use std::sync::Arc;
-
 use core_document::history::OpJournal;
-use core_document::{
-    ArrayPattern, BodyId, BodyPlacement, Compression, Document, ImportedGeometry, TriMesh,
-};
+use core_document::{ArrayPattern, BodyId, BodyPlacement, Document};
 use glam::{Quat, Vec3};
 
-fn geometry() -> ImportedGeometry {
-    let mesh = Arc::new(TriMesh {
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        normals: vec![[0.0, 0.0, 1.0]; 3],
-        indices: vec![0, 1, 2],
-        ..TriMesh::default()
-    });
-    ImportedGeometry {
-        bounds_mm: mesh.bounds(),
-        mesh,
-        source_asset: None,
-        revision: 0,
-        brep_blob_path: None,
-        mesh_path: None,
-        face_colors_path: None,
-        health: None,
-    }
-}
+use crate::support::{assert_replays, geometry, reloaded, triangle};
 
 fn close(a: [f32; 3], b: [f32; 3]) -> bool {
     (0..3).all(|i| (a[i] - b[i]).abs() < 1e-4)
@@ -43,7 +22,7 @@ fn row(spacing: f32) -> ArrayPattern {
 /// A body with a shape and a snapshot.
 fn part(doc: &mut Document) -> BodyId {
     let body = doc.create_body(Some("Peg".into()));
-    doc.set_imported_geometry(body, geometry());
+    doc.set_imported_geometry(body, geometry(triangle()));
     doc.set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
     body
 }
@@ -199,19 +178,9 @@ fn array_edits_replay_and_survive_a_save() {
         BodyPlacement::new(Quat::IDENTITY, Vec3::new(0.0, 0.0, 2.0)),
     );
     let ops = live.take_pending_ops();
-    let json = serde_json::to_string(&ops).unwrap();
-    let ops: Vec<core_document::op::DocumentOp> = serde_json::from_str(&json).unwrap();
-    let mut replica = baseline;
-    for op in &ops {
-        replica.apply_op(op);
-    }
-    assert_eq!(
-        live.replicated_projection(),
-        replica.replicated_projection()
-    );
+    assert_replays(&live, baseline, &ops);
 
-    let bytes = live.save_to_bytes(Compression::None).unwrap();
-    let loaded = Document::load_from_bytes(bytes).unwrap();
+    let loaded = reloaded(&mut live);
     assert_eq!(loaded.copy_array(array), live.copy_array(array));
     assert!(close(corners(&loaded, array)[2], [60.0, 0.0, 2.0]));
 }
@@ -228,7 +197,11 @@ fn an_array_s_copy_is_not_a_source_and_counts_are_bounded() {
         direction: [0.0; 3],
         spacing: 5.0,
     };
-    assert!(doc.set_copy_array(array, flat, 3, Vec::new()).is_err());
+    assert_eq!(
+        doc.set_copy_array(array, flat, 3, Vec::new()),
+        Err(core_document::ArrayError::BadPattern),
+        "a zero direction"
+    );
 }
 
 /// Three stations a quarter turn apart round the circle of radius 10
@@ -292,16 +265,7 @@ fn a_path_array_places_copies_at_its_stations_turned_when_aligned_and_replays() 
     );
 
     let ops = live.take_pending_ops();
-    let json = serde_json::to_string(&ops).unwrap();
-    let ops: Vec<core_document::op::DocumentOp> = serde_json::from_str(&json).unwrap();
-    let mut replica = baseline;
-    for op in &ops {
-        replica.apply_op(op);
-    }
-    assert_eq!(
-        live.replicated_projection(),
-        replica.replicated_projection()
-    );
+    assert_replays(&live, baseline, &ops);
 }
 
 #[test]
@@ -345,16 +309,7 @@ fn a_component_array_copies_every_body_together_and_skips_whole_occurrences() {
     assert_eq!(live.array_instance(cap_copy), None);
 
     let ops = live.take_pending_ops();
-    let json = serde_json::to_string(&ops).unwrap();
-    let ops: Vec<core_document::op::DocumentOp> = serde_json::from_str(&json).unwrap();
-    let mut replica = baseline;
-    for op in &ops {
-        replica.apply_op(op);
-    }
-    assert_eq!(
-        live.replicated_projection(),
-        replica.replicated_projection()
-    );
+    assert_replays(&live, baseline, &ops);
     let empty = live.create_component("Empty".into(), None).unwrap();
     assert_eq!(
         live.create_component_array(empty, row(5.0), 2),

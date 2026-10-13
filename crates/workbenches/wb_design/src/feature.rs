@@ -2914,23 +2914,104 @@ mod tests {
         );
     }
 
+    /// A feature saved before its newer fields reads them as their
+    /// defaults.
     #[test]
-    fn old_pad_json_without_new_fields_still_deserializes() {
-        // A Pad with none of the termination-mode fields.
-        let old = serde_json::json!({
-            "Pad": { "sketch": FeatureId::new(), "length": 5.0, "reversed": false }
-        });
-        let feature = DesignFeature::from_json(&old).unwrap();
-        assert!(matches!(
-            feature,
-            DesignFeature::Pad {
-                symmetric: false,
-                mode: ExtrudeMode::Dimension,
-                taper_deg: t,
-                up_to_face: None,
-                ..
-            } if t == 0.0
-        ));
+    fn features_saved_before_their_newer_fields_read_them_as_defaults() {
+        let sketch = FeatureId::new();
+        type Reads = fn(&DesignFeature) -> bool;
+        let rows: [(&str, serde_json::Value, Reads); 6] = [
+            (
+                "a pad without its termination modes",
+                serde_json::json!({"Pad": {"sketch": sketch, "length": 5.0, "reversed": false}}),
+                |f| {
+                    matches!(f, DesignFeature::Pad {
+                        symmetric: false,
+                        mode: ExtrudeMode::Dimension,
+                        taper_deg,
+                        up_to_face: None,
+                        ..
+                    } if *taper_deg == 0.0)
+                },
+            ),
+            (
+                "a pocket through all",
+                serde_json::json!({"Pocket": {
+                    "sketch": sketch, "depth": 5.0, "reversed": false, "through_all": true
+                }}),
+                |f| {
+                    matches!(
+                        f,
+                        DesignFeature::Pocket {
+                            symmetric: false,
+                            through_all: true,
+                            mode: ExtrudeMode::Dimension,
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "a revolution without its axis",
+                serde_json::json!({"Revolution": {"sketch": sketch, "angle_deg": 180.0}}),
+                |f| {
+                    matches!(
+                        f,
+                        DesignFeature::Revolution {
+                            axis: RevolveAxis::SketchY,
+                            midplane: false,
+                            second_angle_deg: None,
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "a helix that neither grows nor keeps inside",
+                serde_json::json!({"Helix": {
+                    "sketch": sketch, "axis": "SketchY", "mode": "PitchHeight",
+                    "pitch": 2.0, "height": 10.0, "turns": 5.0, "left_handed": false,
+                    "cone_angle_deg": 0.0, "reversed": false, "subtractive": true
+                }}),
+                |f| {
+                    matches!(f, DesignFeature::Helix {
+                        keep_inside: false,
+                        growth,
+                        ..
+                    } if *growth == 0.0)
+                },
+            ),
+            (
+                "a fillet with its edges alone",
+                serde_json::json!({"Fillet": {"radius": 1.0}}),
+                |f| {
+                    matches!(
+                        f,
+                        DesignFeature::Fillet {
+                            follow_tangent: false,
+                            ..
+                        }
+                    )
+                },
+            ),
+            (
+                "a chamfer with its edges alone",
+                serde_json::json!({"Chamfer": {"size": 1.0}}),
+                |f| {
+                    matches!(
+                        f,
+                        DesignFeature::Chamfer {
+                            follow_tangent: false,
+                            ..
+                        }
+                    )
+                },
+            ),
+        ];
+        for (what, old, reads) in rows {
+            let feature = DesignFeature::from_json(&old).unwrap_or_else(|e| panic!("{what}: {e}"));
+            assert!(reads(&feature), "{what}: {feature:?}");
+        }
     }
 
     /// A feature saved before it had a boolean tolerance reads as leaving
@@ -2954,28 +3035,6 @@ mod tests {
         .unwrap();
         fillet.set_boolean_tolerance(Some(0.02));
         assert_eq!(fillet.boolean_tolerance(), None);
-    }
-
-    #[test]
-    fn old_pocket_json_still_deserializes() {
-        let old = serde_json::json!({
-            "Pocket": {
-                "sketch": FeatureId::new(),
-                "depth": 5.0,
-                "reversed": false,
-                "through_all": true
-            }
-        });
-        let feature = DesignFeature::from_json(&old).unwrap();
-        assert!(matches!(
-            feature,
-            DesignFeature::Pocket {
-                symmetric: false,
-                through_all: true,
-                mode: ExtrudeMode::Dimension,
-                ..
-            }
-        ));
     }
 
     #[test]
@@ -3023,23 +3082,6 @@ mod tests {
         });
         let feature = DesignFeature::from_json(&old).unwrap();
         assert_eq!(feature.dependencies(), vec![sketch, datum]);
-    }
-
-    #[test]
-    fn old_revolution_json_still_deserializes() {
-        let old = serde_json::json!({
-            "Revolution": { "sketch": FeatureId::new(), "angle_deg": 180.0 }
-        });
-        let feature = DesignFeature::from_json(&old).unwrap();
-        assert!(matches!(
-            feature,
-            DesignFeature::Revolution {
-                axis: RevolveAxis::SketchY,
-                midplane: false,
-                second_angle_deg: None,
-                ..
-            }
-        ));
     }
 
     #[test]
@@ -3104,30 +3146,14 @@ mod tests {
     }
 
     #[test]
-    fn an_old_helix_neither_grows_nor_keeps_inside() {
-        let old = serde_json::json!({
-            "Helix": {
-                "sketch": FeatureId::new(), "axis": "SketchY", "mode": "PitchHeight",
-                "pitch": 2.0, "height": 10.0, "turns": 5.0, "left_handed": false,
-                "cone_angle_deg": 0.0, "reversed": false, "subtractive": true
-            }
-        });
-        let feature = DesignFeature::from_json(&old).unwrap();
-        assert!(matches!(
-            feature,
-            DesignFeature::Helix {
-                keep_inside: false,
-                growth,
-                ..
-            } if growth == 0.0
-        ));
-    }
-
-    #[test]
-    fn dependencies_cover_sketches_and_originals() {
-        let a = FeatureId::new();
-        let b = FeatureId::new();
-        let pipe = DesignFeature::Pipe {
+    fn a_pipe_depends_on_its_sketches_guide_and_sections() {
+        let (a, b, c, d) = (
+            FeatureId::new(),
+            FeatureId::new(),
+            FeatureId::new(),
+            FeatureId::new(),
+        );
+        let pipe = |orientation, sections| DesignFeature::Pipe {
             keep_inside: false,
             path_borrowed: Vec::new(),
             path_edges: Vec::new(),
@@ -3136,43 +3162,15 @@ mod tests {
             boolean_tolerance: None,
             profile: a,
             spine: b,
-            orientation: PipeOrientation::Standard,
+            orientation,
             corner: PipeCorner::Transformed,
-            sections: Vec::new(),
+            sections,
             subtractive: false,
         };
-        assert_eq!(pipe.dependencies(), vec![a, b]);
-
-        let (c, d) = (FeatureId::new(), FeatureId::new());
-        let guided = DesignFeature::Pipe {
-            keep_inside: false,
-            path_borrowed: Vec::new(),
-            path_edges: Vec::new(),
-            profile_face: None,
-            refine: false,
-            boolean_tolerance: None,
-            profile: a,
-            spine: b,
-            orientation: PipeOrientation::Auxiliary { path: c },
-            corner: PipeCorner::Transformed,
-            sections: vec![d],
-            subtractive: false,
-        };
+        let plain = pipe(PipeOrientation::Standard, Vec::new());
+        assert_eq!(plain.dependencies(), vec![a, b]);
+        let guided = pipe(PipeOrientation::Auxiliary { path: c }, vec![d]);
         assert_eq!(guided.dependencies(), vec![a, b, c, d]);
-
-        let pattern = DesignFeature::LinearPattern {
-            skipped: Vec::new(),
-            refine: false,
-            boolean_tolerance: None,
-            originals: vec![a],
-            axis: PatternAxis::X,
-            length: 10.0,
-            occurrences: 3,
-            spacing_mode: false,
-            reversed: false,
-            spacings: Vec::new(),
-        };
-        assert_eq!(pattern.dependencies(), vec![a]);
     }
 
     #[test]
@@ -3196,26 +3194,6 @@ mod tests {
             DesignFeature::from_json(&serde_json::json!({ "Fillet": { "radius": 1.0 } })).unwrap();
         assert!(!fillet.toggle_skipped(0));
         assert_eq!(fillet.skipped(), None);
-    }
-
-    #[test]
-    fn an_old_fillet_or_chamfer_takes_its_edges_alone() {
-        let fillet = serde_json::json!({ "Fillet": { "radius": 1.0 } });
-        assert!(matches!(
-            DesignFeature::from_json(&fillet).unwrap(),
-            DesignFeature::Fillet {
-                follow_tangent: false,
-                ..
-            }
-        ));
-        let chamfer = serde_json::json!({ "Chamfer": { "size": 1.0 } });
-        assert!(matches!(
-            DesignFeature::from_json(&chamfer).unwrap(),
-            DesignFeature::Chamfer {
-                follow_tangent: false,
-                ..
-            }
-        ));
     }
 
     #[test]

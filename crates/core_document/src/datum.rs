@@ -1412,69 +1412,92 @@ mod tests {
         (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5)
     }
 
-    #[test]
-    fn base_plane_with_offset_translates_along_normal() {
-        let datum = DatumFeature {
+    /// A plane on XY, moved by `offset`.
+    fn offset_xy(offset: AttachmentOffset) -> DatumFeature {
+        DatumFeature {
             shape: DatumShape::Plane { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
-            offset: AttachmentOffset {
-                tilt: [0.0; 2],
-                translation: [0.0, 0.0, 7.5],
-                rotation_deg: 0.0,
-                flip: false,
-            },
-        };
-        let frame = datum.frame();
-        assert!(close(frame.origin, [0.0, 0.0, 7.5]));
-        assert!(close(frame.normal, [0.0, 0.0, 1.0]));
+            offset,
+        }
+    }
+
+    /// An offset moves a plane along its normal, flips it, spins its x
+    /// axis in the plane and leans it about its axes.
+    #[test]
+    fn an_offset_moves_flips_spins_and_tilts_a_plane() {
+        let none = AttachmentOffset::default();
+        type Want = Option<[f32; 3]>;
+        let rows: [(&str, AttachmentOffset, Want, Want, Want); 5] = [
+            (
+                "translated along the normal",
+                AttachmentOffset {
+                    translation: [0.0, 0.0, 7.5],
+                    ..none
+                },
+                Some([0.0, 0.0, 7.5]),
+                Some([0.0, 0.0, 1.0]),
+                None,
+            ),
+            (
+                "flipped",
+                AttachmentOffset { flip: true, ..none },
+                None,
+                Some([0.0, 0.0, -1.0]),
+                None,
+            ),
+            (
+                "rotated a quarter turn",
+                AttachmentOffset {
+                    rotation_deg: 90.0,
+                    ..none
+                },
+                None,
+                None,
+                Some([0.0, 1.0, 0.0]),
+            ),
+            // A quarter turn about x takes the normal from z to -y.
+            (
+                "tilted about x",
+                AttachmentOffset {
+                    tilt: [90.0, 0.0],
+                    ..none
+                },
+                None,
+                Some([0.0, -1.0, 0.0]),
+                Some([1.0, 0.0, 0.0]),
+            ),
+            (
+                "tilted about y",
+                AttachmentOffset {
+                    tilt: [0.0, 90.0],
+                    ..none
+                },
+                None,
+                Some([1.0, 0.0, 0.0]),
+                None,
+            ),
+        ];
+        for (what, offset, origin, normal, x_axis) in rows {
+            let frame = offset_xy(offset).frame();
+            orthonormal(&frame);
+            for (got, want) in [
+                (frame.origin, origin),
+                (frame.normal, normal),
+                (frame.x_axis, x_axis),
+            ] {
+                if let Some(want) = want {
+                    assert!(close(got, want), "{what}: {frame:?}");
+                }
+            }
+        }
     }
 
     #[test]
     fn flat_face_attachment_derives_orthonormal_frame() {
-        let datum = DatumFeature {
-            shape: DatumShape::Plane { size: 20.0 },
-            attachment: DatumAttachment::FlatFace {
-                point: [3.0, 4.0, 5.0],
-                normal: [0.0, 3.0, 4.0],
-            },
-            offset: AttachmentOffset::default(),
-        };
-        let frame = datum.frame();
-        let n = frame.normal;
-        let x = frame.x_axis;
-        let dot = n[0] * x[0] + n[1] * x[1] + n[2] * x[2];
-        assert!(dot.abs() < 1e-5, "x-axis orthogonal to normal");
-        assert!((n[0] * n[0] + n[1] * n[1] + n[2] * n[2] - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
-    fn flip_reverses_the_normal() {
-        let datum = DatumFeature {
-            shape: DatumShape::Plane { size: 20.0 },
-            attachment: DatumAttachment::BasePlane(BasePlane::XY),
-            offset: AttachmentOffset {
-                tilt: [0.0; 2],
-                translation: [0.0; 3],
-                rotation_deg: 0.0,
-                flip: true,
-            },
-        };
-        assert!(close(datum.frame().normal, [0.0, 0.0, -1.0]));
-    }
-
-    #[test]
-    fn rotation_spins_the_x_axis_in_plane() {
-        let datum = DatumFeature {
-            shape: DatumShape::Plane { size: 20.0 },
-            attachment: DatumAttachment::BasePlane(BasePlane::XY),
-            offset: AttachmentOffset {
-                tilt: [0.0; 2],
-                translation: [0.0; 3],
-                rotation_deg: 90.0,
-                flip: false,
-            },
-        };
-        assert!(close(datum.frame().x_axis, [0.0, 1.0, 0.0]));
+        orthonormal(&plane(DatumAttachment::FlatFace {
+            point: [3.0, 4.0, 5.0],
+            normal: [0.0, 3.0, 4.0],
+        }));
     }
 
     #[test]
@@ -1483,10 +1506,8 @@ mod tests {
             shape: DatumShape::CoordinateSystem { size: 20.0 },
             attachment: DatumAttachment::BasePlane(BasePlane::XY),
             offset: AttachmentOffset {
-                tilt: [0.0; 2],
                 translation: [1.0, 2.0, 3.0],
-                rotation_deg: 0.0,
-                flip: false,
+                ..AttachmentOffset::default()
             },
         };
         let frame = datum.frame();
@@ -1496,25 +1517,6 @@ mod tests {
             assert!(close(plane.normal, base_normal), "{label}");
             assert!(close(plane.x_axis, base_x), "{label}");
         }
-    }
-
-    #[test]
-    fn json_round_trip() {
-        let datum = DatumFeature {
-            shape: DatumShape::Line { length: 30.0 },
-            attachment: DatumAttachment::FlatFace {
-                point: [1.0, 2.0, 3.0],
-                normal: [0.0, 0.0, 1.0],
-            },
-            offset: AttachmentOffset {
-                tilt: [0.0; 2],
-                translation: [1.0, 2.0, 3.0],
-                rotation_deg: 15.0,
-                flip: true,
-            },
-        };
-        let json = datum.to_json();
-        assert_eq!(DatumFeature::from_json(&json).unwrap(), datum);
     }
 
     fn datum(shape: DatumShape, attachment: DatumAttachment) -> DatumFeature {
@@ -1844,16 +1846,10 @@ mod tests {
             normal: [0.0, 0.0, 1.0],
             surface: kernel_api::FaceSurface::Other,
         })]);
-        let moved = DatumFeature {
-            shape: DatumShape::Plane { size: 20.0 },
-            attachment: DatumAttachment::BasePlane(BasePlane::XY),
-            offset: AttachmentOffset {
-                tilt: [0.0; 2],
-                translation: [0.0, 0.0, 4.0],
-                rotation_deg: 0.0,
-                flip: false,
-            },
-        };
+        let moved = offset_xy(AttachmentOffset {
+            translation: [0.0, 0.0, 4.0],
+            ..AttachmentOffset::default()
+        });
         let values_of = |id: FeatureId| (id == other).then(|| moved.to_json());
         let mut values = middle.to_json();
         assert!(derive(&mut values, None, &values_of, &|_, _| None));
@@ -1989,16 +1985,10 @@ mod tests {
                 ],
             },
         );
-        let moved = DatumFeature {
-            shape: DatumShape::Plane { size: 20.0 },
-            attachment: DatumAttachment::BasePlane(BasePlane::XY),
-            offset: AttachmentOffset {
-                tilt: [0.0; 2],
-                translation: [0.0, 0.0, 6.0],
-                rotation_deg: 0.0,
-                flip: false,
-            },
-        };
+        let moved = offset_xy(AttachmentOffset {
+            translation: [0.0, 0.0, 6.0],
+            ..AttachmentOffset::default()
+        });
         let values_of = |id: FeatureId| (id == other).then(|| moved.to_json());
         let mut values = line.to_json();
         assert!(derive(&mut values, None, &values_of, &|_, _| None));
@@ -2009,6 +1999,10 @@ mod tests {
     #[test]
     fn every_mode_round_trips_through_json() {
         let modes = [
+            DatumAttachment::FlatFace {
+                point: [1.0, 2.0, 3.0],
+                normal: [0.0, 0.0, 1.0],
+            },
             DatumAttachment::Face {
                 face: cylinder_face(),
             },
@@ -2056,7 +2050,16 @@ mod tests {
             },
         ];
         for attachment in modes {
-            let datum = datum(DatumShape::Point, attachment);
+            let datum = DatumFeature {
+                shape: DatumShape::Line { length: 30.0 },
+                attachment,
+                offset: AttachmentOffset {
+                    translation: [1.0, 2.0, 3.0],
+                    rotation_deg: 15.0,
+                    flip: true,
+                    ..AttachmentOffset::default()
+                },
+            };
             assert_eq!(DatumFeature::from_json(&datum.to_json()).unwrap(), datum);
         }
     }
@@ -2165,32 +2168,6 @@ mod tests {
             .problem(),
             Some("the two lines are parallel")
         );
-    }
-
-    #[test]
-    fn a_tilt_leans_the_plane_about_its_axes() {
-        let datum = DatumFeature {
-            shape: DatumShape::Plane { size: 20.0 },
-            attachment: DatumAttachment::BasePlane(BasePlane::XY),
-            offset: AttachmentOffset {
-                tilt: [90.0, 0.0],
-                ..AttachmentOffset::default()
-            },
-        };
-        // A quarter turn about x takes the normal from z to -y.
-        let frame = datum.frame();
-        assert!(close(frame.normal, [0.0, -1.0, 0.0]), "{:?}", frame.normal);
-        assert!(close(frame.x_axis, [1.0, 0.0, 0.0]));
-        let about_y = DatumFeature {
-            offset: AttachmentOffset {
-                tilt: [0.0, 90.0],
-                ..AttachmentOffset::default()
-            },
-            ..datum
-        };
-        let frame = about_y.frame();
-        assert!(close(frame.normal, [1.0, 0.0, 0.0]), "{:?}", frame.normal);
-        orthonormal(&frame);
     }
 
     #[test]

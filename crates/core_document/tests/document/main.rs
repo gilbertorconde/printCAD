@@ -13,4 +13,5 @@ mod op_replay;
 mod placement;
 mod seam;
 mod step_persistence;
+mod support;
 mod textures;

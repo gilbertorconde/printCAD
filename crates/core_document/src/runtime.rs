@@ -660,7 +660,7 @@ pub fn viewport_to_plane(
 #[cfg(test)]
 mod transform_tests {
     use super::*;
-    use glam::{Mat4, Vec3, Vec4};
+    use glam::{Mat4, Vec3};
 
     #[test]
     fn a_circle_is_found_through_an_outline_and_a_line_has_none() {
@@ -706,19 +706,18 @@ mod transform_tests {
         ctx
     }
 
+    /// The camera's target lands in the viewport's centre, world +Y above
+    /// it (Y-down pixels, the flip baked into the matrix), and a point
+    /// behind the camera nowhere.
     #[test]
-    fn center_of_viewport_projects_to_camera_target() {
+    fn world_to_viewport_centres_the_target_with_y_up_the_screen() {
         let mut doc = Document::new("t");
         let ctx = ctx_with_matrix(&mut doc);
         let (x, y) = ctx.world_to_viewport([0.0, 0.0, 0.0]).unwrap();
         assert!((x - 400.0).abs() < 0.5, "x = {x}");
         assert!((y - 300.0).abs() < 0.5, "y = {y}");
-    }
-
-    #[test]
-    fn behind_camera_returns_none() {
-        let mut doc = Document::new("t");
-        let ctx = ctx_with_matrix(&mut doc);
+        let (_, y_up) = ctx.world_to_viewport([0.0, 2.0, 0.0]).unwrap();
+        assert!(y_up < y, "y_up = {y_up}, y_center = {y}");
         assert!(ctx.world_to_viewport([0.0, 0.0, 20.0]).is_none());
     }
 
@@ -752,7 +751,7 @@ mod transform_tests {
     }
 
     #[test]
-    fn plane_hit_roundtrips_through_projection() {
+    fn plane_hit_roundtrips_through_projection_and_a_parallel_plane_has_none() {
         let mut doc = Document::new("t");
         let ctx = ctx_with_matrix(&mut doc);
         // Pick an arbitrary viewport point, intersect the Z=0 plane, and
@@ -765,41 +764,12 @@ mod transform_tests {
         let (x, y) = ctx.world_to_viewport(hit).unwrap();
         assert!((x - px.0).abs() < 0.05, "x = {x}");
         assert!((y - px.1).abs() < 0.05, "y = {y}");
-    }
 
-    #[test]
-    fn parallel_plane_returns_none() {
-        let mut doc = Document::new("t");
-        let ctx = ctx_with_matrix(&mut doc);
         // The center ray travels along -Z; a plane containing that axis
         // (normal +Y at the ray height) is parallel to it.
         assert!(
             ctx.viewport_to_plane((400.0, 300.0), [0.0, 5.0, 0.0], [0.0, 1.0, 0.0])
                 .is_none()
-        );
-    }
-
-    #[test]
-    fn y_axis_is_screen_down() {
-        let mut doc = Document::new("t");
-        let ctx = ctx_with_matrix(&mut doc);
-        // World +Y should appear ABOVE the center on screen, i.e. smaller
-        // viewport y (Y-down pixels, flip baked into the matrix).
-        let (_, y_up) = ctx.world_to_viewport([0.0, 2.0, 0.0]).unwrap();
-        let (_, y_center) = ctx.world_to_viewport([0.0, 0.0, 0.0]).unwrap();
-        assert!(y_up < y_center, "y_up = {y_up}, y_center = {y_center}");
-    }
-
-    #[test]
-    fn used_vec4_sanity() {
-        // Guard against accidental column/row-major confusion in
-        // from_cols_array_2d usage: transform a known point both ways.
-        let m = Mat4::from_translation(Vec3::new(1.0, 2.0, 3.0));
-        let arr = m.to_cols_array_2d();
-        let back = Mat4::from_cols_array_2d(&arr);
-        assert_eq!(
-            back * Vec4::new(0.0, 0.0, 0.0, 1.0),
-            Vec4::new(1.0, 2.0, 3.0, 1.0)
         );
     }
 }

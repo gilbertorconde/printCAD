@@ -5,6 +5,8 @@ use core_document::history::OpJournal;
 use core_document::{Document, FaceKey, FaceTexture, TriMesh};
 use surface_texture::{Pattern, Texture};
 
+use crate::support::{peer_with, reloaded};
+
 fn knurl_on(faces: Vec<FaceKey>) -> Vec<FaceTexture> {
     vec![FaceTexture {
         texture: Texture {
@@ -39,19 +41,13 @@ fn textures_are_one_undo_step_replay_and_save() {
     };
     assert_eq!(textures_of(&doc), textures);
 
-    let mut replica = Document::new("t");
-    replica.apply_remote_op(&core_document::op::DocumentOp::CreateBody {
-        id: body,
-        name: "Body".into(),
-        created_at: 0,
-    });
+    let mut replica = peer_with(body);
     for op in &ops {
         replica.apply_remote_op(op);
     }
     assert_eq!(textures_of(&replica), textures);
 
-    let bytes = doc.save_to_bytes(core_document::Compression::Zstd).unwrap();
-    let back = Document::load_from_bytes(bytes).unwrap();
+    let back = reloaded(&mut doc);
     assert_eq!(textures_of(&back), textures);
 
     assert!(journal.undo(&mut doc).is_some());

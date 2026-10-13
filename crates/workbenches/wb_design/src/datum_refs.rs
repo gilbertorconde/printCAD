@@ -706,7 +706,7 @@ mod tests {
             }
             bench.run_command("design.datum", &args, &mut ctx)?
         };
-        let id = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
+        let id = crate::test_support::made_id(&made);
         let datum = DatumFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         Ok((id, datum))
     }

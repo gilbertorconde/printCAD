@@ -999,26 +999,11 @@ mod tests {
     /// A body with a 10 x 6 rectangle drawn on XY, and `feature` (JSON,
     /// `SKETCH` standing for the sketch's id) made from it.
     fn made(feature: serde_json::Value) -> (Document, FeatureId) {
-        use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
-        let mut sketch = Sketch::new("s");
-        let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 6.0), (0.0, 6.0)].map(|(x, y)| {
-            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
-        });
-        for i in 0..4 {
-            sketch.add_geometry(GeometryElement::Line(Line::new(
-                corners[i],
-                corners[(i + 1) % 4],
-            )));
-        }
-        let plane = sketch.plane;
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
+        let rectangle = crate::test_support::rect_sketch(10.0, 6.0);
         let sketch = doc
-            .add_feature_in_body(
-                wb_sketch::SketchFeature::new(sketch, plane),
-                "s".into(),
-                Some(body),
-            )
+            .add_feature_in_body(rectangle, "s".into(), Some(body))
             .unwrap();
         let text = feature.to_string().replace("SKETCH", &sketch.0.to_string());
         let feature = DesignFeature::from_json(&serde_json::from_str(&text).unwrap()).unwrap();

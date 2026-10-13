@@ -4,30 +4,10 @@
 use std::sync::Arc;
 
 use core_document::history::OpJournal;
-use core_document::{BodyPlacement, Compression, Document, ImportedGeometry, TriMesh};
+use core_document::{BodyPlacement, Document, TriMesh};
 use glam::{Quat, Vec3};
 
-fn triangle() -> Arc<TriMesh> {
-    Arc::new(TriMesh {
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        normals: vec![[0.0, 0.0, 1.0]; 3],
-        indices: vec![0, 1, 2],
-        ..TriMesh::default()
-    })
-}
-
-fn geometry(mesh: Arc<TriMesh>) -> ImportedGeometry {
-    ImportedGeometry {
-        bounds_mm: mesh.bounds(),
-        mesh,
-        source_asset: None,
-        revision: 0,
-        brep_blob_path: None,
-        mesh_path: None,
-        face_colors_path: None,
-        health: None,
-    }
-}
+use crate::support::{geometry, reloaded, triangle};
 
 fn close(a: [f32; 3], b: [f32; 3]) -> bool {
     (0..3).all(|i| (a[i] - b[i]).abs() < 1e-4)
@@ -94,8 +74,7 @@ fn a_placement_survives_a_save_with_the_body_s_own_mesh() {
     let body = doc.create_body(None);
     doc.set_imported_geometry(body, geometry(triangle()));
     doc.set_body_placement(body, shifted_and_turned());
-    let bytes = doc.save_to_bytes(Compression::None).unwrap();
-    let loaded = Document::load_from_bytes(bytes).unwrap();
+    let loaded = reloaded(&mut doc);
     assert_eq!(loaded.body_placement(body), shifted_and_turned());
     assert!(close(
         loaded.imported_geometry(body).unwrap().mesh.positions[1],
@@ -150,8 +129,7 @@ fn a_linked_copy_follows_its_source() {
         doc.body_solid_is_imported(copy),
         "no history of its own to build"
     );
-    let bytes = doc.save_to_bytes(Compression::None).unwrap();
-    let loaded = Document::load_from_bytes(bytes).unwrap();
+    let loaded = reloaded(&mut doc);
     assert_eq!(loaded.copy_source(copy), Some(source));
     assert_eq!(loaded.imported_brep_blob(copy), Some(&b"ogeom bracket"[..]));
     assert!(
@@ -231,8 +209,7 @@ fn a_linked_part_is_read_from_its_file() {
     assert!(doc.links_awaiting_geometry().is_empty());
     assert!(doc.body_solid_is_imported(part));
 
-    let bytes = doc.save_to_bytes(Compression::None).unwrap();
-    let loaded = Document::load_from_bytes(bytes).unwrap();
+    let loaded = reloaded(&mut doc);
     assert!(
         loaded.imported_brep_blob(part).is_none(),
         "its shape is its file's, read again"

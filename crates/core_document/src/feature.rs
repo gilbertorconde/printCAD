@@ -399,40 +399,31 @@ mod tests {
         (tree, a, b, c, d)
     }
 
+    /// The diamond has one root; marking a feature dirty marks it and
+    /// everything downstream of it, any number of times, and leaves a
+    /// sibling branch clean.
     #[test]
-    fn diamond_has_single_root() {
-        let (tree, a, ..) = diamond();
-        assert_eq!(tree.roots(), &[a]);
-    }
-
-    #[test]
-    fn mark_dirty_propagates_to_all_dependents() {
+    fn mark_dirty_reaches_every_dependent_and_only_them() {
         let (mut tree, a, b, c, d) = diamond();
+        assert_eq!(tree.roots(), &[a]);
+        tree.mark_dirty(b);
+        let dirty: HashSet<FeatureId> = tree.dirty_features().into_iter().collect();
+        assert_eq!(dirty, HashSet::from([b, d]));
+        assert!(!tree.get_node(c).unwrap().dirty);
+        tree.mark_dirty(a);
         tree.mark_dirty(a);
         let dirty: HashSet<FeatureId> = tree.dirty_features().into_iter().collect();
         assert_eq!(dirty, HashSet::from([a, b, c, d]));
     }
 
+    /// Every feature comes after what it depends on, and only the dirty
+    /// ones are ordered: a clean dependency counts as up to date.
     #[test]
-    fn mark_dirty_on_branch_leaves_sibling_clean() {
-        let (mut tree, _a, b, c, d) = diamond();
-        tree.mark_dirty(b);
-        let dirty: HashSet<FeatureId> = tree.dirty_features().into_iter().collect();
-        assert_eq!(dirty, HashSet::from([b, d]));
-        assert!(!tree.get_node(c).unwrap().dirty);
-    }
-
-    #[test]
-    fn mark_dirty_is_idempotent() {
-        let (mut tree, a, ..) = diamond();
-        tree.mark_dirty(a);
-        tree.mark_dirty(a);
-        assert_eq!(tree.dirty_features().len(), 4);
-    }
-
-    #[test]
-    fn recompute_order_respects_dependencies() {
+    fn recompute_order_respects_dependencies_within_the_dirty_set() {
         let (mut tree, a, b, c, d) = diamond();
+        assert!(tree.recompute_order(&[]).is_empty());
+        tree.mark_dirty(b);
+        assert_eq!(tree.recompute_order(&tree.dirty_features()), vec![b, d]);
         tree.mark_dirty(a);
         let order = tree.recompute_order(&tree.dirty_features());
         assert_eq!(order.len(), 4);
@@ -441,22 +432,6 @@ mod tests {
         assert!(pos(a) < pos(c));
         assert!(pos(b) < pos(d));
         assert!(pos(c) < pos(d));
-    }
-
-    #[test]
-    fn recompute_order_ignores_dependencies_outside_dirty_set() {
-        let (mut tree, _a, b, _c, d) = diamond();
-        tree.mark_dirty(b);
-        let order = tree.recompute_order(&tree.dirty_features());
-        // `a` and `c` are clean: only the dirty chain is ordered, with the
-        // clean dependency `c` of `d` treated as already up to date.
-        assert_eq!(order, vec![b, d]);
-    }
-
-    #[test]
-    fn recompute_order_empty_input() {
-        let (tree, ..) = diamond();
-        assert!(tree.recompute_order(&[]).is_empty());
     }
 
     /// Members of a dependency cycle are silently dropped from the

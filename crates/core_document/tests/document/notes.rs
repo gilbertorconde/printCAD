@@ -3,7 +3,9 @@
 
 use core_document::history::OpJournal;
 use core_document::op::DocumentOp;
-use core_document::{Compression, Document, Note};
+use core_document::{Document, Note};
+
+use crate::support::{peer_with, reloaded};
 
 fn texts(doc: &Document, body: core_document::BodyId) -> Vec<String> {
     doc.body_notes(body)
@@ -39,19 +41,13 @@ fn adding_changing_and_removing_a_note_are_one_undo_step_each() {
         "a hidden note does not show"
     );
 
-    let mut replica = Document::new("t");
-    replica.apply_remote_op(&DocumentOp::CreateBody {
-        id: body,
-        name: "Body".into(),
-        created_at: 0,
-    });
+    let mut replica = peer_with(body);
     for op in &ops {
         replica.apply_remote_op(op);
     }
     assert_eq!(replica.body_notes(body), doc.body_notes(body));
 
-    let bytes = doc.save_to_bytes(Compression::Zstd).unwrap();
-    let back = Document::load_from_bytes(bytes).unwrap();
+    let back = reloaded(&mut doc);
     assert_eq!(back.body_notes(body), doc.body_notes(body));
 
     assert!(journal.undo(&mut doc).is_some());

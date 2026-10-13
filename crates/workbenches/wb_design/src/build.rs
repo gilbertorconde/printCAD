@@ -3960,45 +3960,11 @@ mod tests {
     use super::*;
     use crate::feature::MirrorPlane;
     use crate::hole_tables::{ScrewSeat, ThreadStandard};
+    use crate::test_support::{HoleFields, bare_geometry, hole, pad, set_hole};
     use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
     fn rect_sketch() -> SketchFeature {
-        let mut sketch = Sketch::new("s");
-        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
-        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 5.0))));
-        let d = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 5.0))));
-        for (s, e) in [(a, b), (b, c), (c, d), (d, a)] {
-            sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
-        }
-        let plane = sketch.plane;
-        SketchFeature::new(sketch, plane)
-    }
-
-    fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
-        DesignFeature::Pad {
-            regions: Vec::new(),
-            profile_borrowed: None,
-            extras: Default::default(),
-            refine: false,
-            boolean_tolerance: None,
-            sketch: Some(sketch),
-            length,
-            reversed: false,
-            symmetric: false,
-            mode: ExtrudeMode::Dimension,
-            length2: 0.0,
-            taper_deg: 0.0,
-            up_to_face: None,
-            up_to_offset: 0.0,
-            profile_face: None,
-            direction: Default::default(),
-            up_to_shape: Vec::new(),
-            mode2: None,
-            up_to_face2: None,
-            up_to_offset2: 0.0,
-            up_to_shape2: Vec::new(),
-        }
+        crate::test_support::rect_sketch(10.0, 5.0)
     }
 
     fn pocket(sketch: FeatureId, depth: f32, reversed: bool, through_all: bool) -> DesignFeature {
@@ -4032,10 +3998,19 @@ mod tests {
     fn doc_with_body_sketch() -> (Document, BodyId, FeatureId) {
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
-        let sketch_id = doc
-            .add_feature_in_body(rect_sketch(), "sketch".into(), Some(body))
-            .unwrap();
+        let sketch_id = add(&mut doc, body, rect_sketch(), "sketch");
         (doc, body, sketch_id)
+    }
+
+    /// `feature` added to `body` as `name`.
+    fn add(
+        doc: &mut Document,
+        body: BodyId,
+        feature: impl core_document::WorkbenchFeature,
+        name: &str,
+    ) -> FeatureId {
+        doc.add_feature_in_body(feature, name.into(), Some(body))
+            .unwrap()
     }
 
     fn extrude_distance(op: &SolidOp) -> f64 {
@@ -4056,73 +4031,58 @@ mod tests {
         op.boolean_op().expect("shape-producing op")
     }
 
-    /// Mark `body` as carrying an imported solid, the way a STEP import does.
-    fn import_into(doc: &mut Document, body: BodyId) {
-        doc.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                source_asset: Some(uuid::Uuid::new_v4()),
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+    /// `originals` repeated along X over 30 mm, the `skipped` occurrences
+    /// left out.
+    fn linear_pattern(
+        originals: Vec<FeatureId>,
+        occurrences: u32,
+        skipped: Vec<u32>,
+    ) -> DesignFeature {
+        DesignFeature::LinearPattern {
+            skipped,
+            refine: false,
+            boolean_tolerance: None,
+            originals,
+            axis: PatternAxis::X,
+            length: 30.0,
+            occurrences,
+            spacing_mode: false,
+            spacings: Vec::new(),
+            reversed: false,
+        }
     }
 
-    #[test]
-    fn an_imported_body_is_not_rebuilt_from_features() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        import_into(&mut doc, body);
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+    /// A sketch of `points` in `body`.
+    fn points_sketch(doc: &mut Document, body: BodyId, points: &[(f64, f64)]) -> FeatureId {
+        let mut sketch = Sketch::new("points");
+        for &(x, y) in points {
+            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+        }
+        add_sketch(doc, body, sketch)
+    }
 
+    fn add_sketch(doc: &mut Document, body: BodyId, sketch: Sketch) -> FeatureId {
+        let plane = sketch.plane;
+        let name = sketch.name.clone();
+        doc.add_feature_in_body(SketchFeature::new(sketch, plane), name, Some(body))
+            .unwrap()
+    }
+
+    /// A body whose geometry names a source file is an import, with no
+    /// history to rebuild; a rebuild's own result names none, and the body
+    /// rebuilds from its features.
+    #[test]
+    fn only_an_imported_solid_stops_a_rebuild_from_features() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
+        doc.set_imported_geometry(body, bare_geometry(None));
+        assert!(!doc.body_solid_is_imported(body));
+        assert!(body_build_ops(&doc, body).is_ok(), "rebuilds normally");
+
+        doc.set_imported_geometry(body, bare_geometry(Some(uuid::Uuid::new_v4())));
         let err = body_build_ops(&doc, body).expect_err("the import has no history to rebuild");
         assert_eq!(err.feature, Some(pad_id));
         assert!(err.message.contains("import"), "{}", err.message);
-    }
-
-    #[test]
-    fn a_body_built_from_features_is_not_taken_for_an_import() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
-        // A rebuild's own result carries no source asset.
-        doc.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
-        assert!(!doc.body_solid_is_imported(body));
-        assert!(
-            body_build_ops(&doc, body).is_ok(),
-            "still rebuilds normally"
-        );
-    }
-
-    #[test]
-    fn pad_produces_new_solid_op() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
-
-        let plan = body_build_ops(&doc, body).unwrap();
-        assert_eq!(plan.ops.len(), 1);
-        assert_eq!(boolean_of(&plan.ops[0]), BooleanOp::NewSolid);
-        assert!((extrude_distance(&plan.ops[0]) - 7.0).abs() < 1e-9);
-        assert_eq!(plan.op_features.len(), 1);
     }
 
     #[test]
@@ -4138,7 +4098,9 @@ mod tests {
         }
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(plan.ops.len(), 3);
+        assert_eq!(plan.op_features.len(), 3);
         assert_eq!(boolean_of(&plan.ops[0]), BooleanOp::NewSolid);
+        assert!((extrude_distance(&plan.ops[0]) - 5.0).abs() < 1e-9);
         assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Fuse);
         assert_eq!(boolean_of(&plan.ops[2]), BooleanOp::Cut);
         // The default pocket cuts against the sketch normal via `reversed`.
@@ -4154,12 +4116,12 @@ mod tests {
     #[test]
     fn pocket_first_is_an_error() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(
+        add(
+            &mut doc,
+            body,
             pocket(sketch_id, 3.0, false, false),
-            "Pocket".into(),
-            Some(body),
-        )
-        .unwrap();
+            "Pocket",
+        );
         let err = body_build_ops(&doc, body).unwrap_err();
         assert!(err.message.contains("material"), "{}", err.message);
     }
@@ -4167,14 +4129,10 @@ mod tests {
     #[test]
     fn rebuild_jobs_settle_the_flags_of_the_plan_and_its_inputs_only() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
         // A sketch of another body, dirty on its own: not this plan's input.
         let other = doc.create_body(None);
-        let other_sketch = doc
-            .add_feature_in_body(rect_sketch(), "Other".into(), Some(other))
-            .unwrap();
+        let other_sketch = add(&mut doc, other, rect_sketch(), "Other");
         doc.mark_feature_dirty(other_sketch);
         doc.mark_feature_dirty(sketch_id);
 
@@ -4193,25 +4151,10 @@ mod tests {
     #[test]
     fn a_pattern_of_one_occurrence_adds_nothing() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
         let before = body_build_ops(&doc, body).unwrap().ops.len();
-        let pattern = |occurrences| DesignFeature::LinearPattern {
-            skipped: Vec::new(),
-            refine: false,
-            boolean_tolerance: None,
-            originals: vec![pad_id],
-            axis: PatternAxis::X,
-            length: 30.0,
-            occurrences,
-            spacing_mode: false,
-            spacings: Vec::new(),
-            reversed: false,
-        };
-        let id = doc
-            .add_feature_in_body(pattern(1), "Pattern".into(), Some(body))
-            .unwrap();
+        let pattern = |occurrences| linear_pattern(vec![pad_id], occurrences, Vec::new());
+        let id = add(&mut doc, body, pattern(1), "Pattern");
         assert_eq!(body_build_ops(&doc, body).unwrap().ops.len(), before);
         doc.update_feature_data(id, pattern(0).to_json()).unwrap();
         let error = body_build_ops(&doc, body).unwrap_err();
@@ -4219,9 +4162,7 @@ mod tests {
 
         // Rebuilding, the plan stops at the pattern: the pad before it
         // builds, and a pad after it is left out.
-        let later = doc
-            .add_feature_in_body(pad(sketch_id, 9.0), "Pad 2".into(), Some(body))
-            .unwrap();
+        let later = add(&mut doc, body, pad(sketch_id, 9.0), "Pad 2");
         let plan = body_plan(&doc, body).unwrap();
         assert_eq!(plan.ops.len(), before, "the pad before the pattern");
         assert_eq!(plan.failed.map(|e| e.feature), Some(Some(id)));
@@ -4235,28 +4176,14 @@ mod tests {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         let mut padded = pad(sketch_id, 7.0);
         padded.set_refine(true);
-        let pad_id = doc
-            .add_feature_in_body(padded, "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, padded, "Pad");
         let plain = body_build_ops(&doc, body).unwrap();
         assert!(matches!(plain.ops.last(), Some(SolidOp::Refine)));
         assert_eq!(plain.op_features.last(), Some(&pad_id));
         assert_eq!(plain.ops.len(), plain.op_features.len());
 
-        let pattern = DesignFeature::LinearPattern {
-            skipped: Vec::new(),
-            refine: false,
-            boolean_tolerance: None,
-            originals: vec![pad_id],
-            axis: PatternAxis::X,
-            length: 30.0,
-            occurrences: 2,
-            spacing_mode: false,
-            spacings: Vec::new(),
-            reversed: false,
-        };
-        doc.add_feature_in_body(pattern, "Pattern".into(), Some(body))
-            .unwrap();
+        let pattern = linear_pattern(vec![pad_id], 2, Vec::new());
+        add(&mut doc, body, pattern, "Pattern");
         let patterned = body_build_ops(&doc, body).unwrap();
         match patterned.ops.last() {
             Some(SolidOp::Transform { originals, .. }) => {
@@ -4285,29 +4212,14 @@ mod tests {
     #[test]
     fn a_stated_tolerance_wraps_the_feature_s_ops_in_place() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 7.0), "Base".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 7.0), "Base");
         let mut padded = pad(sketch_id, 3.0);
         padded.set_refine(true);
         padded.set_boolean_tolerance(Some(0.05));
-        let pad_id = doc
-            .add_feature_in_body(padded, "Pad".into(), Some(body))
-            .unwrap();
-        let mut pattern = DesignFeature::LinearPattern {
-            skipped: Vec::new(),
-            refine: false,
-            boolean_tolerance: None,
-            originals: vec![pad_id],
-            axis: PatternAxis::X,
-            length: 30.0,
-            occurrences: 2,
-            spacing_mode: false,
-            spacings: Vec::new(),
-            reversed: false,
-        };
+        let pad_id = add(&mut doc, body, padded, "Pad");
+        let mut pattern = linear_pattern(vec![pad_id], 2, Vec::new());
         pattern.set_boolean_tolerance(Some(0.02));
-        doc.add_feature_in_body(pattern, "Pattern".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pattern, "Pattern");
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(plan.ops.len(), plan.op_features.len());
         assert_eq!(
@@ -4352,16 +4264,13 @@ mod tests {
     #[test]
     fn deleting_a_feature_reveals_its_sketch_and_restarts_the_body() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
-        let pocket_id = doc
-            .add_feature_in_body(
-                pocket(sketch_id, 2.0, false, false),
-                "Pocket".into(),
-                Some(body),
-            )
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
+        let pocket_id = add(
+            &mut doc,
+            body,
+            pocket(sketch_id, 2.0, false, false),
+            "Pocket",
+        );
         doc.set_feature_visible(sketch_id, false);
         doc.clear_feature_dirty(pad_id);
         doc.clear_feature_dirty(pocket_id);
@@ -4379,27 +4288,13 @@ mod tests {
     #[test]
     fn invalidating_a_body_restarts_its_history_and_leaves_clearing_to_the_registry() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
         doc.clear_feature_dirty(pad_id);
         invalidate_body(&mut doc, body);
         assert!(doc.get_feature_meta(pad_id).unwrap().dirty);
 
         doc.remove_feature(pad_id).unwrap();
-        doc.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        doc.set_imported_geometry(body, bare_geometry(None));
         invalidate_body(&mut doc, body);
         assert!(
             doc.imported_geometry(body).is_some(),
@@ -4410,9 +4305,7 @@ mod tests {
     #[test]
     fn dirty_pad_flags_body_for_rebuild_and_sketch_edit_propagates() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
         assert!(pending_body_rebuilds(&doc).is_empty());
 
         doc.mark_feature_dirty(sketch_id);
@@ -4423,14 +4316,13 @@ mod tests {
         assert!(pending_body_rebuilds(&doc).is_empty());
     }
 
+    /// A suppressed feature and the features after the body's tip are left
+    /// out of the build.
     #[test]
-    fn suppressed_features_are_skipped_in_build() {
+    fn suppressed_features_and_those_after_the_tip_are_skipped_in_build() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_a = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "PadA".into(), Some(body))
-            .unwrap();
-        doc.add_feature_in_body(pad(sketch_id, 9.0), "PadB".into(), Some(body))
-            .unwrap();
+        let pad_a = add(&mut doc, body, pad(sketch_id, 5.0), "PadA");
+        add(&mut doc, body, pad(sketch_id, 9.0), "PadB");
 
         assert_eq!(body_build_ops(&doc, body).unwrap().ops.len(), 2);
         doc.set_feature_suppressed(pad_a, true);
@@ -4439,6 +4331,14 @@ mod tests {
         // The remaining pad becomes the first op → NewSolid.
         assert_eq!(boolean_of(&plan.ops[0]), BooleanOp::NewSolid);
         assert!((extrude_distance(&plan.ops[0]) - 9.0).abs() < 1e-9);
+
+        doc.set_feature_suppressed(pad_a, false);
+        doc.set_body_tip(body, Some(pad_a));
+        let plan = body_build_ops(&doc, body).unwrap();
+        assert_eq!(plan.ops.len(), 1, "features after the tip are excluded");
+        assert!((extrude_distance(&plan.ops[0]) - 5.0).abs() < 1e-9);
+        doc.set_body_tip(body, None);
+        assert_eq!(body_build_ops(&doc, body).unwrap().ops.len(), 2);
     }
 
     #[test]
@@ -4505,61 +4405,46 @@ mod tests {
         ));
     }
 
+    /// A through-all pocket cuts through all; centred on the sketch, it
+    /// cuts through all both ways.
     #[test]
-    fn through_all_pocket_maps_to_through_all_termination() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        doc.add_feature_in_body(
-            pocket(sketch_id, 1.0, false, true),
-            "Pocket".into(),
-            Some(body),
-        )
-        .unwrap();
-        let plan = body_build_ops(&doc, body).unwrap();
-        assert!(matches!(
-            &plan.ops[1],
-            SolidOp::Sweep {
-                kind: SweepKind::Extrude {
-                    termination: ExtrudeTermination::ThroughAll,
-                    ..
-                },
-                ..
+    fn a_through_all_pocket_cuts_through_all_and_a_symmetric_one_both_ways() {
+        for symmetric in [false, true] {
+            let (mut doc, body, sketch_id) = doc_with_body_sketch();
+            add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
+            let mut through = pocket(sketch_id, 1.0, false, true);
+            if let DesignFeature::Pocket { symmetric: s, .. } = &mut through {
+                *s = symmetric;
             }
-        ));
-    }
-
-    /// Through all, centred on the sketch: through all both ways.
-    #[test]
-    fn a_symmetric_through_all_pocket_cuts_both_ways() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        let mut centred = pocket(sketch_id, 1.0, false, true);
-        if let DesignFeature::Pocket { symmetric, .. } = &mut centred {
-            *symmetric = true;
+            add(&mut doc, body, through, "Pocket");
+            let plan = body_build_ops(&doc, body).unwrap();
+            let SolidOp::Sweep {
+                kind:
+                    SweepKind::Extrude {
+                        termination,
+                        second_side,
+                        ..
+                    },
+                ..
+            } = &plan.ops[1]
+            else {
+                panic!("not an extrude: {:?}", plan.ops[1]);
+            };
+            assert_eq!(
+                *termination,
+                ExtrudeTermination::ThroughAll,
+                "symmetric {symmetric}"
+            );
+            if symmetric {
+                assert_eq!(*second_side, Some(ExtrudeTermination::ThroughAll));
+            }
         }
-        doc.add_feature_in_body(centred, "Pocket".into(), Some(body))
-            .unwrap();
-        let plan = body_build_ops(&doc, body).unwrap();
-        assert!(matches!(
-            &plan.ops[1],
-            SolidOp::Sweep {
-                kind: SweepKind::Extrude {
-                    termination: ExtrudeTermination::ThroughAll,
-                    second_side: Some(ExtrudeTermination::ThroughAll),
-                    ..
-                },
-                ..
-            }
-        ));
     }
 
     #[test]
     fn hole_feature_emits_cut_circles() {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(base_sketch, 5.0), "Pad");
 
         let mut hole_sketch = Sketch::new("holes");
         for x in [2.0f64, 8.0] {
@@ -4567,45 +4452,15 @@ mod tests {
                 hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 2.5))));
             hole_sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
         }
-        let plane = hole_sketch.plane;
-        let hole_sketch_id = doc
-            .add_feature_in_body(
-                SketchFeature::new(hole_sketch, plane),
-                "holes".into(),
-                Some(body),
-            )
-            .unwrap();
-        doc.add_feature_in_body(
-            DesignFeature::Hole {
-                cosmetic_thread: false,
-                start: Default::default(),
-                clearance: None,
-                thread_length: Default::default(),
-                refine: false,
-                boolean_tolerance: None,
-                sketch: hole_sketch_id,
-                diameter: 3.0,
-                depth: 4.0,
-                through_all: false,
-                cut: HoleCut::Counterbore {
-                    diameter: 6.0,
-                    depth: 1.5,
-                },
-                thread: None,
-                threaded: false,
-                modeled_thread: false,
-                thread_depth: 0.0,
-                fit: crate::feature::HoleFit::Normal,
-                drill_point: DrillPoint::Flat,
-                point_in_depth: false,
-                taper_deg: 0.0,
-                nut_trap: None,
-                reversed: false,
-            },
-            "Hole".into(),
-            Some(body),
-        )
-        .unwrap();
+        let hole_sketch_id = add_sketch(&mut doc, body, hole_sketch);
+        let counterbored = hole(hole_sketch_id, |h| {
+            *h.depth = 4.0;
+            *h.cut = HoleCut::Counterbore {
+                diameter: 6.0,
+                depth: 1.5,
+            };
+        });
+        add(&mut doc, body, counterbored, "Hole");
 
         let plan = body_build_ops(&doc, body).unwrap();
         // Pad + hole drill + counterbore.
@@ -4620,13 +4475,10 @@ mod tests {
         }
     }
 
-    /// A size the table does not have is an error on the hole, whatever
-    /// its thread settings, never a panic.
     #[test]
     fn a_body_is_never_its_own_boolean_tool() {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(base_sketch, 5.0), "Pad");
         doc.add_feature_in_body(
             DesignFeature::BodyBoolean {
                 more_tools: Vec::new(),
@@ -4648,24 +4500,11 @@ mod tests {
     #[test]
     fn a_boolean_with_two_tools_rebuilds_once() {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(base_sketch, 5.0), "Pad");
         let tools: Vec<BodyId> = (0..2)
             .map(|_| {
                 let tool = doc.create_body(None);
-                doc.set_imported_geometry(
-                    tool,
-                    core_document::ImportedGeometry {
-                        mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                        source_asset: None,
-                        revision: 0,
-                        bounds_mm: None,
-                        brep_blob_path: None,
-                        mesh_path: None,
-                        face_colors_path: None,
-                        health: None,
-                    },
-                );
+                doc.set_imported_geometry(tool, bare_geometry(None));
                 tool
             })
             .collect();
@@ -4698,46 +4537,31 @@ mod tests {
         clearance: Option<f32>,
     ) -> (DesignFeature, Vec<SolidOp>) {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(base_sketch, 20.0), "Pad".into(), Some(body))
-            .unwrap();
-        let mut hole_sketch = Sketch::new("holes");
-        hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.5))));
-        let plane = hole_sketch.plane;
-        let sketch = doc
-            .add_feature_in_body(
-                SketchFeature::new(hole_sketch, plane),
-                "holes".into(),
-                Some(body),
-            )
-            .unwrap();
-        let hole = DesignFeature::Hole {
-            cosmetic_thread: false,
-            start: Default::default(),
-            clearance,
-            thread_length: length,
-            refine: false,
-            boolean_tolerance: None,
-            sketch,
-            diameter: 3.0,
-            depth: 10.0,
-            through_all: false,
-            cut: HoleCut::None,
-            thread: Some(crate::feature::ThreadSpec::new(
-                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                "M6",
-            )),
-            threaded,
-            modeled_thread: threaded,
-            thread_depth: 4.0,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
-        };
-        let ops = hole_ops(&doc, &hole).unwrap();
-        (hole, ops)
+        add(&mut doc, body, pad(base_sketch, 20.0), "Pad");
+        let sketch = points_sketch(&mut doc, body, &[(2.0, 2.5)]);
+        let m6 = hole(sketch, |h| {
+            *h.clearance = clearance;
+            *h.thread_length = length;
+            *h.depth = 10.0;
+            *h.thread = Some(ThreadSpec::new(ThreadStandard::IsoMetricCoarse, "M6"));
+            *h.threaded = threaded;
+            *h.modeled_thread = threaded;
+            *h.thread_depth = 4.0;
+        });
+        let ops = hole_ops(&doc, &m6).unwrap();
+        (m6, ops)
+    }
+
+    /// A 5 mm hole at `sketch`'s points showing an M6 thread, as `edit`
+    /// changes it.
+    fn cosmetic_m6(sketch: FeatureId, edit: impl FnOnce(&mut HoleFields)) -> DesignFeature {
+        hole(sketch, |h| {
+            *h.diameter = 5.0;
+            *h.thread = Some(ThreadSpec::new(ThreadStandard::IsoMetricCoarse, "M6"));
+            *h.threaded = true;
+            *h.cosmetic_thread = true;
+            edit(h);
+        })
     }
 
     /// The height of the thread's helix: its length and one pitch.
@@ -4803,8 +4627,7 @@ mod tests {
         use crate::feature::{PlaneTarget, PullRef};
         use core_document::{BasePlane, DatumAttachment, DatumFeature, DatumShape};
         let (mut doc, body, sketch) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch, 5.0), "Pad");
         let line = doc
             .add_feature_in_body(
                 DatumFeature {
@@ -4863,9 +4686,13 @@ mod tests {
         assert!((run_out - 8.0).abs() < 1e-9, "{run_out}");
     }
 
+    /// A threaded metric hole drills the table's tap size, a clearance hole
+    /// the fit's size, or a clearance of its own in the fit's place.
     #[test]
-    fn a_clearance_of_ones_own_takes_the_fits_place() {
+    fn a_metric_hole_takes_its_size_from_the_table_or_a_clearance_of_its_own() {
         use crate::feature::ThreadLength;
+        let (tapped, _) = m6_hole(true, ThreadLength::Given, None);
+        assert!((hole_diameter(&tapped) - 5.0).abs() < 1e-6, "M6 tap drill");
         let (normal, _) = m6_hole(false, ThreadLength::Given, None);
         assert!(
             (hole_diameter(&normal) - 6.6).abs() < 1e-4,
@@ -4881,38 +4708,8 @@ mod tests {
     #[test]
     fn a_cosmetic_thread_draws_a_helix_down_the_bore() {
         let (mut doc, body, _) = doc_with_body_sketch();
-        let mut holes = Sketch::new("holes");
-        holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(3.0, 4.0))));
-        let plane = holes.plane;
-        let holes = doc
-            .add_feature_in_body(SketchFeature::new(holes, plane), "holes".into(), Some(body))
-            .unwrap();
-        let mut hole = DesignFeature::Hole {
-            boolean_tolerance: None,
-            cosmetic_thread: true,
-            start: Default::default(),
-            clearance: None,
-            thread_length: Default::default(),
-            refine: false,
-            sketch: holes,
-            diameter: 5.0,
-            depth: 10.0,
-            through_all: false,
-            cut: HoleCut::None,
-            thread: Some(crate::feature::ThreadSpec::new(
-                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                "M6",
-            )),
-            threaded: true,
-            modeled_thread: false,
-            thread_depth: 0.0,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
-        };
+        let holes = points_sketch(&mut doc, body, &[(3.0, 4.0)]);
+        let mut hole = cosmetic_m6(holes, |h| *h.depth = 10.0);
         assert_eq!(hole.cosmetic_thread().as_deref(), Some("M6"));
         let lines = cosmetic_thread_lines(&doc, Some(body), &hole);
         assert_eq!(lines.edges.len() / 2, 10 * THREAD_SEGMENTS_PER_TURN);
@@ -4925,12 +4722,7 @@ mod tests {
             );
             assert!((-10.0..=0.0).contains(&p[2]), "down the hole: {}", p[2]);
         }
-        if let DesignFeature::Hole {
-            cosmetic_thread, ..
-        } = &mut hole
-        {
-            *cosmetic_thread = false;
-        }
+        set_hole(&mut hole, |h| *h.cosmetic_thread = false);
         assert!(
             cosmetic_thread_lines(&doc, Some(body), &hole)
                 .positions
@@ -4940,15 +4732,8 @@ mod tests {
         // The document keeps the thread once evaluated: its designation,
         // where its bore opens and which way it runs, until the hole
         // leaves the build.
-        if let DesignFeature::Hole {
-            cosmetic_thread, ..
-        } = &mut hole
-        {
-            *cosmetic_thread = true;
-        }
-        let id = doc
-            .add_feature_in_body(hole.clone(), "Hole".into(), Some(body))
-            .unwrap();
+        set_hole(&mut hole, |h| *h.cosmetic_thread = true);
+        let id = add(&mut doc, body, hole.clone(), "Hole");
         let mut registry = core_document::DocumentService::default();
         registry
             .register_workbench(Box::new(crate::DesignWorkbench::default()))
@@ -4974,37 +4759,13 @@ mod tests {
     #[test]
     fn a_cosmetic_thread_through_all_stops_where_the_hole_leaves_the_solid() {
         let (mut doc, body, _) = doc_with_body_sketch();
-        let mut holes = Sketch::new("holes");
-        holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(3.0, 4.0))));
-        let plane = holes.plane;
-        let holes = doc
-            .add_feature_in_body(SketchFeature::new(holes, plane), "holes".into(), Some(body))
-            .unwrap();
-        let hole = |thread_depth: f32| DesignFeature::Hole {
-            boolean_tolerance: None,
-            cosmetic_thread: true,
-            start: Default::default(),
-            clearance: None,
-            thread_length: Default::default(),
-            refine: false,
-            sketch: holes,
-            diameter: 5.0,
-            depth: 0.0,
-            through_all: true,
-            cut: HoleCut::None,
-            thread: Some(crate::feature::ThreadSpec::new(
-                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                "M6",
-            )),
-            threaded: true,
-            modeled_thread: false,
-            thread_depth,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
+        let holes = points_sketch(&mut doc, body, &[(3.0, 4.0)]);
+        let hole = |thread_depth: f32| {
+            cosmetic_m6(holes, |h| {
+                *h.depth = 0.0;
+                *h.through_all = true;
+                *h.thread_depth = thread_depth;
+            })
         };
         let plate = |bored: bool| {
             let mut positions = Vec::new();
@@ -5028,13 +4789,9 @@ mod tests {
                     positions,
                     ..Default::default()
                 }),
-                source_asset: None,
                 revision: 1,
                 bounds_mm: Some(([-50.0, -50.0, -8.0], [50.0, 50.0, 0.0])),
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
+                ..bare_geometry(None)
             }
         };
         for bored in [true, false] {
@@ -5056,150 +4813,35 @@ mod tests {
         }
     }
 
+    /// A size the table does not have is an error on the hole, whatever
+    /// its thread settings, never a panic.
     #[test]
     fn a_hole_of_a_size_the_table_lacks_fails_cleanly() {
         for (threaded, modeled_thread) in [(false, false), (true, false), (true, true)] {
-            let (mut doc, body, base_sketch) = doc_with_body_sketch();
-            doc.add_feature_in_body(pad(base_sketch, 5.0), "Pad".into(), Some(body))
-                .unwrap();
-            let mut hole_sketch = Sketch::new("holes");
-            let center =
-                hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.5))));
-            hole_sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
-            let plane = hole_sketch.plane;
-            let hole_sketch_id = doc
-                .add_feature_in_body(
-                    SketchFeature::new(hole_sketch, plane),
-                    "holes".into(),
-                    Some(body),
-                )
-                .unwrap();
-            doc.add_feature_in_body(
-                DesignFeature::Hole {
-                    cosmetic_thread: false,
-                    start: Default::default(),
-                    clearance: None,
-                    thread_length: Default::default(),
-                    refine: false,
-                    boolean_tolerance: None,
-                    sketch: hole_sketch_id,
-                    diameter: 3.0,
-                    depth: 4.0,
-                    through_all: false,
-                    cut: HoleCut::None,
-                    thread: Some(crate::feature::ThreadSpec::new(
-                        crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                        "M999",
-                    )),
-                    threaded,
-                    modeled_thread,
-                    thread_depth: 3.0,
-                    fit: crate::feature::HoleFit::Normal,
-                    drill_point: DrillPoint::Flat,
-                    point_in_depth: false,
-                    taper_deg: 0.0,
-                    nut_trap: None,
-                    reversed: false,
-                },
-                "Hole".into(),
-                Some(body),
-            )
-            .unwrap();
-            let error = body_build_ops(&doc, body).unwrap_err();
+            let error = hole_plan(|h| {
+                *h.thread = Some(ThreadSpec::new(ThreadStandard::IsoMetricCoarse, "M999"));
+                *h.threaded = threaded;
+                *h.modeled_thread = modeled_thread;
+                *h.thread_depth = 3.0;
+            })
+            .unwrap_err();
             assert!(
-                error.message.contains("no ISO metric coarse size \"M999\""),
-                "{}",
-                error.message
+                error.contains("no ISO metric coarse size \"M999\""),
+                "threaded {threaded}, modeled {modeled_thread}: {error}"
             );
         }
     }
 
-    /// A padded body with one hole position and `hole` drilled there: the
-    /// hole's ops, or its build error.
-    fn hole_plan(edit: impl FnOnce(&mut DesignFeature)) -> Result<Vec<SolidOp>, String> {
+    /// A padded body with one hole position and a hole, as `edit` changes
+    /// it, drilled there: the hole's ops, or its build error.
+    fn hole_plan(edit: impl FnOnce(&mut HoleFields)) -> Result<Vec<SolidOp>, String> {
         let (mut doc, body, base_sketch) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(base_sketch, 10.0), "Pad".into(), Some(body))
-            .unwrap();
-        let mut hole_sketch = Sketch::new("holes");
-        hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(2.0, 2.5))));
-        let plane = hole_sketch.plane;
-        let hole_sketch_id = doc
-            .add_feature_in_body(
-                SketchFeature::new(hole_sketch, plane),
-                "holes".into(),
-                Some(body),
-            )
-            .unwrap();
-        let mut hole = DesignFeature::Hole {
-            cosmetic_thread: false,
-            start: Default::default(),
-            clearance: None,
-            thread_length: Default::default(),
-            refine: false,
-            boolean_tolerance: None,
-            sketch: hole_sketch_id,
-            diameter: 3.0,
-            depth: 6.0,
-            through_all: false,
-            cut: HoleCut::None,
-            thread: None,
-            threaded: false,
-            modeled_thread: false,
-            thread_depth: 0.0,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
-        };
-        edit(&mut hole);
-        doc.add_feature_in_body(hole, "Hole".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(base_sketch, 10.0), "Pad");
+        let holes = points_sketch(&mut doc, body, &[(2.0, 2.5)]);
+        add(&mut doc, body, hole(holes, edit), "Hole");
         body_build_ops(&doc, body)
             .map(|plan| plan.ops[1..].to_vec())
             .map_err(|e| e.message)
-    }
-
-    fn set_hole(f: &mut DesignFeature, edit: impl FnOnce(&mut HoleFields)) {
-        let DesignFeature::Hole {
-            thread,
-            threaded,
-            modeled_thread,
-            thread_depth,
-            cut,
-            drill_point,
-            point_in_depth,
-            taper_deg,
-            through_all,
-            ..
-        } = f
-        else {
-            unreachable!()
-        };
-        edit(&mut HoleFields {
-            thread,
-            threaded,
-            modeled_thread,
-            thread_depth,
-            cut,
-            drill_point,
-            point_in_depth,
-            taper_deg,
-            through_all,
-        });
-    }
-
-    struct HoleFields<'a> {
-        thread: &'a mut Option<ThreadSpec>,
-        threaded: &'a mut bool,
-        modeled_thread: &'a mut bool,
-        thread_depth: &'a mut f32,
-        cut: &'a mut HoleCut,
-        drill_point: &'a mut DrillPoint,
-        point_in_depth: &'a mut bool,
-        taper_deg: &'a mut f32,
-        through_all: &'a mut bool,
     }
 
     fn blind_distance(op: &SolidOp) -> (f64, f64) {
@@ -5240,11 +4882,9 @@ mod tests {
     #[test]
     fn an_angled_point_adds_a_cone_below_the_wall_or_within_the_depth() {
         let point = |in_depth: bool| {
-            hole_plan(|f| {
-                set_hole(f, |h| {
-                    *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
-                    *h.point_in_depth = in_depth;
-                })
+            hole_plan(|h| {
+                *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
+                *h.point_in_depth = in_depth;
             })
             .unwrap()
         };
@@ -5263,11 +4903,9 @@ mod tests {
         let (.., origin) = cone_of(&within[1]);
         assert!((origin[2] + 6.0 - tip).abs() < 1e-9);
         // Through all has no bottom to point.
-        let through = hole_plan(|f| {
-            set_hole(f, |h| {
-                *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
-                *h.through_all = true;
-            })
+        let through = hole_plan(|h| {
+            *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
+            *h.through_all = true;
         })
         .unwrap();
         assert_eq!(through.len(), 1);
@@ -5275,14 +4913,10 @@ mod tests {
 
     #[test]
     fn a_point_deeper_than_the_hole_is_an_error() {
-        let error = hole_plan(|f| {
-            if let DesignFeature::Hole { depth, .. } = f {
-                *depth = 0.5;
-            }
-            set_hole(f, |h| {
-                *h.drill_point = DrillPoint::Angled { angle_deg: 135.0 };
-                *h.point_in_depth = true;
-            })
+        let error = hole_plan(|h| {
+            *h.depth = 0.5;
+            *h.drill_point = DrillPoint::Angled { angle_deg: 135.0 };
+            *h.point_in_depth = true;
         })
         .unwrap_err();
         assert!(error.contains("drill point is deeper"), "{error}");
@@ -5290,42 +4924,36 @@ mod tests {
 
     #[test]
     fn a_tapered_hole_narrows_its_extrude_and_its_point() {
-        let ops = hole_plan(|f| {
-            set_hole(f, |h| {
-                *h.taper_deg = 3.0;
-                *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
-            })
+        let ops = hole_plan(|h| {
+            *h.taper_deg = 3.0;
+            *h.drill_point = DrillPoint::Angled { angle_deg: 118.0 };
         })
         .unwrap();
         let (distance, taper) = blind_distance(&ops[0]);
         assert!((distance - 6.0).abs() < 1e-9 && (taper + 3.0).abs() < 1e-9);
         let (r1, ..) = cone_of(&ops[1]);
         assert!((r1 - (1.5 - 6.0 * 3f64.to_radians().tan())).abs() < 1e-9);
-        let closed = hole_plan(|f| set_hole(f, |h| *h.taper_deg = 40.0)).unwrap_err();
+        let closed = hole_plan(|h| *h.taper_deg = 40.0).unwrap_err();
         assert!(closed.contains("taper closes"), "{closed}");
     }
 
     #[test]
     fn spotface_and_counterdrill_cut_their_mouths() {
-        let spot = hole_plan(|f| {
-            set_hole(f, |h| {
-                *h.cut = HoleCut::Spotface {
-                    diameter: 6.0,
-                    depth: 0.5,
-                }
-            })
+        let spot = hole_plan(|h| {
+            *h.cut = HoleCut::Spotface {
+                diameter: 6.0,
+                depth: 0.5,
+            }
         })
         .unwrap();
         assert_eq!(spot.len(), 2);
         assert!((blind_distance(&spot[1]).0 - 0.5).abs() < 1e-9);
-        let drill = hole_plan(|f| {
-            set_hole(f, |h| {
-                *h.cut = HoleCut::Counterdrill {
-                    diameter: 5.0,
-                    depth: 2.0,
-                    angle_deg: 90.0,
-                }
-            })
+        let drill = hole_plan(|h| {
+            *h.cut = HoleCut::Counterdrill {
+                diameter: 5.0,
+                depth: 2.0,
+                angle_deg: 90.0,
+            }
         })
         .unwrap();
         assert_eq!(drill.len(), 3, "drill, bore, cone");
@@ -5333,13 +4961,11 @@ mod tests {
         let (r1, r2, h, origin) = cone_of(&drill[2]);
         assert!((r1 - 2.5).abs() < 1e-9 && (r2 - 1.5).abs() < 1e-9 && (h - 1.0).abs() < 1e-9);
         assert!((origin[2] + 2.0).abs() < 1e-9);
-        let narrow = hole_plan(|f| {
-            set_hole(f, |h| {
-                *h.cut = HoleCut::Spotface {
-                    diameter: 2.0,
-                    depth: 0.5,
-                }
-            })
+        let narrow = hole_plan(|h| {
+            *h.cut = HoleCut::Spotface {
+                diameter: 2.0,
+                depth: 0.5,
+            }
         })
         .unwrap_err();
         assert!(narrow.contains("spotface diameter"), "{narrow}");
@@ -5348,11 +4974,9 @@ mod tests {
     #[test]
     fn a_screw_seat_takes_its_size_from_the_metric_thread() {
         let seat = |standard: ThreadStandard, size: &str, seat: ScrewSeat| {
-            hole_plan(|f| {
-                set_hole(f, |h| {
-                    *h.thread = Some(ThreadSpec::new(standard, size));
-                    *h.cut = HoleCut::Seat { seat };
-                })
+            hole_plan(|h| {
+                *h.thread = Some(ThreadSpec::new(standard, size));
+                *h.cut = HoleCut::Seat { seat };
             })
         };
         let bore = seat(ThreadStandard::IsoMetricCoarse, "M6", ScrewSeat::SocketHead).unwrap();
@@ -5385,13 +5009,11 @@ mod tests {
     #[test]
     fn a_modeled_thread_takes_its_standards_form_hand_and_taper() {
         let thread = |spec: ThreadSpec| {
-            let ops = hole_plan(|f| {
-                set_hole(f, |h| {
-                    *h.thread = Some(spec);
-                    *h.threaded = true;
-                    *h.modeled_thread = true;
-                    *h.thread_depth = 4.0;
-                })
+            let ops = hole_plan(|h| {
+                *h.thread = Some(spec);
+                *h.threaded = true;
+                *h.modeled_thread = true;
+                *h.thread_depth = 4.0;
             })
             .unwrap();
             let Some(SolidOp::Sweep {
@@ -5454,19 +5076,17 @@ mod tests {
     fn a_thread_the_standard_lacks_fails_cleanly() {
         let mut spec = ThreadSpec::new(ThreadStandard::Unc, "1/4-20");
         spec.class = "6H".into();
-        let error = hole_plan(|f| set_hole(f, |h| *h.thread = Some(spec))).unwrap_err();
+        let error = hole_plan(|h| *h.thread = Some(spec)).unwrap_err();
         assert!(error.contains("UNC has no class 6H"), "{error}");
     }
 
     #[test]
     fn a_tapered_standard_tapers_the_tapped_drill_only() {
         let drilled = |threaded: bool| {
-            hole_plan(|f| {
-                set_hole(f, |h| {
-                    *h.thread = Some(ThreadSpec::new(ThreadStandard::BspTaper, "1/4"));
-                    *h.threaded = threaded;
-                    *h.taper_deg = 7.0;
-                })
+            hole_plan(|h| {
+                *h.thread = Some(ThreadSpec::new(ThreadStandard::BspTaper, "1/4"));
+                *h.threaded = threaded;
+                *h.taper_deg = 7.0;
             })
             .unwrap()
         };
@@ -5476,126 +5096,13 @@ mod tests {
         assert!((taper + 7.0).abs() < 1e-9, "a clearance hole keeps its own");
     }
 
-    #[test]
-    fn metric_hole_diameter_uses_the_table() {
-        let feature = DesignFeature::Hole {
-            cosmetic_thread: false,
-            start: Default::default(),
-            clearance: None,
-            thread_length: Default::default(),
-            refine: false,
-            boolean_tolerance: None,
-            sketch: FeatureId::new(),
-            diameter: 99.0,
-            depth: 4.0,
-            through_all: false,
-            cut: HoleCut::None,
-            thread: Some(crate::feature::ThreadSpec::new(
-                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                "M6",
-            )),
-            threaded: true,
-            modeled_thread: false,
-            thread_depth: 0.0,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
-        };
-        assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
-        let clearance = DesignFeature::Hole {
-            cosmetic_thread: false,
-            start: Default::default(),
-            clearance: None,
-            thread_length: Default::default(),
-            refine: false,
-            boolean_tolerance: None,
-            sketch: FeatureId::new(),
-            diameter: 99.0,
-            depth: 4.0,
-            through_all: false,
-            cut: HoleCut::None,
-            thread: Some(crate::feature::ThreadSpec::new(
-                crate::hole_tables::ThreadStandard::IsoMetricCoarse,
-                "M6",
-            )),
-            threaded: false,
-            modeled_thread: false,
-            thread_depth: 0.0,
-            fit: crate::feature::HoleFit::Normal,
-            drill_point: DrillPoint::Flat,
-            point_in_depth: false,
-            taper_deg: 0.0,
-            nut_trap: None,
-            reversed: false,
-        };
-        assert!(
-            (hole_diameter(&clearance) - 6.6).abs() < 1e-6,
-            "M6 normal fit"
-        );
-    }
-
-    #[test]
-    fn linear_pattern_emits_transform_op_with_original_indices() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        doc.add_feature_in_body(
-            DesignFeature::LinearPattern {
-                skipped: Vec::new(),
-                refine: false,
-                boolean_tolerance: None,
-                originals: vec![pad_id],
-                axis: PatternAxis::X,
-                length: 30.0,
-                occurrences: 4,
-                spacing_mode: false,
-                spacings: Vec::new(),
-                reversed: false,
-            },
-            "Pattern".into(),
-            Some(body),
-        )
-        .unwrap();
-        let plan = body_build_ops(&doc, body).unwrap();
-        assert_eq!(plan.ops.len(), 2);
-        let SolidOp::Transform {
-            transforms,
-            originals,
-        } = &plan.ops[1]
-        else {
-            panic!("expected transform op");
-        };
-        assert_eq!(originals, &vec![0]);
-        assert_eq!(transforms.len(), 3, "occurrences minus the original");
-        // Overall length 30 over 4 occurrences → 10 mm spacing.
-        assert!((transforms[0][0][3] - 10.0).abs() < 1e-9);
-        assert!((transforms[2][0][3] - 30.0).abs() < 1e-9);
-    }
-
     /// The standalone circular and point patterns place their copies as
     /// their multi-transform steps do, the original left out.
     #[test]
     fn circular_and_point_patterns_build_as_their_steps() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        let mut points = Sketch::new("points");
-        for (x, y) in [(1.0, 1.0), (6.0, 1.0), (1.0, 9.0)] {
-            points.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
-        }
-        let plane = points.plane;
-        let points = doc
-            .add_feature_in_body(
-                SketchFeature::new(points, plane),
-                "points".into(),
-                Some(body),
-            )
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
+        let points = points_sketch(&mut doc, body, &[(1.0, 1.0), (6.0, 1.0), (1.0, 9.0)]);
         let circular = DesignFeature::CircularPattern {
             originals: vec![pad_id],
             axis: PatternAxis::Z,
@@ -5628,8 +5135,7 @@ mod tests {
         ] {
             let mut doc = doc.clone();
             let skipped: Vec<u32> = feature.skipped().unwrap().to_vec();
-            doc.add_feature_in_body(feature, "Pattern".into(), Some(body))
-                .unwrap();
+            add(&mut doc, body, feature, "Pattern");
             let plan = body_build_ops(&doc, body).unwrap();
             let SolidOp::Transform {
                 transforms,
@@ -5658,9 +5164,7 @@ mod tests {
     fn a_path_pattern_hands_its_path_to_the_chain() {
         use crate::feature::{PathSpacing, PatternPath};
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
         let layout = PathSpacing {
             occurrences: 5,
             spacing_mode: true,
@@ -5714,8 +5218,7 @@ mod tests {
             direction: [0.0, 0.0, 1.0],
             faces: [0, 0],
         };
-        doc.add_feature_in_body(along(PatternPath::Edge(pick)), "Path".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, along(PatternPath::Edge(pick)), "Path");
         let plan = body_build_ops(&doc, body).unwrap();
         let SolidOp::Pattern { steps, .. } = &plan.ops[1] else {
             panic!("expected a pattern op");
@@ -5739,9 +5242,7 @@ mod tests {
     fn a_multi_transform_with_a_path_step_goes_to_the_chain_as_steps() {
         use crate::feature::PatternPath;
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
         let linear = TransformStep::Linear {
             axis: PatternAxis::Z,
             length: 20.0,
@@ -5801,13 +5302,10 @@ mod tests {
     #[test]
     fn a_pocket_kept_inside_keeps_the_common_and_does_not_pattern() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 10.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 10.0), "Pad");
         let mut kept = pocket(sketch_id, 5.0, false, false);
         *kept.keep_inside_mut().expect("a pocket offers it") = true;
-        let pocket_id = doc
-            .add_feature_in_body(kept, "Pocket".into(), Some(body))
-            .unwrap();
+        let pocket_id = add(&mut doc, body, kept, "Pocket");
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Common);
         // It digs into the material as the cutting pocket does.
@@ -5826,61 +5324,43 @@ mod tests {
         assert_eq!(boolean_of(&cut_plan.ops[1]), BooleanOp::Cut);
         assert_eq!(digs(&plan.ops[1]), digs(&cut_plan.ops[1]));
 
-        doc.add_feature_in_body(
-            DesignFeature::LinearPattern {
-                skipped: Vec::new(),
-                refine: false,
-                boolean_tolerance: None,
-                originals: vec![pocket_id],
-                axis: PatternAxis::X,
-                length: 30.0,
-                occurrences: 3,
-                spacing_mode: false,
-                spacings: Vec::new(),
-                reversed: false,
-            },
-            "Pattern".into(),
-            Some(body),
-        )
-        .unwrap();
+        let pattern = linear_pattern(vec![pocket_id], 3, Vec::new());
+        add(&mut doc, body, pattern, "Pattern");
         let refused = body_build_ops(&doc, body).unwrap_err().to_string();
         assert!(refused.contains("cannot repeat"), "{refused}");
         // An adding feature offers no such switch.
         assert!(pad(sketch_id, 1.0).keep_inside_mut().is_none());
     }
 
-    /// A skipped copy's transform is left out; a skipped original makes
-    /// the copies alone, and the body's first solid cannot be skipped.
+    /// A linear pattern's op repeats its original's op, the copies spread
+    /// over its length; a skipped copy's transform is left out; a skipped
+    /// original makes the copies alone, and the body's first solid cannot
+    /// be skipped.
     #[test]
     fn a_pattern_leaves_its_skipped_occurrences_out_of_the_plan() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let base = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        let boss = doc
-            .add_feature_in_body(pad(sketch_id, 8.0), "Boss".into(), Some(body))
-            .unwrap();
-        let pattern = |originals: Vec<FeatureId>, skipped: Vec<u32>| DesignFeature::LinearPattern {
-            boolean_tolerance: None,
-            skipped,
-            refine: false,
-            originals,
-            axis: PatternAxis::X,
-            length: 30.0,
-            occurrences: 4,
-            spacing_mode: false,
-            spacings: Vec::new(),
-            reversed: false,
+        let base = add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
+        let boss = add(&mut doc, body, pad(sketch_id, 8.0), "Boss");
+        let pattern = |originals, skipped| linear_pattern(originals, 4, skipped);
+        let id = add(&mut doc, body, pattern(vec![boss], vec![]), "Pattern");
+        let copies_at = |doc: &Document| {
+            let plan = body_build_ops(doc, body).unwrap();
+            assert_eq!(plan.ops.len(), 3);
+            let SolidOp::Transform {
+                transforms,
+                originals,
+            } = &plan.ops[2]
+            else {
+                panic!("expected a transform: {:?}", plan.ops[2]);
+            };
+            assert_eq!(originals, &vec![1], "the boss's op");
+            transforms.iter().map(|t| t[0][3]).collect::<Vec<f64>>()
         };
-        let id = doc
-            .add_feature_in_body(pattern(vec![boss], vec![2]), "Pattern".into(), Some(body))
+        // Overall length 30 over 4 occurrences: 10 mm apart.
+        assert_eq!(copies_at(&doc), vec![10.0, 20.0, 30.0]);
+        doc.update_feature_data(id, pattern(vec![boss], vec![2]).to_json())
             .unwrap();
-        let plan = body_build_ops(&doc, body).unwrap();
-        let SolidOp::Transform { transforms, .. } = &plan.ops[2] else {
-            panic!("expected a transform: {:?}", plan.ops[2]);
-        };
-        let at: Vec<f64> = transforms.iter().map(|t| t[0][3]).collect();
-        assert_eq!(at, vec![10.0, 30.0], "the copy at 20 left out");
+        assert_eq!(copies_at(&doc), vec![10.0, 30.0], "the copy at 20 left out");
 
         doc.update_feature_data(id, pattern(vec![boss], vec![0, 3]).to_json())
             .unwrap();
@@ -5941,14 +5421,7 @@ mod tests {
         }
         let guide = points.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(50.0, 50.0))));
         points.set_construction(guide, true);
-        let plane = points.plane;
-        let sketch = doc
-            .add_feature_in_body(
-                SketchFeature::new(points, plane),
-                "points".into(),
-                Some(body),
-            )
-            .unwrap();
+        let sketch = add_sketch(&mut doc, body, points);
         let ts = point_transforms(&doc, sketch).unwrap();
         assert_eq!(ts.len(), 2);
         assert_eq!(transform_point(&ts[0], [0.0; 3]), [5.0, 0.0, 0.0]);
@@ -5961,23 +5434,16 @@ mod tests {
     #[test]
     fn a_pad_starts_on_the_plane_it_names() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let lifted = {
-            let mut s = Sketch::new("lifted");
-            s.plane.origin = [0.0, 0.0, 7.0];
-            let plane = s.plane;
-            SketchFeature::new(s, plane)
-        };
-        let lifted = doc
-            .add_feature_in_body(lifted, "lifted".into(), Some(body))
-            .unwrap();
+        let mut lifted = Sketch::new("lifted");
+        lifted.plane.origin = [0.0, 0.0, 7.0];
+        let lifted = add_sketch(&mut doc, body, lifted);
         let mut started = pad(sketch_id, 5.0);
         if let DesignFeature::Pad { extras, .. } = &mut started {
             extras.start_at = Some(lifted);
             extras.start_offset = 1.0;
         }
         assert!(started.dependencies().contains(&lifted));
-        doc.add_feature_in_body(started.clone(), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, started.clone(), "Pad");
         let plan = body_build_ops(&doc, body).unwrap();
         let SolidOp::Sweep { profile, .. } = &plan.ops[0] else {
             panic!("a sweep");
@@ -5993,15 +5459,12 @@ mod tests {
             let s = Sketch::new("side");
             SketchFeature::new(s, wb_sketch::sketch::SketchPlane::xz())
         };
-        let side = doc
-            .add_feature_in_body(side, "side".into(), Some(body))
-            .unwrap();
+        let side = add(&mut doc, body, side, "side");
         if let DesignFeature::Pad { extras, sketch, .. } = &mut started {
             extras.start_at = Some(side);
             *sketch = Some(sketch_id);
         }
-        doc.add_feature_in_body(started, "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, started, "Pad");
         let refused = body_build_ops(&doc, body).unwrap_err().to_string();
         assert!(refused.contains("runs along the plane"), "{refused}");
     }
@@ -6012,8 +5475,7 @@ mod tests {
     #[test]
     fn a_pad_starts_on_the_face_it_picks() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 10.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 10.0), "Pad");
         let face = FacePick {
             point: [1.0, 1.0, 10.0],
             normal: [0.0, 0.0, 1.0],
@@ -6023,9 +5485,7 @@ mod tests {
         if let DesignFeature::Pad { extras, .. } = &mut boss {
             extras.start_face = Some(face);
         }
-        let boss = doc
-            .add_feature_in_body(boss, "Boss".into(), Some(body))
-            .unwrap();
+        let boss = add(&mut doc, body, boss, "Boss");
         let mut plan = body_build_ops(&doc, body).unwrap();
         plan.probes = datum_probes(&doc, body, &plan);
         let SolidOp::Sweep { profile, .. } = &plan.ops[1] else {
@@ -6059,15 +5519,9 @@ mod tests {
     #[test]
     fn a_hole_starts_where_its_start_says() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let lifted = {
-            let mut s = Sketch::new("lifted");
-            s.plane.origin = [0.0, 0.0, 7.0];
-            let plane = s.plane;
-            SketchFeature::new(s, plane)
-        };
-        let lifted = doc
-            .add_feature_in_body(lifted, "lifted".into(), Some(body))
-            .unwrap();
+        let mut lifted = Sketch::new("lifted");
+        lifted.plane.origin = [0.0, 0.0, 7.0];
+        let lifted = add_sketch(&mut doc, body, lifted);
         let mut hole = match DesignFeature::from_json(&serde_json::json!({"Hole": {
             "sketch": sketch_id, "diameter": 2.0, "depth": 3.0, "through_all": false,
         }})) {
@@ -6237,8 +5691,7 @@ mod tests {
     fn pattern_referencing_later_feature_fails() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         let ghost = FeatureId::new();
-        doc.add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 5.0), "Pad");
         doc.add_feature_in_body(
             DesignFeature::Mirrored {
                 skipped: Vec::new(),
@@ -6255,23 +5708,29 @@ mod tests {
         assert!(err.message.contains("original"), "{}", err.message);
     }
 
-    #[test]
-    fn spine_orders_segments_into_one_chain() {
+    /// The path `lines` draw between `points`, in that order, in a body of
+    /// its own.
+    fn path(points: &[(f64, f64)], lines: &[(usize, usize)]) -> (Document, FeatureId) {
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Body".into()));
-        // An L-shaped open path: two lines sharing a corner point.
         let mut sketch = Sketch::new("path");
-        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(20.0, 0.0))));
-        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(20.0, 15.0))));
-        // Insert out of order to exercise the chain walk.
-        sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
-        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        let plane = sketch.plane;
-        let spine_id = doc
-            .add_feature_in_body(SketchFeature::new(sketch, plane), "path".into(), Some(body))
-            .unwrap();
+        let ids: Vec<_> = points
+            .iter()
+            .map(|&(x, y)| {
+                sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+            })
+            .collect();
+        for &(a, b) in lines {
+            sketch.add_geometry(GeometryElement::Line(Line::new(ids[a], ids[b])));
+        }
+        let id = add_sketch(&mut doc, body, sketch);
+        (doc, id)
+    }
 
+    #[test]
+    fn spine_orders_segments_into_one_chain() {
+        // An L-shaped open path, its lines drawn out of order.
+        let (doc, spine_id) = path(&[(0.0, 0.0), (20.0, 0.0), (20.0, 15.0)], &[(1, 2), (0, 1)]);
         let spine = sketch_spine(&doc, spine_id, None).unwrap();
         assert_eq!(spine.wires.len(), 1);
         assert_eq!(spine.wires[0].segments.len(), 2);
@@ -6287,18 +5746,7 @@ mod tests {
 
     #[test]
     fn an_open_spine_starts_at_the_end_by_its_profile() {
-        let mut doc = Document::new("t");
-        let body = doc.create_body(Some("Body".into()));
-        let mut sketch = Sketch::new("path");
-        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 10.0))));
-        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
-        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        sketch.add_geometry(GeometryElement::Line(Line::new(b, c)));
-        let plane = sketch.plane;
-        let spine_id = doc
-            .add_feature_in_body(SketchFeature::new(sketch, plane), "path".into(), Some(body))
-            .unwrap();
+        let (doc, spine_id) = path(&[(0.0, 0.0), (0.0, 10.0), (10.0, 10.0)], &[(0, 1), (1, 2)]);
         let first_start = |near| {
             let spine = sketch_spine(&doc, spine_id, near).unwrap();
             match spine.wires[0].segments[0] {
@@ -6316,22 +5764,10 @@ mod tests {
 
     #[test]
     fn branching_spine_is_rejected() {
-        let mut doc = Document::new("t");
-        let body = doc.create_body(Some("Body".into()));
-        let mut sketch = Sketch::new("branch");
-        let hub = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        for (x, y) in [(10.0, 0.0), (0.0, 10.0), (-10.0, 0.0)] {
-            let tip = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
-            sketch.add_geometry(GeometryElement::Line(Line::new(hub, tip)));
-        }
-        let plane = sketch.plane;
-        let spine_id = doc
-            .add_feature_in_body(
-                SketchFeature::new(sketch, plane),
-                "branch".into(),
-                Some(body),
-            )
-            .unwrap();
+        let (doc, spine_id) = path(
+            &[(0.0, 0.0), (10.0, 0.0), (0.0, 10.0), (-10.0, 0.0)],
+            &[(0, 1), (0, 2), (0, 3)],
+        );
         assert!(
             sketch_spine(&doc, spine_id, None)
                 .unwrap_err()
@@ -6340,33 +5776,10 @@ mod tests {
     }
 
     #[test]
-    fn tip_excludes_later_features_from_the_build() {
-        let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_a = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "PadA".into(), Some(body))
-            .unwrap();
-        doc.add_feature_in_body(pad(sketch_id, 9.0), "PadB".into(), Some(body))
-            .unwrap();
-
-        assert_eq!(body_build_ops(&doc, body).unwrap().ops.len(), 2);
-        doc.set_body_tip(body, Some(pad_a));
-        let plan = body_build_ops(&doc, body).unwrap();
-        assert_eq!(plan.ops.len(), 1, "features after the tip are excluded");
-        assert!((extrude_distance(&plan.ops[0]) - 5.0).abs() < 1e-9);
-
-        doc.set_body_tip(body, None);
-        assert_eq!(body_build_ops(&doc, body).unwrap().ops.len(), 2);
-    }
-
-    #[test]
     fn history_reorder_swaps_build_order_and_respects_dependencies() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        let pad_a = doc
-            .add_feature_in_body(pad(sketch_id, 5.0), "PadA".into(), Some(body))
-            .unwrap();
-        let pad_b = doc
-            .add_feature_in_body(pad(sketch_id, 9.0), "PadB".into(), Some(body))
-            .unwrap();
+        let pad_a = add(&mut doc, body, pad(sketch_id, 5.0), "PadA");
+        let pad_b = add(&mut doc, body, pad(sketch_id, 9.0), "PadB");
 
         assert!(doc.move_feature_in_history(pad_b, true));
         let plan = body_build_ops(&doc, body).unwrap();
@@ -6404,43 +5817,14 @@ mod tests {
     #[test]
     fn a_move_is_one_place_in_the_whole_history() {
         let (mut doc, body, base) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(base, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        let cut_sketch = doc
-            .add_feature_in_body(rect_sketch(), "cut".into(), Some(body))
-            .unwrap();
-        let pocket = doc
-            .add_feature_in_body(
-                DesignFeature::Pocket {
-                    regions: Vec::new(),
-                    keep_inside: false,
-                    profile_borrowed: None,
-                    extras: Default::default(),
-                    refine: false,
-                    boolean_tolerance: None,
-                    sketch: Some(cut_sketch),
-                    depth: 2.0,
-                    reversed: false,
-                    symmetric: false,
-                    through_all: false,
-                    mode: crate::ExtrudeMode::Dimension,
-                    depth2: 0.0,
-                    taper_deg: 0.0,
-                    up_to_face: None,
-                    up_to_offset: 0.0,
-                    profile_face: None,
-                    direction: Default::default(),
-                    up_to_shape: Vec::new(),
-                    mode2: None,
-                    up_to_face2: None,
-                    up_to_offset2: 0.0,
-                    up_to_shape2: Vec::new(),
-                },
-                "Pocket".into(),
-                Some(body),
-            )
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(base, 5.0), "Pad");
+        let cut_sketch = add(&mut doc, body, rect_sketch(), "cut");
+        let pocket = add(
+            &mut doc,
+            body,
+            pocket(cut_sketch, 2.0, false, false),
+            "Pocket",
+        );
         let order = |doc: &Document| {
             let mut nodes: Vec<(u64, FeatureId)> = doc
                 .feature_tree()
@@ -6469,12 +5853,8 @@ mod tests {
     #[test]
     fn retarget_moves_dependency_and_visibility() {
         let (mut doc, body, sketch_a) = doc_with_body_sketch();
-        let sketch_b = doc
-            .add_feature_in_body(rect_sketch(), "sketch_b".into(), Some(body))
-            .unwrap();
-        let pad_id = doc
-            .add_feature_in_body(pad(sketch_a, 5.0), "Pad".into(), Some(body))
-            .unwrap();
+        let sketch_b = add(&mut doc, body, rect_sketch(), "sketch_b");
+        let pad_id = add(&mut doc, body, pad(sketch_a, 5.0), "Pad");
         doc.set_feature_visible(sketch_a, false);
         doc.clear_feature_dirty(pad_id);
 
@@ -6493,8 +5873,7 @@ mod tests {
         let symmetric_of = |feature: DesignFeature| {
             let (mut doc, body, sketch) = doc_with_body_sketch();
             // Material first, for the modes that cut through it.
-            doc.add_feature_in_body(pad(sketch, 5.0), "Base".into(), Some(body))
-                .unwrap();
+            add(&mut doc, body, pad(sketch, 5.0), "Base");
             let mut feature = feature;
             match &mut feature {
                 DesignFeature::Pad { sketch: s, .. } | DesignFeature::Pocket { sketch: s, .. } => {
@@ -6502,9 +5881,7 @@ mod tests {
                 }
                 _ => unreachable!(),
             }
-            let id = doc
-                .add_feature_in_body(feature, "F".into(), Some(body))
-                .unwrap();
+            let id = add(&mut doc, body, feature, "F");
             let plan = body_build_ops(&doc, body).unwrap();
             let index = plan.op_features.iter().position(|f| *f == id).unwrap();
             match &plan.ops[index] {
@@ -6561,12 +5938,8 @@ mod tests {
     #[test]
     fn a_feature_is_offered_the_sketches_before_it() {
         let (mut doc, body, before) = doc_with_body_sketch();
-        let pad_id = doc
-            .add_feature_in_body(pad(before, 5.0), "Pad".into(), Some(body))
-            .unwrap();
-        let after = doc
-            .add_feature_in_body(rect_sketch(), "after".into(), Some(body))
-            .unwrap();
+        let pad_id = add(&mut doc, body, pad(before, 5.0), "Pad");
+        let after = add(&mut doc, body, rect_sketch(), "after");
         let ids = |current| {
             sketch_choices(&doc, body, pad_id, current)
                 .into_iter()
@@ -6581,9 +5954,7 @@ mod tests {
     #[test]
     fn sketches_of_body_lists_in_creation_order() {
         let (mut doc, body, first) = doc_with_body_sketch();
-        let second = doc
-            .add_feature_in_body(rect_sketch(), "second".into(), Some(body))
-            .unwrap();
+        let second = add(&mut doc, body, rect_sketch(), "second");
         let list = sketches_of_body(&doc, body);
         assert_eq!(
             list.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
@@ -6598,13 +5969,8 @@ mod tests {
         let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
         let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
         sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        let plane = sketch.plane;
-        let open_id = doc
-            .add_feature_in_body(SketchFeature::new(sketch, plane), "open".into(), Some(body))
-            .unwrap();
-        let bad = doc
-            .add_feature_in_body(pad(open_id, 7.0), "BadPad".into(), Some(body))
-            .unwrap();
+        let open_id = add_sketch(&mut doc, body, sketch);
+        let bad = add(&mut doc, body, pad(open_id, 7.0), "BadPad");
         let err = body_build_ops(&doc, body).unwrap_err();
         assert_eq!(err.feature, Some(bad));
         // The feature names itself wherever the error shows.
@@ -6618,8 +5984,7 @@ mod tests {
         edit: impl FnOnce(&mut DesignFeature),
     ) -> Result<SolidOp, String> {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 5.0), "Base".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 5.0), "Base");
         let mut feature = feature;
         if let DesignFeature::Pad { sketch, .. } | DesignFeature::Pocket { sketch, .. } =
             &mut feature
@@ -6627,8 +5992,7 @@ mod tests {
             *sketch = Some(sketch_id);
         }
         edit(&mut feature);
-        doc.add_feature_in_body(feature, "Feature".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, feature, "Feature");
         body_build_ops(&doc, body)
             .map(|plan| plan.ops[1].clone())
             .map_err(|e| e.message)
@@ -6819,8 +6183,7 @@ mod tests {
             *sketch = None;
             *profile_face = Some(face);
         }
-        doc.add_feature_in_body(first, "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, first, "Pad");
         assert!(body_build_ops(&doc, body).is_err());
     }
 
@@ -6845,12 +6208,12 @@ mod tests {
                 up_to_face,
             };
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(
+        add(
+            &mut doc,
+            body,
             revolution(RevolveMode::ToLast, None, sketch_id),
-            "Rev".into(),
-            Some(body),
-        )
-        .unwrap();
+            "Rev",
+        );
         assert!(body_build_ops(&doc, body).is_err(), "nothing to stop on");
 
         let face = FacePick {
@@ -6871,14 +6234,13 @@ mod tests {
             ),
         ] {
             let (mut doc, body, sketch_id) = doc_with_body_sketch();
-            doc.add_feature_in_body(pad(sketch_id, 1.0), "Base".into(), Some(body))
-                .unwrap();
-            doc.add_feature_in_body(
+            add(&mut doc, body, pad(sketch_id, 1.0), "Base");
+            add(
+                &mut doc,
+                body,
                 revolution(mode, Some(face), sketch_id),
-                "Rev".into(),
-                Some(body),
-            )
-            .unwrap();
+                "Rev",
+            );
             let plan = body_build_ops(&doc, body).unwrap();
             assert!(matches!(
                 &plan.ops[1],
@@ -6995,8 +6357,7 @@ mod tests {
     fn helix_kind(mode: HelixMode, height: f32, growth: f32) -> Result<SweepKind, BuildError> {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
         let feature = helix(sketch_id, mode, height, growth);
-        doc.add_feature_in_body(feature, "Helix".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, feature, "Helix");
         let plan = body_build_ops(&doc, body)?;
         match plan.ops.into_iter().next() {
             Some(SolidOp::Sweep { kind, .. }) => Ok(kind),
@@ -7053,8 +6414,7 @@ mod tests {
     #[test]
     fn a_subtractive_helix_kept_inside_keeps_the_common() {
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
         let mut cut = helix(sketch_id, HelixMode::PitchHeight, 8.0, 0.0);
         if let DesignFeature::Helix {
             subtractive,
@@ -7065,15 +6425,13 @@ mod tests {
             *subtractive = true;
             *keep_inside = true;
         }
-        doc.add_feature_in_body(cut.clone(), "Helix".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, cut.clone(), "Helix");
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Common);
 
         // Kept inside means nothing on an adding helix.
         let (mut doc, body, sketch_id) = doc_with_body_sketch();
-        doc.add_feature_in_body(pad(sketch_id, 7.0), "Pad".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, pad(sketch_id, 7.0), "Pad");
         if let DesignFeature::Helix {
             sketch,
             subtractive,
@@ -7083,8 +6441,7 @@ mod tests {
             *sketch = sketch_id;
             *subtractive = false;
         }
-        doc.add_feature_in_body(cut, "Helix".into(), Some(body))
-            .unwrap();
+        add(&mut doc, body, cut, "Helix");
         let plan = body_build_ops(&doc, body).unwrap();
         assert_eq!(boolean_of(&plan.ops[1]), BooleanOp::Fuse);
     }
@@ -7092,15 +6449,9 @@ mod tests {
     #[test]
     fn a_pipe_hands_its_orientation_corners_and_sections_to_the_kernel() {
         let (mut doc, body, profile) = doc_with_body_sketch();
-        let spine = doc
-            .add_feature_in_body(rect_sketch(), "spine".into(), Some(body))
-            .unwrap();
-        let guide = doc
-            .add_feature_in_body(rect_sketch(), "guide".into(), Some(body))
-            .unwrap();
-        let section = doc
-            .add_feature_in_body(rect_sketch(), "section".into(), Some(body))
-            .unwrap();
+        let spine = add(&mut doc, body, rect_sketch(), "spine");
+        let guide = add(&mut doc, body, rect_sketch(), "guide");
+        let section = add(&mut doc, body, rect_sketch(), "section");
         let pipe = |orientation: PipeOrientation| DesignFeature::Pipe {
             keep_inside: false,
             path_borrowed: Vec::new(),
@@ -7117,8 +6468,7 @@ mod tests {
         };
         let op_of = |feature: DesignFeature| {
             let mut doc = doc.clone();
-            doc.add_feature_in_body(feature, "Pipe".into(), Some(body))
-                .unwrap();
+            add(&mut doc, body, feature, "Pipe");
             body_build_ops(&doc, body).map(|plan| plan.ops.into_iter().next().unwrap())
         };
         let Ok(SolidOp::Pipe {

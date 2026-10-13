@@ -865,13 +865,4 @@ mod tests {
             Err(ArrayError::PathTooShort { fits: 3 })
         );
     }
-
-    #[test]
-    fn a_zero_direction_is_refused() {
-        let pattern = ArrayPattern::Linear {
-            direction: [0.0; 3],
-            spacing: 1.0,
-        };
-        assert!(!pattern.is_valid());
-    }
 }

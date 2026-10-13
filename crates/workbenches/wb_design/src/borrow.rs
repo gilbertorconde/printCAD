@@ -1399,6 +1399,7 @@ mod tests {
 
     use crate::DesignWorkbench;
     use crate::feature::{ExtrudeDirection, ExtrudeMode};
+    use crate::test_support::made_id as id_of;
     use core_document::{CommandResult, Workbench, WorkbenchRuntimeContext};
     use serde_json::{Value, json};
 
@@ -1406,10 +1407,6 @@ mod tests {
         let mut bench = DesignWorkbench::default();
         let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         bench.run_command(id, args.as_object().unwrap(), &mut ctx)
-    }
-
-    fn id_of(value: &Value) -> FeatureId {
-        FeatureId(uuid::Uuid::parse_str(value.as_str().unwrap()).unwrap())
     }
 
     /// Two bodies, the first with a sketch in it.

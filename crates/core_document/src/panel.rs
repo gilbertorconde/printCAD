@@ -1130,7 +1130,14 @@ mod tests {
     #[test]
     fn every_widget_draws_with_and_without_a_document() {
         let mut document = Document::new("panel");
-        let feature = crate::FeatureId::new();
+        let feature = document.add_feature_of_kind(
+            crate::WorkbenchId::new("bench.thing"),
+            "Thing".into(),
+            None,
+            Vec::new(),
+            serde_json::json!({"length": 10.0}),
+            Default::default(),
+        );
         let widgets = every_widget(&feature.0.to_string());
         let ctx = egui::Context::default();
         ui_kit::theme::apply_theme(&ctx);
@@ -1158,5 +1165,11 @@ mod tests {
                 Some("2 * 3".into()),
             )],
         );
+        let node = document.get_feature_meta(feature).unwrap();
+        assert_eq!(
+            node.formulas.get("/length").map(String::as_str),
+            Some("2 * 3")
+        );
+        assert!(node.dirty);
     }
 }

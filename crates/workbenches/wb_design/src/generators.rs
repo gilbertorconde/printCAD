@@ -425,7 +425,7 @@ mod tests {
             json!({"body": body.0.to_string(), "teeth": 31, "module": 1.5}),
         )
         .unwrap();
-        let id = FeatureId(uuid::Uuid::parse_str(id.as_str().unwrap()).unwrap());
+        let id = crate::test_support::made_id(&id);
         let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         let Some(Generator::Gear(spec)) = &feature.generator else {
             panic!("a gear")
@@ -440,7 +440,7 @@ mod tests {
             json!({"body": body.0.to_string()}),
         )
         .unwrap();
-        let shaft = FeatureId(uuid::Uuid::parse_str(shaft.as_str().unwrap()).unwrap());
+        let shaft = crate::test_support::made_id(&shaft);
         let feature = SketchFeature::from_json(doc.get_feature_data(shaft).unwrap()).unwrap();
         assert_eq!(feature.plane.normal, SketchPlane::xz().normal);
     }

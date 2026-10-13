@@ -206,32 +206,6 @@ mod tests {
     use super::*;
     use core_document::Document;
 
-    fn pad(sketch: FeatureId) -> DesignFeature {
-        DesignFeature::Pad {
-            regions: Vec::new(),
-            profile_borrowed: None,
-            extras: Default::default(),
-            refine: false,
-            boolean_tolerance: None,
-            sketch: Some(sketch),
-            length: 5.0,
-            reversed: false,
-            symmetric: false,
-            mode: crate::feature::ExtrudeMode::Dimension,
-            length2: 0.0,
-            taper_deg: 0.0,
-            up_to_face: None,
-            up_to_offset: 0.0,
-            profile_face: None,
-            direction: Default::default(),
-            up_to_shape: Vec::new(),
-            mode2: None,
-            up_to_face2: None,
-            up_to_offset2: 0.0,
-            up_to_shape2: Vec::new(),
-        }
-    }
-
     #[test]
     fn a_pad_offers_its_profile_and_swaps_it_for_an_earlier_sketch() {
         let mut doc = Document::new("t");
@@ -243,7 +217,7 @@ mod tests {
             .add_feature_in_body(Stub("b".into()), "b".into(), Some(body))
             .unwrap();
         let pad_id = doc
-            .add_feature_in_body(pad(a), "Pad".into(), Some(body))
+            .add_feature_in_body(crate::test_support::pad(a, 5.0), "Pad".into(), Some(body))
             .unwrap();
         let node = doc.get_feature_meta(pad_id).unwrap().clone();
         let refs = references(&doc, pad_id, &node);

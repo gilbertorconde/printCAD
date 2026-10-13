@@ -6,6 +6,8 @@ use core_document::datum::{DatumAttachment, DatumFeature, DatumShape};
 use core_document::units::Unit;
 use core_document::{BasePlane, Document};
 
+use crate::support::{assert_replays, geometry, reloaded};
+
 fn datum(plane: BasePlane) -> DatumFeature {
     DatumFeature {
         shape: DatumShape::Plane { size: 10.0 },
@@ -70,6 +72,9 @@ fn scripted_session(doc: &mut Document) {
     doc.set_name("Replayed");
 }
 
+/// Replaying a session's captured ops onto the baseline, as they are and
+/// through the JSON the wire and the on-disk op log carry them as, lands on
+/// the live document's replicated state.
 #[test]
 fn replaying_captured_ops_reproduces_the_replicated_state() {
     let mut live = Document::new("Session");
@@ -84,41 +89,16 @@ fn replaying_captured_ops_reproduces_the_replicated_state() {
         ops.len()
     );
 
-    let mut replica = baseline;
+    let mut replica = baseline.clone();
     for op in &ops {
         replica.apply_op(op);
     }
-
     assert_eq!(
         live.replicated_projection(),
         replica.replicated_projection(),
         "replay must converge on the live document's replicated state"
     );
-}
-
-/// The op stream survives a serde round-trip unchanged, which is what the
-/// wire and the on-disk op log do to it.
-#[test]
-fn ops_replay_identically_after_a_serde_round_trip() {
-    let mut live = Document::new("Wire");
-    let baseline = live.clone();
-    let _ = live.take_pending_ops();
-
-    scripted_session(&mut live);
-    let ops = live.take_pending_ops();
-
-    let json = serde_json::to_string(&ops).expect("ops serialize");
-    let decoded: Vec<core_document::op::DocumentOp> =
-        serde_json::from_str(&json).expect("ops deserialize");
-
-    let mut replica = baseline;
-    for op in &decoded {
-        replica.apply_op(op);
-    }
-    assert_eq!(
-        live.replicated_projection(),
-        replica.replicated_projection()
-    );
+    assert_replays(&live, baseline, &ops);
 }
 
 /// A drag burst must not flood the outbox: consecutive whole-payload writes
@@ -234,19 +214,7 @@ fn removing_a_body_takes_its_features_and_its_geometry() {
     let kept = doc
         .add_feature_in_body(datum(BasePlane::XY), "Kept".into(), Some(keep))
         .expect("add");
-    doc.set_imported_geometry(
-        body,
-        core_document::ImportedGeometry {
-            mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    doc.set_imported_geometry(body, geometry(Default::default()));
 
     assert!(doc.remove_body(body));
     assert!(doc.bodies().iter().all(|b| b.id != body), "body gone");
@@ -268,10 +236,7 @@ fn a_document_keeps_its_agent_rules() {
     doc.set_agent_rules("The lid stays 2 mm thick.");
     let ops = doc.take_pending_ops();
     assert_eq!(ops.len(), 1, "one op");
-    let bytes = doc
-        .save_to_bytes(core_document::Compression::None)
-        .expect("saves");
-    let back = Document::load_from_bytes(bytes).expect("loads");
+    let back = reloaded(&mut doc);
     assert_eq!(back.agent_rules(), "The lid stays 2 mm thick.");
 }
 
@@ -293,10 +258,7 @@ fn a_document_keeps_its_measure_unit() {
     replica.apply_remote_op(&ops[0]);
     assert_eq!(replica.measure_unit(), Some(Unit::In));
 
-    let bytes = doc
-        .save_to_bytes(core_document::Compression::None)
-        .expect("saves");
-    let back = Document::load_from_bytes(bytes).expect("loads");
+    let back = reloaded(&mut doc);
     assert_eq!(back.measure_unit(), Some(Unit::In));
 
     assert!(journal.undo(&mut doc).is_some());
@@ -304,9 +266,6 @@ fn a_document_keeps_its_measure_unit() {
     assert!(journal.redo(&mut doc).is_some());
     assert_eq!(doc.measure_unit(), Some(Unit::In));
 
-    let plain = Document::new("plain")
-        .save_to_bytes(core_document::Compression::None)
-        .expect("saves");
-    let back = Document::load_from_bytes(plain).expect("loads");
+    let back = reloaded(&mut Document::new("plain"));
     assert_eq!(back.measure_unit(), None);
 }

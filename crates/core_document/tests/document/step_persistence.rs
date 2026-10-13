@@ -11,19 +11,41 @@ use serde_json::json;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::support::{geometry, pack, peer_with};
+
+/// A coloured triangle.
 fn fake_mesh() -> Arc<TriMesh> {
     Arc::new(TriMesh {
-        edge_faces: Vec::new(),
-        face_names: Vec::new(),
-        positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        normals: vec![[0.0, 0.0, 1.0]; 3],
-        indices: vec![0, 1, 2],
-        edges: Vec::new(),
         colors: vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
-        faces: Vec::new(),
-        edge_ids: Vec::new(),
-        face_surfaces: Vec::new(),
+        ..(*crate::support::triangle()).clone()
     })
+}
+
+/// A mesh of one point.
+fn point_mesh() -> Arc<TriMesh> {
+    Arc::new(TriMesh {
+        positions: vec![[0.0, 0.0, 0.0]],
+        normals: vec![[0.0, 0.0, 1.0]],
+        ..TriMesh::default()
+    })
+}
+
+/// The coloured triangle as geometry read from `source_asset`.
+fn imported(source_asset: Option<Uuid>) -> ImportedGeometry {
+    ImportedGeometry {
+        source_asset,
+        ..geometry(fake_mesh())
+    }
+}
+
+/// `doc` saved to a `.prtcad` file named after `tag` and opened again.
+fn through_file(doc: &mut Document, tag: &str) -> Document {
+    let tmp = std::env::temp_dir().join(format!("printcad_{tag}_{}.prtcad", std::process::id()));
+    doc.save_to_file(&tmp, Compression::None)
+        .expect("save .prtcad");
+    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let _ = std::fs::remove_file(&tmp);
+    loaded
 }
 
 #[test]
@@ -39,28 +61,9 @@ fn imported_geometry_roundtrips_through_prtcad() {
     let raw_bytes = b"ISO-10303-21;\nSTEP;\nfake-content".to_vec();
     let asset_id = doc.add_asset_with_data(asset, raw_bytes.clone());
 
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: Some(asset_id),
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    doc.set_imported_geometry(body_id, imported(Some(asset_id)));
 
-    let tmp = std::env::temp_dir().join(format!(
-        "printcad_step_persistence_{}.prtcad",
-        std::process::id()
-    ));
-    doc.save_to_file(&tmp, Compression::None)
-        .expect("save .prtcad");
-
-    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let loaded = through_file(&mut doc, "step_persistence");
     let geometry = loaded
         .imported_geometry(body_id)
         .expect("imported geometry survives save/load");
@@ -79,8 +82,6 @@ fn imported_geometry_roundtrips_through_prtcad() {
         .asset_bytes(asset_id)
         .expect("asset bytes restored from archive");
     assert_eq!(restored_bytes, raw_bytes.as_slice());
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -94,40 +95,13 @@ fn brep_sidecars_roundtrip_through_prtcad() {
     let colors: Vec<[f32; 3]> = vec![[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]];
     doc.set_imported_brep_data(body_id, brep.clone(), colors.clone());
 
-    let mesh = Arc::new(TriMesh {
-        edge_faces: Vec::new(),
-        face_names: Vec::new(),
-        positions: vec![[0.0, 0.0, 0.0]],
-        normals: vec![[0.0, 0.0, 1.0]],
-        indices: Vec::new(),
-        edges: Vec::new(),
-        colors: Vec::new(),
-        faces: Vec::new(),
-        edge_ids: Vec::new(),
-        face_surfaces: Vec::new(),
-    });
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh,
-            source_asset: None,
-            revision: 0,
-            bounds_mm: Some(([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])),
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    let bounded = ImportedGeometry {
+        bounds_mm: Some(([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])),
+        ..geometry(point_mesh())
+    };
+    doc.set_imported_geometry(body_id, bounded);
 
-    let tmp = std::env::temp_dir().join(format!(
-        "printcad_brep_persistence_{}.prtcad",
-        std::process::id()
-    ));
-    doc.save_to_file(&tmp, Compression::None)
-        .expect("save .prtcad");
-
-    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let loaded = through_file(&mut doc, "brep_persistence");
     assert_eq!(
         loaded.imported_brep_blob(body_id).expect("brep restored"),
         brep.as_slice()
@@ -145,27 +119,13 @@ fn brep_sidecars_roundtrip_through_prtcad() {
         Some(format!("brep/{}.colors", body_id.0))
     );
     assert_eq!(geom.bounds_mm, Some(([0.0, 0.0, 0.0], [1.0, 2.0, 3.0])));
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
 fn imported_object_graph_and_visibility_roundtrip() {
     let mut doc = Document::new("TreePersistenceTest");
     let body_id = doc.create_body(Some("Imported Root Body".into()));
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    doc.set_imported_geometry(body_id, imported(None));
 
     let root_id = Uuid::new_v4();
     let child_id = Uuid::new_v4();
@@ -208,14 +168,7 @@ fn imported_object_graph_and_visibility_roundtrip() {
     doc.set_imported_object_graph(vec![root_id], nodes);
     assert!(!doc.imported_body_effective_visible(body_id));
 
-    let tmp = std::env::temp_dir().join(format!(
-        "printcad_tree_persistence_{}.prtcad",
-        std::process::id()
-    ));
-    doc.save_to_file(&tmp, Compression::None)
-        .expect("save .prtcad");
-
-    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
+    let loaded = through_file(&mut doc, "tree_persistence");
     assert_eq!(loaded.imported_object_roots(), &[root_id]);
     let loaded_child = loaded.imported_object(child_id).expect("child node");
     assert_eq!(loaded_child.parent_id, Some(root_id));
@@ -223,8 +176,6 @@ fn imported_object_graph_and_visibility_roundtrip() {
     assert_eq!(loaded_child.body_id, Some(body_id));
     assert!(!loaded.imported_body_effective_visible(body_id));
     assert_eq!(loaded.imported_object_for_body(body_id), Some(child_id));
-
-    let _ = std::fs::remove_file(&tmp);
 }
 
 /// An import's annotations and its bodies' layers come back from a save:
@@ -286,14 +237,7 @@ fn imported_annotations_and_layers_roundtrip() {
     doc.set_imported_object_graph(vec![part_id], nodes);
     assert!(doc.set_imported_object_visibility(dimension_id, false));
 
-    let tmp = std::env::temp_dir().join(format!(
-        "printcad_annotation_persistence_{}.prtcad",
-        std::process::id()
-    ));
-    doc.save_to_file(&tmp, Compression::None)
-        .expect("save .prtcad");
-    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
-    let _ = std::fs::remove_file(&tmp);
+    let loaded = through_file(&mut doc, "annotation_persistence");
 
     assert_eq!(
         loaded.imported_object(part_id).expect("part").layers,
@@ -321,30 +265,11 @@ fn a_cloned_document_saves_independently_from_another_thread() {
     let body_id = doc.create_body(Some("Body".into()));
     let brep = b"ogeom 1\nunits 1.0\n".to_vec();
     doc.set_imported_brep_data(body_id, brep.clone(), vec![[1.0, 0.0, 0.0]]);
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh: Arc::new(TriMesh {
-                edge_faces: Vec::new(),
-                face_names: Vec::new(),
-                positions: vec![[0.0, 0.0, 0.0]],
-                normals: vec![[0.0, 0.0, 1.0]],
-                indices: Vec::new(),
-                edges: Vec::new(),
-                colors: Vec::new(),
-                faces: Vec::new(),
-                edge_ids: Vec::new(),
-                face_surfaces: Vec::new(),
-            }),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: Some(([0.0; 3], [1.0, 2.0, 3.0])),
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    let bounded = ImportedGeometry {
+        bounds_mm: Some(([0.0; 3], [1.0, 2.0, 3.0])),
+        ..geometry(point_mesh())
+    };
+    doc.set_imported_geometry(body_id, bounded);
 
     let mut snapshot = doc.clone();
     let tmp =
@@ -371,7 +296,6 @@ fn a_cloned_document_saves_independently_from_another_thread() {
         loaded.imported_brep_blob(body_id).expect("blob restored"),
         brep.as_slice()
     );
-    let _ = std::fs::remove_file(&tmp);
 }
 
 #[test]
@@ -388,19 +312,7 @@ fn packing_an_archive_reports_what_it_has_packed() {
         json!({"source_path": "/tmp/big.step"}),
     );
     let asset_id = doc.add_asset_with_data(asset, raw_bytes.clone());
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: Some(asset_id),
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    doc.set_imported_geometry(body_id, imported(Some(asset_id)));
 
     assert!(doc.archive_payload_bytes() >= raw_bytes.len() as u64);
 
@@ -446,32 +358,12 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
         repaired: false,
         faceted: false,
     };
-    doc.set_imported_geometry(
-        imported,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: Some(asset_id),
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: Some(broken.clone()),
-        },
-    );
-    doc.set_imported_geometry(
-        modelled,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    let with_health = |health: ShapeHealth| ImportedGeometry {
+        health: Some(health),
+        ..self::imported(Some(asset_id))
+    };
+    doc.set_imported_geometry(imported, with_health(broken.clone()));
+    doc.set_imported_geometry(modelled, self::imported(None));
     let mut journal = OpJournal::new(16);
     doc.rename_body(modelled, "Renamed");
     journal.note(&mut doc);
@@ -490,12 +382,7 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     assert_eq!(ops.len(), 1, "one op for one request");
     assert_eq!(doc.bodies_awaiting_repair(), vec![imported]);
 
-    let mut peer = Document::new("Peer");
-    peer.apply_remote_op(&core_document::op::DocumentOp::CreateBody {
-        id: imported,
-        name: "Imported".into(),
-        created_at: 0,
-    });
+    let mut peer = peer_with(imported);
     peer.apply_remote_op(&ops[0]);
     assert!(
         peer.bodies()
@@ -506,30 +393,14 @@ fn a_repair_request_is_one_op_a_barrier_and_survives_a_save() {
     // The repaired geometry lands: nothing waits any more.
     doc.set_imported_geometry(
         imported,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: Some(asset_id),
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: Some(ShapeHealth {
-                repaired: true,
-                ..broken.clone()
-            }),
-        },
+        with_health(ShapeHealth {
+            repaired: true,
+            ..broken.clone()
+        }),
     );
     assert!(doc.bodies_awaiting_repair().is_empty());
 
-    let tmp = std::env::temp_dir().join(format!(
-        "printcad_repair_request_{}.prtcad",
-        std::process::id()
-    ));
-    doc.save_to_file(&tmp, Compression::None)
-        .expect("save .prtcad");
-    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
-    let _ = std::fs::remove_file(&tmp);
+    let loaded = through_file(&mut doc, "repair_request");
     assert!(
         loaded
             .bodies()
@@ -559,17 +430,11 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
     let asset = AssetReference::new("assets/part.stl".to_string(), AssetType::Stl, json!({}));
     let asset_id = doc.add_asset_with_data(asset, b"solid".to_vec());
     let geometry = |faceted: bool| ImportedGeometry {
-        mesh: fake_mesh(),
-        source_asset: Some(asset_id),
-        revision: 0,
-        bounds_mm: None,
-        brep_blob_path: None,
-        mesh_path: None,
-        face_colors_path: None,
         health: Some(ShapeHealth {
             faceted,
             ..ShapeHealth::default()
         }),
+        ..imported(Some(asset_id))
     };
     doc.set_imported_geometry(converted, geometry(true));
     doc.set_imported_geometry(smooth, geometry(false));
@@ -589,12 +454,7 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
     assert_eq!(ops.len(), 1, "one op for one request");
     assert_eq!(doc.bodies_awaiting_refine(), vec![converted]);
 
-    let mut peer = Document::new("Peer");
-    peer.apply_remote_op(&core_document::op::DocumentOp::CreateBody {
-        id: converted,
-        name: "Converted".into(),
-        created_at: 0,
-    });
+    let mut peer = peer_with(converted);
     peer.apply_remote_op(&ops[0]);
     assert!(
         peer.bodies()
@@ -602,14 +462,7 @@ fn a_faceted_solid_is_refined_once_and_the_request_survives_a_save() {
             .any(|b| b.id == converted && b.refine_requested)
     );
 
-    let tmp = std::env::temp_dir().join(format!(
-        "printcad_refine_request_{}.prtcad",
-        std::process::id()
-    ));
-    doc.save_to_file(&tmp, Compression::None)
-        .expect("save .prtcad");
-    let loaded = Document::load_from_file(&tmp).expect("load .prtcad");
-    let _ = std::fs::remove_file(&tmp);
+    let loaded = through_file(&mut doc, "refine_request");
     assert_eq!(
         loaded.bodies_awaiting_refine(),
         vec![converted],
@@ -639,19 +492,7 @@ fn a_mesh_body_asks_for_its_solid_once_and_stops_waiting_when_it_lands() {
             AssetReference::new(path.to_string(), kind, json!({})),
             b"bytes".to_vec(),
         );
-        doc.set_imported_geometry(
-            body,
-            ImportedGeometry {
-                mesh: fake_mesh(),
-                source_asset: Some(asset),
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        doc.set_imported_geometry(body, imported(Some(asset)));
     }
     doc.set_imported_brep_data(step_body, b"ogeom".to_vec(), Vec::new());
 
@@ -701,10 +542,7 @@ fn a_body_hides_and_shows_as_one_undoable_edit() {
     );
     assert!(!doc.imported_body_effective_visible(body));
 
-    let tmp = std::env::temp_dir().join(format!("printcad_hide_{}.prtcad", std::process::id()));
-    doc.save_to_file(&tmp, Compression::None).expect("save");
-    let loaded = Document::load_from_file(&tmp).expect("load");
-    let _ = std::fs::remove_file(&tmp);
+    let loaded = through_file(&mut doc, "hide");
     assert!(
         !loaded.imported_body_effective_visible(body),
         "hidden after a save"
@@ -774,19 +612,7 @@ fn a_clone_keeps_the_sidecar_bytes() {
 fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
     let mut doc = Document::new("MeshesApart");
     let body_id = doc.create_body(Some("Body".into()));
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    doc.set_imported_geometry(body_id, imported(None));
 
     let bytes = doc.save_to_bytes(Compression::None).expect("save");
     let mut archive = tar::Archive::new(bytes.as_slice());
@@ -815,14 +641,7 @@ fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
 
     // An archive whose JSON holds the mesh, as earlier saves wrote it.
     let inline = serde_json::to_vec(&doc).unwrap();
-    let mut builder = tar::Builder::new(Vec::new());
-    let mut header = tar::Header::new_gnu();
-    header.set_path("document.json").unwrap();
-    header.set_size(inline.len() as u64);
-    header.set_mode(0o644);
-    header.set_cksum();
-    builder.append(&header, inline.as_slice()).unwrap();
-    let old = builder.into_inner().unwrap();
+    let old = pack(&[("document.json".to_string(), inline)]);
     let loaded = Document::load_from_bytes(old).expect("load an inline save");
     let mesh = &loaded.imported_geometry(body_id).unwrap().mesh;
     assert_eq!(mesh.indices, vec![0, 1, 2]);
@@ -835,19 +654,7 @@ fn meshes_are_entries_of_their_own_and_inline_ones_still_load() {
 fn a_zstd_packed_prtcad_opens_by_its_first_bytes() {
     let mut doc = Document::new("Packed");
     let body_id = doc.create_body(Some("Body".into()));
-    doc.set_imported_geometry(
-        body_id,
-        ImportedGeometry {
-            mesh: fake_mesh(),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
-        },
-    );
+    doc.set_imported_geometry(body_id, imported(None));
     doc.set_thumbnail(Some(b"\x89PNG-ish".to_vec()));
     let bytes = doc.save_to_bytes(Compression::Zstd).expect("save");
     let tmp = std::env::temp_dir().join(format!("printcad_zstd_{}.prtcad", std::process::id()));
@@ -861,5 +668,4 @@ fn a_zstd_packed_prtcad_opens_by_its_first_bytes() {
         Document::read_thumbnail(&tmp).as_deref(),
         Some(&b"\x89PNG-ish"[..])
     );
-    let _ = std::fs::remove_file(&tmp);
 }

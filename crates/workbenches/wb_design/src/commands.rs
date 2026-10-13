@@ -2628,6 +2628,7 @@ fn apply_fields(feature: &mut DesignFeature, fields: &Map<String, Value>) -> Res
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::made_id;
     use core_document::{Document, Workbench};
 
     fn call(
@@ -2640,89 +2641,91 @@ mod tests {
         bench.run_command(id, args.as_object().unwrap(), &mut ctx)
     }
 
-    fn sketch_in(doc: &mut Document) -> (BodyId, FeatureId) {
-        let body = doc.create_body(None);
-        let sketch = doc
-            .add_feature_in_body(
-                wb_sketch::SketchFeature::new(
-                    wb_sketch::sketch::Sketch::new("s"),
-                    wb_sketch::sketch::SketchPlane::default(),
-                ),
-                "sketch".to_string(),
-                Some(body),
-            )
-            .unwrap();
-        (body, sketch)
+    /// A document and the bench its commands run on.
+    struct Session {
+        doc: Document,
+        bench: DesignWorkbench,
+    }
+
+    impl Session {
+        fn new() -> Self {
+            Session {
+                doc: Document::new("t"),
+                bench: DesignWorkbench::default(),
+            }
+        }
+
+        fn run(&mut self, id: &str, args: Value) -> CommandResult {
+            call(&mut self.bench, &mut self.doc, id, args)
+        }
+
+        /// A new body with an empty sketch in it.
+        fn sketch(&mut self) -> (BodyId, FeatureId) {
+            let body = self.doc.create_body(None);
+            (body, self.sketch_in(body, "sketch"))
+        }
+
+        fn sketch_in(&mut self, body: BodyId, name: &str) -> FeatureId {
+            let sketch = wb_sketch::SketchFeature::new(
+                wb_sketch::sketch::Sketch::new(name),
+                wb_sketch::sketch::SketchPlane::default(),
+            );
+            self.doc
+                .add_feature_in_body(sketch, name.to_string(), Some(body))
+                .unwrap()
+        }
+
+        /// The data of the feature a command answered with.
+        fn fields(&self, made: &Value) -> Value {
+            self.doc.get_feature_data(made_id(made)).unwrap().clone()
+        }
     }
 
     /// A projection takes its sketch and the faces named, as a point and
     /// normal or as a list, and is refused with neither.
     #[test]
     fn a_projection_takes_its_sketch_and_faces() {
-        let mut doc = Document::new("t");
-        let (body, profile) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let id = |f: FeatureId| json!(f.0.to_string());
-        call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": id(profile), "length": 10.0}),
-        )
-        .unwrap();
-        let label = doc
-            .add_feature_in_body(
-                wb_sketch::SketchFeature::new(
-                    wb_sketch::sketch::Sketch::new("label"),
-                    wb_sketch::sketch::SketchPlane::default(),
-                ),
-                "label".to_string(),
-                Some(body),
+        let mut s = Session::new();
+        let (body, profile) = s.sketch();
+        s.run("design.pad", json!({"sketch": profile, "length": 10.0}))
+            .unwrap();
+        let label = s.sketch_in(body, "label");
+        let err = s
+            .run("design.project", json!({"sketch": label}))
+            .unwrap_err();
+        assert!(err.to_string().contains("face_point"), "{err}");
+        let made = s
+            .run(
+                "design.project",
+                json!({"sketch": label, "face_point": [5.0, 2.5, 10.0],
+                       "face_normal": [0.0, 0.0, 1.0]}),
             )
             .unwrap();
-        let err = call(
-            &mut bench,
-            &mut doc,
-            "design.project",
-            json!({"sketch": id(label)}),
-        )
-        .unwrap_err();
-        assert!(err.to_string().contains("face_point"), "{err}");
-        let made = call(
-            &mut bench,
-            &mut doc,
-            "design.project",
-            json!({"sketch": id(label), "face_point": [5.0, 2.5, 10.0],
-                   "face_normal": [0.0, 0.0, 1.0]}),
-        )
-        .unwrap();
-        let project = &fields(&doc, &made)["Project"];
-        assert_eq!(project["sketch"], id(label));
+        let project = &s.fields(&made)["Project"];
+        assert_eq!(project["sketch"], json!(label));
         assert_eq!(project["mode"], "Emboss");
         assert_eq!(project["height"], 1.0);
         assert_eq!(project["faces"].as_array().unwrap().len(), 1);
-        let made = call(
-            &mut bench,
-            &mut doc,
-            "design.project",
-            json!({"sketch": id(label), "mode": "Deboss", "height": 0.5,
-                   "faces": [{"point": [5.0, 2.5, 10.0], "normal": [0.0, 0.0, 1.0]},
-                             {"point": [10.0, 2.5, 5.0], "normal": [1.0, 0.0, 0.0]}]}),
-        )
-        .unwrap();
-        let project = &fields(&doc, &made)["Project"];
+        let made = s
+            .run(
+                "design.project",
+                json!({"sketch": label, "mode": "Deboss", "height": 0.5,
+                       "faces": [{"point": [5.0, 2.5, 10.0], "normal": [0.0, 0.0, 1.0]},
+                                 {"point": [10.0, 2.5, 5.0], "normal": [1.0, 0.0, 0.0]}]}),
+            )
+            .unwrap();
+        let project = &s.fields(&made)["Project"];
         assert_eq!(project["mode"], "Deboss");
         assert_eq!(project["faces"].as_array().unwrap().len(), 2);
         assert_eq!(project["wrap"], false);
-        let made = call(
-            &mut bench,
-            &mut doc,
-            "design.project",
-            json!({"sketch": id(label), "wrap": true,
-                   "face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]}),
-        )
-        .unwrap();
-        assert_eq!(fields(&doc, &made)["Project"]["wrap"], true);
+        let made = s
+            .run(
+                "design.project",
+                json!({"sketch": label, "wrap": true,
+                       "face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]}),
+            )
+            .unwrap();
+        assert_eq!(s.fields(&made)["Project"]["wrap"], true);
     }
 
     /// A pipe takes the path it is given, from any body; given none it
@@ -2730,64 +2733,42 @@ mod tests {
     /// arguments' terms.
     #[test]
     fn a_pipe_takes_a_spine_from_another_body() {
-        let mut doc = Document::new("t");
-        let (_, profile) = sketch_in(&mut doc);
-        let (_, path) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let id = |f: FeatureId| json!(f.0.to_string());
-        let err = call(
-            &mut bench,
-            &mut doc,
-            "design.pipe",
-            json!({"sketch": id(profile)}),
-        )
-        .unwrap_err();
+        let mut s = Session::new();
+        let (_, profile) = s.sketch();
+        let (_, path) = s.sketch();
+        let err = s
+            .run("design.pipe", json!({"sketch": profile}))
+            .unwrap_err();
         assert!(err.to_string().contains("`spine`"), "{err}");
-        let made = call(
-            &mut bench,
-            &mut doc,
-            "design.pipe",
-            json!({"sketch": id(profile), "spine": id(path)}),
-        )
-        .unwrap();
-        assert_eq!(fields(&doc, &made)["Pipe"]["spine"], id(path));
+        let made = s
+            .run("design.pipe", json!({"sketch": profile, "spine": path}))
+            .unwrap();
+        assert_eq!(s.fields(&made)["Pipe"]["spine"], json!(path));
     }
 
     /// A shape the primitive tools do not offer is refused, naming the
     /// ones they do.
     #[test]
     fn an_unknown_primitive_variant_is_refused() {
-        let mut doc = Document::new("t");
-        let body = doc.create_body(None);
-        let mut bench = DesignWorkbench::default();
-        let err = call(
-            &mut bench,
-            &mut doc,
-            "design.primitive",
-            json!({"body": body.0.to_string(), "variant": "blob"}),
-        )
-        .unwrap_err();
+        let mut s = Session::new();
+        let body = s.doc.create_body(None);
+        let err = s
+            .run("design.primitive", json!({"body": body, "variant": "blob"}))
+            .unwrap_err();
         assert!(
             err.to_string().contains("variant") && err.to_string().contains("cylinder"),
             "{err}"
         );
-        assert!(doc.feature_tree().all_nodes().next().is_none());
+        assert!(s.doc.feature_tree().all_nodes().next().is_none());
     }
 
     /// A command missing its sketch is told which argument to give, not
     /// what to select in the window.
     #[test]
     fn a_command_refusal_names_the_argument() {
-        let mut doc = Document::new("t");
-        let body = doc.create_body(None);
-        let mut bench = DesignWorkbench::default();
-        let err = call(
-            &mut bench,
-            &mut doc,
-            "design.revolve",
-            json!({"body": body.0.to_string()}),
-        )
-        .unwrap_err();
+        let mut s = Session::new();
+        let body = s.doc.create_body(None);
+        let err = s.run("design.revolve", json!({"body": body})).unwrap_err();
         assert!(err.to_string().contains("give `sketch`"), "{err}");
     }
 
@@ -2795,29 +2776,17 @@ mod tests {
     /// goes before them, and sections alone take the first as the sketch.
     #[test]
     fn a_loft_s_sketch_leads_its_sections() {
-        let mut doc = Document::new("t");
-        let (_, a) = sketch_in(&mut doc);
-        let body = doc.get_feature_meta(a).unwrap().body.unwrap();
-        let b = doc
-            .add_feature_in_body(
-                wb_sketch::SketchFeature::new(
-                    wb_sketch::sketch::Sketch::new("b"),
-                    wb_sketch::sketch::SketchPlane::default(),
-                ),
-                "b".to_string(),
-                Some(body),
-            )
-            .unwrap();
-        let mut bench = DesignWorkbench::default();
-        let id = |f: FeatureId| json!(f.0.to_string());
+        let mut s = Session::new();
+        let (body, a) = s.sketch();
+        let b = s.sketch_in(body, "b");
         for args in [
-            json!({"sketch": id(a), "sections": [id(b)]}),
-            json!({"sections": [id(a), id(b)]}),
-            json!({"sketch": id(a), "sections": [id(a), id(b)]}),
+            json!({"sketch": a, "sections": [b]}),
+            json!({"sections": [a, b]}),
+            json!({"sketch": a, "sections": [a, b]}),
         ] {
-            let made = call(&mut bench, &mut doc, "design.loft", args.clone()).unwrap();
-            let sections = fields(&doc, &made)["Loft"]["sections"].clone();
-            assert_eq!(sections, json!([id(a), id(b)]), "{args}");
+            let made = s.run("design.loft", args.clone()).unwrap();
+            let sections = s.fields(&made)["Loft"]["sections"].clone();
+            assert_eq!(sections, json!([a, b]), "{args}");
         }
     }
 
@@ -2916,39 +2885,29 @@ mod tests {
         assert!(wrong.to_string().contains("IsoMetricCoarse"), "{wrong}");
     }
 
-    fn fields(doc: &Document, id: &Value) -> Value {
-        let id = FeatureId(uuid::Uuid::parse_str(id.as_str().unwrap()).unwrap());
-        doc.get_feature_data(id).unwrap().clone()
-    }
-
     #[test]
     fn a_pad_takes_its_sketch_and_the_fields_named() {
-        let mut doc = Document::new("t");
-        let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let pad = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "length": 25.0, "name": "Base"}),
-        )
-        .unwrap();
-        let data = fields(&doc, &pad);
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        let pad = s
+            .run(
+                "design.pad",
+                json!({"sketch": sketch, "length": 25.0, "name": "Base"}),
+            )
+            .unwrap();
+        let data = s.fields(&pad);
         assert_eq!(data["Pad"]["length"], json!(25.0));
-        assert_eq!(data["Pad"]["sketch"], json!(sketch.0.to_string()));
-        let id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
-        let node = doc.get_feature_meta(id).unwrap();
+        assert_eq!(data["Pad"]["sketch"], json!(sketch));
+        let node = s.doc.get_feature_meta(made_id(&pad)).unwrap();
         assert_eq!(node.name, "Base");
         assert_eq!(node.body, Some(body));
 
-        call(
-            &mut bench,
-            &mut doc,
+        s.run(
             "design.set",
             json!({"feature": pad, "length": 40.0, "reversed": true}),
         )
         .unwrap();
-        let data = fields(&doc, &pad);
+        let data = s.fields(&pad);
         assert_eq!(data["Pad"]["length"], json!(40.0));
         assert_eq!(data["Pad"]["reversed"], json!(true));
     }
@@ -2957,106 +2916,81 @@ mod tests {
     /// which then lists as a parameter, and zero puts it back to automatic.
     #[test]
     fn a_script_states_and_clears_a_boolean_tolerance() {
-        let mut doc = Document::new("t");
-        let (_, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let pad = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "length": 5.0, "boolean_tolerance": 0.05}),
-        )
-        .unwrap();
-        let id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
+        let mut s = Session::new();
+        let (_, sketch) = s.sketch();
+        let pad = s
+            .run(
+                "design.pad",
+                json!({"sketch": sketch, "length": 5.0, "boolean_tolerance": 0.05}),
+            )
+            .unwrap();
+        let id = made_id(&pad);
         let read = |doc: &Document| {
             DesignFeature::from_json(doc.get_feature_data(id).unwrap())
                 .unwrap()
                 .boolean_tolerance()
         };
-        assert_eq!(read(&doc), Some(0.05));
+        assert_eq!(read(&s.doc), Some(0.05));
         let listed = |doc: &Document| {
             crate::params::feature_parameters(doc.get_feature_meta(id).unwrap())
                 .iter()
                 .any(|p| p.name.as_deref() == Some("boolean_tolerance"))
         };
-        assert!(listed(&doc), "a stated tolerance is a parameter");
+        assert!(listed(&s.doc), "a stated tolerance is a parameter");
 
-        call(
-            &mut bench,
-            &mut doc,
+        s.run(
             "design.set",
             json!({"feature": pad, "boolean_tolerance": 0}),
         )
         .unwrap();
-        assert_eq!(read(&doc), None);
-        assert!(!listed(&doc), "an automatic tolerance is no parameter");
+        assert_eq!(read(&s.doc), None);
+        assert!(!listed(&s.doc), "an automatic tolerance is no parameter");
     }
 
     /// A pad moved to another body takes its sketch along, and the tree
     /// offers the move for each other body.
     #[test]
     fn a_pad_moves_to_another_body_with_its_sketch() {
-        let mut doc = Document::new("t");
-        let (from, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let pad = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string()}),
-        )
-        .unwrap();
-        let pad_id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
-        let to = doc.create_body(Some("Other".into()));
-        let items = bench.menu_items(&core_document::MenuScope::TreeFeature(pad_id), &doc);
+        let mut s = Session::new();
+        let (from, sketch) = s.sketch();
+        let pad = s.run("design.pad", json!({"sketch": sketch})).unwrap();
+        let pad_id = made_id(&pad);
+        let to = s.doc.create_body(Some("Other".into()));
+        let items = s
+            .bench
+            .menu_items(&core_document::MenuScope::TreeFeature(pad_id), &s.doc);
         let labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
         assert_eq!(labels, ["Duplicate", "Move to Other"]);
 
-        let moved = call(
-            &mut bench,
-            &mut doc,
-            "design.move_to_body",
-            json!({"feature": pad, "body": to.0.to_string()}),
-        )
-        .unwrap();
-        assert_eq!(moved, json!([sketch.0.to_string(), pad]));
-        assert_eq!(doc.get_feature_meta(pad_id).unwrap().body, Some(to));
-        assert_eq!(doc.get_feature_meta(sketch).unwrap().body, Some(to));
-        assert!(crate::design_feature_ids(&doc, from).is_empty());
+        let moved = s
+            .run("design.move_to_body", json!({"feature": pad, "body": to}))
+            .unwrap();
+        assert_eq!(moved, json!([sketch, pad]));
+        assert_eq!(s.doc.get_feature_meta(pad_id).unwrap().body, Some(to));
+        assert_eq!(s.doc.get_feature_meta(sketch).unwrap().body, Some(to));
+        assert!(crate::design_feature_ids(&s.doc, from).is_empty());
     }
 
     /// A duplicate reads a copy of its sketch, named as a new feature is,
     /// and the original is untouched.
     #[test]
     fn a_duplicated_pad_reads_its_own_copy_of_the_sketch() {
-        let mut doc = Document::new("t");
-        let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let pad = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "length": 7.0, "name": "Pad"}),
-        )
-        .unwrap();
-        let made = call(
-            &mut bench,
-            &mut doc,
-            "design.duplicate",
-            json!({"feature": pad}),
-        )
-        .unwrap();
-        let made: Vec<FeatureId> = made
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| FeatureId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap()))
-            .collect();
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        let pad = s
+            .run(
+                "design.pad",
+                json!({"sketch": sketch, "length": 7.0, "name": "Pad"}),
+            )
+            .unwrap();
+        let made = s.run("design.duplicate", json!({"feature": pad})).unwrap();
+        let made: Vec<FeatureId> = made.as_array().unwrap().iter().map(made_id).collect();
         assert_eq!(made.len(), 2, "the sketch and the pad");
         let (new_sketch, new_pad) = (made[0], made[1]);
+        let Session { doc, bench } = &mut s;
         assert_ne!(new_sketch, sketch);
         let data = doc.get_feature_data(new_pad).unwrap();
-        assert_eq!(data["Pad"]["sketch"], json!(new_sketch.0.to_string()));
+        assert_eq!(data["Pad"]["sketch"], json!(new_sketch));
         assert_eq!(data["Pad"]["length"], json!(7.0));
         assert_eq!(doc.feature_tree().dependencies(new_pad), [new_sketch]);
         assert_eq!(doc.get_feature_meta(new_pad).unwrap().name, "Pad_1");
@@ -3066,14 +3000,14 @@ mod tests {
             doc.get_feature_meta(sketch).unwrap().visible
         );
         assert_eq!(
-            fields(&doc, &pad)["Pad"]["sketch"],
-            json!(sketch.0.to_string())
+            doc.get_feature_data(made_id(&pad)).unwrap()["Pad"]["sketch"],
+            json!(sketch)
         );
 
         // Cut and paste puts it back, in the body selected.
         let other = doc.create_body(None);
-        let pad_id = FeatureId(uuid::Uuid::parse_str(pad.as_str().unwrap()).unwrap());
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let pad_id = made_id(&pad);
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
         ctx.active_document_object = Some(pad_id);
         assert!(bench.on_command("edit.cut", &core_document::MenuScope::EditMenu, &mut ctx));
         ctx.active_document_object = None;
@@ -3090,65 +3024,45 @@ mod tests {
     /// combine, as its tool.
     #[test]
     fn a_boolean_starts_on_the_latest_other_body() {
-        let mut doc = Document::new("t");
-        let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string()}),
-        )
-        .unwrap();
-        doc.create_body(None);
-        let latest = doc.create_body(None);
-        let boolean = call(
-            &mut bench,
-            &mut doc,
-            "design.boolean",
-            json!({"body": body.0.to_string()}),
-        )
-        .unwrap();
-        let data = fields(&doc, &boolean);
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        s.run("design.pad", json!({"sketch": sketch})).unwrap();
+        s.doc.create_body(None);
+        let latest = s.doc.create_body(None);
+        let boolean = s.run("design.boolean", json!({"body": body})).unwrap();
         assert_eq!(
-            data["BodyBoolean"]["tool_body"],
-            json!(latest.0.to_string())
+            s.fields(&boolean)["BodyBoolean"]["tool_body"],
+            json!(latest)
         );
     }
 
     /// A datum moves by the same arguments whether it is made or set.
     #[test]
     fn a_datum_is_set_by_the_offset_it_was_made_with() {
-        let mut doc = Document::new("t");
-        let body = doc.create_body(None);
-        let mut bench = DesignWorkbench::default();
-        let datum = call(
-            &mut bench,
-            &mut doc,
-            "design.datum",
-            json!({"body": body.0.to_string(), "kind": "plane", "offset": [0, 0, 5]}),
-        )
-        .unwrap();
-        call(
-            &mut bench,
-            &mut doc,
+        let mut s = Session::new();
+        let body = s.doc.create_body(None);
+        let datum = s
+            .run(
+                "design.datum",
+                json!({"body": body, "kind": "plane", "offset": [0, 0, 5]}),
+            )
+            .unwrap();
+        s.run(
             "design.set",
             json!({"feature": datum, "offset": {"x": 1, "y": 2, "z": 8}, "rotation": 30}),
         )
         .unwrap();
-        let offset = &fields(&doc, &datum)["offset"];
+        let offset = &s.fields(&datum)["offset"];
         assert_eq!(offset["translation"], json!([1.0, 2.0, 8.0]));
         assert_eq!(offset["rotation_deg"], json!(30.0));
 
-        call(
-            &mut bench,
-            &mut doc,
+        s.run(
             "design.set",
             json!({"feature": datum, "offset":
                 {"translation": [0, 0, 3], "rotation_deg": 0, "flip": true}}),
         )
         .unwrap();
-        let offset = &fields(&doc, &datum)["offset"];
+        let offset = &s.fields(&datum)["offset"];
         assert_eq!(offset["translation"], json!([0.0, 0.0, 3.0]));
         assert_eq!(offset["flip"], json!(true));
     }
@@ -3157,78 +3071,53 @@ mod tests {
     /// the empty one.
     #[test]
     fn an_empty_table_empties_a_list_field() {
-        let mut doc = Document::new("t");
-        let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string()}),
-        )
-        .unwrap();
-        let mirror = call(
-            &mut bench,
-            &mut doc,
-            "design.mirror",
-            json!({"body": body.0.to_string(), "originals": {}}),
-        )
-        .unwrap();
-        assert_eq!(fields(&doc, &mirror)["Mirrored"]["originals"], json!([]));
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        s.run("design.pad", json!({"sketch": sketch})).unwrap();
+        let mirror = s
+            .run("design.mirror", json!({"body": body, "originals": {}}))
+            .unwrap();
+        assert_eq!(s.fields(&mirror)["Mirrored"]["originals"], json!([]));
     }
 
     /// `through_all` and the ThroughAll mode are one setting: either
     /// spelling sets it, and each reads what the other says.
     #[test]
     fn a_pocket_through_all_reads_back_as_its_mode() {
-        let mut doc = Document::new("t");
-        let (_, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string()}),
-        )
-        .unwrap();
-        let pocket = call(
-            &mut bench,
-            &mut doc,
-            "design.pocket",
-            json!({"sketch": sketch.0.to_string(), "through_all": true}),
-        )
-        .unwrap();
-        let data = fields(&doc, &pocket);
+        let mut s = Session::new();
+        let (_, sketch) = s.sketch();
+        s.run("design.pad", json!({"sketch": sketch})).unwrap();
+        let pocket = s
+            .run(
+                "design.pocket",
+                json!({"sketch": sketch, "through_all": true}),
+            )
+            .unwrap();
+        let data = s.fields(&pocket);
         assert_eq!(data["Pocket"]["mode"], json!("ThroughAll"));
         assert_eq!(data["Pocket"]["through_all"], json!(true));
 
-        call(
-            &mut bench,
-            &mut doc,
+        s.run(
             "design.set",
             json!({"feature": pocket, "through_all": false}),
         )
         .unwrap();
-        let data = fields(&doc, &pocket);
+        let data = s.fields(&pocket);
         assert_eq!(data["Pocket"]["mode"], json!("Dimension"));
         assert_eq!(data["Pocket"]["through_all"], json!(false));
-        call(
-            &mut bench,
-            &mut doc,
+        s.run(
             "design.set",
             json!({"feature": pocket, "mode": "ThroughAll"}),
         )
         .unwrap();
-        assert_eq!(fields(&doc, &pocket)["Pocket"]["through_all"], json!(true));
+        assert_eq!(s.fields(&pocket)["Pocket"]["through_all"], json!(true));
 
-        call(
-            &mut bench,
-            &mut doc,
+        s.run(
             "design.set",
             json!({"feature": pocket, "mode": "Dimension", "symmetric": true}),
         )
         .unwrap();
-        let data = fields(&doc, &pocket);
+        let data = s.fields(&pocket);
         assert_eq!(data["Pocket"]["mode"], json!("Dimension"));
         assert_eq!(data["Pocket"]["symmetric"], json!(true));
     }
@@ -3238,30 +3127,18 @@ mod tests {
     /// has been moved to.
     #[test]
     fn a_script_gives_a_thickness_or_a_draft_its_face() {
-        let mut doc = Document::new("t");
-        let (body, sketch) = sketch_in(&mut doc);
-        doc.set_body_placement(
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        s.doc.set_body_placement(
             body,
             core_document::BodyPlacement {
                 translation: [30.0, -5.0, 2.0],
                 rotation: [0.0, 0.0, 0.35f32.sin(), 0.35f32.cos()],
             },
         );
-        let mut bench = DesignWorkbench::default();
-        call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "length": 10.0}),
-        )
-        .unwrap();
-        let face = json!({"face_point": [5.0, 2.5, 10.0], "face_normal": [0.0, 0.0, 1.0]});
-        let without = call(
-            &mut bench,
-            &mut doc,
-            "design.thickness",
-            json!({"body": body.0.to_string()}),
-        );
+        s.run("design.pad", json!({"sketch": sketch, "length": 10.0}))
+            .unwrap();
+        let without = s.run("design.thickness", json!({"body": body}));
         assert!(without.is_err(), "no face, no thickness");
         let near = |pick: &Value, want: [f64; 3]| {
             let point: Vec<f64> = pick["point"]
@@ -3272,17 +3149,17 @@ mod tests {
                 .collect();
             point.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-3)
         };
-        let mut args = face.clone();
-        args["body"] = json!(body.0.to_string());
-        let made = call(&mut bench, &mut doc, "design.thickness", args.clone()).unwrap();
-        let thickness = fields(&doc, &made);
+        let mut args = json!({"body": body, "face_point": [5.0, 2.5, 10.0],
+                              "face_normal": [0.0, 0.0, 1.0]});
+        let made = s.run("design.thickness", args.clone()).unwrap();
+        let thickness = s.fields(&made);
         let opened = thickness["Thickness"]["faces"].as_array().expect("faces");
         assert_eq!(opened.len(), 1);
         assert!(near(&opened[0], [5.0, 2.5, 10.0]), "{opened:?}");
         // A draft's face is its neutral plane; the faces to tilt are a field.
         args["faces"] = json!([{"point": [10.0, 2.5, 5.0], "normal": [1.0, 0.0, 0.0]}]);
-        let made = call(&mut bench, &mut doc, "design.draft", args).unwrap();
-        let draft = fields(&doc, &made);
+        let made = s.run("design.draft", args).unwrap();
+        let draft = s.fields(&made);
         assert!(
             near(&draft["Draft"]["neutral"], [5.0, 2.5, 10.0]),
             "{draft}"
@@ -3315,39 +3192,79 @@ mod tests {
         recorded
     }
 
+    /// A frame that opens the task, then one that accepts it: what the
+    /// accepting one recorded.
+    #[cfg(feature = "egui")]
+    fn open_and_accept(
+        bench: &mut DesignWorkbench,
+        doc: &mut Document,
+        active: FeatureId,
+        edit: impl FnOnce(&mut Document),
+    ) -> Vec<core_document::Recorded> {
+        task_frame(bench, doc, active, Default::default());
+        edit(doc);
+        let accept = core_document::TaskRequest {
+            accept: true,
+            cancel: false,
+        };
+        task_frame(bench, doc, active, accept)
+    }
+
+    /// The tool's key pressed with `select` setting what is selected: the
+    /// feature it made.
+    #[cfg(feature = "egui")]
+    fn pad_tool(
+        bench: &mut DesignWorkbench,
+        doc: &mut Document,
+        select: impl FnOnce(&mut WorkbenchRuntimeContext),
+    ) -> FeatureId {
+        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        select(&mut ctx);
+        bench.on_input(
+            &core_document::WorkbenchInputEvent::KeyPress {
+                key: core_document::KeyCode::A,
+            },
+            Some("design.pad"),
+            &mut ctx,
+        );
+        ctx.active_document_object.unwrap()
+    }
+
+    /// `call` run on `replay` makes the feature `made` is in `doc`.
+    #[cfg(feature = "egui")]
+    fn replays_as(
+        replay: &mut Document,
+        call: &core_document::Recorded,
+        doc: &Document,
+        made: FeatureId,
+    ) {
+        let again = call_on(replay, &call.id, Value::Object(call.args.clone())).unwrap();
+        let again = made_id(&again);
+        assert_eq!(
+            replay.get_feature_data(again),
+            doc.get_feature_data(made),
+            "the same fields"
+        );
+        assert_eq!(
+            replay.get_feature_meta(again).unwrap().name,
+            doc.get_feature_meta(made).unwrap().name
+        );
+    }
+
     #[cfg(feature = "egui")]
     #[test]
     fn a_pad_made_with_the_tool_records_as_the_command_that_makes_it() {
-        let mut doc = Document::new("t");
-        let (_, sketch) = sketch_in(&mut doc);
-        let before = doc.clone();
-        let mut bench = DesignWorkbench::default();
-        let pad = {
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-            ctx.active_document_object = Some(sketch);
-            bench.on_input(
-                &core_document::WorkbenchInputEvent::KeyPress {
-                    key: core_document::KeyCode::A,
-                },
-                Some("design.pad"),
-                &mut ctx,
-            );
-            ctx.active_document_object.unwrap()
-        };
-        task_frame(&mut bench, &mut doc, pad, Default::default());
+        let mut s = Session::new();
+        let (_, sketch) = s.sketch();
+        let before = s.doc.clone();
+        let Session { doc, bench } = &mut s;
+        let pad = pad_tool(bench, doc, |ctx| ctx.active_document_object = Some(sketch));
         // The panel's length field, as a person types into it.
-        let mut data = doc.get_feature_data(pad).unwrap().clone();
-        data["Pad"]["length"] = json!(25.0);
-        doc.update_feature_data(pad, data).unwrap();
-        let recorded = task_frame(
-            &mut bench,
-            &mut doc,
-            pad,
-            core_document::TaskRequest {
-                accept: true,
-                cancel: false,
-            },
-        );
+        let recorded = open_and_accept(bench, doc, pad, |doc| {
+            let mut data = doc.get_feature_data(pad).unwrap().clone();
+            data["Pad"]["length"] = json!(25.0);
+            doc.update_feature_data(pad, data).unwrap();
+        });
         assert_eq!(recorded.len(), 1, "{recorded:?}");
         let call = &recorded[0];
         assert_eq!(call.id, "design.pad");
@@ -3357,40 +3274,20 @@ mod tests {
             "only what differs from the command's own: {:?}",
             call.args
         );
-
         // The call makes the same pad on the document as it was.
-        let mut replay = before;
-        let made = call_on(&mut replay, &call.id, Value::Object(call.args.clone())).unwrap();
-        let made = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
-        assert_eq!(
-            replay.get_feature_data(made),
-            doc.get_feature_data(pad),
-            "the same fields"
-        );
-        assert_eq!(
-            replay.get_feature_meta(made).unwrap().name,
-            doc.get_feature_meta(pad).unwrap().name
-        );
+        replays_as(&mut before.clone(), call, doc, pad);
 
         // Editing it again records the change alone.
         {
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
             ctx.active_document_object = Some(pad);
-            core_document::Workbench::edit_feature(&mut bench, &mut ctx, pad);
+            core_document::Workbench::edit_feature(bench, &mut ctx, pad);
         }
-        task_frame(&mut bench, &mut doc, pad, Default::default());
-        let mut data = doc.get_feature_data(pad).unwrap().clone();
-        data["Pad"]["reversed"] = json!(true);
-        doc.update_feature_data(pad, data).unwrap();
-        let edit = task_frame(
-            &mut bench,
-            &mut doc,
-            pad,
-            core_document::TaskRequest {
-                accept: true,
-                cancel: false,
-            },
-        );
+        let edit = open_and_accept(bench, doc, pad, |doc| {
+            let mut data = doc.get_feature_data(pad).unwrap().clone();
+            data["Pad"]["reversed"] = json!(true);
+            doc.update_feature_data(pad, data).unwrap();
+        });
         assert_eq!(edit.len(), 1);
         assert_eq!(edit[0].id, "design.set");
         assert_eq!(
@@ -3411,26 +3308,19 @@ mod tests {
     #[cfg(feature = "egui")]
     #[test]
     fn a_face_profile_pad_is_made_and_recorded_with_its_face() {
-        let mut doc = Document::new("t");
-        let (body, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "length": 10.0}),
-        )
-        .unwrap();
-        let before = doc.clone();
-        let made = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"body": body.0.to_string(), "face_point": [5.0, 2.5, 10.0],
-                "face_normal": [0.0, 0.0, 1.0], "length": 4.0}),
-        )
-        .unwrap();
-        let data = fields(&doc, &made);
+        let mut s = Session::new();
+        let (body, sketch) = s.sketch();
+        s.run("design.pad", json!({"sketch": sketch, "length": 10.0}))
+            .unwrap();
+        let before = s.doc.clone();
+        let made = s
+            .run(
+                "design.pad",
+                json!({"body": body, "face_point": [5.0, 2.5, 10.0],
+                    "face_normal": [0.0, 0.0, 1.0], "length": 4.0}),
+            )
+            .unwrap();
+        let data = s.fields(&made);
         assert_eq!(data["Pad"]["sketch"], Value::Null);
         assert_eq!(
             data["Pad"]["profile_face"]["point"],
@@ -3438,8 +3328,7 @@ mod tests {
         );
 
         let mut doc = before.clone();
-        let pad = {
-            let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        let pad = pad_tool(&mut s.bench, &mut doc, |ctx| {
             ctx.selected_body_id = Some(body.0);
             ctx.selected_face = Some(core_document::FaceRef {
                 name: 0,
@@ -3447,61 +3336,31 @@ mod tests {
                 normal: [0.0, 0.0, 1.0],
                 surface: None,
             });
-            bench.on_input(
-                &core_document::WorkbenchInputEvent::KeyPress {
-                    key: core_document::KeyCode::A,
-                },
-                Some("design.pad"),
-                &mut ctx,
-            );
-            ctx.active_document_object.unwrap()
-        };
-        task_frame(&mut bench, &mut doc, pad, Default::default());
-        let recorded = task_frame(
-            &mut bench,
-            &mut doc,
-            pad,
-            core_document::TaskRequest {
-                accept: true,
-                cancel: false,
-            },
-        );
+        });
+        let recorded = open_and_accept(&mut s.bench, &mut doc, pad, |_| {});
         assert_eq!(recorded.len(), 1, "{recorded:?}");
         let call = &recorded[0];
         assert_eq!(call.args["face_point"], json!([5.0, 2.5, 10.0]));
         assert!(!call.args.contains_key("profile_face"), "{:?}", call.args);
-        let mut replay = before;
-        let made = call_on(&mut replay, &call.id, Value::Object(call.args.clone())).unwrap();
-        let made = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
-        assert_eq!(replay.get_feature_data(made), doc.get_feature_data(pad));
+        replays_as(&mut before.clone(), call, &doc, pad);
     }
 
     #[test]
     fn an_unknown_field_or_a_wrong_kind_is_refused_and_says_what_there_is() {
-        let mut doc = Document::new("t");
-        let (_, sketch) = sketch_in(&mut doc);
-        let mut bench = DesignWorkbench::default();
-        let err = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "colour": "red"}),
-        )
-        .unwrap_err()
-        .to_string();
+        let mut s = Session::new();
+        let (_, sketch) = s.sketch();
+        let err = s
+            .run("design.pad", json!({"sketch": sketch, "colour": "red"}))
+            .unwrap_err()
+            .to_string();
         assert!(
             err.contains("no field `colour`") && err.contains("length"),
             "{err}"
         );
-        let err = call(
-            &mut bench,
-            &mut doc,
-            "design.pad",
-            json!({"sketch": sketch.0.to_string(), "length": "long"}),
-        );
+        let err = s.run("design.pad", json!({"sketch": sketch, "length": "long"}));
         assert!(err.is_err());
         assert_eq!(
-            doc.feature_tree().all_nodes().count(),
+            s.doc.feature_tree().all_nodes().count(),
             1,
             "a refused command adds nothing"
         );

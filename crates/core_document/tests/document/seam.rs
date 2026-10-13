@@ -222,12 +222,12 @@ fn the_landing_bench_is_the_first_registered_that_is_not_modal() {
             WorkbenchId::from("other")
         ]
     );
-}
-
-#[test]
-fn a_registry_of_only_edit_sessions_has_nowhere_to_land() {
-    let registry = registry(vec![FakeBench::new("edit").modal()]);
-    assert_eq!(registry.landing_workbench(), None);
+    let only_edit_sessions = self::registry(vec![FakeBench::new("edit").modal()]);
+    assert_eq!(
+        only_edit_sessions.landing_workbench(),
+        None,
+        "nowhere to land"
+    );
 }
 
 #[test]

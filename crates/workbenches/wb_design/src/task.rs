@@ -582,50 +582,13 @@ fn faceted_hint(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::feature::ExtrudeMode;
+    use crate::test_support::{bare_geometry, pad};
     use core_document::Document;
     use wb_sketch::SketchFeature;
-    use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
+    use wb_sketch::sketch::{GeometryElement, Point, Sketch, Vec2D};
 
     fn rect_sketch() -> SketchFeature {
-        let mut sketch = Sketch::new("s");
-        let corners = [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)].map(|(x, y)| {
-            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
-        });
-        for i in 0..4 {
-            sketch.add_geometry(GeometryElement::Line(Line::new(
-                corners[i],
-                corners[(i + 1) % 4],
-            )));
-        }
-        let plane = sketch.plane;
-        SketchFeature::new(sketch, plane)
-    }
-
-    fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
-        DesignFeature::Pad {
-            regions: Vec::new(),
-            profile_borrowed: None,
-            extras: Default::default(),
-            refine: false,
-            boolean_tolerance: None,
-            sketch: Some(sketch),
-            length,
-            reversed: false,
-            symmetric: false,
-            mode: ExtrudeMode::Dimension,
-            length2: 0.0,
-            taper_deg: 0.0,
-            up_to_face: None,
-            up_to_offset: 0.0,
-            profile_face: None,
-            direction: Default::default(),
-            up_to_shape: Vec::new(),
-            mode2: None,
-            up_to_face2: None,
-            up_to_offset2: 0.0,
-            up_to_shape2: Vec::new(),
-        }
+        crate::test_support::rect_sketch(10.0, 5.0)
     }
 
     /// A body with two sketches, a pad on each, the first sketch hidden
@@ -1031,17 +994,11 @@ mod tests {
         let mut doc = Document::new("t");
         let body = doc.create_body(Some("Part".into()));
         let geometry = |faceted: bool| core_document::ImportedGeometry {
-            mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-            source_asset: Some(uuid::Uuid::new_v4()),
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
             health: Some(kernel_api::ShapeHealth {
                 faceted,
                 ..Default::default()
             }),
+            ..bare_geometry(Some(uuid::Uuid::new_v4()))
         };
         let sketch = doc
             .add_feature_in_body(rect_sketch(), "Sketch".into(), Some(body))

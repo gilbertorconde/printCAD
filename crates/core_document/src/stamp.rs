@@ -136,11 +136,6 @@ mod tests {
     }
 
     #[test]
-    fn an_unstamped_file_is_older() {
-        assert_eq!(file_age(None, "0.8.1"), FileAge::Older);
-    }
-
-    #[test]
     fn the_format_number_decides_before_the_version() {
         let ahead = stamp(CONTAINER_FORMAT + 1, "0.1.0");
         assert_eq!(file_age(Some(&ahead), "9.0.0"), FileAge::Newer);
