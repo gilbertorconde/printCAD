@@ -221,6 +221,27 @@ pub struct BodySubmission {
     /// See-through and one layer deep: its back faces are culled, which
     /// takes winding it made itself, and its edges draw over its faces.
     pub front_only: bool,
+    /// The mesh in a frame of its own, shared with every body that names
+    /// the same key and drawn moved: one upload for all of them.
+    pub instance: Option<MeshInstance>,
+}
+
+/// A mesh drawn moved, its GPU buffers held under `key` rather than the
+/// body's id, so bodies of one shape share them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeshInstance {
+    /// Names the shared mesh; `BodySubmission::revision` is its revision,
+    /// the same for every body that shares it.
+    pub key: Uuid,
+    /// A rigid motion, column-major, from the mesh's frame to the scene's.
+    pub transform: [[f32; 4]; 4],
+}
+
+impl BodySubmission {
+    /// Under which the GPU holds its mesh: the shared key, else its id.
+    pub fn mesh_key(&self) -> Uuid {
+        self.instance.map_or(self.id, |i| i.key)
+    }
 }
 
 impl fmt::Debug for BodySubmission {

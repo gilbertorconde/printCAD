@@ -42,6 +42,20 @@ fn hash_trimesh(mesh: &kernel_api::TriMesh) -> u64 {
 
 /// The build volume as a line body: a box of the bed's width and depth,
 /// standing on Z, with the origin at the bed's corner or centre.
+/// The mesh a linked copy shares with its source, in their own frame:
+/// `None` for any other body, a mirrored copy, or a copy whose mesh is
+/// its own.
+fn shared_mesh(
+    document: &Document,
+    body: core_document::BodyId,
+) -> Option<Arc<kernel_api::TriMesh>> {
+    let entry = document.bodies().iter().find(|b| b.id == body)?;
+    let source = entry.copy_of.filter(|_| entry.mirror.is_none())?;
+    let (own, _) = document.local_geometry(body)?;
+    let (theirs, _) = document.local_geometry(source)?;
+    Arc::ptr_eq(&own, &theirs).then_some(own)
+}
+
 pub(crate) fn print_bed_mesh(printing: &settings::PrintingSettings) -> kernel_api::TriMesh {
     let [w, d, h] = printing.bed_mm;
     let (x0, y0) = if printing.origin_center {
@@ -1304,6 +1318,7 @@ impl PrintCadApp {
                             on_top: false,
                             edge_color: None,
                             front_only: false,
+                            instance: None,
                         });
                     }
                 }
@@ -1319,6 +1334,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    instance: None,
                 }
             })
             .collect();
@@ -1441,6 +1457,36 @@ impl PrintCadApp {
                     });
                     (mesh, key, [1.0, 1.0, 1.0])
                 };
+                // A linked copy drawn as its source's mesh is (no face
+                // coloured, no texture, not mirrored) draws the mesh it
+                // shares with the source, moved where it sits: the GPU
+                // holds that mesh once for every copy.
+                let textured = self
+                    .session
+                    .textured
+                    .get(body_id)
+                    .is_some_and(|p| p.made.is_some());
+                let shared = (face_colors.is_empty() && !textured)
+                    .then(|| shared_mesh(&self.session.document, *body_id))
+                    .flatten();
+                let (mesh, revision, instance) = match shared {
+                    Some(shared) => {
+                        let ptr = Arc::as_ptr(&shared) as usize;
+                        let key = self
+                            .session
+                            .shared_meshes
+                            .entry(ptr)
+                            .or_insert_with(|| (Arc::downgrade(&shared), Uuid::new_v4()))
+                            .1;
+                        let transform = self.session.document.body_placement(*body_id).matrix();
+                        (
+                            shared,
+                            0,
+                            Some(render_wgpu::MeshInstance { key, transform }),
+                        )
+                    }
+                    None => (mesh, revision, None),
+                };
                 BodySubmission {
                     id: body_id.0,
                     revision,
@@ -1453,9 +1499,14 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    instance,
                 }
             })
             .collect();
+        // A shared mesh no copy draws any more is let go.
+        self.session
+            .shared_meshes
+            .retain(|_, (mesh, _)| mesh.strong_count() > 0);
         // What a pick's triangle numbers: each body drawn with the
         // document's mesh, or a copy of it in its order with faces
         // coloured; a textured body's triangles are split.
@@ -1503,6 +1554,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    instance: None,
                 })
                 .collect();
         }
@@ -1543,6 +1595,7 @@ impl PrintCadApp {
                     on_top: overlay.on_top,
                     edge_color: None,
                     front_only: false,
+                    instance: None,
                 }
             })
             .collect();
@@ -1747,6 +1800,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: Some(rendering.preview_color),
                 front_only: true,
+                instance: None,
             });
         }
         all_meshes.append(&mut overlay_meshes);
@@ -1777,6 +1831,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         }
         if let Some(face) = &self.session.face_highlight {
@@ -1792,6 +1847,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         } else if let Some(geometry) = self
             .session
@@ -1827,6 +1883,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         }
 
@@ -1852,6 +1909,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         }
 
@@ -1875,6 +1933,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         }
 
@@ -1903,6 +1962,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         }
 
@@ -1955,6 +2015,7 @@ impl PrintCadApp {
                 on_top: false,
                 edge_color: None,
                 front_only: false,
+                instance: None,
             });
         } else if self.user_settings.printing.show_bed {
             // The printer's build volume, as twelve lines around the model.
@@ -1988,6 +2049,7 @@ impl PrintCadApp {
                     on_top: false,
                     edge_color: None,
                     front_only: false,
+                    instance: None,
                 });
             }
         }
@@ -2268,5 +2330,58 @@ impl PrintCadApp {
             bounds,
             self.session.document.display_unit(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_document::{BodyPlacement, Compression, ImportedGeometry};
+
+    fn part(doc: &mut Document) -> core_document::BodyId {
+        let body = doc.create_body(Some("Peg".into()));
+        let mesh = Arc::new(kernel_api::TriMesh {
+            positions: vec![[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            indices: vec![0, 1, 2],
+            ..Default::default()
+        });
+        doc.set_imported_geometry(
+            body,
+            ImportedGeometry {
+                bounds_mm: mesh.bounds(),
+                mesh,
+                source_asset: None,
+                revision: 0,
+                brep_blob_path: None,
+                mesh_path: None,
+                face_colors_path: None,
+                health: None,
+            },
+        );
+        doc.set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
+        body
+    }
+
+    #[test]
+    fn copies_draw_the_mesh_they_share_and_a_mirror_or_other_body_does_not() {
+        let mut doc = Document::new("t");
+        let source = part(&mut doc);
+        doc.set_body_placement(source, BodyPlacement::new(glam::Quat::IDENTITY, Vec3::Z));
+        let a = doc.create_linked_copy(source, None).unwrap();
+        let b = doc.create_linked_copy(source, None).unwrap();
+        doc.set_body_placement(b, BodyPlacement::new(glam::Quat::IDENTITY, Vec3::X * 5.0));
+        let (sa, sb) = (shared_mesh(&doc, a).unwrap(), shared_mesh(&doc, b).unwrap());
+        assert!(Arc::ptr_eq(&sa, &sb), "one mesh for both copies");
+        assert_eq!(sa.positions[1], [1.0, 0.0, 0.0], "in its own frame");
+        assert!(shared_mesh(&doc, source).is_none());
+
+        let bytes = doc.save_to_bytes(Compression::None).unwrap();
+        let loaded = Document::load_from_bytes(bytes).unwrap();
+        let (la, lb) = (shared_mesh(&loaded, a), shared_mesh(&loaded, b));
+        assert!(
+            la.zip(lb).is_some_and(|(x, y)| Arc::ptr_eq(&x, &y)),
+            "after a load too"
+        );
     }
 }

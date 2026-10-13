@@ -220,6 +220,11 @@ pub(crate) struct DocumentSession {
         core_document::BodyId,
         (u64, std::sync::Arc<kernel_api::TriMesh>),
     >,
+    /// The meshes linked copies share with their source, each under the
+    /// key the renderer holds it by: by the mesh's address, kept from
+    /// reuse by the weak reference while the entry lasts.
+    pub shared_meshes:
+        std::collections::HashMap<usize, (std::sync::Weak<kernel_api::TriMesh>, uuid::Uuid)>,
     /// The Print layout task is open: the scene shows the layout.
     pub print_layout_shown: bool,
     /// The print layout shown while its task is open.
@@ -322,6 +327,7 @@ impl DocumentSession {
             hovered_edge: None,
             hovered_face: None,
             face_colored: Default::default(),
+            shared_meshes: Default::default(),
             print_layout_shown: false,
             print_layout: None,
             textured: Default::default(),

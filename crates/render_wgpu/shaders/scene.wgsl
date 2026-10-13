@@ -34,6 +34,9 @@ struct Frame {
 
 // One per body, at a dynamic offset.
 struct Draw {
+    // The body's mesh to the scene: identity, or the rigid motion of a
+    // body drawing a mesh it shares.
+    model: mat4x4<f32>,
     // rgb = the body's colour, highlight mixed in; a = opacity.
     face_color: vec4<f32>,
     // rgb = its edges' colour.
@@ -49,6 +52,10 @@ fn to_clip(p: vec3<f32>) -> vec4<f32> {
     var c = frame.view_proj * vec4<f32>(p, 1.0);
     c.y = -c.y;
     return c;
+}
+
+fn placed(p: vec3<f32>) -> vec3<f32> {
+    return (draw.model * vec4<f32>(p, 1.0)).xyz;
 }
 
 fn cut_away(p: vec3<f32>) -> bool {
@@ -71,9 +78,10 @@ fn vs_mesh(
     @location(2) color: vec3<f32>,
 ) -> MeshOut {
     var out: MeshOut;
-    out.position = to_clip(position);
-    out.world = position;
-    out.normal = normal;
+    let world = placed(position);
+    out.position = to_clip(world);
+    out.world = world;
+    out.normal = (draw.model * vec4<f32>(normal, 0.0)).xyz;
     out.color = color;
     return out;
 }
@@ -161,10 +169,12 @@ struct EdgeOut {
 @vertex
 fn vs_edge(
     @builtin(vertex_index) vertex: u32,
-    @location(0) a: vec3<f32>,
-    @location(1) b: vec3<f32>,
+    @location(0) a_own: vec3<f32>,
+    @location(1) b_own: vec3<f32>,
 ) -> EdgeOut {
     var out: EdgeOut;
+    let a = placed(a_own);
+    let b = placed(b_own);
     var ca = to_clip(a);
     var cb = to_clip(b);
     var wa = a;
@@ -232,8 +242,9 @@ struct PickOut {
 @vertex
 fn vs_pick(@location(0) position: vec3<f32>) -> PickOut {
     var out: PickOut;
-    out.position = to_clip(position);
-    out.world = position;
+    let world = placed(position);
+    out.position = to_clip(world);
+    out.world = world;
     return out;
 }
 

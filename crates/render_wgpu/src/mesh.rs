@@ -171,9 +171,43 @@ impl FrameUniform {
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub(crate) struct DrawUniform {
+    /// Column-major: the body's mesh to the scene; identity unless the
+    /// mesh is shared.
+    model: [[f32; 4]; 4],
     face_color: [f32; 4],
     edge_color: [f32; 4],
     object_id: [u32; 4],
+}
+
+const IDENTITY: [[f32; 4]; 4] = [
+    [1.0, 0.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0, 0.0],
+    [0.0, 0.0, 1.0, 0.0],
+    [0.0, 0.0, 0.0, 1.0],
+];
+
+/// `body`'s bounds where it is drawn: the cached mesh's, moved by its
+/// instance's transform when it has one.
+pub(crate) fn placed_bounds(
+    body: &BodySubmission,
+    cached: &CachedMesh,
+) -> Option<([f32; 3], [f32; 3])> {
+    let (lo, hi) = cached.bounds?;
+    let Some(instance) = body.instance else {
+        return Some((lo, hi));
+    };
+    let m = glam::Mat4::from_cols_array_2d(&instance.transform);
+    let mut out: Option<(glam::Vec3, glam::Vec3)> = None;
+    for corner in 0..8 {
+        let p = glam::Vec3::new(
+            if corner & 1 == 0 { lo[0] } else { hi[0] },
+            if corner & 2 == 0 { lo[1] } else { hi[1] },
+            if corner & 4 == 0 { lo[2] } else { hi[2] },
+        );
+        let q = m.transform_point3(p);
+        out = Some(out.map_or((q, q), |(a, b)| (a.min(q), b.max(q))));
+    }
+    out.map(|(a, b)| (a.to_array(), b.to_array()))
 }
 
 impl DrawUniform {
@@ -187,6 +221,7 @@ impl DrawUniform {
             body.edge_color.unwrap_or(lighting.edge_line_color)
         };
         Self {
+            model: body.instance.map_or(IDENTITY, |i| i.transform),
             face_color: [face[0], face[1], face[2], body.opacity.clamp(0.0, 1.0)],
             edge_color: [edge[0], edge[1], edge[2], 0.0],
             object_id: uuid_to_u32s(body.id),
@@ -323,8 +358,9 @@ impl MeshCache {
         }
     }
 
-    pub(crate) fn get(&self, id: &Uuid) -> Option<&CachedMesh> {
-        self.entries.get(id)
+    /// The buffers `body` draws from: its own, or the shared mesh's.
+    pub(crate) fn of(&self, body: &BodySubmission) -> Option<&CachedMesh> {
+        self.entries.get(&body.mesh_key())
     }
 
     /// Make sure `body` has up-to-date GPU buffers. Re-uploads on revision
@@ -337,7 +373,7 @@ impl MeshCache {
     ) {
         let fresh = self
             .entries
-            .get(&body.id)
+            .get(&body.mesh_key())
             .is_some_and(|c| c.revision == body.revision);
         if !fresh {
             self.upload_body(device, queue, body);
@@ -384,16 +420,19 @@ impl MeshCache {
             })
             .collect();
 
-        let entry = self.entries.entry(body.id).or_insert_with(|| CachedMesh {
-            bounds: None,
-            vertex_buffer: None,
-            index_buffer: None,
-            index_count: 0,
-            edge_buffer: None,
-            edge_segments: 0,
-            edge_index_count: 0,
-            revision: u64::MAX,
-        });
+        let entry = self
+            .entries
+            .entry(body.mesh_key())
+            .or_insert_with(|| CachedMesh {
+                bounds: None,
+                vertex_buffer: None,
+                index_buffer: None,
+                index_count: 0,
+                edge_buffer: None,
+                edge_segments: 0,
+                edge_index_count: 0,
+                revision: u64::MAX,
+            });
         write_into(
             device,
             queue,
@@ -666,7 +705,7 @@ impl MeshRenderer {
         let stride = self.draw_stride as usize;
         let mut bytes = vec![0u8; frame.bodies.len() * stride];
         for (i, body) in frame.bodies.iter().enumerate() {
-            let line_body = cache.get(&body.id).is_some_and(|c| c.index_count == 0);
+            let line_body = cache.of(body).is_some_and(|c| c.index_count == 0);
             let draw = DrawUniform::new(body, &frame.lighting, line_body);
             bytes[i * stride..i * stride + size_of::<DrawUniform>()]
                 .copy_from_slice(bytemuck::bytes_of(&draw));
@@ -728,8 +767,8 @@ impl MeshRenderer {
             .iter()
             .map(|body| {
                 let outside = cache
-                    .get(&body.id)
-                    .and_then(|c| c.bounds)
+                    .of(body)
+                    .and_then(|c| placed_bounds(body, c))
                     .is_some_and(|(lo, hi)| aabb_outside_frustum(&planes, lo, hi));
                 if outside {
                     stats.bodies_culled += 1;
@@ -742,9 +781,9 @@ impl MeshRenderer {
             .zip(&visible)
             .map(|(body, v)| {
                 // Line bodies (sketches) are all edges: never skipped for size.
-                *v && cache.get(&body.id).is_none_or(|c| {
+                *v && cache.of(body).is_none_or(|c| {
                     c.index_count == 0
-                        || c.bounds.is_none_or(|(lo, hi)| {
+                        || placed_bounds(body, c).is_none_or(|(lo, hi)| {
                             edge_min_px <= 0.0
                                 || aabb_screen_px(&view_proj, lo, hi, viewport[0], viewport[1])
                                     >= edge_min_px
@@ -767,7 +806,7 @@ impl MeshRenderer {
                 if !visible[i] || !pick(body) {
                     continue;
                 }
-                let Some(cached) = cache.get(&body.id).filter(|c| c.index_count > 0) else {
+                let Some(cached) = cache.of(body).filter(|c| c.index_count > 0) else {
                     continue;
                 };
                 stats.bodies_drawn += 1;
@@ -793,9 +832,11 @@ impl MeshRenderer {
         // its faces, over them.
         let edges_later = |b: &BodySubmission| b.front_only && b.opacity < 1.0;
         let edges_now = |b: &BodySubmission| !b.is_wireframe && !b.on_top && !edges_later(b);
-        if bodies.iter().enumerate().any(|(i, b)| {
-            edges_eligible[i] && edges_now(b) && cache.get(&b.id).is_some_and(draws_edges)
-        }) {
+        if bodies
+            .iter()
+            .enumerate()
+            .any(|(i, b)| edges_eligible[i] && edges_now(b) && cache.of(b).is_some_and(draws_edges))
+        {
             pass.set_pipeline(&self.edges);
             // Solids' boundary edges first, then line bodies: a sketch drawn
             // along a solid's own edges ties with them in depth, and the
@@ -806,7 +847,7 @@ impl MeshRenderer {
                         continue;
                     }
                     let Some(cached) = cache
-                        .get(&body.id)
+                        .of(body)
                         .filter(|c| draws_edges(c) && (c.index_count == 0) == lines)
                     else {
                         continue;
@@ -836,14 +877,14 @@ impl MeshRenderer {
         });
         let late_edges = |b: &BodySubmission| translucent(b) && edges_later(b);
         if bodies.iter().enumerate().any(|(i, b)| {
-            edges_eligible[i] && late_edges(b) && cache.get(&b.id).is_some_and(draws_edges)
+            edges_eligible[i] && late_edges(b) && cache.of(b).is_some_and(draws_edges)
         }) {
             pass.set_pipeline(&self.edges);
             for (i, body) in bodies.iter().enumerate() {
                 if !edges_eligible[i] || !late_edges(body) {
                     continue;
                 }
-                let Some(cached) = cache.get(&body.id).filter(|c| draws_edges(c)) else {
+                let Some(cached) = cache.of(body).filter(|c| draws_edges(c)) else {
                     continue;
                 };
                 stats.edge_indices += u64::from(cached.edge_index_count);
@@ -877,7 +918,7 @@ impl MeshRenderer {
             if !body.pickable {
                 continue;
             }
-            if let Some(cached) = cache.get(&body.id).filter(|c| c.index_count > 0) {
+            if let Some(cached) = cache.of(body).filter(|c| c.index_count > 0) {
                 self.draw_body(pass, cached, i);
             }
         }
@@ -1113,7 +1154,8 @@ mod tests {
         // `Frame` in scene.wgsl: a mat4, five vec4s and three lights of two.
         assert_eq!(size_of::<FrameUniform>(), 64 + 16 * 5 + 32 * 3);
         assert_eq!(size_of::<FrameUniform>() % 16, 0);
-        assert_eq!(size_of::<DrawUniform>(), 48);
+        // `Draw`: a mat4 and three vec4s.
+        assert_eq!(size_of::<DrawUniform>(), 64 + 48);
         assert_eq!(size_of::<MeshVertex>(), 36);
         assert_eq!(size_of::<EdgeSegment>(), 24);
     }
@@ -1162,6 +1204,7 @@ mod tests {
             on_top: false,
             edge_color: None,
             front_only: false,
+            instance: None,
         };
         let lighting = LightingData::default();
         let line = DrawUniform::new(&body, &lighting, true);

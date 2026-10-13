@@ -533,6 +533,7 @@ pub(crate) fn highlight_submission(
         on_top: false,
         edge_color: None,
         front_only: false,
+        instance: None,
     })
 }
 

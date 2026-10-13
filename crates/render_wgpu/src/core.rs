@@ -733,8 +733,8 @@ impl RendererCore {
         // Every change is applied: the list may go.
         textures.clear();
 
-        // Drop GPU buffers for any body that is no longer submitted.
-        let alive: Vec<Uuid> = frame.bodies.iter().map(|b| b.id).collect();
+        // Drop GPU buffers for any mesh no body submits any more.
+        let alive: Vec<Uuid> = frame.bodies.iter().map(|b| b.mesh_key()).collect();
         if self.mesh_cache.has_dead_entries(&alive) {
             self.mesh_cache.retain_only(&alive);
         }
@@ -994,6 +994,15 @@ pub(crate) fn scene_fingerprint(frame: &FrameSubmission) -> u64 {
             None => 0u8.hash(&mut h),
         }
         body.front_only.hash(&mut h);
+        match &body.instance {
+            Some(instance) => {
+                instance.key.hash(&mut h);
+                for col in &instance.transform {
+                    f32s(&mut h, col);
+                }
+            }
+            None => 0u8.hash(&mut h),
+        }
     }
     h.finish()
 }
@@ -1038,5 +1047,37 @@ mod tests {
         assert_ne!(first, moved);
         frame.draw_edges = !frame.draw_edges;
         assert_ne!(moved, scene_fingerprint(&frame));
+    }
+
+    #[test]
+    fn a_shared_mesh_moved_changes_the_fingerprint() {
+        let shift = |x: f32| crate::MeshInstance {
+            key: uuid::Uuid::nil(),
+            transform: [
+                [1.0, 0.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0],
+                [x, 0.0, 0.0, 1.0],
+            ],
+        };
+        let mut frame = FrameSubmission::default();
+        frame.bodies.push(crate::BodySubmission {
+            id: uuid::Uuid::new_v4(),
+            revision: 0,
+            mesh: Arc::new(kernel_api::TriMesh::default()),
+            color: [1.0; 3],
+            opacity: 1.0,
+            highlight: crate::HighlightState::None,
+            is_wireframe: false,
+            pickable: true,
+            on_top: false,
+            edge_color: None,
+            front_only: false,
+            instance: Some(shift(10.0)),
+        });
+        let first = scene_fingerprint(&frame);
+        frame.bodies[0].instance = Some(shift(20.0));
+        assert_ne!(first, scene_fingerprint(&frame));
+        assert_eq!(frame.bodies[0].mesh_key(), uuid::Uuid::nil());
     }
 }
