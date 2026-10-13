@@ -1362,6 +1362,18 @@ pub enum SolidOp {
         transforms: Vec<[[f64; 4]; 4]>,
         originals: Vec<usize>,
     },
+    /// [`SolidOp::Transform`] whose transforms the chain works out from
+    /// `steps` where the op stands, so a step may follow an edge of the
+    /// solid as it is there. Occurrence 0 is the original; with it among
+    /// `skipped`, only the copies go in, as [`SolidOp::TransformCopies`].
+    Pattern {
+        steps: Vec<PatternStep>,
+        originals: Vec<usize>,
+        /// Occurrences left out, by index: 0 the original, then each copy
+        /// in the order the steps make them.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skipped: Vec<u32>,
+    },
     /// Boolean against an external solid (another body's shape snapshot,
     /// ogeom native-format text bytes).
     Boolean {
@@ -1607,6 +1619,53 @@ impl SurfaceOp {
                 | SurfaceOp::Extend { .. }
         )
     }
+}
+
+/// One step of a [`SolidOp::Pattern`]: each applies to every occurrence of
+/// the steps before it, the original among them, which stands first.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PatternStep {
+    /// A copy under each transform (rigid or not, row-major), the
+    /// original, untransformed, left out.
+    Transforms(Vec<[[f64; 4]; 4]>),
+    /// Copies along a path.
+    Path(PathLayout),
+}
+
+/// The path a [`PathLayout`] runs along, in the chain's frame.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum PatternPath {
+    /// A chain of curves on a plane, walked from its first segment's
+    /// start.
+    Wire {
+        plane: ProfilePlane,
+        wire: ProfileWire,
+    },
+    /// The edge of the solid, where the step stands, that the probe finds,
+    /// walked from its curve's start.
+    Edge(EdgeProbe),
+}
+
+/// Occurrences at stations along a path by arc length, the original at
+/// the first: occurrence k is moved from where the first station stands
+/// to where the k-th does, turned as the path turns between them when
+/// `align`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PathLayout {
+    pub path: PatternPath,
+    /// Occurrences, the original counted.
+    pub count: u32,
+    /// Millimetres between neighbours along the path; `None` spreads them
+    /// over the whole of it, evenly round it when it closes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spacing: Option<f64>,
+    /// Walk the path from its end.
+    #[serde(default)]
+    pub reversed: bool,
+    /// Turn each copy as the path's direction turns from the first
+    /// station to its own, carried along the path without twisting.
+    #[serde(default)]
+    pub align: bool,
 }
 
 impl SolidOp {
@@ -2201,6 +2260,18 @@ pub trait KernelQueries: Send + Sync {
         _stations: &[f64],
     ) -> KernelResult<PathFrames> {
         Err(KernelError::Unsupported("points along a wire".into()))
+    }
+
+    /// Where every occurrence of a [`SolidOp::Pattern`] with `steps` stands,
+    /// as row-major transforms from the original's place, the original's
+    /// (the identity) first: what the chain works out, with `brep` (in the
+    /// pattern's frame) as the solid a step's edge is found on.
+    fn pattern_transforms(
+        &self,
+        _brep: Option<&[u8]>,
+        _steps: &[PatternStep],
+    ) -> KernelResult<Vec<[[f64; 4]; 4]>> {
+        Err(KernelError::Unsupported("pattern transforms".into()))
     }
 
     /// The face of `brep` nearest `near` (in the shape's own frame), as a

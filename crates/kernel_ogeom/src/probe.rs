@@ -128,8 +128,22 @@ fn edge(
     faces: [kernel_api::TopoName; 2],
     along: Option<f64>,
 ) -> Result<ProbeAnswer, String> {
+    let found = find_edge(model, root, point, direction, faces)?;
+    describe_edge(model, &found, point, along)
+}
+
+/// The edge of `root` between faces named `faces`, else the nearest to
+/// `point` that runs along `direction` where it passes nearest (a zero
+/// direction taking the nearest whichever way it runs).
+pub(crate) fn find_edge(
+    model: &mut Model,
+    root: &Shape,
+    point: [f64; 3],
+    direction: [f64; 3],
+    faces: [kernel_api::TopoName; 2],
+) -> Result<Shape, String> {
     if let Some(named) = crate::naming::find_edge(model, root, faces, point3(point)) {
-        return describe_edge(model, &named, point, along);
+        return Ok(named);
     }
     let tol = tess::tolerances();
     let edges = explore_unique(model, root, ShapeType::Edge).map_err(|e| e.to_string())?;
@@ -154,16 +168,14 @@ fn edge(
     // The nearest edge that runs the probe's way where it passes nearest,
     // so a rim found again after its circle grew or moved is still the
     // rim, not the straight edge beside it.
-    for (_, edge) in &near {
-        let Ok(answer) = describe_edge(model, edge, point, along) else {
-            continue;
-        };
-        let ProbeAnswer::Edge { direction: d, .. } = answer else {
+    for (_, edge) in near {
+        let Ok(ProbeAnswer::Edge { direction: d, .. }) = describe_edge(model, &edge, point, None)
+        else {
             continue;
         };
         let along = (0..3).map(|i| d[i] * direction[i]).sum::<f64>().abs();
         if length < 1e-9 || along >= RUNS_ALONG * length {
-            return Ok(answer);
+            return Ok(edge);
         }
     }
     let [x, y, z] = point;

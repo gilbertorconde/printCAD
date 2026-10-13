@@ -202,17 +202,23 @@ fn op_keys(ops_list: &[SolidOp], tags: &[TopoName]) -> Vec<u64> {
         .collect()
 }
 
-/// Per op, whether a later [`SolidOp::TransformCopies`] names it among its
+/// Per op, whether a later [`SolidOp::TransformCopies`], or a
+/// [`SolidOp::Pattern`] leaving its original out, names it among its
 /// originals: its tool is built for the copies but leaves the solid as it
 /// was.
 fn withheld_originals(ops_list: &[SolidOp]) -> Vec<bool> {
     let mut withheld = vec![false; ops_list.len()];
     for op in ops_list {
-        if let SolidOp::TransformCopies { originals, .. } = op {
-            for &index in originals {
-                if let Some(slot) = withheld.get_mut(index) {
-                    *slot = true;
-                }
+        let originals = match op.inner() {
+            SolidOp::TransformCopies { originals, .. } => originals,
+            SolidOp::Pattern {
+                originals, skipped, ..
+            } if skipped.contains(&0) => originals,
+            _ => continue,
+        };
+        for &index in originals {
+            if let Some(slot) = withheld.get_mut(index) {
+                *slot = true;
             }
         }
     }
@@ -495,6 +501,27 @@ pub fn execute_cached(
             message,
         };
         progress::checkpoint().map_err(&err)?;
+        // A pattern's places are worked out from the solid as it stands
+        // here, and it builds as the transforms they make.
+        let resolved;
+        let solid_op = match solid_op {
+            SolidOp::Pattern {
+                steps,
+                originals,
+                skipped,
+            } => {
+                resolved = ops::pattern_steps::resolve(
+                    &mut model,
+                    current.as_ref(),
+                    steps,
+                    originals,
+                    skipped,
+                )
+                .map_err(&err)?;
+                &resolved
+            }
+            op => op,
+        };
         let op_started = web_time::Instant::now();
         let base = current.clone();
         if preview.as_ref().is_some_and(|r| r.start == index) {
@@ -875,6 +902,7 @@ pub fn execute_cached(
                 made.shape
             }
             SolidOp::WithTolerance { .. } => unreachable!("read out of its wrapper above"),
+            SolidOp::Pattern { .. } => unreachable!("resolved into its transforms above"),
         };
 
         if withheld[index] {

@@ -340,19 +340,7 @@ impl KernelQueries for OgeomQueries {
                 near[0], near[1], near[2]
             )));
         }
-        let Some(NodeData::Edge(data)) = model.node(&edge).map(|n| n.data()) else {
-            return Err(other("the shape holds no edge there"));
-        };
-        let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
-            return Err(other("the edge has no curve"));
-        };
-        let geometry = model
-            .geometry()
-            .curve(*curve)
-            .ok_or_else(|| other("the edge's curve is missing"))?
-            .clone();
-        let placement = edge.transform(model.datums()).map_err(other)?;
-        frames_along(&[(geometry, *range)], Some(&placement), stations)
+        edge_frames_of(&model, &edge, stations)
     }
 
     fn wire_frames(
@@ -363,6 +351,21 @@ impl KernelQueries for OgeomQueries {
     ) -> KernelResult<PathFrames> {
         let curves = crate::profile::wire_curves(plane, wire).map_err(other)?;
         frames_along(&curves, None, stations)
+    }
+
+    fn pattern_transforms(
+        &self,
+        brep: Option<&[u8]>,
+        steps: &[kernel_api::PatternStep],
+    ) -> KernelResult<Vec<[[f64; 4]; 4]>> {
+        let (mut model, root) = match brep {
+            Some(brep) => {
+                let (model, root) = tess::read_blob(brep)?;
+                (model, Some(root))
+            }
+            None => (Model::new(), None),
+        };
+        crate::ops::pattern_steps::transforms(&mut model, root.as_ref(), steps).map_err(other)
     }
 
     fn section_face(
@@ -942,12 +945,41 @@ pub(crate) fn face_named(
         .ok_or_else(|| other("no face near the picked point"))
 }
 
-/// Points along an edge, placed, from its start to its end as the edge
-/// runs.
+/// Frames at `stations` (fractions of its length) along `edge`, placed,
+/// walked from its curve's start.
+pub(crate) fn edge_frames_of(
+    model: &Model,
+    edge: &Shape,
+    stations: &[f64],
+) -> KernelResult<PathFrames> {
+    let (curve, placement) = edge_curve(model, edge)?;
+    frames_along(&[curve], Some(&placement), stations)
+}
+
+/// `edge`'s curve over the range it covers, and where the edge places it.
+pub(crate) fn edge_curve(
+    model: &Model,
+    edge: &Shape,
+) -> KernelResult<(crate::profile::SegmentCurve, ogeom::math::Transform)> {
+    let Some(NodeData::Edge(data)) = model.node(edge).map(|n| n.data()) else {
+        return Err(other("the shape holds no edge there"));
+    };
+    let Some(EdgeRepr::Curve3d { curve, range, .. }) = data.curve3d() else {
+        return Err(other("the edge has no curve"));
+    };
+    let geometry = model
+        .geometry()
+        .curve(*curve)
+        .ok_or_else(|| other("the edge's curve is missing"))?
+        .clone();
+    let placement = edge.transform(model.datums()).map_err(other)?;
+    Ok(((geometry, *range), placement))
+}
+
 /// Frames at `stations` (fractions of the whole length) along `curves`
 /// walked one after another, each over its range from its start, moved by
 /// `placement` when there is one.
-fn frames_along(
+pub(crate) fn frames_along(
     curves: &[crate::profile::SegmentCurve],
     placement: Option<&ogeom::math::Transform>,
     stations: &[f64],
@@ -1006,6 +1038,8 @@ fn frames_along(
     })
 }
 
+/// Points along an edge, placed, from its start to its end as the edge
+/// runs.
 fn edge_points(
     model: &Model,
     edge: &Shape,
