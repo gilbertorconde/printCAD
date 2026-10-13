@@ -49,6 +49,9 @@ pub struct StatusBarInputs<'a> {
     pub picks: Option<&'a str>,
     /// "x × y × z" of the selection, already formatted.
     pub dimensions: Option<&'a str>,
+    /// What the selection measures, a line each, while the quick measure
+    /// is on.
+    pub quick_measure: &'a [String],
     /// The script running, by name, while one is.
     pub script_running: Option<&'a str>,
     /// A recording is on.
@@ -85,7 +88,7 @@ pub struct StatusBarResult {
 }
 
 /// The rows of the bar's menu: each readout's name and its switch.
-fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut bool); 9] {
+fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut bool); 10] {
     [
         ("State", &mut shown.state),
         ("Selection", &mut shown.selection),
@@ -96,6 +99,7 @@ fn readouts(shown: &mut settings::StatusBarSettings) -> [(&'static str, &mut boo
         ("Mode", &mut shown.mode),
         ("Size", &mut shown.size),
         ("Coordinates", &mut shown.coordinates),
+        ("Quick measure", &mut shown.quick_measure),
     ]
 }
 
@@ -364,7 +368,31 @@ fn draw_right(ui: &mut egui::Ui, inputs: &StatusBarInputs<'_>) -> StatusBarResul
     if let Some(coords) = coords {
         mono_label(ui, coords, FONT_XS, TEXT2).on_hover_text("The point under the cursor");
     }
+    if let Some(text) = quick_measure_text(inputs.quick_measure).filter(|_| shown.quick_measure)
+        && group(ui, true)
+    {
+        mono_label(ui, text, FONT_XS, TEXT2).on_hover_text(format!(
+            "What the selection measures\n{}",
+            inputs.quick_measure.join("\n")
+        ));
+    }
     result
+}
+
+/// The quick measure's first lines, as many as the bar has room for; the
+/// rest show on hover.
+fn quick_measure_text(lines: &[String]) -> Option<String> {
+    const SHOWN: usize = 3;
+    let mut text = lines
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(" · ");
+    if lines.len() > SHOWN {
+        text.push_str(" …");
+    }
+    (!lines.is_empty()).then_some(text)
 }
 
 /// The extent of `bounds` (millimetres, document axes) along X, Y and Z,
@@ -552,6 +580,7 @@ mod tests {
             preselect: None,
             picks: None,
             dimensions: None,
+            quick_measure: &[],
             script_running: None,
             recording: false,
             panels: Panels::default(),
@@ -580,6 +609,25 @@ mod tests {
         });
         out.textures_delta.clear();
         result
+    }
+
+    /// The bar shows the quick measure's first three lines; more are
+    /// marked as more, and nothing picked shows nothing.
+    #[test]
+    fn the_quick_measure_shows_its_first_lines() {
+        let lines = [
+            "Least distance 2.00 mm",
+            "Angle 90.00°",
+            "Total length 6.00 mm",
+        ]
+        .map(String::from);
+        assert_eq!(
+            quick_measure_text(&lines).unwrap(),
+            "Least distance 2.00 mm · Angle 90.00° · Total length 6.00 mm"
+        );
+        let more = [lines.as_slice(), &["Path through 4 picks 9.00 mm".into()]].concat();
+        assert!(quick_measure_text(&more).unwrap().ends_with("6.00 mm …"));
+        assert_eq!(quick_measure_text(&[]), None);
     }
 
     #[test]

@@ -505,6 +505,7 @@ impl UiLayer {
             hover_card,
             picks,
             dimensions,
+            quick_measure,
             physical,
             inertia_references,
             field_of_view_deg,
@@ -920,6 +921,7 @@ impl UiLayer {
                     preselect: hover_card.as_ref().map(|h| h.title.as_str()),
                     picks: picks.as_deref(),
                     dimensions: dimensions.as_deref(),
+                    quick_measure: &quick_measure,
                     script_running,
                     recording,
                     panels: status_bar::Panels {

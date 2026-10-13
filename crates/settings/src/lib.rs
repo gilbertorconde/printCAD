@@ -88,7 +88,8 @@ pub struct UserSettings {
 
 /// The status bar's readouts, each shown or left out from the bar's own
 /// menu. A busy job's progress and its Cancel, a recording and a running
-/// script always show.
+/// script always show. All show but the quick measure, which asks the
+/// kernel for each new selection's least distance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct StatusBarSettings {
@@ -110,6 +111,9 @@ pub struct StatusBarSettings {
     pub size: bool,
     /// The point under the cursor.
     pub coordinates: bool,
+    /// What the selection measures: an edge's length, a face's area, the
+    /// least distance and angle between two picks.
+    pub quick_measure: bool,
 }
 
 impl Default for StatusBarSettings {
@@ -124,6 +128,7 @@ impl Default for StatusBarSettings {
             mode: true,
             size: true,
             coordinates: true,
+            quick_measure: false,
         }
     }
 }
@@ -1194,6 +1199,10 @@ mod tests {
         let all = StatusBarSettings::default();
         assert!(all.state && all.selection && all.panel_switches && all.device);
         assert!(all.performance && all.server && all.mode && all.size && all.coordinates);
+        assert!(
+            !all.quick_measure,
+            "it asks the kernel, so it waits to be turned on"
+        );
         // A file from before the bar's menu loads with all of them shown,
         // and one naming only some keeps the rest shown.
         let mut older = serde_json::to_value(UserSettings::default()).unwrap();

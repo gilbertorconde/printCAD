@@ -299,11 +299,18 @@ impl PrintCadApp {
                     }
                 }
                 KernelResponse::MinDistance { token, result, .. } => {
+                    let quick = self
+                        .session
+                        .quick_measure
+                        .as_mut()
+                        .and_then(|q| q.gap.as_mut());
                     if let Some(gap) = self
                         .session
                         .measure_gap
                         .as_mut()
-                        .filter(|gap| gap.token == token)
+                        .into_iter()
+                        .chain(quick)
+                        .find(|gap| gap.token == token)
                     {
                         gap.found = Some(result);
                     }

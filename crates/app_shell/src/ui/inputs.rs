@@ -78,6 +78,9 @@ pub struct UiFrameInputs<'a> {
     pub picks: Option<String>,
     /// "w × h × d" of the selected body, already formatted.
     pub dimensions: Option<String>,
+    /// What the selection measures, a line each, while the status bar's
+    /// quick measure is on.
+    pub quick_measure: Vec<String>,
     /// Volume, area and centre of the body the property panel shows.
     pub physical: Option<Physical>,
     /// What the Physical group can take the inertia about, the centre of

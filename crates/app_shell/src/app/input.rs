@@ -641,21 +641,103 @@ impl PrintCadApp {
     /// With the last two picks faces or edges of solids, ask the kernel for
     /// the least distance between them; otherwise drop the last answer.
     fn ask_measure_gap(&mut self) {
+        let picks = self.session.measure.clone().unwrap_or_default();
+        self.session.measure_gap = self.ask_gap(&picks);
+    }
+
+    /// The status bar's quick measure of the selection, a line each: asked
+    /// again of the kernel only when the selection changes. Empty while it
+    /// is turned off or nothing is picked.
+    pub(crate) fn drive_quick_measure(&mut self) -> Vec<String> {
+        if !self.user_settings.status_bar.quick_measure {
+            self.session.quick_measure = None;
+            return Vec::new();
+        }
+        let picks = self.selection_picks();
+        if picks.is_empty() {
+            self.session.quick_measure = None;
+            return Vec::new();
+        }
+        if self
+            .session
+            .quick_measure
+            .as_ref()
+            .is_none_or(|q| q.picks != picks)
+        {
+            let gap = self.ask_gap(&picks);
+            self.session.quick_measure = Some(crate::app::measure::QuickMeasure { picks, gap });
+        }
+        let unit = self.session.document.display_unit();
+        self.session
+            .quick_measure
+            .as_ref()
+            .map(|q| q.lines(unit))
+            .unwrap_or_default()
+    }
+
+    /// The faces and edges picked in the view as measure picks, in world
+    /// space: the faces of the selected body in the order picked, then the
+    /// edges.
+    fn selection_picks(&self) -> Vec<crate::app::measure::MeasurePick> {
+        use crate::app::measure::{MeasurePick, mesh_area};
+        let mut picks = Vec::new();
+        if let Some((body, _)) = self
+            .session
+            .last_face_hit
+            .filter(|(body, _)| self.session.selected_body == Some(*body))
+        {
+            let last = self
+                .session
+                .last_face_hit
+                .zip(self.session.face_highlight.as_ref())
+                .map(|((_, face), highlight)| (face, highlight));
+            let faces = self
+                .session
+                .earlier_faces
+                .iter()
+                .filter(|p| p.highlight.body == body)
+                .map(|p| (p.face, &p.highlight))
+                .chain(last);
+            for (face, highlight) in faces {
+                picks.push(MeasurePick::Face {
+                    point: face.point,
+                    normal: face.normal,
+                    surface: face.surface,
+                    area: mesh_area(&highlight.mesh),
+                    body: Some(core_document::BodyId(body)),
+                });
+            }
+        }
+        for edge in &self.session.selected_edges {
+            picks.push(MeasurePick::Edge {
+                point: edge.point,
+                direction: edge.direction,
+                length: edge.length_mm,
+                circle: edge.circle,
+                body: Some(core_document::BodyId(edge.body)),
+            });
+        }
+        picks
+    }
+
+    /// With the last two of `picks` faces or edges of solids, ask the
+    /// kernel for the least distance between them, under a token of its
+    /// own.
+    fn ask_gap(
+        &mut self,
+        picks: &[crate::app::measure::MeasurePick],
+    ) -> Option<crate::app::measure::MeasureGap> {
         use crate::app::measure::{MeasureGap, gap_operands};
-        let token = self.session.measure_gap.as_ref().map_or(1, |g| g.token + 1);
-        self.session.measure_gap = None;
-        let Some([(a, part_a, pa), (b, part_b, pb)]) =
-            self.session.measure.as_deref().and_then(gap_operands)
-        else {
-            return;
-        };
+        let [(a, part_a, pa), (b, part_b, pb)] = gap_operands(picks)?;
         let document = &self.session.document;
         let (Some(first), Some(second)) = (
             document.imported_brep_blob_arc(a),
             document.imported_brep_blob_arc(b),
         ) else {
-            return;
+            return None;
         };
+        self.session.gap_token += 1;
+        let token = self.session.gap_token;
         let (place_a, place_b) = (document.body_placement(a), document.body_placement(b));
         let local = |placement: core_document::BodyPlacement, p: [f32; 3]| {
             placement.inverse().point(p).map(f64::from)
@@ -678,11 +760,11 @@ impl PrintCadApp {
                 second_near: local(place_b, pb),
                 second_in_first: rows,
             });
-        self.session.measure_gap = Some(MeasureGap {
+        Some(MeasureGap {
             token,
             first_placement: place_a,
             found: None,
-        });
+        })
     }
 
     /// A right click that did not pan: over a body, the menu for that body

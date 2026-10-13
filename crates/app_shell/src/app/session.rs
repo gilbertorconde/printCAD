@@ -146,6 +146,12 @@ pub(crate) struct DocumentSession {
     /// The least distance between the measure tool's last two faces or
     /// edges, asked of the kernel.
     pub measure_gap: Option<crate::app::measure::MeasureGap>,
+    /// The status bar's quick measure: the selection it read, and the
+    /// least distance asked of the kernel between its last two picks.
+    pub quick_measure: Option<crate::app::measure::QuickMeasure>,
+    /// The last token a least distance was asked under, by the measure
+    /// tool or the quick measure.
+    pub gap_token: u64,
     /// The unit the measure tool reads in, when the user chose one over
     /// the document's.
     pub measure_unit: Option<core_document::Unit>,
@@ -327,6 +333,8 @@ impl DocumentSession {
             dimension_cache: None,
             measure: None,
             measure_gap: None,
+            quick_measure: None,
+            gap_token: 0,
             measure_unit: None,
             hovered_edge: None,
             hovered_face: None,

@@ -802,6 +802,7 @@ impl PrintCadApp {
             })
             .unwrap_or_default();
         let dimensions = self.selection_dimensions();
+        let quick_measure = self.drive_quick_measure();
         let physical = self.panel_physical();
         let inertia_references = self.inertia_references();
         let host_params = ui::HostCtxParams {
@@ -894,6 +895,7 @@ impl PrintCadApp {
                         hover_card,
                         picks,
                         dimensions,
+                        quick_measure,
                         physical,
                         inertia_references,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),

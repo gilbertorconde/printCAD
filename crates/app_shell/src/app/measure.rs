@@ -141,6 +141,36 @@ impl MeasureGap {
     }
 }
 
+/// The status bar's quick measure: the selection's picks, and the least
+/// distance between the last two when the kernel can measure it.
+#[derive(Debug, Clone)]
+pub(crate) struct QuickMeasure {
+    pub picks: Vec<MeasurePick>,
+    pub gap: Option<MeasureGap>,
+}
+
+impl QuickMeasure {
+    /// What the selection reads, one line each, as the measure tool reads
+    /// the same picks; where the least distance is asked, it stands in for
+    /// the distance between the points the picks were made at.
+    pub fn lines(&self, unit: Unit) -> Vec<String> {
+        let mut lines = readout(&self.picks, unit);
+        let Some(gap) = &self.gap else {
+            return lines;
+        };
+        if let Some(i) = lines.iter().position(|l| l.starts_with("Δx")) {
+            lines.drain(i.saturating_sub(1)..=i);
+        }
+        let least = match (&gap.found, gap.in_world()) {
+            (_, Some((distance, _, _))) => format!("Least distance {}", length(distance, unit)),
+            (Some(Err(why)), _) => format!("Least distance unknown: {why}"),
+            _ => "Least distance …".to_string(),
+        };
+        lines.insert(0, least);
+        lines
+    }
+}
+
 /// What the kernel measures the least distance between: the last two
 /// picks, when each is a face or an edge of a body, as the body, which of
 /// its parts and the picked point in the world.
@@ -819,6 +849,52 @@ mod tests {
         assert_eq!(gap_operands(&[edge]), None);
         let loose = plane(0.0, [0.0, 0.0, 1.0]);
         assert_eq!(gap_operands(&[loose.clone(), loose]), None, "no body");
+    }
+
+    /// The quick measure reads one edge's length and one face's area; of
+    /// two edges, the kernel's least distance stands in for the distance
+    /// between their midpoints, and the angle stays.
+    #[test]
+    fn the_quick_measure_reads_the_selection() {
+        let edge = |x: f32, direction: [f32; 3]| MeasurePick::Edge {
+            point: [x, 0.0, 0.0],
+            direction,
+            length: 3.0,
+            circle: None,
+            body: Some(core_document::BodyId(uuid::Uuid::from_u128(7))),
+        };
+        let one = QuickMeasure {
+            picks: vec![edge(0.0, [0.0, 1.0, 0.0])],
+            gap: None,
+        };
+        assert_eq!(one.lines(Unit::Mm), ["Length 3.00 mm"]);
+        let face = QuickMeasure {
+            picks: vec![plane(0.0, [0.0, 0.0, 1.0])],
+            gap: None,
+        };
+        assert_eq!(face.lines(Unit::Mm), ["Area 100.00 mm²"]);
+
+        let mut two = QuickMeasure {
+            picks: vec![edge(0.0, [0.0, 1.0, 0.0]), edge(4.0, [0.0, 0.0, 1.0])],
+            gap: Some(MeasureGap {
+                token: 1,
+                first_placement: core_document::BodyPlacement::default(),
+                found: None,
+            }),
+        };
+        let lines = two.lines(Unit::Mm);
+        assert_eq!(lines[0], "Least distance …");
+        assert!(
+            lines
+                .iter()
+                .all(|l| !l.starts_with("Distance") && !l.starts_with("Δx")),
+            "{lines:?}"
+        );
+        assert!(lines.contains(&"Angle 90.00°".to_string()), "{lines:?}");
+        if let Some(gap) = &mut two.gap {
+            gap.found = Some(Ok((4.0, [0.0; 3], [4.0, 0.0, 0.0])));
+        }
+        assert_eq!(two.lines(Unit::Cm)[0], "Least distance 0.400 cm");
     }
 
     #[test]
