@@ -553,11 +553,36 @@ pub fn field_label(ui: &mut Ui, text: &str) -> Response {
     ui.label(RichText::new(text).font(sans(FONT_SM)).color(TEXT2))
 }
 
+/// A number a [`QtyField`] edits: single precision for the host's own
+/// values, double for a model's.
+pub trait QtyValue {
+    fn get(&self) -> f64;
+    fn set(&mut self, v: f64);
+}
+
+impl QtyValue for f32 {
+    fn get(&self) -> f64 {
+        f64::from(*self)
+    }
+    fn set(&mut self, v: f64) {
+        *self = v as f32;
+    }
+}
+
+impl QtyValue for f64 {
+    fn get(&self) -> f64 {
+        *self
+    }
+    fn set(&mut self, v: f64) {
+        *self = v;
+    }
+}
+
 /// A numeric field: mono value with a unit suffix, dragging and typing both
 /// work. `dim` renders it as not applicable; `error` paints it red with an
 /// inline message.
 pub struct QtyField<'a> {
-    value: &'a mut f32,
+    value: &'a mut dyn QtyValue,
     unit: &'static str,
     speed: f64,
     range: std::ops::RangeInclusive<f64>,
@@ -568,7 +593,7 @@ pub struct QtyField<'a> {
 }
 
 impl<'a> QtyField<'a> {
-    pub fn new(value: &'a mut f32) -> Self {
+    pub fn new(value: &'a mut dyn QtyValue) -> Self {
         Self {
             value,
             unit: "",
@@ -582,16 +607,16 @@ impl<'a> QtyField<'a> {
     }
 
     /// A length, above zero.
-    pub fn mm(value: &'a mut f32) -> Self {
+    pub fn mm(value: &'a mut dyn QtyValue) -> Self {
         Self::new(value).unit("mm").range(0.001..=1.0e6)
     }
 
     /// A position or a shift, mm: either way along its axis.
-    pub fn offset(value: &'a mut f32) -> Self {
+    pub fn offset(value: &'a mut dyn QtyValue) -> Self {
         Self::new(value).unit("mm").range(-1.0e6..=1.0e6)
     }
 
-    pub fn degrees(value: &'a mut f32) -> Self {
+    pub fn degrees(value: &'a mut dyn QtyValue) -> Self {
         Self::new(value).unit("°").speed(0.5)
     }
 
@@ -685,7 +710,7 @@ impl<'a> QtyField<'a> {
                         // not only the digits drawn in it.
                         ui.spacing_mut().interact_size.x = ui.available_width();
                     }
-                    let mut v = *self.value as f64;
+                    let mut v = self.value.get();
                     let resp = ui.add_enabled(
                         !self.dim,
                         // The range bounds what is dragged or typed; a value
@@ -699,7 +724,7 @@ impl<'a> QtyField<'a> {
                             .suffix(suffix),
                     );
                     if resp.changed() {
-                        *self.value = v as f32;
+                        self.value.set(v);
                         changed = true;
                     }
                     settled = resp.drag_stopped() || resp.lost_focus();
