@@ -22,6 +22,34 @@ fn shared_end(sketch: &Sketch, a: CurveReference, b: CurveReference) -> Option<P
     a.into_iter().find(|p| b.contains(p))
 }
 
+/// The side of its line an arc's centre stands on when the line, joined
+/// to the arc at the arc's end `end`, runs on from the arc there rather
+/// than back along it: the arc turns counter-clockwise from its start to
+/// its end, so the line leaves its end along the arc's direction and
+/// leaves its start against it. `line_starts_there` says which end of the
+/// line `end` is. `None` when `arc` is not an arc ending at `end`.
+fn smooth_join_side(
+    sketch: &Sketch,
+    arc: CurveReference,
+    end: PointReference,
+    line_starts_there: bool,
+) -> Option<f64> {
+    let GeometryElement::Arc(a) = sketch.get_geometry(arc)? else {
+        return None;
+    };
+    // +1 where the line leaves along the arc's turning direction.
+    let along_arc = match (a.start == end, a.end == end) {
+        (false, true) => 1.0,
+        (true, false) => -1.0,
+        _ => return None,
+    };
+    // The line's direction s → e against the way it leaves the join.
+    let line_away = if line_starts_there { 1.0 } else { -1.0 };
+    // Running counter-clockwise, the centre is on the left of the
+    // direction of travel, the negative side of a signed distance.
+    Some(-along_arc * line_away)
+}
+
 /// The constraint system: free variables plus resolved residual specs.
 pub struct System {
     pub origins: Vec<EquationSource>,
@@ -602,7 +630,15 @@ pub fn compile_system(sketch: &Sketch, exclude: Option<ConstraintId>, arcs_alway
                         if at_end.and_then(&point_var).is_some() =>
                     {
                         let p = at_end.and_then(&point_var).expect("checked");
-                        Some(ResidualSpec::TangentAtEnd { p, c, s, e })
+                        let arc = if circle_vars(item2).is_some() {
+                            item2
+                        } else {
+                            line_or_circle1
+                        };
+                        let side = at_end
+                            .and_then(|end| smooth_join_side(sketch, arc, end, p == s))
+                            .unwrap_or_else(|| line_side(c, s, e));
+                        Some(ResidualSpec::TangentAtEnd { p, c, s, e, side })
                     }
                     (_, Some((c1, _)), _, Some((c2, _)))
                         if at_end.and_then(&point_var).is_some() =>

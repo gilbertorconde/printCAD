@@ -103,12 +103,16 @@ pub enum ResidualSpec {
     /// Implicit arc consistency: |endpoint - center| - r.
     ArcEndpoint { p: usize, c: usize, r: usize },
     /// A line and an arc joined smoothly at their shared end `p`: the
-    /// radius there square to the line, dot(unit(p - c), unit(e - s)).
+    /// radius there square to the line, with the centre on the side of
+    /// the line `side` names (where the line runs on from the arc rather
+    /// than back along it), so the crossed join is no solution:
+    /// wrap(angle(e - s, p - c) - side · π/2).
     TangentAtEnd {
         p: usize,
         c: usize,
         s: usize,
         e: usize,
+        side: f64,
     },
     /// Two arcs joined smoothly at their shared end `p`: both centres on
     /// one line through it, cross(unit(p - c1), unit(p - c2)).
@@ -583,10 +587,14 @@ impl ResidualSpec {
             ResidualSpec::TangentLineCircle { s, e, c, r, side } => {
                 out.push(side * point_line_distance(v, c, s, e, minimum_length) - v[r]);
             }
-            ResidualSpec::TangentAtEnd { p, c, s, e } => {
+            ResidualSpec::TangentAtEnd { p, c, s, e, side } => {
                 let radial = unit_direction(v, c, p, minimum_length);
                 let along = unit_direction(v, s, e, minimum_length);
-                out.push(radial.0 * along.0 + radial.1 * along.1);
+                let cross = along.0 * radial.1 - along.1 * radial.0;
+                let dot = along.0 * radial.0 + along.1 * radial.1;
+                out.push(wrap_angle(
+                    cross.atan2(dot) - side * std::f64::consts::FRAC_PI_2,
+                ));
             }
             ResidualSpec::TangentArcsAtEnd { p, c1, c2 } => {
                 let a = unit_direction(v, c1, p, minimum_length);

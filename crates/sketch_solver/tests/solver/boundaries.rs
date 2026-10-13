@@ -480,3 +480,61 @@ fn line_gaps_and_tangency_keep_the_side_they_start_on() {
         assert!(worst(&mirrored) > 1.0, "the mirror image is no solution");
     }
 }
+
+/// A line tangent to an arc at an end they share runs on from the arc,
+/// whichever end of each it is: the line laid back along the arc (the
+/// crossed join, square to the radius as well) is no answer.
+#[test]
+fn a_line_tangent_at_an_arcs_end_runs_on_from_it() {
+    // A quarter arc round the origin, counter-clockwise from (2, 0) to
+    // (0, 2): a line running on from it leaves its start going -y and its
+    // end going -x.
+    for (join, on, back) in [(2, (2.0, -5.0), (2.0, 5.0)), (3, (-5.0, 2.0), (5.0, 2.0))] {
+        for line_starts_there in [true, false] {
+            let worst = |far: (f64, f64)| {
+                let (start, end) = if line_starts_there {
+                    (join, 4)
+                } else {
+                    (4, join)
+                };
+                let input = Problem {
+                    geometry: vec![
+                        point(1, 0.0, 0.0),
+                        point(2, 2.0, 0.0),
+                        point(3, 0.0, 2.0),
+                        Geometry::Arc(Arc {
+                            id: CurveId(5),
+                            center: PointId(1).into(),
+                            start: PointId(2).into(),
+                            end: PointId(3).into(),
+                            radius: Length(2.0),
+                        }),
+                        point(4, far.0, far.1),
+                        Geometry::Line(Line {
+                            id: CurveId(6),
+                            start: PointId(start).into(),
+                            end: PointId(end).into(),
+                        }),
+                    ],
+                    constraints: vec![constraint(
+                        1,
+                        Relation::Tangent {
+                            line_or_circle1: CurveId(6).into(),
+                            item2: CurveId(5).into(),
+                        },
+                    )],
+                    ..Problem::default()
+                };
+                let system = compile(&input).unwrap();
+                let mut out = Vec::new();
+                for spec in &system.specs {
+                    spec.eval(&system.vars, &mut out);
+                }
+                out.iter().fold(0.0f64, |m, r| m.max(r.abs()))
+            };
+            let case = format!("joined at point {join}, line starting there: {line_starts_there}");
+            assert!(worst(on) < 1e-12, "{case}: running on is tangent");
+            assert!(worst(back) > 1.0, "{case}: laid back is not");
+        }
+    }
+}

@@ -2147,18 +2147,22 @@ fn an_arc_slot_holds_its_shape_when_dragged() {
 
 #[test]
 fn a_slot_holds_its_shape_when_dragged() {
-    // From (3, 3) to (13, 3), 4 wide: a rail ends at (13, 5).
-    for (what, from, to) in [
-        ("width", (13.0, 5.0), (13.0, 6.0)),
-        ("end", (13.0, 3.0), (15.0, 7.0)),
-        ("start", (3.0, 3.0), (2.0, 5.0)),
+    // From (3, 3) to (13, 3), 4 wide: a rail ends at (13, 5). Each drag
+    // is made in several pointer moves and in one.
+    for (what, from, to, steps) in [
+        ("width", (13.0, 5.0), (13.0, 6.0), 8),
+        ("end", (13.0, 3.0), (15.0, 7.0), 8),
+        ("start", (3.0, 3.0), (2.0, 5.0), 8),
+        ("width in one move", (13.0, 5.0), (13.0, 6.0), 1),
+        ("end in one move", (13.0, 3.0), (15.0, 7.0), 1),
+        ("start in one move", (3.0, 3.0), (2.0, 5.0), 1),
     ] {
         let mut h = Harness::new();
         h.create_sketch();
         h.click(3.0, 3.0, "sketch.slot");
         h.click(13.0, 3.0, "sketch.slot");
 
-        drag_in_steps(&mut h, from, to, 8);
+        drag_in_steps(&mut h, from, to, steps);
         let sketch = h.sketch();
         assert!(
             has_point_near_within(&sketch, to, 0.05),
@@ -2195,6 +2199,11 @@ fn a_slot_holds_its_shape_when_dragged() {
         for rail in rails {
             let d = (at(&sketch, rail.end) - at(&sketch, rail.start)).normalize();
             assert!(d.perp_dot(axis).abs() < 1e-4, "{what}: rails parallel");
+            let side = |p| axis.perp_dot(at(&sketch, p) - a);
+            assert!(
+                side(rail.start) * side(rail.end) > 0.0,
+                "{what}: a rail stays on its side of the slot"
+            );
         }
     }
 }
