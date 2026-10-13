@@ -137,14 +137,18 @@ pub(crate) fn click(
         })
         .map(|c| c.id)
         .collect();
+    // One at a time, the earliest first: two autos can be redundant only
+    // together (a point held on a circle where a line drawn to it touches
+    // the circle), and dropping one leaves the other holding.
     if settings.avoid_redundant && !autos.is_empty() {
-        let diagnosis = crate::solver::diagnose(sketch);
-        let redundant: Vec<Uuid> = autos
-            .into_iter()
-            .filter(|id| diagnosis.redundant.contains(id))
-            .collect();
-        skipped = redundant.len();
-        sketch.constraints.retain(|c| !redundant.contains(&c.id));
+        let mut diagnosis = crate::solver::diagnose(sketch);
+        for id in autos {
+            if diagnosis.redundant.contains(&id) {
+                sketch.constraints.retain(|c| c.id != id);
+                skipped += 1;
+                diagnosis = crate::solver::diagnose(sketch);
+            }
+        }
     }
     StepOutcome {
         changed: effect.changed,
