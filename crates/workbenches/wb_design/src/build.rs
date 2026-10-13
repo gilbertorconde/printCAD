@@ -640,6 +640,7 @@ fn plan_feature(
         DesignFeature::Revolution {
             sketch,
             angle_deg,
+            start_angle_deg,
             axis,
             project_axis,
             reversed,
@@ -652,6 +653,7 @@ fn plan_feature(
         | DesignFeature::Groove {
             sketch,
             angle_deg,
+            start_angle_deg,
             axis,
             project_axis,
             reversed,
@@ -669,9 +671,17 @@ fn plan_feature(
                 ));
             }
             let sketch_feature = load_sketch(document, *sketch).map_err(&fail)?;
-            let profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
+            let mut profile = profile_of(&sketch_feature, feature.regions()).map_err(&fail)?;
             let axis_2d =
                 axis_in_sketch(document, &sketch_feature, axis, *project_axis).map_err(&fail)?;
+            if *start_angle_deg != 0.0 {
+                let turn = if *reversed {
+                    -*start_angle_deg
+                } else {
+                    *start_angle_deg
+                };
+                turn_plane(&mut profile.plane, axis_2d, f64::from(turn));
+            }
             let termination = match (mode, up_to_face) {
                 (RevolveMode::Angle, _) => RevolveTermination::Angle,
                 (RevolveMode::ToFirst, _) => RevolveTermination::ToFirst,
@@ -1902,6 +1912,38 @@ pub(crate) fn axis_in_sketch(
 
 /// Build the revolve sweep for a feature. `reversed` flips the axis so the
 /// sweep runs the other way around.
+/// `plane` turned `angle_deg` about the axis it holds (a point and a
+/// direction in its own coordinates), right-handed about the direction:
+/// the axis stays where it is in the plane's coordinates.
+fn turn_plane(
+    plane: &mut kernel_api::ProfilePlane,
+    (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
+    angle_deg: f64,
+) {
+    let at = |p: [f64; 2]| -> [f64; 3] {
+        std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * p[0] + plane.y_axis[k] * p[1])
+    };
+    let pivot = at(axis_origin);
+    let way: [f64; 3] =
+        std::array::from_fn(|k| plane.x_axis[k] * axis_dir[0] + plane.y_axis[k] * axis_dir[1]);
+    let Ok(k) = normalize(way) else {
+        return;
+    };
+    let (sin, cos) = angle_deg.to_radians().sin_cos();
+    // Rodrigues: v cos + (k × v) sin + k (k · v)(1 − cos).
+    let turn = |v: [f64; 3]| -> [f64; 3] {
+        let kv = cross3(k, v);
+        let along = dot3(k, v) * (1.0 - cos);
+        std::array::from_fn(|i| v[i] * cos + kv[i] * sin + k[i] * along)
+    };
+    let from_pivot: [f64; 3] = std::array::from_fn(|i| plane.origin[i] - pivot[i]);
+    let moved = turn(from_pivot);
+    plane.origin = std::array::from_fn(|i| pivot[i] + moved[i]);
+    plane.x_axis = turn(plane.x_axis);
+    plane.y_axis = turn(plane.y_axis);
+    plane.normal = turn(plane.normal);
+}
+
 fn revolve_kind(
     (axis_origin, axis_dir): ([f64; 2], [f64; 2]),
     angle_deg: f32,
@@ -4141,6 +4183,7 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode: Default::default(),
                 up_to_face: None,
             },
@@ -4161,6 +4204,7 @@ mod tests {
                 reversed: true,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode: Default::default(),
                 up_to_face: None,
             },
@@ -5527,6 +5571,25 @@ mod tests {
         assert!(hole.dependencies().contains(&lifted));
     }
 
+    /// A plane turned about an axis it holds keeps the axis where it was
+    /// and turns right-handed about the axis's direction.
+    #[test]
+    fn a_plane_turns_about_the_axis_it_holds() {
+        let mut plane = kernel_api::ProfilePlane {
+            origin: [0.0, 0.0, 5.0],
+            ..Default::default()
+        };
+        // The line x = 2 of the plane, along its y.
+        turn_plane(&mut plane, ([2.0, 0.0], [0.0, 1.0]), 90.0);
+        let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 1e-9);
+        assert!(close(plane.normal, [1.0, 0.0, 0.0]), "{:?}", plane.normal);
+        assert!(close(plane.x_axis, [0.0, 0.0, -1.0]), "{:?}", plane.x_axis);
+        assert!(close(plane.y_axis, [0.0, 1.0, 0.0]));
+        // The axis's point stays put: origin + 2 x.
+        let on_axis: [f64; 3] = std::array::from_fn(|k| plane.origin[k] + 2.0 * plane.x_axis[k]);
+        assert!(close(on_axis, [2.0, 0.0, 5.0]), "{on_axis:?}");
+    }
+
     #[test]
     fn polar_full_circle_spacing_avoids_overlap() {
         let z = ([0.0; 3], [0.0, 0.0, 1.0]);
@@ -6255,6 +6318,7 @@ mod tests {
                 reversed: false,
                 midplane: false,
                 second_angle_deg: None,
+                start_angle_deg: 0.0,
                 mode,
                 up_to_face,
             };

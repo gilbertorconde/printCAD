@@ -50,6 +50,7 @@ fn revolve(sketch: FeatureId) -> DesignFeature {
         reversed: false,
         midplane: false,
         second_angle_deg: None,
+        start_angle_deg: 0.0,
         mode: Default::default(),
         up_to_face: None,
     }

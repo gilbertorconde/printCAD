@@ -369,6 +369,7 @@ fn a_revolution_turns_about_a_datum_line_that_follows_a_rim() {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: wb_design::RevolveMode::Angle,
             up_to_face: None,
         },

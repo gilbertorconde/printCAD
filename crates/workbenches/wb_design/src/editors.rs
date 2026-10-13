@@ -101,6 +101,7 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Offset", "offset"),
     ("Second offset", "offset2"),
     ("Start offset", "start_offset"),
+    ("Start angle", "start_angle"),
     ("Angle", "angle"),
     ("Angle 2", "angle2"),
     ("Pitch", "pitch"),
@@ -2596,6 +2597,7 @@ pub fn feature_editor(
             reversed,
             midplane,
             second_angle_deg,
+            start_angle_deg,
             mode,
             up_to_face,
         }
@@ -2611,6 +2613,7 @@ pub fn feature_editor(
             reversed,
             midplane,
             second_angle_deg,
+            start_angle_deg,
             mode,
             up_to_face,
         } => {
@@ -2686,6 +2689,7 @@ pub fn feature_editor(
                 }
             }
             changed |= check_row(ui, reversed, "Reversed").changed();
+            changed |= deg_drag(ui, fx, start_angle_deg, "Start angle:", -360.0..=360.0);
         }
         DesignFeature::Loft {
             keep_inside: _,

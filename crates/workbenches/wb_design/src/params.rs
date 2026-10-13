@@ -50,6 +50,7 @@ fn fields(variant: &str) -> &'static [Field] {
         "Revolution" | "Groove" => &[
             ("angle_deg", "angle", "Angle", Some(ANGLE)),
             ("second_angle_deg", "angle2", "Second angle", Some(ANGLE)),
+            ("start_angle_deg", "start_angle", "Start angle", Some(ANGLE)),
         ],
         "Helix" => &[
             ("pitch", "pitch", "Pitch", Some(LENGTH)),

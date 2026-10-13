@@ -2712,6 +2712,7 @@ mod tests {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             refine: false,
             boolean_tolerance: None,
             mode: Default::default(),

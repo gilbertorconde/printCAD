@@ -284,6 +284,7 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: Default::default(),
             up_to_face: None,
         },
@@ -309,6 +310,74 @@ fn revolution_feature_builds_a_ring_through_the_full_stack() {
         "z span"
     );
     assert!((max[1] - min[1] - 2.0).abs() < 0.1, "height");
+}
+
+/// The bounds of a revolution of the rectangle x ∈ [5, 8], y ∈ [0, 2]
+/// about the sketch's Y axis.
+fn revolved_bounds(angle_deg: f32, start_angle_deg: f32, reversed: bool) -> ([f32; 3], [f32; 3]) {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let mut sketch = Sketch::new("ring");
+    let corners = [(5.0, 0.0), (8.0, 0.0), (8.0, 2.0), (5.0, 2.0)]
+        .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
+    for i in 0..4 {
+        sketch.add_geometry(GeometryElement::Line(Line::new(
+            corners[i],
+            corners[(i + 1) % 4],
+        )));
+    }
+    let plane = sketch.plane;
+    let sketch_id = doc
+        .add_feature_in_body(SketchFeature::new(sketch, plane), "ring".into(), Some(body))
+        .unwrap();
+    doc.add_feature_in_body(
+        wb_design::DesignFeature::Revolution {
+            regions: Vec::new(),
+            refine: false,
+            boolean_tolerance: None,
+            sketch: sketch_id,
+            angle_deg,
+            axis: wb_design::RevolveAxis::SketchY,
+            project_axis: false,
+            reversed,
+            midplane: false,
+            second_angle_deg: None,
+            start_angle_deg,
+            mode: Default::default(),
+            up_to_face: None,
+        },
+        "Revolution".into(),
+        Some(body),
+    )
+    .unwrap();
+    let ops = wb_design::body_build_ops(&doc, body).unwrap().ops;
+    let result = OgeomKernel::new()
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    mesh_bounds(&result.mesh)
+}
+
+/// A quarter turn started a quarter turn on carries on where a quarter
+/// turn from the profile ends: the two together are the half turn, either
+/// way round.
+#[test]
+fn a_revolution_starts_turned_by_its_start_angle() {
+    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 0.1);
+    for reversed in [false, true] {
+        let first = revolved_bounds(90.0, 0.0, reversed);
+        let next = revolved_bounds(90.0, 90.0, reversed);
+        let half = revolved_bounds(180.0, 0.0, reversed);
+        let lo = std::array::from_fn(|i| first.0[i].min(next.0[i]));
+        let hi = std::array::from_fn(|i| first.1[i].max(next.1[i]));
+        assert!(
+            !near(first.0, next.0) || !near(first.1, next.1),
+            "reversed {reversed}: turned"
+        );
+        assert!(
+            near(lo, half.0) && near(hi, half.1),
+            "reversed {reversed}: {first:?} and {next:?} against {half:?}"
+        );
+    }
 }
 
 #[test]
@@ -1386,6 +1455,7 @@ fn a_mirrored_revolution_turns_the_way_the_mirror_puts_it() {
                     reversed: false,
                     midplane: false,
                     second_angle_deg: None,
+                    start_angle_deg: 0.0,
                     mode: Default::default(),
                     up_to_face: None,
                 },
@@ -2696,6 +2766,7 @@ fn revolution(sketch: FeatureId, fields: serde_json::Value) -> DesignFeature {
             reversed: false,
             midplane: false,
             second_angle_deg: None,
+            start_angle_deg: 0.0,
             mode: wb_design::RevolveMode::Angle,
             up_to_face: None,
         },

@@ -1408,6 +1408,10 @@ pub enum DesignFeature {
         reversed: bool,
         #[serde(default)]
         midplane: bool,
+        /// Degrees the profile is turned about the axis, the way the
+        /// turn runs, before it starts.
+        #[serde(default)]
+        start_angle_deg: f32,
         #[serde(default)]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -1444,6 +1448,10 @@ pub enum DesignFeature {
         reversed: bool,
         #[serde(default)]
         midplane: bool,
+        /// Degrees the profile is turned about the axis, the way the
+        /// turn runs, before it starts.
+        #[serde(default)]
+        start_angle_deg: f32,
         #[serde(default)]
         second_angle_deg: Option<f32>,
         /// Merge the coplanar faces the fuse or cut leaves behind.
