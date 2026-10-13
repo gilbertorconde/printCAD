@@ -1260,6 +1260,13 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "A body's volume, surface area, centre and bounds",
         )
         .param("body", ParamKind::Id, "")
+        .optional(
+            "about",
+            ParamKind::Any,
+            "What the inertia is also taken about: \"origin\", a point {x, y, z}, a line \
+             {point = {x, y, z}, direction = {x, y, z}}, or the id of a datum point, \
+             coordinate system or line",
+        )
         .returns("{volume, area, centre, min, max, approximate, inertia?}")
         .read_only()
         .note(
@@ -1278,6 +1285,11 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
              `tensor`, three rows, and `principal`, the principal moments smallest first, \
              each {moment, axis}.",
         )
+        .note(
+            "With `about`, `inertia.about` is the inertia about it, by the parallel axis \
+             theorem, in the same units: about a point, {point, tensor, principal} as above; \
+             about a line, {point, direction, moment} (the moment about the line).",
+        )
         .see_also("doc.rebuild")
         .see_also("doc.faces")
         .example(
@@ -1295,6 +1307,23 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             local least = m.inertia.principal[1]
             assert(math.abs(least.moment - math.pi * 3125) < 1, least.moment)
             assert(math.abs(math.abs(least.axis[3]) - 1) < 1e-6)
+            "#,
+        )
+        .example(
+            "A block's inertia about the edge it stands on",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
+            local pad = pc.design.pad{sketch = s, length = 4}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            -- The edge along X through the origin: V (y² + z²) / 3.
+            local m = pc.doc.measure{body = body, about = {point = {0, 0, 0}, direction = {1, 0, 0}}}
+            local v = 20 * 10 * 4
+            assert(math.abs(m.inertia.about.moment - v * (100 + 16) / 3) < 1e-3, m.inertia.about.moment)
+            -- About the origin, the products of inertia show the offset.
+            local o = pc.doc.measure{body = body, about = "origin"}
+            assert(math.abs(o.inertia.about.tensor[1][2] + v * 10 * 5) < 1e-3)
             "#,
         ),
         CommandSpec::new(
@@ -3198,6 +3227,85 @@ pub(crate) fn picture_command(
     }))
 }
 
+/// What `doc.measure`'s `about` names: "origin", a point {x, y, z}, a line
+/// {point, direction}, or a datum point, coordinate system or line by id,
+/// placed in the world.
+fn inertia_reference(
+    document: &core_document::Document,
+    value: &Value,
+) -> Result<crate::ui::InertiaReference, CommandError> {
+    use crate::ui::InertiaReference as R;
+    use core_document::WorkbenchFeature;
+    let bad = || {
+        CommandError::bad(
+            "about",
+            "is \"origin\", {x, y, z}, {point, direction} or a datum's id",
+        )
+    };
+    let xyz = |v: &Value| -> Option<[f64; 3]> {
+        let at = |key: &str, i: usize| v.get(key).or_else(|| v.get(i)).and_then(Value::as_f64);
+        Some([at("x", 0)?, at("y", 1)?, at("z", 2)?])
+    };
+    if value.as_str() == Some("origin") {
+        return Ok(R::Point {
+            name: "origin".into(),
+            at: [0.0; 3],
+        });
+    }
+    if let Some(id) = value.as_str().and_then(|s| uuid::Uuid::parse_str(s).ok()) {
+        let id = FeatureId(id);
+        let node = document
+            .get_feature_meta(id)
+            .filter(|n| n.workbench_id.as_str() == core_document::DATUM_KIND)
+            .ok_or_else(|| CommandError::bad("about", "is no datum"))?;
+        let datum = document
+            .feature_values(id)
+            .and_then(|v| core_document::DatumFeature::from_json(v).ok())
+            .ok_or_else(|| CommandError::failed("the datum could not be read"))?;
+        let placement = node
+            .body
+            .map(|body| document.body_placement(body))
+            .unwrap_or_default();
+        let frame = datum.frame();
+        let origin = placement.point(frame.origin).map(f64::from);
+        return match datum.shape {
+            core_document::DatumShape::Line { .. } => Ok(R::Axis {
+                name: node.name.clone(),
+                point: origin,
+                direction: placement.direction(frame.x_axis).map(f64::from),
+            }),
+            core_document::DatumShape::Plane { .. } => Err(CommandError::bad(
+                "about",
+                "is a datum plane; give a point or a line",
+            )),
+            _ => Ok(R::Point {
+                name: node.name.clone(),
+                at: origin,
+            }),
+        };
+    }
+    if let (Some(point), Some(direction)) = (value.get("point"), value.get("direction")) {
+        let (point, direction) = (xyz(point).ok_or_else(bad)?, xyz(direction).ok_or_else(bad)?);
+        if direction == [0.0; 3] {
+            return Err(CommandError::bad(
+                "about",
+                "a line's direction has no length",
+            ));
+        }
+        return Ok(R::Axis {
+            name: "line".into(),
+            point,
+            direction,
+        });
+    }
+    xyz(value)
+        .map(|at| R::Point {
+            name: "point".into(),
+            at,
+        })
+        .ok_or_else(bad)
+}
+
 /// The commands every host of a document answers the same way, with or
 /// without a window: reading it, naming and adding bodies, and measuring.
 /// `None` for any other command.
@@ -3631,16 +3739,57 @@ pub(crate) fn document_command(
                 .map_err(|e| CommandError::failed(e.to_string()))?;
             let c = props.centre_mm.map(|v| v as f32);
             let centre = document.body_placement(body).point(c);
+            let about = match args.get("about").filter(|v| !v.is_null()) {
+                Some(value) => Some(inertia_reference(document, value)?),
+                None => None,
+            };
+            let principal = |found: [(f64, [f64; 3]); 3]| {
+                found.map(|(moment, axis)| json!({"moment": moment, "axis": axis}))
+            };
+            let centre_wide = centre.map(f64::from);
+            let volume = props.volume_mm3.unwrap_or(0.0);
             let inertia = props.inertia.map(|inertia| {
-                let turned = crate::app::recompute::turned_inertia(
+                let turned = core_document::inertia::turned(
                     &inertia,
-                    document.body_placement(body).quat(),
+                    document.body_placement(body).quat().as_dquat(),
                 );
+                let about = about.as_ref().map(|about| match about {
+                    crate::ui::InertiaReference::Axis {
+                        point, direction, ..
+                    } => json!({
+                        "point": point,
+                        "direction": direction,
+                        "moment": core_document::inertia::about_axis(
+                            &turned.about_centre,
+                            volume,
+                            centre_wide,
+                            *point,
+                            *direction,
+                        ),
+                    }),
+                    crate::ui::InertiaReference::Point { at, .. } => {
+                        let tensor = core_document::inertia::about_point(
+                            &turned.about_centre,
+                            volume,
+                            centre_wide,
+                            *at,
+                        );
+                        json!({
+                            "point": at,
+                            "tensor": tensor,
+                            "principal": principal(core_document::inertia::principal(&tensor)),
+                        })
+                    }
+                    crate::ui::InertiaReference::CentreOfMass => json!({
+                        "point": centre_wide,
+                        "tensor": turned.about_centre,
+                        "principal": principal(turned.principal),
+                    }),
+                });
                 json!({
                     "tensor": turned.about_centre,
-                    "principal": turned
-                        .principal
-                        .map(|(moment, axis)| json!({"moment": moment, "axis": axis})),
+                    "principal": principal(turned.principal),
+                    "about": about,
                 })
             });
             Ok(json!({

@@ -746,31 +746,105 @@ impl PrintCadApp {
                 let c = props.centre_mm.map(|v| v as f32);
                 props.centre_mm = placement.point(c).map(f64::from);
                 if let Some(inertia) = &mut props.inertia {
-                    *inertia = turned_inertia(inertia, placement.quat());
+                    *inertia = core_document::inertia::turned(inertia, placement.quat().as_dquat());
                 }
                 crate::ui::Physical::Ready(Box::new(props))
             }
             other => other.clone(),
         })
     }
-}
 
-/// An inertia measured in a body's own frame, on the world's axes once the
-/// body is turned by `turn`: the tensor R I Rᵀ, the principal axes turned.
-pub(crate) fn turned_inertia(
-    inertia: &kernel_api::Inertia,
-    turn: glam::Quat,
-) -> kernel_api::Inertia {
-    let r = glam::DMat3::from_quat(turn.as_dquat());
-    // Stored row by row; glam's columns are its rows transposed.
-    let tensor = glam::DMat3::from_cols_array_2d(&inertia.about_centre).transpose();
-    let world = (r * tensor * r.transpose()).transpose().to_cols_array_2d();
-    let principal = inertia
-        .principal
-        .map(|(moment, axis)| (moment, (r * glam::DVec3::from_array(axis)).to_array()));
-    kernel_api::Inertia {
-        about_centre: world,
-        principal,
+    /// What the Physical group can take the panel body's inertia about, in
+    /// the world: its centre of mass, the origin and the world's axes, the
+    /// line the view's pick stands for (a straight edge, a round edge's or
+    /// face's axis), then the document's datum points and lines by name.
+    /// Empty while the panel shows no measure.
+    pub(crate) fn inertia_references(&self) -> Vec<crate::ui::InertiaReference> {
+        use crate::ui::InertiaReference as R;
+        use core_document::WorkbenchFeature;
+        if self.panel_body().is_none() {
+            return Vec::new();
+        }
+        let wide = |v: [f32; 3]| v.map(f64::from);
+        let mut found = vec![
+            R::CentreOfMass,
+            R::Point {
+                name: "Origin".into(),
+                at: [0.0; 3],
+            },
+        ];
+        for (name, direction) in [
+            ("X axis", [1.0, 0.0, 0.0]),
+            ("Y axis", [0.0, 1.0, 0.0]),
+            ("Z axis", [0.0, 0.0, 1.0]),
+        ] {
+            found.push(R::Axis {
+                name: name.into(),
+                point: [0.0; 3],
+                direction,
+            });
+        }
+        let picked_edge = self
+            .session
+            .selected_edges
+            .last()
+            .map(|edge| match edge.circle {
+                Some(c) => R::Axis {
+                    name: "Picked edge's axis".into(),
+                    point: wide(c.center),
+                    direction: wide(c.normal),
+                },
+                None => R::Axis {
+                    name: "Picked edge".into(),
+                    point: wide(edge.point),
+                    direction: wide(edge.direction),
+                },
+            });
+        let picked_face = self
+            .session
+            .last_face_hit
+            .and_then(|(_, face)| face.surface?.axis())
+            .map(|(point, direction)| R::Axis {
+                name: "Picked face's axis".into(),
+                point: wide(point),
+                direction: wide(direction),
+            });
+        found.extend(picked_edge.into_iter().chain(picked_face));
+        let document = &self.session.document;
+        let mut datums: Vec<_> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(_, n)| n.workbench_id.as_str() == core_document::DATUM_KIND && !n.suppressed)
+            .collect();
+        datums.sort_by_key(|(_, n)| n.seq);
+        for (id, node) in datums {
+            let Some(datum) = document
+                .feature_values(*id)
+                .and_then(|v| core_document::DatumFeature::from_json(v).ok())
+            else {
+                continue;
+            };
+            let placement = node
+                .body
+                .map(|body| document.body_placement(body))
+                .unwrap_or_default();
+            let frame = datum.frame();
+            let origin = wide(placement.point(frame.origin));
+            match datum.shape {
+                core_document::DatumShape::Line { .. } => found.push(R::Axis {
+                    name: node.name.clone(),
+                    point: origin,
+                    direction: wide(placement.direction(frame.x_axis)),
+                }),
+                core_document::DatumShape::Point
+                | core_document::DatumShape::CoordinateSystem { .. } => found.push(R::Point {
+                    name: node.name.clone(),
+                    at: origin,
+                }),
+                core_document::DatumShape::Plane { .. } => {}
+            }
+        }
+        found
     }
 }
 
@@ -905,36 +979,6 @@ pub(crate) fn store_built_solid(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// A body stood on its side shows its inertia on the world's axes: a
-    /// long bar along X turned a quarter about Z lies along Y.
-    #[test]
-    fn a_turned_body_turns_its_inertia() {
-        let bar = kernel_api::Inertia {
-            about_centre: [[1.0, 0.0, 0.0], [0.0, 9.0, 0.5], [0.0, 0.5, 9.0]],
-            principal: [
-                (1.0, [1.0, 0.0, 0.0]),
-                (8.5, [0.0, 0.7, -0.7]),
-                (9.5, [0.0, 0.7, 0.7]),
-            ],
-        };
-        let turned = turned_inertia(
-            &bar,
-            glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
-        );
-        let t = turned.about_centre;
-        assert!(
-            (t[0][0] - 9.0).abs() < 1e-6 && (t[1][1] - 1.0).abs() < 1e-6,
-            "{t:?}"
-        );
-        assert!(
-            (t[0][2] + 0.5).abs() < 1e-6 && (t[2][0] + 0.5).abs() < 1e-6,
-            "{t:?}"
-        );
-        let axis = turned.principal[0].1;
-        assert!((axis[1] - 1.0).abs() < 1e-6, "{axis:?}");
-        assert_eq!(turned.principal[0].0, 1.0);
-    }
 
     /// A moving body's mesh is coarser along and round its curves, and
     /// keeps everything else of the fine settings.

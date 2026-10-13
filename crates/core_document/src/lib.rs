@@ -9,6 +9,7 @@ pub mod evaluate;
 pub mod expr;
 pub mod feature;
 pub mod history;
+pub mod inertia;
 pub mod notes;
 pub mod op;
 pub mod palette;

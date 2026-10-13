@@ -707,6 +707,10 @@ pub struct PanelSubject<'a> {
     pub selected: TreeItemId,
     pub detail: Option<&'a str>,
     pub physical: Option<&'a super::Physical>,
+    /// What the inertia can be taken about, the centre of mass first.
+    pub inertia_references: &'a [InertiaReference],
+    /// The one chosen, by name.
+    pub inertia_about: &'a mut Option<String>,
 }
 
 /// Draw the panel body for `subject.selected`. `subject.detail` is the
@@ -724,7 +728,14 @@ pub fn draw_property_panel(
         selected,
         detail,
         physical,
+        inertia_references,
+        inertia_about,
     } = subject;
+    // The choice is kept by name, so a datum's stays chosen while it is
+    // there to choose.
+    let about = inertia_about
+        .as_deref()
+        .and_then(|name| inertia_references.iter().find(|r| r.name() == name));
     let mut result = PropertyPanelResult::default();
     let selected_name = match selected {
         TreeItemId::DocumentRoot => document.name().to_string(),
@@ -829,7 +840,12 @@ pub fn draw_property_panel(
                     let material = body
                         .and_then(|b| document.bodies().iter().find(|x| x.id == b))
                         .and_then(|b| b.material.as_ref());
-                    groups.push(physical_group(physical, document.display_unit(), material));
+                    groups.push(physical_group(
+                        physical,
+                        document.display_unit(),
+                        material,
+                        about,
+                    ));
                 }
                 for (group, rows) in groups {
                     group_header(ui, &group);
@@ -838,6 +854,12 @@ pub fn draw_property_panel(
                             row.name == "Label" && !matches!(selected, TreeItemId::DocumentRoot);
                         if editable_label {
                             label_row(ui, selected, &row.value, rename_buffer, &mut result);
+                        } else if row.name == INERTIA_ABOUT && inertia_references.len() > 1 {
+                            if let Some(name) =
+                                inertia_about_row(ui, &row.value, inertia_references)
+                            {
+                                *inertia_about = Some(name);
+                            }
                         } else {
                             value_row(ui, &row);
                         }
@@ -868,11 +890,13 @@ pub fn draw_property_panel(
 }
 
 /// Volume, surface area and centre of mass (one row per axis, since a
-/// value column holds one length), in the display unit.
+/// value column holds one length), in the display unit, then the inertia
+/// about `about` (the centre of mass when `None`).
 fn physical_group(
     physical: &super::Physical,
     unit: Unit,
     material: Option<&core_document::Material>,
+    about: Option<&InertiaReference>,
 ) -> (String, Vec<PropRow>) {
     let rows = match physical {
         super::Physical::Measuring => vec![PropRow::text("Measure", "Measuring…").dim(true)],
@@ -881,10 +905,10 @@ fn physical_group(
         }
         super::Physical::Ready(props) => {
             // A figure integrated over a tessellation reads as approximate.
-            let about = if props.approximate { "≈ " } else { "" };
+            let approx = if props.approximate { "≈ " } else { "" };
             let length = |mm: f64| {
                 format!(
-                    "{about}{}",
+                    "{approx}{}",
                     core_document::format_length_mm(mm as f32, unit, 2)
                 )
             };
@@ -893,13 +917,13 @@ fn physical_group(
                     "Volume",
                     props.volume_mm3.map_or_else(
                         || "encloses none".to_string(),
-                        |v| format!("{about}{}", core_document::format_volume_mm3(v, unit, 2)),
+                        |v| format!("{approx}{}", core_document::format_volume_mm3(v, unit, 2)),
                     ),
                 ),
                 PropRow::mono(
                     "Surface area",
                     format!(
-                        "{about}{}",
+                        "{approx}{}",
                         core_document::format_area_mm2(props.area_mm2, unit, 2)
                     ),
                 ),
@@ -912,41 +936,136 @@ fn physical_group(
                 // mm³ to cm³, times g/cm³.
                 PropRow::mono(
                     "Mass",
-                    format!("{about}{}", format_mass(v / 1000.0 * f64::from(m.density))),
+                    format!("{approx}{}", format_mass(v / 1000.0 * f64::from(m.density))),
                 )
             }))
-            .chain(
-                props
-                    .inertia
-                    .iter()
-                    .flat_map(|inertia| inertia_rows(inertia, unit, material, about)),
-            )
+            .chain(props.inertia.iter().flat_map(|inertia| {
+                let volume = props.volume_mm3.unwrap_or(0.0);
+                let reference = about.unwrap_or(&InertiaReference::CentreOfMass);
+                let rows = match reference {
+                    InertiaReference::CentreOfMass => inertia_rows(inertia, unit, material, approx),
+                    InertiaReference::Point { at, .. } => {
+                        let tensor = core_document::inertia::about_point(
+                            &inertia.about_centre,
+                            volume,
+                            props.centre_mm,
+                            *at,
+                        );
+                        let moved = kernel_api::Inertia {
+                            about_centre: tensor,
+                            principal: core_document::inertia::principal(&tensor),
+                        };
+                        inertia_rows(&moved, unit, material, approx)
+                    }
+                    InertiaReference::Axis {
+                        point, direction, ..
+                    } => axis_rows(
+                        core_document::inertia::about_axis(
+                            &inertia.about_centre,
+                            volume,
+                            props.centre_mm,
+                            *point,
+                            *direction,
+                        ),
+                        volume,
+                        unit,
+                        material,
+                        approx,
+                    ),
+                };
+                std::iter::once(PropRow::text(INERTIA_ABOUT, reference.name())).chain(rows)
+            }))
             .collect()
         }
     };
     ("Physical".to_string(), rows)
 }
 
-/// The inertia about the centre of mass: the tensor on the world's axes,
-/// then the principal moments, smallest first, each with its axis. With a
-/// material it is the mass's (g times the unit squared); without, the
-/// volume's at unit density (the unit to the fifth).
-fn inertia_rows(
-    inertia: &kernel_api::Inertia,
-    unit: Unit,
-    material: Option<&core_document::Material>,
-    about: &str,
-) -> Vec<PropRow> {
+/// The row naming what the inertia below it is about, drawn as a choice.
+const INERTIA_ABOUT: &str = "Inertia about";
+
+/// A point or a line the Physical group can take a body's inertia about,
+/// placed in the world.
+#[derive(Debug, Clone, PartialEq)]
+pub enum InertiaReference {
+    CentreOfMass,
+    Point {
+        name: String,
+        at: [f64; 3],
+    },
+    Axis {
+        name: String,
+        point: [f64; 3],
+        direction: [f64; 3],
+    },
+}
+
+impl InertiaReference {
+    pub fn name(&self) -> &str {
+        match self {
+            InertiaReference::CentreOfMass => "Centre of mass",
+            InertiaReference::Point { name, .. } | InertiaReference::Axis { name, .. } => name,
+        }
+    }
+}
+
+/// What a moment in mm⁵ at unit density is multiplied by to read in
+/// `unit`, and the suffix it reads with: the mass's (g times the unit
+/// squared) with a material, the volume's (the unit to the fifth) without.
+fn moment_scale(unit: Unit, material: Option<&core_document::Material>) -> (f64, String) {
     let per = f64::from(unit.mm_per_unit());
     let label = unit.short_label();
-    let (scale, suffix) = match material {
+    match material {
         // mm⁵ times g/cm³ (a thousandth of g/mm³) is g·mm².
         Some(m) => (
             f64::from(m.density) / 1000.0 / (per * per),
             format!("g·{label}²"),
         ),
         None => (1.0 / per.powi(5), format!("{label}⁵")),
+    }
+}
+
+/// The moment about a line, and the radius of gyration: how far from the
+/// line the whole mass would turn alike.
+fn axis_rows(
+    moment: Option<f64>,
+    volume: f64,
+    unit: Unit,
+    material: Option<&core_document::Material>,
+    about: &str,
+) -> Vec<PropRow> {
+    let Some(moment) = moment else {
+        return vec![PropRow::text("Moment", "the line has no direction").dim(true)];
     };
+    let (scale, suffix) = moment_scale(unit, material);
+    let mut rows = vec![PropRow::mono(
+        "Moment",
+        format!("{about}{} {suffix}", format_figure(moment * scale)),
+    )];
+    if volume > 0.0 {
+        let radius = (moment / volume).max(0.0).sqrt();
+        rows.push(PropRow::mono(
+            "Gyration radius",
+            format!(
+                "{about}{}",
+                core_document::format_length_mm(radius as f32, unit, 2)
+            ),
+        ));
+    }
+    rows
+}
+
+/// An inertia tensor on the world's axes, then its principal moments,
+/// smallest first, each with its axis. With a material it is the mass's
+/// (g times the unit squared); without, the volume's at unit density (the
+/// unit to the fifth).
+fn inertia_rows(
+    inertia: &kernel_api::Inertia,
+    unit: Unit,
+    material: Option<&core_document::Material>,
+    about: &str,
+) -> Vec<PropRow> {
+    let (scale, suffix) = moment_scale(unit, material);
     // What is a billionth of the largest moment is the integration's
     // rounding, not a product of inertia.
     let floor = inertia.principal[2].0.abs() * 1e-9;
@@ -1061,6 +1180,45 @@ fn value_row(ui: &mut egui::Ui, row: &PropRow) {
         font,
         if row.dim { TEXT3 } else { TEXT1 },
     );
+}
+
+/// The choice of what the inertia is about; the name picked, when it
+/// changed.
+fn inertia_about_row(
+    ui: &mut egui::Ui,
+    current: &str,
+    references: &[InertiaReference],
+) -> Option<String> {
+    let (_, name, value) = row_frame(ui);
+    ui.painter().with_clip_rect(name).text(
+        name.left_center(),
+        egui::Align2::LEFT_CENTER,
+        INERTIA_ABOUT,
+        sans(FONT_SM),
+        TEXT2,
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(value)
+            .layout(egui::Layout::left_to_right(egui::Align::Center)),
+    );
+    let mut chosen = references
+        .iter()
+        .position(|r| r.name() == current)
+        .unwrap_or(0);
+    let options: Vec<(usize, &str)> = references
+        .iter()
+        .enumerate()
+        .map(|(i, r)| (i, r.name()))
+        .collect();
+    ui_kit::widgets::select_field(
+        &mut child,
+        "inertia_about",
+        &mut chosen,
+        &options,
+        value.width(),
+    )
+    .then(|| references[chosen].name().to_string())
 }
 
 /// The key under which a rename asks the Label row for the keyboard.
@@ -1312,8 +1470,12 @@ mod tests {
                 ],
             }),
         };
-        let (title, rows) =
-            physical_group(&crate::ui::Physical::Ready(Box::new(props)), Unit::Cm, None);
+        let (title, rows) = physical_group(
+            &crate::ui::Physical::Ready(Box::new(props)),
+            Unit::Cm,
+            None,
+            None,
+        );
         assert_eq!(title, "Physical");
         let value = |name: &str| {
             rows.iter()
@@ -1339,6 +1501,7 @@ mod tests {
             &crate::ui::Physical::Ready(Box::new(props)),
             Unit::Cm,
             Some(&pla),
+            None,
         );
         let mass = rows.iter().find(|r| r.name == "Mass").unwrap();
         assert_eq!(mass.value, "10.00 g");
@@ -1354,8 +1517,75 @@ mod tests {
             volume_mm3: None,
             ..props
         };
-        let (_, rows) = physical_group(&crate::ui::Physical::Ready(Box::new(open)), Unit::Mm, None);
+        let (_, rows) = physical_group(
+            &crate::ui::Physical::Ready(Box::new(open)),
+            Unit::Mm,
+            None,
+            None,
+        );
         assert_eq!(rows[0].value, "encloses none");
+    }
+
+    /// A 20 mm cube centred at (10, 0, 0): about the origin each moment
+    /// off X gains the volume times 10², and about the Z axis its own
+    /// moment plus the same, so its gyration radius reads from that.
+    #[test]
+    fn the_inertia_reads_about_the_point_or_line_chosen() {
+        let cube = 8000.0 * 800.0 / 12.0;
+        let props = kernel_api::PhysicalProperties {
+            volume_mm3: Some(8_000.0),
+            area_mm2: 2_400.0,
+            centre_mm: [10.0, 0.0, 0.0],
+            approximate: false,
+            inertia: Some(kernel_api::Inertia {
+                about_centre: [[cube, 0.0, 0.0], [0.0, cube, 0.0], [0.0, 0.0, cube]],
+                principal: [
+                    (cube, [1.0, 0.0, 0.0]),
+                    (cube, [0.0, 1.0, 0.0]),
+                    (cube, [0.0, 0.0, 1.0]),
+                ],
+            }),
+        };
+        let physical = crate::ui::Physical::Ready(Box::new(props));
+        let value = |rows: &[PropRow], name: &str| {
+            rows.iter()
+                .find(|r| r.name == name)
+                .map(|r| r.value.clone())
+                .unwrap_or_else(|| panic!("no {name} row"))
+        };
+        let origin = InertiaReference::Point {
+            name: "Origin".into(),
+            at: [0.0; 3],
+        };
+        let (_, rows) = physical_group(&physical, Unit::Mm, None, Some(&origin));
+        assert_eq!(value(&rows, INERTIA_ABOUT), "Origin");
+        assert_eq!(value(&rows, "Ixx"), format!("{} mm⁵", format_figure(cube)));
+        assert_eq!(
+            value(&rows, "Iyy"),
+            format!("{} mm⁵", format_figure(cube + 8000.0 * 100.0))
+        );
+        let z = InertiaReference::Axis {
+            name: "Z axis".into(),
+            point: [0.0; 3],
+            direction: [0.0, 0.0, 2.0],
+        };
+        let (_, rows) = physical_group(&physical, Unit::Mm, None, Some(&z));
+        let moment = cube + 8000.0 * 100.0;
+        assert_eq!(
+            value(&rows, "Moment"),
+            format!("{} mm⁵", format_figure(moment))
+        );
+        assert_eq!(
+            value(&rows, "Gyration radius"),
+            core_document::format_length_mm((moment / 8000.0).sqrt() as f32, Unit::Mm, 2)
+        );
+        assert!(
+            rows.iter().all(|r| r.name != "Ixx"),
+            "a line has one moment"
+        );
+        let (_, rows) = physical_group(&physical, Unit::Mm, None, None);
+        assert_eq!(value(&rows, INERTIA_ABOUT), "Centre of mass");
+        assert_eq!(value(&rows, "Iyy"), format!("{} mm⁵", format_figure(cube)));
     }
 
     #[test]

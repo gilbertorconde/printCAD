@@ -803,6 +803,7 @@ impl PrintCadApp {
             .unwrap_or_default();
         let dimensions = self.selection_dimensions();
         let physical = self.panel_physical();
+        let inertia_references = self.inertia_references();
         let host_params = ui::HostCtxParams {
             pixels_per_point: self.pixels_per_point(),
             camera_position: self.session.camera.position(),
@@ -894,6 +895,7 @@ impl PrintCadApp {
                         picks,
                         dimensions,
                         physical,
+                        inertia_references,
                         field_of_view_deg: self.session.camera.field_of_view_deg(),
                         projection: self.session.camera.projection(),
                         section: self.session.section,

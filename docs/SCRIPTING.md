@@ -1090,6 +1090,7 @@ assert(rims == 2 and seams == 1, "the top and bottom rims and the side's seam")
 `pc.doc.measure`: A body's volume, surface area, centre and bounds.
 
 - `body` (id)
+- `about` (any, optional): What the inertia is also taken about: "origin", a point {x, y, z}, a line {point = {x, y, z}, direction = {x, y, z}}, or the id of a datum point, coordinate system or line
 - Returns {volume, area, centre, min, max, approximate, inertia?}
 
 Notes:
@@ -1097,6 +1098,7 @@ Notes:
 - It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
 - Volume is in mm³ and area in mm², the bounds and centre in world space. `approximate` is true when some face had no closed form and the figures were summed over its triangles: close (a fraction of a percent) rather than exact. A mesh body is refused; it has no solid to measure.
 - `inertia`, where the body has a volume, is the volume's at unit density (mm⁵; times a density in g/mm³ it is g·mm²) about the centre, on the world's axes: `tensor`, three rows, and `principal`, the principal moments smallest first, each {moment, axis}.
+- With `about`, `inertia.about` is the inertia about it, by the parallel axis theorem, in the same units: about a point, {point, tensor, principal} as above; about a line, {point, direction, moment} (the moment about the line).
 
 See also `pc.doc.rebuild`, `pc.doc.faces`.
 

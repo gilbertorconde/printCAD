@@ -139,6 +139,10 @@ View keys:
 
 Right click the status bar to choose which of its readouts show.
 
+The property panel's Physical group gives a body's volume, area, centre
+of mass and inertia, about the centre of mass, the origin, a world axis,
+a datum point or line, or the line of the edge or round face picked.
+
 ### Row and body menus
 
 Right click a row of the tree, or a body in the view, for what can be

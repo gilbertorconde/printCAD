@@ -67,6 +67,9 @@ pub struct ComboViewInputs<'a> {
     pub rename_buffer: &'a mut Option<(TreeItemId, String)>,
     /// The measure of the body the property panel shows.
     pub physical: Option<&'a super::Physical>,
+    /// What the inertia can be taken about, and the one chosen.
+    pub inertia_references: &'a [super::property_panel::InertiaReference],
+    pub inertia_about: &'a mut Option<String>,
     /// The keys the tree's menus name.
     pub keymap: &'a super::keymap::Keymap,
     /// The Data tab's variable and configuration editors.
@@ -95,6 +98,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
         property_tab,
         rename_buffer,
         physical,
+        inertia_references,
+        inertia_about,
         keymap,
         variables,
         tree_share,
@@ -257,6 +262,8 @@ pub fn draw_combo_view(ui: &mut egui::Ui, inputs: ComboViewInputs<'_>) -> ComboV
                     selected: selected_id,
                     detail: selected_detail.as_deref(),
                     physical,
+                    inertia_references,
+                    inertia_about,
                 },
                 property_tab,
                 rename_buffer,

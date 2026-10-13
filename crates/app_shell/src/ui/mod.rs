@@ -40,6 +40,7 @@ pub use body_menu::{MenuLocal, OpenTask};
 pub use commands::{BodyEdit, ConfigEdit, EditCommand, FileCommand, StartKind, UiCommand};
 pub use host_ctx::HostCtxParams;
 pub use inputs::{FileMarks, HoverCard, Physical, UiFrameInputs};
+pub use property_panel::InertiaReference;
 pub use step_import_modal::StepImportDialogAction;
 pub use tab_bar::TabInfo;
 
@@ -140,6 +141,9 @@ pub struct UiLayer {
     tree_filter: String,
     property_tab: property_panel::PropertyTab,
     rename_buffer: Option<(TreeItemId, String)>,
+    /// What the Physical group takes the inertia about, by name; the
+    /// centre of mass when unset or no longer offered.
+    inertia_about: Option<String>,
     /// The start page's recent-files filter; UI-local.
     recent_search: String,
     start_view: start_page::StartView,
@@ -264,6 +268,7 @@ impl UiLayer {
             tree_filter: String::new(),
             property_tab: property_panel::PropertyTab::default(),
             rename_buffer: None,
+            inertia_about: None,
             recent_search: String::new(),
             start_view: Default::default(),
             details: None,
@@ -501,6 +506,7 @@ impl UiLayer {
             picks,
             dimensions,
             physical,
+            inertia_references,
             field_of_view_deg,
             projection,
             section,
@@ -972,6 +978,8 @@ impl UiLayer {
                     variables: &mut self.variables,
                     tree_share: &mut self.tree_share,
                     physical: physical.as_ref(),
+                    inertia_references: &inertia_references,
+                    inertia_about: &mut self.inertia_about,
                     keymap: &keymap,
                     read_only: file.read_only,
                     read_only_links: file.read_only_links,
