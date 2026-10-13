@@ -19,9 +19,10 @@ mention outside that section.)
 ```bash
 cargo run -p app_shell            # launch the app (needs a Vulkan, Metal or DX12 GPU)
 cargo run --release -p app_shell  # for real STEP files; see the profile note
-cargo test --workspace            # full suite (~1500 tests)
+cargo test --workspace            # full suite (~1900 tests)
 node scripts/test-budget.mjs      # the same, timed against its budget (what CI runs)
 node scripts/test-budget.mjs --changed   # only what a change reaches, its own crates first
+node scripts/test-lines.mjs       # tests' share of the code, held under a ceiling in CI
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 ```
@@ -1404,6 +1405,15 @@ on the start page (`Screen::Start`); the recent list lives in
   file with a `cfg(windows)`/`cfg(unix)`/`target_os` gate, the manifests)
   or carries the `platforms` label. Changes to CI, the test scripts or the
   manifests test everything.
+- Tests stay a bounded share of the code: `scripts/test-lines.mjs` counts
+  test lines per crate and fails CI above its ceiling. A new case goes
+  into an existing table or shared harness (the sketcher `Harness`,
+  `tests/kernel/common.rs`) rather than a near-copy of a sibling test; a
+  test whose property a stronger test already asserts is retired. A
+  behaviour has one owner at its strongest boundary: a tool proved
+  through the viewport's clicks is not proved again by unit clicks on its
+  state, and a slow geometric check shares its builds (a `OnceLock`)
+  and meshes no finer than its tolerance needs.
 
 - Sketcher end-to-end tests drive `on_input` with real viewport-pixel clicks:
   `wb_sketch/tests/sketcher/interaction.rs` (reuse its `Harness`).
