@@ -2002,6 +2002,158 @@ fn arc_slot_tool_end_to_end_closed_profile() {
     assert_eq!(wires[0].segments.len(), 4);
 }
 
+/// Where a point of the sketch is.
+fn at(sketch: &Sketch, id: uuid::Uuid) -> glam::DVec2 {
+    sketch.point_position(id).expect("a point").to_glam()
+}
+
+/// The arc slot holds its shape: two rails round one centre, each cap
+/// centred midway between them on the line through its ends and half the
+/// gap across, so it runs on tangent into both rails and the caps are
+/// one size.
+fn assert_arc_slot_shape(sketch: &Sketch, what: &str) {
+    let arcs: Vec<_> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Arc(a) => Some(a.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(arcs.len(), 4, "{what}");
+    let (rails, caps): (Vec<_>, Vec<_>) = arcs
+        .iter()
+        .partition(|a| arcs.iter().filter(|b| b.center == a.center).count() == 2);
+    assert_eq!(
+        (rails.len(), caps.len()),
+        (2, 2),
+        "{what}: concentric rails"
+    );
+    let c = at(sketch, rails[0].center);
+    let radius = |a: &wb_sketch::sketch::Arc| {
+        let r = (at(sketch, a.start) - at(sketch, a.center)).length();
+        let r_end = (at(sketch, a.end) - at(sketch, a.center)).length();
+        assert!((r - r_end).abs() < 1e-4, "{what}: ends on the arc");
+        r
+    };
+    let (r1, r2) = (radius(rails[0]), radius(rails[1]));
+    let (outer, inner) = (r1.max(r2), r1.min(r2));
+    assert!(outer - inner > 1e-3, "{what}: the rails apart");
+    for cap in &caps {
+        let mid = at(sketch, cap.center);
+        let r = radius(cap);
+        assert!((r - 0.5 * (outer - inner)).abs() < 1e-4, "{what}: cap {r}");
+        assert!(
+            ((mid - c).length() - 0.5 * (outer + inner)).abs() < 1e-4,
+            "{what}: cap centred between the rails"
+        );
+        for end in [cap.start, cap.end] {
+            let cross = (at(sketch, end) - c).perp_dot(mid - c);
+            assert!(cross.abs() < 1e-3, "{what}: cap tangent at its end");
+        }
+    }
+}
+
+/// Drag from `from` to `to` as a pointer does, a move each frame on the way.
+fn drag_in_steps(h: &mut Harness, from: (f64, f64), to: (f64, f64), steps: usize) {
+    h.click(from.0, from.1, "sketch.select");
+    for i in 1..=steps {
+        let t = i as f64 / steps as f64;
+        let (x, y) = (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t);
+        h.mouse_move(x, y, "sketch.select");
+    }
+    h.release(to.0, to.1, "sketch.select");
+}
+
+fn has_point_near_within(sketch: &Sketch, (x, y): (f64, f64), tol: f64) -> bool {
+    point_positions(sketch)
+        .iter()
+        .any(|p| (*p - glam::DVec2::new(x, y)).length() < tol)
+}
+
+#[test]
+fn an_arc_slot_holds_its_shape_when_dragged() {
+    // Centre (3, 2), centerline radius 10 from (13, 2) a quarter turn round
+    // to (3, 12), 4 wide: off the axes, so nothing pins to them. The outer
+    // rail starts at (15, 2).
+    for (what, from, to) in [
+        ("width", (15.0, 2.0), (16.0, 2.0)),
+        ("radius", (13.0, 2.0), (15.0, 2.0)),
+        ("sweep", (3.0, 12.0), (-4.0, 9.0)),
+        ("centre", (3.0, 2.0), (5.0, 4.0)),
+    ] {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(3.0, 2.0, "sketch.arc_slot");
+        h.click(13.0, 2.0, "sketch.arc_slot");
+        h.click(3.0, 12.0, "sketch.arc_slot");
+        assert_arc_slot_shape(&h.sketch(), "drawn");
+
+        drag_in_steps(&mut h, from, to, 8);
+        let sketch = h.sketch();
+        assert!(
+            has_point_near_within(&sketch, to, 0.05),
+            "{what}: the dragged point followed: {:?}",
+            point_positions(&sketch)
+        );
+        assert_arc_slot_shape(&sketch, what);
+    }
+}
+
+#[test]
+fn a_slot_holds_its_shape_when_dragged() {
+    // From (3, 3) to (13, 3), 4 wide: a rail ends at (13, 5).
+    for (what, from, to) in [
+        ("width", (13.0, 5.0), (13.0, 6.0)),
+        ("end", (13.0, 3.0), (15.0, 7.0)),
+        ("start", (3.0, 3.0), (2.0, 5.0)),
+    ] {
+        let mut h = Harness::new();
+        h.create_sketch();
+        h.click(3.0, 3.0, "sketch.slot");
+        h.click(13.0, 3.0, "sketch.slot");
+
+        drag_in_steps(&mut h, from, to, 8);
+        let sketch = h.sketch();
+        assert!(
+            has_point_near_within(&sketch, to, 0.05),
+            "{what}: the dragged point followed: {:?}",
+            point_positions(&sketch)
+        );
+        let caps: Vec<_> = sketch
+            .geometry
+            .iter()
+            .filter_map(|g| match g {
+                GeometryElement::Arc(a) => Some(a.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(caps.len(), 2, "{what}");
+        let (a, b) = (at(&sketch, caps[0].center), at(&sketch, caps[1].center));
+        let axis = (b - a).normalize();
+        let r = (at(&sketch, caps[0].start) - a).length();
+        for cap in &caps {
+            let mid = at(&sketch, cap.center);
+            for end in [cap.start, cap.end] {
+                let off = at(&sketch, end) - mid;
+                assert!((off.length() - r).abs() < 1e-4, "{what}: caps alike");
+                assert!(
+                    off.dot(axis).abs() < 1e-3,
+                    "{what}: the rails leave the caps square to the slot"
+                );
+            }
+        }
+        let rails = sketch.geometry.iter().filter_map(|g| match g {
+            GeometryElement::Line(l) => Some(l),
+            _ => None,
+        });
+        for rail in rails {
+            let d = (at(&sketch, rail.end) - at(&sketch, rail.start)).normalize();
+            assert!(d.perp_dot(axis).abs() < 1e-4, "{what}: rails parallel");
+        }
+    }
+}
+
 #[test]
 fn chamfer_tool_end_to_end() {
     let mut h = Harness::new();

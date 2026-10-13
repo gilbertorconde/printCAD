@@ -4601,3 +4601,31 @@ fn copying_a_group_moves_its_reference_with_the_copy() {
         assert!((*at - want).to_glam().length() < 1e-5);
     }
 }
+
+/// A fresh slot's constraints are independent: none says what the others
+/// already do, and what is left free is the shape's own freedom (a straight
+/// slot's two ends and width; an arc slot's centre, its two rails' radii
+/// and the angles its ends stand at).
+#[test]
+fn fresh_slots_carry_no_redundant_constraint() {
+    for (tool, clicks, dof) in [
+        ("sketch.slot", &[(3.0, 3.0), (13.0, 3.0)][..], 5),
+        (
+            "sketch.arc_slot",
+            &[(3.0, 2.0), (13.0, 2.0), (3.0, 12.0)][..],
+            6,
+        ),
+    ] {
+        let mut sketch = Sketch::new("t");
+        let mut state = ToolState::default();
+        for &(x, y) in clicks {
+            handle_click(&mut state, tool, &mut sketch, Vec2D::new(x, y), 0.5);
+        }
+        assert!(state.is_idle(), "{tool} committed");
+        let diagnosis = crate::solver::diagnose(&sketch);
+        assert!(diagnosis.analyzed, "{tool}");
+        assert!(diagnosis.redundant.is_empty(), "{tool}: {diagnosis:?}");
+        assert!(diagnosis.conflicting.is_empty(), "{tool}: {diagnosis:?}");
+        assert_eq!(diagnosis.dof, dof, "{tool}");
+    }
+}

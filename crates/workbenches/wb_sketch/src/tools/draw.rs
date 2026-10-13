@@ -1591,8 +1591,11 @@ pub(super) fn arc_slot(
                 outer_a,
                 shape.cap_r,
             )));
-            // Each cap runs on smoothly into both rails, and the two caps
-            // are one size: it stays a slot when dragged.
+            // Each cap runs on smoothly into both rails: it stays a slot
+            // when dragged. Tangent to both concentric rails at its ends, a
+            // cap spans the gap between them, so both caps are half the
+            // rails' difference across; an equal-radius constraint on top
+            // would say that again and be redundant.
             for cap in [cap_a, cap_b] {
                 for rail in [outer, inner] {
                     sketch.add_constraint(ConstraintKind::Tangent {
@@ -1601,10 +1604,6 @@ pub(super) fn arc_slot(
                     });
                 }
             }
-            sketch.add_constraint(ConstraintKind::EqualRadius {
-                circle1: cap_a,
-                circle2: cap_b,
-            });
 
             *state = ToolState::Idle;
             ToolEffect::changed(format!(

@@ -4300,7 +4300,8 @@ mod tests {
     }
 
     /// A rounded rectangle, a slot and an arc slot keep their shape when
-    /// dragged: their tangents and equal radii are part of them.
+    /// dragged: their tangents and equal radii are part of them, and none
+    /// of those constraints says again what the others already do.
     #[test]
     fn shapes_with_rounded_ends_hold_together_when_dragged() {
         for (tool, points, params, dof) in [
@@ -4333,6 +4334,7 @@ mod tests {
             .unwrap();
             let status = call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap();
             assert_eq!(status["dof"], json!(dof), "{tool}");
+            assert_eq!(status["redundant"], json!([]), "{tool}");
             let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
             let first = geometry
                 .as_array()
