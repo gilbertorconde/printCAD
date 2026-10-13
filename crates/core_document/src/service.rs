@@ -40,8 +40,8 @@ struct WorkbenchEntry {
 }
 
 impl DocumentService {
-    /// The kernel evaluation asks of solids: without one, what follows a
-    /// solid's edges stays where it was until it is edited.
+    /// The kernel evaluation asks of solids. Without one, geometry projected
+    /// from a solid's edges keeps its stored position until it is edited.
     pub fn set_kernel(&mut self, kernel: &'static dyn kernel_api::KernelQueries) {
         self.kernel = Some(kernel);
     }
