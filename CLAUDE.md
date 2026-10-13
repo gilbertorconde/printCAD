@@ -1450,6 +1450,11 @@ on the start page (`Screen::Start`); the recent list lives in
   (a taper thread its minor diameter at the face, narrowing 1:16),
   clearances otherwise; "Modeled thread" also cuts the standard's groove
   (60° or 55°) along a helix out to the major diameter, along a cone for a
-  taper (`thread_cut` in `wb_design/src/build.rs`). Drill points and
+  taper (`thread_cut` in `wb_design/src/build.rs`). A cosmetic thread
+  (`cosmetic_thread`) draws a helix instead, and its designation reaches
+  the host through `Workbench::cosmetic_threads` (`ThreadCallout`, kept by
+  `DocumentService::evaluate` as derived `Document::cosmetic_threads`),
+  which the parts list's Threads column, `app/annotations.rs`'s callouts
+  and a STEP export's callouts (`export.rs::body_notes`) read. Drill points and
   counterdrill cones are kernel cone primitives cut at each centre.
   `docs/HOLES.md` is the user guide.

@@ -2111,6 +2111,57 @@ pub(crate) fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
 /// How many line pieces a cosmetic thread draws per turn.
 const THREAD_SEGMENTS_PER_TURN: usize = 24;
 
+/// The bores a hole with a cosmetic thread threads, in its body's frame.
+pub(crate) struct ThreadedBores {
+    /// Each hole's centre on the plane it starts on: where its bore opens.
+    pub mouths: Vec<[f64; 3]>,
+    /// Down the bores, into the material.
+    pub into: [f64; 3],
+    /// Across the bores: the sketch plane's X axis.
+    pub across: [f64; 3],
+    /// The bores' radius, mm.
+    pub radius: f64,
+    pub pitch: f64,
+    pub left_handed: bool,
+}
+
+/// Where a hole with a cosmetic thread opens; `None` for a hole with no
+/// cosmetic thread, or one whose sketch or thread size is not found.
+pub(crate) fn threaded_bores(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Option<ThreadedBores> {
+    let DesignFeature::Hole {
+        sketch,
+        thread: Some(spec),
+        ..
+    } = feature
+    else {
+        return None;
+    };
+    feature.cosmetic_thread()?;
+    let (Ok(size), Ok(sketch_feature)) = (spec.resolve(), load_sketch(document, *sketch)) else {
+        return None;
+    };
+    let (plane, into) = hole_plane(document, feature, &sketch_feature).ok()?;
+    let mouths = hole_centers(&sketch_feature.sketch)
+        .into_iter()
+        .map(|centre| {
+            std::array::from_fn(|k| {
+                plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1]
+            })
+        })
+        .collect();
+    Some(ThreadedBores {
+        mouths,
+        into,
+        across: plane.x_axis,
+        radius: f64::from(hole_diameter(feature)) * 0.5,
+        pitch: size.pitch,
+        left_handed: spec.left_handed,
+    })
+}
+
 /// A cosmetic thread as lines in its body's frame: at every hole centre a
 /// helix of the thread's pitch, just inside the bore so the wall does not
 /// hide it, down the thread's length: the thread's own depth when set,
@@ -2124,43 +2175,30 @@ pub(crate) fn cosmetic_thread_lines(
 ) -> kernel_api::TriMesh {
     let mut mesh = kernel_api::TriMesh::default();
     let DesignFeature::Hole {
-        sketch,
         depth,
         through_all,
-        thread: Some(spec),
         thread_depth,
         ..
     } = feature
     else {
         return mesh;
     };
-    if feature.cosmetic_thread().is_none() {
-        return mesh;
-    }
-    let (Ok(size), Ok(sketch_feature)) = (spec.resolve(), load_sketch(document, *sketch)) else {
+    let Some(bores) = threaded_bores(document, feature) else {
         return mesh;
     };
-    let Ok((plane, into)) = hole_plane(document, feature, &sketch_feature) else {
-        return mesh;
-    };
-    let bore = f64::from(hole_diameter(feature)) * 0.5;
+    let (into, bore, pitch) = (bores.into, bores.radius, bores.pitch);
     let radius = bore * 0.98;
-    let pitch = size.pitch;
     if radius <= 0.0 || pitch <= 0.0 {
         return mesh;
     }
     let solid = body.and_then(|b| document.local_geometry(b));
-    let (u, v) = (plane.x_axis, cross3(into, plane.x_axis));
-    let turn = if spec.left_handed { -1.0 } else { 1.0 };
-    for centre in hole_centers(&sketch_feature.sketch) {
-        let at =
-            |k: usize| plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1];
+    let (u, v) = (bores.across, cross3(into, bores.across));
+    let turn = if bores.left_handed { -1.0 } else { 1.0 };
+    for mouth in bores.mouths {
         let hole_length = if *through_all {
             solid
                 .as_ref()
-                .and_then(|(mesh, bounds)| {
-                    through_length(mesh, *bounds, std::array::from_fn(at), into, bore)
-                })
+                .and_then(|(mesh, bounds)| through_length(mesh, *bounds, mouth, into, bore))
                 .unwrap_or(20.0)
         } else {
             f64::from(*depth)
@@ -2180,7 +2218,7 @@ pub(crate) fn cosmetic_thread_lines(
             let angle = turn * std::f64::consts::TAU * down / pitch;
             let (sin, cos) = angle.sin_cos();
             let point: [f32; 3] = std::array::from_fn(|k| {
-                (at(k) + into[k] * down + radius * (cos * u[k] + sin * v[k])) as f32
+                (mouth[k] + into[k] * down + radius * (cos * u[k] + sin * v[k])) as f32
             });
             mesh.positions.push(point);
             mesh.normals.push(into.map(|c| c as f32));
@@ -4666,6 +4704,35 @@ mod tests {
                 .positions
                 .is_empty()
         );
+
+        // The document keeps the thread once evaluated: its designation,
+        // where its bore opens and which way it runs, until the hole
+        // leaves the build.
+        if let DesignFeature::Hole {
+            cosmetic_thread, ..
+        } = &mut hole
+        {
+            *cosmetic_thread = true;
+        }
+        let id = doc
+            .add_feature_in_body(hole.clone(), "Hole".into(), Some(body))
+            .unwrap();
+        let mut registry = core_document::DocumentService::default();
+        registry
+            .register_workbench(Box::new(crate::DesignWorkbench::default()))
+            .unwrap();
+        registry.evaluate(&mut doc);
+        let threads = doc.cosmetic_threads();
+        assert_eq!(threads.len(), 1, "{threads:?}");
+        let thread = &threads[0];
+        assert_eq!((thread.feature, thread.body), (id, body));
+        assert_eq!(thread.label(), "M6 thread");
+        assert_eq!(thread.mouth, [3.0, 4.0, 0.0]);
+        assert_eq!(thread.axis, [0.0, 0.0, -1.0]);
+        assert!((thread.radius - f64::from(hole_diameter(&hole)) * 0.5).abs() < 1e-9);
+        doc.set_feature_suppressed(id, true);
+        registry.evaluate(&mut doc);
+        assert!(doc.cosmetic_threads().is_empty(), "a suppressed hole");
     }
 
     /// A cosmetic thread through all of an 8 mm plate stops at the plate's

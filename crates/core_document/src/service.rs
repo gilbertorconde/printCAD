@@ -322,6 +322,29 @@ impl DocumentService {
             evaluation.unsettled.insert(id, unsettled);
         }
         document.apply_evaluation(evaluation);
+        let threads = self.cosmetic_threads(document);
+        document.set_cosmetic_threads(threads);
+    }
+
+    /// The cosmetic threads of every feature in its body's build, in
+    /// history order, asked of the bench that claimed each feature's kind.
+    fn cosmetic_threads(&self, document: &Document) -> Vec<crate::ThreadCallout> {
+        let mut nodes: Vec<(&FeatureId, &FeatureNode)> = document
+            .feature_tree()
+            .all_nodes()
+            .filter(|(id, node)| node.body.is_some() && document.feature_in_build(**id))
+            .collect();
+        nodes.sort_by_key(|(id, node)| (node.seq, **id));
+        nodes
+            .into_iter()
+            .filter_map(|(id, node)| {
+                Some(
+                    self.owner_of(&node.workbench_id)?
+                        .cosmetic_threads(document, *id, node),
+                )
+            })
+            .flatten()
+            .collect()
     }
 
     /// The parameter of `feature` that formulas call `name`, or whose key

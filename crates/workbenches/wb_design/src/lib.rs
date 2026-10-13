@@ -1528,6 +1528,42 @@ impl Workbench for DesignWorkbench {
         }
     }
 
+    /// A hole with a cosmetic thread threads each of its bores.
+    fn cosmetic_threads(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+    ) -> Vec<core_document::ThreadCallout> {
+        let Some(body) = node.body else {
+            return Vec::new();
+        };
+        let Some(feature @ DesignFeature::Hole { .. }) = document
+            .feature_values(id)
+            .and_then(|data| DesignFeature::from_json(data).ok())
+        else {
+            return Vec::new();
+        };
+        let (Some(designation), Some(bores)) = (
+            feature.cosmetic_thread(),
+            build::threaded_bores(document, &feature),
+        ) else {
+            return Vec::new();
+        };
+        bores
+            .mouths
+            .iter()
+            .map(|mouth| core_document::ThreadCallout {
+                feature: id,
+                body,
+                designation: designation.clone(),
+                mouth: *mouth,
+                axis: bores.into,
+                radius: bores.radius,
+            })
+            .collect()
+    }
+
     /// A borrow draws what it lends where its body sits, in the palette's
     /// external colour: the sketch's curves, or the outlines of the faces
     /// and edges.

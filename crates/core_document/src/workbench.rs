@@ -682,6 +682,20 @@ pub trait Workbench: Send {
         None
     }
 
+    /// The cosmetic threads an owned feature declares: each bore it
+    /// threads without cutting the thread, with its designation, in its
+    /// body's frame. Asked as the document evaluates, of `document`'s
+    /// evaluated values; the parts list, the annotations and export read
+    /// the answers (`Document::cosmetic_threads`).
+    fn cosmetic_threads(
+        &self,
+        _document: &Document,
+        _id: FeatureId,
+        _node: &FeatureNode,
+    ) -> Vec<crate::ThreadCallout> {
+        Vec::new()
+    }
+
     /// A problem an owned feature has that does not stop it building (a
     /// sketch whose projected edges are gone), which the tree warns of on
     /// its row. Asked whenever the tree is drawn, so it answers from what

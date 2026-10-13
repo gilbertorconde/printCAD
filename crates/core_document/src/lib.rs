@@ -23,6 +23,7 @@ pub mod server;
 pub mod service;
 pub mod shortcut;
 pub mod stamp;
+pub mod threads;
 pub mod units;
 pub mod variables;
 pub mod workbench;
@@ -69,6 +70,7 @@ pub use runtime::{
 pub use service::DocumentService;
 pub use shortcut::{ActionDescriptor, Chord};
 pub use stamp::{CONTAINER_FORMAT, FileAge, FileStamp, file_age, set_writer_version};
+pub use threads::ThreadCallout;
 pub use units::{Unit, format_area_mm2, format_length_mm, format_volume_mm3};
 #[cfg(feature = "egui")]
 pub use variables::{DocumentFormulas, formula_candidates};
@@ -226,6 +228,11 @@ pub struct Document {
     /// body's solid. Derived on each replica, never an op.
     #[serde(skip)]
     probed: HashMap<FeatureId, rebuild::ProbedReferences>,
+    /// The cosmetic threads the features in the bodies' builds declare,
+    /// as the registry last worked them out. Derived on each replica,
+    /// never an op.
+    #[serde(skip)]
+    threads: Vec<threads::ThreadCallout>,
 }
 
 /// Why a feature cannot move a step in its body's history.
@@ -720,6 +727,7 @@ impl Document {
             link_stale: Default::default(),
             built_against: HashMap::new(),
             probed: HashMap::new(),
+            threads: Vec::new(),
         }
     }
 
@@ -1789,6 +1797,40 @@ impl Document {
         if !self.evaluated.moved.contains(&id) {
             self.evaluated.moved.push(id);
         }
+    }
+
+    /// Every cosmetic thread the features in the bodies' builds declare
+    /// (`Workbench::cosmetic_threads`), as last evaluated.
+    pub fn cosmetic_threads(&self) -> &[threads::ThreadCallout] {
+        &self.threads
+    }
+
+    /// The cosmetic threads of `body`, in history order.
+    pub fn body_threads(&self, body: BodyId) -> impl Iterator<Item = &threads::ThreadCallout> {
+        self.threads.iter().filter(move |t| t.body == body)
+    }
+
+    /// Take `threads` as the document's cosmetic threads. Derived state:
+    /// records no op and marks nothing edited.
+    pub fn set_cosmetic_threads(&mut self, threads: Vec<threads::ThreadCallout>) {
+        self.threads = threads;
+    }
+
+    /// Whether feature `id` is in its body's build: not suppressed, and
+    /// not past the body's tip.
+    pub fn feature_in_build(&self, id: FeatureId) -> bool {
+        let Some(node) = self.feature_tree.get_node(id) else {
+            return false;
+        };
+        if node.suppressed {
+            return false;
+        }
+        let tip = node
+            .body
+            .and_then(|body| self.bodies.iter().find(|b| b.id == body))
+            .and_then(|b| b.tip)
+            .and_then(|tip| self.feature_tree.get_node(tip));
+        tip.is_none_or(|tip| node.seq <= tip.seq)
     }
 
     /// The features whose values formulas moved since this was last
