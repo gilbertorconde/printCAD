@@ -626,6 +626,21 @@ fn a_package_sections_its_rod_reads_its_faces_and_threads_it() {
     }
     assert!((points[0][2] - 20.0).abs() < 1e-3);
     assert!((points[points.len() - 1][2] - 10.0).abs() < 1e-3);
+
+    // Its designation reaches the document, at the top of the side and
+    // down the rod, in the body's frame.
+    registry.evaluate(&mut document);
+    let [thread] = document.cosmetic_threads() else {
+        panic!("{:?}", document.cosmetic_threads());
+    };
+    assert_eq!((thread.feature, thread.body), (feature, body));
+    assert_eq!(thread.label(), "M10 thread");
+    assert!(
+        distance(thread.mouth, [0.0, 0.0, 20.0]) < 1e-3,
+        "{thread:?}"
+    );
+    assert!(distance(thread.axis, [0.0, 0.0, -1.0]) < 1e-6, "{thread:?}");
+    assert!((thread.radius - 5.0).abs() < 1e-3);
 }
 
 #[test]

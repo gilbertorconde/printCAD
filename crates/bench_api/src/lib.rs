@@ -421,7 +421,9 @@ pub struct Rebuild {
 /// A thread drawn on a round face, never modelled: the face keeps its
 /// size (a bore its tap drill, a shank its major diameter) and a helix of
 /// the thread's pitch is drawn just off it, inside a bore and outside a
-/// shank, in every bench and never exported.
+/// shank, in every bench and never exported. A thread with a
+/// `designation` is also named where the app lists threads: a callout at
+/// the face's end, the parts list, and a STEP export's callouts.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct CosmeticThread {
     /// The feature it belongs to: drawn while that feature shows.
@@ -441,6 +443,10 @@ pub struct CosmeticThread {
     pub length: f64,
     #[serde(default)]
     pub left_handed: bool,
+    /// What the thread is called ("M6", "1/4-20 UNC"); `None` names it
+    /// nowhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub designation: Option<String>,
 }
 
 /// What a [`Rebuild`] asks of the kernel.

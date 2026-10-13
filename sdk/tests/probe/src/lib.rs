@@ -82,6 +82,7 @@ impl Bench for Probe {
                         point: [radius, 0.0, height],
                         pitch: number("pitch"),
                         length: number("length"),
+                        designation: Some("M10".into()),
                         ..Default::default()
                     }],
                     ..Default::default()

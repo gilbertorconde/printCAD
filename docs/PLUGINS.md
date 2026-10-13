@@ -285,8 +285,12 @@ it, inside a bore and outside a shank, from the face's end nearest the
 thread's `point` for its `length` (0 the whole face), in every bench and
 never exported. The face is found by its `name` while the solid has a
 face of that name, else at `point` (in the body's own frame, as the
-ops are). The thread draws while its `feature` shows; its designation
-is the package's to put in the feature's `kind_label`.
+ops are). The thread draws while its `feature` shows. A thread given a
+`designation` ("M6"; optional) is named where the app names threads,
+as a hole's cosmetic thread is: a callout at the face's end under
+View › Annotations, the Assembly's parts list ("2 × M6 thread") and a
+STEP export's callouts. Putting it in the feature's `kind_label` as
+well ("Rod · M6 thread") is the package's choice.
 
 **Panels.** A bench declares its task panel and Preferences page as
 widgets (`Widget`): headings, a header with an icon, text, read-only

@@ -333,32 +333,41 @@ const THREAD_MOST_PIECES: f32 = 100_000.0;
 /// the face does not hide it.
 const THREAD_CLEARANCE: f32 = 0.02;
 
-/// `thread` as a helix over its round face of `mesh` (both in the body's
-/// frame): the face found by name, else the one at its point, which must
-/// be a circular cylinder. Empty when it is not, or the thread has no
-/// pitch or length.
-pub(crate) fn thread_helix(mesh: &TriMesh, thread: &CosmeticThread) -> Vec<[f32; 3]> {
+/// The round face a thread is on, in the body's frame.
+pub(crate) struct ThreadFace {
+    /// Where on the axis the thread starts: at the face's end nearest the
+    /// thread's point.
+    pub start: Vec3,
+    /// Along the axis from `start`, over the face.
+    pub into: Vec3,
+    pub radius: f32,
+    /// A bore's face, facing its axis, rather than a shank's.
+    pub bore: bool,
+    /// How far the face runs along its axis.
+    pub length: f32,
+}
+
+/// `thread`'s round face of `mesh` (both in the body's frame): the face
+/// found by name, else the one at its point, which must be a circular
+/// cylinder. `None` when it is not.
+pub(crate) fn thread_face(mesh: &TriMesh, thread: &CosmeticThread) -> Option<ThreadFace> {
     let at = Vec3::from_array(thread.point.map(|v| v as f32));
     let face = thread
         .name
         .and_then(|name| point_on_named(mesh, name, Some(at)))
         .and_then(|p| nearest_face(mesh, p))
-        .or_else(|| nearest_face(mesh, at));
-    let Some(face) = face else {
-        return Vec::new();
-    };
+        .or_else(|| nearest_face(mesh, at))?;
     let Some(FaceSurface::Cylinder {
         origin,
         axis,
         radius,
     }) = mesh.face_surfaces.get(face as usize).copied()
     else {
-        return Vec::new();
+        return None;
     };
     let (origin, axis) = (Vec3::from(origin), Vec3::from(axis).normalize_or_zero());
-    let pitch = thread.pitch as f32;
-    if axis == Vec3::ZERO || radius <= 0.0 || !pitch.is_finite() || pitch <= 0.0 {
-        return Vec::new();
+    if axis == Vec3::ZERO || radius <= 0.0 {
+        return None;
     }
     // How far along the axis the face runs, and which way it faces.
     let (mut low, mut high) = (f32::INFINITY, f32::NEG_INFINITY);
@@ -379,30 +388,49 @@ pub(crate) fn thread_helix(mesh: &TriMesh, thread: &CosmeticThread) -> Vec<[f32;
         }
     }
     if high <= low {
-        return Vec::new();
+        return None;
     }
-    // A bore faces its axis: the thread goes just inside it.
-    let drawn = if facing < 0.0 {
-        radius * (1.0 - THREAD_CLEARANCE)
-    } else {
-        radius * (1.0 + THREAD_CLEARANCE)
-    };
     let along = (at - origin).dot(axis);
     let (start, into) = if along - low <= high - along {
         (low, axis)
     } else {
         (high, -axis)
     };
-    let whole = high - low;
+    Some(ThreadFace {
+        start: origin + axis * start,
+        into,
+        radius,
+        bore: facing < 0.0,
+        length: high - low,
+    })
+}
+
+/// `thread` as a helix over its round face of `mesh` (both in the body's
+/// frame, [`thread_face`]). Empty when it has no such face, or the thread
+/// has no pitch or length.
+pub(crate) fn thread_helix(mesh: &TriMesh, thread: &CosmeticThread) -> Vec<[f32; 3]> {
+    let Some(face) = thread_face(mesh, thread) else {
+        return Vec::new();
+    };
+    let pitch = thread.pitch as f32;
+    if !pitch.is_finite() || pitch <= 0.0 {
+        return Vec::new();
+    }
+    // A bore faces its axis: the thread goes just inside it.
+    let drawn = if face.bore {
+        face.radius * (1.0 - THREAD_CLEARANCE)
+    } else {
+        face.radius * (1.0 + THREAD_CLEARANCE)
+    };
     let length = match thread.length as f32 {
-        l if l > 0.0 => l.min(whole),
-        _ => whole,
+        l if l > 0.0 => l.min(face.length),
+        _ => face.length,
     };
     let pieces = (length / pitch * THREAD_SEGMENTS_PER_TURN).ceil();
     if !pieces.is_finite() || !(1.0..=THREAD_MOST_PIECES).contains(&pieces) {
         return Vec::new();
     }
-    let base = origin + axis * start;
+    let into = face.into;
     let u = into.any_orthonormal_vector();
     let v = into.cross(u);
     let turn = if thread.left_handed { -1.0 } else { 1.0 };
@@ -412,7 +440,7 @@ pub(crate) fn thread_helix(mesh: &TriMesh, thread: &CosmeticThread) -> Vec<[f32;
             let down = length * i as f32 / pieces as f32;
             let angle = turn * std::f32::consts::TAU * down / pitch;
             let (sin, cos) = angle.sin_cos();
-            (base + into * down + drawn * (cos * u + sin * v)).to_array()
+            (face.start + into * down + drawn * (cos * u + sin * v)).to_array()
         })
         .collect()
 }
@@ -493,6 +521,31 @@ mod tests {
         );
         assert!(helix[0][2].abs() < 1e-4);
         assert!((helix[helix.len() - 1][2] - 4.0).abs() < 1e-4);
+    }
+
+    /// A thread's face starts at the end nearest its point and runs along
+    /// the axis from there: where a bore's thread opens and which way it
+    /// goes in.
+    #[test]
+    fn a_thread_face_starts_at_the_end_nearest_its_point() {
+        let mesh = tube();
+        let bore = CosmeticThread {
+            point: [3.0, 0.0, 9.0],
+            pitch: 1.0,
+            ..Default::default()
+        };
+        let face = thread_face(&mesh, &bore).expect("the bore is round");
+        assert!(face.bore);
+        assert!(face.start.distance(Vec3::new(0.0, 0.0, 10.0)) < 1e-5);
+        assert!(face.into.distance(Vec3::NEG_Z) < 1e-6);
+        assert!((face.radius - 3.0).abs() < 1e-6 && (face.length - 10.0).abs() < 1e-5);
+        let shank = CosmeticThread {
+            point: [0.0, 5.0, 1.0],
+            ..bore
+        };
+        let face = thread_face(&mesh, &shank).expect("the outside is round");
+        assert!(!face.bore);
+        assert!(face.start.distance(Vec3::ZERO) < 1e-5 && face.into.distance(Vec3::Z) < 1e-6);
     }
 
     /// A name finds its face wherever the point now lies; a face that is

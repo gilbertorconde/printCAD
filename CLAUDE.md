@@ -199,8 +199,10 @@ cargo fmt --all                   # CI enforces --check
   package makes on its own kinds only, recorded like any edit),
   `geometry.rs` (the read-only `geom.*` calls, the kernel asked in the
   body's frame and its answer named from the body's mesh by where it
-  lies; a plan's `CosmeticThread`s drawn as `passive_geometry`, the plan
-  asked again only when the body's history changed), `guest.rs`
+  lies; a plan's `CosmeticThread`s drawn as `passive_geometry` and,
+  those with a `designation`, answered as `cosmetic_threads` from their
+  face (`thread_face`), the plan asked again only when the body's history
+  changed), `guest.rs`
   (wasmtime's bindings and store; instantiate with WASI, the package's
   `data/` preopened as `/data`, the network only when granted, a memory
   cap; a trap or overrun replaces the instance, three turn the bench off),
