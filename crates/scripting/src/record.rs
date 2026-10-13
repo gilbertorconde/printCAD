@@ -189,10 +189,15 @@ fn quoted(s: &str) -> String {
     out
 }
 
-/// A number exactly, in as few digits as read back to it. The document
-/// keeps most values in single precision, which a replay has to meet to
-/// the last bit (a rounded point can tip a solver's verdict), so a value
-/// that is one is written as one: 1.99997, not 1.9999699592590332.
+/// A number exactly, in as few digits as read back to it. A replay has
+/// to meet each value to the last bit (a rounded point can tip a solver's
+/// verdict). Sketches keep doubles, written in their own shortest digits;
+/// a bench that keeps a value in single precision reads it back from the
+/// single's digits, so a double that is exactly a single is written as
+/// that single: 12.7, not 12.699999809265137. A sketch's double is exactly
+/// a single where the two share their digits (the sketcher widens the
+/// host's singles through their digits), or where it was read from a
+/// document saved in single precision, which replays to that precision.
 fn number(v: f64) -> String {
     let single = v as f32;
     let text = if f64::from(single) == v {
@@ -228,7 +233,7 @@ mod tests {
         rec.push(&call("sketch.new", json!({"plane": "XY"}), json!(S)));
         rec.push(&call(
             "sketch.draw",
-            json!({"sketch": S, "tool": "sketch.line", "points": [[0, 0], [f64::from(1.99997f32), 0.1]]}),
+            json!({"sketch": S, "tool": "sketch.line", "points": [[0, 0], [1.99997, 0.1 + 0.2]]}),
             json!({"elements": [L1, L2], "constraints": []}),
         ));
         rec.push(&call(
@@ -238,7 +243,7 @@ mod tests {
         ));
         rec.push(&call(
             "design.pad",
-            json!({"sketch": S, "length": 12.5}),
+            json!({"sketch": S, "length": f64::from(12.7f32)}),
             json!(PAD),
         ));
         rec.push(&call(
@@ -250,9 +255,9 @@ mod tests {
         let expected = format!(
             "-- Recorded\n\n\
              sketch1 = pc.sketch.new{{plane = \"XY\"}}\n\
-             line1 = pc.sketch.draw{{points = {{{{0, 0}}, {{1.99997, 0.1}}}}, sketch = sketch1, tool = \"sketch.line\"}}\n\
+             line1 = pc.sketch.draw{{points = {{{{0, 0}}, {{1.99997, 0.30000000000000004}}}}, sketch = sketch1, tool = \"sketch.line\"}}\n\
              pc.sketch.constrain{{items = {{line1.elements[2], \"{OLD}\"}}, kind = \"horizontal\", sketch = sketch1}}\n\
-             pad1 = pc.design.pad{{length = 12.5, sketch = sketch1}}\n\
+             pad1 = pc.design.pad{{length = 12.7, sketch = sketch1}}\n\
              pc.design.set{{feature = pad1, reversed = true}}\n"
         );
         assert_eq!(script, expected);
