@@ -376,7 +376,7 @@ fn a_note_is_written_to_step_as_a_callout_where_its_body_sits() {
 }
 
 #[test]
-#[ignore = "kernel: a callout carries no text of its own (no TEXT_LITERAL written or read), so a note's words ride in its name and read back as an unclassified annotation"]
+#[ignore = "kernel: a callout carries no text of its own (no TEXT_LITERAL written or read), so a note's words ride in its name and read back as an unclassified annotation (ogeom-rs#228)"]
 fn a_note_written_to_step_reads_back_as_a_note() {
     let back = noted_box_round_trip();
     let note = back

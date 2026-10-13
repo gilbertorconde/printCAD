@@ -1740,11 +1740,14 @@ fn a_cone_cut_by_a_plane_projects_as_its_conic() {
             centre[1] + major[1] * s.cosh() + minor[1] * s.sinh(),
         ]
     };
+    // The branch runs from base to base, or stops at its vertex where the
+    // cone's seam splits it in two.
     let ends = [at(range.0), at(range.1)];
     let half = 91f64.sqrt();
+    let on_base = |e: &[f64; 2]| e[1].abs() < 1e-6 && (e[0].abs() - half).abs() < 1e-6;
+    let at_vertex = |e: &[f64; 2]| near(*e, [0.0, 7.0]);
     assert!(
-        ends.iter()
-            .all(|e| e[1].abs() < 1e-6 && (e[0].abs() - half).abs() < 1e-6),
+        ends.iter().all(|e| on_base(e) || at_vertex(e)) && ends.iter().any(on_base),
         "{ends:?}"
     );
 

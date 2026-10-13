@@ -182,5 +182,6 @@ fn a_tolerance_of_a_tenth_keeps_both_cubes() {
     let built = OgeomKernel::new()
         .execute_solid_chain(&ops, &TessellationSettings::default())
         .unwrap();
-    assert!((volume(&built) - 1999.5).abs() < 0.01, "{}", volume(&built));
+    // Two 1000 mm³ cubes sharing a 0.05 mm slab of 100 mm².
+    assert!((volume(&built) - 1995.0).abs() < 0.01, "{}", volume(&built));
 }
