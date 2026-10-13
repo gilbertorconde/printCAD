@@ -1,29 +1,10 @@
 //! A joint's offset set by a variable: the body follows when the variable
 //! changes, as the host settles formulas before an undo step closes.
 
-use core_document::{
-    BodyId, Document, DocumentService, Variable, VariableSet, WorkbenchFeature,
-    WorkbenchRuntimeContext,
-};
+use core_document::{Document, DocumentService, Variable, VariableSet, WorkbenchFeature};
 use wb_assembly::{Anchor, AssemblyWorkbench, JOINT_KIND, JointFeature, JointKind};
 
-/// What the host does before closing an undo step.
-fn settle(registry: &mut DocumentService, doc: &mut Document) {
-    registry.evaluate(doc);
-    let moved = doc.take_moved_values();
-    if moved.is_empty() {
-        return;
-    }
-    for id in registry.ids().to_vec() {
-        let wb = registry.workbench_mut(&id).unwrap();
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        wb.values_moved(&mut ctx, &moved);
-    }
-}
-
-fn height(doc: &Document, part: BodyId) -> f32 {
-    doc.body_placement(part).point([0.0, 0.0, 0.0])[2]
-}
+use crate::{height, settle};
 
 #[test]
 fn a_variable_offset_moves_the_body_and_settling_again_records_nothing() {

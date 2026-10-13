@@ -277,9 +277,10 @@ pub fn interference(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{ImportedGeometry, TriMesh};
+    use crate::test_support::imported;
+    use core_document::TriMesh;
     use kernel_api::{KernelError, KernelResult, Overlap, ProfilePlane, ProjectedEdge};
-    use std::sync::{Arc, Mutex};
+    use std::sync::Mutex;
 
     /// Answers every pair with the same shared solid, and keeps where it
     /// was told the second shape sits.
@@ -366,21 +367,15 @@ mod tests {
         let corners = [[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]];
         document.set_imported_geometry(
             body,
-            ImportedGeometry {
-                mesh: Arc::new(TriMesh {
+            imported(
+                TriMesh {
                     positions: corners.to_vec(),
                     normals: vec![[0.0, 0.0, 1.0]; 3],
                     indices: vec![0, 1, 2],
                     ..TriMesh::default()
-                }),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
+                },
+                None,
+            ),
         );
         if solid {
             document.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());

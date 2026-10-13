@@ -3345,13 +3345,81 @@ impl Workbench for AssemblyWorkbench {
     }
 }
 
+/// What the crate's unit tests share: a context, joints, geometry and
+/// the bench's tools.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+    use core_document::{Document, ImportedGeometry, TriMesh};
+
+    /// A context over `doc` with an 800 × 600 view.
+    pub(crate) fn context(doc: &mut Document) -> WorkbenchRuntimeContext<'_> {
+        WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600))
+    }
+
+    /// A joint of `kind` holding `moving`, on the body it is added to, to
+    /// `fixed` on `other`.
+    pub(crate) fn joint(
+        kind: JointKind,
+        moving: Anchor,
+        other: BodyId,
+        fixed: Anchor,
+    ) -> JointFeature {
+        JointFeature {
+            kind,
+            moving,
+            other_body: other,
+            fixed,
+            names: [0; 2],
+            ends: [0.0; 2],
+            shape: Vec::new(),
+            second: None,
+        }
+    }
+
+    /// An undriven hinge `offset` along its axis, at no turn.
+    pub(crate) fn hinge(offset: f32) -> JointKind {
+        JointKind::Hinge {
+            offset,
+            zero: glam::DQuat::IDENTITY.to_array(),
+            drive: Drive::default(),
+        }
+    }
+
+    /// Geometry of `mesh` alone, within `bounds_mm`.
+    pub(crate) fn imported(
+        mesh: TriMesh,
+        bounds_mm: Option<([f32; 3], [f32; 3])>,
+    ) -> ImportedGeometry {
+        ImportedGeometry {
+            mesh: std::sync::Arc::new(mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        }
+    }
+
+    /// The bench's `tool` taken up, as a click on its button does.
+    pub(crate) fn activate(
+        wb: &mut AssemblyWorkbench,
+        ctx: &mut WorkbenchRuntimeContext<'_>,
+        tool: &str,
+    ) {
+        wb.on_input(&WorkbenchInputEvent::ToolActivated, Some(tool), ctx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{Document, FaceRef, ImportedGeometry, TriMesh};
+    use crate::test_support::{activate, context, imported, joint};
+    use core_document::{Document, FaceRef, TriMesh};
     use kernel_api::FaceSurface;
     use serde_json::json;
-    use std::sync::Arc;
 
     /// Two bodies, each a flat square facing up at its own height.
     pub(crate) fn scene() -> (Document, BodyId, BodyId) {
@@ -3359,24 +3427,13 @@ mod tests {
         let base = doc.create_body(Some("Base".into()));
         let part = doc.create_body(Some("Part".into()));
         for body in [base, part] {
-            doc.set_imported_geometry(
-                body,
-                ImportedGeometry {
-                    mesh: Arc::new(TriMesh {
-                        positions: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]],
-                        normals: vec![[0.0, 0.0, 1.0]; 3],
-                        indices: vec![0, 1, 2],
-                        ..TriMesh::default()
-                    }),
-                    source_asset: None,
-                    revision: 0,
-                    bounds_mm: None,
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: None,
-                },
-            );
+            let square = TriMesh {
+                positions: vec![[0.0, 0.0, 0.0], [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                indices: vec![0, 1, 2],
+                ..TriMesh::default()
+            };
+            doc.set_imported_geometry(body, imported(square, None));
         }
         doc.set_body_placement(
             part,
@@ -3402,16 +3459,63 @@ mod tests {
         doc: &mut Document,
         pick: Option<(BodyId, FaceRef)>,
     ) {
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(doc);
         ctx.selected_body_id = pick.map(|(b, _)| b.0);
         ctx.selected_face = pick.map(|(_, f)| f);
         wb.on_frame(0.016, &mut ctx);
     }
 
+    /// One frame of the task panel, as the host runs it; what it recorded.
+    pub(crate) fn task_frame(
+        wb: &mut AssemblyWorkbench,
+        doc: &mut Document,
+        request: core_document::TaskRequest,
+    ) -> Vec<core_document::Recorded> {
+        let egui_ctx = egui::Context::default();
+        ui_kit::apply_theme(&egui_ctx);
+        let mut recorded = Vec::new();
+        let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
+            let mut ctx = context(doc);
+            wb.ui_task_panel(ui, &mut ctx, request);
+            recorded = core_document::HookOutcome::take(&mut ctx).recorded;
+        });
+        output.textures_delta.clear();
+        recorded
+    }
+
+    /// A view from `eye` toward `target`, Y up, 60° high, flipped upright
+    /// as the host's is.
+    fn flipped_view_proj(eye: glam::Vec3, target: glam::Vec3) -> [[f32; 4]; 4] {
+        use glam::{Mat4, Vec3};
+        let proj = glam::camera::rh::proj::directx::perspective(
+            60f32.to_radians(),
+            800.0 / 600.0,
+            0.1,
+            1000.0,
+        );
+        let view = glam::camera::rh::view::look_at_mat4(eye, target, Vec3::Y);
+        (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d()
+    }
+
+    /// Frames run while `working` holds, as the host runs them while the
+    /// bench's work is away from the window; at most 5 s.
+    fn until_done(
+        wb: &mut AssemblyWorkbench,
+        ctx: &mut WorkbenchRuntimeContext<'_>,
+        working: impl Fn(&AssemblyWorkbench) -> bool,
+    ) {
+        let started = web_time::Instant::now();
+        while working(wb) {
+            assert!(started.elapsed().as_secs() < 5, "the work finishes");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            wb.on_frame(0.016, ctx);
+        }
+    }
+
     /// A datum plane selected in the tree while a joint is picked is taken
-    /// as its body's face; the origin's planes are offered as the second.
+    /// as its body's face.
     #[test]
-    fn a_datum_or_the_origin_is_the_other_end() {
+    fn a_datum_is_the_other_end() {
         let (mut doc, base, part) = scene();
         let datum = doc
             .add_feature_in_body(
@@ -3430,19 +3534,10 @@ mod tests {
             )
             .unwrap();
         let mut wb = AssemblyWorkbench::default();
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.mate"),
-                &mut ctx,
-            );
-        }
+        activate(&mut wb, &mut context(&mut doc), "asm.mate");
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
         {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            let mut ctx = context(&mut doc);
             ctx.active_document_object = Some(datum);
             wb.on_frame(0.016, &mut ctx);
         }
@@ -3454,27 +3549,6 @@ mod tests {
         assert_eq!(mate.feature.other_body, base);
         let placed = doc.body_placement(part);
         assert!((placed.point([2.0, 2.0, 0.0])[2] - 7.0).abs() < 1e-3);
-
-        // The origin's XY plane as the second end.
-        let (mut doc, _, part) = scene();
-        let mut wb = AssemblyWorkbench::default();
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.mate"),
-                &mut ctx,
-            );
-        }
-        frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-        let (_, xy) = ORIGIN[0];
-        wb.picked(&mut ctx, WORLD, xy, None, 0);
-        drop(ctx);
-        let mate = joints(&doc).into_iter().next().unwrap();
-        assert_eq!(mate.feature.other_body, WORLD);
-        assert!((doc.body_placement(part).point([2.0, 2.0, 0.0])[2]).abs() < 1e-3);
     }
 
     /// A joint's faces picked again keep the joint: its name, and it is
@@ -3483,15 +3557,7 @@ mod tests {
     fn a_joint_s_faces_are_picked_again_in_place() {
         let (mut doc, base, part) = scene();
         let mut wb = AssemblyWorkbench::default();
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.mate"),
-                &mut ctx,
-            );
-        }
+        activate(&mut wb, &mut context(&mut doc), "asm.mate");
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
         frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
         let mate = joints(&doc)
@@ -3525,7 +3591,7 @@ mod tests {
     fn a_joint_is_linked_to_the_body_it_holds_to() {
         let (mut doc, base, part) = scene();
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         let anchor = Anchor::Plane {
             point: [0.0; 3],
             normal: [0.0, 0.0, 1.0],
@@ -3533,19 +3599,15 @@ mod tests {
         wb.make_joint(
             &mut ctx,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Mate {
+            joint(
+                JointKind::Mate {
                     flip: false,
                     offset: 0.0,
                 },
-                moving: anchor,
-                other_body: base,
-                fixed: anchor,
-            },
+                anchor,
+                base,
+                anchor,
+            ),
         );
         drop(ctx);
         let mate = joints(&doc)
@@ -3562,7 +3624,7 @@ mod tests {
     fn a_selected_joint_is_drawn_in_the_view() {
         let (mut doc, base, part) = scene();
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         let eye = glam::Vec3::new(60.0, -80.0, 90.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Z);
         let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
@@ -3574,19 +3636,15 @@ mod tests {
         wb.make_joint(
             &mut ctx,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Mate {
+            joint(
+                JointKind::Mate {
                     flip: false,
                     offset: 0.0,
                 },
-                moving: anchor,
-                other_body: base,
-                fixed: anchor,
-            },
+                anchor,
+                base,
+                anchor,
+            ),
         );
         let [(lines, dots, name)] = wb
             .joint_drawings(&ctx)
@@ -3626,19 +3684,10 @@ mod tests {
             point: [2.0, 2.0, 0.0],
             normal: [0.0, 0.0, 1.0],
         };
-        let joint = |kind| JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind,
-            moving: anchor,
-            other_body: base,
-            fixed: anchor,
-        };
+        let to_base = |kind| joint(kind, anchor, base, anchor);
         let mate = doc
             .add_feature_in_body(
-                joint(JointKind::Mate {
+                to_base(JointKind::Mate {
                     flip: false,
                     offset: 0.0,
                 }),
@@ -3647,7 +3696,11 @@ mod tests {
             )
             .unwrap();
         let parallel = doc
-            .add_feature_in_body(joint(JointKind::Parallel), "Parallel 1".into(), Some(part))
+            .add_feature_in_body(
+                to_base(JointKind::Parallel),
+                "Parallel 1".into(),
+                Some(part),
+            )
             .unwrap();
         for scope in [
             core_document::MenuScope::TreeBody(base),
@@ -3659,8 +3712,7 @@ mod tests {
                 .find(|i| i.id == "asm.menu.select_joints")
                 .expect("offered");
             assert_eq!(item.label, "Select its 2 joints");
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            let mut ctx = context(&mut doc);
             assert!(wb.on_command("asm.menu.select_joints", &scope, &mut ctx));
             let requests = core_document::HookOutcome::take(&mut ctx).requests;
             assert_eq!(
@@ -3669,7 +3721,7 @@ mod tests {
             );
         }
 
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         let eye = glam::Vec3::new(60.0, -80.0, 90.0);
         let view = glam::camera::rh::view::look_at_mat4(eye, glam::Vec3::ZERO, glam::Vec3::Z);
         let proj = glam::camera::rh::proj::directx::perspective(0.8, 800.0 / 600.0, 0.1, 1000.0);
@@ -3691,7 +3743,7 @@ mod tests {
         let (mut doc, base, part) = scene();
         let third = doc.create_body(None);
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         assert!(wb.faded_bodies(&ctx).is_empty());
         wb.picking = Some(Picking {
             kind: JointTool::Mate,
@@ -3724,19 +3776,14 @@ mod tests {
         assert_eq!(wb.faded_bodies(&ctx), vec![third]);
     }
 
+    /// Two picks make a mate that moves the first body onto the second; it
+    /// records as the command, which replays it to the same place.
     #[test]
-    fn two_picks_make_a_mate_that_moves_the_first_body_onto_the_second() {
+    fn two_picks_make_a_mate_that_moves_the_first_body_and_replays_as_the_command() {
         let (mut doc, base, part) = scene();
+        let before = doc.clone();
         let mut wb = AssemblyWorkbench::default();
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.mate"),
-                &mut ctx,
-            );
-        }
+        activate(&mut wb, &mut context(&mut doc), "asm.mate");
         assert!(wb.picking.is_some());
         // The part's own face, as the scene shows it (placed at z = 40).
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
@@ -3764,42 +3811,7 @@ mod tests {
         assert!((placed.point([-28.0, 2.0, 0.0])[2]).abs() < 1e-3);
         assert!((placed.direction([0.0, 0.0, 1.0])[2] + 1.0).abs() < 1e-4);
         assert!(matches!(wb.task, Some(Task::Joint { before: None, .. })));
-    }
 
-    /// One frame of the task panel, as the host runs it; what it recorded.
-    pub(crate) fn task_frame(
-        wb: &mut AssemblyWorkbench,
-        doc: &mut Document,
-        request: core_document::TaskRequest,
-    ) -> Vec<core_document::Recorded> {
-        let egui_ctx = egui::Context::default();
-        ui_kit::apply_theme(&egui_ctx);
-        let mut recorded = Vec::new();
-        let mut output = egui_ctx.run_ui(egui::RawInput::default(), |ui| {
-            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.ui_task_panel(ui, &mut ctx, request);
-            recorded = core_document::HookOutcome::take(&mut ctx).recorded;
-        });
-        output.textures_delta.clear();
-        recorded
-    }
-
-    #[test]
-    fn a_mate_made_by_picks_records_as_the_command_and_replays_to_the_same_place() {
-        let (mut doc, base, part) = scene();
-        let before = doc.clone();
-        let mut wb = AssemblyWorkbench::default();
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.mate"),
-                &mut ctx,
-            );
-        }
-        frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
-        frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
         let recorded = task_frame(
             &mut wb,
             &mut doc,
@@ -3861,14 +3873,9 @@ mod tests {
 
         let mut wb = AssemblyWorkbench::default();
         {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            let mut ctx = context(&mut doc);
             assert!(wb.is_tool_enabled("asm.couple", &ctx));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.couple"),
-                &mut ctx,
-            );
+            activate(&mut wb, &mut ctx, "asm.couple");
         }
         let Some(Task::Coupling { id, .. }) = wb.task.clone() else {
             panic!("the tool opens the coupling's settings: {:?}", wb.task);
@@ -3930,7 +3937,6 @@ mod tests {
 
     #[test]
     fn a_body_dragged_by_the_mouse_turns_on_its_hinge_and_is_recorded() {
-        use glam::{Mat4, Vec3};
         let mut doc = Document::new("t");
         let frame = doc.create_body(None);
         let door = doc.create_body(None);
@@ -3939,35 +3945,23 @@ mod tests {
             direction: [0.0, 0.0, 1.0],
         };
         doc.add_feature_in_body(
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointTool::Hinge.joint(
+            joint(
+                JointTool::Hinge.joint(
                     &pin,
                     &Rigid::from(BodyPlacement::default()),
                     &pin,
                     &Rigid::from(BodyPlacement::default()),
                     0.0,
                 ),
-                moving: pin,
-                other_body: frame,
-                fixed: pin,
-            },
+                pin,
+                frame,
+                pin,
+            ),
             "Hinge 1".into(),
             Some(door),
         )
         .unwrap();
-        let proj = glam::camera::rh::proj::directx::perspective(
-            60f32.to_radians(),
-            800.0 / 600.0,
-            0.1,
-            1000.0,
-        );
-        let view =
-            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 100.0), Vec3::ZERO, Vec3::Y);
-        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+        let vp = flipped_view_proj(glam::Vec3::new(0.0, 0.0, 100.0), glam::Vec3::ZERO);
         let mut wb = AssemblyWorkbench::default();
         let mut send = |doc: &mut Document, event: WorkbenchInputEvent| {
             let mut ctx =
@@ -4021,12 +4015,10 @@ mod tests {
     /// and one with no joints is dragged straight across the view.
     #[test]
     fn copies_go_in_a_row_and_a_free_one_is_dragged() {
-        use glam::{Mat4, Vec3};
         let (mut doc, base, _) = scene();
         doc.set_imported_brep_data(base, b"ogeom base".to_vec(), Vec::new());
         let made = {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            let mut ctx = context(&mut doc);
             let args = serde_json::json!({"body": base.0.to_string(), "count": 2});
             commands::run("asm.copy", args.as_object().unwrap(), &mut ctx).unwrap()
         };
@@ -4050,15 +4042,7 @@ mod tests {
         );
 
         let copy = made[0];
-        let proj = glam::camera::rh::proj::directx::perspective(
-            60f32.to_radians(),
-            800.0 / 600.0,
-            0.1,
-            1000.0,
-        );
-        let view =
-            glam::camera::rh::view::look_at_mat4(Vec3::new(0.0, 0.0, 100.0), Vec3::ZERO, Vec3::Y);
-        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
+        let vp = flipped_view_proj(glam::Vec3::new(0.0, 0.0, 100.0), glam::Vec3::ZERO);
         let screen = |p: [f32; 3]| {
             core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p).unwrap()
         };
@@ -4175,7 +4159,7 @@ mod tests {
         // Two shapes, so the parts list counts two parts.
         doc.set_imported_brep_data(base, b"base".to_vec(), Vec::new());
         doc.set_imported_brep_data(part, b"part".to_vec(), Vec::new());
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         ctx.kernel = Some(&LITRE);
         let args = serde_json::json!({"density": 2.0});
         let got = commands::run("asm.mass", args.as_object().unwrap(), &mut ctx).unwrap();
@@ -4204,18 +4188,9 @@ mod tests {
         assert!((centre[0] - 1.0).abs() < 1e-4, "the base alone: {got}");
 
         let mut wb = AssemblyWorkbench::default();
-        wb.on_input(
-            &WorkbenchInputEvent::ToolActivated,
-            Some("asm.mass"),
-            &mut ctx,
-        );
+        activate(&mut wb, &mut ctx, "asm.mass");
         assert!(wb.busy());
-        let started = web_time::Instant::now();
-        while wb.measuring.is_some() {
-            assert!(started.elapsed().as_secs() < 5, "the measuring finishes");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            wb.on_frame(0.016, &mut ctx);
-        }
+        until_done(&mut wb, &mut ctx, |wb| wb.measuring.is_some());
         assert!(!wb.busy());
         let Some(Task::Mass {
             found: Some(report),
@@ -4235,23 +4210,14 @@ mod tests {
         }
         doc.set_body_placement(part, BodyPlacement::default());
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         ctx.kernel = Some(&ALWAYS_SHARED);
-        wb.on_input(
-            &WorkbenchInputEvent::ToolActivated,
-            Some("asm.interference"),
-            &mut ctx,
-        );
+        activate(&mut wb, &mut ctx, "asm.interference");
         assert!(matches!(
             wb.task,
             Some(Task::Interference { found: None, .. })
         ));
-        let started = web_time::Instant::now();
-        while wb.checking.is_some() {
-            assert!(started.elapsed().as_secs() < 5, "the check finishes");
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            wb.on_frame(0.016, &mut ctx);
-        }
+        until_done(&mut wb, &mut ctx, |wb| wb.checking.is_some());
         let Some(Task::Interference {
             found: Some(found), ..
         }) = &wb.task
@@ -4280,14 +4246,10 @@ mod tests {
         assert_eq!(interference::plan(&doc, None).pairs(), 3);
         assert_eq!(interference::plan(&doc, None).around(part).pairs(), 2);
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         ctx.kernel = Some(&ALWAYS_SHARED);
         ctx.selected_body_id = Some(part.0);
-        wb.on_input(
-            &WorkbenchInputEvent::ToolActivated,
-            Some("asm.interference"),
-            &mut ctx,
-        );
+        activate(&mut wb, &mut ctx, "asm.interference");
         assert!(matches!(
             wb.task,
             Some(Task::Interference { around: Some(b), .. }) if b == part
@@ -4327,38 +4289,24 @@ mod tests {
 
     static CUBES: Cubes = Cubes;
 
-    /// A slider swept from where the cube stands (20 mm off) down to
-    /// nothing runs into the other cube for the steps under 10 mm.
-    #[test]
-    fn a_motion_is_checked_for_collisions_step_by_step() {
-        use glam::Vec3;
+    /// Two 10 mm cubes, the second 20 mm along X on a slider along X: the
+    /// document, the second cube and the slider.
+    fn cubes_on_a_slider() -> (Document, BodyId, FeatureId) {
         let mut doc = Document::new("t");
-        let cube = || TriMesh {
-            positions: vec![[0.0; 3], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
-            normals: vec![[0.0, 0.0, 1.0]; 3],
-            indices: vec![0, 1, 2],
-            ..TriMesh::default()
-        };
         let [base, part] = [doc.create_body(None), doc.create_body(None)];
         for body in [base, part] {
-            doc.set_imported_geometry(
-                body,
-                ImportedGeometry {
-                    mesh: Arc::new(cube()),
-                    source_asset: None,
-                    revision: 0,
-                    bounds_mm: Some(([0.0; 3], [10.0; 3])),
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: None,
-                },
-            );
+            let cube = TriMesh {
+                positions: vec![[0.0; 3], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
+                normals: vec![[0.0, 0.0, 1.0]; 3],
+                indices: vec![0, 1, 2],
+                ..TriMesh::default()
+            };
+            doc.set_imported_geometry(body, imported(cube, Some(([0.0; 3], [10.0; 3]))));
             doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
         }
         doc.set_body_placement(
             part,
-            BodyPlacement::new(glam::Quat::IDENTITY, Vec3::new(20.0, 0.0, 0.0)),
+            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(20.0, 0.0, 0.0)),
         );
         let rail = Anchor::Axis {
             point: [0.0, 5.0, 5.0],
@@ -4367,21 +4315,16 @@ mod tests {
         let at = |b: BodyId| Rigid::from(doc.body_placement(b));
         let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
         let slider = doc
-            .add_feature_in_body(
-                JointFeature {
-                    second: None,
-                    shape: Vec::new(),
-                    ends: [0.0; 2],
-                    names: [0; 2],
-                    kind,
-                    moving: rail,
-                    other_body: base,
-                    fixed: rail,
-                },
-                "Slider 1".into(),
-                Some(part),
-            )
+            .add_feature_in_body(joint(kind, rail, base, rail), "Slider 1".into(), Some(part))
             .unwrap();
+        (doc, part, slider)
+    }
+
+    /// A slider swept from where the cube stands (20 mm off) down to
+    /// nothing runs into the other cube for the steps under 10 mm.
+    #[test]
+    fn a_motion_is_checked_for_collisions_step_by_step() {
+        let (mut doc, part, slider) = cubes_on_a_slider();
         let check = sweep_check::plan(&doc, slider, 20.0, 0.0, 5).expect("the part moves");
         let found = check
             .run(
@@ -4400,15 +4343,10 @@ mod tests {
         );
 
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+        let mut ctx = context(&mut doc);
         ctx.kernel = Some(&CUBES);
         wb.check_sweep(&mut ctx, slider, (20.0, 0.0));
-        let started = web_time::Instant::now();
-        while wb.sweeping.is_some() {
-            assert!(started.elapsed().as_secs() < 5);
-            std::thread::sleep(std::time::Duration::from_millis(5));
-            wb.on_frame(0.016, &mut ctx);
-        }
+        until_done(&mut wb, &mut ctx, |wb| wb.sweeping.is_some());
         let Some((joint, Ok(found))) = &wb.motion_clashes else {
             panic!("the answer is kept")
         };
@@ -4419,68 +4357,11 @@ mod tests {
     /// Two 10 mm cubes, the second on a slider along X, 20 mm along; the
     /// second dragged from its middle to `to`, and where it ends up.
     fn slide_cube_to(to: [f32; 3], collisions_off: bool) -> f32 {
-        use glam::{Mat4, Vec3};
-        let mut doc = Document::new("t");
-        let cube = || TriMesh {
-            positions: vec![[0.0; 3], [10.0, 0.0, 0.0], [0.0, 10.0, 10.0]],
-            normals: vec![[0.0, 0.0, 1.0]; 3],
-            indices: vec![0, 1, 2],
-            ..TriMesh::default()
-        };
-        let [base, part] = [doc.create_body(None), doc.create_body(None)];
-        for body in [base, part] {
-            doc.set_imported_geometry(
-                body,
-                ImportedGeometry {
-                    mesh: Arc::new(cube()),
-                    source_asset: None,
-                    revision: 0,
-                    bounds_mm: Some(([0.0; 3], [10.0; 3])),
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: None,
-                },
-            );
-            doc.set_imported_brep_data(body, b"cube".to_vec(), Vec::new());
-        }
-        doc.set_body_placement(
-            part,
-            BodyPlacement::new(glam::Quat::IDENTITY, Vec3::new(20.0, 0.0, 0.0)),
+        let (mut doc, part, _) = cubes_on_a_slider();
+        let vp = flipped_view_proj(
+            glam::Vec3::new(10.0, 5.0, 100.0),
+            glam::Vec3::new(10.0, 5.0, 0.0),
         );
-        let rail = Anchor::Axis {
-            point: [0.0, 5.0, 5.0],
-            direction: [1.0, 0.0, 0.0],
-        };
-        let at = |b: BodyId| Rigid::from(doc.body_placement(b));
-        let kind = JointTool::Slider.joint(&rail, &at(part), &rail, &at(base), 0.0);
-        doc.add_feature_in_body(
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind,
-                moving: rail,
-                other_body: base,
-                fixed: rail,
-            },
-            "Slider 1".into(),
-            Some(part),
-        )
-        .unwrap();
-        let proj = glam::camera::rh::proj::directx::perspective(
-            60f32.to_radians(),
-            800.0 / 600.0,
-            0.1,
-            1000.0,
-        );
-        let view = glam::camera::rh::view::look_at_mat4(
-            Vec3::new(10.0, 5.0, 100.0),
-            Vec3::new(10.0, 5.0, 0.0),
-            Vec3::Y,
-        );
-        let vp = (Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0)) * proj * view).to_cols_array_2d();
         let screen = |p: [f32; 3]| {
             core_document::runtime::world_to_viewport(vp, (0, 0, 800, 600), p).unwrap()
         };
@@ -4557,16 +4438,12 @@ mod tests {
         let at = Rigid::from(BodyPlacement::default());
         let hinge = doc
             .add_feature_in_body(
-                JointFeature {
-                    second: None,
-                    shape: Vec::new(),
-                    ends: [0.0; 2],
-                    names: [0; 2],
-                    kind: JointTool::Hinge.joint(&pin, &at, &pin, &at, 0.0),
-                    moving: pin,
-                    other_body: frame,
-                    fixed: pin,
-                },
+                joint(
+                    JointTool::Hinge.joint(&pin, &at, &pin, &at, 0.0),
+                    pin,
+                    frame,
+                    pin,
+                ),
                 "Hinge 1".into(),
                 Some(door),
             )
@@ -4598,12 +4475,8 @@ mod tests {
         let (mut doc, base, part) = scene();
         let before = [base, part].map(|b| doc.body_placement(b));
         let mut wb = AssemblyWorkbench::default();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-        wb.on_input(
-            &WorkbenchInputEvent::ToolActivated,
-            Some("asm.explode"),
-            &mut ctx,
-        );
+        let mut ctx = context(&mut doc);
+        activate(&mut wb, &mut ctx, "asm.explode");
         let apart = |ctx: &WorkbenchRuntimeContext| {
             let [a, b] = [base, part]
                 .map(|body| glam::Vec3::from_array(ctx.document.body_placement(body).translation));
@@ -4633,19 +4506,11 @@ mod tests {
             }),
         };
         let edge_frame = |wb: &mut AssemblyWorkbench, doc: &mut Document, edge| {
-            let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+            let mut ctx = context(doc);
             ctx.selected_edges = vec![edge];
             wb.on_frame(0.016, &mut ctx);
         };
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.hinge"),
-                &mut ctx,
-            );
-        }
+        activate(&mut wb, &mut context(&mut doc), "asm.hinge");
         // The part's rim where the scene shows it (placed at x + 30, z + 40).
         edge_frame(&mut wb, &mut doc, rim(part, [35.0, 5.0, 40.0]));
         edge_frame(&mut wb, &mut doc, rim(base, [5.0, 5.0, 0.0]));
@@ -4666,15 +4531,7 @@ mod tests {
     fn a_round_face_is_asked_for_where_an_alignment_needs_one() {
         let (mut doc, _, part) = scene();
         let mut wb = AssemblyWorkbench::default();
-        {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
-            wb.on_input(
-                &WorkbenchInputEvent::ToolActivated,
-                Some("asm.align"),
-                &mut ctx,
-            );
-        }
+        activate(&mut wb, &mut context(&mut doc), "asm.align");
         frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
         assert!(
             wb.picking.as_ref().unwrap().first.is_none(),

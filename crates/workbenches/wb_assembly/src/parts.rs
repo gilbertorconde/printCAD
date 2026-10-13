@@ -644,6 +644,7 @@ pub fn levels_csv(parts: &[Part], rows: &[LevelRow], columns: &[String]) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::imported;
 
     #[test]
     fn a_list_by_component_nests_its_parts() {
@@ -824,19 +825,7 @@ mod tests {
     fn an_array_counts_its_occurrences_as_one_part() {
         let mut document = Document::new("t");
         let peg = document.create_body(Some("Peg".into()));
-        document.set_imported_geometry(
-            peg,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(cube(5.0)),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        document.set_imported_geometry(peg, imported(cube(5.0), None));
         document.set_imported_brep_data(peg, b"peg".to_vec(), Vec::new());
         let row = core_document::ArrayPattern::Linear {
             direction: [1.0, 0.0, 0.0],
@@ -872,19 +861,7 @@ mod tests {
         let a = document.create_body(Some("Cube".into()));
         let b = document.create_body(Some("Steel cube".into()));
         for (body, size) in [(a, 10.0), (b, 20.0)] {
-            document.set_imported_geometry(
-                body,
-                core_document::ImportedGeometry {
-                    mesh: std::sync::Arc::new(cube(size)),
-                    source_asset: None,
-                    revision: 0,
-                    bounds_mm: None,
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: None,
-                },
-            );
+            document.set_imported_geometry(body, imported(cube(size), None));
         }
         document.set_body_material(
             b,

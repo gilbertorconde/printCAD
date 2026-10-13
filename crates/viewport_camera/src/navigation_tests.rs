@@ -28,6 +28,36 @@ pub(crate) fn projections() -> [Projection; 2] {
     ]
 }
 
+/// `settings` saved and read back, checking the round trip, then read again
+/// with `fields` taken out, as a file saved before they existed.
+pub(crate) fn loaded_without(settings: NavigationSettings, fields: &[&str]) -> NavigationSettings {
+    let mut json = serde_json::to_value(settings).unwrap();
+    assert_eq!(
+        serde_json::from_value::<NavigationSettings>(json.clone()).unwrap(),
+        settings,
+        "round trip"
+    );
+    for field in fields {
+        assert!(
+            json.as_object_mut().unwrap().remove(*field).is_some(),
+            "{field}"
+        );
+    }
+    serde_json::from_value(json).unwrap()
+}
+
+/// Each of `values`, put into the CAD settings by `set`, fails validation.
+pub(crate) fn rejects<T: Copy + std::fmt::Debug>(
+    values: &[T],
+    set: impl Fn(&mut NavigationSettings, T),
+) {
+    for &value in values {
+        let mut settings = NavigationSettings::cad();
+        set(&mut settings, value);
+        assert!(settings.validate().is_err(), "{value:?}");
+    }
+}
+
 #[test]
 fn off_center_orbit_anchor_stays_fixed_for_both_projections_and_orbit_policies() {
     let mut checked = 0;
@@ -239,24 +269,9 @@ fn ground_orbit_pitch_clamps_at_poles_and_small_reverse_motion_leaves_them() {
 
 #[test]
 fn invalid_navigation_settings_fail_at_the_file_boundary() {
-    for speed in [0.0, -1.0, 4.0, f32::NAN, f32::INFINITY] {
-        assert!(
-            NavigationSettings {
-                orbit_speed: speed,
-                ..NavigationSettings::cad()
-            }
-            .validate()
-            .is_err()
-        );
-        assert!(
-            NavigationSettings {
-                zoom_speed: speed,
-                ..NavigationSettings::cad()
-            }
-            .validate()
-            .is_err()
-        );
-    }
+    let speeds = [0.0, -1.0, 4.0, f32::NAN, f32::INFINITY];
+    rejects(&speeds, |s, speed| s.orbit_speed = speed);
+    rejects(&speeds, |s, speed| s.zoom_speed = speed);
 }
 
 #[test]
@@ -265,29 +280,20 @@ fn limits_and_depth_reject_invalid_and_unrepresentable_file_values() {
     use crate::scale::PerPx;
 
     use crate::navigation::FallbackDepth;
-    let mut checked = 0;
     // Raw tuple constructors on purpose: these are the values a file can carry past
     // `PerPx::new`/`Length::new`, and `validate` is what must reject them.
-    for value in [0.0, -1.0, 1e-10, 1e30, f64::NAN, f64::INFINITY] {
-        for field in 0..4 {
-            let mut settings = NavigationSettings::cad();
-            match field {
-                0 => settings.limits.min_scale = PerPx(value),
-                1 => settings.limits.max_scale = PerPx(value),
-                2 => settings.limits.initial_depth = Length(value),
-                _ => settings.limits.fallback_depth = FallbackDepth::Fixed(Length(value)),
-            }
-            assert!(settings.validate().is_err());
-            checked += 1;
-        }
-    }
+    let values = [0.0, -1.0, 1e-10, 1e30, f64::NAN, f64::INFINITY];
+    rejects(&values, |s, v| s.limits.min_scale = PerPx(v));
+    rejects(&values, |s, v| s.limits.max_scale = PerPx(v));
+    rejects(&values, |s, v| s.limits.initial_depth = Length(v));
+    rejects(&values, |s, v| {
+        s.limits.fallback_depth = FallbackDepth::Fixed(Length(v))
+    });
     for max in [0.04, 0.05] {
         let mut settings = NavigationSettings::cad();
         settings.limits.max_scale = PerPx(max);
         assert!(settings.validate().unwrap_err().contains("less than"));
-        checked += 1;
     }
-    assert_eq!(checked, 26);
 }
 
 /// 🎯 **Pan holds the point under the pointer, not the pivot's depth.**
@@ -374,14 +380,11 @@ fn pan_grip_is_saved_and_absent_field_loads_as_pointer() {
         pan_grip: PanGrip::PivotDepth,
         ..NavigationSettings::cad()
     };
-    let mut json = serde_json::to_value(settings).unwrap();
-    assert_eq!(json["pan_grip"], "PivotDepth");
     assert_eq!(
-        serde_json::from_value::<NavigationSettings>(json.clone()).unwrap(),
-        settings
+        serde_json::to_value(settings).unwrap()["pan_grip"],
+        "PivotDepth"
     );
-    json.as_object_mut().unwrap().remove("pan_grip");
-    let legacy: NavigationSettings = serde_json::from_value(json).unwrap();
+    let legacy = loaded_without(settings, &["pan_grip"]);
     assert_eq!(legacy.pan_grip, PanGrip::Pointer);
 }
 
@@ -392,16 +395,6 @@ fn fov_wheel_is_saved_and_legacy_documents_enable_it() {
             fov_wheel: enabled,
             ..NavigationSettings::cad()
         };
-        let mut json = serde_json::to_value(settings).unwrap();
-        assert_eq!(
-            serde_json::from_value::<NavigationSettings>(json.clone()).unwrap(),
-            settings
-        );
-        json.as_object_mut().unwrap().remove("fov_wheel");
-        assert!(
-            serde_json::from_value::<NavigationSettings>(json)
-                .unwrap()
-                .fov_wheel
-        );
+        assert!(loaded_without(settings, &["fov_wheel"]).fov_wheel);
     }
 }

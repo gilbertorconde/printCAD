@@ -4283,6 +4283,7 @@ fn unchecked_json(unchecked: &[crate::interference::Unchecked]) -> Vec<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::imported;
     use core_document::Document;
 
     /// Run a command as a script does: its arguments checked against its
@@ -4301,10 +4302,58 @@ mod tests {
         run(id, args, &mut ctx)
     }
 
-    #[test]
-    fn a_mate_puts_one_body_s_face_on_the_other_s() {
+    /// Run joint command `id` holding `body`'s `face` to `other`'s
+    /// `other_face`, with the `extra` arguments.
+    fn join(
+        doc: &mut Document,
+        id: &str,
+        body: BodyId,
+        face: &Value,
+        other: BodyId,
+        other_face: &Value,
+        extra: Value,
+    ) -> CommandResult {
+        let mut args = json!({"body": body.0.to_string(), "face": face,
+                              "other": other.0.to_string(), "other_face": other_face});
+        let args_map = args.as_object_mut().unwrap();
+        args_map.extend(extra.as_object().unwrap().clone());
+        call(doc, id, args)
+    }
+
+    /// A document of two bodies.
+    fn two() -> (Document, BodyId, BodyId) {
         let mut doc = Document::new("t");
         let (a, b) = (doc.create_body(None), doc.create_body(None));
+        (doc, a, b)
+    }
+
+    /// The feature a command answered with.
+    fn feature(id: &Value) -> FeatureId {
+        FeatureId(uuid::Uuid::parse_str(id.as_str().unwrap()).unwrap())
+    }
+
+    /// Unturned, at (`x`, `y`, `z`).
+    fn at(x: f32, y: f32, z: f32) -> BodyPlacement {
+        BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(x, y, z))
+    }
+
+    /// Where `joint` stands, as `asm.travel` reads it.
+    fn travel(doc: &mut Document, joint: &Value) -> f64 {
+        call(doc, "asm.travel", json!({"joint": joint}))
+            .unwrap()
+            .as_f64()
+            .unwrap()
+    }
+
+    /// How far `body` is turned about Z, in degrees.
+    fn turned_deg(doc: &Document, body: BodyId) -> f32 {
+        let x = doc.body_placement(body).direction([1.0, 0.0, 0.0]);
+        x[1].atan2(x[0]).to_degrees()
+    }
+
+    #[test]
+    fn a_mate_puts_one_body_s_face_on_the_other_s() {
+        let (mut doc, a, b) = two();
         call(
             &mut doc,
             "asm.move",
@@ -4312,55 +4361,42 @@ mod tests {
         )
         .unwrap();
         // a's bottom (at z = 50 where it sits) onto b's top at z = 10.
-        let joint = call(
+        let joint = join(
             &mut doc,
             "asm.mate",
-            json!({
-                "body": a.0.to_string(),
-                "face": {"point": [0, 0, 50], "normal": [0, 0, -1]},
-                "other": b.0.to_string(),
-                "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
-                "offset": 2,
-            }),
+            a,
+            &json!({"point": [0, 0, 50], "normal": [0, 0, -1]}),
+            b,
+            &json!({"point": [0, 0, 10], "normal": [0, 0, 1]}),
+            json!({"offset": 2}),
         )
         .unwrap();
         let z = doc.body_placement(a).translation[2];
         assert!((z - 12.0).abs() < 1e-3, "{z}");
         call(&mut doc, "asm.set", json!({"joint": joint, "offset": 5})).unwrap();
         assert!((doc.body_placement(a).translation[2] - 15.0).abs() < 1e-3);
-        let err = call(
+        let err = join(
             &mut doc,
             "asm.align",
-            json!({
-                "body": a.0.to_string(),
-                "face": {"point": [0, 0, 0], "normal": [0, 0, 1]},
-                "other": b.0.to_string(),
-                "other_face": {"point": [0, 0, 0], "normal": [0, 0, 1]},
-            }),
+            a,
+            &json!({"point": [0, 0, 0], "normal": [0, 0, 1]}),
+            b,
+            &json!({"point": [0, 0, 0], "normal": [0, 0, 1]}),
+            json!({}),
         );
         assert!(err.is_err(), "an alignment takes round faces");
     }
 
     #[test]
     fn a_tangent_takes_its_radius_from_the_round_face_and_either_order() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let roller = json!({"axis": {"point": [0, 0, 0], "direction": [1, 0, 0]}, "radius": 4});
         let top = json!({"point": [0, 0, 10], "normal": [0, 0, 1]});
-        let joint = call(
-            &mut doc,
-            "asm.tangent",
-            json!({"body": a.0.to_string(), "face": roller, "other": b.0.to_string(), "other_face": top}),
-        )
-        .unwrap();
+        let joint = join(&mut doc, "asm.tangent", a, &roller, b, &top, json!({})).unwrap();
         assert!((doc.body_placement(a).translation[2] - 14.0).abs() < 1e-3);
         call(&mut doc, "asm.set", json!({"joint": joint, "radius": 6})).unwrap();
         assert!((doc.body_placement(a).translation[2] - 16.0).abs() < 1e-3);
-        let both_flat = call(
-            &mut doc,
-            "asm.tangent",
-            json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
-        );
+        let both_flat = join(&mut doc, "asm.tangent", a, &top, b, &top, json!({}));
         assert!(both_flat.is_err(), "one face of each");
     }
 
@@ -4369,45 +4405,38 @@ mod tests {
     /// other way round, a mate turned over faces the same way.
     #[test]
     fn a_joint_s_body_turns_and_turns_over_and_stays() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-        let hinge = call(
+        let hinge = join(
             &mut doc,
             "asm.hinge",
-            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
-                   "drive": 30}),
+            a,
+            &pin,
+            b,
+            &pin,
+            json!({"drive": 30}),
         )
         .unwrap();
         call(&mut doc, "asm.turn", json!({"joint": hinge, "degrees": 20})).unwrap();
-        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
-        assert!((x[1].atan2(x[0]).to_degrees() - 50.0).abs() < 1e-2, "{x:?}");
+        let turned = turned_deg(&doc, a);
+        assert!((turned - 50.0).abs() < 1e-2, "{turned}");
         // The drive moved with it: the hinge reads where the body is.
-        let travel = call(&mut doc, "asm.travel", json!({"joint": hinge})).unwrap();
-        assert!((travel.as_f64().unwrap() - 50.0).abs() < 1e-2, "{travel}");
+        let reads = travel(&mut doc, &hinge);
+        assert!((reads - 50.0).abs() < 1e-2, "{reads}");
         call(&mut doc, "asm.solve", json!({})).unwrap();
-        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
-        assert!(
-            (x[1].atan2(x[0]).to_degrees() - 50.0).abs() < 1e-2,
-            "stays: {x:?}"
-        );
+        let turned = turned_deg(&doc, a);
+        assert!((turned - 50.0).abs() < 1e-2, "stays: {turned}");
 
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
-        let mate = call(
-            &mut doc,
-            "asm.mate",
-            json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
-        )
-        .unwrap();
+        let mate = join(&mut doc, "asm.mate", a, &top, b, &top, json!({})).unwrap();
         let up = doc.body_placement(a).direction([0.0, 0.0, 1.0]);
         assert!(up[2] < -0.99, "faces the other: {up:?}");
         call(&mut doc, "asm.flip", json!({"joint": mate})).unwrap();
         call(&mut doc, "asm.solve", json!({})).unwrap();
         let up = doc.body_placement(a).direction([0.0, 0.0, 1.0]);
         assert!(up[2] > 0.99, "the same way now: {up:?}");
-        let id = FeatureId(uuid::Uuid::parse_str(mate.as_str().unwrap()).unwrap());
+        let id = feature(&mate);
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         assert!(matches!(data.kind, JointKind::Mate { flip: true, .. }));
@@ -4419,33 +4448,26 @@ mod tests {
     /// keeps no turn, is refused.
     #[test]
     fn a_quarter_turn_moves_a_joint_s_own_turn_and_its_body() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-        let hinge = call(
+        let hinge = join(
             &mut doc,
             "asm.hinge",
-            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
-                   "drive": 30, "limits": [-45, 45]}),
+            a,
+            &pin,
+            b,
+            &pin,
+            json!({"drive": 30, "limits": [-45, 45]}),
         )
         .unwrap();
-        let angle = |doc: &Document| {
-            let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
-            x[1].atan2(x[0]).to_degrees()
-        };
-        let travel = |doc: &mut Document| {
-            call(doc, "asm.travel", json!({"joint": hinge}))
-                .unwrap()
-                .as_f64()
-                .unwrap()
-        };
+        let angle = |doc: &Document| turned_deg(doc, a);
         call(&mut doc, "asm.turn90", json!({"joint": hinge})).unwrap();
         assert!((angle(&doc) - 120.0).abs() < 1e-2, "{}", angle(&doc));
         assert!(
-            (travel(&mut doc) - 30.0).abs() < 1e-2,
+            (travel(&mut doc, &hinge) - 30.0).abs() < 1e-2,
             "the hinge reads as it did"
         );
-        let id = FeatureId(uuid::Uuid::parse_str(hinge.as_str().unwrap()).unwrap());
+        let id = feature(&hinge);
         let data: JointFeature =
             serde_json::from_value(doc.get_feature_data(id).unwrap().clone()).unwrap();
         let JointKind::Hinge { drive, .. } = data.kind else {
@@ -4463,8 +4485,7 @@ mod tests {
         .unwrap();
         assert!((angle(&doc) - 30.0).abs() < 1e-2, "{}", angle(&doc));
 
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         call(
             &mut doc,
             "asm.move",
@@ -4485,12 +4506,7 @@ mod tests {
 
         let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
         let c = doc.create_body(None);
-        let mate = call(
-            &mut doc,
-            "asm.mate",
-            json!({"body": c.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
-        )
-        .unwrap();
+        let mate = join(&mut doc, "asm.mate", c, &top, b, &top, json!({})).unwrap();
         assert!(call(&mut doc, "asm.turn90", json!({"joint": mate})).is_err());
     }
 
@@ -4506,18 +4522,11 @@ mod tests {
         ];
         let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
         let mate = |doc: &mut Document, body: BodyId, other: BodyId| {
-            call(
-                doc,
-                "asm.mate",
-                json!({"body": body.0.to_string(), "face": top, "other": other.0.to_string(),
-                       "other_face": top}),
-            )
-            .unwrap()
+            join(doc, "asm.mate", body, &top, other, &top, json!({})).unwrap()
         };
         let ground = call(&mut doc, "asm.ground", json!({"body": a.0.to_string()})).unwrap();
         let ab = mate(&mut doc, b, a);
         let cb = mate(&mut doc, c, b);
-        let id = |v: &Value| FeatureId(uuid::Uuid::parse_str(v.as_str().unwrap()).unwrap());
 
         let selected = |doc: &mut Document, body: BodyId| {
             let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
@@ -4535,44 +4544,16 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|r| id(&r["joint"]))
+                .map(|r| feature(&r["joint"]))
                 .collect();
             assert_eq!(&answered, features);
             answered
         };
-        assert_eq!(selected(&mut doc, a), [id(&ground), id(&ab)]);
-        assert_eq!(selected(&mut doc, b), [id(&ab), id(&cb)]);
-        assert_eq!(selected(&mut doc, c), [id(&cb)]);
+        assert_eq!(selected(&mut doc, a), [feature(&ground), feature(&ab)]);
+        assert_eq!(selected(&mut doc, b), [feature(&ab), feature(&cb)]);
+        assert_eq!(selected(&mut doc, c), [feature(&cb)]);
         let d = doc.create_body(None);
         assert!(selected(&mut doc, d).is_empty(), "none: the document");
-    }
-
-    /// A joint the bodies cannot hold is listed as unmet; one that holds
-    /// is not.
-    #[test]
-    fn a_joint_left_apart_is_unmet() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
-        let up = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
-        let down = json!({"point": [0, 0, 0], "normal": [0, 0, -1]});
-        call(
-            &mut doc,
-            "asm.distance",
-            json!({"body": b.0.to_string(), "face": down, "other": a.0.to_string(),
-                   "other_face": up, "offset": 5}),
-        )
-        .unwrap();
-        assert_eq!(call(&mut doc, "asm.unmet", json!({})).unwrap(), json!([]));
-        let mut clash = crate::joints(&doc)[0].feature.clone();
-        clash.kind = JointKind::Distance { offset: 9.0 };
-        let clash = doc
-            .add_feature_in_body(clash, "Clash".into(), Some(b))
-            .unwrap();
-        let found = call(&mut doc, "asm.unmet", json!({})).unwrap();
-        assert_eq!(
-            found,
-            json!([{"joint": clash.0.to_string(), "name": "Clash"}])
-        );
     }
 
     /// Turning either of two geared hinges turns both: the driver by what
@@ -4587,13 +4568,7 @@ mod tests {
         ];
         let pin = |x: f32| json!({"axis": {"point": [x, 0, 0], "direction": [0, 0, 1]}});
         let hinge = |doc: &mut Document, body: BodyId, x: f32| {
-            call(
-                doc,
-                "asm.hinge",
-                json!({"body": body.0.to_string(), "face": pin(x), "other": base.0.to_string(),
-                       "other_face": pin(x)}),
-            )
-            .unwrap()
+            join(doc, "asm.hinge", body, &pin(x), base, &pin(x), json!({})).unwrap()
         };
         let h1 = hinge(&mut doc, g1, -20.0);
         let h2 = hinge(&mut doc, g2, 10.0);
@@ -4603,12 +4578,6 @@ mod tests {
             json!({"driver": h1, "driven": h2, "gearing": "gears", "ratio": 2}),
         )
         .unwrap();
-        let travel = |doc: &mut Document, joint: &Value| {
-            call(doc, "asm.travel", json!({"joint": joint}))
-                .unwrap()
-                .as_f64()
-                .unwrap()
-        };
         call(&mut doc, "asm.turn", json!({"joint": h1, "degrees": 30})).unwrap();
         assert!((travel(&mut doc, &h1) - 30.0).abs() < 1e-2);
         assert!((travel(&mut doc, &h2) + 60.0).abs() < 1e-2);
@@ -4628,17 +4597,10 @@ mod tests {
     #[test]
     fn a_slider_turns_its_body_onto_the_axis() {
         for along in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [1.0, 1.0, 0.0]] {
-            let mut doc = Document::new("t");
-            let (a, b) = (doc.create_body(None), doc.create_body(None));
+            let (mut doc, a, b) = two();
             let peg = json!({"axis": {"point": [0, 0, 20], "direction": along}});
             let hole = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-            call(
-                &mut doc,
-                "asm.slider",
-                json!({"body": a.0.to_string(), "face": peg, "other": b.0.to_string(),
-                       "other_face": hole}),
-            )
-            .unwrap();
+            join(&mut doc, "asm.slider", a, &peg, b, &hole, json!({})).unwrap();
             let d = doc.body_placement(a).direction(along);
             let n = glam::Vec3::from_array(d).normalize();
             assert!(n.z.abs() > 0.999, "{along:?} now {d:?}");
@@ -4648,15 +4610,9 @@ mod tests {
     /// Faces that start exactly parallel are turned square.
     #[test]
     fn perpendicular_faces_start_parallel_and_end_square() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let up = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
-        call(
-            &mut doc,
-            "asm.perpendicular",
-            json!({"body": a.0.to_string(), "face": up, "other": b.0.to_string(), "other_face": up}),
-        )
-        .unwrap();
+        join(&mut doc, "asm.perpendicular", a, &up, b, &up, json!({})).unwrap();
         let n = doc.body_placement(a).direction([0.0, 0.0, 1.0]);
         assert!(n[2].abs() < 1e-3, "square to Z: {n:?}");
     }
@@ -4694,10 +4650,7 @@ mod tests {
     fn copies_spread_round_an_axis() {
         let mut doc = Document::new("t");
         let arm = doc.create_body(Some("Arm".into()));
-        doc.set_body_placement(
-            arm,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(10.0, 0.0, 0.0)),
-        );
+        doc.set_body_placement(arm, at(10.0, 0.0, 0.0));
         let made = call(
             &mut doc,
             "asm.copy",
@@ -4727,45 +4680,39 @@ mod tests {
     /// goes to the new body's, which sits on the base; the old is hidden.
     #[test]
     fn a_replacement_takes_the_joints_on_its_own_faces() {
-        use std::sync::Arc;
         let mut doc = Document::new("t");
         let [base, old, new] = [
             doc.create_body(Some("Base".into())),
             doc.create_body(Some("Old".into())),
             doc.create_body(Some("New".into())),
         ];
-        let with_bottom = |z: f32| core_document::ImportedGeometry {
-            mesh: Arc::new(kernel_api::TriMesh {
-                positions: vec![[0.0, 0.0, z], [10.0, 0.0, z], [0.0, 10.0, z]],
-                normals: vec![[0.0, 0.0, -1.0]; 3],
-                indices: vec![0, 2, 1],
-                faces: vec![0],
-                face_surfaces: vec![kernel_api::FaceSurface::Plane {
-                    origin: [0.0, 0.0, z],
-                    normal: [0.0, 0.0, -1.0],
-                }],
-                ..kernel_api::TriMesh::default()
-            }),
-            source_asset: None,
-            revision: 0,
-            bounds_mm: None,
-            brep_blob_path: None,
-            mesh_path: None,
-            face_colors_path: None,
-            health: None,
+        let with_bottom = |z: f32| {
+            imported(
+                kernel_api::TriMesh {
+                    positions: vec![[0.0, 0.0, z], [10.0, 0.0, z], [0.0, 10.0, z]],
+                    normals: vec![[0.0, 0.0, -1.0]; 3],
+                    indices: vec![0, 2, 1],
+                    faces: vec![0],
+                    face_surfaces: vec![kernel_api::FaceSurface::Plane {
+                        origin: [0.0, 0.0, z],
+                        normal: [0.0, 0.0, -1.0],
+                    }],
+                    ..kernel_api::TriMesh::default()
+                },
+                None,
+            )
         };
         doc.set_imported_geometry(old, with_bottom(0.0));
         doc.set_imported_geometry(new, with_bottom(2.0));
-        doc.set_body_placement(
-            old,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 30.0)),
-        );
-        call(
+        doc.set_body_placement(old, at(0.0, 0.0, 30.0));
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": old.0.to_string(), "face": {"point": [0, 0, 30], "normal": [0, 0, -1]},
-                   "other": base.0.to_string(), "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
-                   "offset": 0}),
+            old,
+            &json!({"point": [0, 0, 30], "normal": [0, 0, -1]}),
+            base,
+            &json!({"point": [0, 0, 10], "normal": [0, 0, 1]}),
+            json!({"offset": 0}),
         )
         .unwrap();
         assert!((doc.body_placement(old).translation[2] - 10.0).abs() < 1e-3);
@@ -4790,16 +4737,9 @@ mod tests {
     /// moves nothing in the document.
     #[test]
     fn a_motion_drives_its_joints_over_time() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-        let hinge = call(
-            &mut doc,
-            "asm.hinge",
-            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
-                   "drive": 0}),
-        )
-        .unwrap();
+        let hinge = join(&mut doc, "asm.hinge", a, &pin, b, &pin, json!({"drive": 0})).unwrap();
         let study = call(
             &mut doc,
             "asm.motion",
@@ -4836,8 +4776,7 @@ mod tests {
     /// An exploded view kept by a script plays its steps in order.
     #[test]
     fn an_exploded_view_is_kept_and_played() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let view = call(
             &mut doc,
             "asm.exploded_view",
@@ -4865,26 +4804,15 @@ mod tests {
     /// sat and which were hidden.
     #[test]
     fn a_saved_state_is_returned_to() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-        let hinge = call(
-            &mut doc,
-            "asm.hinge",
-            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
-                   "drive": 0}),
-        )
-        .unwrap();
+        let hinge = join(&mut doc, "asm.hinge", a, &pin, b, &pin, json!({"drive": 0})).unwrap();
         let folded = call(&mut doc, "asm.save_state", json!({"name": "Folded"})).unwrap();
         call(&mut doc, "asm.set", json!({"joint": hinge, "drive": 90})).unwrap();
         doc.set_body_visible(b, false);
-        let turned = |doc: &Document| {
-            let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
-            x[1].atan2(x[0]).to_degrees()
-        };
-        assert!((turned(&doc) - 90.0).abs() < 1e-2);
+        assert!((turned_deg(&doc, a) - 90.0).abs() < 1e-2);
         call(&mut doc, "asm.restore_state", json!({"state": folded})).unwrap();
-        assert!(turned(&doc).abs() < 1e-2, "{}", turned(&doc));
+        assert!(turned_deg(&doc, a).abs() < 1e-2, "{}", turned_deg(&doc, a));
         assert!(doc.bodies().iter().all(|x| !x.hidden));
     }
 
@@ -4892,25 +4820,22 @@ mod tests {
     /// redundant; the mate alone is not.
     #[test]
     fn a_joint_holding_nothing_new_is_redundant() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
         let under = json!({"point": [0, 0, 0], "normal": [0, 0, -1]});
-        call(
-            &mut doc,
-            "asm.mate",
-            json!({"body": a.0.to_string(), "face": under, "other": b.0.to_string(), "other_face": top}),
-        )
-        .unwrap();
+        join(&mut doc, "asm.mate", a, &under, b, &top, json!({})).unwrap();
         assert_eq!(
             call(&mut doc, "asm.redundant", json!({})).unwrap(),
             json!([])
         );
-        call(
+        join(
             &mut doc,
             "asm.parallel",
-            json!({"body": a.0.to_string(), "face": under, "other": b.0.to_string(), "other_face": top,
-                   "name": "Extra"}),
+            a,
+            &under,
+            b,
+            &top,
+            json!({"name": "Extra"}),
         )
         .unwrap();
         let found = call(&mut doc, "asm.redundant", json!({})).unwrap();
@@ -4926,15 +4851,16 @@ mod tests {
     /// A tab centred in a slot: its middle on the slot's middle.
     #[test]
     fn a_tab_is_centred_in_its_slot() {
-        let mut doc = Document::new("t");
-        let (tab, slot) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, tab, slot) = two();
         let face = |x: f32, n: f32| json!({"point": [x, 0, 0], "normal": [n, 0, 0]});
-        call(
+        join(
             &mut doc,
             "asm.width",
-            json!({"body": tab.0.to_string(), "face": face(0.0, -1.0), "face2": face(4.0, 1.0),
-                   "other": slot.0.to_string(), "other_face": face(10.0, 1.0),
-                   "other_face2": face(20.0, -1.0)}),
+            tab,
+            &face(0.0, -1.0),
+            slot,
+            &face(10.0, 1.0),
+            json!({"face2": face(4.0, 1.0), "other_face2": face(20.0, -1.0)}),
         )
         .unwrap();
         let middle = doc.body_placement(tab).point([2.0, 0.0, 0.0]);
@@ -4945,9 +4871,7 @@ mod tests {
     /// a cam sits a roller's radius off the cam's face.
     #[test]
     fn a_path_and_a_cam_hold_to_the_other_body_s_edge_and_face() {
-        use std::sync::Arc;
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         // An L-shaped edge along X then Y at height 10, and a floor face at
         // z = 10 facing up.
         let mesh = kernel_api::TriMesh {
@@ -4964,28 +4888,16 @@ mod tests {
             edge_ids: vec![4, 4],
             ..kernel_api::TriMesh::default()
         };
-        doc.set_imported_geometry(
-            b,
-            core_document::ImportedGeometry {
-                mesh: Arc::new(mesh),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
-        doc.set_body_placement(
-            a,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(18.0, 6.0, 15.0)),
-        );
-        call(
+        doc.set_imported_geometry(b, imported(mesh, None));
+        doc.set_body_placement(a, at(18.0, 6.0, 15.0));
+        join(
             &mut doc,
             "asm.path",
-            json!({"body": a.0.to_string(), "face": {"point": [18, 6, 15]}, "other": b.0.to_string(),
-                   "other_face": {"point": [20, 5, 10]}}),
+            a,
+            &json!({"point": [18, 6, 15]}),
+            b,
+            &json!({"point": [20, 5, 10]}),
+            json!({}),
         )
         .unwrap();
         let at = doc.body_placement(a).point([0.0; 3]);
@@ -5004,11 +4916,14 @@ mod tests {
         for id in crate::joints(doc).iter().map(|j| j.id).collect::<Vec<_>>() {
             doc.remove_feature(id).unwrap();
         }
-        call(
+        join(
             doc,
             "asm.cam",
-            json!({"body": a.0.to_string(), "face": {"point": [5, 5, 30]}, "other": b.0.to_string(),
-                   "other_face": {"point": [5, 5, 10]}, "radius": 2}),
+            a,
+            &json!({"point": [5, 5, 30]}),
+            b,
+            &json!({"point": [5, 5, 10]}),
+            json!({"radius": 2}),
         )
         .unwrap();
         // The follower was picked at (5, 5, 30) where the body stood.
@@ -5034,30 +4949,31 @@ mod tests {
                 .map(|(_, m)| m.len())
                 .unwrap()
         };
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
-        call(
+        let (mut doc, a, b) = two();
+        join(
             &mut doc,
             "asm.slot",
-            json!({"body": a.0.to_string(), "face": {"point": [0, 0, 5]}, "other": b.0.to_string(),
-                   "other_face": {"axis": {"point": [10, 0, 0], "direction": [1, 0, 0]}}}),
+            a,
+            &json!({"point": [0, 0, 5]}),
+            b,
+            &json!({"axis": {"point": [10, 0, 0], "direction": [1, 0, 0]}}),
+            json!({}),
         )
         .unwrap();
         let pin = doc.body_placement(a).point([0.0, 0.0, 5.0]);
         assert!(pin[1].abs() < 1e-3 && pin[2].abs() < 1e-3, "{pin:?}");
         assert_eq!(motions(&doc, a), 4);
 
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
-        doc.set_body_placement(
-            a,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(3.0, 2.0, 1.0)),
-        );
-        call(
+        let (mut doc, a, b) = two();
+        doc.set_body_placement(a, at(3.0, 2.0, 1.0));
+        join(
             &mut doc,
             "asm.universal",
-            json!({"body": a.0.to_string(), "face": {"axis": {"point": [3, 2, 1], "direction": [1, 0, 0]}},
-                   "other": b.0.to_string(), "other_face": {"axis": {"point": [0, 0, 0], "direction": [0, 1, 0]}}}),
+            a,
+            &json!({"axis": {"point": [3, 2, 1], "direction": [1, 0, 0]}}),
+            b,
+            &json!({"axis": {"point": [0, 0, 0], "direction": [0, 1, 0]}}),
+            json!({}),
         )
         .unwrap();
         let centre = doc.body_placement(a).point([0.0; 3]);
@@ -5069,14 +4985,16 @@ mod tests {
     /// the other end raised 3 sits 3 higher.
     #[test]
     fn an_end_offset_moves_the_body() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
-        let mate = call(
+        let mate = join(
             &mut doc,
             "asm.mate",
-            json!({"body": a.0.to_string(), "face": {"point": [0, 0, 0], "normal": [0, 0, -1]},
-                   "other": b.0.to_string(), "other_face": top}),
+            a,
+            &json!({"point": [0, 0, 0], "normal": [0, 0, -1]}),
+            b,
+            &top,
+            json!({}),
         )
         .unwrap();
         call(&mut doc, "asm.set", json!({"joint": mate, "fixed_end": 3})).unwrap();
@@ -5091,16 +5009,10 @@ mod tests {
     /// faces, and parallel takes axes.
     #[test]
     fn points_and_axes_are_held_as_faces_are() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let ball = json!({"centre": [0, 0, 20], "point": [0, 0, 25]});
         let socket = json!({"point": [5, 5, 5]});
-        call(
-            &mut doc,
-            "asm.ball",
-            json!({"body": a.0.to_string(), "face": ball, "other": b.0.to_string(), "other_face": socket}),
-        )
-        .unwrap();
+        join(&mut doc, "asm.ball", a, &ball, b, &socket, json!({})).unwrap();
         let centre = doc.body_placement(a).point([0.0, 0.0, 20.0]);
         assert!(
             (centre[0] - 5.0).abs() < 1e-3
@@ -5112,20 +5024,26 @@ mod tests {
         let motions = &free.iter().find(|(body, _)| *body == a).unwrap().1;
         assert_eq!(motions.len(), 3, "three turns: {motions:?}");
 
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let axis = |x: f32| json!({"axis": {"point": [x, 0, 0], "direction": [0, 0, 1]}});
-        call(
+        join(
             &mut doc,
             "asm.parallel",
-            json!({"body": a.0.to_string(), "face": axis(0.0), "other": b.0.to_string(), "other_face": axis(0.0)}),
+            a,
+            &axis(0.0),
+            b,
+            &axis(0.0),
+            json!({}),
         )
         .unwrap();
-        call(
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": a.0.to_string(), "face": axis(0.0), "other": b.0.to_string(),
-                   "other_face": axis(0.0), "offset": 30}),
+            a,
+            &axis(0.0),
+            b,
+            &axis(0.0),
+            json!({"offset": 30}),
         )
         .unwrap();
         let at = doc.body_placement(a).point([0.0, 0.0, 0.0]);
@@ -5134,13 +5052,15 @@ mod tests {
             "{at:?}"
         );
 
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
-        call(
+        let (mut doc, a, b) = two();
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": a.0.to_string(), "face": {"point": [0, 0, 0]}, "other": b.0.to_string(),
-                   "other_face": {"point": [0, 0, 0]}, "offset": 12}),
+            a,
+            &json!({"point": [0, 0, 0]}),
+            b,
+            &json!({"point": [0, 0, 0]}),
+            json!({"offset": 12}),
         )
         .unwrap();
         let at = doc.body_placement(a).point([0.0, 0.0, 0.0]);
@@ -5160,14 +5080,8 @@ mod tests {
             doc.create_body(None),
             doc.create_body(None),
         ];
-        doc.set_body_placement(
-            lid,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 30.0)),
-        );
-        doc.set_body_placement(
-            knob,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(5.0, 0.0, 40.0)),
-        );
+        doc.set_body_placement(lid, at(0.0, 0.0, 30.0));
+        doc.set_body_placement(knob, at(5.0, 0.0, 40.0));
         let group = call(
             &mut doc,
             "asm.group",
@@ -5176,12 +5090,14 @@ mod tests {
         .unwrap();
         assert!(group.is_string());
         // The lid's underside, 30 up, onto the base's top at 10.
-        call(
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": lid.0.to_string(), "face": {"point": [0, 0, 30], "normal": [0, 0, -1]},
-                   "other": base.0.to_string(), "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
-                   "offset": 0}),
+            lid,
+            &json!({"point": [0, 0, 30], "normal": [0, 0, -1]}),
+            base,
+            &json!({"point": [0, 0, 10], "normal": [0, 0, 1]}),
+            json!({"offset": 0}),
         )
         .unwrap();
         let lid_z = doc.body_placement(lid).translation[2];
@@ -5211,24 +5127,20 @@ mod tests {
             doc.create_body(None),
             doc.create_body(None),
         ];
-        doc.set_body_placement(
-            lid,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 30.0)),
-        );
-        doc.set_body_placement(
-            knob,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(5.0, 0.0, 40.0)),
-        );
+        doc.set_body_placement(lid, at(0.0, 0.0, 30.0));
+        doc.set_body_placement(knob, at(5.0, 0.0, 40.0));
         let component = doc.create_component("Lid".into(), None).unwrap();
         doc.set_body_component(lid, Some(component)).unwrap();
         doc.set_body_component(knob, Some(component)).unwrap();
         // The knob's underside, 40 up, onto the base's top at 10.
-        call(
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": knob.0.to_string(), "face": {"point": [5, 0, 40], "normal": [0, 0, -1]},
-                   "other": base.0.to_string(), "other_face": {"point": [0, 0, 10], "normal": [0, 0, 1]},
-                   "offset": 0}),
+            knob,
+            &json!({"point": [5, 0, 40], "normal": [0, 0, -1]}),
+            base,
+            &json!({"point": [0, 0, 10], "normal": [0, 0, 1]}),
+            json!({"offset": 0}),
         )
         .unwrap();
         let z = |doc: &Document, b| doc.body_placement(b).translation[2];
@@ -5239,12 +5151,14 @@ mod tests {
             z(&doc, lid)
         );
         // A joint inside the rigid component rests.
-        call(
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": lid.0.to_string(), "face": {"point": [0, 0, 0], "normal": [0, 0, 1]},
-                   "other": knob.0.to_string(), "other_face": {"point": [5, 0, 10], "normal": [0, 0, -1]},
-                   "offset": 4}),
+            lid,
+            &json!({"point": [0, 0, 0], "normal": [0, 0, 1]}),
+            knob,
+            &json!({"point": [5, 0, 10], "normal": [0, 0, -1]}),
+            json!({"offset": 4}),
         )
         .unwrap();
         assert!((z(&doc, lid) - 0.0).abs() < 1e-3, "{}", z(&doc, lid));
@@ -5333,11 +5247,12 @@ mod tests {
         assert_eq!(doc.components().len(), 1);
     }
 
-    /// A joint that cannot hold with the others is not made, and one
-    /// conflict holds up only the bodies joined to it: a joint between two
-    /// other bodies still solves.
+    /// A joint that cannot hold with the others is not made; one already in
+    /// the document is listed as unmet, while one that holds is not, and it
+    /// holds up only the bodies joined to it: a joint between two other
+    /// bodies still solves.
     #[test]
-    fn a_joint_that_cannot_hold_is_not_made_and_blocks_nothing_else() {
+    fn a_joint_that_cannot_hold_is_refused_or_unmet_and_blocks_nothing_else() {
         let mut doc = Document::new("t");
         let [a, b, c, d] = [
             doc.create_body(None),
@@ -5348,69 +5263,56 @@ mod tests {
         let up = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, 1]});
         let down = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, -1]});
         // B's bottom 5 above A's top.
-        call(
+        join(
             &mut doc,
             "asm.distance",
-            json!({"body": b.0.to_string(), "face": down(0.0), "other": a.0.to_string(),
-                   "other_face": up(0.0), "offset": 5}),
+            b,
+            &down(0.0),
+            a,
+            &up(0.0),
+            json!({"offset": 5}),
         )
         .unwrap();
+        assert_eq!(call(&mut doc, "asm.unmet", json!({})).unwrap(), json!([]));
         let joints_before = crate::joints(&doc).len();
         // The same faces 9 apart as well: it cannot hold.
-        let refused = call(
+        let refused = join(
             &mut doc,
             "asm.distance",
-            json!({"body": b.0.to_string(), "face": down(0.0), "other": a.0.to_string(),
-                   "other_face": up(0.0), "offset": 9}),
+            b,
+            &down(0.0),
+            a,
+            &up(0.0),
+            json!({"offset": 9}),
         );
         assert!(refused.is_err(), "{refused:?}");
         assert_eq!(crate::joints(&doc).len(), joints_before, "not left behind");
-        // An unrelated pair solves.
-        call(
-            &mut doc,
-            "asm.distance",
-            json!({"body": d.0.to_string(), "face": down(0.0), "other": c.0.to_string(),
-                   "other_face": up(0.0), "offset": 3}),
-        )
-        .unwrap();
-        let z = doc.body_placement(d).translation[2] - doc.body_placement(c).translation[2];
-        assert!((z - 3.0).abs() < 1e-3, "{z}");
-    }
-
-    /// With a conflict already in the assembly, the rest is still placed.
-    #[test]
-    fn a_conflict_holds_up_only_what_it_is_joined_to() {
-        let mut doc = Document::new("t");
-        let [a, b, c, d] = [
-            doc.create_body(None),
-            doc.create_body(None),
-            doc.create_body(None),
-            doc.create_body(None),
-        ];
-        let up = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, 1]});
-        let down = |z: f32| json!({"point": [0, 0, z], "normal": [0, 0, -1]});
-        call(
-            &mut doc,
-            "asm.distance",
-            json!({"body": b.0.to_string(), "face": down(0.0), "other": a.0.to_string(),
-                   "other_face": up(0.0), "offset": 5}),
-        )
-        .unwrap();
         // A conflicting joint written straight into the document, as an
         // old file might hold it.
-        let mut conflicting = crate::joints(&doc)[1].feature.clone();
+        let mut conflicting = crate::joints(&doc)
+            .into_iter()
+            .find(|j| matches!(j.feature.kind, JointKind::Distance { .. }))
+            .unwrap()
+            .feature;
         conflicting.kind = JointKind::Distance { offset: 9.0 };
-        doc.add_feature_in_body(conflicting, "Clash".into(), Some(b))
+        let clash = doc
+            .add_feature_in_body(conflicting, "Clash".into(), Some(b))
             .unwrap();
-        doc.set_body_placement(
-            d,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 0.0, 40.0)),
+        let found = call(&mut doc, "asm.unmet", json!({})).unwrap();
+        assert_eq!(
+            found,
+            json!([{"joint": clash.0.to_string(), "name": "Clash"}])
         );
-        let made = call(
+        // The rest is still placed.
+        doc.set_body_placement(d, at(0.0, 0.0, 40.0));
+        let made = join(
             &mut doc,
             "asm.distance",
-            json!({"body": d.0.to_string(), "face": down(40.0), "other": c.0.to_string(),
-                   "other_face": up(0.0), "offset": 3}),
+            d,
+            &down(40.0),
+            c,
+            &up(0.0),
+            json!({"offset": 3}),
         );
         assert!(made.is_ok(), "{made:?}");
         let z = doc.body_placement(d).translation[2] - doc.body_placement(c).translation[2];
@@ -5423,17 +5325,17 @@ mod tests {
     fn a_body_mates_to_the_origin() {
         let mut doc = Document::new("t");
         let a = doc.create_body(None);
-        doc.set_body_placement(
-            a,
-            BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(3.0, 4.0, 25.0)),
-        );
+        doc.set_body_placement(a, at(3.0, 4.0, 25.0));
         let bottom = json!({"point": [3, 4, 25], "normal": [0, 0, -1]});
         let xy = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
-        call(
+        join(
             &mut doc,
             "asm.mate",
-            json!({"body": a.0.to_string(), "face": bottom, "other": crate::WORLD.0.to_string(),
-                   "other_face": xy}),
+            a,
+            &bottom,
+            crate::WORLD,
+            &xy,
+            json!({}),
         )
         .unwrap();
         let t = doc.body_placement(a).translation;
@@ -5450,16 +5352,10 @@ mod tests {
     /// wrong sort for the kind asked are refused, and new faces go in.
     #[test]
     fn a_joint_changes_kind_and_faces() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let top = json!({"point": [0, 0, 0], "normal": [0, 0, 1]});
-        let mate = call(
-            &mut doc,
-            "asm.mate",
-            json!({"body": a.0.to_string(), "face": top, "other": b.0.to_string(), "other_face": top}),
-        )
-        .unwrap();
-        let id = FeatureId(uuid::Uuid::parse_str(mate.as_str().unwrap()).unwrap());
+        let mate = join(&mut doc, "asm.mate", a, &top, b, &top, json!({})).unwrap();
+        let id = feature(&mate);
         let kind = |doc: &Document| {
             serde_json::from_value::<JointFeature>(doc.get_feature_data(id).unwrap().clone())
                 .unwrap()
@@ -5488,14 +5384,16 @@ mod tests {
     /// stored as a plain word still loads, both free.
     #[test]
     fn an_alignment_drives_its_turn_and_its_slide() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-        let joint = call(
+        let joint = join(
             &mut doc,
             "asm.align",
-            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin,
-                   "slide_drive": 5}),
+            a,
+            &pin,
+            b,
+            &pin,
+            json!({"slide_drive": 5}),
         )
         .unwrap();
         assert!((doc.body_placement(a).translation[2] - 5.0).abs() < 1e-3);
@@ -5505,8 +5403,8 @@ mod tests {
             json!({"joint": joint, "turn_drive": 30}),
         )
         .unwrap();
-        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
-        assert!((x[1].atan2(x[0]).to_degrees() - 30.0).abs() < 1e-2, "{x:?}");
+        let turned = turned_deg(&doc, a);
+        assert!((turned - 30.0).abs() < 1e-2, "{turned}");
         assert!((doc.body_placement(a).translation[2] - 5.0).abs() < 1e-3);
         let free = crate::freedom(&doc);
         let motions = &free.iter().find(|(body, _)| *body == a).unwrap().1;
@@ -5524,26 +5422,14 @@ mod tests {
 
     #[test]
     fn a_hinge_is_driven_to_an_angle_and_kept_within_its_limits() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let pin = json!({"axis": {"point": [0, 0, 0], "direction": [0, 0, 1]}});
-        let joint = call(
-            &mut doc,
-            "asm.hinge",
-            json!({"body": a.0.to_string(), "face": pin, "other": b.0.to_string(), "other_face": pin}),
-        )
-        .unwrap();
-        let travel = |doc: &mut Document| {
-            call(doc, "asm.travel", json!({"joint": joint}))
-                .unwrap()
-                .as_f64()
-                .unwrap()
-        };
-        assert!(travel(&mut doc).abs() < 1e-6, "made where it sits");
+        let joint = join(&mut doc, "asm.hinge", a, &pin, b, &pin, json!({})).unwrap();
+        assert!(travel(&mut doc, &joint).abs() < 1e-6, "made where it sits");
         call(&mut doc, "asm.set", json!({"joint": joint, "drive": 30})).unwrap();
-        assert!((travel(&mut doc) - 30.0).abs() < 1e-3);
-        let x = doc.body_placement(a).direction([1.0, 0.0, 0.0]);
-        assert!((x[1].atan2(x[0]).to_degrees() - 30.0).abs() < 1e-2, "{x:?}");
+        assert!((travel(&mut doc, &joint) - 30.0).abs() < 1e-3);
+        let turned = turned_deg(&doc, a);
+        assert!((turned - 30.0).abs() < 1e-2, "{turned}");
         // Let go and limited below where it is: it turns back to the limit.
         call(
             &mut doc,
@@ -5551,7 +5437,7 @@ mod tests {
             json!({"joint": joint, "drive": false, "limits": [-10, 10]}),
         )
         .unwrap();
-        assert!((travel(&mut doc) - 10.0).abs() < 1e-2);
+        assert!((travel(&mut doc, &joint) - 10.0).abs() < 1e-2);
         // At its limit it may still turn, back the other way.
         let motions = &crate::freedom(&doc)[0].1;
         assert_eq!(motions.len(), 1);
@@ -5586,26 +5472,26 @@ mod tests {
 
     #[test]
     fn a_slider_is_driven_along_its_axis() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         let rail = json!({"axis": {"point": [0, 0, 0], "direction": [1, 0, 0]}});
-        let joint = call(
+        let joint = join(
             &mut doc,
             "asm.slider",
-            json!({"body": a.0.to_string(), "face": rail, "other": b.0.to_string(),
-                   "other_face": rail, "drive": 12.5}),
+            a,
+            &rail,
+            b,
+            &rail,
+            json!({"drive": 12.5}),
         )
         .unwrap();
         assert!((doc.body_placement(a).translation[0] - 12.5).abs() < 1e-3);
         assert!(crate::freedom(&doc)[0].1.is_empty(), "driven: nothing left");
-        let travel = call(&mut doc, "asm.travel", json!({"joint": joint})).unwrap();
-        assert!((travel.as_f64().unwrap() - 12.5).abs() < 1e-3);
+        assert!((travel(&mut doc, &joint) - 12.5).abs() < 1e-3);
     }
 
     #[test]
     fn a_fixed_joint_needs_no_faces_and_carries_the_body_along() {
-        let mut doc = Document::new("t");
-        let (a, b) = (doc.create_body(None), doc.create_body(None));
+        let (mut doc, a, b) = two();
         call(
             &mut doc,
             "asm.move",

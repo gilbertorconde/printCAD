@@ -29,16 +29,18 @@ fn projections() -> [Projection; 2] {
     ]
 }
 
+/// The bounds the fit transitions frame.
+const SPHERE: BoundingSphere = BoundingSphere {
+    center: Vec3::new(-20.0, 5.0, 3.0),
+    radius: 4.0,
+};
+
 fn transitions(source: CameraController) -> Vec<CameraTransition> {
     let duration = Duration::from_millis(400);
     let top = view_orientation(Vec3::Z, Vec3::Z, true, source.pose().orientation);
-    let sphere = BoundingSphere {
-        center: Vec3::new(-20.0, 5.0, 3.0),
-        radius: 4.0,
-    };
     vec![
         CameraTransition::view(source, top, duration),
-        CameraTransition::frame(source, fit(source, sphere), duration),
+        CameraTransition::frame(source, fit(source, SPHERE), duration),
         CameraTransition::projection(
             source,
             ProjectionKind::Perspective { vertical_fov: 1.6 },
@@ -188,18 +190,14 @@ fn a_projection_transition_is_a_dolly_zoom() {
 fn a_fit_transition_moves_pivot_and_scale_monotonically() {
     for projection in projections() {
         let source = camera(projection);
-        let sphere = BoundingSphere {
-            center: Vec3::new(-20.0, 5.0, 3.0),
-            radius: 4.0,
-        };
-        let target = fit(source, sphere);
+        let target = fit(source, SPHERE);
         let mut transition = CameraTransition::frame(source, target, Duration::from_millis(400));
         let mut last_scale = source.scale_at(source.pivot());
         let shrinking = target.scale_at(target.pivot()) < last_scale;
         for _ in 0..30 {
             transition.advance(Duration::from_millis(16));
             let sample = transition.sample();
-            let along = (sample.pivot() - source.pivot()).cross(sphere.center - source.pivot());
+            let along = (sample.pivot() - source.pivot()).cross(SPHERE.center - source.pivot());
             assert!(along.length() < 1e-3, "pivot left the straight line");
             let scale = sample.scale_at(sample.pivot());
             assert!(if shrinking {

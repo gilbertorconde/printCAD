@@ -43,7 +43,7 @@ use glam::{Quat, Vec2, Vec3};
 use crate::camera::{CameraPose, Projection};
 use crate::controller::{CameraController, GestureKind};
 use crate::navigation::{NavigationSettings, ScreenPoint, ViewCubeSize};
-use crate::navigation_tests::{camera, projections};
+use crate::navigation_tests::{camera, loaded_without, projections, rejects};
 
 fn close(a: CameraPose, b: CameraPose, what: &str) {
     // `angle_between` is acos of a dot near 1: one f32 ulp reads as ~7e-4 rad.
@@ -369,36 +369,21 @@ fn gesture_options_are_saved_and_old_files_load_without_them() {
         zoom_through: true,
         ..NavigationSettings::cad()
     };
-    let mut json = serde_json::to_value(settings).unwrap();
-    assert_eq!(
-        serde_json::from_value::<NavigationSettings>(json.clone()).unwrap(),
-        settings
+    let legacy = loaded_without(
+        settings,
+        &[
+            "orbit_vertical_ratio",
+            "pass_poles",
+            "zoom_in_hold",
+            "zoom_through",
+        ],
     );
-    for field in [
-        "orbit_vertical_ratio",
-        "pass_poles",
-        "zoom_in_hold",
-        "zoom_through",
-    ] {
-        assert!(
-            json.as_object_mut().unwrap().remove(field).is_some(),
-            "{field}"
-        );
-    }
-    let legacy: NavigationSettings = serde_json::from_value(json).unwrap();
     assert_eq!(legacy, NavigationSettings::cad());
     assert_eq!(legacy.orbit_vertical_ratio, 1.0);
-    for ratio in [0.0, -1.0, 0.2, 5.0, f32::NAN, f32::INFINITY] {
-        assert!(
-            NavigationSettings {
-                orbit_vertical_ratio: ratio,
-                ..NavigationSettings::cad()
-            }
-            .validate()
-            .is_err(),
-            "{ratio}"
-        );
-    }
+    rejects(
+        &[0.0, -1.0, 0.2, 5.0, f32::NAN, f32::INFINITY],
+        |s, ratio| s.orbit_vertical_ratio = ratio,
+    );
 }
 
 /// The view cube size is saved with the other overlay setting; files from
@@ -410,26 +395,10 @@ fn view_cube_size_is_saved_and_old_files_load_medium() {
             view_cube_size: size,
             ..NavigationSettings::cad()
         };
-        let json = serde_json::to_value(settings).unwrap();
-        assert_eq!(
-            serde_json::from_value::<NavigationSettings>(json).unwrap(),
-            settings
-        );
+        let legacy = loaded_without(settings, &["view_cube_size"]);
+        assert_eq!(legacy.view_cube_size, ViewCubeSize::Medium);
+        assert_eq!(legacy, NavigationSettings::cad());
     }
-    let mut json = serde_json::to_value(NavigationSettings {
-        view_cube_size: ViewCubeSize::Large,
-        ..NavigationSettings::cad()
-    })
-    .unwrap();
-    assert!(
-        json.as_object_mut()
-            .unwrap()
-            .remove("view_cube_size")
-            .is_some()
-    );
-    let legacy: NavigationSettings = serde_json::from_value(json).unwrap();
-    assert_eq!(legacy.view_cube_size, ViewCubeSize::Medium);
-    assert_eq!(legacy, NavigationSettings::cad());
 }
 
 /// Pointer grab is saved; files from before it load with the grab on at
@@ -443,47 +412,22 @@ fn pointer_lock_is_saved_and_old_files_load_it_on() {
         pointer_lock_orbit_speed: 0.75,
         ..NavigationSettings::cad()
     };
-    let json = serde_json::to_value(settings).unwrap();
-    assert_eq!(
-        serde_json::from_value::<NavigationSettings>(json).unwrap(),
-        settings
+    let legacy = loaded_without(
+        settings,
+        &[
+            "pointer_lock",
+            "pointer_lock_speed",
+            "pointer_lock_pan_speed",
+            "pointer_lock_orbit_speed",
+        ],
     );
-    let mut json = serde_json::to_value(settings).unwrap();
-    for field in [
-        "pointer_lock",
-        "pointer_lock_speed",
-        "pointer_lock_pan_speed",
-        "pointer_lock_orbit_speed",
-    ] {
-        assert!(
-            json.as_object_mut().unwrap().remove(field).is_some(),
-            "{field}"
-        );
-    }
-    let legacy: NavigationSettings = serde_json::from_value(json).unwrap();
     assert!(legacy.pointer_lock);
     assert_eq!(legacy.pointer_lock_speed, 1.0);
     assert_eq!(legacy.pointer_lock_pan_speed, 1.0);
     assert_eq!(legacy.pointer_lock_orbit_speed, 0.25);
     assert_eq!(legacy, NavigationSettings::cad());
-    for speed in [0.0, -1.0, 0.2, 5.0, f32::NAN, f32::INFINITY] {
-        for field in ["pan", "orbit"] {
-            let mut invalid = NavigationSettings::cad();
-            match field {
-                "pan" => invalid.pointer_lock_pan_speed = speed,
-                "orbit" => invalid.pointer_lock_orbit_speed = speed,
-                _ => unreachable!(),
-            }
-            assert!(invalid.validate().is_err(), "{field}: {speed}");
-        }
-        assert!(
-            NavigationSettings {
-                pointer_lock_speed: speed,
-                ..NavigationSettings::cad()
-            }
-            .validate()
-            .is_err(),
-            "{speed}"
-        );
-    }
+    let speeds = [0.0, -1.0, 0.2, 5.0, f32::NAN, f32::INFINITY];
+    rejects(&speeds, |s, speed| s.pointer_lock_pan_speed = speed);
+    rejects(&speeds, |s, speed| s.pointer_lock_orbit_speed = speed);
+    rejects(&speeds, |s, speed| s.pointer_lock_speed = speed);
 }

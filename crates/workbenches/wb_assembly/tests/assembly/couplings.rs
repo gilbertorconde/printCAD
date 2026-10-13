@@ -179,43 +179,43 @@ fn a_coupling_is_made_where_the_joints_stand_and_moves_nothing() {
     assert!(solve(&s.doc).unwrap().is_empty(), "nothing moves");
 }
 
+/// Meshed gears turn the other way by their ratio, a belt turns the same
+/// way, and a pinion moves its rack by its pitch circle.
 #[test]
-fn meshed_gears_turn_the_other_way_by_their_ratio() {
-    let mut s = scene();
-    couple(
-        &mut s.doc,
-        Gearing::Gears,
-        s.first_hinge,
-        s.second_hinge,
-        0.5,
-    );
-    drive(&mut s.doc, s.first_hinge, 90.0);
-    apply(&mut s.doc);
-    assert!((travel(&s.doc, s.first_hinge) - 90.0).abs() < 1e-3);
-    let second = travel(&s.doc, s.second_hinge);
-    assert!((second + 45.0).abs() < 1e-2, "the driven gear at {second}");
-    // Only the turns moved: each gear stays on its axis.
-    let at = s.doc.body_placement(s.second).offset();
-    assert!((at - Vec3::new(30.0, 0.0, 0.0)).length() < 1e-3, "{at:?}");
-}
-
-#[test]
-fn a_belt_turns_the_same_way() {
-    let mut s = scene();
-    couple(
-        &mut s.doc,
-        Gearing::Belt,
-        s.first_hinge,
-        s.second_hinge,
-        2.0,
-    );
-    drive(&mut s.doc, s.first_hinge, 30.0);
-    apply(&mut s.doc);
-    let second = travel(&s.doc, s.second_hinge);
-    assert!(
-        (second - 60.0).abs() < 1e-2,
-        "the driven pulley at {second}"
-    );
+fn a_driven_joint_moves_by_its_coupling_s_ratio() {
+    let quarter = std::f64::consts::FRAC_PI_2 * 10.0;
+    for (gearing, ratio, to, moved) in [
+        (Gearing::Gears, 0.5, 90.0, -45.0),
+        (Gearing::Belt, 2.0, 30.0, 60.0),
+        (Gearing::RackAndPinion, 10.0, 90.0, quarter),
+    ] {
+        let mut s = scene();
+        let driven = if gearing == Gearing::RackAndPinion {
+            s.rack_slider
+        } else {
+            s.second_hinge
+        };
+        couple(&mut s.doc, gearing, s.first_hinge, driven, ratio);
+        let start = travel(&s.doc, driven);
+        drive(&mut s.doc, s.first_hinge, to);
+        apply(&mut s.doc);
+        let driver = travel(&s.doc, s.first_hinge);
+        assert!(
+            (driver - f64::from(to)).abs() < 1e-3,
+            "{gearing:?}: the driver at {driver}"
+        );
+        let change = travel(&s.doc, driven) - start;
+        assert!(
+            (change - moved).abs() < 1e-2,
+            "{gearing:?}: the driven joint moved {change}"
+        );
+        // Only the turns moved: the second gear stays on its axis.
+        let at = s.doc.body_placement(s.second).offset();
+        assert!(
+            (at - Vec3::new(30.0, 0.0, 0.0)).length() < 1e-3,
+            "{gearing:?}: {at:?}"
+        );
+    }
 }
 
 #[test]
@@ -241,24 +241,6 @@ fn a_whole_turn_of_the_driver_is_counted_through_the_wrap() {
         (second.abs() - 180.0).abs() < 1e-2,
         "the driven gear half a turn round: {second}"
     );
-}
-
-#[test]
-fn a_pinion_moves_its_rack_by_its_pitch_circle() {
-    let mut s = scene();
-    couple(
-        &mut s.doc,
-        Gearing::RackAndPinion,
-        s.first_hinge,
-        s.rack_slider,
-        10.0,
-    );
-    let start = travel(&s.doc, s.rack_slider);
-    drive(&mut s.doc, s.first_hinge, 90.0);
-    apply(&mut s.doc);
-    let moved = travel(&s.doc, s.rack_slider) - start;
-    let quarter = std::f64::consts::FRAC_PI_2 * 10.0;
-    assert!((moved - quarter).abs() < 1e-2, "the rack moved {moved}");
 }
 
 #[test]

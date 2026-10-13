@@ -6,22 +6,11 @@ use super::{
     DampingRate, Friction, Momentum, MomentumLaw, MomentumSettings, PointerTrack, ScreenVelocity,
     WHEEL_DEBOUNCE,
 };
-use crate::camera::{CameraPose, Projection};
+use crate::camera::Projection;
 use crate::controller::{CameraController, GestureKind};
 use crate::navigation::{NavigationDrag, NavigationSettings, ScreenPoint};
+use crate::navigation_tests::{camera, loaded_without, rejects};
 use crate::smoothing::SmoothingMillis;
-
-fn camera(projection: Projection, orientation: Quat) -> CameraController {
-    CameraController::new(
-        CameraPose {
-            position: orientation * Vec3::Z * 1000.0,
-            orientation,
-        },
-        projection,
-        Vec2::new(800.0, 600.0),
-        Vec3::ZERO,
-    )
-}
 
 fn perspective() -> Projection {
     Projection::Perspective { vertical_fov: 1.0 }
@@ -329,25 +318,19 @@ fn the_wheel_is_debounced_only_right_after_release() {
 /// field round-trips.
 #[test]
 fn settings_without_momentum_load_with_inertia_off_and_round_trip() {
-    let mut legacy = serde_json::to_value(NavigationSettings::cad()).unwrap();
-    legacy.as_object_mut().unwrap().remove("momentum").unwrap();
-    let loaded: NavigationSettings = serde_json::from_value(legacy).unwrap();
-    assert_eq!(loaded, NavigationSettings::cad());
-    assert!(!loaded.momentum.enabled);
     let mut on = NavigationSettings::cad();
     on.momentum.enabled = true;
     on.momentum.orbit.damping = DampingRate(3.0);
     let json = serde_json::to_string(&on).unwrap();
-    assert_eq!(
-        serde_json::from_str::<NavigationSettings>(&json).unwrap(),
-        on
-    );
     assert!(json.contains("\"damping\":3.0"), "{json}");
+    let loaded = loaded_without(on, &["momentum"]);
+    assert_eq!(loaded, NavigationSettings::cad());
+    assert!(!loaded.momentum.enabled);
 }
 
 #[test]
 fn invalid_inertia_laws_are_rejected() {
-    for bad in [
+    let bad = [
         MomentumLaw {
             friction: Friction(0.0),
             ..law()
@@ -360,14 +343,6 @@ fn invalid_inertia_laws_are_rejected() {
             window: SmoothingMillis(0),
             ..law()
         },
-    ] {
-        let settings = NavigationSettings {
-            momentum: MomentumSettings {
-                pan: bad,
-                ..MomentumSettings::default()
-            },
-            ..NavigationSettings::cad()
-        };
-        assert!(settings.validate().is_err(), "{bad:?}");
-    }
+    ];
+    rejects(&bad, |s, law| s.momentum.pan = law);
 }

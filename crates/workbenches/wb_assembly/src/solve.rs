@@ -1335,11 +1335,20 @@ fn solve6(mut m: [[f64; 6]; 6], mut b: [f64; 6]) -> Option<[f64; 6]> {
 mod tests {
     use super::*;
     use crate::joint::{Anchor, JointKind, Rigid};
+    use crate::test_support::{hinge, joint};
     use core_document::Document;
     use glam::{Quat, Vec3};
 
     fn close(a: [f32; 3], b: [f32; 3]) -> bool {
         (0..3).all(|k| (a[k] - b[k]).abs() < 1e-3)
+    }
+
+    /// A document of two bodies, the first to hold the second to.
+    fn base_and_part() -> (Document, BodyId, BodyId) {
+        let mut doc = Document::new("t");
+        let base = doc.create_body(None);
+        let part = doc.create_body(None);
+        (doc, base, part)
     }
 
     fn add_joint(doc: &mut Document, body: BodyId, feature: JointFeature) {
@@ -1355,9 +1364,7 @@ mod tests {
 
     #[test]
     fn a_mate_sets_one_face_on_the_other_and_keeps_the_slide() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         // The part starts turned over and off to the side.
         doc.set_body_placement(
             part,
@@ -1368,25 +1375,21 @@ mod tests {
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Mate {
+            joint(
+                JointKind::Mate {
                     flip: false,
                     offset: 0.0,
                 },
-                moving: Anchor::Plane {
+                Anchor::Plane {
                     point: [0.0, 0.0, 0.0],
                     normal: [0.0, 0.0, -1.0],
                 },
-                other_body: base,
-                fixed: Anchor::Plane {
+                base,
+                Anchor::Plane {
                     point: [0.0, 0.0, 10.0],
                     normal: [0.0, 0.0, 1.0],
                 },
-            },
+            ),
         );
         apply(&mut doc);
         let placed = doc.body_placement(part);
@@ -1401,31 +1404,25 @@ mod tests {
 
     #[test]
     fn an_offset_leaves_a_gap_and_a_flip_turns_the_part_over() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Mate {
+            joint(
+                JointKind::Mate {
                     flip: true,
                     offset: 2.5,
                 },
-                moving: Anchor::Plane {
+                Anchor::Plane {
                     point: [0.0, 0.0, 0.0],
                     normal: [0.0, 0.0, -1.0],
                 },
-                other_body: base,
-                fixed: Anchor::Plane {
+                base,
+                Anchor::Plane {
                     point: [0.0, 0.0, 10.0],
                     normal: [0.0, 0.0, 1.0],
                 },
-            },
+            ),
         );
         apply(&mut doc);
         let placed = doc.body_placement(part);
@@ -1435,9 +1432,7 @@ mod tests {
 
     #[test]
     fn an_align_puts_a_pin_on_the_hole_s_axis() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let pin = doc.create_body(None);
+        let (mut doc, base, pin) = base_and_part();
         doc.set_body_placement(
             pin,
             BodyPlacement::new(Quat::from_rotation_y(0.5), Vec3::new(3.0, -7.0, 0.0)),
@@ -1445,22 +1440,18 @@ mod tests {
         add_joint(
             &mut doc,
             pin,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::align(),
-                moving: Anchor::Axis {
+            joint(
+                JointKind::align(),
+                Anchor::Axis {
                     point: [0.0, 0.0, 0.0],
                     direction: [0.0, 0.0, 1.0],
                 },
-                other_body: base,
-                fixed: Anchor::Axis {
+                base,
+                Anchor::Axis {
                     point: [20.0, 10.0, 0.0],
                     direction: [0.0, 0.0, 1.0],
                 },
-            },
+            ),
         );
         apply(&mut doc);
         let placed = doc.body_placement(pin);
@@ -1476,24 +1467,22 @@ mod tests {
         let a = doc.create_body(None);
         let b = doc.create_body(None);
         let c = doc.create_body(None);
-        let mate = |other| JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind: JointKind::Mate {
-                flip: true,
-                offset: 5.0,
-            },
-            moving: Anchor::Plane {
-                point: [0.0; 3],
-                normal: [0.0, 0.0, 1.0],
-            },
-            other_body: other,
-            fixed: Anchor::Plane {
-                point: [0.0; 3],
-                normal: [0.0, 0.0, 1.0],
-            },
+        let mate = |other| {
+            joint(
+                JointKind::Mate {
+                    flip: true,
+                    offset: 5.0,
+                },
+                Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                other,
+                Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+            )
         };
         // c sits on b, which sits on a: b first, then c.
         add_joint(&mut doc, c, mate(b));
@@ -1503,22 +1492,18 @@ mod tests {
         assert!((doc.body_placement(c).offset().z - 10.0).abs() < 1e-3);
         // Grounding a lets it take a joint of its own: a ring that can
         // close does, one that cannot is named.
-        let ground = JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind: JointKind::Ground,
-            moving: Anchor::Plane {
+        let ground = joint(
+            JointKind::Ground,
+            Anchor::Plane {
                 point: [0.0; 3],
                 normal: [0.0, 0.0, 1.0],
             },
-            other_body: a,
-            fixed: Anchor::Plane {
+            a,
+            Anchor::Plane {
                 point: [0.0; 3],
                 normal: [0.0, 0.0, 1.0],
             },
-        };
+        );
         add_joint(&mut doc, a, ground);
         let mut on_a = mate(a);
         if let JointKind::Mate { offset, .. } = &mut on_a.kind {
@@ -1537,9 +1522,7 @@ mod tests {
 
     #[test]
     fn an_angle_turns_a_face_to_the_angle_asked_and_leaves_where_it_sits() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let flap = doc.create_body(None);
+        let (mut doc, base, flap) = base_and_part();
         doc.set_body_placement(
             flap,
             BodyPlacement::new(Quat::IDENTITY, Vec3::new(10.0, 20.0, 30.0)),
@@ -1548,16 +1531,7 @@ mod tests {
             point: [0.0; 3],
             normal: [0.0, 0.0, 1.0],
         };
-        let joint = JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind: JointKind::Angle { degrees: 90.0 },
-            moving: up,
-            other_body: base,
-            fixed: up,
-        };
+        let joint = joint(JointKind::Angle { degrees: 90.0 }, up, base, up);
         add_joint(&mut doc, flap, joint.clone());
         apply(&mut doc);
         let placed = Rigid::from(doc.body_placement(flap));
@@ -1569,9 +1543,7 @@ mod tests {
 
     #[test]
     fn an_angle_with_a_mate_holds_both() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         doc.set_body_placement(
             part,
             BodyPlacement::new(Quat::from_rotation_z(0.2), Vec3::new(5.0, 5.0, 10.0)),
@@ -1580,25 +1552,21 @@ mod tests {
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Mate {
+            joint(
+                JointKind::Mate {
                     flip: false,
                     offset: 0.0,
                 },
-                moving: Anchor::Plane {
+                Anchor::Plane {
                     point: [0.0; 3],
                     normal: [0.0, 0.0, -1.0],
                 },
-                other_body: base,
-                fixed: Anchor::Plane {
+                base,
+                Anchor::Plane {
                     point: [0.0; 3],
                     normal: [0.0, 0.0, 1.0],
                 },
-            },
+            ),
         );
         // Its +X side at 30 degrees to the base's +X side.
         let side = Anchor::Plane {
@@ -1608,16 +1576,7 @@ mod tests {
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Angle { degrees: 30.0 },
-                moving: side,
-                other_body: base,
-                fixed: side,
-            },
+            joint(JointKind::Angle { degrees: 30.0 }, side, base, side),
         );
         apply(&mut doc);
         let placed = Rigid::from(doc.body_placement(part));
@@ -1633,27 +1592,23 @@ mod tests {
 
     #[test]
     fn joints_that_cannot_both_hold_are_named() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
-        let on = |z: f32| JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind: JointKind::Mate {
-                flip: true,
-                offset: 0.0,
-            },
-            moving: Anchor::Plane {
-                point: [0.0; 3],
-                normal: [0.0, 0.0, 1.0],
-            },
-            other_body: base,
-            fixed: Anchor::Plane {
-                point: [0.0, 0.0, z],
-                normal: [0.0, 0.0, 1.0],
-            },
+        let (mut doc, base, part) = base_and_part();
+        let on = |z: f32| {
+            joint(
+                JointKind::Mate {
+                    flip: true,
+                    offset: 0.0,
+                },
+                Anchor::Plane {
+                    point: [0.0; 3],
+                    normal: [0.0, 0.0, 1.0],
+                },
+                base,
+                Anchor::Plane {
+                    point: [0.0, 0.0, z],
+                    normal: [0.0, 0.0, 1.0],
+                },
+            )
         };
         add_joint(&mut doc, part, on(0.0));
         add_joint(&mut doc, part, on(10.0));
@@ -1671,16 +1626,7 @@ mod tests {
     }
 
     fn mate(moving: Anchor, other: BodyId, fixed: Anchor, flip: bool, offset: f32) -> JointFeature {
-        JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind: JointKind::Mate { flip, offset },
-            moving,
-            other_body: other,
-            fixed,
-        }
+        joint(JointKind::Mate { flip, offset }, moving, other, fixed)
     }
 
     fn holds(doc: &Document) -> bool {
@@ -1697,9 +1643,7 @@ mod tests {
 
     #[test]
     fn a_ring_the_bodies_close_together_holds() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let b = doc.create_body(None);
+        let (mut doc, base, b) = base_and_part();
         let c = doc.create_body(None);
         doc.set_body_placement(
             b,
@@ -1757,9 +1701,7 @@ mod tests {
 
     #[test]
     fn the_freedom_left_is_the_motions_the_joints_do_not_hold() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         add_joint(
             &mut doc,
             part,
@@ -1787,22 +1729,18 @@ mod tests {
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::align(),
-                moving: Anchor::Axis {
+            joint(
+                JointKind::align(),
+                Anchor::Axis {
                     point: [5.0, 0.0, 0.0],
                     direction: [0.0, 0.0, 1.0],
                 },
-                other_body: base,
-                fixed: Anchor::Axis {
+                base,
+                Anchor::Axis {
                     point: [20.0, 3.0, 0.0],
                     direction: [0.0, 0.0, 1.0],
                 },
-            },
+            ),
         );
         apply(&mut doc);
         let free = freedom(&doc);
@@ -1865,16 +1803,8 @@ mod tests {
         other: BodyId,
         fixed: Anchor,
     ) -> JointFeature {
-        JointFeature {
-            second: None,
-            shape: Vec::new(),
-            ends: [0.0; 2],
-            names: [0; 2],
-            kind: tool.joint(&moving, &rigid(doc, body), &fixed, &rigid(doc, other), 0.0),
-            moving,
-            other_body: other,
-            fixed,
-        }
+        let kind = tool.joint(&moving, &rigid(doc, body), &fixed, &rigid(doc, other), 0.0);
+        joint(kind, moving, other, fixed)
     }
 
     fn tilted(doc: &mut Document, body: BodyId) {
@@ -1889,27 +1819,17 @@ mod tests {
 
     #[test]
     fn a_hinge_leaves_only_the_turn_about_its_axis_at_its_height() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         tilted(&mut doc, part);
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Hinge {
-                    offset: 5.0,
-                    zero: DQuat::IDENTITY.to_array(),
-                    drive: Default::default(),
-                },
-                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
-                other_body: base,
-                fixed: axis([20.0, 3.0, 0.0], [0.0, 0.0, 1.0]),
-            },
+            joint(
+                hinge(5.0),
+                axis([0.0; 3], [0.0, 0.0, 1.0]),
+                base,
+                axis([20.0, 3.0, 0.0], [0.0, 0.0, 1.0]),
+            ),
         );
         let motions = free_after_solving(&mut doc, part);
         assert_eq!(motions.len(), 1, "{motions:?}");
@@ -1927,9 +1847,7 @@ mod tests {
 
     #[test]
     fn a_slider_leaves_only_the_slide_and_keeps_the_turn_it_was_made_with() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         doc.set_body_placement(
             part,
             BodyPlacement::new(Quat::from_rotation_z(0.5), Vec3::new(8.0, 9.0, 4.0)),
@@ -1964,9 +1882,7 @@ mod tests {
 
     #[test]
     fn a_fixed_body_follows_the_other_and_is_left_nothing() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         tilted(&mut doc, part);
         let joint = made(
             &doc,
@@ -1999,24 +1915,11 @@ mod tests {
             (JointKind::Distance { offset: 7.0 }, 5),
         ];
         for (kind, free) in cases {
-            let mut doc = Document::new("t");
-            let base = doc.create_body(None);
-            let part = doc.create_body(None);
+            let (mut doc, base, part) = base_and_part();
             tilted(&mut doc, part);
-            add_joint(
-                &mut doc,
-                part,
-                JointFeature {
-                    second: None,
-                    shape: Vec::new(),
-                    ends: [0.0; 2],
-                    names: [0; 2],
-                    kind,
-                    moving: plane([0.0; 3], [0.0, 0.0, -1.0]),
-                    other_body: base,
-                    fixed: plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
-                },
-            );
+            let under = plane([0.0; 3], [0.0, 0.0, -1.0]);
+            let top = plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]);
+            add_joint(&mut doc, part, joint(kind, under, base, top));
             let motions = free_after_solving(&mut doc, part);
             assert_eq!(motions.len(), free, "{kind:?}: {motions:?}");
         }
@@ -2024,24 +1927,18 @@ mod tests {
 
     #[test]
     fn a_round_face_rests_on_a_flat_one_a_radius_up() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let part = doc.create_body(None);
+        let (mut doc, base, part) = base_and_part();
         tilted(&mut doc, part);
         // A roller along the part's X, radius 4, on the base's top.
         add_joint(
             &mut doc,
             part,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Tangent { radius: 4.0 },
-                moving: axis([0.0; 3], [1.0, 0.0, 0.0]),
-                other_body: base,
-                fixed: plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
-            },
+            joint(
+                JointKind::Tangent { radius: 4.0 },
+                axis([0.0; 3], [1.0, 0.0, 0.0]),
+                base,
+                plane([0.0, 0.0, 10.0], [0.0, 0.0, 1.0]),
+            ),
         );
         let motions = free_after_solving(&mut doc, part);
         assert_eq!(motions.len(), 4, "roll, spin and two slides: {motions:?}");
@@ -2050,29 +1947,20 @@ mod tests {
         assert!(placed.direction([1.0, 0.0, 0.0])[2].abs() < 1e-4);
     }
 
-    #[test]
-    fn a_dragged_door_swings_on_its_hinge_toward_the_mouse() {
+    /// A door hung on a frame by a hinge along Z through the origin; the
+    /// document, the frame and the door.
+    fn door_on_frame() -> (Document, BodyId, BodyId) {
         let mut doc = Document::new("t");
         let frame = doc.create_body(None);
         let door = doc.create_body(None);
-        add_joint(
-            &mut doc,
-            door,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Hinge {
-                    offset: 0.0,
-                    zero: DQuat::IDENTITY.to_array(),
-                    drive: Default::default(),
-                },
-                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
-                other_body: frame,
-                fixed: axis([0.0; 3], [0.0, 0.0, 1.0]),
-            },
-        );
+        let pin = axis([0.0; 3], [0.0, 0.0, 1.0]);
+        add_joint(&mut doc, door, joint(hinge(0.0), pin, frame, pin));
+        (doc, frame, door)
+    }
+
+    #[test]
+    fn a_dragged_door_swings_on_its_hinge_toward_the_mouse() {
+        let (mut doc, frame, door) = door_on_frame();
         // The handle, 10 mm out along X, pulled round to Y.
         for (body, placement) in drag(&doc, door, [10.0, 0.0, 0.0], [0.0, 10.0, 0.0]) {
             doc.set_body_placement(body, placement);
@@ -2098,28 +1986,8 @@ mod tests {
     /// Shift drag takes as one; grounded, or a body alone, is none.
     #[test]
     fn an_island_nothing_grounds_is_found_from_any_member() {
-        let mut doc = Document::new("t");
-        let frame = doc.create_body(None);
-        let door = doc.create_body(None);
+        let (mut doc, frame, door) = door_on_frame();
         let alone = doc.create_body(None);
-        add_joint(
-            &mut doc,
-            door,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Hinge {
-                    offset: 0.0,
-                    zero: DQuat::IDENTITY.to_array(),
-                    drive: Default::default(),
-                },
-                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
-                other_body: frame,
-                fixed: axis([0.0; 3], [0.0, 0.0, 1.0]),
-            },
-        );
         let sorted = |found: Option<Vec<BodyId>>| {
             found.map(|mut bodies| {
                 bodies.sort();
@@ -2137,27 +2005,12 @@ mod tests {
 
     fn ground(doc: &mut Document, body: BodyId) {
         let anchor = plane([0.0; 3], [0.0, 0.0, 1.0]);
-        add_joint(
-            doc,
-            body,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Ground,
-                moving: anchor,
-                other_body: body,
-                fixed: anchor,
-            },
-        );
+        add_joint(doc, body, joint(JointKind::Ground, anchor, body, anchor));
     }
 
     #[test]
     fn a_grounded_body_s_joint_moves_the_body_at_its_other_end() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let lid = doc.create_body(None);
+        let (mut doc, base, lid) = base_and_part();
         // The base starts turned and off to the side.
         doc.set_body_placement(
             base,
@@ -2200,28 +2053,18 @@ mod tests {
 
     #[test]
     fn a_limit_or_a_path_s_corner_leaves_the_motion_it_rests_on() {
-        let mut doc = Document::new("t");
-        let base = doc.create_body(None);
-        let pin = doc.create_body(None);
+        let (mut doc, base, pin) = base_and_part();
         let rider = doc.create_body(None);
         // A pin in a hole, resting on the near end of its slide's limits.
         let mut kind = JointKind::align();
         if let JointKind::Align { slide, .. } = &mut kind {
             slide.limits = Some([0.0, 3.0]);
         }
+        let hole = axis([5.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
         add_joint(
             &mut doc,
             pin,
-            JointFeature {
-                second: None,
-                shape: Vec::new(),
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind,
-                moving: axis([0.0; 3], [0.0, 0.0, 1.0]),
-                other_body: base,
-                fixed: axis([5.0, 0.0, 0.0], [0.0, 0.0, 1.0]),
-            },
+            joint(kind, axis([0.0; 3], [0.0, 0.0, 1.0]), base, hole),
         );
         let motions = free_after_solving(&mut doc, pin);
         assert_eq!(motions.len(), 2, "{motions:?}");
@@ -2238,7 +2081,6 @@ mod tests {
             &mut doc,
             rider,
             JointFeature {
-                second: None,
                 shape: vec![
                     [0.0, 0.0, 10.0],
                     [10.0, 0.0, 10.0],
@@ -2246,14 +2088,14 @@ mod tests {
                     [0.0, 10.0, 10.0],
                     [0.0, 0.0, 10.0],
                 ],
-                ends: [0.0; 2],
-                names: [0; 2],
-                kind: JointKind::Path,
-                moving: Anchor::Point { point: [0.0; 3] },
-                other_body: base,
-                fixed: Anchor::Point {
-                    point: [10.0, 0.0, 10.0],
-                },
+                ..joint(
+                    JointKind::Path,
+                    Anchor::Point { point: [0.0; 3] },
+                    base,
+                    Anchor::Point {
+                        point: [10.0, 0.0, 10.0],
+                    },
+                )
             },
         );
         doc.set_body_placement(

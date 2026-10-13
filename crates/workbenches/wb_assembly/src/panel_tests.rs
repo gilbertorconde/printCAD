@@ -2,11 +2,27 @@
 //! calls, its fields and buttons stand for.
 
 use super::*;
+use crate::test_support::{activate, context};
 use crate::tests::{face_up, frame, scene, task_frame};
-use core_document::{Document, Recorded, Workbench, WorkbenchInputEvent};
+use core_document::{Document, Recorded, Workbench};
 
-fn context(doc: &mut Document) -> WorkbenchRuntimeContext<'_> {
-    WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600))
+/// The bench with `task` open.
+fn with_task(task: Task) -> AssemblyWorkbench {
+    AssemblyWorkbench {
+        task: Some(task),
+        ..AssemblyWorkbench::default()
+    }
+}
+
+/// The copies task on `part`: one copy 10 mm along X.
+fn copies(part: BodyId) -> Task {
+    Task::Copies {
+        body: part,
+        count: 1,
+        step: [10.0, 0.0, 0.0],
+        around: None,
+        mirror: None,
+    }
 }
 
 /// Hand `event` to the open task's panel, as the renderer hands it; what
@@ -50,6 +66,33 @@ fn number(id: &str, value: f64) -> PanelEvent {
 
 fn button(id: &str) -> PanelEvent {
     PanelEvent::Button { id: id.into() }
+}
+
+fn text(id: &str, value: &str) -> PanelEvent {
+    PanelEvent::Text {
+        id: id.into(),
+        value: value.into(),
+    }
+}
+
+/// Text typed into a table's cell.
+fn cell(id: &str, row: usize, column: usize, value: &str) -> PanelEvent {
+    PanelEvent::CellText {
+        id: id.into(),
+        row,
+        column,
+        value: value.into(),
+    }
+}
+
+/// A table's check cell set.
+fn check(id: &str, row: usize, column: usize, on: bool) -> PanelEvent {
+    PanelEvent::CellCheck {
+        id: id.into(),
+        row,
+        column,
+        on,
+    }
 }
 
 fn widgets(wb: &AssemblyWorkbench, doc: &mut Document) -> Vec<Widget> {
@@ -137,11 +180,7 @@ fn close_to(a: [f32; 3], b: [f32; 3]) -> bool {
 fn mated() -> (AssemblyWorkbench, Document, BodyId, BodyId, FeatureId) {
     let (mut doc, base, part) = scene();
     let mut wb = AssemblyWorkbench::default();
-    wb.on_input(
-        &WorkbenchInputEvent::ToolActivated,
-        Some("asm.mate"),
-        &mut context(&mut doc),
-    );
+    activate(&mut wb, &mut context(&mut doc), "asm.mate");
     frame(&mut wb, &mut doc, Some((part, face_up(40.0))));
     frame(&mut wb, &mut doc, Some((base, face_up(0.0))));
     let Some(Task::Joint { id, .. }) = wb.task.clone() else {
@@ -153,13 +192,10 @@ fn mated() -> (AssemblyWorkbench, Document, BodyId, BodyId, FeatureId) {
 #[test]
 fn the_move_panel_moves_the_body_as_asm_place_does_and_records_it() {
     let (mut doc, _, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Move {
-            body: part,
-            placements: crate::all_placements(&context(&mut doc)),
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Move {
+        body: part,
+        placements: crate::all_placements(&context(&mut doc)),
+    });
     draws(&mut wb, &mut doc);
     let panel = widgets(&wb, &mut doc);
     assert_eq!(value_of(&panel, "x"), 30.0);
@@ -202,11 +238,7 @@ fn the_move_panel_moves_the_body_as_asm_place_does_and_records_it() {
 fn the_picking_prompt_offers_the_origin_and_takes_its_plane_as_the_second_face() {
     let (mut doc, _, part) = scene();
     let mut wb = AssemblyWorkbench::default();
-    wb.on_input(
-        &WorkbenchInputEvent::ToolActivated,
-        Some("asm.mate"),
-        &mut context(&mut doc),
-    );
+    activate(&mut wb, &mut context(&mut doc), "asm.mate");
     let panel = widgets(&wb, &mut doc);
     assert!(words(&panel).contains("The first body moves"));
     assert!(field(&panel, "origin:0").is_none(), "nothing to pair yet");
@@ -231,6 +263,11 @@ fn the_picking_prompt_offers_the_origin_and_takes_its_plane_as_the_second_face()
         .unwrap();
     assert_eq!(joint.feature.other_body, crate::WORLD);
     assert_eq!(joint.body, part);
+    let placed = doc.body_placement(part);
+    assert!(
+        placed.point([2.0, 2.0, 0.0])[2].abs() < 1e-3,
+        "the part's face on the XY plane: {placed:?}"
+    );
 }
 
 #[test]
@@ -257,13 +294,10 @@ fn a_body_its_joints_place_shows_its_place_without_fields() {
 #[test]
 fn the_move_panel_switches_its_handles_between_moving_and_turning() {
     let (mut doc, _, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Move {
-            body: part,
-            placements: Vec::new(),
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Move {
+        body: part,
+        placements: Vec::new(),
+    });
     let selected =
         |wb: &AssemblyWorkbench, doc: &mut Document| match field(&widgets(wb, doc), "handles") {
             Some(Widget::Choice {
@@ -314,16 +348,7 @@ fn new_bodies(doc: &Document, before: &Document) -> Vec<BodyPlacement> {
 fn copies_turned_about_an_axis_are_inserted_and_recorded_as_asm_copy() {
     let (mut doc, _, part) = scene();
     let before = doc.clone();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Copies {
-            body: part,
-            count: 1,
-            step: [10.0, 0.0, 0.0],
-            around: None,
-            mirror: None,
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(copies(part));
     draws(&mut wb, &mut doc);
     assert!(field(&widgets(&wb, &mut doc), "step_0").is_some());
     send(&mut wb, &mut doc, number("count", 3.0));
@@ -363,16 +388,7 @@ fn copies_turned_about_an_axis_are_inserted_and_recorded_as_asm_copy() {
 #[test]
 fn a_mirror_image_across_a_plane_is_recorded_as_asm_mirror() {
     let (mut doc, _, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Copies {
-            body: part,
-            count: 1,
-            step: [10.0, 0.0, 0.0],
-            around: None,
-            mirror: None,
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(copies(part));
     send(&mut wb, &mut doc, toggle("mirror", true));
     send(&mut wb, &mut doc, choose("plane", 2));
     send(&mut wb, &mut doc, number("mirror_2", 5.0));
@@ -398,13 +414,10 @@ fn a_mirror_image_across_a_plane_is_recorded_as_asm_mirror() {
 #[test]
 fn the_replace_panel_names_both_bodies() {
     let (mut doc, base, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Replace {
-            old: part,
-            new: None,
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Replace {
+        old: part,
+        new: None,
+    });
     let said = words(&widgets(&wb, &mut doc));
     assert!(said.contains("Replace: Part"), "{said}");
     assert!(said.contains("With: click a body"), "{said}");
@@ -419,13 +432,10 @@ fn the_replace_panel_names_both_bodies() {
 #[test]
 fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
     let (mut doc, base, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Group {
-            editing: None,
-            members: vec![base, part],
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Group {
+        editing: None,
+        members: vec![base, part],
+    });
     let panel = widgets(&wb, &mut doc);
     assert!(field(&panel, "remove:1").is_some());
     assert!(
@@ -461,15 +471,12 @@ fn a_group_takes_bodies_out_and_is_dissolved_as_doc_delete() {
 #[test]
 fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() {
     let (mut doc, base, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Interference {
-            found: None,
-            seq: doc.mutation_seq(),
-            around: Some(part),
-            clearance: None,
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Interference {
+        found: None,
+        seq: doc.mutation_seq(),
+        around: Some(part),
+        clearance: None,
+    });
     let panel = widgets(&wb, &mut doc);
     assert!(matches!(
         flat(&panel)[1],
@@ -520,34 +527,31 @@ fn an_interference_check_lists_its_clashes_and_a_click_selects_the_first_body() 
 #[test]
 fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
     let (mut doc, base, part) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Mass {
-            found: Some(crate::MassReport {
-                bodies: vec![
-                    crate::BodyMass {
-                        body: base,
-                        volume_mm3: 1000.0,
-                        centre: [0.0; 3],
-                        density: None,
-                        inertia: Some(kernel_api::Inertia::default()),
-                        bought: false,
-                    },
-                    crate::BodyMass {
-                        body: part,
-                        volume_mm3: 1000.0,
-                        centre: [10.0, 0.0, 0.0],
-                        density: None,
-                        inertia: Some(kernel_api::Inertia::default()),
-                        bought: true,
-                    },
-                ],
-                skipped: 0,
-                stopped: false,
-            }),
-            density: 1.0,
+    let mut wb = with_task(Task::Mass {
+        found: Some(crate::MassReport {
+            bodies: vec![
+                crate::BodyMass {
+                    body: base,
+                    volume_mm3: 1000.0,
+                    centre: [0.0; 3],
+                    density: None,
+                    inertia: Some(kernel_api::Inertia::default()),
+                    bought: false,
+                },
+                crate::BodyMass {
+                    body: part,
+                    volume_mm3: 1000.0,
+                    centre: [10.0, 0.0, 0.0],
+                    density: None,
+                    inertia: Some(kernel_api::Inertia::default()),
+                    bought: true,
+                },
+            ],
+            skipped: 0,
+            stopped: false,
         }),
-        ..AssemblyWorkbench::default()
-    };
+        density: 1.0,
+    });
     let said = words(&widgets(&wb, &mut doc));
     assert!(said.contains("Mass: 2.00 g"), "{said}");
     // Two point masses 10 mm apart: 1 g · 5² each about Y and Z.
@@ -570,14 +574,11 @@ fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
 fn the_exploded_view_spreads_bodies_and_keeps_its_steps_as_asm_exploded_view() {
     let (mut doc, base, part) = scene();
     let placements = crate::all_placements(&context(&mut doc));
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Explode {
-            placements: placements.clone(),
-            spread: 0.0,
-            steps: Box::default(),
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Explode {
+        placements: placements.clone(),
+        spread: 0.0,
+        steps: Box::default(),
+    });
     draws(&mut wb, &mut doc);
     let mut by_hand = doc.clone();
     crate::explode(&mut context(&mut by_hand), &placements, 1.5);
@@ -671,14 +672,11 @@ fn drawn_texts(wb: &mut AssemblyWorkbench, doc: &mut Document, width: f32) -> Ve
 fn an_exploded_step_says_what_it_does_and_its_remove_button_keeps_one_line() {
     let (mut doc, base, part) = scene();
     let placements = crate::all_placements(&context(&mut doc));
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Explode {
-            placements,
-            spread: 0.0,
-            steps: Box::default(),
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Explode {
+        placements,
+        spread: 0.0,
+        steps: Box::default(),
+    });
     for bodies in [vec![part], vec![base, part]] {
         if let Some(Task::Explode { steps, .. }) = &mut wb.task {
             steps.picked = bodies;
@@ -710,10 +708,7 @@ fn an_exploded_step_says_what_it_does_and_its_remove_button_keeps_one_line() {
 #[test]
 fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     let (mut doc, _, _) = scene();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Parts),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Parts);
     draws(&mut wb, &mut doc);
     let parts = crate::parts_list(&doc, &[]);
     let Some(Widget::Sheet { rows, columns, .. }) =
@@ -724,14 +719,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     assert_eq!(rows.len(), parts.len());
     assert_eq!(columns.len(), 9);
 
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::Text {
-            id: "new_column".into(),
-            value: "Maker".into(),
-        },
-    );
+    send(&mut wb, &mut doc, text("new_column", "Maker"));
     let (_, recorded) = send(&mut wb, &mut doc, button("add_column"));
     assert_eq!(recorded.len(), 1);
     assert_eq!(recorded[0].id, "asm.parts_table");
@@ -742,69 +730,25 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
     };
     assert_eq!(columns.last().map(String::as_str), Some("Maker"));
 
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::CellText {
-            id: "parts".into(),
-            row: 0,
-            column: 9,
-            value: "ACME".into(),
-        },
-    );
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::CellCheck {
-            id: "parts".into(),
-            row: 0,
-            column: 7,
-            on: true,
-        },
-    );
+    send(&mut wb, &mut doc, cell("parts", 0, 9, "ACME"));
+    send(&mut wb, &mut doc, check("parts", 0, 7, true));
     assert_eq!(
         crate::parts_list(&doc, &[])[0].print,
         0,
         "a bought part prints none"
     );
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::CellText {
-            id: "parts".into(),
-            row: 0,
-            column: 3,
-            value: "5".into(),
-        },
-    );
+    send(&mut wb, &mut doc, cell("parts", 0, 3, "5"));
     assert_eq!(crate::parts_list(&doc, &[])[0].print, 5);
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::Choice {
-            id: "print_material".into(),
-            index: 1,
-        },
-    );
+    send(&mut wb, &mut doc, choose("print_material", 1));
     let (_, table) = crate::parts::table_of(&doc).unwrap();
     assert_eq!(table.material.name, "PETG");
     assert!(field(&widgets(&wb, &mut doc), "print_density").is_none());
     send(
         &mut wb,
         &mut doc,
-        PanelEvent::Choice {
-            id: "print_material".into(),
-            index: crate::parts::PRINT_MATERIALS.len(),
-        },
+        choose("print_material", crate::parts::PRINT_MATERIALS.len()),
     );
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::Number {
-            id: "print_density".into(),
-            value: 1.3,
-        },
-    );
+    send(&mut wb, &mut doc, number("print_density", 1.3));
     let (_, table) = crate::parts::table_of(&doc).unwrap();
     assert_eq!(
         (table.material.name.as_str(), table.material.density),
@@ -863,14 +807,11 @@ fn geared() -> (Document, FeatureId, FeatureId) {
 fn a_coupling_s_fields_change_it_as_asm_set_does_and_record_the_change() {
     let (mut doc, coupling, _) = geared();
     let before = doc.clone();
-    let mut wb = AssemblyWorkbench {
-        task: Some(Task::Coupling {
-            id: coupling,
-            before: doc.get_feature_data(coupling).cloned(),
-            placements: crate::all_placements(&context(&mut doc)),
-        }),
-        ..AssemblyWorkbench::default()
-    };
+    let mut wb = with_task(Task::Coupling {
+        id: coupling,
+        before: doc.get_feature_data(coupling).cloned(),
+        placements: crate::all_placements(&context(&mut doc)),
+    });
     draws(&mut wb, &mut doc);
     let panel = widgets(&wb, &mut doc);
     assert_eq!(value_of(&panel, "ratio"), 2.0);
@@ -1230,11 +1171,7 @@ fn studying(wb: &AssemblyWorkbench) -> &crate::Studying {
 fn a_motion_is_worked_out_kept_as_asm_motion_and_scrubbed() {
     let (mut doc, _, hinge) = geared();
     let mut wb = AssemblyWorkbench::default();
-    wb.on_input(
-        &WorkbenchInputEvent::ToolActivated,
-        Some("asm.motion"),
-        &mut context(&mut doc),
-    );
+    activate(&mut wb, &mut context(&mut doc), "asm.motion");
     let panel = widgets(&wb, &mut doc);
     let Some(Widget::Choice { options, .. }) = field(&panel, "add_drive") else {
         panic!("{panel:?}");
@@ -1246,14 +1183,7 @@ fn a_motion_is_worked_out_kept_as_asm_motion_and_scrubbed() {
     send(&mut wb, &mut doc, choose("add_drive", 1));
     assert_eq!(studying(&wb).draft.drives[0].joint, hinge);
     assert_eq!(studying(&wb).draft.drives[0].formula, "90 * t");
-    send(
-        &mut wb,
-        &mut doc,
-        PanelEvent::Text {
-            id: "formula:0".into(),
-            value: "45 * t".into(),
-        },
-    );
+    send(&mut wb, &mut doc, text("formula:0", "45 * t"));
     send(&mut wb, &mut doc, number("end", 1.0));
     send(&mut wb, &mut doc, number("step", 0.25));
     let (_, recorded) = send(&mut wb, &mut doc, button("work_out"));

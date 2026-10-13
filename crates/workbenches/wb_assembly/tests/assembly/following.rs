@@ -4,23 +4,11 @@
 
 use std::sync::Arc;
 
-use core_document::{BodyId, Document, DocumentService, ImportedGeometry, WorkbenchRuntimeContext};
+use core_document::{Document, DocumentService, ImportedGeometry, WorkbenchRuntimeContext};
 use kernel_api::{FaceSurface, TriMesh};
 use wb_assembly::{Anchor, AssemblyWorkbench, JOINT_KIND};
 
-/// What the host does before closing an undo step.
-fn settle(registry: &mut DocumentService, doc: &mut Document) {
-    registry.evaluate(doc);
-    let moved = doc.take_moved_values();
-    if moved.is_empty() {
-        return;
-    }
-    for id in registry.ids().to_vec() {
-        let wb = registry.workbench_mut(&id).unwrap();
-        let mut ctx = WorkbenchRuntimeContext::new(doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        wb.values_moved(&mut ctx, &moved);
-    }
-}
+use crate::{height, settle};
 
 /// A slab whose top face, named 77, stands at `top`.
 fn slab(top: f32) -> ImportedGeometry {
@@ -45,10 +33,6 @@ fn slab(top: f32) -> ImportedGeometry {
         face_colors_path: None,
         health: None,
     }
-}
-
-fn height(doc: &Document, body: BodyId) -> f32 {
-    doc.body_placement(body).point([0.0, 0.0, 0.0])[2]
 }
 
 #[test]

@@ -95,12 +95,17 @@ fn fit_shows_the_whole_sphere_in_narrow_and_wide_windows() {
 }
 
 /// A fit moves the view, not its attitude: orientation (with roll) and
-/// projection kind stay, the pivot is the centre and sits mid-screen.
+/// projection kind stay, the pivot is the centre and sits mid-screen. A point
+/// has no size to fit: the scale stays.
 #[test]
 fn fit_keeps_orientation_and_centres_the_pivot() {
     let viewport = Vec2::new(800.0, 600.0);
     let sphere = BoundingSphere::from_aabb(Vec3::new(-1.0, 2.0, 3.0), Vec3::new(5.0, 4.0, 9.0));
     assert_eq!(sphere.center, Vec3::new(2.0, 3.0, 6.0));
+    let point = BoundingSphere {
+        center: Vec3::new(4.0, -2.0, 1.0),
+        radius: 0.0,
+    };
     for projection in [
         Projection::Perspective { vertical_fov: 0.9 },
         orthographic(viewport, 2.0),
@@ -121,25 +126,9 @@ fn fit_keeps_orientation_and_centres_the_pivot() {
                 .distance(viewport * 0.5)
                 < 1e-3
         );
-    }
-}
-
-/// A point has no size to fit: it is centred and the scale stays.
-#[test]
-fn fitting_a_point_keeps_the_scale() {
-    let viewport = Vec2::new(800.0, 600.0);
-    let point = BoundingSphere {
-        center: Vec3::new(4.0, -2.0, 1.0),
-        radius: 0.0,
-    };
-    for projection in [
-        Projection::Perspective { vertical_fov: 0.9 },
-        orthographic(viewport, 2.0),
-    ] {
-        let source = camera(viewport, projection);
-        let fitted = fit(source, point);
+        let on_point = fit(source, point);
         let before = source.scale_at(source.pivot());
-        assert!((fitted.scale_at(point.center) / before - 1.0).abs() < 1e-5);
+        assert!((on_point.scale_at(point.center) / before - 1.0).abs() < 1e-5);
     }
 }
 

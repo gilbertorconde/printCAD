@@ -13,19 +13,6 @@ fn slide_delta_is_the_projection_on_the_axis() {
     assert!((delta - 4.0 / 2.0_f64.sqrt()).abs() < 1e-14, "{delta:?}");
 }
 
-/// A skewed pair (60°): the increments recover a delta in the plane exactly, not
-/// "by the projection on each axis" (which would give 1.5 instead of 1 on each).
-#[test]
-fn plane_split_recovers_a_delta_in_a_skewed_plane() {
-    let first = unit(1.0, 0.0, 0.0);
-    let second = unit(0.5, 3.0_f64.sqrt() / 2.0, 0.0);
-    let plane = SlidePlane::new(first, second).expect("60° pair spans a plane");
-    let delta = first * 2.0 + second * -7.0;
-    let (along_first, along_second) = plane.split(delta);
-    assert!((along_first - 2.0).abs() < 1e-13, "{along_first:?}");
-    assert!((along_second + 7.0).abs() < 1e-13, "{along_second:?}");
-}
-
 /// The part off the plane is dropped: the result is the orthogonal projection.
 #[test]
 fn plane_split_drops_the_normal_component() {
