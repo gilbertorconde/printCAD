@@ -34,6 +34,10 @@ struct Session {
     wb: SketchWorkbench,
     active: Option<FeatureId>,
     recorded: Vec<Recorded>,
+    /// The kernel the host hands the bench, when a test has a model.
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    /// The model's edges the host has picked.
+    edges: Vec<core_document::EdgeRef>,
 }
 
 impl Session {
@@ -50,6 +54,8 @@ impl Session {
         let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
         ctx.view_proj = Some(view_proj());
         ctx.active_document_object = active;
+        ctx.kernel = self.kernel;
+        ctx.selected_edges = self.edges.clone();
         self.wb.on_input(&event, tool, &mut ctx);
         let outcome = HookOutcome::take(&mut ctx);
         self.active = outcome.active_document_object;
@@ -57,6 +63,8 @@ impl Session {
         let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
         ctx.view_proj = Some(view_proj());
         ctx.active_document_object = self.active;
+        ctx.kernel = self.kernel;
+        ctx.selected_edges = self.edges.clone();
         self.wb.on_frame(0.016, &mut ctx);
         self.recorded.extend(HookOutcome::take(&mut ctx).recorded);
     }
@@ -92,6 +100,23 @@ impl Session {
         self.release(x, y, tool);
     }
 
+    /// A click on the model's edge `edge` where the view shows it, which
+    /// the host takes and picks the edge with.
+    fn pick_edge(&mut self, edge: core_document::EdgeRef) {
+        let viewport_pos = self.ctx().world_to_viewport(edge.point).unwrap();
+        let press = WorkbenchInputEvent::MousePress {
+            button: MouseButton::Left,
+            viewport_pos,
+        };
+        self.event(press, Some("sketch.select"));
+        self.edges = vec![edge];
+        let release = WorkbenchInputEvent::MouseRelease {
+            button: MouseButton::Left,
+            viewport_pos,
+        };
+        self.event(release, Some("sketch.select"));
+    }
+
     fn move_to(&mut self, x: f32, y: f32, tool: &str) {
         let viewport_pos = self.px(x, y);
         self.event(WorkbenchInputEvent::MouseMove { viewport_pos }, Some(tool));
@@ -124,6 +149,7 @@ struct Replay {
     doc: Document,
     wb: SketchWorkbench,
     specs: Vec<CommandSpec>,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 impl scripting::Host for Replay {
@@ -139,6 +165,7 @@ impl scripting::Host for Replay {
             .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
         spec.check(&args)?;
         let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
+        ctx.kernel = self.kernel;
         self.wb.run_command(id, &args, &mut ctx)
     }
 }
@@ -312,6 +339,7 @@ fn assert_replays(recorded: &[Recorded], before: Document, id: FeatureId, live: 
         doc: before,
         wb: SketchWorkbench::default(),
         specs: context.commands().to_vec(),
+        kernel: Some(&crate::block_kernel::BLOCK),
     };
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
@@ -343,6 +371,8 @@ fn session_on_a_sketch() -> (Session, FeatureId, Document) {
         wb: SketchWorkbench::default(),
         active: None,
         recorded: Vec::new(),
+        kernel: None,
+        edges: Vec::new(),
     };
     let plane = Sketch::new("s").plane;
     let id = s
@@ -531,6 +561,7 @@ fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
         doc: before,
         wb: SketchWorkbench::default(),
         specs: context.commands().to_vec(),
+        kernel: None,
     };
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
@@ -715,4 +746,45 @@ fn number_text(key: KeyCode) -> Option<&'static str> {
         KeyCode::Minus => "-",
         _ => return None,
     })
+}
+
+/// Constraints taken to edges and a vertex of the model replay: each new
+/// projection as `sketch.external` before the constraint naming what it
+/// made, and a vertex of an edge already in the sketch named as it is.
+#[test]
+fn constraints_on_model_edges_replay_with_their_projections() {
+    use crate::block_kernel::{BLOCK, DEPTH, add_block, edge_at};
+    let (mut s, id, _) = session_on_a_sketch();
+    let body = add_block(&mut s.doc);
+    s.kernel = Some(&BLOCK);
+    let before = s.doc.clone();
+    s.click(5.0, 5.0, "sketch.point");
+    s.click(14.0, 13.0, "sketch.point");
+    s.key(KeyCode::Escape, Some("sketch.point"));
+
+    // The first point's distance to the block's left edge, then the
+    // second point onto the corner that edge ends at.
+    s.click(5.0, 5.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.constrain.distance"));
+    s.pick_edge(edge_at(body, [20.0, 5.0, DEPTH], [0.0, 1.0, 0.0]));
+    s.click(14.0, 13.0, "sketch.select");
+    s.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    s.pick_edge(edge_at(body, [20.0, 9.9, DEPTH], [0.0, 1.0, 0.0]));
+
+    let sketch = s.sketch(id);
+    assert_eq!(sketch.external.len(), 1, "{:?}", sketch.external);
+    assert_eq!(sketch.constraints.len(), 2, "{:?}", sketch.constraints);
+    let kinds: Vec<&str> = s
+        .recorded
+        .iter()
+        .map(|r| r.id.as_str())
+        .filter(|id| *id != "sketch.draw")
+        .collect();
+    assert_eq!(
+        kinds,
+        ["sketch.external", "sketch.constrain", "sketch.constrain"],
+        "{:#?}",
+        s.recorded
+    );
+    assert_replays(&s.recorded, before, id, &sketch);
 }

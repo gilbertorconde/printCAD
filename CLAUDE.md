@@ -352,7 +352,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   task's checks; `sketch.regions` lists them), `overlay.rs` (screen-space rendering
   while editing), `glyphs.rs` (constraint icons and dimension layouts),
   `constrain.rs` (which constraint a toolbar action creates for the
-  selection's shape), `panel.rs` (the task panel), `style.rs` (icons and
+  selection's shape; a tool the selection does not fit yet arms in
+  `model_picks.rs`, taking sketch clicks and the host's edge picks as
+  operands, projecting the edges as guides, reusing what the sketch
+  holds, and recording `sketch.external` then `sketch.constrain`),
+  `panel.rs` (the task panel), `style.rs` (icons and
   names per element/constraint kind).
 - `viewport_camera`: camera pose, projection, rays, press-relative navigation,
   fit and timed transitions, shared with other applications. It depends only

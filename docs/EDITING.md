@@ -65,6 +65,17 @@ square to its plane.
 **While editing,** the view stays square to the sketch plane: pan, zoom and
 roll work, orbit and standard views do not.
 
+**Constraining to the model.** A constraint or dimension tool pressed
+while the selection does not fit it yet stays armed (its button lit) and
+takes more picks: a click on the sketch adds an element, and a click on an
+edge of a solid adds that edge, or the vertex at its end when the click is
+there and the tool takes a point. Once two items are picked and fit, the
+edges are projected into the sketch as guides (an edge the sketch already
+holds is used again) and the constraint goes on: a distance from a point to
+a model edge, a point coincident with a model vertex, a circle tangent to a
+round edge. That is one undo step. Enter applies the tool to a single item,
+Escape or a right click puts it away.
+
 **Finishing.** Close in the task panel, or Enter, ends the edit and returns
 to the workbench you came from. Escape in the view drops what is in
 progress first: a typed value, a half-drawn shape, the selection.

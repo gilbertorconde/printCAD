@@ -53,6 +53,12 @@ struct Harness {
     tool_request: Option<String>,
     /// Whether the workbench has asked the host to turn the view.
     view_turned: bool,
+    /// The kernel the host hands the bench, when a test has a model.
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+    /// The model's edges the host has picked.
+    edges: Vec<core_document::EdgeRef>,
+    /// Whether the bench took the last event.
+    consumed: bool,
 }
 
 impl Harness {
@@ -64,6 +70,9 @@ impl Harness {
             vp: view_proj(),
             tool_request: None,
             view_turned: false,
+            kernel: None,
+            edges: Vec::new(),
+            consumed: false,
         }
     }
 
@@ -79,7 +88,9 @@ impl Harness {
         ctx.ctrl_down = ctrl;
         // A body is always "selected" so sketch.create is permitted.
         ctx.selected_body_id = Some(uuid::Uuid::new_v4());
-        self.wb.on_input(&event, tool, &mut ctx);
+        ctx.kernel = self.kernel;
+        ctx.selected_edges = self.edges.clone();
+        self.consumed = self.wb.on_input(&event, tool, &mut ctx).consumed;
         self.active_object = ctx.active_document_object;
         let requests = ctx.take_requests();
         self.view_turned |= requests
@@ -95,7 +106,41 @@ impl Harness {
             WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
         frame_ctx.view_proj = Some(self.vp);
         frame_ctx.active_document_object = self.active_object;
+        frame_ctx.kernel = self.kernel;
+        frame_ctx.selected_edges = self.edges.clone();
         self.wb.on_frame(0.016, &mut frame_ctx);
+    }
+
+    /// A click on the model's edge `edge` where the view shows it, as the
+    /// host makes it: the press and release are the host's when the bench
+    /// leaves them, and the edge is picked. Whether the bench left them.
+    fn pick_edge(&mut self, edge: core_document::EdgeRef) -> bool {
+        let viewport_pos = {
+            let mut ctx =
+                WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+            ctx.view_proj = Some(self.vp);
+            ctx.world_to_viewport(edge.point)
+                .expect("the edge projects into the viewport")
+        };
+        self.event(
+            WorkbenchInputEvent::MousePress {
+                button: MouseButton::Left,
+                viewport_pos,
+            },
+            Some("sketch.select"),
+        );
+        let left = !self.consumed;
+        if left {
+            self.edges = vec![edge];
+        }
+        self.event(
+            WorkbenchInputEvent::MouseRelease {
+                button: MouseButton::Left,
+                viewport_pos,
+            },
+            Some("sketch.select"),
+        );
+        left && !self.consumed
     }
 
     /// Viewport pixel coordinates for a sketch-plane point (the inverse of
@@ -3243,8 +3288,8 @@ fn selecting_two_lines_enables_the_constraint_tools_that_fit_them() {
     let mut h = Harness::new();
     two_lines(&mut h);
     assert!(
-        !h.tool_enabled("sketch.constrain.parallel"),
-        "nothing selected, nothing to constrain"
+        h.tool_enabled("sketch.constrain.parallel"),
+        "nothing selected, the tool arms to take picks"
     );
 
     h.click(5.0, 3.5, "sketch.select");
@@ -5415,4 +5460,214 @@ fn number_text(key: KeyCode) -> Option<&'static str> {
         KeyCode::Minus => "-",
         _ => return None,
     })
+}
+
+/// A sketch on the XY plane beside the block of `block_kernel`, with its
+/// kernel at hand.
+fn beside_the_block() -> (Harness, core_document::BodyId) {
+    let mut h = Harness::new();
+    let body = crate::block_kernel::add_block(&mut h.doc);
+    h.kernel = Some(&crate::block_kernel::BLOCK);
+    h.create_sketch();
+    (h, body)
+}
+
+/// The edited sketch as the document stores it.
+fn stored(h: &Harness) -> serde_json::Value {
+    h.doc
+        .get_feature_data(h.active_object.expect("a sketch"))
+        .cloned()
+        .expect("its data")
+}
+
+/// A point drawn at (x, y) and selected.
+fn selected_point(h: &mut Harness, x: f64, y: f64) {
+    h.click(x, y, "sketch.point");
+    h.key(KeyCode::Escape, Some("sketch.point"));
+    h.click(x, y, "sketch.select");
+    h.release(x, y, "sketch.select");
+}
+
+/// The block's left edge, picked `up` along it.
+fn left_edge(body: core_document::BodyId, up: f32) -> core_document::EdgeRef {
+    crate::block_kernel::edge_at(
+        body,
+        [20.0, up, crate::block_kernel::DEPTH],
+        [0.0, 1.0, 0.0],
+    )
+}
+
+/// The round boss's rim, picked on its right.
+fn rim(body: core_document::BodyId) -> core_document::EdgeRef {
+    crate::block_kernel::edge_at(
+        body,
+        [43.0, 5.0, crate::block_kernel::DEPTH],
+        [0.0, 1.0, 0.0],
+    )
+}
+
+/// A distance from a sketch point to an edge of the model: the edge comes
+/// in as a guide, the dimension holds the two, and undoing takes both
+/// back at once.
+#[test]
+fn a_distance_reaches_a_model_edge_in_one_step() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut h, body) = beside_the_block();
+    selected_point(&mut h, 5.0, 5.0);
+    assert!(h.tool_enabled("sketch.constrain.distance"));
+
+    let mut journal = core_document::history::OpJournal::new(16);
+    journal.note(&mut h.doc);
+    let before = stored(&h);
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    assert_eq!(stored(&h), before, "armed: nothing changes yet");
+    assert!(h.wb.tool_toggled("sketch.constrain.distance"));
+
+    assert!(h.pick_edge(left_edge(body, 5.0)), "the click is the host's");
+    let sketch = h.sketch();
+    assert_eq!(sketch.external.len(), 1, "the edge came in");
+    let (line, source) = sketch.external.iter().next().unwrap();
+    assert!(!source.defining, "as a guide");
+    let gap = sketch
+        .constraints
+        .iter()
+        .find_map(|c| match c.kind {
+            ConstraintKind::Gap {
+                item1,
+                item2,
+                distance,
+            } => Some((item1, item2, distance)),
+            _ => None,
+        })
+        .expect("a distance to the edge");
+    assert_eq!(gap.1, *line, "the edge is its second operand");
+    assert!((gap.2 - 15.0).abs() < 1e-3, "measured: {}", gap.2);
+    assert!(!h.wb.tool_toggled("sketch.constrain.distance"), "applied");
+
+    journal.note(&mut h.doc);
+    assert!(journal.undo(&mut h.doc).is_some());
+    let undone = h.sketch();
+    assert!(
+        undone.external.is_empty() && undone.constraints.is_empty(),
+        "one undo takes the edge and the distance"
+    );
+    assert!(h.point_at(5.0, 5.0), "and only them");
+}
+
+/// A sketch point picked onto the model's vertex: the click at an edge's
+/// end is the vertex, and the point lands on it.
+#[test]
+fn coincident_takes_a_model_vertex() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut h, body) = beside_the_block();
+    selected_point(&mut h, 14.0, 13.0);
+    h.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    assert!(h.pick_edge(left_edge(body, 9.9)));
+
+    let sketch = h.sketch();
+    let held = sketch.constraints.iter().find_map(|c| match c.kind {
+        ConstraintKind::Coincident { point1, point2 } => Some((point1, point2)),
+        _ => None,
+    });
+    let (_, vertex) = held.expect("a coincident constraint");
+    assert!(sketch.is_external(vertex), "on the projected end");
+    assert!(h.point_at(20.0, 10.0), "the point moved onto the vertex");
+    assert!(!h.point_at(14.0, 13.0));
+}
+
+/// A sketch circle made tangent to a round edge of the model.
+#[test]
+fn tangent_takes_a_round_model_edge() {
+    use wb_sketch::sketch::ConstraintKind;
+    let (mut h, body) = beside_the_block();
+    h.click(40.0, 15.0, "sketch.circle");
+    h.click(42.0, 15.0, "sketch.circle");
+    h.key(KeyCode::Escape, Some("sketch.circle"));
+    h.click(42.0, 15.0, "sketch.select");
+    h.release(42.0, 15.0, "sketch.select");
+    h.key(KeyCode::A, Some("sketch.constrain.tangent"));
+    assert!(h.pick_edge(rim(body)));
+
+    let sketch = h.sketch();
+    assert!(
+        sketch
+            .constraints
+            .iter()
+            .any(|c| matches!(c.kind, ConstraintKind::Tangent { .. })),
+        "{:?}",
+        sketch.constraints
+    );
+    let circles: Vec<(f64, f64, f64)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Circle(c) => {
+                let at = sketch.point_position(c.center)?;
+                Some((at.x, at.y, c.radius))
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(circles.len(), 2);
+    let ((x1, y1, r1), (x2, y2, r2)) = (circles[0], circles[1]);
+    let apart = (x1 - x2).hypot(y1 - y2);
+    assert!(
+        (apart - (r1 + r2)).abs() < 1e-6 || (apart - (r1 - r2).abs()).abs() < 1e-6,
+        "touching: {circles:?}"
+    );
+}
+
+/// With nothing selected the tool arms; a sketch element and a model edge
+/// clicked in turn are its two operands, and an edge already brought in
+/// is used again rather than projected twice.
+#[test]
+fn an_armed_tool_takes_sketch_and_model_picks_and_reuses_projections() {
+    let (mut h, body) = beside_the_block();
+    h.click(5.0, 5.0, "sketch.point");
+    h.click(6.0, 2.0, "sketch.point");
+    h.key(KeyCode::Escape, Some("sketch.point"));
+    assert!(
+        h.tool_enabled("sketch.constrain.distance"),
+        "nothing selected: it arms"
+    );
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    h.click(5.0, 5.0, "sketch.select");
+    assert!(h.consumed, "a sketch element is the tool's");
+    h.release(5.0, 5.0, "sketch.select");
+    assert!(
+        h.sketch().constraints.is_empty(),
+        "one operand is not enough"
+    );
+    assert!(h.pick_edge(left_edge(body, 5.0)));
+    assert_eq!(h.sketch().constraints.len(), 1);
+
+    h.key(KeyCode::A, Some("sketch.constrain.distance"));
+    h.click(6.0, 2.0, "sketch.select");
+    h.release(6.0, 2.0, "sketch.select");
+    assert!(h.pick_edge(left_edge(body, 3.0)));
+    let sketch = h.sketch();
+    assert_eq!(sketch.constraints.len(), 2);
+    assert_eq!(sketch.external.len(), 1, "the edge came in once");
+}
+
+/// A tool a selection can never fit does not arm; Escape puts an armed
+/// tool away with nothing changed.
+#[test]
+fn an_armed_tool_cancels_and_a_misfit_never_arms() {
+    let (mut h, body) = beside_the_block();
+    selected_point(&mut h, 5.0, 5.0);
+    let before = stored(&h);
+    assert!(!h.tool_enabled("sketch.constrain.radius"));
+    h.key(KeyCode::A, Some("sketch.constrain.radius"));
+    assert!(
+        !h.wb.tool_toggled("sketch.constrain.radius"),
+        "a point never takes a radius"
+    );
+
+    h.key(KeyCode::A, Some("sketch.constrain.coincident"));
+    assert!(h.wb.tool_toggled("sketch.constrain.coincident"));
+    h.key(KeyCode::Escape, Some("sketch.select"));
+    assert!(!h.wb.tool_toggled("sketch.constrain.coincident"));
+    h.pick_edge(rim(body));
+    assert_eq!(stored(&h), before, "nothing came in");
 }

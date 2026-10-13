@@ -18,6 +18,7 @@ mod glyphs;
 mod images;
 pub mod internal;
 mod measure;
+mod model_picks;
 mod overlay;
 mod ovp;
 #[cfg(feature = "egui")]
@@ -611,6 +612,12 @@ pub struct SketchWorkbench {
     /// The last wall thickness check, drawn until the sketch changes, the
     /// session ends, Escape or another tool.
     wall_check: Option<walls::WallCheck>,
+    /// A constraint tool waiting for its operands, sketch elements or
+    /// edges and vertices of the model.
+    armed: Option<model_picks::Armed>,
+    /// The constraint tools the selection, as it is or with more picks,
+    /// could take, and the selection they were worked out for.
+    armable: (Option<constrain::SelectionShape>, HashSet<&'static str>),
 }
 
 /// A flag each constraint carries, as the toolbar flips it.
@@ -986,6 +993,7 @@ impl SketchWorkbench {
         self.last_empty_click = None;
         self.calibrating = None;
         self.dim_capture = DimCapture::default();
+        self.armed = None;
     }
 
     fn sync_active_sketch_from_ctx(&mut self, ctx: &mut WorkbenchRuntimeContext) {
@@ -3760,7 +3768,13 @@ impl Workbench for SketchWorkbench {
         if let (Some(tool), Some(base)) = (active_tool, base) {
             if let Some(rest) = base.strip_prefix("sketch.constrain.") {
                 let which = tool_variant(tool).unwrap_or(rest);
-                return self.apply_constraint_tool(ctx, which);
+                // Pressed again while armed, the tool is put away.
+                if self.armed_as(base) {
+                    self.armed = None;
+                    ctx.log_info("Constraint cancelled");
+                    return InputResult::consumed();
+                }
+                return self.apply_constraint_tool(ctx, tool, which);
             }
             match base {
                 "sketch.construction" => return self.toggle_construction_selected(ctx),
@@ -3918,6 +3932,16 @@ impl Workbench for SketchWorkbench {
                 WorkbenchInputEvent::KeyPress { key } => self.handle_key_press(ctx, tool, *key),
                 _ => InputResult::ignored(),
             };
+        }
+
+        // An armed constraint tool takes its picks while the view is in
+        // select mode; any other tool puts it away.
+        if self.armed.is_some() {
+            if tool.is_some_and(|t| t != "sketch.select") {
+                self.armed = None;
+            } else if let Some(result) = self.armed_input(ctx, event) {
+                return result;
+            }
         }
 
         match event {
@@ -4174,6 +4198,10 @@ impl Workbench for SketchWorkbench {
                 self.take_external_picks(ctx);
             }
         }
+        if self.active_sketch_id.is_none() {
+            self.armed = None;
+        }
+        self.take_armed_picks(ctx);
         self.drop_stale_wall_check(ctx);
         let seq = ctx.document.mutation_seq();
         let from_outside = self.own_seq.swap(seq, std::sync::atomic::Ordering::Relaxed) != seq;
@@ -4203,6 +4231,13 @@ impl Workbench for SketchWorkbench {
             }
             None => constrain::SelectionShape::default(),
         };
+        if self.armable.0.as_ref() != Some(&self.selection_shape) {
+            let armable = std::iter::once("dimension")
+                .chain(constrain::TOOLS.iter().copied())
+                .filter(|which| model_picks::completable(which, &self.selection_shape))
+                .collect();
+            self.armable = (Some(self.selection_shape.clone()), armable);
+        }
     }
 
     fn is_tool_enabled(&self, tool_id: &str, ctx: &WorkbenchRuntimeContext) -> bool {
@@ -4212,10 +4247,12 @@ impl Workbench for SketchWorkbench {
         let editing = self.active_sketch_id.is_some();
         if let Some(rest) = tool_id.strip_prefix("sketch.constrain.") {
             let which = tool_variant(tool_id).unwrap_or(rest);
+            // A tool the selection does not fit yet arms, to take more picks.
+            let armable = self.armable.1.contains(which);
             if which == "dimension" {
-                return editing && dimension_for(&self.selection_shape).is_some();
+                return editing && (dimension_for(&self.selection_shape).is_some() || armable);
             }
-            return editing && constrain::fits(which, &self.selection_shape);
+            return editing && (constrain::fits(which, &self.selection_shape) || armable);
         }
         match tool_id {
             "sketch.create" => ctx.selected_body_id.is_some(),
@@ -4263,6 +4300,7 @@ impl Workbench for SketchWorkbench {
 
     fn tool_toggled(&self, tool_id: &str) -> bool {
         match tool_id {
+            _ if self.armed_as(tool_id) => true,
             "sketch.construction" => self.construction_mode(),
             "sketch.snap" => !self.snap_off,
             "sketch.show_constraints" => self.options.constraints_hidden,
@@ -4367,8 +4405,13 @@ impl Workbench for SketchWorkbench {
                 key("Enter", "finish");
             }
         }
+        let armed = self.armed_hint();
+        if armed.is_some() {
+            key("Enter", "apply");
+        }
         // Selecting is what the view does at rest: it takes no card.
-        let resting = tool == "sketch.select" && self.tool_state.hint().is_none();
+        let resting =
+            armed.is_none() && tool == "sketch.select" && self.tool_state.hint().is_none();
         if !resting {
             key("Esc", "cancel");
         }
@@ -4401,11 +4444,19 @@ impl Workbench for SketchWorkbench {
             })
         });
         Some(ViewportHud {
-            tool: (!resting).then(|| ToolHint {
-                icon: tool_icon(tool),
-                name: name.to_string(),
-                prompt: prompt.to_string(),
-                keys,
+            tool: (!resting).then(|| match armed {
+                Some(name) => ToolHint {
+                    icon: "external-geometry",
+                    name,
+                    prompt: "Click sketch elements, or edges and vertices of the model".to_string(),
+                    keys,
+                },
+                None => ToolHint {
+                    icon: tool_icon(tool),
+                    name: name.to_string(),
+                    prompt: prompt.to_string(),
+                    keys,
+                },
             }),
             badge: Some((verdict.kind.color(&pal), format!("{} DoF", verdict.dof))),
             legend: vec![
@@ -4905,12 +4956,16 @@ fn canonical_tool(tool: &str) -> Option<String> {
 
 impl SketchWorkbench {
     /// A constraint tool on the current selection: every kind it maps to
-    /// is added, dimensional ones at their measured value.
+    /// is added, dimensional ones at their measured value. A selection the
+    /// tool does not take yet, but could with more picks, arms the tool
+    /// (`model_picks`).
     fn apply_constraint_tool(
         &mut self,
         ctx: &mut WorkbenchRuntimeContext,
+        tool: &str,
         which: &str,
     ) -> InputResult {
+        self.armed = None;
         let Some(feature) = self.get_active_sketch(ctx) else {
             return InputResult::ignored();
         };
@@ -4920,84 +4975,99 @@ impl SketchWorkbench {
             self.selected.in_order(),
         );
         // "dimension" is whichever dimensional tool the selection takes.
-        let which = if which == "dimension" {
-            match constrain::dimension_in(&shape, &feature.sketch) {
-                Some(tool) => tool,
-                None => {
-                    ctx.log_warn("Select a line, circles, or two items to dimension");
-                    self.selection_shape = shape;
-                    return InputResult::consumed();
-                }
-            }
+        let resolved = if which == "dimension" {
+            constrain::dimension_in(&shape, &feature.sketch)
         } else {
-            which
+            Some(which)
         };
         let mut items: Vec<Uuid> = self.selected.iter().copied().collect();
         items.sort();
-        let mut feature = feature;
-        match commands::constrain(&mut feature.sketch, which, &items, None) {
-            Ok(made) => {
-                let remove_redundant = self.options.auto_remove_redundant;
-                let removed = if remove_redundant {
-                    commands::remove_superseded(&mut feature.sketch, &made)
-                } else {
-                    0
-                };
-                if let Some(sketch_id) = self.active_sketch_id {
-                    let mut args = serde_json::json!({
-                        "sketch": sketch_id.0.to_string(),
-                        "kind": which,
-                        "items": ids_json(&items),
-                    });
-                    if remove_redundant {
-                        args["remove_redundant"] = serde_json::json!(true);
-                    }
-                    ctx.record(
-                        "sketch.constrain",
-                        commands::args(args),
-                        serde_json::json!(made),
-                    );
-                }
-                if removed > 0 {
-                    ctx.log_info(format!(
-                        "Removed {removed} constraint(s) the new one made redundant"
-                    ));
-                    self.selected_constraints
-                        .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
-                }
-                let mut dimension = None;
-                for id in &made {
-                    if let Some(c) = feature
-                        .sketch
-                        .constraints
-                        .iter()
-                        .find(|c| c.id.to_string() == *id)
-                    {
-                        ctx.log_info(format!(
-                            "Added constraint: {}",
-                            sketch::constraint_label(&c.kind)
-                        ));
-                        if c.kind.is_dimensional() && dimension.is_none() {
-                            dimension = Some(c.id);
-                        }
-                    }
-                }
-                self.solve(ctx, &mut feature);
-                if let Some(id) = dimension {
-                    if self.options.ask_dimension_value {
-                        self.open_new_dimension(ctx, &feature, id);
-                    } else {
-                        self.pending_focus = Some(id);
-                    }
-                }
-                self.store_sketch(ctx, feature);
-            }
-            Err(_) => ctx.log_warn(format!(
-                "The {which} constraint does not fit the current selection"
-            )),
+        let done = resolved.is_some_and(|resolved| {
+            self.constrain_items(ctx, feature, resolved, &items, Vec::new())
+        });
+        if !done && !self.arm_constraint(ctx, tool, which, &shape) {
+            ctx.log_warn(if which == "dimension" {
+                "Select a line, circles, or two items to dimension".to_string()
+            } else {
+                format!("The {which} constraint does not fit the current selection")
+            });
         }
         self.selection_shape = shape;
         InputResult::consumed()
+    }
+
+    /// Add the constraints the tool `which` makes of `items` to `feature`'s
+    /// sketch and store it, recording `first` (the calls that made what the
+    /// items name) and then the constraint. Whether the items fit.
+    pub(crate) fn constrain_items(
+        &mut self,
+        ctx: &mut WorkbenchRuntimeContext,
+        mut feature: SketchFeature,
+        which: &str,
+        items: &[Uuid],
+        first: Vec<(&'static str, core_document::CommandArgs, serde_json::Value)>,
+    ) -> bool {
+        let Ok(made) = commands::constrain(&mut feature.sketch, which, items, None) else {
+            return false;
+        };
+        let remove_redundant = self.options.auto_remove_redundant;
+        let removed = if remove_redundant {
+            commands::remove_superseded(&mut feature.sketch, &made)
+        } else {
+            0
+        };
+        if let Some(sketch_id) = self.active_sketch_id {
+            for (id, args, result) in first {
+                ctx.record(id, args, result);
+            }
+            let mut args = serde_json::json!({
+                "sketch": sketch_id.0.to_string(),
+                "kind": which,
+                "items": ids_json(items),
+            });
+            if remove_redundant {
+                args["remove_redundant"] = serde_json::json!(true);
+            }
+            ctx.record(
+                "sketch.constrain",
+                commands::args(args),
+                serde_json::json!(made),
+            );
+        }
+        if removed > 0 {
+            ctx.log_info(format!(
+                "Removed {removed} constraint(s) the new one made redundant"
+            ));
+            self.selected_constraints
+                .retain(|id| feature.sketch.constraints.iter().any(|c| c.id == *id));
+        }
+        let mut dimension = None;
+        for id in &made {
+            if let Some(c) = feature
+                .sketch
+                .constraints
+                .iter()
+                .find(|c| c.id.to_string() == *id)
+            {
+                ctx.log_info(format!(
+                    "Added constraint: {}",
+                    sketch::constraint_label(&c.kind)
+                ));
+                if c.kind.is_dimensional() && dimension.is_none() {
+                    dimension = Some(c.id);
+                }
+            }
+        }
+        self.solve(ctx, &mut feature);
+        if let Some(id) = dimension {
+            if self.options.ask_dimension_value {
+                self.open_new_dimension(ctx, &feature, id);
+            } else {
+                self.pending_focus = Some(id);
+            }
+        }
+        self.store_sketch(ctx, feature);
+        true
     }
 
     /// Open the value editor on dimension `id`, just added: by its label,
