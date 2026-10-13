@@ -126,11 +126,12 @@ pub(crate) fn refusal(document: &Document, using: BodyId, source: &BorrowSource)
 /// A sketch feature's plane (and its sketch's copy of it) moved by
 /// `placement`: the same sketch, seen from another frame.
 fn placed_sketch(mut feature: SketchFeature, placement: &BodyPlacement) -> SketchFeature {
+    use wb_sketch::boundary::{place_direction, place_point};
     let place = |plane: &mut wb_sketch::sketch::SketchPlane| {
-        plane.origin = placement.point(plane.origin);
-        plane.normal = placement.direction(plane.normal);
-        plane.x_axis = placement.direction(plane.x_axis);
-        plane.y_axis = placement.direction(plane.y_axis);
+        plane.origin = place_point(placement, plane.origin);
+        plane.normal = place_direction(placement, plane.normal);
+        plane.x_axis = place_direction(placement, plane.x_axis);
+        plane.y_axis = place_direction(placement, plane.y_axis);
     };
     place(&mut feature.plane);
     place(&mut feature.sketch.plane);
@@ -193,55 +194,60 @@ pub(crate) fn lends_sketch(document: &Document, id: FeatureId) -> bool {
 }
 
 /// How far apart two points of borrowed edges may be and still be one.
-const JOIN_MM: f32 = 1e-3;
+const JOIN_MM: f64 = 1e-3;
 
 /// The face borrowed `edges` bound, as a sketch on their plane: straight
 /// pieces as lines, a piece that keeps to one circle as that circle or an
 /// arc of it. Refused when they leave the plane or do not close.
 pub(crate) fn filled(edges: &[FrozenEdge]) -> Result<SketchFeature, String> {
+    use glam::DVec3;
+    use wb_sketch::boundary::widen3;
     use wb_sketch::sketch::{
         Arc, Circle, GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D,
     };
-    let points: Vec<[f32; 3]> = edges
+    let points: Vec<DVec3> = edges
         .iter()
-        .flat_map(|e| e.outline.iter().copied())
+        .flat_map(|e| e.outline.iter().map(|p| DVec3::from_array(widen3(*p))))
         .collect();
     let Some(&p0) = points.first() else {
         return Err("fill needs borrowed edges".into());
     };
     let size = points
         .iter()
-        .map(|p| length(sub(*p, p0)))
-        .fold(0.0, f32::max)
+        .map(|p| p.distance(p0))
+        .fold(0.0, f64::max)
         .max(1.0);
     // The plane: the first point and the two directions from it that
     // span the most.
     let far = points
         .iter()
         .copied()
-        .max_by(|a, b| length(sub(*a, p0)).total_cmp(&length(sub(*b, p0))))
+        .max_by(|a, b| a.distance(p0).total_cmp(&b.distance(p0)))
         .unwrap_or(p0);
-    let u = sub(far, p0);
+    let u = far - p0;
     let normal = points
         .iter()
-        .map(|p| cross(u, sub(*p, p0)))
-        .max_by(|a, b| length(*a).total_cmp(&length(*b)))
-        .unwrap_or([0.0, 0.0, 1.0]);
-    if length(normal) < 1e-6 * size * size {
+        .map(|p| u.cross(*p - p0))
+        .max_by(|a, b| a.length().total_cmp(&b.length()))
+        .unwrap_or(DVec3::Z);
+    if normal.length() < 1e-6 * size * size {
         return Err("the borrowed edges lie in a line, which bounds no face".into());
     }
-    let normal = normal.map(|c| c / length(normal));
+    let normal = normal / normal.length();
     if points
         .iter()
-        .any(|p| dot(sub(*p, p0), normal).abs() > 1e-3 * size)
+        .any(|p| (*p - p0).dot(normal).abs() > 1e-3 * size)
     {
         return Err("the borrowed edges do not lie in one plane".into());
     }
-    let x_axis = u.map(|c| c / length(u));
-    let plane = SketchPlane::from_frame(p0, normal, x_axis);
+    let x_axis = u / u.length();
+    let plane = SketchPlane::from_frame(p0.to_array(), normal.to_array(), x_axis.to_array());
     let flat = |p: [f32; 3]| {
-        let d = sub(p, plane.origin);
-        Vec2D::new(dot(d, plane.x_axis), dot(d, plane.y_axis))
+        let d = DVec3::from_array(widen3(p)) - DVec3::from_array(plane.origin);
+        Vec2D::new(
+            d.dot(DVec3::from_array(plane.x_axis)),
+            d.dot(DVec3::from_array(plane.y_axis)),
+        )
     };
     let mut sketch = Sketch::new("Filled");
     sketch.plane = plane;
@@ -310,7 +316,7 @@ fn chain(pairs: &[[f32; 3]]) -> Vec<[f32; 3]> {
     let Some(first) = pieces.pop() else {
         return Vec::new();
     };
-    let near = |a: [f32; 3], b: [f32; 3]| length(sub(a, b)) < JOIN_MM;
+    let near = |a: [f32; 3], b: [f32; 3]| f64::from(length(sub(a, b))) < JOIN_MM;
     let mut run = vec![first.0, first.1];
     loop {
         let tail = *run.last().expect("a run");
@@ -335,7 +341,7 @@ fn chain(pairs: &[[f32; 3]]) -> Vec<[f32; 3]> {
 }
 
 /// The circle every point of `run` keeps to, when there is one.
-fn round(run: &[wb_sketch::sketch::Vec2D]) -> Option<(wb_sketch::sketch::Vec2D, f32)> {
+fn round(run: &[wb_sketch::sketch::Vec2D]) -> Option<(wb_sketch::sketch::Vec2D, f64)> {
     use wb_sketch::sketch::Vec2D;
     let (a, b, c) = (
         run[0].to_glam(),
@@ -347,7 +353,7 @@ fn round(run: &[wb_sketch::sketch::Vec2D]) -> Option<(wb_sketch::sketch::Vec2D, 
         return None;
     }
     let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    let centre = glam::Vec2::new(
+    let centre = glam::DVec2::new(
         (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
         (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
     );
@@ -874,6 +880,10 @@ pub(crate) fn map_sketch(
         .get_feature_data(sketch)
         .ok_or("the sketch is not in this document")?;
     let mut feature = SketchFeature::from_json(data).map_err(|e| format!("invalid sketch: {e}"))?;
+    let (point, normal) = (
+        wb_sketch::boundary::widen3(point),
+        wb_sketch::boundary::widen3(normal),
+    );
     let plane = wb_sketch::sketch::SketchPlane::from_face(point, normal);
     feature.plane = plane;
     feature.sketch.plane = plane;
@@ -1380,7 +1390,7 @@ mod tests {
         };
         let placed = placed_sketch(feature, &placement);
         assert!(placed.support.is_none());
-        let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
+        let close = |a: [f64; 3], b: [f64; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
         assert!(close(placed.plane.origin, [10.0, 0.0, 0.0]));
         // A quarter turn about x takes +z to -y.
         assert!(close(placed.plane.normal, [0.0, -1.0, 0.0]));

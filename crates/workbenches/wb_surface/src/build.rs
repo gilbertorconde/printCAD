@@ -455,11 +455,12 @@ fn sketch_plane(document: &Document, body: BodyId, id: FeatureId) -> Result<Prof
     let sketch = load_sketch(document, id)?;
     let moved = into_body(document, body, id);
     let p = &sketch.plane;
+    use wb_sketch::boundary::{place_direction, place_point};
     Ok(profile::plane_of(&wb_sketch::sketch::SketchPlane {
-        origin: moved.point(p.origin),
-        normal: moved.direction(p.normal),
-        x_axis: moved.direction(p.x_axis),
-        y_axis: moved.direction(p.y_axis),
+        origin: place_point(&moved, p.origin),
+        normal: place_direction(&moved, p.normal),
+        x_axis: place_direction(&moved, p.x_axis),
+        y_axis: place_direction(&moved, p.y_axis),
     }))
 }
 

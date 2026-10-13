@@ -20,7 +20,7 @@ use crate::tools::{self, ToolParams, ToolState};
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct StepSettings {
     /// How close, in sketch units, a click snaps onto or picks geometry.
-    pub tol: f32,
+    pub tol: f64,
     pub params: ToolParams,
     /// What the tool makes is construction geometry.
     pub construction: bool,
@@ -47,7 +47,7 @@ pub(crate) fn click(
     tool: &str,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    typed: &[(FieldKind, f32)],
+    typed: &[(FieldKind, f64)],
     constrain: bool,
     settings: &StepSettings,
     selected: &HashSet<Uuid>,
@@ -168,7 +168,7 @@ pub(crate) fn line_arc_click(
     capture: &mut DimCapture,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    typed: &[(FieldKind, f32)],
+    typed: &[(FieldKind, f64)],
     constrain: bool,
     settings: &StepSettings,
     selected: &HashSet<Uuid>,
@@ -268,7 +268,7 @@ pub(crate) fn drag(sketch: &mut Sketch, targets: &[(Uuid, Vec2D)], delta: Vec2D)
 /// another point within `tol` first, else a curve within `tol`, never one
 /// of the curves the point belongs to or their other points. The sketch's
 /// origin and axes are left out.
-pub(crate) fn drag_target(sketch: &Sketch, point: Uuid, cursor: Vec2D, tol: f32) -> Option<Uuid> {
+pub(crate) fn drag_target(sketch: &Sketch, point: Uuid, cursor: Vec2D, tol: f64) -> Option<Uuid> {
     if tol <= 0.0 {
         return None;
     }
@@ -484,11 +484,11 @@ pub(crate) fn params_from_json(value: Option<&Value>) -> Result<ToolParams, Stri
         };
         match name.as_str() {
             "polygon_sides" => p.polygon_sides = number()? as u32,
-            "slot_width" => p.slot_width = number()? as f32,
-            "fillet_radius" => p.fillet_radius = number()? as f32,
-            "chamfer_length" => p.chamfer_length = number()? as f32,
+            "slot_width" => p.slot_width = number()?,
+            "fillet_radius" => p.fillet_radius = number()?,
+            "chamfer_length" => p.chamfer_length = number()?,
             "corner_keep" => p.corner_keep = flag()?,
-            "offset_distance" => p.offset_distance = number()? as f32,
+            "offset_distance" => p.offset_distance = number()?,
             "offset_round" => p.offset_round = flag()?,
             "offset_both" => p.offset_both = flag()?,
             "offset_delete" => p.offset_delete = flag()?,

@@ -23,7 +23,7 @@ pub enum Place {
     Line(Vec2D, Vec2D),
 }
 
-fn v(x: f32, y: f32) -> Vec2D {
+fn v(x: f64, y: f64) -> Vec2D {
     Vec2D::new(x, y)
 }
 
@@ -69,7 +69,7 @@ pub fn place(sketch: &Sketch, curve: Uuid, role: InternalRole) -> Option<Place> 
             let b = a * e.ratio.min(1.0);
             let minor = u.perp() * b;
             let f = u * (a * a - b * b).max(0.0).sqrt();
-            let at = |d: glam::Vec2| Vec2D::from_glam(c.to_glam() + d);
+            let at = |d: glam::DVec2| Vec2D::from_glam(c.to_glam() + d);
             Some(match role {
                 InternalRole::MajorAxis => Place::Line(at(-major), at(major)),
                 InternalRole::MinorAxis => Place::Line(at(-minor), at(minor)),
@@ -84,8 +84,8 @@ pub fn place(sketch: &Sketch, curve: Uuid, role: InternalRole) -> Option<Place> 
                 let [ox, oy] = shape.origin;
                 let (u, w) = (shape.u, [-shape.u[1], shape.u[0]]);
                 v(
-                    (ox + u[0] * along + w[0] * across) as f32,
-                    (oy + u[1] * along + w[1] * across) as f32,
+                    ox + u[0] * along + w[0] * across,
+                    oy + u[1] * along + w[1] * across,
                 )
             };
             let focus = match conic.kind {
@@ -318,7 +318,7 @@ mod tests {
     use super::*;
     use crate::sketch::{BSpline, Conic, Ellipse};
 
-    fn point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(v(x, y))))
     }
 
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(l.end, focus, "and ends at its focus");
 
         let ps: Vec<Uuid> = (0..4)
-            .map(|i| point(&mut sketch, i as f32 * 3.0, (i % 2) as f32))
+            .map(|i| point(&mut sketch, i as f64 * 3.0, (i % 2) as f64))
             .collect();
         let spline = sketch.add_geometry(GeometryElement::BSpline(BSpline::new(ps.clone(), true)));
         show(&mut sketch, spline);
@@ -597,7 +597,7 @@ mod tests {
         // From 3 above the centre to 8, in quarter steps: through 5,
         // where the ellipse is a circle.
         for step in 1..=20 {
-            let y = 5.0 + step as f32 * 0.25;
+            let y = 5.0 + step as f64 * 0.25;
             if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(end) {
                 p.position = v(1.0, y);
             }
@@ -615,7 +615,7 @@ mod tests {
         assert!((el.major.to_glam().length() - 8.0).abs() < 1e-3);
         assert!((el.ratio - 5.0 / 8.0).abs() < 1e-3, "{}", el.ratio);
         // a = 8, b = 5: the foci sit √39 from the centre, along the axis.
-        let f = 39f32.sqrt();
+        let f = 39f64.sqrt();
         let up = el.major.y.signum();
         let (f1, f2) = (
             sketch
@@ -692,8 +692,8 @@ mod tests {
         });
         // From (5, 2) to the centre, then up to (1, 5).
         let path = (1..=16)
-            .map(|k| v(5.0 - k as f32 * 0.25, 2.0))
-            .chain((1..=12).map(|k| v(1.0, 2.0 + k as f32 * 0.25)));
+            .map(|k| v(5.0 - k as f64 * 0.25, 2.0))
+            .chain((1..=12).map(|k| v(1.0, 2.0 + k as f64 * 0.25)));
         for at in path {
             if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(focus) {
                 p.position = at;
@@ -705,7 +705,7 @@ mod tests {
                 sketch.point_position(other).unwrap().to_glam(),
             );
             assert!(
-                ((f + g) * 0.5 - glam::Vec2::new(1.0, 2.0)).length() < 1e-3,
+                ((f + g) * 0.5 - glam::DVec2::new(1.0, 2.0)).length() < 1e-3,
                 "opposite through the centre at {at:?}: {f} {g}"
             );
             assert!(aligned(&sketch, e), "on the ellipse at {at:?}");
@@ -748,7 +748,7 @@ mod tests {
         let shape = Shape::new(ConicKind::Hyperbola, v(0.0, 0.0), v(2.0, 0.0), 1.0).unwrap();
         let at = |t: f64| {
             let [x, y] = shape.point(t);
-            v(x as f32, y as f32)
+            v(x, y)
         };
         let s = point(&mut sketch, at(-1.0).x, at(-1.0).y);
         let end = point(&mut sketch, at(1.0).x, at(1.0).y);
@@ -777,7 +777,7 @@ mod tests {
         let shape = Shape::of(conic, &sketch).unwrap();
         for id in [conic.start, conic.end] {
             let p = sketch.point_position(id).unwrap();
-            assert!(shape.distance([p.x as f64, p.y as f64]).abs() < 1e-3);
+            assert!(shape.distance([p.x, p.y]).abs() < 1e-3);
         }
     }
 

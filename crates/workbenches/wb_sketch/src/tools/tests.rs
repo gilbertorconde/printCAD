@@ -10,7 +10,7 @@ fn handle_click(
     tool: &str,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     click_p(
         state,
@@ -28,7 +28,7 @@ fn click_p(
     tool: &str,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     params: &ToolParams,
 ) -> ToolEffect {
     super::handle_click(
@@ -48,7 +48,7 @@ fn click_sel(
     tool: &str,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {
@@ -71,7 +71,7 @@ fn circles(s: &Sketch) -> usize {
     count_kind(s, |g| matches!(g, GeometryElement::Circle(_)))
 }
 
-fn pt(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+fn pt(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
     sketch.add_geometry(GeometryElement::Point(crate::sketch::Point::new(
         Vec2D::new(x, y),
     )))
@@ -206,7 +206,7 @@ fn nearly_horizontal_line_gets_auto_constraint() {
         ConstraintKind::Horizontal { .. }
     ));
     // And the geometry was snapped level.
-    let ys: Vec<f32> = sketch
+    let ys: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -371,7 +371,7 @@ fn rect_center_builds_symmetric_rectangle() {
         "2 horizontal + 2 vertical + the symmetry"
     );
     // Corners are mirrored through the center: (1,1) .. (9,5).
-    let mut xs: Vec<f32> = sketch
+    let mut xs: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -379,7 +379,7 @@ fn rect_center_builds_symmetric_rectangle() {
             _ => None,
         })
         .collect();
-    xs.sort_by(f32::total_cmp);
+    xs.sort_by(f64::total_cmp);
     assert_eq!(xs, vec![1.0, 1.0, 9.0, 9.0]);
 }
 
@@ -445,7 +445,7 @@ fn circle3_builds_circumscribed_circle() {
         })
         .unwrap();
     let center = sketch.point_position(circle.center).unwrap();
-    assert!((center.to_glam() - glam::Vec2::new(3.0, 4.0)).length() < 1e-3);
+    assert!((center.to_glam() - glam::DVec2::new(3.0, 4.0)).length() < 1e-3);
     assert!((circle.radius - 5.0).abs() < 1e-3);
 }
 
@@ -560,11 +560,11 @@ fn arc3_stores_ccw_arc_through_rim_point() {
         c,
         s,
         e,
-        glam::Vec2::new(3.5355, 3.5355)
+        glam::DVec2::new(3.5355, 3.5355)
     ));
     let (_, sweep) = crate::snap::arc_angles(s - c, e - c);
     assert!(
-        sweep < std::f32::consts::PI,
+        sweep < std::f64::consts::PI,
         "short side chosen, sweep {sweep}"
     );
 }
@@ -611,9 +611,9 @@ fn arc3_swaps_endpoints_for_clockwise_rim_point() {
         c,
         s,
         e,
-        glam::Vec2::new(-3.5355, -3.5355)
+        glam::DVec2::new(-3.5355, -3.5355)
     ));
-    assert!((s - glam::Vec2::new(0.0, 5.0)).length() < 1e-3, "swapped");
+    assert!((s - glam::DVec2::new(0.0, 5.0)).length() < 1e-3, "swapped");
 }
 
 #[test]
@@ -999,7 +999,7 @@ fn arc_slot_three_clicks_builds_closed_profile() {
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 4);
     // Rail radii are r ± width/2.
-    let mut radii: Vec<f32> = sketch
+    let mut radii: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -1007,7 +1007,7 @@ fn arc_slot_three_clicks_builds_closed_profile() {
             _ => None,
         })
         .collect();
-    radii.sort_by(f32::total_cmp);
+    radii.sort_by(f64::total_cmp);
     assert_eq!(radii, vec![1.0, 1.0, 4.0, 6.0]);
 }
 
@@ -1048,7 +1048,7 @@ fn arc_slot_rejects_width_wider_than_radius() {
 }
 
 /// Rectangle (0,0)-(w,h) built from shared corner points.
-fn build_rectangle(sketch: &mut Sketch, w: f32, h: f32) -> [Uuid; 4] {
+fn build_rectangle(sketch: &mut Sketch, w: f64, h: f64) -> [Uuid; 4] {
     let a = pt(sketch, 0.0, 0.0);
     let b = pt(sketch, w, 0.0);
     let c = pt(sketch, w, h);
@@ -1060,7 +1060,7 @@ fn build_rectangle(sketch: &mut Sketch, w: f32, h: f32) -> [Uuid; 4] {
     [a, b, c, d]
 }
 
-fn fillet_params(radius: f32) -> ToolParams {
+fn fillet_params(radius: f64) -> ToolParams {
     ToolParams {
         fillet_radius: radius,
         ..ToolParams::default()
@@ -1097,7 +1097,7 @@ fn fillet_rounds_rectangle_corner_tangentially() {
     let end = sketch.point_position(arc.end).unwrap();
     // 90° corner with R=2: center at (10, 6), tangent points at
     // (12, 6) and (10, 8).
-    assert!((center.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4);
+    assert!((center.to_glam() - glam::DVec2::new(10.0, 6.0)).length() < 1e-4);
     assert!((arc.radius - 2.0).abs() < 1e-5);
     assert!(((start.to_glam() - center.to_glam()).length() - 2.0).abs() < 1e-4);
     assert!(((end.to_glam() - center.to_glam()).length() - 2.0).abs() < 1e-4);
@@ -1106,11 +1106,11 @@ fn fillet_rounds_rectangle_corner_tangentially() {
     let (start_angle, sweep) =
         crate::snap::arc_angles((start - center).to_glam(), (end - center).to_glam());
     assert!(
-        (sweep - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+        (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-3,
         "quarter-circle sweep, got {sweep}"
     );
     let mid_angle = start_angle + sweep * 0.5;
-    let mid = center.to_glam() + 2.0 * glam::Vec2::new(mid_angle.cos(), mid_angle.sin());
+    let mid = center.to_glam() + 2.0 * glam::DVec2::new(mid_angle.cos(), mid_angle.sin());
     assert!(
         mid.x > 10.5 && mid.y > 6.5,
         "arc bulges toward the corner: {mid:?}"
@@ -1255,7 +1255,7 @@ fn chamfer_cuts_rectangle_corner_with_line() {
     // Corner point replaced by 2 setback points; extra chamfer line.
     assert_eq!((points(&sketch), lines(&sketch), arcs(&sketch)), (5, 5, 0));
     // Setback points 2mm from the removed corner along each edge.
-    let expect = [glam::Vec2::new(10.0, 8.0), glam::Vec2::new(12.0, 6.0)];
+    let expect = [glam::DVec2::new(10.0, 8.0), glam::DVec2::new(12.0, 6.0)];
     for target in expect {
         assert!(
             sketch.geometry.iter().any(|g| match g {
@@ -1295,7 +1295,7 @@ fn trim_middle_span_leaves_two_lines() {
     assert!(fx.changed);
     assert_eq!((points(&sketch), lines(&sketch)), (8, 4), "two halves left");
     // The retained halves end exactly at the cutters.
-    let spans: Vec<(f32, f32)> = sketch
+    let spans: Vec<(f64, f64)> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -1361,7 +1361,7 @@ fn trim_end_span_keeps_shared_endpoint() {
         sketch.get_geometry(b).is_none(),
         "orphaned endpoint removed"
     );
-    let spans: Vec<f32> = sketch
+    let spans: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -1416,16 +1416,16 @@ fn trim_circle_span_becomes_arc_keeping_id() {
     let s = sketch.point_position(arc.start).unwrap().to_glam();
     let e = sketch.point_position(arc.end).unwrap().to_glam();
     assert!(crate::geom2d::point_on_arc(
-        glam::Vec2::ZERO,
+        glam::DVec2::ZERO,
         s,
         e,
-        glam::Vec2::new(-5.0, 0.0)
+        glam::DVec2::new(-5.0, 0.0)
     ));
     assert!(!crate::geom2d::point_on_arc(
-        glam::Vec2::ZERO,
+        glam::DVec2::ZERO,
         s,
         e,
-        glam::Vec2::new(5.0, 0.0)
+        glam::DVec2::new(5.0, 0.0)
     ));
 }
 
@@ -1547,7 +1547,7 @@ fn extend_line_reaches_nearest_intersection() {
     assert!(fx.changed);
     let end = sketch.point_position(b).unwrap();
     assert!(
-        (end.to_glam() - glam::Vec2::new(10.0, 0.0)).length() < 1e-3,
+        (end.to_glam() - glam::DVec2::new(10.0, 0.0)).length() < 1e-3,
         "end extended to the nearest wall: {end:?}"
     );
 
@@ -1587,7 +1587,7 @@ fn extend_arc_end_reaches_circle() {
     assert!(fx.changed);
     let end = sketch.point_position(e).unwrap().to_glam();
     assert!(
-        (end - glam::Vec2::new(-5.0, 0.0)).length() < 1e-3,
+        (end - glam::DVec2::new(-5.0, 0.0)).length() < 1e-3,
         "arc end swept CCW to the wall: {end:?}"
     );
 }
@@ -1621,7 +1621,7 @@ fn split_line_at_click_shares_new_point() {
     assert!(halves.iter().any(|h| h.id == l));
     assert_eq!(halves[0].end, halves[1].start, "shared split point");
     let m = sketch.point_position(halves[0].end).unwrap();
-    assert!((m.to_glam() - glam::Vec2::new(4.0, 0.0)).length() < 1e-3);
+    assert!((m.to_glam() - glam::DVec2::new(4.0, 0.0)).length() < 1e-3);
 }
 
 #[test]
@@ -1665,7 +1665,7 @@ fn split_arc_produces_two_ccw_arcs() {
         let ep = sketch.point_position(a.end).unwrap().to_glam();
         let (_, sweep) = crate::snap::arc_angles(sp, ep);
         assert!(
-            (sweep - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+            (sweep - std::f64::consts::FRAC_PI_2).abs() < 1e-3,
             "quarter sweep each, got {sweep}"
         );
     }
@@ -1702,7 +1702,7 @@ fn offset_rectangle_inward_builds_closed_loop() {
     assert_eq!(wires.len(), 2, "original + offset loop both closed");
     // The offset corners sit 1mm inside the original ones.
     for corner in [(1.0, 1.0), (9.0, 1.0), (9.0, 4.0), (1.0, 4.0)] {
-        let target = glam::Vec2::new(corner.0, corner.1);
+        let target = glam::DVec2::new(corner.0, corner.1);
         assert!(
             sketch.geometry.iter().any(|g| match g {
                 GeometryElement::Point(p) => (p.position.to_glam() - target).length() < 1e-3,
@@ -1735,7 +1735,7 @@ fn offset_single_circle_is_concentric() {
         &selected,
     );
     assert!(fx.changed);
-    let radii: Vec<f32> = sketch
+    let radii: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -1747,7 +1747,7 @@ fn offset_single_circle_is_concentric() {
         })
         .collect();
     let mut radii = radii;
-    radii.sort_by(f32::total_cmp);
+    radii.sort_by(f64::total_cmp);
     assert_eq!(radii, vec![5.0, 7.0]);
     assert_eq!(points(&sketch), 1);
 }
@@ -1783,8 +1783,8 @@ fn translate_moves_selection_and_shared_points() {
     assert!(state.is_idle());
     let pa = sketch.point_position(a).unwrap().to_glam();
     let pb = sketch.point_position(b).unwrap().to_glam();
-    assert!((pa - glam::Vec2::new(5.0, 3.0)).length() < 1e-3);
-    assert!((pb - glam::Vec2::new(15.0, 3.0)).length() < 1e-3);
+    assert!((pa - glam::DVec2::new(5.0, 3.0)).length() < 1e-3);
+    assert!((pb - glam::DVec2::new(15.0, 3.0)).length() < 1e-3);
     assert_eq!((points(&sketch), lines(&sketch)), (2, 1), "no copies");
 }
 
@@ -1835,7 +1835,7 @@ fn translate_with_copies_builds_array_preserving_sharing() {
     // Second copy apex at (5,5) + 2Δ = (45, 5).
     assert!(sketch.geometry.iter().any(|g| match g {
         GeometryElement::Point(p) =>
-            (p.position.to_glam() - glam::Vec2::new(45.0, 5.0)).length() < 1e-3,
+            (p.position.to_glam() - glam::DVec2::new(45.0, 5.0)).length() < 1e-3,
         _ => false,
     }));
 }
@@ -1881,7 +1881,7 @@ fn rotate_selection_about_pivot() {
     assert!(fx.changed);
     let pb = sketch.point_position(b).unwrap().to_glam();
     assert!(
-        (pb - glam::Vec2::new(0.0, 10.0)).length() < 1e-3,
+        (pb - glam::DVec2::new(0.0, 10.0)).length() < 1e-3,
         "endpoint rotated 90°: {pb:?}"
     );
 }
@@ -1946,7 +1946,7 @@ fn rotate_full_turn_spreads_the_elements_evenly_from_one_click() {
     for want in [(0.0, 10.0), (-10.0, 0.0), (0.0, -10.0)] {
         assert!(
             sketch.geometry.iter().any(|g| matches!(g,
-                GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::from(want)).length() < 1e-3)),
+                GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::from(want)).length() < 1e-3)),
             "a copy's start at {want:?}"
         );
     }
@@ -1962,7 +1962,7 @@ fn rotate_full_turn_spreads_the_elements_evenly_from_one_click() {
         .expect("a polar pitch");
     assert_eq!(pitch.0.len(), 4);
     assert_eq!(pitch.0[0], a, "the original first, the rest in turn");
-    assert!((pitch.1 - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+    assert!((pitch.1 - std::f64::consts::FRAC_PI_2).abs() < 1e-5);
 }
 
 /// Symmetric copies go both ways from the original, and a linked pitch
@@ -1993,9 +1993,9 @@ fn translate_symmetric_copies_go_both_ways() {
         );
     }
     assert_eq!(lines(&sketch), 3);
-    for x in [-5.0f32, 5.0] {
+    for x in [-5.0f64, 5.0] {
         assert!(sketch.geometry.iter().any(|g| matches!(g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(x, 0.0)).length() < 1e-3)));
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(x, 0.0)).length() < 1e-3)));
     }
     let (points, distance) = sketch
         .constraints
@@ -2051,7 +2051,7 @@ fn scale_selection_scales_radii_too() {
     );
     assert!(fx.changed);
     let c = sketch.point_position(center).unwrap().to_glam();
-    assert!((c - glam::Vec2::new(8.0, 0.0)).length() < 1e-3);
+    assert!((c - glam::DVec2::new(8.0, 0.0)).length() < 1e-3);
     let r = sketch
         .geometry
         .iter()
@@ -2090,7 +2090,7 @@ fn mirror_about_line_element_copies_geometry() {
     assert!(state.is_idle());
     assert_eq!((points(&sketch), lines(&sketch)), (6, 3));
     // Mirrored endpoints at (2,-2) and (8,-5); originals untouched.
-    for target in [glam::Vec2::new(2.0, -2.0), glam::Vec2::new(8.0, -5.0)] {
+    for target in [glam::DVec2::new(2.0, -2.0), glam::DVec2::new(8.0, -5.0)] {
         assert!(
             sketch.geometry.iter().any(|g| match g {
                 GeometryElement::Point(p) => (p.position.to_glam() - target).length() < 1e-3,
@@ -2157,10 +2157,10 @@ fn mirror_arc_copy_stays_ccw() {
         cc,
         cs,
         ce,
-        glam::Vec2::new(0.0, -5.0)
+        glam::DVec2::new(0.0, -5.0)
     ));
     let (_, sweep) = crate::snap::arc_angles(cs - cc, ce - cc);
-    assert!((sweep - std::f32::consts::PI).abs() < 1e-3);
+    assert!((sweep - std::f64::consts::PI).abs() < 1e-3);
 }
 
 #[test]
@@ -2189,7 +2189,7 @@ fn a_three_point_ellipse_passes_through_its_rim_point() {
         handle_click(&mut state, "sketch.ellipse3", &mut sketch, p, 0.01);
     }
     assert!(sketch.geometry.is_empty(), "nothing before the rim point");
-    let rim = Vec2D::new(2.0, 3.0_f32.sqrt());
+    let rim = Vec2D::new(2.0, 3.0_f64.sqrt());
     assert!(handle_click(&mut state, "sketch.ellipse3", &mut sketch, rim, 0.01).changed);
     let ellipse = sketch
         .geometry
@@ -2220,7 +2220,7 @@ fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
     for p in [
         Vec2D::new(0.0, 0.0),
         Vec2D::new(4.0, 0.0),
-        Vec2D::new(4.0 * (0.5f32).sqrt(), 2.0 * (0.5f32).sqrt()),
+        Vec2D::new(4.0 * (0.5f64).sqrt(), 2.0 * (0.5f64).sqrt()),
     ] {
         handle_click(&mut state, "sketch.ellipse_arc", &mut sketch, p, 0.01);
     }
@@ -2252,11 +2252,11 @@ fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
     assert!((ellipse.ratio - 0.5).abs() < 1e-4);
     let (t0, t1) = ellipse.param_span(&sketch).expect("a span");
     assert!(
-        (t0 - std::f32::consts::FRAC_PI_4).abs() < 1e-3,
+        (t0 - std::f64::consts::FRAC_PI_4).abs() < 1e-3,
         "starts at 45°: {t0}"
     );
     assert!(
-        t1 > t0 && t1 < std::f32::consts::PI + 1e-3,
+        t1 > t0 && t1 < std::f64::consts::PI + 1e-3,
         "ends before the far vertex: {t1}"
     );
     for end in [arc.start, arc.end] {
@@ -2285,7 +2285,7 @@ fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
 fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
     let mut sketch = Sketch::new("t");
     let mut state = ToolState::default();
-    let click = |state: &mut ToolState, sketch: &mut Sketch, x: f32, y: f32| {
+    let click = |state: &mut ToolState, sketch: &mut Sketch, x: f64, y: f64| {
         handle_click(state, "sketch.polyline", sketch, Vec2D::new(x, y), 0.2).changed
     };
     click(&mut state, &mut sketch, 0.0, 0.0);
@@ -2375,7 +2375,7 @@ fn a_rotated_rectangle_stays_rotated_and_square() {
         0.5,
     );
     let everything: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
-    let angle = 30f32.to_radians();
+    let angle = 30f64.to_radians();
     for p in [
         Vec2D::new(0.0, 0.0),
         Vec2D::new(10.0, 0.0),
@@ -2392,7 +2392,7 @@ fn a_rotated_rectangle_stays_rotated_and_square() {
         );
     }
     crate::solver::solve(&mut sketch);
-    let lines: Vec<glam::Vec2> = sketch
+    let lines: Vec<glam::DVec2> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -2454,7 +2454,7 @@ fn a_copy_carries_the_constraints_of_what_it_copies() {
     transform::copy_selection(
         &mut sketch,
         &everything,
-        &transform::Similarity::translation(glam::Vec2::new(40.0, 0.0)),
+        &transform::Similarity::translation(glam::DVec2::new(40.0, 0.0)),
     );
     // The copy's own shape comes with it; a pin to the origin does not.
     assert_eq!(shape(&sketch), 2 * before);
@@ -2598,7 +2598,7 @@ fn shape_tools_constrain_their_shapes_cleanly() {
 }
 
 /// Every line's direction, by id.
-fn line_dirs(sketch: &Sketch) -> Vec<glam::Vec2> {
+fn line_dirs(sketch: &Sketch) -> Vec<glam::DVec2> {
     sketch
         .geometry
         .iter()
@@ -2738,8 +2738,8 @@ fn a_rectangle_from_its_centre_and_two_corners() {
             GeometryElement::Point(p) if p.id != centre => Some(p.position.to_glam()),
             _ => None,
         })
-        .sum::<glam::Vec2>();
-    assert!((sum / 4.0 - glam::Vec2::new(3.0, 2.0)).length() < 1e-3);
+        .sum::<glam::DVec2>();
+    assert!((sum / 4.0 - glam::DVec2::new(3.0, 2.0)).length() < 1e-3);
 }
 
 #[test]
@@ -2771,7 +2771,7 @@ fn a_frame_is_two_rectangles_a_dimensioned_wall_apart() {
     assert_eq!(sketch.constraints.len(), 12, "8 H/V + 4 wall distances");
     let wires = crate::profile::extract_wires(&sketch).expect("two closed outlines");
     assert_eq!(wires.len(), 2);
-    let inner_at = |sketch: &Sketch, x: f32, y: f32| {
+    let inner_at = |sketch: &Sketch, x: f64, y: f64| {
         sketch.geometry.iter().any(|g| {
             matches!(g, GeometryElement::Point(p)
                 if (p.position.x - x).abs() < 1e-3 && (p.position.y - y).abs() < 1e-3)
@@ -2862,7 +2862,7 @@ fn spline_of(sketch: &Sketch) -> crate::sketch::BSpline {
 }
 
 /// The spline passes within `tol` of `p`.
-fn passes_through(sketch: &Sketch, spline: &crate::sketch::BSpline, p: Vec2D, tol: f32) -> bool {
+fn passes_through(sketch: &Sketch, spline: &crate::sketch::BSpline, p: Vec2D, tol: f64) -> bool {
     spline
         .points(sketch, 2000)
         .unwrap()
@@ -3085,12 +3085,12 @@ fn joining_a_chain_makes_one_spline_on_its_ends_that_follows_it() {
                     before.point_position(l.end).unwrap(),
                 );
                 (0..=20)
-                    .map(|i| Vec2D::from_glam(p.to_glam().lerp(q.to_glam(), i as f32 / 20.0)))
+                    .map(|i| Vec2D::from_glam(p.to_glam().lerp(q.to_glam(), i as f64 / 20.0)))
                     .collect()
             }
             _ => (0..=20)
                 .map(|i| {
-                    let t = std::f32::consts::FRAC_PI_2 * i as f32 / 20.0;
+                    let t = std::f64::consts::FRAC_PI_2 * i as f64 / 20.0;
                     Vec2D::new(10.0 + 5.0 * t.sin(), 5.0 - 5.0 * t.cos())
                 })
                 .collect(),
@@ -3099,7 +3099,7 @@ fn joining_a_chain_makes_one_spline_on_its_ends_that_follows_it() {
             let nearest = curve
                 .iter()
                 .map(|p| (*p - s).to_glam().length())
-                .fold(f32::MAX, f32::min);
+                .fold(f64::MAX, f64::min);
             assert!(nearest < 0.02, "{s:?} is {nearest} from the spline");
         }
     }
@@ -3147,7 +3147,7 @@ fn worst_end_miss(sketch: &Sketch) -> f64 {
             let shape = crate::conic::Shape::of(c, sketch).unwrap();
             [c.start, c.end].map(|id| {
                 let p = sketch.point_position(id).unwrap();
-                shape.distance([f64::from(p.x), f64::from(p.y)]).abs()
+                shape.distance([p.x, p.y]).abs()
             })
         })
         .fold(0.0, f64::max)
@@ -3272,10 +3272,10 @@ fn a_turned_or_mirrored_conic_keeps_its_ends_on_it() {
         );
     }
     let all: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
-    let turn = Similarity::rotation_about(glam::Vec2::new(2.0, 2.0), 0.7);
+    let turn = Similarity::rotation_about(glam::DVec2::new(2.0, 2.0), 0.7);
     let copies = copy_from(&sketch.clone(), &mut sketch, &all, &turn);
     assert!(copies > 0);
-    let mirror = Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+    let mirror = Similarity::mirror_about(glam::DVec2::ZERO, glam::DVec2::Y);
     copy_from(&sketch.clone(), &mut sketch, &all, &mirror);
     let conics = sketch
         .geometry
@@ -3298,10 +3298,10 @@ fn a_mirror_about_a_point_can_move_the_original_or_keep_a_linked_image() {
         let l = line_between(sketch, a, b);
         (a, l)
     };
-    let find = |sketch: &Sketch, x: f32, y: f32| {
+    let find = |sketch: &Sketch, x: f64, y: f64| {
         sketch.geometry.iter().find_map(|g| match g {
             GeometryElement::Point(p)
-                if (p.position.to_glam() - glam::Vec2::new(x, y)).length() < 1e-3 =>
+                if (p.position.to_glam() - glam::DVec2::new(x, y)).length() < 1e-3 =>
             {
                 Some(p.id)
             }
@@ -3358,7 +3358,7 @@ fn a_mirror_about_a_point_can_move_the_original_or_keep_a_linked_image() {
     crate::solver::solve(&mut sketch);
     let moved = sketch.point_position(image).unwrap().to_glam();
     assert!(
-        (moved - glam::Vec2::new(-3.0, -1.0)).length() < 1e-3,
+        (moved - glam::DVec2::new(-3.0, -1.0)).length() < 1e-3,
         "the image followed: {moved:?}"
     );
 }
@@ -3385,7 +3385,7 @@ fn a_scale_with_copies_keeps_the_original_and_scales_each_copy_again() {
             &selected,
         );
     }
-    let mut radii: Vec<f32> = sketch
+    let mut radii: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3393,7 +3393,7 @@ fn a_scale_with_copies_keeps_the_original_and_scales_each_copy_again() {
             _ => None,
         })
         .collect();
-    radii.sort_by(f32::total_cmp);
+    radii.sort_by(f64::total_cmp);
     assert_eq!(radii.len(), 3, "the original and two copies");
     for (got, want) in radii.iter().zip([2.0, 4.0, 8.0]) {
         assert!((got - want).abs() < 1e-3, "{radii:?}");
@@ -3405,7 +3405,7 @@ fn a_polyline_arc_can_leave_square_to_the_last_segment_or_back_along_it() {
     let arc_center = |segment: PolySegment| {
         let mut sketch = Sketch::new("t");
         let mut state = ToolState::default();
-        let click = |state: &mut ToolState, sketch: &mut Sketch, x: f32, y: f32| {
+        let click = |state: &mut ToolState, sketch: &mut Sketch, x: f64, y: f64| {
             handle_click(state, "sketch.polyline", sketch, Vec2D::new(x, y), 0.2).changed
         };
         click(&mut state, &mut sketch, 0.0, 0.0);
@@ -3480,7 +3480,7 @@ fn a_polyline_arc_can_leave_square_to_the_last_segment_or_back_along_it() {
     assert!((arc.radius - 4.0).abs() < 1e-4);
 }
 
-fn the_arc(sketch: &Sketch) -> (glam::Vec2, Arc) {
+fn the_arc(sketch: &Sketch) -> (glam::DVec2, Arc) {
     let arc = sketch
         .geometry
         .iter()
@@ -3560,7 +3560,7 @@ fn a_fillet_joins_two_lines_that_do_not_meet() {
     assert!(state.is_idle());
     let (centre, arc) = the_arc(&sketch);
     assert!(
-        (centre - glam::Vec2::new(1.0, 1.0)).length() < 1e-4,
+        (centre - glam::DVec2::new(1.0, 1.0)).length() < 1e-4,
         "{centre:?}"
     );
     // Each line runs on to the arc: the bottom is extended back to x = 1,
@@ -3574,8 +3574,8 @@ fn a_fillet_joins_two_lines_that_do_not_meet() {
     assert!([arc.start, arc.end].contains(&bs));
     assert!([arc.start, arc.end].contains(&ss));
     let at = |p: Uuid| sketch.point_position(p).unwrap().to_glam();
-    assert!((at(bs) - glam::Vec2::new(1.0, 0.0)).length() < 1e-4);
-    assert!((at(ss) - glam::Vec2::new(0.0, 1.0)).length() < 1e-4);
+    assert!((at(bs) - glam::DVec2::new(1.0, 0.0)).length() < 1e-4);
+    assert!((at(ss) - glam::DVec2::new(0.0, 1.0)).length() < 1e-4);
     // The old ends are gone.
     assert!(sketch.get_geometry(a).is_none() && sketch.get_geometry(c).is_none());
 }
@@ -3596,7 +3596,7 @@ fn a_fillet_trims_lines_that_cross() {
     }
     let (centre, _) = the_arc(&sketch);
     assert!(
-        (centre - glam::Vec2::new(2.0, 2.0)).length() < 1e-4,
+        (centre - glam::DVec2::new(2.0, 2.0)).length() < 1e-4,
         "{centre:?}"
     );
     // The parts past the crossing are cut away.
@@ -3607,7 +3607,7 @@ fn a_fillet_trims_lines_that_cross() {
             GeometryElement::Point(p) => Some(p.position),
             _ => None,
         })
-        .fold(f32::MAX, |m, p| m.min(p.x).min(p.y));
+        .fold(f64::MAX, |m, p| m.min(p.x).min(p.y));
     assert!(lowest > -1e-4, "{lowest}");
 }
 
@@ -3667,10 +3667,10 @@ fn a_chamfer_joins_two_lines_that_do_not_meet() {
         click_p(&mut state, "sketch.chamfer", &mut sketch, at, 0.5, &params);
     }
     assert_eq!(lines(&sketch), 3);
-    let has = |x: f32, y: f32| {
+    let has = |x: f64, y: f64| {
         sketch.geometry.iter().any(|g| match g {
             GeometryElement::Point(p) => {
-                (p.position.to_glam() - glam::Vec2::new(x, y)).length() < 1e-4
+                (p.position.to_glam() - glam::DVec2::new(x, y)).length() < 1e-4
             }
             _ => false,
         })
@@ -3777,7 +3777,7 @@ fn an_offset_outward_can_round_its_corners() {
             assert!(
                 [(0.0, 0.0), (10.0, 0.0), (10.0, 5.0), (0.0, 5.0)]
                     .iter()
-                    .any(|&(x, y)| (c - glam::Vec2::new(x, y)).length() < 1e-5)
+                    .any(|&(x, y)| (c - glam::DVec2::new(x, y)).length() < 1e-5)
             );
         }
     }
@@ -3826,7 +3826,7 @@ fn an_offset_to_both_sides_replacing_the_original() {
     );
     assert_eq!(lines(&sketch), 8);
     assert!(selected.iter().all(|id| sketch.get_geometry(*id).is_none()));
-    let xs: Vec<f32> = sketch
+    let xs: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -3891,7 +3891,7 @@ fn a_linked_offset_follows_its_dimension() {
             GeometryElement::Point(p) => Some(p.position.y),
             _ => None,
         })
-        .fold(f32::MAX, f32::min);
+        .fold(f64::MAX, f64::min);
     assert!((lowest + 2.5).abs() < 1e-3, "{lowest}");
     for g in &sketch.geometry {
         if let GeometryElement::Arc(a) = g {
@@ -3934,8 +3934,8 @@ fn an_ellipse_offsets_as_a_closed_spline() {
     let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
     // Outside the ellipse, about 2 from it: at its ends 12 out along x and
     // 7 up at its top.
-    let max_x = samples.iter().map(|p| p.x).fold(f32::MIN, f32::max);
-    let max_y = samples.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+    let max_x = samples.iter().map(|p| p.x).fold(f64::MIN, f64::max);
+    let max_y = samples.iter().map(|p| p.y).fold(f64::MIN, f64::max);
     assert!((max_x - 12.0).abs() < 0.1, "{max_x}");
     assert!((max_y - 7.0).abs() < 0.1, "{max_y}");
     let wires = crate::profile::extract_wires(&sketch).unwrap();
@@ -3961,7 +3961,7 @@ fn ellipse_and_line(sketch: &mut Sketch, arc: bool) -> (Uuid, Uuid) {
     (ellipse, line)
 }
 
-fn ellipse_arc_span(sketch: &Sketch, id: Uuid) -> Option<(f32, f32)> {
+fn ellipse_arc_span(sketch: &Sketch, id: Uuid) -> Option<(f64, f64)> {
     match sketch.get_geometry(id)? {
         GeometryElement::Ellipse(e) => e.param_span(sketch),
         _ => None,
@@ -3983,7 +3983,7 @@ fn trimming_a_whole_ellipse_leaves_an_arc_of_it() {
     );
     assert!(fx.changed, "{:?}", fx.log);
     let (t0, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
-    let x_at = |t: f32| 10.0 * t.cos();
+    let x_at = |t: f64| 10.0 * t.cos();
     // What stays runs from the line's top crossing round the left.
     assert!((x_at(t0) - 4.0).abs() < 1e-3 && (x_at(t1) - 4.0).abs() < 1e-3);
     let mid = (t0 + t1) * 0.5;
@@ -3995,13 +3995,13 @@ fn trimming_an_arc_of_an_ellipse_shortens_it() {
     let mut sketch = Sketch::new("t");
     let (ellipse, _) = ellipse_and_line(&mut sketch, true);
     let mut state = ToolState::Idle;
-    let near_right = Vec2D::new(10.0 * 0.3f32.cos(), 5.0 * 0.3f32.sin());
+    let near_right = Vec2D::new(10.0 * 0.3f64.cos(), 5.0 * 0.3f64.sin());
     let fx = handle_click(&mut state, "sketch.trim", &mut sketch, near_right, 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let (t0, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
     assert!((10.0 * t0.cos() - 4.0).abs() < 1e-3, "starts at the line");
     assert!(
-        (t1 - std::f32::consts::PI).abs() < 1e-3,
+        (t1 - std::f64::consts::PI).abs() < 1e-3,
         "still ends at (-10, 0)"
     );
     let outcome = crate::solver::solve(&mut sketch);
@@ -4051,13 +4051,13 @@ fn extending_an_arc_of_an_ellipse_to_a_line() {
     let b = pt(&mut sketch, -6.0, 8.0);
     line_between(&mut sketch, a, b);
     let mut state = ToolState::Idle;
-    let near_end = Vec2D::new(10.0 * 1.4f32.cos(), 5.0 * 1.4f32.sin());
+    let near_end = Vec2D::new(10.0 * 1.4f64.cos(), 5.0 * 1.4f64.sin());
     let fx = handle_click(&mut state, "sketch.extend", &mut sketch, near_end, 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let end = sketch.point_position(e).unwrap();
     assert!((end.x + 6.0).abs() < 1e-3 && end.y > 0.0, "{end:?}");
     let (_, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
-    assert!(t1 > std::f32::consts::FRAC_PI_2);
+    assert!(t1 > std::f64::consts::FRAC_PI_2);
 }
 
 /// An open cubic spline from (0, 0) to (30, 0) and a vertical line through
@@ -4083,7 +4083,7 @@ fn spline_and_line(sketch: &mut Sketch, periodic: bool) -> (Uuid, Vec<Uuid>) {
     (spline, pts)
 }
 
-fn spline_samples(sketch: &Sketch, id: Uuid) -> Vec<glam::Vec2> {
+fn spline_samples(sketch: &Sketch, id: Uuid) -> Vec<glam::DVec2> {
     crate::measure::curve_samples(sketch, id).unwrap()
 }
 
@@ -4119,7 +4119,7 @@ fn trimming_a_spline_keeps_the_rest_of_the_same_curve() {
                 let t = ((*p - w[0]).dot(d) / d.length_squared().max(1e-12)).clamp(0.0, 1.0);
                 (*p - (w[0] + d * t)).length()
             })
-            .fold(f32::MAX, f32::min);
+            .fold(f64::MAX, f64::min);
         assert!(d < 0.05, "{p:?} off the curve by {d}");
     }
     assert!(
@@ -4215,7 +4215,7 @@ fn a_line_trims_back_to_an_ellipse_it_crosses() {
         panic!()
     };
     let end = sketch.point_position(l.end).unwrap();
-    let y = 5.0 * (1.0f32 - 0.16).sqrt();
+    let y = 5.0 * (1.0f64 - 0.16).sqrt();
     assert!((end.y - y).abs() < 1e-3, "{end:?}");
 }
 
@@ -4265,7 +4265,7 @@ fn converged(sketch: &mut Sketch) {
     );
 }
 
-fn set_dimension(sketch: &mut Sketch, pick: impl Fn(&ConstraintKind) -> bool, value: f32) {
+fn set_dimension(sketch: &mut Sketch, pick: impl Fn(&ConstraintKind) -> bool, value: f64) {
     let c = sketch
         .constraints
         .iter_mut()
@@ -4275,7 +4275,7 @@ fn set_dimension(sketch: &mut Sketch, pick: impl Fn(&ConstraintKind) -> bool, va
 }
 
 /// A circle of radius 2 about (0, 0), its centre fixed, selected.
-fn fixed_circle(sketch: &mut Sketch, x: f32, y: f32) -> (Uuid, Uuid, HashSet<Uuid>) {
+fn fixed_circle(sketch: &mut Sketch, x: f64, y: f64) -> (Uuid, Uuid, HashSet<Uuid>) {
     let c = pt(sketch, x, y);
     sketch.add_constraint(ConstraintKind::FixedPoint {
         point: c,
@@ -4289,7 +4289,7 @@ fn fixed_circle(sketch: &mut Sketch, x: f32, y: f32) -> (Uuid, Uuid, HashSet<Uui
     (c, circle, [circle].into_iter().collect())
 }
 
-fn circle_centres(sketch: &Sketch) -> Vec<glam::Vec2> {
+fn circle_centres(sketch: &Sketch) -> Vec<glam::DVec2> {
     sketch
         .geometry
         .iter()
@@ -4333,8 +4333,8 @@ fn linked_translated_copies_follow_the_original_and_one_pitch() {
         3.0,
     );
     converged(&mut sketch);
-    let mut xs: Vec<f32> = circle_centres(&sketch).iter().map(|p| p.x).collect();
-    xs.sort_by(f32::total_cmp);
+    let mut xs: Vec<f64> = circle_centres(&sketch).iter().map(|p| p.x).collect();
+    xs.sort_by(f64::total_cmp);
     for (x, want) in xs.iter().zip([0.0, 15.0, 30.0, 45.0]) {
         assert!((x - want).abs() < 1e-3, "{xs:?}");
     }
@@ -4389,21 +4389,21 @@ fn linked_rotated_copies_turn_by_one_angle() {
         .expect("an angular pitch");
     assert_eq!(pitch.0, o, "turns about the point at the pivot");
     assert_eq!(pitch.1, 3);
-    assert!((pitch.2 - std::f32::consts::FRAC_PI_2).abs() < 1e-4);
+    assert!((pitch.2 - std::f64::consts::FRAC_PI_2).abs() < 1e-4);
     set_dimension(
         &mut sketch,
         |k| matches!(k, ConstraintKind::PolarPitch { .. }),
         60.0,
     );
     converged(&mut sketch);
-    let mut angles: Vec<f32> = circle_centres(&sketch)
+    let mut angles: Vec<f64> = circle_centres(&sketch)
         .iter()
         .map(|p| {
             assert!((p.length() - 10.0).abs() < 1e-3);
             p.y.atan2(p.x).to_degrees()
         })
         .collect();
-    angles.sort_by(f32::total_cmp);
+    angles.sort_by(f64::total_cmp);
     for (a, want) in angles.iter().zip([0.0, 60.0, 120.0]) {
         assert!((a - want).abs() < 1e-2, "{angles:?}");
     }
@@ -4436,7 +4436,7 @@ fn a_linked_array_is_spaced_by_its_two_pitches() {
         (12.0, 5.0),
         (24.0, 5.0),
     ] {
-        let want = glam::Vec2::new(want.0, want.1);
+        let want = glam::DVec2::new(want.0, want.1);
         assert!(
             centres.iter().any(|c| (*c - want).length() < 1e-3),
             "{want:?} in {centres:?}"
@@ -4467,7 +4467,7 @@ fn grouped_triangle(sketch: &mut Sketch) -> ([Uuid; 3], [Uuid; 3]) {
     (corners, sides)
 }
 
-fn side_lengths(sketch: &Sketch, corners: [Uuid; 3]) -> [f32; 3] {
+fn side_lengths(sketch: &Sketch, corners: [Uuid; 3]) -> [f64; 3] {
     let at = |i: usize| sketch.point_position(corners[i]).unwrap().to_glam();
     [
         at(0).distance(at(1)),
@@ -4529,10 +4529,10 @@ fn copies_of_a_group_hold_their_own_shape_where_they_land() {
         &sketch,
         &mut clip,
         &selected,
-        &Similarity::translation(glam::Vec2::ZERO),
+        &Similarity::translation(glam::DVec2::ZERO),
     );
     crate::commands::paste(&mut sketch, &clip, Vec2D::new(10.0, 2.0));
-    let turn = Similarity::rotation_about(glam::Vec2::new(1.0, 1.0), 0.8);
+    let turn = Similarity::rotation_about(glam::DVec2::new(1.0, 1.0), 0.8);
     copy_from(&sketch.clone(), &mut sketch, &selected, &turn);
 
     let groups: Vec<&ConstraintKind> = sketch
@@ -4581,7 +4581,7 @@ fn copying_a_group_moves_its_reference_with_the_copy() {
     let mut sketch = Sketch::new("t");
     let (corners, sides) = grouped_triangle(&mut sketch);
     let selected: HashSet<Uuid> = sides.into_iter().collect();
-    let turn = Similarity::rotation_about(glam::Vec2::ZERO, std::f32::consts::FRAC_PI_2);
+    let turn = Similarity::rotation_about(glam::DVec2::ZERO, std::f64::consts::FRAC_PI_2);
     let mut target = Sketch::new("target");
     let map = copy_mapped(&sketch, &mut target, &selected, &turn);
     assert_eq!(copy_constraints(&sketch, &mut target, &map, &turn), 1);

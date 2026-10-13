@@ -4,9 +4,9 @@ use super::*;
 mod tests {
     use super::*;
     use crate::sketch::{Arc, Circle, Constraint, Ellipse, Line, Point};
-    use std::f32::consts::PI;
+    use std::f64::consts::PI;
 
-    fn add_point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn add_point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 
@@ -14,21 +14,21 @@ mod tests {
         sketch.add_geometry(GeometryElement::Line(Line::new(start, end)))
     }
 
-    fn fix(sketch: &mut Sketch, point: Uuid, x: f32, y: f32) {
+    fn fix(sketch: &mut Sketch, point: Uuid, x: f64, y: f64) {
         sketch.add_constraint(ConstraintKind::FixedPoint {
             point,
             position: Vec2D::new(x, y),
         });
     }
 
-    fn pos(sketch: &Sketch, id: Uuid) -> glam::Vec2 {
+    fn pos(sketch: &Sketch, id: Uuid) -> glam::DVec2 {
         match sketch.get_geometry(id) {
             Some(GeometryElement::Point(p)) => p.position.to_glam(),
             _ => panic!("expected point"),
         }
     }
 
-    fn circle_radius(sketch: &Sketch, id: Uuid) -> f32 {
+    fn circle_radius(sketch: &Sketch, id: Uuid) -> f64 {
         match sketch.get_geometry(id) {
             Some(GeometryElement::Circle(c)) => c.radius,
             Some(GeometryElement::Arc(a)) => a.radius,
@@ -43,7 +43,7 @@ mod tests {
         );
     }
 
-    fn assert_near(actual: f32, expected: f32, tol: f32) {
+    fn assert_near(actual: f64, expected: f64, tol: f64) {
         assert!(
             (actual - expected).abs() <= tol,
             "expected {expected}, got {actual} (tol {tol})"
@@ -165,7 +165,7 @@ mod tests {
         let dir = (pos(&sketch, b) - pos(&sketch, a)).normalize();
         assert_near((pos(&sketch, b) - pos(&sketch, a)).length(), 10.0, 1e-3);
         // Direction should be roughly preserved (initially (0.6, 0.8)).
-        assert!(dir.dot(glam::Vec2::new(0.6, 0.8)) > 0.9);
+        assert!(dir.dot(glam::DVec2::new(0.6, 0.8)) > 0.9);
     }
 
     #[test]
@@ -798,7 +798,7 @@ mod tests {
     #[test]
     fn tangent_arc_arc_separates_centers() {
         let mut sketch = Sketch::new("tangent_arcs");
-        let make_arc = |sketch: &mut Sketch, cx: f32, r: f32| {
+        let make_arc = |sketch: &mut Sketch, cx: f64, r: f64| {
             let c = add_point(sketch, cx, 0.0);
             let s = add_point(sketch, cx + r, 0.0);
             let e = add_point(sketch, cx, r);
@@ -962,7 +962,7 @@ mod reference_tests {
     use crate::sketch::{ConstraintKind, GeometryElement, Line, Point, Sketch, Vec2D};
     use crate::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
 
-    fn add_point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn add_point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 
@@ -1073,7 +1073,7 @@ mod curve_constraints {
     use crate::measure;
     use crate::sketch::{Arc, Circle, Line, Point};
 
-    fn point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 
@@ -1081,7 +1081,7 @@ mod curve_constraints {
         sketch.add_geometry(GeometryElement::Line(Line::new(a, b)))
     }
 
-    fn circle(sketch: &mut Sketch, x: f32, y: f32, r: f32) -> (Uuid, Uuid) {
+    fn circle(sketch: &mut Sketch, x: f64, y: f64, r: f64) -> (Uuid, Uuid) {
         let c = point(sketch, x, y);
         (
             c,
@@ -1102,7 +1102,7 @@ mod curve_constraints {
         );
     }
 
-    fn near(actual: f32, expected: f32) {
+    fn near(actual: f64, expected: f64) {
         assert!(
             (actual - expected).abs() < 1e-3,
             "expected {expected}, got {actual}"
@@ -1118,7 +1118,7 @@ mod curve_constraints {
         let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
         fix(&mut sketch, c);
         fix(&mut sketch, s);
-        let three_eighths = 5.0 * std::f32::consts::PI * 0.75;
+        let three_eighths = 5.0 * std::f64::consts::PI * 0.75;
         sketch.add_constraint(ConstraintKind::ArcLength {
             arc,
             length: three_eighths,
@@ -1126,8 +1126,8 @@ mod curve_constraints {
         converged(&mut sketch);
         near(measure::arc_length(&sketch, arc).unwrap(), three_eighths);
         let end = sketch.point_position(e).unwrap();
-        near(end.x, -5.0 / 2f32.sqrt());
-        near(end.y, 5.0 / 2f32.sqrt());
+        near(end.x, -5.0 / 2f64.sqrt());
+        near(end.y, 5.0 / 2f64.sqrt());
     }
 
     #[test]
@@ -1145,7 +1145,7 @@ mod curve_constraints {
         });
         sketch.add_constraint(ConstraintKind::ArcAngle {
             arc,
-            angle_rad: 135f32.to_radians(),
+            angle_rad: 135f64.to_radians(),
         });
         converged(&mut sketch);
         near(
@@ -1186,19 +1186,19 @@ mod curve_constraints {
         near(at.y.atan2(at.x).to_degrees(), 60.0);
     }
 
-    fn with_dimension_value_kind(kind: &ConstraintKind, v: f32) -> ConstraintKind {
+    fn with_dimension_value_kind(kind: &ConstraintKind, v: f64) -> ConstraintKind {
         crate::sketch::with_dimension_value(kind, v)
     }
 
     /// The distance from `p` to the nearest of `samples`.
-    fn off(samples: &[glam::Vec2], p: glam::Vec2) -> f32 {
+    fn off(samples: &[glam::DVec2], p: glam::DVec2) -> f64 {
         samples
             .iter()
             .map(|q| (*q - p).length())
-            .fold(f32::INFINITY, f32::min)
+            .fold(f64::INFINITY, f64::min)
     }
 
-    fn spline_samples(sketch: &Sketch, spline: Uuid) -> Vec<glam::Vec2> {
+    fn spline_samples(sketch: &Sketch, spline: Uuid) -> Vec<glam::DVec2> {
         let Some(GeometryElement::BSpline(b)) = sketch.get_geometry(spline) else {
             panic!("not a spline");
         };
@@ -1208,7 +1208,7 @@ mod curve_constraints {
             .iter()
             .map(|id| {
                 let p = sketch.point_position(*id).unwrap();
-                [f64::from(p.x), f64::from(p.y)]
+                [p.x, p.y]
             })
             .collect();
         crate::spline::sample_basis(&basis, &control, 2000)
@@ -1335,17 +1335,17 @@ mod curve_constraints {
             sketch.point_position(a).unwrap().to_glam(),
             sketch.point_position(b).unwrap().to_glam(),
         );
-        let ring: Vec<glam::Vec2> = (0..4000)
+        let ring: Vec<glam::DVec2> = (0..4000)
             .map(|i| {
-                let t = i as f32 / 4000.0 * std::f32::consts::TAU;
-                glam::Vec2::new(6.0 * t.cos(), 3.0 * t.sin())
+                let t = i as f64 / 4000.0 * std::f64::consts::TAU;
+                glam::DVec2::new(6.0 * t.cos(), 3.0 * t.sin())
             })
             .collect();
         let dir = (pb - pa).normalize();
         let gap = ring
             .iter()
             .map(|q| (*q - pa).perp_dot(dir).abs())
-            .fold(f32::INFINITY, f32::min);
+            .fold(f64::INFINITY, f64::min);
         assert!(gap < 0.01, "touches: {gap}");
 
         let mut sketch = Sketch::new("t");
@@ -1649,7 +1649,7 @@ mod curve_constraints {
             line: spoke,
             length: 4.0,
         });
-        let angle = 60f32.to_radians();
+        let angle = 60f64.to_radians();
         sketch.add_constraint(ConstraintKind::AngleAtPoint {
             curve1: spoke,
             curve2: arc,
@@ -1664,7 +1664,7 @@ mod curve_constraints {
         // The arc's tangent at its start points straight up; the spoke
         // runs 60° clockwise of it.
         let d = (sketch.point_position(far).unwrap() - sketch.point_position(s).unwrap()).to_glam();
-        near(d.y.atan2(d.x), 30f32.to_radians());
+        near(d.y.atan2(d.x), 30f64.to_radians());
     }
 
     #[test]
@@ -1699,7 +1699,7 @@ mod curve_constraints {
         );
         // sin 45° / sin θ = 1.5, and the ray carries on below.
         let out = sketch.point_position(exit).unwrap().to_glam();
-        near(out.x / out.length(), 45f32.to_radians().sin() / 1.5);
+        near(out.x / out.length(), 45f64.to_radians().sin() / 1.5);
         assert!(out.y < 0.0, "refracted, not reflected: {out:?}");
     }
 

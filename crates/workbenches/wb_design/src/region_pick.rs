@@ -8,7 +8,6 @@ use std::cell::RefCell;
 use core_document::{
     BodyId, Document, FeatureId, OverlayMesh, WorkbenchFeature, WorkbenchRuntimeContext,
 };
-use glam::Vec3;
 use wb_sketch::SketchFeature;
 use wb_sketch::profile;
 
@@ -58,17 +57,19 @@ fn on_plane(
     sketch: &SketchFeature,
     viewport_pos: (f32, f32),
 ) -> Option<[f64; 2]> {
+    use glam::DVec3;
+    use wb_sketch::boundary::{place_direction, place_point, widen3};
     let (origin, dir) = ctx.viewport_to_ray(viewport_pos)?;
     // The sketch keeps its plane in its body's frame.
     let into = ctx.document.body_placement(body).inverse();
     let (origin, dir) = (
-        Vec3::from_array(into.point(origin)),
-        Vec3::from_array(into.direction(dir)),
+        DVec3::from_array(place_point(&into, widen3(origin))),
+        DVec3::from_array(place_direction(&into, widen3(dir))),
     );
     let plane = &sketch.plane;
     let (o, n) = (
-        Vec3::from_array(plane.origin),
-        Vec3::from_array(plane.normal),
+        DVec3::from_array(plane.origin),
+        DVec3::from_array(plane.normal),
     );
     let facing = dir.dot(n);
     if facing.abs() < 1e-6 {
@@ -80,8 +81,8 @@ fn on_plane(
     }
     let d = origin + dir * t - o;
     Some([
-        f64::from(d.dot(Vec3::from_array(plane.x_axis))),
-        f64::from(d.dot(Vec3::from_array(plane.y_axis))),
+        d.dot(DVec3::from_array(plane.x_axis)),
+        d.dot(DVec3::from_array(plane.y_axis)),
     ])
 }
 

@@ -12,7 +12,7 @@ use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D
 
 /// A square of `side` on the plane parallel to XY through `origin`, its
 /// corner there.
-fn square_at(origin: [f32; 3], side: f32) -> SketchFeature {
+fn square_at(origin: [f64; 3], side: f64) -> SketchFeature {
     let plane = SketchPlane {
         origin,
         ..SketchPlane::xy()
@@ -51,7 +51,7 @@ fn cube_body() -> (Document, BodyId) {
 
 /// The cube, and a second cube padded from a sketch at height `z`, its
 /// fuse at `tolerance`.
-fn stacked(z: f32, tolerance: Option<f32>) -> (Document, BodyId) {
+fn stacked(z: f64, tolerance: Option<f32>) -> (Document, BodyId) {
     let (mut doc, body) = cube_body();
     let upper = doc
         .add_feature_in_body(square_at([0.0, 0.0, z], 10.0), "upper".into(), Some(body))

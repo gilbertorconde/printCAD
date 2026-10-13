@@ -29,16 +29,16 @@ fn scale(p: [f64; 2], s: f64) -> [f64; 2] {
 impl Shape {
     /// The shape of `kind` at `origin` with `axis` (its length the focal
     /// distance or semi-major axis) and `minor`. `None` when degenerate.
-    pub fn new(kind: ConicKind, origin: Vec2D, axis: Vec2D, minor: f32) -> Option<Self> {
-        let (ax, ay) = (f64::from(axis.x), f64::from(axis.y));
+    pub fn new(kind: ConicKind, origin: Vec2D, axis: Vec2D, minor: f64) -> Option<Self> {
+        let (ax, ay) = (axis.x, axis.y);
         let a = ax.hypot(ay);
-        let b = f64::from(minor);
+        let b = minor;
         if a < 1e-9 || (kind == ConicKind::Hyperbola && b < 1e-9) {
             return None;
         }
         Some(Self {
             kind,
-            origin: [f64::from(origin.x), f64::from(origin.y)],
+            origin: [origin.x, origin.y],
             u: [ax / a, ay / a],
             a,
             b,
@@ -117,7 +117,7 @@ impl Shape {
         (0..=n)
             .map(|i| {
                 let [x, y] = self.point(t0 + (t1 - t0) * i as f64 / n as f64);
-                Vec2D::new(x as f32, y as f32)
+                Vec2D::new(x, y)
             })
             .collect()
     }
@@ -147,7 +147,7 @@ impl Shape {
 /// The hyperbola centred at `center` with the vertex of its branch at
 /// `vertex` that passes through `on`: its semi-minor axis. `None` when `on`
 /// lies no further out along the axis than the vertex.
-pub fn hyperbola_minor(center: Vec2D, vertex: Vec2D, on: Vec2D) -> Option<f32> {
+pub fn hyperbola_minor(center: Vec2D, vertex: Vec2D, on: Vec2D) -> Option<f64> {
     let axis = (vertex - center).to_glam();
     let a = axis.length();
     if a < 1e-6 {
@@ -167,11 +167,7 @@ impl Conic {
     /// The arc's parameter span, start to end.
     pub fn params(&self, sketch: &Sketch) -> Option<(Shape, f64, f64)> {
         let shape = Shape::of(self, sketch)?;
-        let at = |id| {
-            sketch
-                .point_position(id)
-                .map(|p| [f64::from(p.x), f64::from(p.y)])
-        };
+        let at = |id| sketch.point_position(id).map(|p| [p.x, p.y]);
         Some((
             shape,
             shape.param(at(self.start)?),

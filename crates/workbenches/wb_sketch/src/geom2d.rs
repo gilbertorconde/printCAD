@@ -1,17 +1,17 @@
 //! 2D curve math shared by the editing tools: segment/arc/circle
 //! intersections plus ellipse sampling.
 
-use glam::Vec2;
+use glam::DVec2;
 
 use crate::sketch::{GeometryElement, Sketch, Vec2D};
 use crate::snap::arc_angles;
 
 /// Below this the two directions/points are treated as coincident.
-const EPS: f32 = 1e-6;
+const EPS: f64 = 1e-6;
 
 /// Intersection of the infinite lines through `a1→a2` and `b1→b2`.
 /// `None` for (near-)parallel lines.
-pub fn line_line(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2) -> Option<Vec2> {
+pub fn line_line(a1: DVec2, a2: DVec2, b1: DVec2, b2: DVec2) -> Option<DVec2> {
     let da = a2 - a1;
     let db = b2 - b1;
     let denom = da.perp_dot(db);
@@ -23,8 +23,8 @@ pub fn line_line(a1: Vec2, a2: Vec2, b1: Vec2, b2: Vec2) -> Option<Vec2> {
 }
 
 /// Whether `p` (assumed on the carrier line) lies within the segment
-/// `a→b`, with a small relative slack for intersections computed in f32.
-pub fn on_segment(a: Vec2, b: Vec2, p: Vec2) -> bool {
+/// `a→b`, with a small relative slack for intersections computed in f64.
+pub fn on_segment(a: DVec2, b: DVec2, p: DVec2) -> bool {
     let ab = b - a;
     let len_sq = ab.length_squared();
     if len_sq < EPS * EPS {
@@ -36,7 +36,7 @@ pub fn on_segment(a: Vec2, b: Vec2, p: Vec2) -> bool {
 
 /// Intersections of the infinite line through `a→b` with the circle
 /// (`center`, `radius`): 0, 1 (tangent) or 2 points.
-pub fn line_circle(a: Vec2, b: Vec2, center: Vec2, radius: f32) -> Vec<Vec2> {
+pub fn line_circle(a: DVec2, b: DVec2, center: DVec2, radius: f64) -> Vec<DVec2> {
     let d = b - a;
     let len = d.length();
     if len < EPS {
@@ -60,7 +60,7 @@ pub fn line_circle(a: Vec2, b: Vec2, center: Vec2, radius: f32) -> Vec<Vec2> {
 
 /// Intersections of two circles: 0, 1 (tangent) or 2 points. Coincident
 /// circles report none (no isolated intersection points).
-pub fn circle_circle(c1: Vec2, r1: f32, c2: Vec2, r2: f32) -> Vec<Vec2> {
+pub fn circle_circle(c1: DVec2, r1: f64, c2: DVec2, r2: f64) -> Vec<DVec2> {
     let d = (c2 - c1).length();
     let tol = EPS * (r1 + r2).max(1.0);
     if d < tol {
@@ -84,31 +84,31 @@ pub fn circle_circle(c1: Vec2, r1: f32, c2: Vec2, r2: f32) -> Vec<Vec2> {
 
 /// Whether `p` (assumed on the circle) lies within the CCW arc `start→end`
 /// around `center`.
-pub fn point_on_arc(center: Vec2, start: Vec2, end: Vec2, p: Vec2) -> bool {
+pub fn point_on_arc(center: DVec2, start: DVec2, end: DVec2, p: DVec2) -> bool {
     let (start_angle, sweep) = arc_angles(start - center, end - center);
     let rel = wrap_positive((p - center).y.atan2((p - center).x) - start_angle);
     rel <= sweep + 1e-4
 }
 
 /// Circumcenter of three points; `None` when they are (near-)collinear.
-pub fn circumcenter(a: Vec2, b: Vec2, c: Vec2) -> Option<Vec2> {
+pub fn circumcenter(a: DVec2, b: DVec2, c: DVec2) -> Option<DVec2> {
     let d = 2.0 * (a.x * (b.y - c.y) + b.x * (c.y - a.y) + c.x * (a.y - b.y));
     let scale = (b - a).length() * (c - a).length();
     if d.abs() < 1e-5 * scale.max(EPS) {
         return None;
     }
     let (a2, b2, c2) = (a.length_squared(), b.length_squared(), c.length_squared());
-    Some(Vec2::new(
+    Some(DVec2::new(
         (a2 * (b.y - c.y) + b2 * (c.y - a.y) + c2 * (a.y - b.y)) / d,
         (a2 * (c.x - b.x) + b2 * (a.x - c.x) + c2 * (b.x - a.x)) / d,
     ))
 }
 
 /// Wrap an angle into [0, TAU).
-pub fn wrap_positive(a: f32) -> f32 {
-    let mut a = a % std::f32::consts::TAU;
+pub fn wrap_positive(a: f64) -> f64 {
+    let mut a = a % std::f64::consts::TAU;
     if a < 0.0 {
-        a += std::f32::consts::TAU;
+        a += std::f64::consts::TAU;
     }
     a
 }
@@ -117,7 +117,7 @@ pub fn wrap_positive(a: f32) -> f32 {
 /// keeps it: the major vector and the minor-to-major ratio, at most 1.
 /// When the other radius is the longer, it is the major: the axes trade
 /// places, the same ellipse.
-pub fn ellipse_axes(axis: glam::Vec2, other: f32) -> (glam::Vec2, f32) {
+pub fn ellipse_axes(axis: glam::DVec2, other: f64) -> (glam::DVec2, f64) {
     let a = axis.length();
     let b = other.abs();
     if b > a && a > 1e-9 {
@@ -129,13 +129,13 @@ pub fn ellipse_axes(axis: glam::Vec2, other: f32) -> (glam::Vec2, f32) {
 
 /// Polyline sampling of an ellipse (`center`, center→major-vertex vector,
 /// minor/major `ratio`), closed (first == last point).
-pub fn ellipse_points(center: Vec2D, major: Vec2D, ratio: f32, segments: usize) -> Vec<Vec2D> {
+pub fn ellipse_points(center: Vec2D, major: Vec2D, ratio: f64, segments: usize) -> Vec<Vec2D> {
     let c = center.to_glam();
     let a = major.to_glam();
     let b = a.perp() * ratio;
     (0..=segments)
         .map(|i| {
-            let t = std::f32::consts::TAU * (i as f32) / (segments as f32);
+            let t = std::f64::consts::TAU * (i as f64) / (segments as f64);
             let (sin, cos) = t.sin_cos();
             Vec2D::from_glam(c + a * cos + b * sin)
         })
@@ -146,7 +146,7 @@ pub fn ellipse_points(center: Vec2D, major: Vec2D, ratio: f32, segments: usize) 
 /// `end`: its center, radius, and whether it turns counter-clockwise (to the
 /// left of the heading). `None` when `end` lies on the heading's line, where
 /// only a straight segment continues smoothly.
-pub fn tangent_arc(start: Vec2D, heading: Vec2D, end: Vec2D) -> Option<(Vec2D, f32, bool)> {
+pub fn tangent_arc(start: Vec2D, heading: Vec2D, end: Vec2D) -> Option<(Vec2D, f64, bool)> {
     let t = heading.to_glam().normalize_or_zero();
     if t.length_squared() < 0.5 {
         return None;
@@ -170,7 +170,7 @@ pub fn tangent_arc(start: Vec2D, heading: Vec2D, end: Vec2D) -> Option<(Vec2D, f
 /// point makes the other axis the longer one, the axes swap so the ratio
 /// stays within `(0, 1]`. `None` when the rim point lies on the axis line
 /// at or beyond the vertex, where no such ellipse exists.
-pub fn ellipse_through(center: Vec2D, major_pos: Vec2D, rim: Vec2D) -> Option<(Vec2D, f32)> {
+pub fn ellipse_through(center: Vec2D, major_pos: Vec2D, rim: Vec2D) -> Option<(Vec2D, f64)> {
     let axis = (major_pos - center).to_glam();
     let a = axis.length();
     if a <= 1e-6 {
@@ -196,9 +196,9 @@ pub fn ellipse_through(center: Vec2D, major_pos: Vec2D, rim: Vec2D) -> Option<(V
 pub fn ellipse_arc_points(
     center: Vec2D,
     major: Vec2D,
-    ratio: f32,
-    t0: f32,
-    t1: f32,
+    ratio: f64,
+    t0: f64,
+    t1: f64,
     segments: usize,
 ) -> Vec<Vec2D> {
     let c = center.to_glam();
@@ -207,7 +207,7 @@ pub fn ellipse_arc_points(
     let n = segments.max(1);
     (0..=n)
         .map(|i| {
-            let t = t0 + (t1 - t0) * (i as f32) / (n as f32);
+            let t = t0 + (t1 - t0) * (i as f64) / (n as f64);
             let (sin, cos) = t.sin_cos();
             Vec2D::from_glam(c + a * cos + b * sin)
         })
@@ -216,9 +216,20 @@ pub fn ellipse_arc_points(
 
 /// A trim/extend-capable curve resolved to positions.
 pub(crate) enum Prim {
-    Seg { a: Vec2, b: Vec2 },
-    Arc { c: Vec2, r: f32, s: Vec2, e: Vec2 },
-    Circle { c: Vec2, r: f32 },
+    Seg {
+        a: DVec2,
+        b: DVec2,
+    },
+    Arc {
+        c: DVec2,
+        r: f64,
+        s: DVec2,
+        e: DVec2,
+    },
+    Circle {
+        c: DVec2,
+        r: f64,
+    },
 }
 
 pub(crate) fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
@@ -247,7 +258,7 @@ pub(crate) fn prim_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Prim> {
 
 /// Whether `p` lies within the prim's own extent (segments by parameter,
 /// arcs by angular range; circles are unbounded).
-pub(crate) fn within(prim: &Prim, p: Vec2) -> bool {
+pub(crate) fn within(prim: &Prim, p: DVec2) -> bool {
     match *prim {
         Prim::Seg { a, b } => on_segment(a, b, p),
         Prim::Arc { c, s, e, .. } => point_on_arc(c, s, e, p),
@@ -257,7 +268,7 @@ pub(crate) fn within(prim: &Prim, p: Vec2) -> bool {
 
 /// Intersections of the *unbounded* carriers of two prims (infinite line /
 /// full circle), before any extent filtering.
-pub(crate) fn raw_hits(a: &Prim, b: &Prim) -> Vec<Vec2> {
+pub(crate) fn raw_hits(a: &Prim, b: &Prim) -> Vec<DVec2> {
     match (a, b) {
         (Prim::Seg { a: a1, b: a2 }, Prim::Seg { a: b1, b: b2 }) => {
             line_line(*a1, *a2, *b1, *b2).into_iter().collect()
@@ -277,8 +288,8 @@ pub(crate) fn raw_hits(a: &Prim, b: &Prim) -> Vec<Vec2> {
 mod tests {
     use super::*;
 
-    fn v(x: f32, y: f32) -> Vec2 {
-        Vec2::new(x, y)
+    fn v(x: f64, y: f64) -> DVec2 {
+        DVec2::new(x, y)
     }
 
     #[test]
@@ -316,7 +327,7 @@ mod tests {
     fn line_circle_hits_clip_to_segment_via_on_segment() {
         // Segment ends inside the circle: only the entry hit remains.
         let (a, b) = (v(-10.0, 0.0), v(0.0, 0.0));
-        let hits: Vec<Vec2> = line_circle(a, b, v(0.0, 0.0), 5.0)
+        let hits: Vec<DVec2> = line_circle(a, b, v(0.0, 0.0), 5.0)
             .into_iter()
             .filter(|p| on_segment(a, b, *p))
             .collect();
@@ -347,8 +358,8 @@ mod tests {
         // CCW quarter arc from (5,0) to (0,5).
         let (c, s, e) = (v(0.0, 0.0), v(5.0, 0.0), v(0.0, 5.0));
         let on = v(
-            5.0 * std::f32::consts::FRAC_1_SQRT_2,
-            5.0 * std::f32::consts::FRAC_1_SQRT_2,
+            5.0 * std::f64::consts::FRAC_1_SQRT_2,
+            5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
         assert!(point_on_arc(c, s, e, on));
         assert!(!point_on_arc(c, s, e, v(0.0, -5.0)));
@@ -375,11 +386,11 @@ mod tests {
 
     #[test]
     fn the_longer_radius_is_the_major() {
-        let (major, ratio) = ellipse_axes(glam::Vec2::new(4.0, 0.0), 2.0);
-        assert_eq!((major, ratio), (glam::Vec2::new(4.0, 0.0), 0.5));
-        let (major, ratio) = ellipse_axes(glam::Vec2::new(4.0, 0.0), 8.0);
+        let (major, ratio) = ellipse_axes(glam::DVec2::new(4.0, 0.0), 2.0);
+        assert_eq!((major, ratio), (glam::DVec2::new(4.0, 0.0), 0.5));
+        let (major, ratio) = ellipse_axes(glam::DVec2::new(4.0, 0.0), 8.0);
         assert!(
-            (major - glam::Vec2::new(0.0, 8.0)).length() < 1e-5,
+            (major - glam::DVec2::new(0.0, 8.0)).length() < 1e-5,
             "{major:?}"
         );
         assert!((ratio - 0.5).abs() < 1e-6);

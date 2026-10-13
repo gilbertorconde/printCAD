@@ -11,7 +11,7 @@ use crate::snap::arc_angles;
 
 /// How close the joined spline keeps to the curves it replaces, mm, when
 /// nothing else is asked for.
-pub const JOIN_TOLERANCE: f32 = 0.01;
+pub const JOIN_TOLERANCE: f64 = 0.01;
 
 /// The most control points a joined spline takes.
 const MAX_CONTROL_POINTS: usize = 120;
@@ -23,7 +23,7 @@ const SAMPLES_PER_CURVE: usize = 48;
 /// points along it in that direction.
 fn chain_curve(sketch: &Sketch, geom: &GeometryElement) -> Option<(Uuid, Uuid, Vec<[f64; 2]>)> {
     let at = |id: Uuid| sketch.point_position(id);
-    let f = |p: Vec2D| [f64::from(p.x), f64::from(p.y)];
+    let f = |p: Vec2D| [p.x, p.y];
     let n = SAMPLES_PER_CURVE;
     match geom {
         GeometryElement::Line(l) => {
@@ -39,11 +39,11 @@ fn chain_curve(sketch: &Sketch, geom: &GeometryElement) -> Option<(Uuid, Uuid, V
         GeometryElement::Arc(arc) => {
             let (c, s, e) = (at(arc.center)?, at(arc.start)?, at(arc.end)?);
             let (start_angle, sweep) = arc_angles((s - c).to_glam(), (e - c).to_glam());
-            let r = f64::from((s - c).to_glam().length());
-            let (cx, cy) = (f64::from(c.x), f64::from(c.y));
+            let r = (s - c).to_glam().length();
+            let (cx, cy) = (c.x, c.y);
             let mut points: Vec<[f64; 2]> = (0..=n)
                 .map(|i| {
-                    let a = f64::from(start_angle) + f64::from(sweep) * i as f64 / n as f64;
+                    let a = start_angle + sweep * i as f64 / n as f64;
                     [cx + r * a.cos(), cy + r * a.sin()]
                 })
                 .collect();
@@ -141,7 +141,7 @@ fn walk(curves: &[ChainCurve]) -> Option<Walk> {
 /// that keeps within `tolerance` of them. The spline starts and ends on
 /// the chain's own end points, so what met the chain there meets the
 /// spline; the curves and the points only they used go.
-pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f32) -> ToolEffect {
+pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f64) -> ToolEffect {
     let external = sketch.external_ids();
     let curves: Vec<ChainCurve> = sketch
         .geometry
@@ -182,7 +182,7 @@ pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f32) -> To
     // The fit's knots are the even ones a spline takes when it has none of
     // its own.
     let Some((_, control)) =
-        sketch_solver::spline::fit_chain(&samples, f64::from(tolerance), MAX_CONTROL_POINTS)
+        sketch_solver::spline::fit_chain(&samples, tolerance, MAX_CONTROL_POINTS)
     else {
         return ToolEffect::log(format!(
             "No spline follows these curves within {tolerance} mm; a sharp corner needs a looser tolerance"
@@ -195,10 +195,7 @@ pub fn join(sketch: &mut Sketch, selected: &HashSet<Uuid>, tolerance: f32) -> To
         .map(|(i, p)| match i {
             0 => start,
             i if i == last => end,
-            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                p[0] as f32,
-                p[1] as f32,
-            )))),
+            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))),
         })
         .collect();
     let construction = chain.iter().all(|(id, _)| sketch.is_construction(*id));

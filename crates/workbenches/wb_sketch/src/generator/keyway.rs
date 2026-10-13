@@ -63,19 +63,19 @@ pub fn standard(d: f64) -> Option<KeySize> {
 pub struct BoreKeyway {
     pub on: bool,
     /// Width, mm; 0 takes the standard key's.
-    pub width: f32,
+    pub width: f64,
     /// How far the keyway's floor stands beyond the bore, at its middle,
     /// mm; 0 takes the standard hub depth.
-    pub depth: f32,
+    pub depth: f64,
 }
 
 impl BoreKeyway {
     /// The keyway's width and depth in a bore of diameter `bore`.
     pub fn size(&self, bore: f64) -> Result<(f64, f64), String> {
         let key = standard(bore);
-        let pick = |given: f32, standard: Option<f64>, what: &str| {
+        let pick = |given: f64, standard: Option<f64>, what: &str| {
             if given > 0.0 {
-                Ok(f64::from(given))
+                Ok(given)
             } else {
                 standard.ok_or_else(|| {
                     format!(
@@ -131,13 +131,13 @@ fn ring(pairs: Vec<(P2, Edge)>) -> Loop {
 #[serde(default)]
 pub struct KeywaySpec {
     /// The shaft's diameter, mm: it sizes the standard key.
-    pub shaft: f32,
+    pub shaft: f64,
     /// The slot's length end to end, mm.
-    pub length: f32,
+    pub length: f64,
     /// Width, mm; 0 takes the standard key's.
-    pub width: f32,
+    pub width: f64,
     /// How deep to pocket it, mm; 0 takes the standard shaft depth.
-    pub depth: f32,
+    pub depth: f64,
     /// Round ends (a key of form A); false leaves them square (form B).
     pub rounded: bool,
 }
@@ -157,14 +157,14 @@ impl Default for KeywaySpec {
 impl KeywaySpec {
     /// The slot's width and the depth to pocket it.
     pub fn size(&self) -> Result<(f64, f64), String> {
-        let d = f64::from(self.shaft);
+        let d = self.shaft;
         if !(d > 0.0 && d.is_finite()) {
             return Err("the shaft's diameter must be more than zero".into());
         }
         let key = standard(d);
-        let pick = |given: f32, standard: Option<f64>, what: &str| {
+        let pick = |given: f64, standard: Option<f64>, what: &str| {
             if given > 0.0 {
-                Ok(f64::from(given))
+                Ok(given)
             } else {
                 standard.ok_or_else(|| {
                     format!(
@@ -188,7 +188,7 @@ impl KeywaySpec {
     /// The slot, centred on the origin and running along x.
     pub fn outline(&self) -> Result<Outline, String> {
         let (width, _) = self.size()?;
-        let length = f64::from(self.length);
+        let length = self.length;
         if !(length > width && length.is_finite()) {
             return Err("the keyway must be longer than it is wide".into());
         }

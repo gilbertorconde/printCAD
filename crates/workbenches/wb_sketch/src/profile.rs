@@ -53,7 +53,7 @@ impl std::fmt::Display for ProfileError {
 }
 
 fn v2(p: Vec2D) -> [f64; 2] {
-    [p.x as f64, p.y as f64]
+    [p.x, p.y]
 }
 
 /// Mid-point of the CCW arc from `start` to `end` around `center`.
@@ -87,17 +87,17 @@ fn element_name(id: Uuid) -> kernel_api::TopoName {
 /// Convert the world-space sketch plane into the kernel's profile plane.
 pub fn plane_of(plane: &SketchPlane) -> ProfilePlane {
     ProfilePlane {
-        origin: plane.origin.map(f64::from),
-        x_axis: plane.x_axis.map(f64::from),
-        y_axis: plane.y_axis.map(f64::from),
-        normal: plane.normal.map(f64::from),
+        origin: plane.origin,
+        x_axis: plane.x_axis,
+        y_axis: plane.y_axis,
+        normal: plane.normal,
     }
 }
 
 /// How near two projected ends are one end, in sketch units (mm): a
-/// solid's edges meet at a vertex only within its tolerance, and a sketch
-/// keeps points in single precision, a few millionths of a millimetre
-/// apart at part sizes.
+/// solid's edges meet at a vertex only within its tolerance, and the
+/// picks they come from are single precision, a few millionths of a
+/// millimetre apart at part sizes.
 pub(crate) const PROJECTED_JOIN: f64 = 1e-4;
 
 /// A sketch feature's closed loops on its plane, in its body's frame, as
@@ -331,7 +331,7 @@ fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), Profile
         match geom {
             GeometryElement::Point(_) => {}
             // A circle of no size encloses nothing.
-            GeometryElement::Circle(c) if c.radius <= f32::EPSILON => {}
+            GeometryElement::Circle(c) if c.radius <= f64::EPSILON => {}
             GeometryElement::Circle(c) => {
                 let center = sketch
                     .point_position(c.center)
@@ -340,7 +340,7 @@ fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), Profile
                     names: vec![name],
                     segments: vec![ProfileSegment::Circle {
                         center: v2(center),
-                        radius: c.radius as f64,
+                        radius: c.radius,
                     }],
                 });
             }
@@ -387,14 +387,14 @@ fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), Profile
                 let center = sketch
                     .point_position(e.center)
                     .ok_or(ProfileError::MissingPoint(e.center))?;
-                let major = [f64::from(e.major.x), f64::from(e.major.y)];
+                let major = [e.major.x, e.major.y];
                 match e.arc {
                     None => wires.push(ProfileWire {
                         names: vec![name],
                         segments: vec![ProfileSegment::Ellipse {
                             center: v2(center),
                             major,
-                            ratio: f64::from(e.ratio),
+                            ratio: e.ratio,
                         }],
                     }),
                     Some(arc) => {
@@ -407,7 +407,7 @@ fn curves(sketch: &Sketch) -> Result<(Vec<ProfileWire>, Vec<EdgeCurve>), Profile
                             segment: ProfileSegment::EllipseArc {
                                 center: v2(center),
                                 major,
-                                ratio: f64::from(e.ratio),
+                                ratio: e.ratio,
                                 start_param: t0,
                                 end_param: t1,
                             },
@@ -681,15 +681,12 @@ fn ellipse_arc_span(
             .point_position(id)
             .ok_or(ProfileError::MissingPoint(id))
     };
-    let (major_x, major_y) = (f64::from(e.major.x), f64::from(e.major.y));
+    let (major_x, major_y) = (e.major.x, e.major.y);
     let a = major_x.hypot(major_y);
-    let b = a * f64::from(e.ratio);
+    let b = a * e.ratio;
     let (ux, uy) = (major_x / a, major_y / a);
     let param = |p: Vec2D| {
-        let (dx, dy) = (
-            f64::from(p.x) - f64::from(center.x),
-            f64::from(p.y) - f64::from(center.y),
-        );
+        let (dx, dy) = (p.x - center.x, p.y - center.y);
         ((dx * -uy + dy * ux) / b).atan2((dx * ux + dy * uy) / a)
     };
     let t0 = param(at(arc.start)?);
@@ -705,7 +702,7 @@ mod tests {
     use super::*;
     use crate::sketch::{Arc, Circle, Line, Point};
 
-    fn pt(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn pt(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
     fn line(sketch: &mut Sketch, a: Uuid, b: Uuid) -> Uuid {
@@ -1017,7 +1014,7 @@ mod external_profile_tests {
     #[test]
     fn a_projected_edge_closes_a_profile_once_it_counts() {
         let mut sketch = Sketch::new("t");
-        let mut p = |x: f32, y: f32| {
+        let mut p = |x: f64, y: f64| {
             sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
         };
         let (a, b, c) = (p(0.0, 0.0), p(10.0, 0.0), p(5.0, 8.0));
@@ -1045,11 +1042,11 @@ mod external_profile_tests {
     }
 
     /// Projected edges of one solid meet within its tolerance, a few
-    /// single-precision steps apart at part sizes: they join there. Ends
+    /// millionths of a millimetre apart at part sizes: they join there. Ends
     /// a hundredth of a millimetre apart stay apart.
     #[test]
     fn projected_ends_a_rounding_apart_join() {
-        let triangle = |gap: f32| {
+        let triangle = |gap: f64| {
             let mut sketch = Sketch::new("t");
             let source = ExternalSource {
                 body: uuid::Uuid::new_v4(),

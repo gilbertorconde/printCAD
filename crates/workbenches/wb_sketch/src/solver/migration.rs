@@ -13,7 +13,7 @@ use crate::sketch::{
     Line, Point, TextBlock,
 };
 
-fn point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
     let id = Uuid::from_u128(sketch.geometry.len() as u128 + 1);
     sketch.add_geometry(GeometryElement::Point(Point {
         id,
@@ -32,7 +32,7 @@ fn relation(sketch: &mut Sketch, kind: ConstraintKind) {
     sketch.constraints.push(constraint);
 }
 
-fn fixed(sketch: &mut Sketch, point: Uuid, x: f32, y: f32) {
+fn fixed(sketch: &mut Sketch, point: Uuid, x: f64, y: f64) {
     relation(
         sketch,
         ConstraintKind::FixedPoint {
@@ -42,7 +42,7 @@ fn fixed(sketch: &mut Sketch, point: Uuid, x: f32, y: f32) {
     );
 }
 
-fn circle(sketch: &mut Sketch, center: Uuid, radius: f32) -> Uuid {
+fn circle(sketch: &mut Sketch, center: Uuid, radius: f64) -> Uuid {
     let id = Uuid::from_u128(sketch.geometry.len() as u128 + 1);
     sketch.add_geometry(GeometryElement::Circle(Circle { id, center, radius }))
 }
@@ -870,7 +870,7 @@ fn answer(input: &Sketch, held: &[Uuid]) -> Value {
             "redundant": diagnosis.redundant, "conflicting": diagnosis.conflicting}})
 }
 
-/// Stored f32 geometry may differ by one rounding unit on another platform.
+/// Stored f64 geometry may differ by one rounding unit on another platform.
 /// Integer metadata, IDs, enum tags, ordering and topology compare exactly;
 /// floating values use these fixed tolerances at every migration step.
 fn equivalent(expected: &Value, actual: &Value, path: &str) {
@@ -946,9 +946,10 @@ fn corpus_checks_geometric_meaning_and_held_fallback() {
             }
         } else if name == "text_follow" {
             assert!(matches!(result, SolveOutcome::Converged { .. }));
-            assert_eq!(
-                sketch.point_position(Uuid::from_u128(2)).unwrap(),
-                Vec2D::new(8.0, 11.0)
+            let at = sketch.point_position(Uuid::from_u128(2)).unwrap();
+            assert!(
+                (at - Vec2D::new(8.0, 11.0)).to_glam().length() < 1e-6,
+                "{at:?}"
             );
         } else if name.starts_with("tangent_") {
             assert!(matches!(result, SolveOutcome::Converged { .. }));

@@ -85,7 +85,7 @@ pub fn sketch_points_of(
     let world = |id: uuid::Uuid| {
         let p = feature.sketch.point_position(id)?;
         Some(std::array::from_fn(|i| {
-            plane.origin[i] + plane.x_axis[i] * p.x + plane.y_axis[i] * p.y
+            (plane.origin[i] + plane.x_axis[i] * p.x + plane.y_axis[i] * p.y) as f32
         }))
     };
     match feature.sketch.get_geometry(element)? {

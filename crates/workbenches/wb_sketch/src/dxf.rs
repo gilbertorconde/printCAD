@@ -70,10 +70,7 @@ impl Points {
                 }
             }
         }
-        let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-            p[0] as f32,
-            p[1] as f32,
-        ))));
+        let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1]))));
         self.cells.entry((cx, cy)).or_default().push((id, p));
         id
     }
@@ -140,18 +137,18 @@ pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) 
                 );
                 if start != end {
                     let centre = points.at(sketch, c);
-                    made.push(sketch.add_geometry(GeometryElement::Arc(Arc::new(
-                        centre, start, end, r as f32,
-                    ))));
+                    made.push(
+                        sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, r))),
+                    );
                     added.arcs += 1;
                 }
             }
             DrawingShape::Circle { centre, radius } => {
                 let centre = points.at(sketch, at(*centre));
-                made.push(sketch.add_geometry(GeometryElement::Circle(Circle::new(
-                    centre,
-                    (radius * scale) as f32,
-                ))));
+                made.push(
+                    sketch
+                        .add_geometry(GeometryElement::Circle(Circle::new(centre, radius * scale))),
+                );
                 added.circles += 1;
             }
             DrawingShape::Ellipse {
@@ -163,14 +160,12 @@ pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) 
             } => {
                 let c = at(*centre);
                 let m = [major[0] * scale, major[1] * scale];
-                let major_v = Vec2D::new(m[0] as f32, m[1] as f32);
+                let major_v = Vec2D::new(m[0], m[1]);
                 let centre_id = points.at(sketch, c);
                 let whole = (end_param - start_param).abs() >= std::f64::consts::TAU - 1e-9;
                 if whole {
                     made.push(sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
-                        centre_id,
-                        major_v,
-                        *ratio as f32,
+                        centre_id, major_v, *ratio,
                     ))));
                 } else {
                     // `centre + major cos t + ratio perp(major) sin t`.
@@ -184,11 +179,7 @@ pub(crate) fn add_drawing(sketch: &mut Sketch, drawing: &Drawing2d, scale: f64) 
                     let start = points.at(sketch, on(*start_param));
                     let end = points.at(sketch, on(*end_param));
                     let ellipse = sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new_arc(
-                        centre_id,
-                        major_v,
-                        *ratio as f32,
-                        start,
-                        end,
+                        centre_id, major_v, *ratio, start, end,
                     )));
                     for point in [start, end] {
                         sketch.add_constraint(ConstraintKind::PointOnEllipse { point, ellipse });
@@ -246,12 +237,7 @@ fn segment(
         (end, start)
     };
     added.arcs += 1;
-    Some(sketch.add_geometry(GeometryElement::Arc(Arc::new(
-        centre,
-        from,
-        to,
-        radius as f32,
-    ))))
+    Some(sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, from, to, radius))))
 }
 
 #[cfg(test)]

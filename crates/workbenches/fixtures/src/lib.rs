@@ -47,7 +47,7 @@ pub fn open_sketch_scene(
     scene: Scene,
 ) -> Result<SceneHandles, String> {
     let mut sketch = Sketch::new("Sketch");
-    let p = |s: &mut Sketch, x: f32, y: f32| {
+    let p = |s: &mut Sketch, x: f64, y: f64| {
         s.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     };
     let a = p(&mut sketch, 0.0, 0.0);

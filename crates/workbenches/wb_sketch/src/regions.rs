@@ -16,8 +16,9 @@ use std::collections::HashMap;
 use kernel_api::{ProfileSegment, ProfileWire, TopoName};
 
 /// How near two points are one vertex, in sketch units (mm): curves meet
-/// where the sketch's single-precision points put them, and projected
-/// edges within a solid's tolerance.
+/// where the sketch's points put them (a document saved in single
+/// precision a few millionths of a millimetre apart), and projected edges
+/// within a solid's tolerance.
 const JOIN: f64 = 1e-4;
 
 /// A closed region of the sketch's curves.

@@ -134,17 +134,17 @@ pub fn only_places(state: &ToolState) -> bool {
 enum PendingDim {
     /// `constrain` remembers whether the value came in with Enter.
     ArcRadius {
-        r: f32,
+        r: f64,
         constrain: bool,
     },
     ArcSlotLength {
-        l: f32,
+        l: f64,
         constrain: bool,
     },
     /// A three-corner rectangle's first edge.
     Rect3Edge {
-        length: Option<f32>,
-        angle: Option<f32>,
+        length: Option<f64>,
+        angle: Option<f64>,
         constrain: bool,
     },
 }
@@ -161,7 +161,7 @@ pub struct DimCapture {
     /// The way from the state's anchor the cursor last pointed, and that
     /// anchor: once a value is typed it turns only gradually, so the shape
     /// does not flip over as the cursor crosses the anchor.
-    heading: Option<(Vec2D, glam::Vec2)>,
+    heading: Option<(Vec2D, glam::DVec2)>,
 }
 
 impl DimCapture {
@@ -257,7 +257,7 @@ impl DimCapture {
 
     /// The value of every non-empty buffer that works out (display units:
     /// degrees for angles, millimetres otherwise).
-    pub fn typed(&self, document: &Document) -> Vec<(FieldKind, f32)> {
+    pub fn typed(&self, document: &Document) -> Vec<(FieldKind, f64)> {
         self.fields
             .iter()
             .zip(&self.buffers)
@@ -390,7 +390,7 @@ fn paste(buffer: &mut String, text: &str) -> bool {
         return false;
     }
     let pointed = text.replace(',', ".");
-    if !text.contains('.') && pointed.parse::<f32>().is_ok() {
+    if !text.contains('.') && pointed.parse::<f64>().is_ok() {
         buffer.push_str(&pointed);
     } else {
         buffer.push_str(text);
@@ -400,17 +400,17 @@ fn paste(buffer: &mut String, text: &str) -> bool {
 
 /// What `text` in a `kind` field comes to: a number as written, a formula
 /// worked out against the document's variables.
-fn evaluate(text: &str, kind: FieldKind, document: &Document) -> Result<f32, String> {
+fn evaluate(text: &str, kind: FieldKind, document: &Document) -> Result<f64, String> {
     let text = text.trim();
-    if let Ok(v) = text.parse::<f32>() {
+    if let Ok(v) = text.parse::<f64>() {
         return Ok(v);
     }
     document
         .evaluate_formula(text, Some(kind.dim()))
-        .map(|q| q.value as f32)
+        .map(|q| q.value)
 }
 
-fn typed_value(typed: &[(FieldKind, f32)], kind: FieldKind) -> Option<f32> {
+fn typed_value(typed: &[(FieldKind, f64)], kind: FieldKind) -> Option<f64> {
     typed.iter().find(|(f, _)| *f == kind).map(|(_, v)| *v)
 }
 
@@ -442,7 +442,7 @@ fn anchor(state: &ToolState, sketch: &Sketch) -> Option<Vec2D> {
 }
 
 /// Counter-clockwise turn from `from` to `to`, in degrees (0, 360].
-fn sweep_deg(from: glam::Vec2, to: glam::Vec2) -> f32 {
+fn sweep_deg(from: glam::DVec2, to: glam::DVec2) -> f64 {
     arc_angles(from, to).1.to_degrees()
 }
 
@@ -453,17 +453,17 @@ fn polyline_arc(
     heading: Vec2D,
     from: Vec2D,
     cursor: Vec2D,
-) -> Option<(glam::Vec2, bool)> {
+) -> Option<(glam::DVec2, bool)> {
     let t = segment
         .arc_heading(heading, cursor - from)?
         .to_glam()
         .normalize_or_zero();
-    (t != glam::Vec2::ZERO).then(|| (t, t.perp_dot((cursor - from).to_glam()) >= 0.0))
+    (t != glam::DVec2::ZERO).then(|| (t, t.perp_dot((cursor - from).to_glam()) >= 0.0))
 }
 
 /// A point `along` the ellipse centred at `c` with semi-axis `a` along
 /// unit `u` and `b` across it, on the ray from `c` through `toward`.
-fn on_ellipse_ray(c: Vec2D, u: glam::Vec2, a: f32, b: f32, toward: Vec2D) -> Option<Vec2D> {
+fn on_ellipse_ray(c: Vec2D, u: glam::DVec2, a: f64, b: f64, toward: Vec2D) -> Option<Vec2D> {
     let d = (toward - c).to_glam();
     let (x, y) = (d.dot(u), d.dot(u.perp()));
     let s = ((x / a).powi(2) + (y / b).powi(2)).sqrt();
@@ -472,7 +472,7 @@ fn on_ellipse_ray(c: Vec2D, u: glam::Vec2, a: f32, b: f32, toward: Vec2D) -> Opt
 
 /// The other semi-axis of the ellipse centred at `c` with semi-axis `a`
 /// along unit `u` that passes through `p`.
-fn semi_axis_through(c: Vec2D, u: glam::Vec2, a: f32, p: Vec2D) -> Option<f32> {
+fn semi_axis_through(c: Vec2D, u: glam::DVec2, a: f64, p: Vec2D) -> Option<f64> {
     let d = (p - c).to_glam();
     let (x, y) = (d.dot(u), d.dot(u.perp()));
     let k = 1.0 - (x / a).powi(2);
@@ -487,7 +487,7 @@ pub fn implied_value(
     cursor: Vec2D,
     params: &ToolParams,
     field: FieldKind,
-) -> Option<f32> {
+) -> Option<f64> {
     let pos = |t: &SnapTarget| t.position(sketch);
     let from_anchor = || anchor(state, sketch).map(|a| (cursor - a).to_glam());
     match (state, field) {
@@ -593,36 +593,36 @@ pub fn implied_value(
 }
 
 /// Anchor + radial direction from the cursor, at typed distance `r`.
-fn radial(anchor: Vec2D, cursor: Vec2D, r: f32) -> Vec2D {
+fn radial(anchor: Vec2D, cursor: Vec2D, r: f64) -> Vec2D {
     let d = (cursor - anchor).to_glam();
     let dir = if d.length() > 1e-6 {
         d.normalize()
     } else {
-        glam::Vec2::X
+        glam::DVec2::X
     };
     Vec2D::from_glam(anchor.to_glam() + dir * r)
 }
 
 /// From `anchor` at the typed `length` and `angle` (degrees), each taken
 /// from the cursor where it was not typed.
-fn polar(anchor: Vec2D, cursor: Vec2D, length: Option<f32>, angle: Option<f32>) -> Vec2D {
+fn polar(anchor: Vec2D, cursor: Vec2D, length: Option<f64>, angle: Option<f64>) -> Vec2D {
     let d = (cursor - anchor).to_glam();
     let dir = match angle {
-        Some(deg) => glam::Vec2::from_angle(deg.to_radians()),
+        Some(deg) => glam::DVec2::from_angle(deg.to_radians()),
         None if d.length() > 1e-6 => d.normalize(),
-        None => glam::Vec2::X,
+        None => glam::DVec2::X,
     };
-    let length = length.map(f32::abs).unwrap_or_else(|| d.length());
+    let length = length.map(f64::abs).unwrap_or_else(|| d.length());
     Vec2D::from_glam(anchor.to_glam() + dir * length)
 }
 
 /// `p` turned about `c` by `deg` degrees counter-clockwise.
-fn turned(c: Vec2D, p: Vec2D, deg: f32) -> Vec2D {
-    let r = glam::Vec2::from_angle(deg.to_radians()).rotate((p - c).to_glam());
+fn turned(c: Vec2D, p: Vec2D, deg: f64) -> Vec2D {
+    let r = glam::DVec2::from_angle(deg.to_radians()).rotate((p - c).to_glam());
     Vec2D::from_glam(c.to_glam() + r)
 }
 
-fn sign_or(v: f32, fallback: f32) -> f32 {
+fn sign_or(v: f64, fallback: f64) -> f64 {
     if v > 0.0 {
         1.0
     } else if v < 0.0 {
@@ -638,7 +638,7 @@ pub fn override_cursor(
     state: &ToolState,
     sketch: &Sketch,
     cursor: Vec2D,
-    typed: &[(FieldKind, f32)],
+    typed: &[(FieldKind, f64)],
 ) -> Vec2D {
     let get = |k: FieldKind| typed_value(typed, k);
     let pos = |t: &SnapTarget| t.position(sketch);
@@ -836,7 +836,7 @@ pub fn override_cursor(
 pub fn typed_params(
     params: &ToolParams,
     state: &ToolState,
-    typed: &[(FieldKind, f32)],
+    typed: &[(FieldKind, f64)],
 ) -> ToolParams {
     match (state, typed_value(typed, FieldKind::Width)) {
         (ToolState::SlotFrom { .. } | ToolState::ArcSlotStart { .. }, Some(w)) => ToolParams {
@@ -848,7 +848,7 @@ pub fn typed_params(
 }
 
 /// Wrap degrees into (-180, 180].
-fn normalize_deg(deg: f32) -> f32 {
+fn normalize_deg(deg: f64) -> f64 {
     let mut d = deg % 360.0;
     if d <= -180.0 {
         d += 360.0;
@@ -860,7 +860,7 @@ fn normalize_deg(deg: f32) -> f32 {
 }
 
 /// A typed sweep as an arc's angle in radians, (0, 2π]; `None` for none.
-fn sweep_rad(deg: f32) -> Option<f32> {
+fn sweep_rad(deg: f64) -> Option<f64> {
     let d = deg.rem_euclid(360.0);
     let d = if d < 1e-4 && deg.abs() > 1e-4 {
         360.0
@@ -907,7 +907,7 @@ fn last_lines(sketch: &Sketch, n: usize) -> Option<Vec<uuid::Uuid>> {
     (lines.len() == n).then_some(lines)
 }
 
-fn angle_to_x(line: uuid::Uuid, deg: f32) -> ConstraintKind {
+fn angle_to_x(line: uuid::Uuid, deg: f64) -> ConstraintKind {
     ConstraintKind::AngleToAxis {
         line,
         axis: AxisDirection::Horizontal,
@@ -925,7 +925,7 @@ pub fn apply_typed_constraints(
     state_before: &ToolState,
     state_after: &ToolState,
     changed: bool,
-    typed: &[(FieldKind, f32)],
+    typed: &[(FieldKind, f64)],
     constrain: bool,
 ) -> usize {
     let get = |k: FieldKind| typed_value(typed, k);
@@ -1027,7 +1027,7 @@ pub fn apply_typed_constraints(
                 && (length.is_some() || angle.is_some())
             {
                 capture.pending = Some(PendingDim::Rect3Edge {
-                    length: length.map(f32::abs),
+                    length: length.map(f64::abs),
                     angle,
                     constrain,
                 });
@@ -1157,7 +1157,7 @@ pub fn apply_typed_constraints(
                     .filter(|n| *n >= 3)
                     .and_then(|n| last_of(sketch, n, as_line))
                 {
-                    let turn = deg + 90.0 + 180.0 / sides as f32;
+                    let turn = deg + 90.0 + 180.0 / sides as f64;
                     kinds.push((angle_to_x(first.id, turn), constrain));
                 }
             }
@@ -1282,7 +1282,7 @@ pub fn readout_rows(
             };
             let focused = synced && capture.focus == i;
             let unit = if field.is_angle() { "°" } else { "mm" };
-            let shown = |v: f32| {
+            let shown = |v: f64| {
                 if field.is_angle() {
                     format!("{v:.1}")
                 } else {
@@ -1546,7 +1546,7 @@ mod tests {
 
     #[test]
     fn a_typed_sweep_is_an_arc_angle_in_its_range() {
-        assert!((sweep_rad(90.0).unwrap() - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
+        assert!((sweep_rad(90.0).unwrap() - std::f64::consts::FRAC_PI_2).abs() < 1e-6);
         assert!((sweep_rad(-90.0).unwrap().to_degrees() - 270.0).abs() < 1e-3);
         assert!((sweep_rad(360.0).unwrap().to_degrees() - 360.0).abs() < 1e-3);
         assert!(sweep_rad(0.0).is_none());

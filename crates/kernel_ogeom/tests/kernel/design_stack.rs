@@ -9,7 +9,7 @@ use wb_design::DesignFeature;
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, Vec2D};
 
-fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32) -> SketchFeature {
+fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f64, height: f64) -> SketchFeature {
     let mut sketch = Sketch::new("s");
     sketch.plane = plane;
     let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
@@ -24,7 +24,7 @@ fn rect_sketch_on(plane: wb_sketch::sketch::SketchPlane, width: f32, height: f32
     SketchFeature::new(sketch, plane)
 }
 
-fn rect_sketch(width: f32, height: f32) -> SketchFeature {
+fn rect_sketch(width: f64, height: f64) -> SketchFeature {
     let mut sketch = Sketch::new("s");
     let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
     let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(width, 0.0))));
@@ -41,9 +41,9 @@ fn rect_sketch(width: f32, height: f32) -> SketchFeature {
 
 fn circle_sketch_on(
     plane: wb_sketch::sketch::SketchPlane,
-    cx: f32,
-    cy: f32,
-    r: f32,
+    cx: f64,
+    cy: f64,
+    r: f64,
 ) -> SketchFeature {
     let mut sketch = Sketch::new("c");
     sketch.plane = plane;
@@ -52,7 +52,7 @@ fn circle_sketch_on(
     SketchFeature::new(sketch, plane)
 }
 
-fn setup(width: f32, height: f32) -> (Document, BodyId, FeatureId) {
+fn setup(width: f64, height: f64) -> (Document, BodyId, FeatureId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let sketch_id = doc
@@ -361,7 +361,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     let top_face = wb_sketch::sketch::SketchPlane::from_face([15.0, 10.0, 6.0], [0.0, 0.0, 1.0]);
     let mut holes = Sketch::new("holes");
     holes.plane = top_face;
-    for x in [7.0f32, 23.0] {
+    for x in [7.0f64, 23.0] {
         let center = holes.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 10.0))));
         holes.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));
     }
@@ -748,7 +748,7 @@ fn a_refined_pad_stacked_on_a_pad_leaves_six_faces() {
 #[test]
 fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
     use wb_sketch::sketch::Ellipse;
-    let (a, b, height) = (10.0f32, 5.0f32, 4.0f32);
+    let (a, b, height) = (10.0f64, 5.0f64, 4.0f32);
     let mut sketch = Sketch::new("half ellipse");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
     let right = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(a, 0.0))));
@@ -789,15 +789,18 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
         (hi[0], a),
         (lo[1], 0.0),
         (hi[1], b),
-        (hi[2] - lo[2], height),
+        (hi[2] - lo[2], f64::from(height)),
     ] {
-        assert!((got - want).abs() < 1e-3, "bounds {lo:?}..{hi:?}");
+        assert!(
+            (f64::from(got) - want).abs() < 1e-3,
+            "bounds {lo:?}..{hi:?}"
+        );
     }
     // The elliptic wall is a line swept along an ellipse, which the kernel
     // integrates in closed form: the volume is exact, and says so.
     let props = kernel.physical_properties(&result.brep_blob).unwrap();
     let volume = props.volume_mm3.expect("a closed solid");
-    let expected = f64::from(std::f32::consts::PI * a * b / 2.0 * height);
+    let expected = std::f64::consts::PI * a * b / 2.0 * f64::from(height);
     assert!(!props.approximate);
     assert!(
         (volume - expected).abs() < 1e-5 * expected,
@@ -810,7 +813,7 @@ fn an_arc_of_ellipse_closed_by_a_line_pads_to_its_area() {
 #[test]
 fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
     use wb_sketch::sketch::Circle;
-    let (r, height) = (6.0f32, 3.0f32);
+    let (r, height) = (6.0f64, 3.0f32);
     let mut sketch = Sketch::new("disc");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
     let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, r)));
@@ -839,7 +842,7 @@ fn a_circle_made_into_a_spline_pads_to_its_cylinder() {
         .expect("the spline disc pads");
     let props = kernel.physical_properties(&result.brep_blob).unwrap();
     let volume = props.volume_mm3.expect("a closed solid");
-    let expected = f64::from(std::f32::consts::PI * r * r * height);
+    let expected = std::f64::consts::PI * r * r * f64::from(height);
     assert!(
         (volume - expected).abs() < 1e-3 * expected,
         "volume {volume} vs {expected}"
@@ -1760,12 +1763,7 @@ fn a_spline_through_points_closed_by_a_line_pads() {
     let mut sketch = Sketch::new("spline");
     let fit_points: Vec<_> = clicks
         .iter()
-        .map(|p| {
-            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                p[0] as f32,
-                p[1] as f32,
-            ))))
-        })
+        .map(|p| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))))
         .collect();
     let control: Vec<_> = fit
         .control
@@ -1774,10 +1772,7 @@ fn a_spline_through_points_closed_by_a_line_pads() {
         .map(|(i, p)| match i {
             0 => fit_points[0],
             4 => fit_points[4],
-            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                p[0] as f32,
-                p[1] as f32,
-            )))),
+            _ => sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p[0], p[1])))),
         })
         .collect();
     sketch.add_geometry(GeometryElement::BSpline(BSpline {
@@ -1828,7 +1823,7 @@ fn padded_conic_volume(
     kind: wb_sketch::sketch::ConicKind,
     center: Vec2D,
     axis: Vec2D,
-    minor: f32,
+    minor: f64,
     start: Vec2D,
     end: Vec2D,
     height: f32,
@@ -1919,7 +1914,7 @@ fn arcs_of_parabola_and_hyperbola_closed_by_a_line_pad_to_their_areas() {
 /// its top face, and the hole `hole` makes from that sketch: the block's
 /// volume and properties once drilled.
 fn drilled_block(
-    size: f32,
+    size: f64,
     height: f32,
     hole: impl FnOnce(FeatureId) -> DesignFeature,
 ) -> Result<kernel_api::PhysicalProperties, String> {
@@ -1931,7 +1926,7 @@ fn drilled_block(
 
 /// As [`drilled_block`], the built solid itself.
 fn drilled_block_solid(
-    size: f32,
+    size: f64,
     height: f32,
     hole: impl FnOnce(FeatureId) -> DesignFeature,
 ) -> Result<(kernel_api::SolidBuildResult, OgeomKernel), String> {
@@ -1943,7 +1938,7 @@ fn drilled_block_solid(
     )
     .unwrap();
     let top_face = wb_sketch::sketch::SketchPlane::from_face(
-        [size * 0.5, size * 0.5, height],
+        [size * 0.5, size * 0.5, f64::from(height)],
         [0.0, 0.0, 1.0],
     );
     let mut holes = Sketch::new("holes");
@@ -2313,10 +2308,10 @@ fn a_socket_head_seat_counterbores_to_the_table() {
 /// A rectangle from (x0, y0) to (x1, y1) on `plane`.
 fn rect_at(
     plane: wb_sketch::sketch::SketchPlane,
-    x0: f32,
-    y0: f32,
-    x1: f32,
-    y1: f32,
+    x0: f64,
+    y0: f64,
+    x1: f64,
+    y1: f64,
 ) -> SketchFeature {
     let mut sketch = Sketch::new("r");
     sketch.plane = plane;
@@ -2332,7 +2327,7 @@ fn rect_at(
 }
 
 /// The plane z = `z`, sketched as the XY plane is.
-fn plane_at_z(z: f32) -> wb_sketch::sketch::SketchPlane {
+fn plane_at_z(z: f64) -> wb_sketch::sketch::SketchPlane {
     wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
 }
 
@@ -2681,7 +2676,7 @@ fn a_revolution_turns_about_a_sketch_line_a_datum_line_or_a_picked_edge() {
 
 /// A 60 × 60 × 4 plate and a boss of radius 3, 6 high on its top at
 /// (`x`, `y`): the document, the body, the plate's sketch and the boss.
-fn plate_with_boss(x: f32, y: f32) -> (Document, BodyId, FeatureId, FeatureId) {
+fn plate_with_boss(x: f64, y: f64) -> (Document, BodyId, FeatureId, FeatureId) {
     let (mut doc, body, plate) = setup(60.0, 60.0);
     doc.add_feature_in_body(
         pad_feature(plate, 4.0, false, false),
@@ -3223,7 +3218,7 @@ fn assert_near(got: f64, want: f64, rel: f64, what: &str) {
 }
 
 /// A sketch of one open chain of lines through `points`, on `plane`.
-fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f32; 2]]) -> SketchFeature {
+fn polyline_sketch(plane: wb_sketch::sketch::SketchPlane, points: &[[f64; 2]]) -> SketchFeature {
     let mut sketch = Sketch::new("path");
     sketch.plane = plane;
     let ids: Vec<_> = points
@@ -3390,13 +3385,13 @@ fn a_pipe_oriented_by_an_auxiliary_path_turns_toward_it() {
     // The auxiliary line from (5, 0, 0) to (0, 20, 5), on the plane through
     // it square to (1, 0, 1).
     let plane = wb_sketch::sketch::SketchPlane::from_face([5.0, 0.0, 0.0], [1.0, 0.0, 1.0]);
-    let at = |p: [f32; 3]| {
+    let at = |p: [f64; 3]| {
         let d = [
             p[0] - plane.origin[0],
             p[1] - plane.origin[1],
             p[2] - plane.origin[2],
         ];
-        let dot = |a: [f32; 3]| d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
+        let dot = |a: [f64; 3]| d[0] * a[0] + d[1] * a[1] + d[2] * a[2];
         [dot(plane.x_axis), dot(plane.y_axis)]
     };
     let guide = polyline_sketch(plane, &[at([5.0, 0.0, 0.0]), at([0.0, 20.0, 5.0])]);
@@ -3645,7 +3640,7 @@ fn a_helix_of_no_height_is_a_flat_spiral() {
 /// A 40 mm thick block from `x0` to 20 in X and -5 to 25 in Y, clear of the
 /// coil's ends, and four turns of the coil 12 mm high cut from it, or kept
 /// inside it.
-fn block_and_coil(x0: f32, keep_inside: bool) -> (Document, BodyId) {
+fn block_and_coil(x0: f64, keep_inside: bool) -> (Document, BodyId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let mut block = polyline_sketch(
@@ -4370,7 +4365,7 @@ fn loft_of(sections: Vec<wb_design::LoftSection>) -> DesignFeature {
     }
 }
 
-fn raised(z: f32) -> wb_sketch::sketch::SketchPlane {
+fn raised(z: f64) -> wb_sketch::sketch::SketchPlane {
     wb_sketch::sketch::SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0])
 }
 
@@ -4460,7 +4455,7 @@ fn a_loft_starts_from_a_face_of_the_solid() {
 #[test]
 fn a_loft_through_sections_closes_to_a_point() {
     use wb_design::LoftSection;
-    let circles = |r: f32, z: f32| circle_sketch_on(raised(z), 0.0, 0.0, r);
+    let circles = |r: f64, z: f64| circle_sketch_on(raised(z), 0.0, 0.0, r);
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let a = doc
@@ -4695,7 +4690,7 @@ fn a_boolean_takes_several_tool_bodies() {
         Some(target),
     )
     .unwrap();
-    let tool = |doc: &mut Document, name: &str, x: f32| {
+    let tool = |doc: &mut Document, name: &str, x: f64| {
         let body = doc.create_body(Some(name.into()));
         let sketch = doc
             .add_feature_in_body(

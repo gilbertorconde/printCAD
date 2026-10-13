@@ -19,11 +19,11 @@ use super::shaft::ShaftSpec;
 #[serde(default)]
 pub struct ShaftForce {
     /// Where along the shaft from its first end, mm.
-    pub at: f32,
+    pub at: f64,
     /// How hard, N.
-    pub force: f32,
+    pub force: f64,
     /// Which way about the axis, degrees from the sketch's horizontal.
-    pub angle_deg: f32,
+    pub angle_deg: f64,
 }
 
 impl Default for ShaftForce {
@@ -40,15 +40,15 @@ impl Default for ShaftForce {
 #[serde(default)]
 pub struct ShaftLoads {
     /// Where the two bearings stand from the first end, mm.
-    pub bearings: [f32; 2],
+    pub bearings: [f64; 2],
     pub forces: Vec<ShaftForce>,
     /// The torque the shaft passes, N·m, between `torque_from` and
     /// `torque_to` (mm from the first end).
-    pub torque: f32,
-    pub torque_from: f32,
-    pub torque_to: f32,
+    pub torque: f64,
+    pub torque_from: f64,
+    pub torque_to: f64,
     /// Young's modulus of the material, GPa (steel's 210 when made).
-    pub modulus: f32,
+    pub modulus: f64,
 }
 
 impl Default for ShaftLoads {
@@ -121,7 +121,7 @@ const STATIONS: usize = 600;
 
 /// Work out what `loads` do to `shaft`.
 pub fn analyse(shaft: &ShaftSpec, loads: &ShaftLoads) -> Result<ShaftAnalysis, String> {
-    let length: f64 = shaft.sections.iter().map(|s| f64::from(s.length)).sum();
+    let length: f64 = shaft.sections.iter().map(|s| s.length).sum();
     if length.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         return Err("the shaft has no length".into());
     }
@@ -133,10 +133,10 @@ pub fn analyse(shaft: &ShaftSpec, loads: &ShaftLoads) -> Result<ShaftAnalysis, S
     if (b - a).abs() < 1e-6 {
         return Err("the bearings must stand apart".into());
     }
-    if loads.forces.iter().any(|f| !inside(f64::from(f.at))) {
+    if loads.forces.iter().any(|f| !inside(f.at)) {
         return Err("every force must act on the shaft".into());
     }
-    let modulus = f64::from(loads.modulus) * 1e3;
+    let modulus = loads.modulus * 1e3;
     if modulus.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
         return Err("the material's modulus must be more than zero".into());
     }
@@ -147,9 +147,9 @@ pub fn analyse(shaft: &ShaftSpec, loads: &ShaftLoads) -> Result<ShaftAnalysis, S
         .forces
         .iter()
         .map(|f| {
-            let angle = f64::from(f.angle_deg).to_radians();
-            let force = f64::from(f.force);
-            (f64::from(f.at), [force * angle.cos(), force * angle.sin()])
+            let angle = f.angle_deg.to_radians();
+            let force = f.force;
+            (f.at, [force * angle.cos(), force * angle.sin()])
         })
         .collect();
     let mut reactions = [[0.0; 2]; 2];
@@ -169,16 +169,16 @@ pub fn analyse(shaft: &ShaftSpec, loads: &ShaftLoads) -> Result<ShaftAnalysis, S
     let diameter_at = |x: f64| {
         let mut end = 0.0;
         for s in &shaft.sections {
-            end += f64::from(s.length);
+            end += s.length;
             if x <= end + 1e-9 {
-                return f64::from(s.diameter);
+                return s.diameter;
             }
         }
-        shaft.sections.last().map_or(0.0, |s| f64::from(s.diameter))
+        shaft.sections.last().map_or(0.0, |s| s.diameter)
     };
-    let torque = f64::from(loads.torque) * 1e3;
+    let torque = loads.torque * 1e3;
     let (t0, t1) = {
-        let (p, q) = (f64::from(loads.torque_from), f64::from(loads.torque_to));
+        let (p, q) = (loads.torque_from, loads.torque_to);
         (p.min(q), p.max(q))
     };
 
@@ -272,7 +272,7 @@ mod tests {
     use crate::generator::ShaftSection;
     use std::f64::consts::PI;
 
-    fn plain(length: f32, diameter: f32) -> ShaftSpec {
+    fn plain(length: f64, diameter: f64) -> ShaftSpec {
         ShaftSpec {
             sections: vec![ShaftSection {
                 length,

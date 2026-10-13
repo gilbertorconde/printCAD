@@ -20,7 +20,7 @@ use crate::sketch::Vec2D;
 
 /// The minimum wall a printer is taken to manage when nothing else is
 /// said: two lines of a 0.4 mm nozzle.
-pub const DEFAULT_MINIMUM_MM: f32 = 0.8;
+pub const DEFAULT_MINIMUM_MM: f64 = 0.8;
 
 /// What the medial axis is held to, in millimetres.
 const AXIS_TOLERANCE_MM: f64 = 1e-3;
@@ -172,7 +172,7 @@ pub(crate) fn overlays(
         let px: Vec<Option<[f32; 2]>> = path
             .points
             .iter()
-            .map(|p| proj.to_px(Vec2D::new(p[0] as f32, p[1] as f32)))
+            .map(|p| proj.to_px(Vec2D::new(p[0], p[1])))
             .collect();
         for i in 1..px.len() {
             let (Some(a), Some(b)) = (px[i - 1], px[i]) else {
@@ -206,7 +206,7 @@ pub(crate) fn marks(
             } else {
                 pal.wall
             };
-            let pos = proj.to_px(Vec2D::new(n.at[0] as f32, n.at[1] as f32))?;
+            let pos = proj.to_px(Vec2D::new(n.at[0], n.at[1]))?;
             Some(ScreenSpaceMark::dot(pos, 4.0, color))
         })
         .collect()
@@ -221,7 +221,7 @@ pub(crate) fn labels(
     let Some((wall, at)) = check.thinnest() else {
         return Vec::new();
     };
-    let Some([x, y]) = proj.to_px(Vec2D::new(at[0] as f32, at[1] as f32)) else {
+    let Some([x, y]) = proj.to_px(Vec2D::new(at[0], at[1])) else {
         return Vec::new();
     };
     let color = if wall < check.minimum {

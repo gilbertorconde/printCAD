@@ -1,4 +1,4 @@
-//! Storage precision, references and application pinning at the solver boundary.
+//! References and application pinning at the solver boundary.
 
 use crate::sketch::{self, ConstraintKind as C, GeometryElement as G, Sketch, Vec2D};
 use sketch_solver::problem as core;
@@ -29,17 +29,14 @@ fn item(sketch: &Sketch, id: Uuid) -> core::ItemReference {
 }
 
 fn vector(v: Vec2D) -> core::Vector {
-    core::Vector {
-        x: f64::from(v.x),
-        y: f64::from(v.y),
-    }
+    core::Vector { x: v.x, y: v.y }
 }
 
-fn length(v: f32) -> core::Length {
-    core::Length(f64::from(v))
+fn length(v: f64) -> core::Length {
+    core::Length(v)
 }
-fn radians(v: f32) -> core::Radians {
-    core::Radians(f64::from(v))
+fn radians(v: f64) -> core::Radians {
+    core::Radians(v)
 }
 
 pub(super) fn settings(settings: sketch::SolverSettings) -> core::Settings {
@@ -267,10 +264,7 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
             across,
             direction: direction.map(|v| {
                 let v = v.to_glam().normalize_or_zero();
-                core::Direction {
-                    x: v.x as f64,
-                    y: v.y as f64,
-                }
+                core::Direction { x: v.x, y: v.y }
             }),
         },
         C::PolarPitch {
@@ -308,7 +302,7 @@ fn relation(sketch: &Sketch, kind: &C) -> core::Relation {
             ray2: curve(ray2),
             interface: curve(interface),
             point: point(p),
-            ratio: core::Ratio(f64::from(ratio)),
+            ratio: core::Ratio(ratio),
         },
         C::InternalAlignment {
             element,

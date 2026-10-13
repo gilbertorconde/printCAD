@@ -171,7 +171,7 @@ fn open_curve_ends(sketch: &Sketch, curve: Uuid) -> Option<[Uuid; 2]> {
     }
 }
 
-fn axis_distance(horizontal: bool, a: Uuid, b: Option<Uuid>, value: f32) -> ConstraintKind {
+fn axis_distance(horizontal: bool, a: Uuid, b: Option<Uuid>, value: f64) -> ConstraintKind {
     if horizontal {
         ConstraintKind::DistanceX { a, b, value }
     } else {
@@ -743,7 +743,7 @@ fn nearer_end(sketch: &Sketch, line: Uuid, point: Uuid) -> Option<Uuid> {
     let d = |id: Uuid| {
         sketch
             .point_position(id)
-            .map_or(f32::INFINITY, |p| (p.to_glam() - at).length())
+            .map_or(f64::INFINITY, |p| (p.to_glam() - at).length())
     };
     Some(if d(l.start) <= d(l.end) {
         l.start
@@ -851,7 +851,7 @@ fn parallel(sketch: &Sketch, a: Uuid, b: Uuid) -> bool {
     ) {
         (Some(Item::Line(s1, e1)), Some(Item::Line(s2, e2))) => {
             let (d1, d2) = ((e1 - s1).normalize_or_zero(), (e2 - s2).normalize_or_zero());
-            d1.perp_dot(d2).abs() < 0.5f32.to_radians().sin()
+            d1.perp_dot(d2).abs() < 0.5f64.to_radians().sin()
         }
         _ => false,
     }
@@ -959,7 +959,7 @@ mod tests {
         let (sketch, _, _, circle, arc) = sketch_with_an_arc();
         let shape = SelectionShape::of(&sketch, &HashSet::from([arc]));
         let kinds = kinds_for("arc_length", &shape, &sketch).unwrap();
-        let quarter = 5.0 * std::f32::consts::FRAC_PI_2;
+        let quarter = 5.0 * std::f64::consts::FRAC_PI_2;
         assert!(
             matches!(kinds[0], ConstraintKind::ArcLength { length, .. } if (length - quarter).abs() < 1e-4),
             "{kinds:?}"
@@ -1069,12 +1069,12 @@ mod tests {
         let mut points = Vec::new();
         for i in 0..4 {
             let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                i as f32 * 10.0,
+                i as f64 * 10.0,
                 0.0,
             ))));
             points.push(center);
             circles.push(
-                sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0 + i as f32))),
+                sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0 + i as f64))),
             );
         }
         let many = |ids: &[Uuid]| SelectionShape::of(&sketch, &ids.iter().copied().collect());
@@ -1146,7 +1146,7 @@ mod tests {
     #[test]
     fn a_refraction_tells_its_rays_from_the_interface() {
         let mut sketch = Sketch::new("t");
-        let point = |sketch: &mut Sketch, x: f32, y: f32| {
+        let point = |sketch: &mut Sketch, x: f64, y: f64| {
             sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
         };
         let l = point(&mut sketch, -10.0, 0.0);
@@ -1176,7 +1176,7 @@ mod tests {
         };
         assert_eq!((on, line), (hit, interface));
         assert_eq!((r1, r2, i), (ray1, ray2, interface));
-        let expected = 45f32.to_radians().sin() / (3.0f32 / 5.0);
+        let expected = 45f64.to_radians().sin() / (3.0f64 / 5.0);
         assert!((ratio - expected).abs() < 1e-4, "{ratio}");
     }
 

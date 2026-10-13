@@ -2058,7 +2058,10 @@ impl Workbench for DesignWorkbench {
                     None => face,
                 }
                 .on_its_plane();
-                let plane = wb_sketch::sketch::SketchPlane::from_face(face.point, face.normal);
+                let plane = wb_sketch::sketch::SketchPlane::from_face(
+                    wb_sketch::boundary::widen3(face.point),
+                    wb_sketch::boundary::widen3(face.normal),
+                );
                 feature.plane = plane;
                 feature.sketch.plane = plane;
                 // Mapped to the face, it follows the face, not the datum it was on.

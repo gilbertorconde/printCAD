@@ -13,7 +13,7 @@ use wb_sketch::sketch::{Circle, GeometryElement, Line, Point, Sketch, SketchPlan
 const PI: f64 = std::f64::consts::PI;
 
 /// A rectangle from (x0, y0) to (x1, y1) on the XY plane.
-fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> SketchFeature {
+fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> SketchFeature {
     let mut sketch = Sketch::new("r");
     let corners = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
         .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
@@ -28,7 +28,7 @@ fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> SketchFeature {
 }
 
 /// A circle on the XY plane.
-fn circle(cx: f32, cy: f32, r: f32) -> SketchFeature {
+fn circle(cx: f64, cy: f64, r: f64) -> SketchFeature {
     let mut sketch = Sketch::new("c");
     let center = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(cx, cy))));
     sketch.add_geometry(GeometryElement::Circle(Circle::new(center, r)));
@@ -52,7 +52,7 @@ fn extrude(kind: &str, sketch: FeatureId, fields: serde_json::Value) -> DesignFe
 }
 
 /// A body holding a `w` × `h` block `t` thick from its XY plane up.
-fn block(doc: &mut Document, name: &str, w: f32, h: f32, t: f32) -> BodyId {
+fn block(doc: &mut Document, name: &str, w: f64, h: f64, t: f64) -> BodyId {
     let body = doc.create_body(Some(name.into()));
     let sketch = doc
         .add_feature_in_body(rect(0.0, 0.0, w, h), "Block sketch".into(), Some(body))
@@ -776,7 +776,7 @@ fn an_up_to_shape_pad_stops_on_borrowed_faces() {
     let mut doc = Document::new("t");
     // Two slabs: one over x 0..10 at z 20, one over x 10..20 at z 30.
     let a = doc.create_body(Some("A".into()));
-    for (x0, z) in [(0.0f32, 20.0f32), (10.0, 30.0)] {
+    for (x0, z) in [(0.0f64, 20.0f64), (10.0, 30.0)] {
         let mut slab = rect(x0, 0.0, x0 + 10.0, 10.0);
         slab.plane = SketchPlane::from_frame([0.0, 0.0, z], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
         slab.sketch.plane = slab.plane;

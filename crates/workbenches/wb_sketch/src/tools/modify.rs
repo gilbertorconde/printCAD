@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use glam::Vec2;
+use glam::DVec2;
 use uuid::Uuid;
 
 use super::{ToolEffect, ToolState};
@@ -17,14 +17,14 @@ use crate::snap::{self, arc_angles};
 /// Relative slack in curve parameter space: intersections this close to a
 /// span end don't count as cut points (shared endpoints intersect exactly
 /// at the ends).
-const SPAN_EPS: f32 = 1e-3;
+const SPAN_EPS: f64 = 1e-3;
 
 /// What a corner tool puts between two curves: an arc of a radius, or a
 /// line set back a length from where they meet.
 #[derive(Clone, Copy)]
 pub(super) enum CornerCut {
-    Round(f32),
-    Bevel(f32),
+    Round(f64),
+    Bevel(f64),
 }
 
 impl CornerCut {
@@ -46,13 +46,13 @@ enum End {
 /// A point that ends exactly two lines or arcs.
 struct Corner {
     point: Uuid,
-    at: Vec2,
+    at: DVec2,
     curves: [Uuid; 2],
 }
 
 /// The corner point under the cursor, when exactly two lines or arcs end
 /// there.
-fn corner_under_cursor(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Option<Corner> {
+fn corner_under_cursor(sketch: &Sketch, cursor: Vec2D, snap_tol: f64) -> Option<Corner> {
     let snap::SnapTarget::Existing(point) = snap::snap_to_point(sketch, cursor, snap_tol, &[])
     else {
         return None;
@@ -79,7 +79,7 @@ fn corner_under_cursor(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Option<
 fn joinable_under_cursor(
     sketch: &Sketch,
     cursor: Vec2D,
-    tol: f32,
+    tol: f64,
     except: Option<Uuid>,
 ) -> Option<Uuid> {
     sketch
@@ -99,7 +99,7 @@ fn joinable_under_cursor(
 }
 
 /// The curve's direction at `p` on it (a circle's counter-clockwise).
-fn direction_at(prim: &Prim, p: Vec2) -> Vec2 {
+fn direction_at(prim: &Prim, p: DVec2) -> DVec2 {
     match *prim {
         Prim::Seg { a, b } => (b - a).normalize_or_zero(),
         Prim::Arc { c, .. } | Prim::Circle { c, .. } => (p - c).normalize_or_zero().perp(),
@@ -107,11 +107,11 @@ fn direction_at(prim: &Prim, p: Vec2) -> Vec2 {
 }
 
 /// The curves `radius` away from `prim`, on either side.
-fn offsets(prim: &Prim, radius: f32) -> Vec<Prim> {
+fn offsets(prim: &Prim, radius: f64) -> Vec<Prim> {
     match *prim {
         Prim::Seg { a, b } => {
             let n = (b - a).normalize_or_zero().perp() * radius;
-            if n == Vec2::ZERO {
+            if n == DVec2::ZERO {
                 return Vec::new();
             }
             vec![
@@ -133,7 +133,7 @@ fn offsets(prim: &Prim, radius: f32) -> Vec<Prim> {
 }
 
 /// Where a circle of `radius` centred at `centre` touches `prim`.
-fn touch(prim: &Prim, centre: Vec2, radius: f32) -> Vec2 {
+fn touch(prim: &Prim, centre: DVec2, radius: f64) -> DVec2 {
     match *prim {
         Prim::Seg { a, b } => {
             let d = b - a;
@@ -142,7 +142,7 @@ fn touch(prim: &Prim, centre: Vec2, radius: f32) -> Vec2 {
         Prim::Arc { c, r, .. } | Prim::Circle { c, r } => {
             let dir = (centre - c).normalize_or_zero();
             let (near, far) = (c + dir * r, c - dir * r);
-            let miss = |q: Vec2| ((q - centre).length() - radius).abs();
+            let miss = |q: DVec2| ((q - centre).length() - radius).abs();
             if miss(near) <= miss(far) { near } else { far }
         }
     }
@@ -150,7 +150,7 @@ fn touch(prim: &Prim, centre: Vec2, radius: f32) -> Vec2 {
 
 /// Every circle of `radius` touching both curves' carriers: its centre and
 /// where it touches each.
-fn fillet_circles(a: &Prim, b: &Prim, radius: f32) -> Vec<(Vec2, Vec2, Vec2)> {
+fn fillet_circles(a: &Prim, b: &Prim, radius: f64) -> Vec<(DVec2, DVec2, DVec2)> {
     let mut out = Vec::new();
     for oa in offsets(a, radius) {
         for ob in offsets(b, radius) {
@@ -164,7 +164,7 @@ fn fillet_circles(a: &Prim, b: &Prim, radius: f32) -> Vec<(Vec2, Vec2, Vec2)> {
 
 /// Which side of the curve's carrier `p` is on: left of a line, outside a
 /// circle.
-fn side(prim: &Prim, p: Vec2) -> bool {
+fn side(prim: &Prim, p: DVec2) -> bool {
     match *prim {
         Prim::Seg { a, b } => (b - a).perp_dot(p - a) > 0.0,
         Prim::Arc { c, r, .. } | Prim::Circle { c, r } => (p - c).length() > r,
@@ -174,11 +174,11 @@ fn side(prim: &Prim, p: Vec2) -> bool {
 /// The end of a line or an arc that moves to `to` (on its carrier) so the
 /// part holding `pick` stays: trimmed back when `to` is on it, extended
 /// when beyond it. `None` for a circle, which stays whole.
-fn end_toward(prim: &Prim, pick: Vec2, to: Vec2) -> Option<End> {
+fn end_toward(prim: &Prim, pick: DVec2, to: DVec2) -> Option<End> {
     match *prim {
         Prim::Seg { a, b } => {
             let ab = b - a;
-            let t = |q: Vec2| (q - a).dot(ab);
+            let t = |q: DVec2| (q - a).dot(ab);
             Some(if t(to) > t(pick) {
                 End::End
             } else {
@@ -187,11 +187,11 @@ fn end_toward(prim: &Prim, pick: Vec2, to: Vec2) -> Option<End> {
         }
         Prim::Arc { c, s, e, .. } => {
             let (start, sweep) = arc_angles(s - c, e - c);
-            let rel = |q: Vec2| geom2d::wrap_positive((q - c).y.atan2((q - c).x) - start);
+            let rel = |q: DVec2| geom2d::wrap_positive((q - c).y.atan2((q - c).x) - start);
             let (at, picked) = (rel(to), rel(pick).min(sweep));
             Some(if at <= sweep {
                 if at > picked { End::End } else { End::Start }
-            } else if at - sweep < std::f32::consts::TAU - at {
+            } else if at - sweep < std::f64::consts::TAU - at {
                 End::End
             } else {
                 End::Start
@@ -303,8 +303,8 @@ fn continues(sketch: &mut Sketch, first: Uuid, second: Uuid, joined: bool) {
 /// tangent to both curves.
 fn add_fillet_arc(
     sketch: &mut Sketch,
-    centre: Vec2,
-    radius: f32,
+    centre: DVec2,
+    radius: f64,
     (t1, t2): (Uuid, Uuid),
     curves: [Uuid; 2],
 ) {
@@ -341,7 +341,7 @@ pub(super) fn corner(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     cut: CornerCut,
     keep_corner: bool,
 ) -> ToolEffect {
@@ -392,14 +392,14 @@ fn at_corner(sketch: &mut Sketch, corner: &Corner, cut: CornerCut, keep: bool) -
     if direction_at(&a, q).perp_dot(direction_at(&b, q)).abs() < 1e-4 {
         return ToolEffect::log("The curves run on smoothly there: no corner to cut");
     }
-    let away = |p: Vec2| (p - q).length() > 1e-5;
+    let away = |p: DVec2| (p - q).length() > 1e-5;
     let (t1, t2, centre) = match cut {
         CornerCut::Round(radius) => {
             let Some((c, t1, t2)) = fillet_circles(&a, &b, radius)
                 .into_iter()
                 .filter(|(_, t1, t2)| within(&a, *t1) && within(&b, *t2) && away(*t1) && away(*t2))
                 .min_by(|x, y| {
-                    let d = |t: &(Vec2, Vec2, Vec2)| (t.1 - q).length() + (t.2 - q).length();
+                    let d = |t: &(DVec2, DVec2, DVec2)| (t.1 - q).length() + (t.2 - q).length();
                     d(x).total_cmp(&d(y))
                 })
             else {
@@ -419,7 +419,7 @@ fn at_corner(sketch: &mut Sketch, corner: &Corner, cut: CornerCut, keep: bool) -
             (t1, t2, None)
         }
     };
-    let new_point = |sketch: &mut Sketch, p: Vec2| {
+    let new_point = |sketch: &mut Sketch, p: DVec2| {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(p))))
     };
     let ids = (new_point(sketch, t1), new_point(sketch, t2));
@@ -445,7 +445,7 @@ fn at_corner(sketch: &mut Sketch, corner: &Corner, cut: CornerCut, keep: bool) -
 /// Cut between two curves picked at `picks`, which need not meet.
 fn between(
     sketch: &mut Sketch,
-    picks: [(Uuid, Vec2); 2],
+    picks: [(Uuid, DVec2); 2],
     cut: CornerCut,
     keep: bool,
 ) -> ToolEffect {
@@ -457,7 +457,7 @@ fn between(
     // The picks as they sit on each curve.
     let (pa, pb) = (touch(&a, pa, 0.0), touch(&b, pb, 0.0));
     let meet = raw_hits(&a, &b).into_iter().min_by(|x, y| {
-        let d = |p: &Vec2| (*p - pa).length() + (*p - pb).length();
+        let d = |p: &DVec2| (*p - pa).length() + (*p - pb).length();
         d(x).total_cmp(&d(y))
     });
     let (t1, t2, centre) = match cut {
@@ -470,7 +470,7 @@ fn between(
                 .collect();
             let pool = if facing.is_empty() { circles } else { facing };
             let Some((c, t1, t2)) = pool.into_iter().min_by(|x, y| {
-                let d = |t: &(Vec2, Vec2, Vec2)| (t.1 - pa).length() + (t.2 - pb).length();
+                let d = |t: &(DVec2, DVec2, DVec2)| (t.1 - pa).length() + (t.2 - pb).length();
                 d(x).total_cmp(&d(y))
             }) else {
                 return ToolEffect::log("No fillet of that radius touches both curves");
@@ -481,7 +481,7 @@ fn between(
             let Some(q) = meet else {
                 return ToolEffect::log("These curves never meet: nothing to chamfer");
             };
-            let setback = |p: &Prim, pick: Vec2| {
+            let setback = |p: &Prim, pick: DVec2| {
                 raw_hits(p, &Prim::Circle { c: q, r: length })
                     .into_iter()
                     .min_by(|x, y| (*x - pick).length().total_cmp(&(*y - pick).length()))
@@ -492,7 +492,7 @@ fn between(
             (t1, t2, None)
         }
     };
-    let new_point = |sketch: &mut Sketch, p: Vec2| {
+    let new_point = |sketch: &mut Sketch, p: DVec2| {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(p))))
     };
     let ids = (new_point(sketch, t1), new_point(sketch, t2));
@@ -520,7 +520,7 @@ fn finish(
     sketch: &mut Sketch,
     cut: CornerCut,
     ends: (Uuid, Uuid),
-    centre: Option<(Vec2, f32)>,
+    centre: Option<(DVec2, f64)>,
     curves: [Uuid; 2],
 ) -> ToolEffect {
     match (cut, centre) {
@@ -546,13 +546,13 @@ fn hits_with_others(
     target: &Prim,
     bounded_target: bool,
     axes: bool,
-) -> Vec<Vec2> {
+) -> Vec<DVec2> {
     let mut out = Vec::new();
     if axes {
         // Each axis as the unbounded line through the origin.
-        for along in [Vec2::X, Vec2::Y] {
+        for along in [DVec2::X, DVec2::Y] {
             let axis = Prim::Seg {
-                a: Vec2::ZERO,
+                a: DVec2::ZERO,
                 b: along,
             };
             out.extend(
@@ -584,7 +584,7 @@ fn hits_with_others(
 fn curve_under_cursor(
     sketch: &Sketch,
     pos: Vec2D,
-    tol: f32,
+    tol: f64,
     include_circles: bool,
 ) -> Option<Uuid> {
     sketch
@@ -624,20 +624,20 @@ enum TrimPlan {
     /// Removed line span in curve parameters (None = up to that end).
     LineSpan {
         id: Uuid,
-        lo: Option<f32>,
-        hi: Option<f32>,
+        lo: Option<f64>,
+        hi: Option<f64>,
     },
     /// Removed arc span as CCW angles relative to the arc start.
     ArcSpan {
         id: Uuid,
-        lo: Option<f32>,
-        hi: Option<f32>,
+        lo: Option<f64>,
+        hi: Option<f64>,
     },
     /// Removed circle span between two absolute angles (CCW lo → hi).
-    CircleSpan { id: Uuid, lo: f32, hi: f32 },
+    CircleSpan { id: Uuid, lo: f64, hi: f64 },
 }
 
-fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<TrimPlan> {
+fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f64, axes: bool) -> Option<TrimPlan> {
     let id = curve_under_cursor(sketch, cursor, tol, true)?;
     let prim = prim_of(sketch, sketch.get_geometry(id)?)?;
     let hits = hits_with_others(sketch, id, &prim, true, axes);
@@ -646,15 +646,15 @@ fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<Tri
         Prim::Seg { a, b } => {
             let ab = b - a;
             let len_sq = ab.length_squared();
-            let t_of = |q: Vec2| (q - a).dot(ab) / len_sq;
-            let ts: Vec<f32> = hits
+            let t_of = |q: DVec2| (q - a).dot(ab) / len_sq;
+            let ts: Vec<f64> = hits
                 .iter()
                 .map(|q| t_of(*q))
                 .filter(|t| (SPAN_EPS..=1.0 - SPAN_EPS).contains(t))
                 .collect();
             let tc = t_of(p).clamp(0.0, 1.0);
-            let lo = ts.iter().copied().filter(|t| *t < tc).reduce(f32::max);
-            let hi = ts.iter().copied().filter(|t| *t > tc).reduce(f32::min);
+            let lo = ts.iter().copied().filter(|t| *t < tc).reduce(f64::max);
+            let hi = ts.iter().copied().filter(|t| *t > tc).reduce(f64::min);
             if lo.is_none() && hi.is_none() {
                 Some(TrimPlan::RemoveWhole { id })
             } else {
@@ -664,15 +664,15 @@ fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<Tri
         Prim::Arc { c, s, e, .. } => {
             let (start_angle, sweep) = arc_angles(s - c, e - c);
             let eps = (sweep * SPAN_EPS).max(1e-4);
-            let rel_of = |q: Vec2| geom2d::wrap_positive((q - c).y.atan2((q - c).x) - start_angle);
-            let rels: Vec<f32> = hits
+            let rel_of = |q: DVec2| geom2d::wrap_positive((q - c).y.atan2((q - c).x) - start_angle);
+            let rels: Vec<f64> = hits
                 .iter()
                 .map(|q| rel_of(*q))
                 .filter(|r| (eps..=sweep - eps).contains(r))
                 .collect();
             let rc = rel_of(p).min(sweep);
-            let lo = rels.iter().copied().filter(|r| *r < rc).reduce(f32::max);
-            let hi = rels.iter().copied().filter(|r| *r > rc).reduce(f32::min);
+            let lo = rels.iter().copied().filter(|r| *r < rc).reduce(f64::max);
+            let hi = rels.iter().copied().filter(|r| *r > rc).reduce(f64::min);
             if lo.is_none() && hi.is_none() {
                 Some(TrimPlan::RemoveWhole { id })
             } else {
@@ -682,12 +682,12 @@ fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<Tri
         Prim::Circle { c, .. } => {
             let click_ang = (p - c).y.atan2((p - c).x);
             // Neighbors of the click going CW (lo) and CCW (hi).
-            let mut lo: Option<(f32, Vec2)> = None; // max rel
-            let mut hi: Option<(f32, Vec2)> = None; // min rel
+            let mut lo: Option<(f64, DVec2)> = None; // max rel
+            let mut hi: Option<(f64, DVec2)> = None; // min rel
             for q in &hits {
                 let ang = (*q - c).y.atan2((*q - c).x);
                 let rel = geom2d::wrap_positive(ang - click_ang);
-                if !(1e-4..=std::f32::consts::TAU - 1e-4).contains(&rel) {
+                if !(1e-4..=std::f64::consts::TAU - 1e-4).contains(&rel) {
                     continue;
                 }
                 if hi.map(|(r, _)| rel < r).unwrap_or(true) {
@@ -699,7 +699,7 @@ fn plan_trim(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<Tri
             }
             match (lo, hi) {
                 (Some((_, lo_p)), Some((_, hi_p))) if (lo_p - hi_p).length() > 1e-4 => {
-                    let ang = |q: Vec2| (q - c).y.atan2((q - c).x);
+                    let ang = |q: DVec2| (q - c).y.atan2((q - c).x);
                     Some(TrimPlan::CircleSpan {
                         id,
                         lo: ang(lo_p),
@@ -750,8 +750,8 @@ pub fn next_stroke_crossing(sketch: &Sketch, from: Vec2D, to: Vec2D) -> Option<V
 }
 
 /// Where the stroke `a → b` crosses the ellipses, conics and splines.
-fn general_stroke_crossings(sketch: &Sketch, a: Vec2, b: Vec2) -> Vec<Vec2> {
-    let stroke = Curve::segment(a.as_dvec2(), b.as_dvec2());
+fn general_stroke_crossings(sketch: &Sketch, a: DVec2, b: DVec2) -> Vec<DVec2> {
+    let stroke = Curve::segment(a, b);
     let external = sketch.external_ids();
     sketch
         .geometry
@@ -761,7 +761,7 @@ fn general_stroke_crossings(sketch: &Sketch, a: Vec2, b: Vec2) -> Vec<Vec2> {
         .flat_map(|curve| {
             crate::curves::crossings(&stroke, stroke.span, &curve, curve.span)
                 .into_iter()
-                .map(|(t, _)| stroke.at(t).as_vec2())
+                .map(|(t, _)| stroke.at(t))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -769,16 +769,16 @@ fn general_stroke_crossings(sketch: &Sketch, a: Vec2, b: Vec2) -> Vec<Vec2> {
 
 /// Highlight polyline for the span a trim click at `cursor` would remove
 /// (overlay hover preview). `None` when nothing is trimmable there.
-pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Option<Vec<Vec2D>> {
+pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f64, axes: bool) -> Option<Vec<Vec2D>> {
     const SAMPLES: usize = 24;
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return Some(general_preview(sketch, id, &curve, cursor));
     }
     let plan = plan_trim(sketch, cursor, tol, axes)?;
-    let sample_arc = |c: Vec2, r: f32, from: f32, sweep: f32| -> Vec<Vec2D> {
+    let sample_arc = |c: DVec2, r: f64, from: f64, sweep: f64| -> Vec<Vec2D> {
         (0..=SAMPLES)
             .map(|i| {
-                let a = from + sweep * (i as f32 / SAMPLES as f32);
+                let a = from + sweep * (i as f64 / SAMPLES as f64);
                 Vec2D::new(c.x + r * a.cos(), c.y + r * a.sin())
             })
             .collect()
@@ -790,13 +790,13 @@ pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Opt
                 let (start_angle, sweep) = arc_angles(s - c, e - c);
                 Some(sample_arc(c, r, start_angle, sweep))
             }
-            Prim::Circle { c, r } => Some(sample_arc(c, r, 0.0, std::f32::consts::TAU)),
+            Prim::Circle { c, r } => Some(sample_arc(c, r, 0.0, std::f64::consts::TAU)),
         },
         TrimPlan::LineSpan { id, lo, hi } => {
             let Prim::Seg { a, b } = prim_of(sketch, sketch.get_geometry(id)?)? else {
                 return None;
             };
-            let pos = |t: f32| Vec2D::from_glam(a + (b - a) * t);
+            let pos = |t: f64| Vec2D::from_glam(a + (b - a) * t);
             Some(vec![pos(lo.unwrap_or(0.0)), pos(hi.unwrap_or(1.0))])
         }
         TrimPlan::ArcSpan { id, lo, hi } => {
@@ -818,7 +818,7 @@ pub fn trim_preview(sketch: &Sketch, cursor: Vec2D, tol: f32, axes: bool) -> Opt
 
 /// Trim at the click, the sketch's axes cutting too when `axes` is on:
 /// an end the trim leaves on an axis is held there.
-pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
+pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f64, axes: bool) -> ToolEffect {
     if !axes {
         return trim_at(sketch, cursor, tol, false);
     }
@@ -834,7 +834,7 @@ pub(super) fn trim(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> 
     effect
 }
 
-fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
+fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f64, axes: bool) -> ToolEffect {
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return trim_general(sketch, id, &curve, cursor);
     }
@@ -867,7 +867,7 @@ fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffe
             ) else {
                 return ToolEffect::none();
             };
-            let pos = |t: f32| Vec2D::from_glam(a.to_glam() + (b.to_glam() - a.to_glam()) * t);
+            let pos = |t: f64| Vec2D::from_glam(a.to_glam() + (b.to_glam() - a.to_glam()) * t);
             match (lo, hi) {
                 // Middle span: the line splits in two.
                 (Some(lo), Some(hi)) => {
@@ -916,7 +916,7 @@ fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffe
             let sv = (s - c).to_glam();
             let start_angle = sv.y.atan2(sv.x);
             let r = sv.length();
-            let pos = |rel: f32| {
+            let pos = |rel: f64| {
                 let a = start_angle + rel;
                 Vec2D::new(c.x + r * a.cos(), c.y + r * a.sin())
             };
@@ -957,7 +957,7 @@ fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffe
             let Some(c) = sketch.point_position(center_pid) else {
                 return ToolEffect::none();
             };
-            let pos = |a: f32| Vec2D::new(c.x + radius * a.cos(), c.y + radius * a.sin());
+            let pos = |a: f64| Vec2D::new(c.x + radius * a.cos(), c.y + radius * a.sin());
             // The kept portion runs CCW from hi back around to lo. The arc
             // keeps the circle's id so radius/tangent constraints survive.
             let p_hi = new_point(sketch, pos(hi));
@@ -979,7 +979,7 @@ fn trim_at(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffe
 /// Extend the end nearest the click to the next curve it meets, or the
 /// next axis when `axes` is on: an end that lands on an axis is held
 /// there.
-pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
+pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f64, axes: bool) -> ToolEffect {
     let curve = axes
         .then(|| curve_under_cursor(sketch, cursor, tol, false))
         .flatten();
@@ -995,7 +995,7 @@ pub(super) fn extend(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -
 /// Hold each of `points` that lies on a sketch axis, and is not held to
 /// it already, on that axis. Ids that are not points are passed over.
 fn hold_on_axes(sketch: &mut Sketch, points: &[Uuid]) {
-    const ON_AXIS: f32 = 1e-4;
+    const ON_AXIS: f64 = 1e-4;
     for &point in points {
         let Some(GeometryElement::Point(p)) = sketch.get_geometry(point) else {
             continue;
@@ -1012,7 +1012,7 @@ fn hold_on_axes(sketch: &mut Sketch, points: &[Uuid]) {
     }
 }
 
-fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEffect {
+fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f64, axes: bool) -> ToolEffect {
     if let Some((id, curve)) = general_under_cursor(sketch, cursor, tol) {
         return extend_general(sketch, id, &curve, cursor);
     }
@@ -1031,21 +1031,21 @@ fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEf
             };
             let (start_pid, end_pid) = (l.start, l.end);
             let ab = b - a;
-            let t_of = |q: Vec2| (q - a).dot(ab) / ab.length_squared();
+            let t_of = |q: DVec2| (q - a).dot(ab) / ab.length_squared();
             // The clicked half decides which endpoint grows.
             let target = if t_of(p) >= 0.5 {
                 let t = hits
                     .iter()
                     .map(|q| t_of(*q))
                     .filter(|t| *t > 1.0 + SPAN_EPS)
-                    .reduce(f32::min);
+                    .reduce(f64::min);
                 t.map(|t| (end_pid, a + ab * t))
             } else {
                 let t = hits
                     .iter()
                     .map(|q| t_of(*q))
                     .filter(|t| *t < -SPAN_EPS)
-                    .reduce(f32::max);
+                    .reduce(f64::max);
                 t.map(|t| (start_pid, a + ab * t))
             };
             let Some((pid, new_pos)) = target else {
@@ -1063,11 +1063,11 @@ fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEf
             };
             let (start_pid, end_pid) = (arc.start, arc.end);
             let (start_angle, sweep) = arc_angles(s - c, e - c);
-            let rel_of = |q: Vec2| geom2d::wrap_positive((q - c).y.atan2((q - c).x) - start_angle);
-            let outside: Vec<f32> = hits
+            let rel_of = |q: DVec2| geom2d::wrap_positive((q - c).y.atan2((q - c).x) - start_angle);
+            let outside: Vec<f64> = hits
                 .iter()
                 .map(|q| rel_of(*q))
-                .filter(|rel| *rel > sweep + 1e-3 && *rel < std::f32::consts::TAU - 1e-3)
+                .filter(|rel| *rel > sweep + 1e-3 && *rel < std::f64::consts::TAU - 1e-3)
                 .collect();
             let rel_click = rel_of(p).min(sweep);
             // Nearer endpoint half; the end grows CCW, the start grows CW.
@@ -1075,13 +1075,13 @@ fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEf
                 outside
                     .iter()
                     .copied()
-                    .reduce(f32::min)
+                    .reduce(f64::min)
                     .map(|rel| (end_pid, rel))
             } else {
                 outside
                     .iter()
                     .copied()
-                    .reduce(f32::max)
+                    .reduce(f64::max)
                     .map(|rel| (start_pid, rel))
             };
             let Some((pid, rel)) = target else {
@@ -1097,7 +1097,7 @@ fn extend_to(sketch: &mut Sketch, cursor: Vec2D, tol: f32, axes: bool) -> ToolEf
     }
 }
 
-pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
+pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> ToolEffect {
     if let Some(effect) = split_conic(sketch, cursor, tol) {
         return effect;
     }
@@ -1163,7 +1163,7 @@ pub(super) fn split(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect 
 /// nearer than any line or arc: two arcs of the same curve, sharing its
 /// centre and meeting at a new point on it. `None` when no such arc is the
 /// nearest curve there.
-fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> Option<ToolEffect> {
+fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> Option<ToolEffect> {
     let distance = |g: &GeometryElement| snap::distance_to_element(sketch, g, cursor);
     let (id, d) = sketch
         .geometry
@@ -1183,16 +1183,14 @@ fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> Option<ToolEffec
         return None;
     };
     let (shape, t0, t1) = conic.params(sketch)?;
-    let t = shape.param([f64::from(cursor.x), f64::from(cursor.y)]);
+    let t = shape.param([cursor.x, cursor.y]);
     let (lo, hi) = (t0.min(t1), t0.max(t1));
-    let eps = (hi - lo) * f64::from(SPAN_EPS);
+    let eps = (hi - lo) * SPAN_EPS;
     if !(lo + eps..=hi - eps).contains(&t) {
         return Some(ToolEffect::log("Too close to an end to split"));
     }
     let [x, y] = shape.point(t);
-    let middle = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-        x as f32, y as f32,
-    ))));
+    let middle = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
     if let Some(GeometryElement::Conic(first)) = sketch.get_geometry_mut(id) {
         first.end = middle;
     }
@@ -1205,7 +1203,7 @@ fn split_conic(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> Option<ToolEffec
 }
 
 /// The curve nearest `pos` within `tol`, of any kind.
-fn nearest_curve(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<Uuid> {
+fn nearest_curve(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<Uuid> {
     sketch
         .geometry
         .iter()
@@ -1218,7 +1216,7 @@ fn nearest_curve(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<Uuid> {
 
 /// The curve under the cursor when it is one only the general path cuts:
 /// an ellipse or arc of one, a parabola or hyperbola, a spline.
-fn general_under_cursor(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<(Uuid, Curve)> {
+fn general_under_cursor(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<(Uuid, Curve)> {
     let id = nearest_curve(sketch, pos, tol)?;
     let geom = sketch.get_geometry(id)?;
     if prim_of(sketch, geom).is_some() {
@@ -1245,7 +1243,7 @@ fn general_hits(sketch: &Sketch, id: Uuid, target: &Curve, span: (f64, f64)) -> 
 
 /// A general curve's crossings as sketch points, for the line, arc and
 /// circle paths that meet one.
-fn general_points(sketch: &Sketch, target_id: Uuid, bounded: bool) -> Vec<Vec2> {
+fn general_points(sketch: &Sketch, target_id: Uuid, bounded: bool) -> Vec<DVec2> {
     let Some(target) = sketch
         .get_geometry(target_id)
         .and_then(|g| Curve::of(sketch, g))
@@ -1261,7 +1259,7 @@ fn general_points(sketch: &Sketch, target_id: Uuid, bounded: bool) -> Vec<Vec2> 
         .flat_map(|other| {
             crate::curves::crossings(&target, span, &other, other.span)
                 .into_iter()
-                .map(|(t, _)| target.at(t).as_vec2())
+                .map(|(t, _)| target.at(t))
                 .collect::<Vec<_>>()
         })
         .collect()
@@ -1283,7 +1281,7 @@ enum GeneralCut {
 }
 
 fn plan_general(sketch: &Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) -> GeneralCut {
-    let p = glam::DVec2::new(f64::from(cursor.x), f64::from(cursor.y));
+    let p = glam::DVec2::new(cursor.x, cursor.y);
     if curve.closed {
         let reach = (curve.span.0, curve.span.0 + curve.period);
         let tc = curve.nearest(p, reach);
@@ -1303,7 +1301,7 @@ fn plan_general(sketch: &Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) -> Gene
         };
     }
     let (s0, s1) = curve.span;
-    let eps = (s1 - s0) * f64::from(SPAN_EPS);
+    let eps = (s1 - s0) * SPAN_EPS;
     let tc = curve.nearest(p, curve.span);
     let ts: Vec<f64> = general_hits(sketch, id, curve, curve.span)
         .into_iter()
@@ -1324,7 +1322,7 @@ fn general_samples(curve: &Curve, t0: f64, t1: f64) -> Vec<Vec2D> {
     (0..=SAMPLES)
         .map(|i| {
             let p = curve.at(t0 + (t1 - t0) * i as f64 / SAMPLES as f64);
-            Vec2D::new(p.x as f32, p.y as f32)
+            Vec2D::new(p.x, p.y)
         })
         .collect()
 }
@@ -1347,9 +1345,7 @@ fn general_preview(sketch: &Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) -> V
 /// A new point on `curve` at `t`.
 fn point_at(sketch: &mut Sketch, curve: &Curve, t: f64) -> Uuid {
     let p = curve.at(t);
-    sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-        p.x as f32, p.y as f32,
-    ))))
+    sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p.x, p.y))))
 }
 
 /// Replace the spline `id` with its parts over `spans` (each `(t0, t1)` in
@@ -1366,11 +1362,7 @@ fn cut_spline(sketch: &mut Sketch, id: Uuid, spans: &[(f64, f64)], shared: &[(f6
     let Some(control) = spline
         .control_points
         .iter()
-        .map(|p| {
-            sketch
-                .point_position(*p)
-                .map(|v| [f64::from(v.x), f64::from(v.y)])
-        })
+        .map(|p| sketch.point_position(*p).map(|v| [v.x, v.y]))
         .collect::<Option<Vec<_>>>()
     else {
         return false;
@@ -1409,10 +1401,7 @@ fn cut_spline(sketch: &mut Sketch, id: Uuid, spans: &[(f64, f64)], shared: &[(f6
                         return *pid;
                     }
                 }
-                sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                    q[0] as f32,
-                    q[1] as f32,
-                ))))
+                sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(q[0], q[1]))))
             })
             .collect();
         let part = crate::sketch::BSpline {
@@ -1607,12 +1596,12 @@ fn extend_general(sketch: &mut Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) -
         return ToolEffect::none();
     };
     let (s0, s1) = curve.span;
-    let p = glam::DVec2::new(f64::from(cursor.x), f64::from(cursor.y));
+    let p = glam::DVec2::new(cursor.x, cursor.y);
     let tc = curve.nearest(p, curve.span);
     let at_high = tc >= (s0 + s1) * 0.5;
     let reach = curve.reach();
     let hits = general_hits(sketch, id, curve, reach);
-    let eps = (s1 - s0) * f64::from(SPAN_EPS);
+    let eps = (s1 - s0) * SPAN_EPS;
     let target = if curve.period > 0.0 {
         // Round the closed carrier from the end, forward or back.
         let outside = |t: f64| curve.wrap(t, s0);
@@ -1643,14 +1632,14 @@ fn extend_general(sketch: &mut Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) -
     let q = curve.at(t);
     let moving = if at_high { high } else { low };
     if let Some(GeometryElement::Point(pt)) = sketch.get_geometry_mut(moving) {
-        pt.position = Vec2D::new(q.x as f32, q.y as f32);
+        pt.position = Vec2D::new(q.x, q.y);
     }
     curve_resized(sketch, id);
     ToolEffect::changed("Extended arc to intersection")
 }
 
 fn split_general(sketch: &mut Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) -> ToolEffect {
-    let p = glam::DVec2::new(f64::from(cursor.x), f64::from(cursor.y));
+    let p = glam::DVec2::new(cursor.x, cursor.y);
     let is_spline = matches!(sketch.get_geometry(id), Some(GeometryElement::BSpline(_)));
     if curve.closed {
         if !is_spline {
@@ -1673,7 +1662,7 @@ fn split_general(sketch: &mut Sketch, id: Uuid, curve: &Curve, cursor: Vec2D) ->
     }
     let (s0, s1) = curve.span;
     let t = curve.nearest(p, curve.span);
-    let eps = (s1 - s0) * f64::from(SPAN_EPS);
+    let eps = (s1 - s0) * SPAN_EPS;
     if t < s0 + eps || t > s1 - eps {
         return ToolEffect::log("Too close to an end to split");
     }
@@ -1752,13 +1741,13 @@ fn order_chain(curves: &[(Uuid, (Uuid, Uuid))]) -> Option<(Vec<ChainLink>, bool)
 /// The offset carrier of one link.
 enum OffsetPrim {
     Line,
-    Arc { c: Vec2, new_r: f32 },
+    Arc { c: DVec2, new_r: f64 },
 }
 
 /// How the offset tool makes its copies.
 #[derive(Clone, Copy)]
 pub(super) struct OffsetOptions {
-    pub distance: f32,
+    pub distance: f64,
     /// Where two copies part at a convex corner, an arc about the corner
     /// joins them rather than the copies run on to meet.
     pub round: bool,
@@ -1857,7 +1846,7 @@ fn offset_circle(
     sketch: &mut Sketch,
     circle: &crate::sketch::Circle,
     cursor: Vec2D,
-    distance: f32,
+    distance: f64,
     flip: bool,
 ) -> Option<OffsetMade> {
     let c = sketch.point_position(circle.center)?;
@@ -1890,7 +1879,7 @@ fn offset_sampled(
     sketch: &mut Sketch,
     id: Uuid,
     cursor: Vec2D,
-    distance: f32,
+    distance: f64,
     flip: bool,
 ) -> Option<OffsetMade> {
     let geom = sketch.get_geometry(id)?.clone();
@@ -1899,7 +1888,7 @@ fn offset_sampled(
         GeometryElement::BSpline(b) => b.periodic,
         _ => false,
     };
-    let mut samples: Vec<Vec2> = crate::external_ref::element_samples(sketch, &geom)?
+    let mut samples: Vec<DVec2> = crate::external_ref::element_samples(sketch, &geom)?
         .into_iter()
         .map(Vec2D::to_glam)
         .collect();
@@ -1926,9 +1915,9 @@ fn offset_sampled(
     })?;
     let left = (tangent(nearest).perp().dot(p - samples[nearest]) > 0.0) != flip;
     let d = if left { distance } else { -distance };
-    let step = (n as f32 / OFFSET_SAMPLES as f32).max(1.0);
+    let step = (n as f64 / OFFSET_SAMPLES as f64).max(1.0);
     let mut picks: Vec<usize> = (0..)
-        .map(|k| (k as f32 * step) as usize)
+        .map(|k| (k as f64 * step) as usize)
         .take_while(|i| *i < n)
         .collect();
     if !closed && picks.last() != Some(&(n - 1)) {
@@ -1937,18 +1926,13 @@ fn offset_sampled(
     let points: Vec<[f64; 2]> = picks
         .iter()
         .map(|&i| samples[i] + tangent(i).perp() * d)
-        .map(|q| [f64::from(q.x), f64::from(q.y)])
+        .map(|q| [q.x, q.y])
         .collect();
     let fit = sketch_solver::spline::interpolate(&points, 3, closed)?;
     let control: Vec<Uuid> = fit
         .control
         .iter()
-        .map(|q| {
-            sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-                q[0] as f32,
-                q[1] as f32,
-            ))))
-        })
+        .map(|q| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(q[0], q[1])))))
         .collect();
     let flag = sketch.is_construction(id);
     let new_id = sketch.add_geometry(GeometryElement::BSpline(crate::sketch::BSpline {
@@ -1968,7 +1952,7 @@ fn link_tangent(
     geom: &GeometryElement,
     link: &ChainLink,
     at: Uuid,
-) -> Option<Vec2> {
+) -> Option<DVec2> {
     let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
     Some(match geom {
         GeometryElement::Line(_) => (pos(link.exit)? - pos(link.entry)?).normalize_or_zero(),
@@ -1985,7 +1969,7 @@ fn offset_chain(
     sketch: &mut Sketch,
     curves: &[GeometryElement],
     cursor: Vec2D,
-    distance: f32,
+    distance: f64,
     flip: bool,
     round: bool,
 ) -> Option<OffsetMade> {
@@ -2024,7 +2008,7 @@ fn offset_chain(
     let d_left = if left != flip { distance } else { -distance };
 
     // Raw offset endpoints + carriers per link.
-    let mut prims: Vec<(OffsetPrim, Vec2, Vec2)> = Vec::with_capacity(links.len());
+    let mut prims: Vec<(OffsetPrim, DVec2, DVec2)> = Vec::with_capacity(links.len());
     for link in &links {
         let (a, b) = (pos_of(sketch, link.entry)?, pos_of(sketch, link.exit)?);
         match elem_of(link.id) {
@@ -2045,7 +2029,7 @@ fn offset_chain(
                 if new_r < 1e-6 {
                     return None; // arc would invert
                 }
-                let proj = |q: Vec2| c + (q - c).normalize() * new_r;
+                let proj = |q: DVec2| c + (q - c).normalize() * new_r;
                 prims.push((OffsetPrim::Arc { c, new_r }, proj(a), proj(b)));
             }
             _ => return None,
@@ -2054,7 +2038,7 @@ fn offset_chain(
 
     // Join consecutive offsets at their carrier intersection (nearest
     // candidate to the raw corner; the raw midpoint as a fallback).
-    let join = |ap: &(OffsetPrim, Vec2, Vec2), bp: &(OffsetPrim, Vec2, Vec2)| -> Vec2 {
+    let join = |ap: &(OffsetPrim, DVec2, DVec2), bp: &(OffsetPrim, DVec2, DVec2)| -> DVec2 {
         let raw_mid = (ap.2 + bp.1) * 0.5;
         let candidates = match (&ap.0, &bp.0) {
             (OffsetPrim::Line, OffsetPrim::Line) => geom2d::line_line(ap.1, ap.2, bp.1, bp.2)
@@ -2075,7 +2059,7 @@ fn offset_chain(
             .min_by(|p, q| (*p - raw_mid).length().total_cmp(&(*q - raw_mid).length()))
             .unwrap_or(raw_mid)
     };
-    let new_point = |sketch: &mut Sketch, p: Vec2| {
+    let new_point = |sketch: &mut Sketch, p: DVec2| {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::from_glam(p))))
     };
     // Each copy's new (entry, exit) points, and the corners rounded.

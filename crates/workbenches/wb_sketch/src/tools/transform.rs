@@ -4,7 +4,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use glam::{Mat2, Vec2};
+use glam::{DMat2, DVec2};
 use uuid::Uuid;
 
 use super::{ToolEffect, ToolParams, ToolState};
@@ -18,28 +18,28 @@ use crate::snap;
 /// translation). Also drives the overlay ghost previews.
 #[derive(Debug, Clone, Copy)]
 pub struct Similarity {
-    m: Mat2,
-    t: Vec2,
+    m: DMat2,
+    t: DVec2,
 }
 
 impl Similarity {
-    pub fn translation(d: Vec2) -> Self {
+    pub fn translation(d: DVec2) -> Self {
         Self {
-            m: Mat2::IDENTITY,
+            m: DMat2::IDENTITY,
             t: d,
         }
     }
 
-    pub fn rotation_about(center: Vec2, angle: f32) -> Self {
-        let m = Mat2::from_angle(angle);
+    pub fn rotation_about(center: DVec2, angle: f64) -> Self {
+        let m = DMat2::from_angle(angle);
         Self {
             m,
             t: center - m * center,
         }
     }
 
-    pub fn scale_about(center: Vec2, factor: f32) -> Self {
-        let m = Mat2::from_diagonal(Vec2::splat(factor));
+    pub fn scale_about(center: DVec2, factor: f64) -> Self {
+        let m = DMat2::from_diagonal(DVec2::splat(factor));
         Self {
             m,
             t: center - m * center,
@@ -47,27 +47,27 @@ impl Similarity {
     }
 
     /// Reflection through the point `c`: a half turn about it.
-    pub fn point_reflection(c: Vec2) -> Self {
+    pub fn point_reflection(c: DVec2) -> Self {
         Self {
-            m: -Mat2::IDENTITY,
+            m: -DMat2::IDENTITY,
             t: 2.0 * c,
         }
     }
 
     /// Reflection about the line through `a` and `b`.
-    pub fn mirror_about(a: Vec2, b: Vec2) -> Self {
+    pub fn mirror_about(a: DVec2, b: DVec2) -> Self {
         let u = (b - a).normalize();
         // Householder-style reflection: 2·uuᵀ − I.
-        let m = Mat2::from_cols(
-            Vec2::new(2.0 * u.x * u.x - 1.0, 2.0 * u.x * u.y),
-            Vec2::new(2.0 * u.x * u.y, 2.0 * u.y * u.y - 1.0),
+        let m = DMat2::from_cols(
+            DVec2::new(2.0 * u.x * u.x - 1.0, 2.0 * u.x * u.y),
+            DVec2::new(2.0 * u.x * u.y, 2.0 * u.y * u.y - 1.0),
         );
         Self { m, t: a - m * a }
     }
 
     /// The transform `p' = m·p + t`, for a map worked out elsewhere (one
     /// sketch plane's coordinates onto another's).
-    pub fn linear(m: Mat2, t: Vec2) -> Self {
+    pub fn linear(m: DMat2, t: DVec2) -> Self {
         Self { m, t }
     }
 
@@ -81,7 +81,7 @@ impl Similarity {
     }
 
     /// Uniform scale factor of the linear part.
-    pub fn scale_factor(&self) -> f32 {
+    pub fn scale_factor(&self) -> f64 {
         self.m.determinant().abs().sqrt()
     }
 
@@ -336,8 +336,8 @@ pub fn array(
     selected: &HashSet<Uuid>,
     rows: u32,
     cols: u32,
-    dx: f32,
-    dy: f32,
+    dx: f64,
+    dy: f64,
     linked: bool,
 ) -> ToolEffect {
     if selected.is_empty() || rows.max(cols) < 2 {
@@ -355,7 +355,7 @@ pub fn array(
                 members.extend(reference);
                 continue;
             }
-            let delta = Vec2::new(col as f32 * dx, row as f32 * dy);
+            let delta = DVec2::new(col as f64 * dx, row as f64 * dy);
             let map = copy_linked(
                 &source,
                 sketch,
@@ -704,12 +704,12 @@ pub fn copy_constraints(
 
 /// A turn as the counter-clockwise angle from 0 to a full turn that the
 /// angular pitch holds.
-fn geom_angle(angle: f32) -> f32 {
-    angle.rem_euclid(std::f32::consts::TAU)
+fn geom_angle(angle: f64) -> f64 {
+    angle.rem_euclid(std::f64::consts::TAU)
 }
 
 /// Cursor snapped to an existing point's *position* only.
-fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Vec2D {
+fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f64) -> Vec2D {
     snap::snap_to_point(sketch, cursor, snap_tol, &[])
         .position(sketch)
         .unwrap_or(cursor)
@@ -724,16 +724,16 @@ fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Vec2D {
 /// original included, the click then giving the whole span. With
 /// `copies_symmetric` the copies repeat on the other side of the original
 /// as well.
-pub(crate) fn pattern_multiples(params: &ToolParams) -> Option<Vec<f32>> {
+pub(crate) fn pattern_multiples(params: &ToolParams) -> Option<Vec<f64>> {
     let (per_side, step) = if params.copies_total {
         let n = params.copies.checked_sub(1).filter(|n| *n > 0)?;
-        (n, 1.0 / n as f32)
+        (n, 1.0 / n as f64)
     } else if params.copies > 0 {
         (params.copies, 1.0)
     } else {
         return None;
     };
-    let after = (1..=per_side as i32).map(|k| k as f32 * step);
+    let after = (1..=per_side as i32).map(|k| k as f64 * step);
     Some(if params.copies_symmetric {
         after.clone().rev().map(|m| -m).chain(after).collect()
     } else {
@@ -744,15 +744,15 @@ pub(crate) fn pattern_multiples(params: &ToolParams) -> Option<Vec<f32>> {
 /// A full turn's copies: the elements, the original included, spread
 /// evenly around, as turns from the original in radians. `None` when
 /// there are no copies.
-pub(crate) fn full_turn_angles(params: &ToolParams) -> Option<Vec<f32>> {
+pub(crate) fn full_turn_angles(params: &ToolParams) -> Option<Vec<f64>> {
     let elements = if params.copies_total {
         params.copies
     } else {
         params.copies + 1
     };
     (elements >= 2).then(|| {
-        let step = std::f32::consts::TAU / elements as f32;
-        (1..elements).map(|k| k as f32 * step).collect()
+        let step = std::f64::consts::TAU / elements as f64;
+        (1..elements).map(|k| k as f64 * step).collect()
     })
 }
 
@@ -760,11 +760,11 @@ pub(crate) fn full_turn_angles(params: &ToolParams) -> Option<Vec<f32>> {
 /// its place among them: what a linked pattern's pitch runs through.
 fn pitch_points(
     reference: Option<Uuid>,
-    multiples: &[f32],
+    multiples: &[f64],
     maps: &[HashMap<Uuid, Uuid>],
 ) -> Option<Vec<Uuid>> {
     let r = reference?;
-    let mut ordered: Vec<(f32, Uuid)> = multiples
+    let mut ordered: Vec<(f64, Uuid)> = multiples
         .iter()
         .zip(maps)
         .map(|(m, map)| Some((*m, *map.get(&r)?)))
@@ -778,7 +778,7 @@ pub(super) fn translate(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     selected: &HashSet<Uuid>,
     params: &ToolParams,
 ) -> ToolEffect {
@@ -811,7 +811,7 @@ pub(super) fn translate(
                         * multiples
                             .iter()
                             .copied()
-                            .fold(f32::MAX, |a, m| a.min(m.abs()));
+                            .fold(f64::MAX, |a, m| a.min(m.abs()));
                     sketch.add_constraint(ConstraintKind::Pitch {
                         columns: points.len() as u32,
                         points,
@@ -834,7 +834,7 @@ pub(super) fn rotate(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     selected: &HashSet<Uuid>,
     params: &ToolParams,
 ) -> ToolEffect {
@@ -860,7 +860,7 @@ pub(super) fn rotate(
             let angle = (reference.to_glam() - c).angle_to(to);
             match pattern_multiples(params) {
                 Some(multiples) => {
-                    let angles: Vec<f32> = multiples.iter().map(|m| angle * m).collect();
+                    let angles: Vec<f64> = multiples.iter().map(|m| angle * m).collect();
                     rotated_copies(sketch, center, selected, &angles, params.copies_linked)
                 }
                 None => {
@@ -892,7 +892,7 @@ fn rotated_copies(
     sketch: &mut Sketch,
     center: Vec2D,
     selected: &HashSet<Uuid>,
-    angles: &[f32],
+    angles: &[f64],
     linked: bool,
 ) -> ToolEffect {
     let c = center.to_glam();
@@ -920,7 +920,7 @@ fn rotated_copies(
             };
             // In pattern order each point is one step counter-clockwise
             // of the one before.
-            let pitch = angles.iter().copied().fold(f32::MAX, |a, m| a.min(m.abs()));
+            let pitch = angles.iter().copied().fold(f64::MAX, |a, m| a.min(m.abs()));
             sketch.add_constraint(ConstraintKind::PolarPitch {
                 center: pivot,
                 points,
@@ -935,7 +935,7 @@ pub(super) fn scale(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     selected: &HashSet<Uuid>,
     copies: u32,
 ) -> ToolEffect {
@@ -980,7 +980,7 @@ pub(super) fn scale(
 
 /// The line element under the cursor and its endpoints, for one-click
 /// mirror axes.
-fn line_under_cursor(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<(Vec2D, Vec2D, Uuid)> {
+fn line_under_cursor(sketch: &Sketch, cursor: Vec2D, tol: f64) -> Option<(Vec2D, Vec2D, Uuid)> {
     sketch
         .geometry
         .iter()
@@ -1126,7 +1126,7 @@ pub(super) fn mirror(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     selected: &HashSet<Uuid>,
     params: &super::ToolParams,
 ) -> ToolEffect {

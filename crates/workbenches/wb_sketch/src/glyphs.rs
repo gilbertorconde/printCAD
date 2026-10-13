@@ -108,7 +108,7 @@ impl Glyph {
 }
 
 /// Compact number formatting: two decimals with trailing zeros trimmed.
-pub fn fmt_num(v: f32) -> String {
+pub fn fmt_num(v: f64) -> String {
     let mut s = format!("{v:.2}");
     while s.ends_with('0') {
         s.pop();
@@ -148,7 +148,7 @@ fn default_label_offset(
     label_size: f32,
 ) -> Vec2D {
     let units_per_px = proj.units_per_px();
-    let d = DEFAULT_LABEL_OFFSET_PX * units_per_px;
+    let d = f64::from(DEFAULT_LABEL_OFFSET_PX) * units_per_px;
     let diagonal = Vec2D::new(d, d);
     let (Some(away), Some(anchor)) = (clear_side(sketch, kind), dim_anchor(sketch, kind)) else {
         return diagonal;
@@ -163,12 +163,12 @@ fn default_label_offset(
     let on_screen = glam::Vec2::new(b[0] - a[0], b[1] - a[1]).normalize_or_zero();
     let (hw, hh) = pill_half_extents(label_size, chars);
     let reach = hw * on_screen.x.abs() + hh * on_screen.y.abs() + LABEL_CLEARANCE_PX;
-    Vec2D::from_glam(away * reach * units_per_px)
+    Vec2D::from_glam(away * f64::from(reach) * units_per_px)
 }
 
 /// The unit direction, in sketch space, a default label leaves its
 /// element by, for the dimensions whose label would otherwise sit on it.
-fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::Vec2> {
+fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::DVec2> {
     let square_off = |p: Vec2D, q: Vec2D| {
         let (p, q) = (p.to_glam(), q.to_glam());
         let along = q - p;
@@ -216,7 +216,7 @@ fn clear_side(sketch: &Sketch, kind: &ConstraintKind) -> Option<glam::Vec2> {
 }
 
 /// The mean of the sketch's points that are not construction.
-fn middle_of_points(sketch: &Sketch) -> Option<glam::Vec2> {
+fn middle_of_points(sketch: &Sketch) -> Option<glam::DVec2> {
     let (sum, n) = sketch
         .geometry
         .iter()
@@ -226,8 +226,8 @@ fn middle_of_points(sketch: &Sketch) -> Option<glam::Vec2> {
             }
             _ => None,
         })
-        .fold((glam::Vec2::ZERO, 0usize), |(sum, n), p| (sum + p, n + 1));
-    (n > 0).then(|| sum / n as f32)
+        .fold((glam::DVec2::ZERO, 0usize), |(sum, n), p| (sum + p, n + 1));
+    (n > 0).then(|| sum / n as f64)
 }
 
 /// Representative sketch-space anchor of an element (glyph placement).
@@ -265,11 +265,11 @@ fn element_anchor(sketch: &Sketch, id: Uuid) -> Option<Vec2D> {
                 .map(|id| sketch.point_position(*id))
                 .collect();
             let pts = pts?;
-            let n = pts.len() as f32;
+            let n = pts.len() as f64;
             (n > 0.0).then(|| {
                 Vec2D::new(
-                    pts.iter().map(|p| p.x).sum::<f32>() / n,
-                    pts.iter().map(|p| p.y).sum::<f32>() / n,
+                    pts.iter().map(|p| p.x).sum::<f64>() / n,
+                    pts.iter().map(|p| p.y).sum::<f64>() / n,
                 )
             })
         }
@@ -658,7 +658,7 @@ fn curve_dimension_lines(
     label_at: Vec2D,
     label: [f32; 2],
 ) -> Option<Vec<([f32; 2], [f32; 2])>> {
-    let px = |p: glam::Vec2| proj.to_px(Vec2D::from_glam(p));
+    let px = |p: glam::DVec2| proj.to_px(Vec2D::from_glam(p));
     let polyline = |pts: Option<Vec<[f32; 2]>>| {
         pts.map(|pts| pts.windows(2).map(|w| (w[0], w[1])).collect::<Vec<_>>())
             .unwrap_or_default()
@@ -705,14 +705,15 @@ fn curve_dimension_lines(
                 return Some(Vec::new());
             };
             let (start, sweep) = arc_angles(s - c, e - c);
-            let at = |angle: f32, r: f32| px(c + glam::Vec2::from_angle(angle) * r);
+            let at = |angle: f64, r: f64| px(c + glam::DVec2::from_angle(angle) * r);
             let r = (label_at.to_glam() - c).length().max(units_per_px);
             let mut lines = polyline(
                 (0..=ANGLE_ARC_SEGMENTS)
-                    .map(|i| at(start + sweep * i as f32 / ANGLE_ARC_SEGMENTS as f32, r))
+                    .map(|i| at(start + sweep * i as f64 / ANGLE_ARC_SEGMENTS as f64, r))
                     .collect(),
             );
-            let overshoot = EXTENSION_OVERSHOOT_PX * units_per_px * (r - a.radius).signum();
+            let overshoot =
+                f64::from(EXTENSION_OVERSHOOT_PX) * units_per_px * (r - a.radius).signum();
             for end in [start, start + sweep] {
                 if let (Some(from), Some(to)) = (at(end, a.radius), at(end, r + overshoot)) {
                     lines.push((from, to));
@@ -811,7 +812,7 @@ fn curve_dimension_lines(
             let Some(t) = crate::measure::tangent(sketch, interface, at) else {
                 return Some(Vec::new());
             };
-            let reach = t.perp() * (NORMAL_REACH_PX * units_per_px);
+            let reach = t.perp() * (f64::from(NORMAL_REACH_PX) * units_per_px);
             let (Some(a), Some(b), Some(v)) = (px(at - reach), px(at + reach), px(at)) else {
                 return Some(Vec::new());
             };

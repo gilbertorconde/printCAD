@@ -23,7 +23,7 @@ const ARC_SEGMENTS: usize = 32;
 /// Point marker radius in pixels; centers of circles and arcs draw smaller.
 const POINT_RADIUS_PX: f32 = 3.5;
 const CENTER_RADIUS_PX: f32 = 3.0;
-const AXIS_EXTENT_UNITS: f32 = 1.0e3;
+const AXIS_EXTENT_UNITS: f64 = 1.0e3;
 const AXIS_ALPHA: f32 = 0.55;
 /// Dash pattern for construction geometry, in viewport pixels (the painter
 /// dashes after projection so it is zoom-independent).
@@ -62,27 +62,30 @@ impl<'a> SketchProjector<'a> {
         Self { ctx, plane }
     }
 
-    pub fn to_world(&self, pos: Vec2D) -> [f32; 3] {
-        let x_axis = glam::Vec3::from_array(self.plane.x_axis);
-        let y_axis = glam::Vec3::from_array(self.plane.y_axis);
-        let origin = glam::Vec3::from_array(self.plane.origin);
+    pub fn to_world(&self, pos: Vec2D) -> [f64; 3] {
+        let x_axis = glam::DVec3::from_array(self.plane.x_axis);
+        let y_axis = glam::DVec3::from_array(self.plane.y_axis);
+        let origin = glam::DVec3::from_array(self.plane.origin);
         (origin + x_axis * pos.x + y_axis * pos.y).to_array()
     }
 
     pub fn to_px(&self, pos: Vec2D) -> Option<[f32; 2]> {
-        let (x, y) = self.ctx.world_to_viewport(self.to_world(pos))?;
+        let (x, y) = self
+            .ctx
+            .world_to_viewport(crate::boundary::narrow3(self.to_world(pos)))?;
         Some([x, y])
     }
 
     /// Sketch units per screen pixel at the plane origin; used to convert
     /// pixel-based tolerances into sketch units. Falls back to a small
     /// constant when the projection is degenerate.
-    pub fn units_per_px(&self) -> f32 {
+    pub fn units_per_px(&self) -> f64 {
         let origin = self.to_px(Vec2D::new(0.0, 0.0));
         let unit_x = self.to_px(Vec2D::new(1.0, 0.0));
         match (origin, unit_x) {
             (Some(o), Some(ux)) => {
-                let px_per_unit = ((ux[0] - o[0]).powi(2) + (ux[1] - o[1]).powi(2)).sqrt();
+                let px_per_unit =
+                    f64::from(((ux[0] - o[0]).powi(2) + (ux[1] - o[1]).powi(2)).sqrt());
                 if px_per_unit > 1e-6 {
                     1.0 / px_per_unit
                 } else {
@@ -156,9 +159,9 @@ fn push_dot(out: &mut Overlays, proj: &SketchProjector, pos: Vec2D, color: [f32;
     }
 }
 
-fn circle_points(center: Vec2D, radius: f32) -> impl Iterator<Item = Vec2D> {
+fn circle_points(center: Vec2D, radius: f64) -> impl Iterator<Item = Vec2D> {
     (0..=CIRCLE_SEGMENTS).map(move |i| {
-        let a = (i as f32 / CIRCLE_SEGMENTS as f32) * std::f32::consts::TAU;
+        let a = (i as f64 / CIRCLE_SEGMENTS as f64) * std::f64::consts::TAU;
         Vec2D::new(center.x + radius * a.cos(), center.y + radius * a.sin())
     })
 }
@@ -169,7 +172,7 @@ fn arc_points(center: Vec2D, start: Vec2D, end: Vec2D) -> impl Iterator<Item = V
     let radius = sv.length();
     let (start_angle, sweep) = arc_angles(sv, ev);
     (0..=ARC_SEGMENTS).map(move |i| {
-        let a = start_angle + sweep * (i as f32 / ARC_SEGMENTS as f32);
+        let a = start_angle + sweep * (i as f64 / ARC_SEGMENTS as f64);
         Vec2D::new(center.x + radius * a.cos(), center.y + radius * a.sin())
     })
 }
@@ -684,21 +687,21 @@ fn push_ghost(
 
 /// The outline of the rectangle from `a` to `c` with its corners rounded
 /// at `radius` (no more than half its shorter side, as the fillet can).
-fn rounded_rect_points(a: Vec2D, c: Vec2D, radius: f32) -> Vec<Vec2D> {
+fn rounded_rect_points(a: Vec2D, c: Vec2D, radius: f64) -> Vec<Vec2D> {
     let (x0, x1) = (a.x.min(c.x), a.x.max(c.x));
     let (y0, y1) = (a.y.min(c.y), a.y.max(c.y));
     let r = radius.min((x1 - x0) * 0.5).min((y1 - y0) * 0.5).max(0.0);
     let mut out = Vec::new();
     // Counter-clockwise from the bottom right corner's arc.
     let corners = [
-        (x1 - r, y0 + r, -90.0f32),
+        (x1 - r, y0 + r, -90.0f64),
         (x1 - r, y1 - r, 0.0),
         (x0 + r, y1 - r, 90.0),
         (x0 + r, y0 + r, 180.0),
     ];
     for (cx, cy, start) in corners {
         for step in 0..=8 {
-            let t = (start + step as f32 * 90.0 / 8.0).to_radians();
+            let t = (start + step as f64 * 90.0 / 8.0).to_radians();
             out.push(Vec2D::new(cx + r * t.cos(), cy + r * t.sin()));
         }
     }
@@ -749,16 +752,16 @@ fn push_preview(
                         let (t0, mut t1) = (angle(a), angle(cursor));
                         if ccw {
                             while t1 <= t0 {
-                                t1 += std::f32::consts::TAU;
+                                t1 += std::f64::consts::TAU;
                             }
                         } else {
                             while t1 >= t0 {
-                                t1 -= std::f32::consts::TAU;
+                                t1 -= std::f64::consts::TAU;
                             }
                         }
                         (0..=CIRCLE_SEGMENTS)
                             .map(|i| {
-                                let t = t0 + (t1 - t0) * i as f32 / CIRCLE_SEGMENTS as f32;
+                                let t = t0 + (t1 - t0) * i as f64 / CIRCLE_SEGMENTS as f64;
                                 Vec2D::new(c.x + r * t.cos(), c.y + r * t.sin())
                             })
                             .collect::<Vec<_>>()
@@ -1255,7 +1258,7 @@ fn push_preview(
                 let t0 = probe.param_at(c, *start);
                 let mut t1 = probe.param_at(c, cursor);
                 while t1 <= t0 {
-                    t1 += std::f32::consts::TAU;
+                    t1 += std::f64::consts::TAU;
                 }
                 push_polyline(
                     &mut out.lines,
@@ -1298,7 +1301,7 @@ fn push_preview(
                 if let Some(shape) =
                     minor.and_then(|m| crate::conic::Shape::new(*kind, c, *axis, m))
                 {
-                    let t = shape.param([f64::from(cursor.x), f64::from(cursor.y)]);
+                    let t = shape.param([cursor.x, cursor.y]);
                     let reach = t.abs().max(1.0) * 1.5;
                     push_polyline(
                         &mut out.lines,
@@ -1309,7 +1312,7 @@ fn push_preview(
                         true,
                     );
                     let [x, y] = shape.point(t);
-                    push_point_marker(out, proj, Vec2D::new(x as f32, y as f32), pal.preview);
+                    push_point_marker(out, proj, Vec2D::new(x, y), pal.preview);
                 }
                 push_polyline(
                     &mut out.lines,
@@ -1332,7 +1335,7 @@ fn push_preview(
             if let Some(shape) =
                 pos(center).and_then(|c| crate::conic::Shape::new(*kind, c, *axis, *minor))
             {
-                let param = |p: Vec2D| shape.param([f64::from(p.x), f64::from(p.y)]);
+                let param = |p: Vec2D| shape.param([p.x, p.y]);
                 let (t0, t1) = (param(*start), param(cursor));
                 let reach = t0.abs().max(t1.abs()).max(1.0) * 1.5;
                 // The whole curve faintly, the arc it will keep firmly.
@@ -1517,7 +1520,7 @@ fn push_loose_ends(
     pal: &SketchPalette,
     sketch: &Sketch,
 ) {
-    let radius = LOOSE_END_PX * proj.units_per_px();
+    let radius = f64::from(LOOSE_END_PX) * proj.units_per_px();
     for id in crate::profile::loose_ends(sketch) {
         if let Some(at) = sketch.point_position(id) {
             push_polyline(
@@ -1549,7 +1552,7 @@ pub fn build_overlays(
     params: &ToolParams,
     selection_box: Option<(Vec2D, Vec2D)>,
     active_tool: Option<&str>,
-    snap_tol: f32,
+    snap_tol: f64,
     snap: Option<crate::snap::Snap>,
     construction_on_top: bool,
     look: &Appearance,

@@ -6,20 +6,20 @@ use uuid::Uuid;
 /// 2D vector (serializable version of Vec2).
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Vec2D {
-    pub x: f32,
-    pub y: f32,
+    pub x: f64,
+    pub y: f64,
 }
 
 impl Vec2D {
-    pub fn new(x: f32, y: f32) -> Self {
+    pub fn new(x: f64, y: f64) -> Self {
         Self { x, y }
     }
 
-    pub fn to_glam(self) -> glam::Vec2 {
-        glam::Vec2::new(self.x, self.y)
+    pub fn to_glam(self) -> glam::DVec2 {
+        glam::DVec2::new(self.x, self.y)
     }
 
-    pub fn from_glam(v: glam::Vec2) -> Self {
+    pub fn from_glam(v: glam::DVec2) -> Self {
         Self { x: v.x, y: v.y }
     }
 }
@@ -100,16 +100,16 @@ pub struct ReferenceImage {
     pub center: Vec2D,
     /// How wide it lies, in sketch units (mm); its height keeps its
     /// proportions.
-    pub width: f32,
+    pub width: f64,
     /// Its turn counter-clockwise, in degrees.
     #[serde(default)]
-    pub angle_deg: f32,
+    pub angle_deg: f64,
     /// How much of it shows over the scene, 0..=1.
     #[serde(default = "half")]
-    pub opacity: f32,
+    pub opacity: f64,
 }
 
-fn half() -> f32 {
+fn half() -> f64 {
     0.5
 }
 
@@ -128,13 +128,13 @@ pub struct TextBlock {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_asset: Option<Uuid>,
     /// The font's em, in millimetres.
-    pub size: f32,
+    pub size: f64,
     /// Millimetres added between letters.
     #[serde(default)]
-    pub spacing: f32,
+    pub spacing: f64,
     /// Degrees it turns counter-clockwise about its point.
     #[serde(default)]
-    pub angle: f32,
+    pub angle: f64,
     pub anchor: Uuid,
     /// The outlines' curves and points.
     #[serde(default)]
@@ -175,8 +175,8 @@ impl SolverSettings {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ExternalSource {
     pub body: Uuid,
-    pub point: [f32; 3],
-    pub direction: [f32; 3],
+    pub point: [f64; 3],
+    pub direction: [f64; 3],
     /// A face cut by the sketch plane, not an edge projected onto it.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub section: bool,
@@ -624,8 +624,8 @@ pub fn constraint_label(kind: &ConstraintKind) -> String {
 /// Current geometric value of a dimensional constraint, measured from the
 /// sketch (reference dimensions display this instead of driving anything).
 /// `None` for non-dimensional kinds or unresolvable references.
-pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
-    let line_dir = |id: Uuid| -> Option<glam::Vec2> {
+pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f64> {
+    let line_dir = |id: Uuid| -> Option<glam::DVec2> {
         match sketch.get_geometry(id)? {
             GeometryElement::Line(l) => {
                 Some((sketch.point_position(l.end)? - sketch.point_position(l.start)?).to_glam())
@@ -633,7 +633,7 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
             _ => None,
         }
     };
-    let radius_of = |id: Uuid| -> Option<f32> {
+    let radius_of = |id: Uuid| -> Option<f64> {
         match sketch.get_geometry(id)? {
             GeometryElement::Circle(c) => Some(c.radius),
             GeometryElement::Arc(a) => Some(a.radius),
@@ -672,7 +672,7 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
             let d = line_dir(line)?;
             let base = match axis {
                 AxisDirection::Horizontal => 0.0,
-                AxisDirection::Vertical => std::f32::consts::FRAC_PI_2,
+                AxisDirection::Vertical => std::f64::consts::FRAC_PI_2,
             };
             Some((d.y.atan2(d.x) - base).to_degrees())
         }
@@ -681,7 +681,7 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
             crate::measure::gap(sketch, item1, item2).map(|g| g.distance)
         }
         ConstraintKind::ArcAngle { arc, .. } => {
-            crate::measure::arc_sweep(sketch, arc).map(f32::to_degrees)
+            crate::measure::arc_sweep(sketch, arc).map(f64::to_degrees)
         }
         ConstraintKind::EllipseRadius { ellipse, major, .. } => {
             match sketch.get_geometry(ellipse) {
@@ -708,21 +708,21 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
         ConstraintKind::PolarPitch {
             center, ref points, ..
         } => crate::measure::angle_three_points(sketch, *points.first()?, center, *points.get(1)?)
-            .map(f32::to_degrees),
+            .map(f64::to_degrees),
         ConstraintKind::AngleThreePoints {
             point1,
             vertex,
             point2,
             ..
         } => {
-            crate::measure::angle_three_points(sketch, point1, vertex, point2).map(f32::to_degrees)
+            crate::measure::angle_three_points(sketch, point1, vertex, point2).map(f64::to_degrees)
         }
         ConstraintKind::AngleAtPoint {
             curve1,
             curve2,
             point,
             ..
-        } => crate::measure::angle_at_point(sketch, curve1, curve2, point).map(f32::to_degrees),
+        } => crate::measure::angle_at_point(sketch, curve1, curve2, point).map(f64::to_degrees),
         ConstraintKind::Refraction {
             ray1,
             ray2,
@@ -736,7 +736,7 @@ pub fn measured_value(sketch: &Sketch, kind: &ConstraintKind) -> Option<f32> {
 
 /// Editable value of a dimensional kind in display units (degrees for
 /// angles, mm otherwise); `None` for non-dimensional kinds.
-pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
+pub fn dimension_value(kind: &ConstraintKind) -> Option<f64> {
     match *kind {
         ConstraintKind::Length { length, .. } => Some(length),
         ConstraintKind::Radius { radius, .. } => Some(radius),
@@ -765,7 +765,7 @@ pub fn dimension_value(kind: &ConstraintKind) -> Option<f32> {
 
 /// The kind with its dimensional value replaced (display units, see
 /// `dimension_value`). Non-dimensional kinds are returned unchanged.
-pub fn with_dimension_value(kind: &ConstraintKind, v: f32) -> ConstraintKind {
+pub fn with_dimension_value(kind: &ConstraintKind, v: f64) -> ConstraintKind {
     let mut kind = kind.clone();
     match &mut kind {
         ConstraintKind::Length { length, .. } => *length = v,
@@ -848,13 +848,13 @@ pub fn pitch_ends(kind: &ConstraintKind) -> Option<(Uuid, Uuid)> {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct SketchPlane {
     /// Origin point in world space.
-    pub origin: [f32; 3],
+    pub origin: [f64; 3],
     /// Normal vector (defines the plane orientation).
-    pub normal: [f32; 3],
+    pub normal: [f64; 3],
     /// X-axis direction in the plane (orthogonal to normal).
-    pub x_axis: [f32; 3],
+    pub x_axis: [f64; 3],
     /// Y-axis direction in the plane (orthogonal to normal and x_axis).
-    pub y_axis: [f32; 3],
+    pub y_axis: [f64; 3],
 }
 
 impl SketchPlane {
@@ -903,20 +903,20 @@ impl SketchPlane {
     /// Build a plane from a surface point + outward normal (e.g. a picked
     /// solid face). Axes are derived deterministically: x along the most
     /// stable world axis projected into the plane, y = normal × x.
-    pub fn from_face(point: [f32; 3], normal: [f32; 3]) -> Self {
-        let n = glam::Vec3::from_array(normal).normalize();
+    pub fn from_face(point: [f64; 3], normal: [f64; 3]) -> Self {
+        let n = glam::DVec3::from_array(normal).normalize();
         // Reference direction least aligned with the normal.
         let reference = if n.z.abs() < 0.9 {
-            glam::Vec3::Z
+            glam::DVec3::Z
         } else {
-            glam::Vec3::Y
+            glam::DVec3::Y
         };
         let x_axis = reference.cross(n).normalize();
         let y_axis = n.cross(x_axis).normalize();
         // The document origin dropped onto the plane, not the spot that was
         // clicked: every sketch on a given plane then shares one frame, and
         // geometry built around the origin keeps its place on the far face.
-        let picked = glam::Vec3::from_array(point);
+        let picked = glam::DVec3::from_array(point);
         let origin = n * picked.dot(n);
         Self {
             origin: origin.to_array(),
@@ -928,9 +928,9 @@ impl SketchPlane {
 
     /// Build a plane from a fully resolved frame (e.g. a datum plane's
     /// placement, which carries its own in-plane x-axis).
-    pub fn from_frame(origin: [f32; 3], normal: [f32; 3], x_axis: [f32; 3]) -> Self {
-        let n = glam::Vec3::from_array(normal).normalize();
-        let x = glam::Vec3::from_array(x_axis).normalize();
+    pub fn from_frame(origin: [f64; 3], normal: [f64; 3], x_axis: [f64; 3]) -> Self {
+        let n = glam::DVec3::from_array(normal).normalize();
+        let x = glam::DVec3::from_array(x_axis).normalize();
         let y_axis = n.cross(x).normalize();
         Self {
             origin,
@@ -1021,11 +1021,11 @@ pub struct Arc {
     /// End point ID.
     pub end: Uuid,
     /// Radius (can be computed from center to start, but stored for constraints).
-    pub radius: f32,
+    pub radius: f64,
 }
 
 impl Arc {
-    pub fn new(center: Uuid, start: Uuid, end: Uuid, radius: f32) -> Self {
+    pub fn new(center: Uuid, start: Uuid, end: Uuid, radius: f64) -> Self {
         Self {
             id: Uuid::new_v4(),
             center,
@@ -1043,11 +1043,11 @@ pub struct Circle {
     /// Center point ID.
     pub center: Uuid,
     /// Radius.
-    pub radius: f32,
+    pub radius: f64,
 }
 
 impl Circle {
-    pub fn new(center: Uuid, radius: f32) -> Self {
+    pub fn new(center: Uuid, radius: f64) -> Self {
         Self {
             id: Uuid::new_v4(),
             center,
@@ -1066,7 +1066,7 @@ pub struct Ellipse {
     /// Center → major vertex vector (defines size and rotation).
     pub major: Vec2D,
     /// Minor radius as a fraction of the major radius.
-    pub ratio: f32,
+    pub ratio: f64,
     /// When set, only the arc between these two points is drawn:
     /// counter-clockwise in the ellipse's own frame, `start` to `end`.
     /// Both points sit on the ellipse, held there by point-on-ellipse
@@ -1083,7 +1083,7 @@ pub struct EllipseArcEnds {
 }
 
 impl Ellipse {
-    pub fn new(center: Uuid, major: Vec2D, ratio: f32) -> Self {
+    pub fn new(center: Uuid, major: Vec2D, ratio: f64) -> Self {
         Self {
             id: Uuid::new_v4(),
             center,
@@ -1094,7 +1094,7 @@ impl Ellipse {
     }
 
     /// An arc of an ellipse, from `start` to `end` counter-clockwise.
-    pub fn new_arc(center: Uuid, major: Vec2D, ratio: f32, start: Uuid, end: Uuid) -> Self {
+    pub fn new_arc(center: Uuid, major: Vec2D, ratio: f64, start: Uuid, end: Uuid) -> Self {
         Self {
             arc: Some(EllipseArcEnds { start, end }),
             ..Self::new(center, major, ratio)
@@ -1105,7 +1105,7 @@ impl Ellipse {
     /// frame, of where the point would sit on the circle the ellipse is
     /// squashed from. A point on the ellipse is `center + major·cos t +
     /// minor·sin t` at its parameter `t`.
-    pub fn param_at(&self, center: Vec2D, point: Vec2D) -> f32 {
+    pub fn param_at(&self, center: Vec2D, point: Vec2D) -> f64 {
         let major = self.major.to_glam();
         let a = major.length();
         if a <= 1e-12 {
@@ -1119,15 +1119,15 @@ impl Ellipse {
 
     /// The span of parameters the curve covers, `(t0, t1)` with `t1 > t0`:
     /// the whole turn for an ellipse, from start to end for an arc.
-    pub fn param_span(&self, sketch: &Sketch) -> Option<(f32, f32)> {
+    pub fn param_span(&self, sketch: &Sketch) -> Option<(f64, f64)> {
         let Some(arc) = self.arc else {
-            return Some((0.0, std::f32::consts::TAU));
+            return Some((0.0, std::f64::consts::TAU));
         };
         let center = sketch.point_position(self.center)?;
         let t0 = self.param_at(center, sketch.point_position(arc.start)?);
         let mut t1 = self.param_at(center, sketch.point_position(arc.end)?);
         while t1 <= t0 + 1e-6 {
-            t1 += std::f32::consts::TAU;
+            t1 += std::f64::consts::TAU;
         }
         Some((t0, t1))
     }
@@ -1252,7 +1252,7 @@ pub struct Conic {
     pub axis: Vec2D,
     /// The hyperbola's semi-minor axis; a parabola has none.
     #[serde(default)]
-    pub minor: f32,
+    pub minor: f64,
     /// Where the arc starts and ends: points on the curve.
     pub start: Uuid,
     pub end: Uuid,
@@ -1263,7 +1263,7 @@ impl Conic {
         kind: ConicKind,
         center: Uuid,
         axis: Vec2D,
-        minor: f32,
+        minor: f64,
         start: Uuid,
         end: Uuid,
     ) -> Self {
@@ -1404,13 +1404,13 @@ pub enum ConstraintKind {
     /// Two lines are equal in length.
     EqualLength { line1: Uuid, line2: Uuid },
     /// Line has a specific length.
-    Length { line: Uuid, length: f32 },
+    Length { line: Uuid, length: f64 },
     /// Two circles/arcs have equal radius.
     EqualRadius { circle1: Uuid, circle2: Uuid },
     /// Circle/arc has a specific radius.
-    Radius { circle: Uuid, radius: f32 },
+    Radius { circle: Uuid, radius: f64 },
     /// Circle/arc has a specific diameter.
-    Diameter { circle: Uuid, diameter: f32 },
+    Diameter { circle: Uuid, diameter: f64 },
     /// Point lies on a line.
     PointOnLine { point: Uuid, line: Uuid },
     /// Point lies on a circle/arc.
@@ -1431,7 +1431,7 @@ pub enum ConstraintKind {
     Distance {
         point1: Uuid,
         point2: Uuid,
-        distance: f32,
+        distance: f64,
     },
     /// Horizontal distance between two points (`b = None` measures `a`
     /// from the sketch origin): either way round when positive, `b` to the
@@ -1439,7 +1439,7 @@ pub enum ConstraintKind {
     DistanceX {
         a: Uuid,
         b: Option<Uuid>,
-        value: f32,
+        value: f64,
     },
     /// Vertical distance between two points (`b = None` measures `a`
     /// from the sketch origin): either way round when positive, `b` below
@@ -1447,19 +1447,19 @@ pub enum ConstraintKind {
     DistanceY {
         a: Uuid,
         b: Option<Uuid>,
-        value: f32,
+        value: f64,
     },
     /// Angle between two lines.
     Angle {
         line1: Uuid,
         line2: Uuid,
-        angle_rad: f32,
+        angle_rad: f64,
     },
     /// Angle between a line and a sketch axis.
     AngleToAxis {
         line: Uuid,
         axis: AxisDirection,
-        angle_rad: f32,
+        angle_rad: f64,
     },
     /// Tangency: a line tangent to a circle/arc, or two circles/arcs
     /// tangent to each other (externally or internally, whichever is
@@ -1480,7 +1480,7 @@ pub enum ConstraintKind {
     /// Point sits at the midpoint of a line's endpoints.
     Midpoint { point: Uuid, line: Uuid },
     /// Length along an arc, from its start to its end.
-    ArcLength { arc: Uuid, length: f32 },
+    ArcLength { arc: Uuid, length: f64 },
     /// The shortest distance between two items that are not both points:
     /// a point, line, circle or arc (an arc as its whole circle) against a
     /// circle or arc, a point against a line, or two lines held parallel
@@ -1490,7 +1490,7 @@ pub enum ConstraintKind {
     Gap {
         item1: Uuid,
         item2: Uuid,
-        distance: f32,
+        distance: f64,
     },
     /// The angle two curves make where they meet: from the first curve's
     /// tangent at `point` to the second's (a line's direction runs start to
@@ -1500,17 +1500,17 @@ pub enum ConstraintKind {
         curve1: Uuid,
         curve2: Uuid,
         point: Uuid,
-        angle_rad: f32,
+        angle_rad: f64,
     },
     /// An ellipse's semi-major (`major`) or semi-minor radius.
     EllipseRadius {
         ellipse: Uuid,
         major: bool,
-        radius: f32,
+        radius: f64,
     },
     /// The length along a spline, or along an arc of a parabola or
     /// hyperbola between its ends.
-    CurveLength { curve: Uuid, length: f32 },
+    CurveLength { curve: Uuid, length: f64 },
     /// A point on any curve: a spline, a parabola or hyperbola, or any of
     /// the others.
     PointOnCurve { point: Uuid, curve: Uuid },
@@ -1529,7 +1529,7 @@ pub enum ConstraintKind {
     /// that much apart in radius.
     Offset {
         pairs: Vec<[Uuid; 2]>,
-        distance: f32,
+        distance: f64,
     },
     /// The members of an array stepped evenly: `points` holds one point of
     /// each, row by row, `columns` to a row, the original first. Along a
@@ -1540,7 +1540,7 @@ pub enum ConstraintKind {
     Pitch {
         points: Vec<Uuid>,
         columns: u32,
-        distance: f32,
+        distance: f64,
         #[serde(default)]
         across: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1552,18 +1552,18 @@ pub enum ConstraintKind {
     PolarPitch {
         center: Uuid,
         points: Vec<Uuid>,
-        angle_rad: f32,
+        angle_rad: f64,
     },
     /// An arc's opening: the angle it sweeps counter-clockwise from its
     /// start to its end.
-    ArcAngle { arc: Uuid, angle_rad: f32 },
+    ArcAngle { arc: Uuid, angle_rad: f64 },
     /// The angle at `vertex` counter-clockwise from the arm to `point1` to
     /// the arm to `point2`.
     AngleThreePoints {
         point1: Uuid,
         vertex: Uuid,
         point2: Uuid,
-        angle_rad: f32,
+        angle_rad: f64,
     },
     /// Refraction at an interface: `ray1` arrives at `point` on the
     /// `interface` curve and `ray2` leaves it, at angles to the interface's
@@ -1574,7 +1574,7 @@ pub enum ConstraintKind {
         ray2: Uuid,
         interface: Uuid,
         point: Uuid,
-        ratio: f32,
+        ratio: f64,
     },
     /// `element` is a piece of `curve`'s internal geometry, held where
     /// `role` puts it: an axis or a focus of an ellipse or conic, a side of
@@ -1602,13 +1602,13 @@ pub enum GroupReference {
     /// A member point, or a point of a member curve, where it stood.
     Point { point: Uuid, at: Vec2D },
     /// A member circle's or arc's radius.
-    Radius { curve: Uuid, radius: f32 },
+    Radius { curve: Uuid, radius: f64 },
     /// A member ellipse's centre-to-major-vertex vector or a conic's axis,
     /// and its minor radius.
     Axes {
         curve: Uuid,
         major: Vec2D,
-        minor: f32,
+        minor: f64,
     },
 }
 
@@ -2020,7 +2020,7 @@ mod constraint_record_tests {
         let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(a, 3.0)));
 
-        let near = |v: Option<f32>, want: f32| (v.unwrap() - want).abs() < 1e-4;
+        let near = |v: Option<f64>, want: f64| (v.unwrap() - want).abs() < 1e-4;
         assert!(near(
             measured_value(&sketch, &ConstraintKind::Length { line, length: 0.0 }),
             5.0
@@ -2067,9 +2067,9 @@ mod plane_tests {
     use super::*;
 
     fn assert_orthonormal(plane: &SketchPlane) {
-        let n = glam::Vec3::from_array(plane.normal);
-        let x = glam::Vec3::from_array(plane.x_axis);
-        let y = glam::Vec3::from_array(plane.y_axis);
+        let n = glam::DVec3::from_array(plane.normal);
+        let x = glam::DVec3::from_array(plane.x_axis);
+        let y = glam::DVec3::from_array(plane.y_axis);
         assert!((n.length() - 1.0).abs() < 1e-5);
         assert!((x.length() - 1.0).abs() < 1e-5);
         assert!((y.length() - 1.0).abs() < 1e-5);
@@ -2094,8 +2094,8 @@ mod plane_tests {
         let plane = SketchPlane::from_face([5.0, 3.0, 8.0], [0.0, 0.0, 1.0]);
         assert_orthonormal(&plane);
         assert_eq!(plane.origin, [0.0, 0.0, 8.0]);
-        let n = glam::Vec3::from_array(plane.normal);
-        assert!((n - glam::Vec3::Z).length() < 1e-5);
+        let n = glam::DVec3::from_array(plane.normal);
+        assert!((n - glam::DVec3::Z).length() < 1e-5);
     }
 
     #[test]
@@ -2126,7 +2126,7 @@ mod plane_tests {
         // Slanted face: still orthonormal, normalized input not required.
         let plane = SketchPlane::from_face([1.0, 2.0, 3.0], [1.0, 1.0, 1.0]);
         assert_orthonormal(&plane);
-        let n = glam::Vec3::from_array(plane.normal);
-        assert!((n - glam::Vec3::ONE.normalize()).length() < 1e-5);
+        let n = glam::DVec3::from_array(plane.normal);
+        assert!((n - glam::DVec3::ONE.normalize()).length() < 1e-5);
     }
 }

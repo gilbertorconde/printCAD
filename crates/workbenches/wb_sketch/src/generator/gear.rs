@@ -32,31 +32,31 @@ pub const FLANK_TOLERANCE: f64 = 0.001;
 #[serde(default, from = "StoredGear")]
 pub struct GearSpec {
     /// Pitch diameter over teeth, mm.
-    pub module: f32,
+    pub module: f64,
     #[serde(deserialize_with = "super::count")]
     pub teeth: u32,
-    pub pressure_angle_deg: f32,
+    pub pressure_angle_deg: f64,
     /// Profile shift coefficient: the tooth moved out, away from the
     /// gear's centre, by this many modules.
-    pub profile_shift: f32,
+    pub profile_shift: f64,
     /// Addendum coefficient: the tip stands this many modules beyond the
     /// pitch circle.
-    pub addendum: f32,
+    pub addendum: f64,
     /// Dedendum coefficient: the root sits this many modules inside the
     /// pitch circle (outside it, on a ring).
-    pub dedendum: f32,
+    pub dedendum: f64,
     /// How much thinner each tooth is than half the circular pitch at the
     /// pitch circle, mm.
-    pub backlash: f32,
+    pub backlash: f64,
     /// Root fillet radius coefficient, in modules; 0 leaves a sharp root.
-    pub root_fillet: f32,
+    pub root_fillet: f64,
     /// Bore diameter, mm; 0 leaves the gear solid. Not used by a ring.
-    pub bore: f32,
+    pub bore: f64,
     /// An internal (ring) gear.
     pub internal: bool,
     /// A ring's outside diameter, mm; 0 makes it three modules beyond the
     /// root circle.
-    pub rim: f32,
+    pub rim: f64,
     /// The root as a rack cutter leaves it, undercutting the flanks of a
     /// pinion of few teeth; off, a root fillet arc. Not used by a ring.
     pub undercut: bool,
@@ -69,19 +69,19 @@ pub struct GearSpec {
 #[derive(Deserialize)]
 #[serde(default)]
 struct StoredGear {
-    module: f32,
+    module: f64,
     #[serde(deserialize_with = "super::count")]
     teeth: u32,
-    pressure_angle_deg: f32,
-    profile_shift: f32,
-    addendum: Option<f32>,
-    dedendum: Option<f32>,
-    clearance: Option<f32>,
-    backlash: f32,
-    root_fillet: f32,
-    bore: f32,
+    pressure_angle_deg: f64,
+    profile_shift: f64,
+    addendum: Option<f64>,
+    dedendum: Option<f64>,
+    clearance: Option<f64>,
+    backlash: f64,
+    root_fillet: f64,
+    bore: f64,
     internal: bool,
-    rim: f32,
+    rim: f64,
     /// Absent from gears saved before the cutter's root, which keep the
     /// root fillet arc.
     undercut: bool,
@@ -208,26 +208,26 @@ impl GearGeometry {
 
 impl GearSpec {
     pub fn geometry(&self) -> Result<GearGeometry, String> {
-        let m = f64::from(self.module);
+        let m = self.module;
         if !(m > 0.0 && m.is_finite()) {
             return Err("the module must be more than zero".into());
         }
         if self.teeth < 3 {
             return Err("a gear needs at least 3 teeth".into());
         }
-        let alpha = f64::from(self.pressure_angle_deg).to_radians();
+        let alpha = self.pressure_angle_deg.to_radians();
         if !(alpha > 0.0 && alpha < 45f64.to_radians()) {
             return Err("the pressure angle must be between 0° and 45°".into());
         }
-        let (ha, hf) = (f64::from(self.addendum), f64::from(self.dedendum));
+        let (ha, hf) = (self.addendum, self.dedendum);
         if !(ha >= 0.0 && hf > 0.0 && ha.is_finite() && hf.is_finite()) {
             return Err("the addendum and dedendum must be more than zero".into());
         }
         let z = f64::from(self.teeth);
-        let x = f64::from(self.profile_shift);
+        let x = self.profile_shift;
         let r = m * z / 2.0;
         let shifted = m * (PI / 2.0 + 2.0 * x * alpha.tan());
-        let backlash = f64::from(self.backlash);
+        let backlash = self.backlash;
         // A ring's space, drawn as a tooth, reaches out to its root circle
         // and in to its tip circle; backlash widens it.
         let (s, tip, root) = if self.internal {
@@ -270,7 +270,7 @@ impl GearSpec {
             }
             return Ok(g);
         }
-        let bore = f64::from(self.bore);
+        let bore = self.bore;
         if bore < 0.0 || bore / 2.0 >= g.root_radius {
             return Err("the bore must fit inside the root circle".into());
         }
@@ -283,16 +283,16 @@ impl GearSpec {
     /// A ring's outside radius.
     fn rim_radius(&self, g: &GearGeometry) -> f64 {
         if self.rim > 0.0 {
-            f64::from(self.rim) / 2.0
+            self.rim / 2.0
         } else {
-            g.tip_radius + 3.0 * f64::from(self.module)
+            g.tip_radius + 3.0 * self.module
         }
     }
 
     /// Whether the teeth are undercut at their root, as a rack cutter
     /// leaves a pinion of few teeth.
     pub fn is_undercut(&self) -> bool {
-        let rho = f64::from(self.root_fillet.max(0.0)) * f64::from(self.module);
+        let rho = self.root_fillet.max(0.0) * self.module;
         self.geometry()
             .and_then(|g| generated_flank(&g, rho))
             .is_ok_and(|f| f.undercut)
@@ -317,7 +317,7 @@ impl GearSpec {
         let rho = if self.internal {
             0.0
         } else {
-            f64::from(self.root_fillet.max(0.0)) * f64::from(self.module)
+            self.root_fillet.max(0.0) * self.module
         };
         if self.undercut && !self.internal {
             let lp = generated_loop(&g, rho)?;
@@ -404,7 +404,7 @@ impl GearSpec {
             guides: vec![([0.0, 0.0], g.pitch_radius)],
             ..Outline::default()
         };
-        let bore = f64::from(self.bore);
+        let bore = self.bore;
         if self.internal {
             outline.circles.push(([0.0, 0.0], self.rim_radius(g)));
         } else if self.keyway.on {
@@ -756,7 +756,7 @@ mod tests {
         .geometry()
         .unwrap();
         let thickness = 2.0 * shifted.half_angle(shifted.pitch_radius) * shifted.pitch_radius;
-        let x = f64::from(0.3f32);
+        let x = 0.3f64;
         let want = 2.0 * (PI / 2.0 + 2.0 * x * 20f64.to_radians().tan());
         assert!((thickness - want).abs() < 1e-9);
     }

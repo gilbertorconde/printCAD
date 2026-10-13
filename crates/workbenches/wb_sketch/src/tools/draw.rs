@@ -16,7 +16,7 @@ use crate::spline;
 /// Point snap first (its id reused, never a coincident duplicate); otherwise a
 /// curve within tolerance captures the click, projecting the position onto
 /// it so `materialize_on_curve` records the on-curve constraint.
-fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f32) -> SnapTarget {
+fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f64) -> SnapTarget {
     match snap::snap_to_point(sketch, cursor, tol, &[]) {
         SnapTarget::Existing(id) => SnapTarget::Existing(id),
         SnapTarget::New(pos) => match snap::snap_to_curve(sketch, cursor, tol, &[]) {
@@ -29,7 +29,7 @@ fn snap_point_or_curve(sketch: &Sketch, cursor: Vec2D, tol: f32) -> SnapTarget {
 /// A point at a clicked `pos`: the existing one when one is exactly there
 /// (a snap put the click on it), else a new one, held on whatever curve it
 /// lies exactly on.
-fn place(sketch: &mut Sketch, pos: Vec2D, snap_tol: f32) -> Uuid {
+fn place(sketch: &mut Sketch, pos: Vec2D, snap_tol: f64) -> Uuid {
     let eps = super::curve_attach_eps(snap_tol);
     materialize_on_curve(sketch, snap_point_or_curve(sketch, pos, eps), snap_tol)
 }
@@ -37,12 +37,12 @@ fn place(sketch: &mut Sketch, pos: Vec2D, snap_tol: f32) -> Uuid {
 /// A point at `pos` a tool worked out rather than clicked (a rectangle's
 /// other two corners): the existing one when one is exactly there, else a
 /// new, free one. Nothing was snapped there, so nothing holds it there.
-fn derived(sketch: &mut Sketch, pos: Vec2D, snap_tol: f32) -> Uuid {
+fn derived(sketch: &mut Sketch, pos: Vec2D, snap_tol: f64) -> Uuid {
     let eps = super::curve_attach_eps(snap_tol);
     materialize(sketch, snap::snap_to_point(sketch, pos, eps, &[]))
 }
 
-pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f32) -> ToolEffect {
+pub(super) fn point(sketch: &mut Sketch, cursor: Vec2D, snap_tol: f64) -> ToolEffect {
     // A snap onto an existing point would only double it.
     if let SnapTarget::Existing(_) =
         snap::snap_to_point(sketch, cursor, super::curve_attach_eps(snap_tol), &[])
@@ -62,7 +62,7 @@ pub(super) fn line(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     auto_constraints: bool,
 ) -> ToolEffect {
     match *state {
@@ -145,7 +145,7 @@ pub(super) fn polyline(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     auto_constraints: bool,
 ) -> ToolEffect {
     let ToolState::PolylineFrom {
@@ -331,7 +331,7 @@ pub(super) fn rect(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::RectFrom { corner } => {
@@ -372,8 +372,8 @@ pub(super) fn rect_rounded(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
-    radius: f32,
+    snap_tol: f64,
+    radius: f64,
 ) -> ToolEffect {
     let corner = match *state {
         ToolState::RectFrom { corner } => corner.position(sketch),
@@ -432,7 +432,7 @@ pub(super) fn rect_center(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::RectCenterAt { center } => {
@@ -498,7 +498,7 @@ pub(super) fn rect3(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::Rect3A { a } => {
@@ -574,7 +574,7 @@ pub fn rect_center3_corners(center: Vec2D, corner: Vec2D, toward: Vec2D) -> Opti
     let c = center.to_glam();
     let r = (corner.to_glam() - c).length();
     let dir = (toward.to_glam() - c).normalize_or_zero();
-    if r < 1e-6 || dir == glam::Vec2::ZERO {
+    if r < 1e-6 || dir == glam::DVec2::ZERO {
         return None;
     }
     let p1 = corner.to_glam();
@@ -594,7 +594,7 @@ pub(super) fn rect_center3(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::RectCenter3At { center } => {
@@ -662,7 +662,7 @@ pub(super) fn rect_center3(
 /// rectangle `offset` inside it, corners in the same order as the outer
 /// one's (`a`, `(c.x, a.y)`, `c`, `(a.x, c.y)`). `None` when the offset
 /// leaves nothing inside.
-pub fn frame_inner_corners(a: Vec2D, c: Vec2D, offset: f32) -> Option<[Vec2D; 4]> {
+pub fn frame_inner_corners(a: Vec2D, c: Vec2D, offset: f64) -> Option<[Vec2D; 4]> {
     let (w, h) = ((c.x - a.x).abs(), (c.y - a.y).abs());
     if offset <= 1e-6 || 2.0 * offset >= w.min(h) - 1e-6 {
         return None;
@@ -680,8 +680,8 @@ pub(super) fn rect_frame(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
-    offset: f32,
+    snap_tol: f64,
+    offset: f64,
 ) -> ToolEffect {
     let ToolState::RectFrom { corner } = *state else {
         return rect(state, sketch, cursor, snap_tol);
@@ -743,7 +743,7 @@ pub(super) fn circle(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::CircleFrom { center } => {
@@ -772,7 +772,7 @@ pub(super) fn circle(
 }
 
 /// Cursor snapped to an existing point's *position* (nothing materialized).
-fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f32) -> Vec2D {
+fn snapped_pos(sketch: &Sketch, cursor: Vec2D, snap_tol: f64) -> Vec2D {
     snap::snap_to_point(sketch, cursor, snap_tol, &[])
         .position(sketch)
         .unwrap_or(cursor)
@@ -782,7 +782,7 @@ pub(super) fn circle3(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     let pos = snapped_pos(sketch, cursor, snap_tol);
     match *state {
@@ -815,7 +815,7 @@ pub(super) fn arc(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::ArcCenter { center } => {
@@ -868,7 +868,7 @@ pub(super) fn arc3(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::Arc3Start { start } => {
@@ -921,7 +921,7 @@ pub(super) fn ellipse(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::EllipseCenter { center } => {
@@ -981,7 +981,7 @@ pub(super) fn ellipse3(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     let pos = snapped_pos(sketch, cursor, snap_tol);
     match *state {
@@ -1023,7 +1023,7 @@ pub(super) fn ellipse_arc(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::EllipseArcCenter { center } => {
@@ -1072,7 +1072,7 @@ pub(super) fn ellipse_arc(
             if (end_t - start_t).abs() < 1e-4 {
                 return ToolEffect::none();
             }
-            let on_rim = |t: f32| {
+            let on_rim = |t: f64| {
                 let (sin, cos) = t.sin_cos();
                 let a = major.to_glam();
                 Vec2D::from_glam(c.to_glam() + a * cos + a.perp() * ratio * sin)
@@ -1101,7 +1101,7 @@ pub(super) fn bspline(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
 ) -> ToolEffect {
     let target = snap::snap_to_point(sketch, cursor, snap_tol, &[]);
     match state {
@@ -1132,14 +1132,14 @@ pub(super) fn conic(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     kind: ConicKind,
 ) -> ToolEffect {
     use crate::conic::{Shape, hyperbola_minor};
     let on_curve = |shape: &Shape, p: Vec2D| {
-        let t = shape.param([f64::from(p.x), f64::from(p.y)]);
+        let t = shape.param([p.x, p.y]);
         let [x, y] = shape.point(t);
-        (t, Vec2D::new(x as f32, y as f32))
+        (t, Vec2D::new(x, y))
     };
     match *state {
         ToolState::ConicAt { kind, center } => {
@@ -1228,10 +1228,7 @@ pub(super) fn conic(
 /// The spline the tool's clicks so far make with `params`: over them as
 /// control points, or through them.
 pub fn bspline_preview(clicks: &[Vec2D], params: &ToolParams) -> Option<Vec<Vec2D>> {
-    let points: Vec<[f64; 2]> = clicks
-        .iter()
-        .map(|p| [f64::from(p.x), f64::from(p.y)])
-        .collect();
+    let points: Vec<[f64; 2]> = clicks.iter().map(|p| [p.x, p.y]).collect();
     let periodic = params.bspline_periodic;
     let (degree, knots, control) = if params.bspline_interpolate {
         let fit = sketch_solver::spline::interpolate(&points, params.bspline_degree, periodic)?;
@@ -1269,10 +1266,7 @@ pub(super) fn bspline_finish(
         else {
             return ToolEffect::none();
         };
-        let at: Vec<[f64; 2]> = at
-            .iter()
-            .map(|p| [f64::from(p.x), f64::from(p.y)])
-            .collect();
+        let at: Vec<[f64; 2]> = at.iter().map(|p| [p.x, p.y]).collect();
         let Some(fit) = sketch_solver::spline::interpolate(&at, params.bspline_degree, periodic)
         else {
             return ToolEffect::log("No spline goes through the same point twice in a row");
@@ -1290,7 +1284,7 @@ pub(super) fn bspline_finish(
                 0 if !periodic => fit_points[0],
                 i if i == last && !periodic => fit_points[n - 1],
                 _ => {
-                    let at = Vec2D::new(p[0] as f32, p[1] as f32);
+                    let at = Vec2D::new(p[0], p[1]);
                     sketch.add_geometry(GeometryElement::Point(Point::new(at)))
                 }
             })
@@ -1329,7 +1323,7 @@ pub fn polygon_vertices(center: Vec2D, vertex: Vec2D, sides: u32) -> Vec<Vec2D> 
     let n = sides.max(3);
     (0..n)
         .map(|i| {
-            let a = std::f32::consts::TAU * (i as f32) / (n as f32);
+            let a = std::f64::consts::TAU * (i as f64) / (n as f64);
             let (sin, cos) = a.sin_cos();
             Vec2D::new(c.x + v.x * cos - v.y * sin, c.y + v.x * sin + v.y * cos)
         })
@@ -1340,7 +1334,7 @@ pub(super) fn polygon(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     sides: u32,
 ) -> ToolEffect {
     match *state {
@@ -1403,14 +1397,14 @@ pub(super) fn polygon(
 /// full width `width`. Returns `(p1, p2, p3, p4)`: `p1/p2` on the +normal
 /// side (a/b ends), `p3/p4` on the −normal side (b/a ends). `None` when the
 /// centerline or width is degenerate.
-pub fn slot_corners(a: Vec2D, b: Vec2D, width: f32) -> Option<(Vec2D, Vec2D, Vec2D, Vec2D)> {
+pub fn slot_corners(a: Vec2D, b: Vec2D, width: f64) -> Option<(Vec2D, Vec2D, Vec2D, Vec2D)> {
     let half = width * 0.5;
     let d = (b - a).to_glam();
     if d.length() < 1e-6 || half < 1e-6 {
         return None;
     }
     let dir = d.normalize();
-    let n = glam::Vec2::new(-dir.y, dir.x);
+    let n = glam::DVec2::new(-dir.y, dir.x);
     let (av, bv) = (a.to_glam(), b.to_glam());
     Some((
         Vec2D::from_glam(av + n * half),
@@ -1424,8 +1418,8 @@ pub(super) fn slot(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
-    width: f32,
+    snap_tol: f64,
+    width: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::SlotFrom { from } => {
@@ -1493,16 +1487,16 @@ pub struct ArcSlotShape {
     pub outer_b: Vec2D,
     pub inner_a: Vec2D,
     pub inner_b: Vec2D,
-    pub outer_r: f32,
-    pub inner_r: f32,
-    pub cap_r: f32,
+    pub outer_r: f64,
+    pub inner_r: f64,
+    pub cap_r: f64,
 }
 
 pub fn arc_slot_shape(
     center: Vec2D,
     start: Vec2D,
     toward_end: Vec2D,
-    width: f32,
+    width: f64,
 ) -> Option<ArcSlotShape> {
     let c = center.to_glam();
     let s = start.to_glam();
@@ -1517,10 +1511,10 @@ pub fn arc_slot_shape(
         return None;
     }
     let (start_angle, sweep) = arc_angles(rv, dir_end);
-    if !(0.01..std::f32::consts::TAU - 0.01).contains(&sweep) {
+    if !(0.01..std::f64::consts::TAU - 0.01).contains(&sweep) {
         return None; // degenerate or self-overlapping slot
     }
-    let e = |ang: f32| glam::Vec2::new(ang.cos(), ang.sin());
+    let e = |ang: f64| glam::DVec2::new(ang.cos(), ang.sin());
     let end_angle = start_angle + sweep;
     Some(ArcSlotShape {
         cap_a: start,
@@ -1539,8 +1533,8 @@ pub(super) fn arc_slot(
     state: &mut ToolState,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
-    width: f32,
+    snap_tol: f64,
+    width: f64,
 ) -> ToolEffect {
     match *state {
         ToolState::ArcSlotCenter { center } => {

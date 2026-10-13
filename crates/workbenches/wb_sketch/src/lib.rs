@@ -3,6 +3,7 @@
 #![cfg_attr(not(feature = "egui"), allow(dead_code))]
 
 mod appearance;
+pub mod boundary;
 mod commands;
 pub mod conic;
 mod constrain;
@@ -43,6 +44,7 @@ use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 use web_time::Instant;
 
+use boundary::{narrow, narrow3, widen3};
 use core_document::{
     BasePlane, BodyId, FeatureId, FeatureInfo, HostRequest, InputResult, KeyCode, MenuItem,
     MenuScope, ScreenSpaceLabel, ScreenSpaceMark, SketchPalette, StatusItems, TaskInfo,
@@ -61,7 +63,7 @@ use uuid::Uuid;
 
 /// Snap / hit-test tolerance in screen pixels, converted to sketch units
 /// per frame from the current zoom.
-const SNAP_TOLERANCE_PX: f32 = 8.0;
+const SNAP_TOLERANCE_PX: f64 = 8.0;
 
 /// Elements-panel filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -356,7 +358,7 @@ struct GlyphHit {
 
 const DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(400);
 /// The angle a drawn segment keeps to with Shift held.
-const ANGLE_STEP_DEG: f32 = 15.0;
+const ANGLE_STEP_DEG: f64 = 15.0;
 /// How far the shaded regions stand off the sketch plane, in mm.
 const REGION_LIFT_MM: f64 = 0.01;
 
@@ -369,7 +371,7 @@ pub struct SketchOptions {
     /// The grid step follows the zoom instead of `grid_size`.
     pub grid_auto: bool,
     /// The grid step in sketch units when it does not follow the zoom.
-    pub grid_size: f32,
+    pub grid_size: f64,
     /// Drawing tools land on grid points.
     pub grid_snap: bool,
     /// Constraint glyphs stay off the viewport.
@@ -389,7 +391,7 @@ pub struct SketchOptions {
     /// off, normal geometry draws over construction.
     pub construction_on_top: bool,
     /// The wall thickness check marks a wall thinner than this, in mm.
-    pub min_wall: f32,
+    pub min_wall: f64,
     /// A dimension a tool adds opens its value editor at once.
     pub ask_dimension_value: bool,
     /// What dimensions' labels show.
@@ -1001,10 +1003,10 @@ impl SketchWorkbench {
                 let centre = sketch_feature.generator.is_some().then_some(plane.origin);
                 ctx.request(HostRequest::OrientCamera(
                     core_document::CameraOrientRequest {
-                        plane_origin: plane.origin,
-                        plane_normal: plane.normal,
-                        plane_up: plane.y_axis,
-                        centre,
+                        plane_origin: narrow3(plane.origin),
+                        plane_normal: narrow3(plane.normal),
+                        plane_up: narrow3(plane.y_axis),
+                        centre: centre.map(narrow3),
                     },
                 ));
             }
@@ -1061,12 +1063,12 @@ impl SketchWorkbench {
         plane: &SketchPlane,
         viewport_pos: (f32, f32),
     ) -> Option<Vec2D> {
-        let world = ctx.viewport_to_plane(viewport_pos, plane.origin, plane.normal)?;
-        let origin = glam::Vec3::from_array(plane.origin);
-        let rel = glam::Vec3::from_array(world) - origin;
+        let world = boundary::ctx_cursor_on_plane(ctx, viewport_pos, plane.origin, plane.normal)?;
+        let origin = glam::DVec3::from_array(plane.origin);
+        let rel = glam::DVec3::from_array(world) - origin;
         Some(Vec2D::new(
-            rel.dot(glam::Vec3::from_array(plane.x_axis)),
-            rel.dot(glam::Vec3::from_array(plane.y_axis)),
+            rel.dot(glam::DVec3::from_array(plane.x_axis)),
+            rel.dot(glam::DVec3::from_array(plane.y_axis)),
         ))
     }
 
@@ -1081,7 +1083,7 @@ impl SketchWorkbench {
         feature: &SketchFeature,
         tool: &str,
         cursor: Vec2D,
-    ) -> (Vec2D, f32) {
+    ) -> (Vec2D, f64) {
         let plane = feature.plane;
         let tol = if self.snap_off && is_draw_tool(tool) {
             0.0
@@ -1132,7 +1134,7 @@ impl SketchWorkbench {
     }
 
     /// Pixel tolerance converted into sketch units at the current zoom.
-    fn snap_tolerance(ctx: &WorkbenchRuntimeContext, plane: &SketchPlane) -> f32 {
+    fn snap_tolerance(ctx: &WorkbenchRuntimeContext, plane: &SketchPlane) -> f64 {
         let proj = SketchProjector::new(ctx, *plane);
         SNAP_TOLERANCE_PX * proj.units_per_px()
     }
@@ -1265,16 +1267,18 @@ impl SketchWorkbench {
                 // generator stands.
                 let placement = sketch_placement(ctx.document, feature_id);
                 let centre = match kind {
-                    Some(_) => Some(placement.point(plane.origin)),
-                    None => face.as_ref().map(|f| placement.point(f.point)),
+                    Some(_) => Some(boundary::place_point(&placement, plane.origin)),
+                    None => face
+                        .as_ref()
+                        .map(|f| boundary::place_point(&placement, f.point)),
                 };
                 let plane = placed_plane(&plane, &placement);
                 ctx.request(HostRequest::OrientCamera(
                     core_document::CameraOrientRequest {
-                        plane_origin: plane.origin,
-                        plane_normal: plane.normal,
-                        plane_up: plane.y_axis,
-                        centre,
+                        plane_origin: narrow3(plane.origin),
+                        plane_normal: narrow3(plane.normal),
+                        plane_up: narrow3(plane.y_axis),
+                        centre: centre.map(narrow3),
                     },
                 ));
                 ctx.log_info(format!("Created new sketch: {sketch_name}"));
@@ -1416,7 +1420,7 @@ impl SketchWorkbench {
         feature: &SketchFeature,
         tool: &str,
         cursor: Vec2D,
-        typed: &[(ovp::FieldKind, f32)],
+        typed: &[(ovp::FieldKind, f64)],
         constrain: bool,
         settings: &step::StepSettings,
     ) {
@@ -2088,9 +2092,9 @@ impl SketchWorkbench {
         let plane = feature.plane;
         ctx.request(HostRequest::OrientCamera(
             core_document::CameraOrientRequest {
-                plane_origin: plane.origin,
-                plane_normal: plane.normal,
-                plane_up: plane.y_axis,
+                plane_origin: narrow3(plane.origin),
+                plane_normal: narrow3(plane.normal),
+                plane_up: narrow3(plane.y_axis),
                 centre: None,
             },
         ));
@@ -2700,14 +2704,14 @@ impl SketchWorkbench {
                 Ok(q) => self.bind_dimension(ctx, constraint, text, q.value),
                 Err(why) => {
                     ctx.log_warn(format!("{text}: {why}"));
-                    let value = f64::from(sketch::dimension_value(&c.kind).unwrap_or_default());
+                    let value = sketch::dimension_value(&c.kind).unwrap_or_default();
                     self.bind_dimension(ctx, constraint, text, value);
                 }
             }
             return;
         }
         let value = match evaluated {
-            Ok(q) => q.value as f32,
+            Ok(q) => q.value,
             Err(why) => {
                 ctx.log_warn(format!("{text}: {why}"));
                 return;
@@ -2766,7 +2770,7 @@ impl SketchWorkbench {
             })),
             serde_json::Value::Null,
         );
-        c.kind = sketch::with_dimension_value(&c.kind, value as f32);
+        c.kind = sketch::with_dimension_value(&c.kind, value);
         c.driving = true;
         self.solve(ctx, &mut feature);
         self.store_sketch(ctx, feature);
@@ -3113,33 +3117,33 @@ impl Workbench for SketchWorkbench {
         _node: &core_document::FeatureNode,
         pick: &core_document::ViewportPick,
     ) -> Option<f32> {
-        use core_document::runtime::{viewport_to_plane, world_to_viewport};
+        use core_document::runtime::world_to_viewport;
         let feature = SketchFeature::from_json(document.feature_values(id)?).ok()?;
         let plane = feature.plane;
-        let world = viewport_to_plane(
+        let world = boundary::cursor_on_plane(
             pick.view_proj,
             pick.viewport,
             pick.cursor,
             plane.origin,
             plane.normal,
         )?;
-        let origin = glam::Vec3::from_array(plane.origin);
-        let rel = glam::Vec3::from_array(world) - origin;
+        let origin = glam::DVec3::from_array(plane.origin);
+        let rel = glam::DVec3::from_array(world) - origin;
         let pos = Vec2D::new(
-            rel.dot(glam::Vec3::from_array(plane.x_axis)),
-            rel.dot(glam::Vec3::from_array(plane.y_axis)),
+            rel.dot(glam::DVec3::from_array(plane.x_axis)),
+            rel.dot(glam::DVec3::from_array(plane.y_axis)),
         );
-        let o_px = world_to_viewport(pick.view_proj, pick.viewport, plane.origin)?;
+        let o_px = world_to_viewport(pick.view_proj, pick.viewport, narrow3(plane.origin))?;
         let x_px = world_to_viewport(
             pick.view_proj,
             pick.viewport,
-            (origin + glam::Vec3::from_array(plane.x_axis)).to_array(),
+            narrow3((origin + glam::DVec3::from_array(plane.x_axis)).to_array()),
         )?;
         let px_per_unit = ((x_px.0 - o_px.0).powi(2) + (x_px.1 - o_px.1).powi(2)).sqrt();
         if px_per_unit < 1e-6 {
             return None;
         }
-        snap::nearest_curve_distance(&feature.sketch, pos).map(|units| units * px_per_unit)
+        snap::nearest_curve_distance(&feature.sketch, pos).map(|units| narrow(units) * px_per_unit)
     }
 
     fn configure(&self, context: &mut WorkbenchContext) {
@@ -4439,7 +4443,7 @@ impl Workbench for SketchWorkbench {
         if !feature.shows_section(self.options.section_on_open) {
             return None;
         }
-        Some(section_equation(&feature.plane, ctx.camera_position))
+        Some(section_equation(&feature.plane, widen3(ctx.camera_position)).map(narrow))
     }
 
     fn status_items(&self, ctx: &WorkbenchRuntimeContext) -> Option<StatusItems> {
@@ -4499,7 +4503,7 @@ impl Workbench for SketchWorkbench {
                 let decoded = self.image_cache.get(image.asset, || {
                     ctx.document.asset_bytes(image.asset).map(<[u8]>::to_vec)
                 })?;
-                let aspect = decoded.height as f32 / decoded.width.max(1) as f32;
+                let aspect = decoded.height as f64 / decoded.width.max(1) as f64;
                 let [a, b, c, d] = images::corners(image, aspect);
                 let (hi, lo) = image.asset.as_u64_pair();
                 Some(core_document::ScreenSpaceImage {
@@ -4512,7 +4516,7 @@ impl Workbench for SketchWorkbench {
                         proj.to_px(c)?,
                         proj.to_px(d)?,
                     ],
-                    opacity: image.opacity,
+                    opacity: narrow(image.opacity),
                 })
             })
             .collect()
@@ -5090,12 +5094,12 @@ impl SketchWorkbench {
 
     /// The grid step on screen: the size chosen, or, following the zoom, a
     /// 1-2-5 step that puts lines about forty pixels apart.
-    fn grid_step(&self, units_per_px: f32) -> f32 {
+    fn grid_step(&self, units_per_px: f64) -> f64 {
         if !self.options.grid_auto {
             return self.options.grid_size.max(1e-3);
         }
         let raw = 40.0 * units_per_px;
-        let magnitude = 10f32.powf(raw.log10().floor());
+        let magnitude = 10f64.powf(raw.log10().floor());
         let mantissa = raw / magnitude;
         let nice = if mantissa <= 1.0 {
             1.0
@@ -5152,8 +5156,8 @@ impl SketchWorkbench {
             (0.0, h as f32),
             (w as f32, h as f32),
         ];
-        let mut lo = Vec2D::new(f32::MAX, f32::MAX);
-        let mut hi = Vec2D::new(f32::MIN, f32::MIN);
+        let mut lo = Vec2D::new(f64::MAX, f64::MAX);
+        let mut hi = Vec2D::new(f64::MIN, f64::MIN);
         for corner in corners {
             let Some(at) = Self::cursor_to_sketch(ctx, plane, corner) else {
                 return Vec::new();
@@ -5178,11 +5182,11 @@ impl SketchWorkbench {
             return Vec::new();
         }
         for i in x0..=x1 {
-            let x = i as f32 * step;
+            let x = i as f64 * step;
             line(Vec2D::new(x, lo.y), Vec2D::new(x, hi.y));
         }
         for j in y0..=y1 {
-            let y = j as f32 * step;
+            let y = j as f64 * step;
             line(Vec2D::new(lo.x, y), Vec2D::new(hi.x, y));
         }
         out
@@ -5358,7 +5362,7 @@ impl SketchWorkbench {
             self.dim_capture.sync(&self.tool_state, None);
             self.flush_draw_record(ctx);
         }
-        let minimum = f64::from(self.options.min_wall);
+        let minimum = self.options.min_wall;
         match walls::check(ctx, id, minimum) {
             Ok(check) => {
                 let summary = check.summary();
@@ -5402,7 +5406,7 @@ impl SketchWorkbench {
                     "must be more than zero",
                 ));
             }
-            None => f64::from(self.options.min_wall),
+            None => self.options.min_wall,
         };
         if stored_sketch(ctx.document, sketch).is_none() {
             return Err(core_document::CommandError::bad(
@@ -5544,7 +5548,7 @@ impl SketchWorkbench {
             return InputResult::ignored();
         };
         let plane = feature.plane;
-        let neg = |v: [f32; 3]| [-v[0], -v[1], -v[2]];
+        let neg = |v: [f64; 3]| [-v[0], -v[1], -v[2]];
         let new_plane = if rotate {
             SketchPlane::from_frame(plane.origin, plane.normal, plane.y_axis)
         } else {
@@ -5578,7 +5582,7 @@ impl SketchWorkbench {
             ctx.log_warn("Click a face of a solid first");
             return InputResult::consumed();
         };
-        let plane = SketchPlane::from_face(face.point, face.normal);
+        let plane = SketchPlane::from_face(widen3(face.point), widen3(face.normal));
         // On a face of its own body the sketch follows the face; the face
         // replaces any datum it stood on.
         feature.support = None;
@@ -5605,7 +5609,7 @@ impl SketchWorkbench {
                 .and_then(|probed| probed.answers.first())
                 .and_then(|answer| match answer {
                     Ok(kernel_api::ProbeAnswer::Face { point, normal, .. }) => {
-                        Some((point.map(|c| c as f32), normal.map(|c| c as f32)))
+                        Some((point.map(|c| c), normal.map(|c| c)))
                     }
                     _ => None,
                 });
@@ -5632,9 +5636,9 @@ impl SketchWorkbench {
         }
         ctx.request(HostRequest::OrientCamera(
             core_document::CameraOrientRequest {
-                plane_origin: plane.origin,
-                plane_normal: plane.normal,
-                plane_up: plane.y_axis,
+                plane_origin: narrow3(plane.origin),
+                plane_normal: narrow3(plane.normal),
+                plane_up: narrow3(plane.y_axis),
                 centre: None,
             },
         ));
@@ -5831,8 +5835,8 @@ impl SketchWorkbench {
                 let local = edge.moved(&ctx.document.body_placement(BodyId(edge.body)).inverse());
                 sketch::ExternalSource {
                     body: edge.body,
-                    point: local.point,
-                    direction: local.direction,
+                    point: widen3(local.point),
+                    direction: widen3(local.direction),
                     section: false,
                     defining,
                     reference: None,
@@ -5925,8 +5929,8 @@ impl SketchWorkbench {
                 .into_iter()
                 .map(|(point, direction)| sketch::ExternalSource {
                     body,
-                    point: point.map(|v| v as f32),
-                    direction: direction.map(|v| v as f32),
+                    point,
+                    direction,
                     section: false,
                     defining,
                     reference: None,
@@ -5957,8 +5961,8 @@ impl SketchWorkbench {
         let local = face.moved(&ctx.document.body_placement(BodyId(body)).inverse());
         let source = sketch::ExternalSource {
             body,
-            point: local.point,
-            direction: local.normal,
+            point: widen3(local.point),
+            direction: widen3(local.normal),
             section: true,
             defining: !self.construction_mode(),
             reference: None,
@@ -6197,7 +6201,7 @@ impl SketchWorkbench {
             &feature.sketch,
             &mut clip,
             &self.selected,
-            &tools::Similarity::translation(glam::Vec2::ZERO),
+            &tools::Similarity::translation(glam::DVec2::ZERO),
         );
         self.clipboard = Some(clip);
         if cut {
@@ -6239,7 +6243,7 @@ impl SketchWorkbench {
             // The middle of what was copied lands under the cursor.
             Some(cursor) => {
                 let (lo, hi) = clip.geometry.iter().fold(
-                    (glam::Vec2::splat(f32::MAX), glam::Vec2::splat(f32::MIN)),
+                    (glam::DVec2::splat(f64::MAX), glam::DVec2::splat(f64::MIN)),
                     |(lo, hi), g| match g {
                         GeometryElement::Point(p) => {
                             (lo.min(p.position.to_glam()), hi.max(p.position.to_glam()))
@@ -6250,11 +6254,11 @@ impl SketchWorkbench {
                 let anchor = if lo.x <= hi.x {
                     (lo + hi) * 0.5
                 } else {
-                    glam::Vec2::ZERO
+                    glam::DVec2::ZERO
                 };
                 cursor.to_glam() - anchor
             }
-            None => glam::Vec2::new(5.0, 5.0),
+            None => glam::DVec2::new(5.0, 5.0),
         };
         let before: HashSet<Uuid> = feature
             .sketch
@@ -6474,7 +6478,7 @@ fn point_in_rect(p: Vec2D, min: Vec2D, max: Vec2D) -> bool {
 /// the points they share, or ends at one spot, as projected curves meet.
 fn connected_curves(sketch: &Sketch, start: Uuid) -> Vec<Uuid> {
     let at = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
-    let curves: Vec<(Uuid, Vec<glam::Vec2>)> = sketch
+    let curves: Vec<(Uuid, Vec<glam::DVec2>)> = sketch
         .geometry
         .iter()
         .filter_map(|g| {
@@ -6482,11 +6486,9 @@ fn connected_curves(sketch: &Sketch, start: Uuid) -> Vec<Uuid> {
             Some((g.id(), ends.into_iter().filter_map(at).collect()))
         })
         .collect();
-    let meets = |a: &[glam::Vec2], b: &[glam::Vec2]| {
-        a.iter().any(|p| {
-            b.iter()
-                .any(|q| f64::from(p.distance(*q)) < profile::PROJECTED_JOIN)
-        })
+    let meets = |a: &[glam::DVec2], b: &[glam::DVec2]| {
+        a.iter()
+            .any(|p| b.iter().any(|q| p.distance(*q) < profile::PROJECTED_JOIN))
     };
     let mut found = vec![start];
     let mut frontier = vec![start];
@@ -6580,15 +6582,15 @@ fn parse_sketch_index(name: &str) -> Option<u32> {
 
 /// How far past the sketch plane a section view keeps, in mm: a face the
 /// sketch lies on stays whole.
-const SECTION_MARGIN_MM: f32 = 1e-3;
+const SECTION_MARGIN_MM: f64 = 1e-3;
 
 /// The renderer's clipping equation for a section view at `plane`: it
 /// keeps what lies on the far side from `eye`, and the plane itself.
-pub(crate) fn section_equation(plane: &SketchPlane, eye: [f32; 3]) -> [f32; 4] {
-    let n = glam::Vec3::from_array(plane.normal).normalize_or_zero();
-    let o = glam::Vec3::from_array(plane.origin);
+pub(crate) fn section_equation(plane: &SketchPlane, eye: [f64; 3]) -> [f64; 4] {
+    let n = glam::DVec3::from_array(plane.normal).normalize_or_zero();
+    let o = glam::DVec3::from_array(plane.origin);
     // The side the viewer is on is the side cut away.
-    let toward_eye = if n.dot(glam::Vec3::from_array(eye) - o) >= 0.0 {
+    let toward_eye = if n.dot(glam::DVec3::from_array(eye) - o) >= 0.0 {
         n
     } else {
         -n
@@ -6626,7 +6628,7 @@ fn project_source_in(
     // The kernel works in the body's own frame: the plane goes there too,
     // and the projection keeps the sketch's own coordinates.
     let local = placed_plane(plane, &document.body_placement(body).inverse());
-    let f = |v: [f32; 3]| v.map(f64::from);
+    let f = |v: [f64; 3]| v.map(f64::from);
     let plane = kernel_api::ProfilePlane {
         origin: f(local.origin),
         x_axis: f(local.x_axis),
@@ -6792,10 +6794,10 @@ pub(crate) fn placed_plane(
     placement: &core_document::BodyPlacement,
 ) -> SketchPlane {
     SketchPlane {
-        origin: placement.point(plane.origin),
-        normal: placement.direction(plane.normal),
-        x_axis: placement.direction(plane.x_axis),
-        y_axis: placement.direction(plane.y_axis),
+        origin: boundary::place_point(placement, plane.origin),
+        normal: boundary::place_direction(placement, plane.normal),
+        x_axis: boundary::place_direction(placement, plane.x_axis),
+        y_axis: boundary::place_direction(placement, plane.y_axis),
     }
 }
 
@@ -6806,7 +6808,7 @@ fn local_plane(
     stored: &SketchPlane,
     placement: &core_document::BodyPlacement,
 ) -> SketchPlane {
-    let same = |a: [f32; 3], b: [f32; 3], tol: f32| (0..3).all(|k| (a[k] - b[k]).abs() <= tol);
+    let same = |a: [f64; 3], b: [f64; 3], tol: f64| (0..3).all(|k| (a[k] - b[k]).abs() <= tol);
     let placed = placed_plane(stored, placement);
     if same(placed.origin, seen.origin, 1e-4)
         && same(placed.normal, seen.normal, 1e-6)
@@ -6826,20 +6828,20 @@ pub(crate) fn plane_map(
     from: &SketchPlane,
     onto: &SketchPlane,
 ) -> Result<tools::Similarity, &'static str> {
-    use glam::Vec3;
-    let v = |a: [f32; 3]| Vec3::from_array(a);
+    use glam::DVec3;
+    let v = |a: [f64; 3]| DVec3::from_array(a);
     if v(from.normal).cross(v(onto.normal)).length() > 1e-4 {
         return Err("its plane is not parallel to this one");
     }
     let (ox, oy) = (v(onto.x_axis), v(onto.y_axis));
-    let m = glam::Mat2::from_cols(
-        glam::Vec2::new(v(from.x_axis).dot(ox), v(from.x_axis).dot(oy)),
-        glam::Vec2::new(v(from.y_axis).dot(ox), v(from.y_axis).dot(oy)),
+    let m = glam::DMat2::from_cols(
+        glam::DVec2::new(v(from.x_axis).dot(ox), v(from.x_axis).dot(oy)),
+        glam::DVec2::new(v(from.y_axis).dot(ox), v(from.y_axis).dot(oy)),
     );
     let d = v(from.origin) - v(onto.origin);
     Ok(tools::Similarity::linear(
         m,
-        glam::Vec2::new(d.dot(ox), d.dot(oy)),
+        glam::DVec2::new(d.dot(ox), d.dot(oy)),
     ))
 }
 
@@ -6881,7 +6883,7 @@ mod constraint_filter {
     #[test]
     fn from_elements_to_their_constraints_and_back() {
         let mut sketch = Sketch::new("t");
-        let point = |sketch: &mut Sketch, x: f32| {
+        let point = |sketch: &mut Sketch, x: f64| {
             sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))))
         };
         let (a, b, c) = (
@@ -6909,7 +6911,7 @@ mod constraint_filter {
     #[test]
     fn each_filter_lists_its_own() {
         let mut sketch = Sketch::new("t");
-        let point = |sketch: &mut Sketch, x: f32| {
+        let point = |sketch: &mut Sketch, x: f64| {
             sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 0.0))))
         };
         let (a, b, c) = (
@@ -6978,7 +6980,7 @@ mod constraint_filter {
     #[test]
     fn related_reaches_across_a_coincident_corner() {
         let mut sketch = Sketch::new("s");
-        let point = |sketch: &mut Sketch, x: f32, y: f32| {
+        let point = |sketch: &mut Sketch, x: f64, y: f64| {
             sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
         };
         let (a, b) = (point(&mut sketch, 0.0, 0.0), point(&mut sketch, 5.0, 0.0));
@@ -7157,7 +7159,7 @@ mod sketch_picker {
             .collect()
     }
 
-    fn shifted(dx: f32, dy: f32, dz: f32) -> SketchPlane {
+    fn shifted(dx: f64, dy: f64, dz: f64) -> SketchPlane {
         SketchPlane {
             origin: [dx, dy, dz],
             ..SketchPlane::xy()
@@ -7318,7 +7320,7 @@ mod placed_body {
     use super::*;
     use core_document::{BodyPlacement, Document};
 
-    fn close(a: [f32; 3], b: [f32; 3]) -> bool {
+    fn close(a: [f64; 3], b: [f64; 3]) -> bool {
         (0..3).all(|k| (a[k] - b[k]).abs() < 1e-4)
     }
 
@@ -7388,7 +7390,7 @@ mod face_view {
             [n.x, n.y, n.z]
         };
         let clicked = [10.0, 2.0, 5.0];
-        let plane = SketchPlane::from_face(clicked, normal);
+        let plane = SketchPlane::from_face(widen3(clicked), widen3(normal));
         let face = core_document::FaceRef {
             point: clicked,
             normal,
@@ -7415,7 +7417,7 @@ mod face_view {
                 _ => None,
             })
             .expect("the view is turned");
-        assert_eq!(orient.plane_normal, plane.normal);
+        assert_eq!(orient.plane_normal, narrow3(plane.normal));
         assert_eq!(orient.centre, Some(clicked), "on the face clicked");
     }
 
@@ -7426,9 +7428,9 @@ mod face_view {
     fn a_generated_sketch_turns_the_view_to_where_its_body_has_it() {
         let mut doc = core_document::Document::new("t");
         let body = doc.create_body(None);
-        let turn = glam::Quat::from_rotation_x(30f32.to_radians());
+        let turn = glam::DQuat::from_rotation_x(30f64.to_radians());
         let mut placement = doc.body_placement(body);
-        placement.rotation = turn.to_array();
+        placement.rotation = turn.as_quat().to_array();
         placement.translation = [5.0, 0.0, 0.0];
         doc.set_body_placement(body, placement);
         let plane = SketchPlane::from_frame([1.0, 2.0, 10.0], [0.0, 0.0, 1.0], [1.0, 0.0, 0.0]);
@@ -7455,10 +7457,10 @@ mod face_view {
         let recorded = outcome.recorded;
         assert_eq!(recorded[0].id, "sketch.new");
         assert_eq!(recorded[0].args["generator"], "sprocket");
-        let normal = turn * glam::Vec3::Z;
-        assert!(glam::Vec3::from_array(orient.plane_normal).distance(normal) < 1e-5);
-        let centre = turn * glam::Vec3::new(1.0, 2.0, 10.0) + glam::Vec3::new(5.0, 0.0, 0.0);
-        let seen = glam::Vec3::from_array(orient.centre.expect("centred"));
+        let normal = turn * glam::DVec3::Z;
+        assert!(glam::DVec3::from_array(widen3(orient.plane_normal)).distance(normal) < 1e-5);
+        let centre = turn * glam::DVec3::new(1.0, 2.0, 10.0) + glam::DVec3::new(5.0, 0.0, 0.0);
+        let seen = glam::DVec3::from_array(widen3(orient.centre.expect("centred")));
         assert!(seen.distance(centre) < 1e-4, "{seen} is not {centre}");
         let id = wb.active_sketch_id.expect("the sketch is open");
         let made = stored_sketch(&doc, id).unwrap();
@@ -7472,7 +7474,7 @@ mod face_view {
 mod section_view {
     use super::*;
 
-    fn keeps([a, b, c, d]: [f32; 4], p: [f32; 3]) -> bool {
+    fn keeps([a, b, c, d]: [f64; 4], p: [f64; 3]) -> bool {
         a * p[0] + b * p[1] + c * p[2] + d >= 0.0
     }
 
@@ -7638,7 +7640,7 @@ mod external_geometry {
         let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
         assert_eq!(stored.external.len(), 2, "both lines came in");
         assert!(stored.external.values().all(|s| s.section));
-        let xs: Vec<f32> = stored
+        let xs: Vec<f64> = stored
             .geometry
             .iter()
             .filter_map(|g| match g {
@@ -7758,10 +7760,10 @@ mod formulas {
         (doc, wb, id, length_id)
     }
 
-    fn line_length(wb: &SketchWorkbench, doc: &mut Document) -> f32 {
+    fn line_length(wb: &SketchWorkbench, doc: &mut Document) -> f64 {
         let ctx = WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
         let feature = wb.get_active_sketch(&ctx).unwrap();
-        let xs: Vec<f32> = feature
+        let xs: Vec<f64> = feature
             .sketch
             .geometry
             .iter()
@@ -7770,7 +7772,7 @@ mod formulas {
                 _ => None,
             })
             .collect();
-        xs.iter().cloned().fold(f32::MIN, f32::max) - xs.iter().cloned().fold(f32::MAX, f32::min)
+        xs.iter().cloned().fold(f64::MIN, f64::max) - xs.iter().cloned().fold(f64::MAX, f64::min)
     }
 
     #[test]

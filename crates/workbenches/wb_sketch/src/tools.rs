@@ -111,7 +111,7 @@ pub enum ToolState {
     EllipseArcStart {
         center: SnapTarget,
         major: Vec2D,
-        ratio: f32,
+        ratio: f64,
         start: Vec2D,
     },
     /// Arc of parabola or hyperbola: the parabola's vertex or the
@@ -131,7 +131,7 @@ pub enum ToolState {
         kind: ConicKind,
         center: SnapTarget,
         axis: Vec2D,
-        minor: f32,
+        minor: f64,
         start: Vec2D,
     },
     /// Polyline: waiting for the next segment's end. `first` is the chain's
@@ -238,16 +238,16 @@ pub struct ToolParams {
     /// Number of sides for the regular polygon tool (3..=12).
     pub polygon_sides: u32,
     /// Full slot width (distance between the two parallel edges), mm.
-    pub slot_width: f32,
+    pub slot_width: f64,
     /// Corner fillet radius for the sketch fillet tool, mm.
-    pub fillet_radius: f32,
+    pub fillet_radius: f64,
     /// Corner setback for the sketch chamfer tool, mm.
-    pub chamfer_length: f32,
+    pub chamfer_length: f64,
     /// A fillet or chamfer keeps the corner as a construction point on
     /// both curves, with what held it.
     pub corner_keep: bool,
     /// Offset distance for the offset tool, mm.
-    pub offset_distance: f32,
+    pub offset_distance: f64,
     /// The offset rounds the copies' convex corners with arcs.
     pub offset_round: bool,
     /// The offset copies to both sides.
@@ -282,8 +282,8 @@ pub struct ToolParams {
     /// The rectangular array: rows and columns, and the step between them.
     pub array_rows: u32,
     pub array_cols: u32,
-    pub array_dx: f32,
-    pub array_dy: f32,
+    pub array_dx: f64,
+    pub array_dy: f64,
     /// The mirror keeps the original beside its image; off, it moves it.
     pub mirror_keep: bool,
     /// The image holds to the original with symmetric constraints, so it
@@ -475,7 +475,7 @@ fn materialize(sketch: &mut Sketch, target: SnapTarget) -> Uuid {
 /// Positions produced by curve snapping sit numerically ON the curve;
 /// anything else is at least a full snap tolerance away, so a tiny epsilon
 /// re-identifies the snapped curve at materialization time.
-fn curve_attach_eps(snap_tol: f32) -> f32 {
+fn curve_attach_eps(snap_tol: f64) -> f64 {
     (snap_tol * 0.05).max(1e-5)
 }
 
@@ -485,7 +485,7 @@ fn curve_attach_eps(snap_tol: f32) -> f32 {
 /// constraint, or, on none, on a line's extension by a point-on-line, found
 /// again within `curve_attach_eps`. Existing points are reused untouched:
 /// shared ids already imply coincidence.
-fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f32) -> Uuid {
+fn materialize_on_curve(sketch: &mut Sketch, target: SnapTarget, snap_tol: f64) -> Uuid {
     let SnapTarget::New(pos) = target else {
         return materialize(sketch, target);
     };
@@ -580,7 +580,7 @@ pub fn snap_context(state: &ToolState, sketch: &Sketch) -> snap::SnapContext {
 
 /// Where a click in tool `state` at `cursor` lands, and on what:
 /// what the click uses and what the cue before it shows.
-pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f32) -> snap::Snap {
+pub fn snap_at(state: &ToolState, sketch: &Sketch, cursor: Vec2D, tol: f64) -> snap::Snap {
     snap::resolve(sketch, cursor, tol, &snap_context(state, sketch))
 }
 
@@ -593,7 +593,7 @@ pub fn handle_click(
     tool: &str,
     sketch: &mut Sketch,
     cursor: Vec2D,
-    snap_tol: f32,
+    snap_tol: f64,
     params: &ToolParams,
     selected: &HashSet<Uuid>,
 ) -> ToolEffect {

@@ -48,7 +48,7 @@ pub struct Curve {
 }
 
 fn dv(p: crate::sketch::Vec2D) -> DVec2 {
-    DVec2::new(f64::from(p.x), f64::from(p.y))
+    DVec2::new(p.x, p.y)
 }
 
 impl Curve {
@@ -80,7 +80,7 @@ impl Curve {
             GeometryElement::Circle(c) => Self {
                 carrier: Carrier::Circle {
                     c: pos(c.center)?,
-                    r: f64::from(c.radius),
+                    r: c.radius,
                 },
                 span: (0.0, tau),
                 period: tau,
@@ -108,9 +108,9 @@ impl Curve {
                     carrier: Carrier::Ellipse {
                         c: pos(e.center)?,
                         major,
-                        minor: major.perp() * f64::from(e.ratio),
+                        minor: major.perp() * e.ratio,
                     },
-                    span: (f64::from(t0), f64::from(t1)),
+                    span: (t0, t1),
                     period: tau,
                     closed: e.arc.is_none(),
                 }
@@ -347,7 +347,7 @@ mod tests {
     use super::*;
     use crate::sketch::{Ellipse, Line, Point, Vec2D};
 
-    fn pt(sketch: &mut Sketch, x: f32, y: f32) -> uuid::Uuid {
+    fn pt(sketch: &mut Sketch, x: f64, y: f64) -> uuid::Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 

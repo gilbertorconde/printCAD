@@ -108,7 +108,7 @@ fn near(a: [f32; 3], b: [f32; 3]) -> bool {
     (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3)
 }
 
-fn rect_sketch(width: f32, height: f32) -> SketchFeature {
+fn rect_sketch(width: f64, height: f64) -> SketchFeature {
     let mut sketch = Sketch::new("s");
     let corners = [(0.0, 0.0), (width, 0.0), (width, height), (0.0, height)]
         .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
@@ -510,7 +510,10 @@ fn a_sketch_on_a_face_follows_the_face_when_the_pad_grows() {
         name: mesh.face_names[top_id],
     };
     assert_ne!(top.name, 0, "the top is named");
-    let plane = wb_sketch::sketch::SketchPlane::from_face(top.point, top.normal);
+    let plane = wb_sketch::sketch::SketchPlane::from_face(
+        wb_sketch::boundary::widen3(top.point),
+        wb_sketch::boundary::widen3(top.normal),
+    );
     let mut hole = Sketch::new("hole");
     hole.plane = plane;
     let centre = hole.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));
@@ -577,7 +580,10 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
         surface: None,
         name: mesh.face_names[side_id],
     };
-    let plane = wb_sketch::sketch::SketchPlane::from_face(side.point, side.normal);
+    let plane = wb_sketch::sketch::SketchPlane::from_face(
+        wb_sketch::boundary::widen3(side.point),
+        wb_sketch::boundary::widen3(side.normal),
+    );
     let mut sketch = Sketch::new("side");
     sketch.plane = plane;
     let mut sketch = SketchFeature::new(sketch, plane);
@@ -590,7 +596,7 @@ fn a_sketch_on_a_side_face_stays_on_that_face() {
     let placed = SketchFeature::from_json(doc.feature_values(id).unwrap())
         .unwrap()
         .plane;
-    let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3);
+    let near = |a: [f64; 3], b: [f64; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3);
     assert!(
         near(placed.normal, [1.0, 0.0, 0.0]),
         "normal {:?}",
@@ -655,7 +661,10 @@ fn a_sketch_on_a_lent_face_follows_the_lender() {
         surface: None,
         name: mesh.face_names[top_id],
     };
-    let plane = wb_sketch::sketch::SketchPlane::from_face(top.point, top.normal);
+    let plane = wb_sketch::sketch::SketchPlane::from_face(
+        wb_sketch::boundary::widen3(top.point),
+        wb_sketch::boundary::widen3(top.normal),
+    );
     let mut post = Sketch::new("post");
     post.plane = plane;
     let centre = post.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 10.0))));

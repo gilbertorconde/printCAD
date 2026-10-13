@@ -105,7 +105,7 @@ fn rename_all(sketch: &mut Sketch, map: &HashMap<Uuid, Uuid>) {
 }
 
 /// Repair `sketch`, ends within `tolerance` of each other joined.
-pub fn repair(sketch: &mut Sketch, tolerance: f32) -> Repaired {
+pub fn repair(sketch: &mut Sketch, tolerance: f64) -> Repaired {
     let mut done = Repaired::default();
 
     // Ends that nearly meet: each joined into the first of them.
@@ -229,7 +229,7 @@ mod tests {
     use super::*;
     use crate::sketch::{Circle, ConstraintKind, Line, Point, Vec2D};
 
-    fn point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 

@@ -125,24 +125,20 @@ fn drill(
     x[least] = 1.0;
     let along: f64 = (0..3).map(|i| x[i] * normal[i]).sum();
     let x: [f64; 3] = std::array::from_fn(|i| x[i] - normal[i] * along);
-    let plane = SketchPlane::from_frame(
-        first.entry.map(|v| v as f32),
-        normal.map(|v| v as f32),
-        x.map(|v| v as f32),
-    );
+    let plane = SketchPlane::from_frame(first.entry, normal, x);
     let name = DesignWorkbench::next_feature_name(ctx, "HoleSketch");
     let mut sketch = Sketch::new(name.clone());
     sketch.plane = plane;
     for hole in set {
         let d: [f64; 3] = std::array::from_fn(|i| hole.entry[i] - first.entry[i]);
-        let local = |axis: [f32; 3]| (0..3).map(|i| d[i] * f64::from(axis[i])).sum::<f64>() as f32;
+        let local = |axis: [f64; 3]| (0..3).map(|i| d[i] * axis[i]).sum::<f64>();
         let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
             local(plane.x_axis),
             local(plane.y_axis),
         ))));
         sketch.add_geometry(GeometryElement::Circle(Circle::new(
             centre,
-            (hole.diameter / 2.0) as f32,
+            hole.diameter / 2.0,
         )));
     }
     let sketch_id = ctx

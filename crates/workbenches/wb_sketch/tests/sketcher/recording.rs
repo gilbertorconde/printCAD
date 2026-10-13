@@ -448,7 +448,7 @@ type Summary = (Vec<(i64, i64)>, Vec<&'static str>, Vec<String>);
 
 /// Every sketch of a document by name, with its plane and what it holds.
 fn all_sketches(doc: &Document) -> Vec<(String, [i64; 9], Summary)> {
-    let r = |v: f32| (v * 1000.0).round() as i64;
+    let r = |v: f64| (v * 1000.0).round() as i64;
     let mut out: Vec<_> = doc
         .feature_tree()
         .all_nodes()

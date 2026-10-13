@@ -367,7 +367,7 @@ fn feature_of(made: &Value) -> core_document::FeatureId {
 
 /// A square sketch, `side` across from its corner at the origin, on a body
 /// placed at `at`.
-fn square_sketch(document: &mut Document, side: f32, at: [f32; 3]) -> core_document::FeatureId {
+fn square_sketch(document: &mut Document, side: f64, at: [f32; 3]) -> core_document::FeatureId {
     use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, Vec2D};
     let body = document.create_body(Some("Stock".into()));
     document.set_body_placement(

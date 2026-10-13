@@ -253,7 +253,7 @@ fn base_plane(generator: &Generator) -> (SketchPlane, &'static str) {
 }
 
 /// The plane of a face, centred on `point` of it.
-fn face_plane(point: [f32; 3], normal: [f32; 3]) -> SketchPlane {
+fn face_plane(point: [f64; 3], normal: [f64; 3]) -> SketchPlane {
     let frame = SketchPlane::from_face(point, normal);
     SketchPlane::from_frame(point, frame.normal, frame.x_axis)
 }
@@ -333,10 +333,10 @@ pub(crate) fn command(
         );
         match args.get("along").filter(|v| !v.is_null()) {
             Some(along) => {
-                let along = glam::Vec3::from_array(vector3(Some(along), "along")?);
-                let n = glam::Vec3::from_array(plane.normal);
+                let along = glam::DVec3::from_array(vector3(Some(along), "along")?);
+                let n = glam::DVec3::from_array(plane.normal);
                 let x = (along - n * along.dot(n)).normalize_or_zero();
-                if x == glam::Vec3::ZERO {
+                if x == glam::DVec3::ZERO {
                     return Err(CommandError::bad("along", "must run across the face"));
                 }
                 SketchPlane::from_frame(plane.origin, plane.normal, x.to_array())
@@ -358,7 +358,7 @@ pub(crate) fn command(
 }
 
 /// `{x, y, z}` or `[x, y, z]`.
-fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> {
+fn vector3(value: Option<&Value>, name: &str) -> Result<[f64; 3], CommandError> {
     let bad = || CommandError::bad(name, "must be {x, y, z}");
     let parts = match value {
         Some(Value::Array(v)) if v.len() == 3 => [v[0].as_f64(), v[1].as_f64(), v[2].as_f64()],
@@ -366,7 +366,7 @@ fn vector3(value: Option<&Value>, name: &str) -> Result<[f32; 3], CommandError> 
         _ => return Err(bad()),
     };
     match parts {
-        [Some(x), Some(y), Some(z)] => Ok([x as f32, y as f32, z as f32]),
+        [Some(x), Some(y), Some(z)] => Ok([x, y, z]),
         _ => Err(bad()),
     }
 }

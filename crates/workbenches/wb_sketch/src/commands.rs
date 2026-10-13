@@ -2122,18 +2122,18 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 return Err(CommandError::bad("sketch", "is not attached to a datum"));
             };
             if let Some(v) = a.opt_number("offset")? {
-                support.offset = v as f32;
+                support.offset = v;
             }
             if let Some(v) = args.get("shift").filter(|v| !v.is_null()) {
                 let pair = v
                     .as_array()
                     .filter(|p| p.len() == 2)
-                    .and_then(|p| Some([p[0].as_f64()? as f32, p[1].as_f64()? as f32]))
+                    .and_then(|p| Some([p[0].as_f64()?, p[1].as_f64()?]))
                     .ok_or_else(|| CommandError::bad("shift", "must be {x, y}"))?;
                 support.shift = pair;
             }
             if let Some(v) = a.opt_number("turn")? {
-                support.turn = v as f32;
+                support.turn = v;
             }
             let values = ctx
                 .document
@@ -2217,7 +2217,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             return save(ctx, sketch_id, feature, Value::Null);
         }
         "sketch.repair" => {
-            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01) as f32;
+            let tolerance = a.opt_number("tolerance")?.unwrap_or(0.01);
             let done = crate::repair::repair(&mut feature.sketch, tolerance);
             crate::solver::solve(&mut feature.sketch);
             let words = done.describe();
@@ -2327,10 +2327,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let (x, y) = (a.number("x")?, a.number("y")?);
             let at = |deg: f64| {
                 let t = deg.to_radians();
-                vec(
-                    x + f64::from(radius) * t.cos(),
-                    y + f64::from(radius) * t.sin(),
-                )
+                vec(x + radius * t.cos(), y + radius * t.sin())
             };
             let (start, end) = (a.number("start")?, a.number("end")?);
             let centre = point_at(sketch, vec(x, y));
@@ -2352,7 +2349,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
         }
         "sketch.set_value" => {
             let id = a.id("constraint")?;
-            let value = a.number("value")? as f32;
+            let value = a.number("value")?;
             let constraint = sketch
                 .constraints
                 .iter_mut()
@@ -2394,8 +2391,8 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 &items,
                 count("rows")?,
                 count("cols")?,
-                a.number("dx")? as f32,
-                a.number("dy")? as f32,
+                a.number("dx")?,
+                a.number("dy")?,
                 a.opt_bool("linked")?.unwrap_or(false),
             );
             if !effect.changed {
@@ -2547,7 +2544,7 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                 .collect();
             let tolerance = a
                 .opt_number("tolerance")?
-                .map_or(crate::tools::JOIN_TOLERANCE, |t| t as f32);
+                .unwrap_or(crate::tools::JOIN_TOLERANCE);
             if tolerance <= 0.0 {
                 return Err(CommandError::bad("tolerance", "must be more than 0"));
             }
@@ -2678,22 +2675,22 @@ fn place_image(
     mut image: crate::sketch::ReferenceImage,
 ) -> Result<crate::sketch::ReferenceImage, CommandError> {
     if let Some(x) = a.opt_number("x")? {
-        image.center.x = x as f32;
+        image.center.x = x;
     }
     if let Some(y) = a.opt_number("y")? {
-        image.center.y = y as f32;
+        image.center.y = y;
     }
     if let Some(width) = a.opt_number("width")? {
         if !(width > 0.0 && width.is_finite()) {
             return Err(CommandError::bad("width", "must be more than zero"));
         }
-        image.width = width as f32;
+        image.width = width;
     }
     if let Some(angle) = a.opt_number("angle")? {
-        image.angle_deg = angle as f32;
+        image.angle_deg = angle;
     }
     if let Some(opacity) = a.opt_number("opacity")? {
-        image.opacity = (opacity as f32).clamp(0.0, 1.0);
+        image.opacity = opacity.clamp(0.0, 1.0);
     }
     Ok(image)
 }
@@ -2762,7 +2759,7 @@ fn add_image(a: &Args, ctx: &mut WorkbenchRuntimeContext) -> CommandResult {
 }
 
 /// How wide a picture lies when nothing says, mm.
-const DEFAULT_IMAGE_WIDTH_MM: f32 = 100.0;
+const DEFAULT_IMAGE_WIDTH_MM: f64 = 100.0;
 
 /// A sketch of the DXF drawing at `path`, placed as `sketch.new` places
 /// one and named after the file unless `name` says otherwise.
@@ -2843,7 +2840,7 @@ fn add_sketch(
         plane = custom_plane(a)?;
     }
     let mut datum_body = None;
-    let offset = a.opt_number("offset")?.unwrap_or(0.0) as f32;
+    let offset = a.opt_number("offset")?.unwrap_or(0.0);
     let mut support = None;
     if let Some(on) = a.opt_id("on")? {
         let (on_datum, body) = datum_support(ctx, FeatureId(on), a.opt_string("plane")?, offset)?;
@@ -2954,13 +2951,13 @@ fn load(ctx: &WorkbenchRuntimeContext, id: FeatureId) -> Result<SketchFeature, C
 }
 
 fn vec(x: f64, y: f64) -> Vec2D {
-    Vec2D::new(x as f32, y as f32)
+    Vec2D::new(x, y)
 }
 
-fn positive(a: &Args, name: &str) -> Result<f32, CommandError> {
+fn positive(a: &Args, name: &str) -> Result<f64, CommandError> {
     let value = a.number(name)?;
     if value > 0.0 {
-        Ok(value as f32)
+        Ok(value)
     } else {
         Err(CommandError::bad(name, "must be more than zero"))
     }
@@ -3019,7 +3016,7 @@ fn datum_support(
     ctx: &WorkbenchRuntimeContext,
     id: FeatureId,
     which: Option<&str>,
-    offset: f32,
+    offset: f64,
 ) -> Result<(OnDatum, Option<BodyId>), CommandError> {
     let not_a_plane = || CommandError::bad("on", "is not a datum plane or coordinate system");
     let node = ctx.document.get_feature_meta(id).ok_or_else(not_a_plane)?;
@@ -3086,7 +3083,7 @@ fn custom_plane(a: &Args) -> Result<SketchPlane, CommandError> {
         "x_axis",
     )?;
     let y_axis = cross(normal, x_axis);
-    let f = |v: [f64; 3]| v.map(|c| c as f32);
+    let f = |v: [f64; 3]| v.map(|c| c);
     Ok(SketchPlane {
         origin: f(origin),
         normal: f(normal),
@@ -3148,13 +3145,13 @@ fn text_options(a: &Args, spec: &mut crate::text::TextSpec) -> Result<(), Comman
         if size <= 0.0 {
             return Err(CommandError::bad("size", "must be more than 0"));
         }
-        spec.size = size as f32;
+        spec.size = size;
     }
     if let Some(v) = a.opt_number("spacing")? {
-        spec.spacing = v as f32;
+        spec.spacing = v;
     }
     if let Some(v) = a.opt_number("angle")? {
-        spec.angle = v as f32;
+        spec.angle = v;
     }
     Ok(())
 }
@@ -3310,7 +3307,7 @@ pub(crate) fn paste(sketch: &mut Sketch, clip: &Sketch, by: Vec2D) -> usize {
         clip,
         sketch,
         &all,
-        &crate::tools::Similarity::translation(glam::Vec2::new(by.x, by.y)),
+        &crate::tools::Similarity::translation(glam::DVec2::new(by.x, by.y)),
     )
 }
 
@@ -3322,7 +3319,7 @@ pub(crate) fn switch_circle_dimension(
     sketch: &mut Sketch,
     id: Uuid,
     diameter: bool,
-) -> Option<f32> {
+) -> Option<f64> {
     let c = sketch.constraints.iter_mut().find(|c| c.id == id)?;
     let (kind, scale) = match (&c.kind, diameter) {
         (ConstraintKind::Radius { circle, radius }, true) => (
@@ -3356,7 +3353,7 @@ pub(crate) fn switch_dimension(
     sketch: &mut Sketch,
     id: Uuid,
     diameter: bool,
-) -> Option<f32> {
+) -> Option<f64> {
     let scale = switch_circle_dimension(sketch, id, diameter)?;
     let key = id.to_string();
     if let Some(formula) = document.feature_formula(sketch_id, &key) {
@@ -3370,7 +3367,7 @@ pub(crate) fn switch_dimension(
 
 /// `formula` giving `scale` times what it gave, undoing the opposite
 /// switch rather than stacking on it.
-pub(crate) fn scaled_formula(formula: &str, scale: f32) -> String {
+pub(crate) fn scaled_formula(formula: &str, scale: f64) -> String {
     let formula = formula.trim();
     let (undo, apply) = if scale > 1.0 {
         (" / 2", " * 2")
@@ -3429,7 +3426,7 @@ pub(crate) fn merge(
     crate::copy_sketch_into(
         &base.sketch,
         &mut merged,
-        &crate::tools::Similarity::translation(glam::Vec2::ZERO),
+        &crate::tools::Similarity::translation(glam::DVec2::ZERO),
     );
     for other in with {
         let from = placed(document, *other)
@@ -3455,7 +3452,7 @@ pub(crate) fn mirror_sketch(
         .iter()
         .map(GeometryElement::id)
         .collect();
-    let xf = crate::tools::Similarity::mirror_about(glam::Vec2::ZERO, glam::Vec2::Y);
+    let xf = crate::tools::Similarity::mirror_about(glam::DVec2::ZERO, glam::DVec2::Y);
     crate::tools::copy_from(&base.sketch, &mut mirrored, &all, &xf);
     new_beside(document, sketch, mirrored)
 }
@@ -3502,9 +3499,9 @@ fn external_sources(
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or_else(bad)?;
-            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+            let v = |name: &str| -> Result<[f64; 3], CommandError> {
                 let v = vector3(edge.get(name), "edges")?;
-                Ok(v.map(|c| c as f32))
+                Ok(v.map(|c| c))
             };
             Ok(crate::sketch::ExternalSource {
                 body,
@@ -3531,9 +3528,9 @@ fn section_sources(
                 .and_then(Value::as_str)
                 .and_then(|s| Uuid::parse_str(s).ok())
                 .ok_or_else(bad)?;
-            let v = |name: &str| -> Result<[f32; 3], CommandError> {
+            let v = |name: &str| -> Result<[f64; 3], CommandError> {
                 let v = vector3(face.get(name), "faces")?;
-                Ok(v.map(|c| c as f32))
+                Ok(v.map(|c| c))
             };
             Ok(crate::sketch::ExternalSource {
                 body,
@@ -3680,7 +3677,7 @@ fn draw(
         return Err(CommandError::bad("tool", format!("has no tool `{name}`")));
     }
     let settings = step::StepSettings {
-        tol: a.opt_number("tolerance")?.unwrap_or(1e-3) as f32,
+        tol: a.opt_number("tolerance")?.unwrap_or(1e-3),
         params: step::params_from_json(args.get("params"))
             .map_err(|e| CommandError::bad("params", e))?,
         construction: a.opt_bool("construction")?.unwrap_or(false),
@@ -3823,7 +3820,7 @@ const DRAW_TOOLS: &[&str] = &[
 
 /// One click of `sketch.draw`: where, the values typed at it, and whether
 /// they become constraints.
-type Click = (Vec2D, Vec<(crate::ovp::FieldKind, f32)>, bool);
+type Click = (Vec2D, Vec<(crate::ovp::FieldKind, f64)>, bool);
 
 /// Read one click of `sketch.draw`.
 fn click_of(click: &Value) -> Result<Click, CommandError> {
@@ -3840,7 +3837,7 @@ fn click_of(click: &Value) -> Result<Click, CommandError> {
                 let v = v
                     .as_f64()
                     .ok_or_else(|| CommandError::bad("points", "typed values are numbers"))?;
-                typed.push((kind, v as f32));
+                typed.push((kind, v));
             }
         }
         constrain = fields
@@ -3892,7 +3889,7 @@ pub(crate) fn constrain(
         if let Some(value) = value
             && crate::sketch::dimension_value(&k).is_some()
         {
-            k = crate::sketch::with_dimension_value(&k, value as f32);
+            k = crate::sketch::with_dimension_value(&k, value);
         }
         made.push(sketch.add_constraint(k).to_string());
     }
@@ -4530,7 +4527,7 @@ mod tests {
         .unwrap();
         let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
         let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
-        let near = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
+        let near = |a: [f64; 3], b: [f64; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
         assert!(
             near(feature.plane.origin, [5.0, 0.0, 3.0]),
             "{:?}",
@@ -4607,7 +4604,7 @@ mod tests {
         assert_eq!(wires.len(), 1);
         let corner = copied.geometry.iter().any(|g| matches!(
             g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(10.0, 6.0)).length() < 1e-4
         ));
         assert!(
             corner,
@@ -4635,7 +4632,7 @@ mod tests {
         let with_datum = sketch_of(&doc, &second);
         let crossing = with_datum.geometry.iter().any(|g| matches!(
             g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(10.0, 0.0)).length() < 1e-3
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(10.0, 0.0)).length() < 1e-3
         ));
         assert!(
             crossing,
@@ -4658,7 +4655,7 @@ mod tests {
         let mut edited = SketchFeature::from_json(&data).unwrap();
         for g in &mut edited.sketch.geometry {
             if let GeometryElement::Point(p) = g
-                && (p.position.to_glam() - glam::Vec2::new(10.0, 6.0)).length() < 1e-4
+                && (p.position.to_glam() - glam::DVec2::new(10.0, 6.0)).length() < 1e-4
             {
                 p.position = crate::sketch::Vec2D::new(12.0, 7.0);
             }
@@ -4676,7 +4673,7 @@ mod tests {
         }
         let moved = feature.sketch.geometry.iter().any(|g| matches!(
             g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::Vec2::new(12.0, 7.0)).length() < 1e-4
+            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(12.0, 7.0)).length() < 1e-4
         ));
         assert!(moved, "the copy's corner followed");
     }
@@ -4688,7 +4685,7 @@ mod tests {
             .sketch
     }
 
-    fn line_length(sketch: &Sketch, id: &Value) -> f32 {
+    fn line_length(sketch: &Sketch, id: &Value) -> f64 {
         let id = Uuid::parse_str(id.as_str().unwrap()).unwrap();
         let Some(GeometryElement::Line(l)) = sketch.get_geometry(id) else {
             panic!("not a line")

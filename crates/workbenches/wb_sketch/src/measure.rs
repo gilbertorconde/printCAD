@@ -4,7 +4,7 @@
 //! ratio of sines a refraction holds. The solver states the same relations
 //! over its own variables; these read them off the sketch as it is.
 
-use glam::Vec2;
+use glam::DVec2;
 use uuid::Uuid;
 
 use crate::sketch::{GeometryElement, Reference, Sketch};
@@ -14,9 +14,9 @@ use sketch_solver::contact::circles_nest;
 /// a segment, or a whole circle (an arc counts as its circle).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Item {
-    Point(Vec2),
-    Line(Vec2, Vec2),
-    Circle(Vec2, f32),
+    Point(DVec2),
+    Line(DVec2, DVec2),
+    Circle(DVec2, f64),
 }
 
 /// `id` as an [`Item`]: points and the origin, lines and the axes,
@@ -24,8 +24,8 @@ pub enum Item {
 pub fn item(sketch: &Sketch, id: Uuid) -> Option<Item> {
     if let Some(reference) = Reference::of(id) {
         return Some(match reference.direction() {
-            None => Item::Point(Vec2::ZERO),
-            Some(d) => Item::Line(Vec2::ZERO, d.to_glam()),
+            None => Item::Point(DVec2::ZERO),
+            Some(d) => Item::Line(DVec2::ZERO, d.to_glam()),
         });
     }
     let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
@@ -39,7 +39,7 @@ pub fn item(sketch: &Sketch, id: Uuid) -> Option<Item> {
 }
 
 /// Length along an arc, start to end counter-clockwise.
-pub fn arc_length(sketch: &Sketch, arc: Uuid) -> Option<f32> {
+pub fn arc_length(sketch: &Sketch, arc: Uuid) -> Option<f64> {
     let GeometryElement::Arc(a) = sketch.get_geometry(arc)? else {
         return None;
     };
@@ -53,11 +53,11 @@ pub fn arc_length(sketch: &Sketch, arc: Uuid) -> Option<f32> {
 /// The gap between two items: its length and the nearest point on each.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gap {
-    pub distance: f32,
+    pub distance: f64,
     /// On the first item.
-    pub a: Vec2,
+    pub a: DVec2,
     /// On the second item.
-    pub b: Vec2,
+    pub b: DVec2,
 }
 
 /// The shortest distance between two items (see [`Item`]), for the pairs a
@@ -77,11 +77,11 @@ pub fn gap(sketch: &Sketch, id1: Uuid, id2: Uuid) -> Option<Gap> {
     }
 }
 
-fn unit_or_x(v: Vec2) -> Vec2 {
-    v.try_normalize().unwrap_or(Vec2::X)
+fn unit_or_x(v: DVec2) -> DVec2 {
+    v.try_normalize().unwrap_or(DVec2::X)
 }
 
-fn foot_on_line(p: Vec2, s: Vec2, e: Vec2) -> Vec2 {
+fn foot_on_line(p: DVec2, s: DVec2, e: DVec2) -> DVec2 {
     let d = e - s;
     let len_sq = d.length_squared();
     if len_sq < 1e-12 {
@@ -130,7 +130,7 @@ fn gap_ordered(i1: Item, i2: Item) -> Option<Gap> {
         }
         (Item::Circle(c1, r1), Item::Circle(c2, r2)) => {
             let d = (c2 - c1).length();
-            if circles_nest(f64::from(d), f64::from(r1), f64::from(r2)) {
+            if circles_nest(d, r1, r2) {
                 // Along the line from the larger circle's center through
                 // the smaller's: where the smaller comes nearest the rim.
                 let (big_c, big_r, small_c, small_r) = if r1 >= r2 {
@@ -166,7 +166,7 @@ fn gap_ordered(i1: Item, i2: Item) -> Option<Gap> {
 /// The points along a spline, or along an arc of a parabola or hyperbola
 /// between its ends: fine enough that their polyline's length is the
 /// curve's.
-pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<Vec2>> {
+pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<DVec2>> {
     use crate::sketch::{ConicKind, GeometryElement};
     const STEPS: usize = 256;
     let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
@@ -176,7 +176,7 @@ pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<Vec2>> {
             let control = b
                 .control_points
                 .iter()
-                .map(|id| pos(*id).map(|p| [f64::from(p.x), f64::from(p.y)]))
+                .map(|id| pos(*id).map(|p| [p.x, p.y]))
                 .collect::<Option<Vec<_>>>()?;
             Some(
                 crate::spline::sample_basis(&basis, &control, STEPS)
@@ -191,21 +191,21 @@ pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<Vec2>> {
             let u = k.axis.to_glam() / a;
             let w = u.perp();
             // The parameter of a point on the curve, in its own frame.
-            let param = |p: Vec2| {
+            let param = |p: DVec2| {
                 let across = (p - c).dot(w);
                 match k.kind {
                     ConicKind::Hyperbola => (across / k.minor.max(1e-9)).asinh(),
                     ConicKind::Parabola => across,
                 }
             };
-            let at = |t: f32| match k.kind {
+            let at = |t: f64| match k.kind {
                 ConicKind::Hyperbola => c + u * (a * t.cosh()) + w * (k.minor * t.sinh()),
                 ConicKind::Parabola => c + u * (t * t / (4.0 * a)) + w * t,
             };
             let (t0, t1) = (param(pos(k.start)?), param(pos(k.end)?));
             Some(
                 (0..=STEPS)
-                    .map(|i| at(t0 + (t1 - t0) * i as f32 / STEPS as f32))
+                    .map(|i| at(t0 + (t1 - t0) * i as f64 / STEPS as f64))
                     .collect(),
             )
         }
@@ -214,14 +214,14 @@ pub fn curve_samples(sketch: &Sketch, curve: Uuid) -> Option<Vec<Vec2>> {
 }
 
 /// The length along a spline, or along an arc of a conic between its ends.
-pub fn curve_length(sketch: &Sketch, curve: Uuid) -> Option<f32> {
+pub fn curve_length(sketch: &Sketch, curve: Uuid) -> Option<f64> {
     let pts = curve_samples(sketch, curve)?;
     Some(pts.windows(2).map(|w| (w[1] - w[0]).length()).sum())
 }
 
 /// The angle an arc sweeps counter-clockwise from its start to its end, in
 /// radians (0 to a whole turn).
-pub fn arc_sweep(sketch: &Sketch, arc: Uuid) -> Option<f32> {
+pub fn arc_sweep(sketch: &Sketch, arc: Uuid) -> Option<f64> {
     let crate::sketch::GeometryElement::Arc(a) = sketch.get_geometry(arc)? else {
         return None;
     };
@@ -237,7 +237,7 @@ pub fn angle_three_points(
     point1: Uuid,
     vertex: Uuid,
     point2: Uuid,
-) -> Option<f32> {
+) -> Option<f64> {
     let pos = |id: Uuid| sketch.point_position(id).map(|p| p.to_glam());
     let (a, v, b) = (pos(point1)?, pos(vertex)?, pos(point2)?);
     let (d1, d2) = (a - v, b - v);
@@ -247,23 +247,23 @@ pub fn angle_three_points(
     Some(
         (d1.perp_dot(d2))
             .atan2(d1.dot(d2))
-            .rem_euclid(std::f32::consts::TAU),
+            .rem_euclid(std::f64::consts::TAU),
     )
 }
 
 /// The unit tangent of a curve at `at`: a line's direction start to end, a
 /// circle's or arc's counter-clockwise direction at the point's angle.
-pub fn tangent(sketch: &Sketch, curve: Uuid, at: Vec2) -> Option<Vec2> {
+pub fn tangent(sketch: &Sketch, curve: Uuid, at: DVec2) -> Option<DVec2> {
     match item(sketch, curve)? {
         Item::Line(s, e) => (e - s).try_normalize(),
-        Item::Circle(c, _) => (at - c).try_normalize().map(Vec2::perp),
+        Item::Circle(c, _) => (at - c).try_normalize().map(DVec2::perp),
         Item::Point(_) => None,
     }
 }
 
 /// The signed angle (radians) from `curve1`'s tangent to `curve2`'s at
 /// `point`.
-pub fn angle_at_point(sketch: &Sketch, curve1: Uuid, curve2: Uuid, point: Uuid) -> Option<f32> {
+pub fn angle_at_point(sketch: &Sketch, curve1: Uuid, curve2: Uuid, point: Uuid) -> Option<f64> {
     let at = sketch.point_position(point)?.to_glam();
     let t1 = tangent(sketch, curve1, at)?;
     let t2 = tangent(sketch, curve2, at)?;
@@ -271,7 +271,7 @@ pub fn angle_at_point(sketch: &Sketch, curve1: Uuid, curve2: Uuid, point: Uuid) 
 }
 
 /// A ray's two ends, nearer `at` first.
-pub fn ray_ends(sketch: &Sketch, ray: Uuid, at: Vec2) -> Option<(Vec2, Vec2)> {
+pub fn ray_ends(sketch: &Sketch, ray: Uuid, at: DVec2) -> Option<(DVec2, DVec2)> {
     let Item::Line(s, e) = item(sketch, ray)? else {
         return None;
     };
@@ -292,7 +292,7 @@ pub fn refraction_ratio(
     ray2: Uuid,
     interface: Uuid,
     point: Uuid,
-) -> Option<f32> {
+) -> Option<f64> {
     let at = sketch.point_position(point)?.to_glam();
     let t = tangent(sketch, interface, at)?;
     let (near1, far1) = ray_ends(sketch, ray1, at)?;
@@ -307,11 +307,11 @@ mod tests {
     use super::*;
     use crate::sketch::{Arc, Circle, Line, Point, Vec2D};
 
-    fn point(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn point(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 
-    fn circle(sketch: &mut Sketch, x: f32, y: f32, r: f32) -> Uuid {
+    fn circle(sketch: &mut Sketch, x: f64, y: f64, r: f64) -> Uuid {
         let c = point(sketch, x, y);
         sketch.add_geometry(GeometryElement::Circle(Circle::new(c, r)))
     }
@@ -324,7 +324,7 @@ mod tests {
         let e = point(&mut sketch, 0.0, 2.0);
         let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 2.0)));
         let len = arc_length(&sketch, arc).unwrap();
-        assert!((len - std::f32::consts::PI).abs() < 1e-5, "{len}");
+        assert!((len - std::f64::consts::PI).abs() < 1e-5, "{len}");
     }
 
     #[test]
@@ -334,15 +334,15 @@ mod tests {
         let b = circle(&mut sketch, 10.0, 0.0, 3.0);
         let g = gap(&sketch, a, b).unwrap();
         assert!((g.distance - 5.0).abs() < 1e-5);
-        assert!((g.a - Vec2::new(2.0, 0.0)).length() < 1e-5);
-        assert!((g.b - Vec2::new(7.0, 0.0)).length() < 1e-5);
+        assert!((g.a - DVec2::new(2.0, 0.0)).length() < 1e-5);
+        assert!((g.b - DVec2::new(7.0, 0.0)).length() < 1e-5);
 
         let inner = circle(&mut sketch, 1.0, 0.0, 1.0);
         let big = circle(&mut sketch, 0.0, 0.0, 5.0);
         let g = gap(&sketch, inner, big).unwrap();
         assert!((g.distance - 3.0).abs() < 1e-5, "{g:?}");
-        assert!((g.a - Vec2::new(2.0, 0.0)).length() < 1e-5, "on the inner");
-        assert!((g.b - Vec2::new(5.0, 0.0)).length() < 1e-5, "on the outer");
+        assert!((g.a - DVec2::new(2.0, 0.0)).length() < 1e-5, "on the inner");
+        assert!((g.b - DVec2::new(5.0, 0.0)).length() < 1e-5, "on the outer");
     }
 
     #[test]
@@ -354,10 +354,10 @@ mod tests {
         let c = circle(&mut sketch, 0.0, 0.0, 2.0);
         let g = gap(&sketch, line, c).unwrap();
         assert!((g.distance - 4.0).abs() < 1e-5);
-        assert!((g.a - Vec2::new(0.0, 6.0)).length() < 1e-5);
-        assert!((g.b - Vec2::new(0.0, 2.0)).length() < 1e-5);
+        assert!((g.a - DVec2::new(0.0, 6.0)).length() < 1e-5);
+        assert!((g.b - DVec2::new(0.0, 2.0)).length() < 1e-5);
         let g = gap(&sketch, c, line).unwrap();
-        assert!((g.a - Vec2::new(0.0, 2.0)).length() < 1e-5, "order kept");
+        assert!((g.a - DVec2::new(0.0, 2.0)).length() < 1e-5, "order kept");
         let g = gap(&sketch, line, line).unwrap();
         assert!(g.distance.abs() < 1e-5, "a line is no distance from itself");
     }
@@ -373,7 +373,7 @@ mod tests {
         let line = sketch.add_geometry(GeometryElement::Line(Line::new(s, far)));
         let angle = angle_at_point(&sketch, line, arc, s).unwrap();
         assert!(
-            (angle - std::f32::consts::FRAC_PI_2).abs() < 1e-5,
+            (angle - std::f64::consts::FRAC_PI_2).abs() < 1e-5,
             "{angle}"
         );
     }

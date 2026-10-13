@@ -71,8 +71,8 @@ pub(crate) fn show(ui: &mut egui::Ui, ctx: &mut WorkbenchRuntimeContext, id: Fea
                 })
                 .inner;
             if picked && let Some((_, pitch, roller)) = SPROCKET_CHAINS.get(chosen) {
-                set(&mut data, "/generator/Sprocket/pitch", f64::from(*pitch));
-                set(&mut data, "/generator/Sprocket/roller", f64::from(*roller));
+                set(&mut data, "/generator/Sprocket/pitch", *pitch);
+                set(&mut data, "/generator/Sprocket/roller", *roller);
                 edited.extend(["pitch".to_string(), "roller".to_string()]);
             }
         }
@@ -309,13 +309,13 @@ fn measured(ui: &mut egui::Ui, generator: &Generator) {
 /// The shaft's loads, each a field, and what they do to it; the loads
 /// as edited when a field changed.
 fn loads_card(ui: &mut egui::Ui, spec: &ShaftSpec) -> Option<ShaftLoads> {
-    let length: f32 = spec.sections.iter().map(|s| s.length).sum();
+    let length: f64 = spec.sections.iter().map(|s| s.length).sum();
     let mut loads = spec.loads.clone();
     let mut changed = false;
     ui.add_space(SPACE_2);
     Card::new().show(ui, |ui| {
         overline(ui, "Loads");
-        let mut row = |ui: &mut egui::Ui, label: &str, value: &mut f32, unit: &'static str| {
+        let mut row = |ui: &mut egui::Ui, label: &str, value: &mut f64, unit: &'static str| {
             ui.horizontal(|ui| {
                 label_cell(ui, label);
                 changed |= QtyField::new(value).unit(unit).speed(0.5).show(ui);

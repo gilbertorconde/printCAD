@@ -12,6 +12,7 @@ use ui_kit::widgets::{
 };
 use ui_kit::{mono, sans};
 
+use crate::boundary::widen3;
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
 use crate::solver;
 use crate::style::{constraint_icon, element_icon, element_kind, element_name};
@@ -344,12 +345,12 @@ impl SketchWorkbench {
             {
                 // On the face itself, not the drawn mesh the click met.
                 let face = face.on_its_plane();
-                let mut plane = SketchPlane::from_face(face.point, face.normal);
+                let mut plane = SketchPlane::from_face(widen3(face.point), widen3(face.normal));
                 // A generator stands where the face was clicked, a keyway
                 // running along the shaft it is clicked on.
                 if let Some(made_by) = &made_by {
                     let x_axis = made_by.runs_along(&face).unwrap_or(plane.x_axis);
-                    plane = SketchPlane::from_frame(face.point, plane.normal, x_axis);
+                    plane = SketchPlane::from_frame(widen3(face.point), plane.normal, x_axis);
                 }
                 // A face of the sketch's own body, or one it borrows, is
                 // followed.
@@ -415,9 +416,9 @@ impl SketchWorkbench {
                             {
                                 chosen = Some((
                                     SketchPlane::from_frame(
-                                        frame.origin,
-                                        frame.normal,
-                                        frame.x_axis,
+                                        widen3(frame.origin),
+                                        widen3(frame.normal),
+                                        widen3(frame.x_axis),
                                     ),
                                     Some(crate::feature::DatumSupport {
                                         datum: datum_id,
@@ -437,7 +438,11 @@ impl SketchWorkbench {
                                     .clicked()
                                 {
                                     chosen = Some((
-                                        SketchPlane::from_frame(at.origin, at.normal, at.x_axis),
+                                        SketchPlane::from_frame(
+                                            widen3(at.origin),
+                                            widen3(at.normal),
+                                            widen3(at.x_axis),
+                                        ),
                                         Some(crate::feature::DatumSupport {
                                             datum: datum_id,
                                             plane: Some(plane.to_string()),
@@ -1093,7 +1098,7 @@ impl SketchWorkbench {
                         &crate::images::Calibration {
                             from,
                             to,
-                            length: q.value as f32,
+                            length: q.value,
                             straighten: calibrating.straighten,
                             centre: calibrating.centre,
                         },
@@ -2051,7 +2056,7 @@ impl SketchWorkbench {
         };
         if let Some(edit) = self.dim_edit.as_mut() {
             let text = edit.text.trim();
-            edit.text = match text.parse::<f32>() {
+            edit.text = match text.parse::<f64>() {
                 Ok(value) => crate::glyphs::fmt_num(value * scale),
                 Err(_) if text.is_empty() => String::new(),
                 Err(_) => crate::commands::scaled_formula(text, scale),
@@ -2189,7 +2194,7 @@ fn dimension_value_cell(
         };
         let field = ui_kit::widgets::FormulaField::new(
             egui::Id::new(("dimension", constraint.id)),
-            f64::from(value),
+            value,
             &host,
         )
         .formula(formula)

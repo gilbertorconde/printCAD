@@ -114,7 +114,7 @@ pub struct SnapContext {
 /// extension. The one
 /// function every drawing click and the cue before it go through, so what
 /// is shown is where the click lands.
-pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f32, cx: &SnapContext) -> Snap {
+pub fn resolve(sketch: &Sketch, cursor: Vec2D, tol: f64, cx: &SnapContext) -> Snap {
     let bare = Snap {
         target: SnapTarget::New(cursor),
         pos: cursor,
@@ -236,11 +236,11 @@ fn along_a_line(
     sketch: &Sketch,
     from: Vec2D,
     cursor: Vec2D,
-    tol: f32,
+    tol: f64,
     exclude: &[Uuid],
 ) -> Option<(Uuid, Vec2D, SnapKind)> {
     let (f, d) = (from.to_glam(), (cursor - from).to_glam());
-    let mut best: Option<(Uuid, glam::Vec2, SnapKind, f32)> = None;
+    let mut best: Option<(Uuid, glam::DVec2, SnapKind, f64)> = None;
     for geom in &sketch.geometry {
         let GeometryElement::Line(line) = geom else {
             continue;
@@ -277,7 +277,7 @@ fn along_a_line(
 /// Where `pos` falls on line `geom`'s extension past one of its ends, no
 /// further out than half the line's length: the foot and how far `pos` is
 /// from it. `None` for any other element, and along the line itself.
-pub fn extension_foot(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<(Vec2D, f32)> {
+pub fn extension_foot(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<(Vec2D, f64)> {
     let GeometryElement::Line(line) = geom else {
         return None;
     };
@@ -303,12 +303,12 @@ fn square_or_touching(
     sketch: &Sketch,
     from: Vec2D,
     cursor: Vec2D,
-    tol: f32,
+    tol: f64,
 ) -> Option<(Uuid, Vec2D, SnapKind)> {
     use crate::geom2d::{Prim, prim_of, within};
     let (f, c) = (from.to_glam(), cursor.to_glam());
-    let mut best: Option<(Uuid, glam::Vec2, SnapKind, f32)> = None;
-    let mut offer = |id: Uuid, p: glam::Vec2, kind: SnapKind| {
+    let mut best: Option<(Uuid, glam::DVec2, SnapKind, f64)> = None;
+    let mut offer = |id: Uuid, p: glam::DVec2, kind: SnapKind| {
         let d = (p - c).length();
         // A foot or a touch at the start itself draws nothing.
         if d <= tol && (p - f).length() > tol && best.is_none_or(|(.., bd)| d < bd) {
@@ -343,9 +343,9 @@ fn square_or_touching(
                     // the line from `from`.
                     let angle = (r / d).acos();
                     let base = away.y.atan2(away.x);
-                    for side in [-1.0f32, 1.0] {
+                    for side in [-1.0f64, 1.0] {
                         let t = base + side * angle;
-                        let p = centre + glam::Vec2::new(t.cos(), t.sin()) * r;
+                        let p = centre + glam::DVec2::new(t.cos(), t.sin()) * r;
                         if within(&prim, p) {
                             offer(geom.id(), p, SnapKind::Tangent);
                         }
@@ -358,11 +358,11 @@ fn square_or_touching(
 }
 
 /// How far the axes reach when crossed with other curves.
-const AXIS_REACH: f32 = 1.0e6;
+const AXIS_REACH: f64 = 1.0e6;
 
 /// The crossing of two curves (the sketch's axes among them) nearest
 /// `cursor`, within `tol`.
-fn crossing_near(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec2D> {
+fn crossing_near(sketch: &Sketch, cursor: Vec2D, tol: f64) -> Option<Vec2D> {
     use crate::geom2d::{Prim, prim_of, raw_hits, within};
     let c = cursor.to_glam();
     let mut prims: Vec<Prim> = sketch
@@ -374,17 +374,17 @@ fn crossing_near(sketch: &Sketch, cursor: Vec2D, tol: f32) -> Option<Vec2D> {
         .collect();
     if cursor.y.abs() <= tol {
         prims.push(Prim::Seg {
-            a: glam::Vec2::new(-AXIS_REACH, 0.0),
-            b: glam::Vec2::new(AXIS_REACH, 0.0),
+            a: glam::DVec2::new(-AXIS_REACH, 0.0),
+            b: glam::DVec2::new(AXIS_REACH, 0.0),
         });
     }
     if cursor.x.abs() <= tol {
         prims.push(Prim::Seg {
-            a: glam::Vec2::new(0.0, -AXIS_REACH),
-            b: glam::Vec2::new(0.0, AXIS_REACH),
+            a: glam::DVec2::new(0.0, -AXIS_REACH),
+            b: glam::DVec2::new(0.0, AXIS_REACH),
         });
     }
-    let mut best: Option<(glam::Vec2, f32)> = None;
+    let mut best: Option<(glam::DVec2, f64)> = None;
     for i in 0..prims.len() {
         for j in i + 1..prims.len() {
             for p in raw_hits(&prims[i], &prims[j]) {
@@ -412,14 +412,14 @@ pub enum AxisSnap {
 /// `cursor` turned about `from` to the nearest direction that is a whole
 /// number of `step_deg` from the x axis, at the cursor's distance projected
 /// onto it.
-pub fn angle_step(from: Vec2D, cursor: Vec2D, step_deg: f32) -> Vec2D {
+pub fn angle_step(from: Vec2D, cursor: Vec2D, step_deg: f64) -> Vec2D {
     let d = (cursor - from).to_glam();
     if d.length_squared() < 1e-12 || step_deg <= 0.0 {
         return cursor;
     }
     let step = step_deg.to_radians();
     let angle = (d.y.atan2(d.x) / step).round() * step;
-    let dir = glam::Vec2::from_angle(angle);
+    let dir = glam::DVec2::from_angle(angle);
     let reach = d.dot(dir).max(0.0);
     Vec2D::from_glam(from.to_glam() + dir * reach)
 }
@@ -427,8 +427,8 @@ pub fn angle_step(from: Vec2D, cursor: Vec2D, step_deg: f32) -> Vec2D {
 /// Snap `cursor` to the nearest existing sketch point within `tol`
 /// (sketch units). Points in `exclude` are ignored (e.g. the chain's own
 /// previous point).
-pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f32, exclude: &[Uuid]) -> SnapTarget {
-    let mut best: Option<(Uuid, f32)> = None;
+pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f64, exclude: &[Uuid]) -> SnapTarget {
+    let mut best: Option<(Uuid, f64)> = None;
     for geom in &sketch.geometry {
         if let GeometryElement::Point(p) = geom {
             if exclude.contains(&p.id) {
@@ -450,7 +450,7 @@ pub fn snap_to_point(sketch: &Sketch, cursor: Vec2D, tol: f32, exclude: &[Uuid])
 /// axis through `from` when it is within `tol` of it. Returns the adjusted
 /// position and which axis was snapped (used to auto-add the matching
 /// constraint).
-pub fn snap_axis(from: Vec2D, cursor: Vec2D, tol: f32) -> (Vec2D, Option<AxisSnap>) {
+pub fn snap_axis(from: Vec2D, cursor: Vec2D, tol: f64) -> (Vec2D, Option<AxisSnap>) {
     let dx = (cursor.x - from.x).abs();
     let dy = (cursor.y - from.y).abs();
     // Require some real extent along the snapped axis so a click right on
@@ -466,7 +466,7 @@ pub fn snap_axis(from: Vec2D, cursor: Vec2D, tol: f32) -> (Vec2D, Option<AxisSna
 
 /// Distance from `pos` to the closest bit of `geom` (sketch units).
 /// `None` for unresolvable references.
-pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<f32> {
+pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Option<f64> {
     let p = pos.to_glam();
     match geom {
         GeometryElement::Point(pt) => Some((pt.position.to_glam() - p).length()),
@@ -494,7 +494,7 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
             let cursor_angle = (p - c).y.atan2((p - c).x);
             let mut rel = cursor_angle - start_angle;
             while rel < 0.0 {
-                rel += std::f32::consts::TAU;
+                rel += std::f64::consts::TAU;
             }
             if rel <= sweep {
                 Some(((p - c).length() - radius).abs())
@@ -512,7 +512,7 @@ pub fn distance_to_element(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) 
 }
 
 /// Distance from `p` to a sampled polyline. `None` for fewer than 2 samples.
-fn polyline_distance(pts: &[Vec2D], p: glam::Vec2) -> Option<f32> {
+fn polyline_distance(pts: &[Vec2D], p: glam::DVec2) -> Option<f64> {
     pts.windows(2)
         .map(|w| {
             let a = w[0].to_glam();
@@ -525,17 +525,17 @@ fn polyline_distance(pts: &[Vec2D], p: glam::Vec2) -> Option<f32> {
                 (p - (a + ab * t)).length()
             }
         })
-        .min_by(f32::total_cmp)
+        .min_by(f64::total_cmp)
 }
 
 /// CCW start angle and sweep (0..TAU) for an arc from `start_vec` to
 /// `end_vec` (both relative to the center).
-pub fn arc_angles(start_vec: glam::Vec2, end_vec: glam::Vec2) -> (f32, f32) {
+pub fn arc_angles(start_vec: glam::DVec2, end_vec: glam::DVec2) -> (f64, f64) {
     let start_angle = start_vec.y.atan2(start_vec.x);
     let end_angle = end_vec.y.atan2(end_vec.x);
     let mut sweep = end_angle - start_angle;
     while sweep <= 0.0 {
-        sweep += std::f32::consts::TAU;
+        sweep += std::f64::consts::TAU;
     }
     (start_angle, sweep)
 }
@@ -575,7 +575,7 @@ fn project_to_curve(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Opti
             let (start_angle, sweep) = arc_angles(s - c, e - c);
             let mut rel = dir.y.atan2(dir.x) - start_angle;
             while rel < 0.0 {
-                rel += std::f32::consts::TAU;
+                rel += std::f64::consts::TAU;
             }
             (rel <= sweep).then(|| Vec2D::from_glam(c + dir.normalize() * (s - c).length()))
         }
@@ -595,10 +595,10 @@ fn project_to_curve(sketch: &Sketch, geom: &GeometryElement, pos: Vec2D) -> Opti
 pub fn snap_to_curve(
     sketch: &Sketch,
     cursor: Vec2D,
-    tol: f32,
+    tol: f64,
     exclude: &[Uuid],
 ) -> Option<(Uuid, Vec2D)> {
-    let mut best: Option<(Uuid, Vec2D, f32)> = None;
+    let mut best: Option<(Uuid, Vec2D, f64)> = None;
     for geom in &sketch.geometry {
         if exclude.contains(&geom.id()) {
             continue;
@@ -633,7 +633,7 @@ pub fn snap_to_curve(
 /// Distance from `pos` to the nearest curve of the sketch, points left
 /// out: they are too small to be a click target for feature-level
 /// selection. `None` for a sketch with no curves.
-pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f32> {
+pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f64> {
     sketch
         .geometry
         .iter()
@@ -644,9 +644,9 @@ pub fn nearest_curve_distance(sketch: &Sketch, pos: Vec2D) -> Option<f32> {
 
 /// Topmost element within `tol` of `pos`, preferring points over curves so
 /// endpoints stay clickable on top of their lines.
-pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f32) -> Option<Uuid> {
-    let mut best_point: Option<(Uuid, f32)> = None;
-    let mut best_curve: Option<(Uuid, f32)> = None;
+pub fn hit_test(sketch: &Sketch, pos: Vec2D, tol: f64) -> Option<Uuid> {
+    let mut best_point: Option<(Uuid, f64)> = None;
+    let mut best_curve: Option<(Uuid, f64)> = None;
     for geom in &sketch.geometry {
         let Some(d) = distance_to_element(sketch, geom, pos) else {
             continue;
@@ -736,7 +736,7 @@ mod tests {
         assert!((d.y.atan2(d.x).to_degrees() - 15.0).abs() < 1e-4, "{d:?}");
         assert!(
             (d.length()
-                - glam::Vec2::new(10.0, 3.0).dot(glam::Vec2::from_angle(15f32.to_radians())))
+                - glam::DVec2::new(10.0, 3.0).dot(glam::DVec2::from_angle(15f64.to_radians())))
             .abs()
                 < 1e-4
         );

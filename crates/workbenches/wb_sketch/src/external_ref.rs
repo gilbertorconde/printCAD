@@ -8,7 +8,9 @@
 //! lines, as a projected edge with no closed form does.
 
 use core_document::{DatumFeature, DatumShape, Document, FeatureId, WorkbenchFeature};
-use glam::Vec3;
+use glam::DVec3;
+
+use crate::boundary::{place_direction, place_point, widen, widen3};
 use kernel_api::ProjectedEdge;
 use serde_json::Value;
 use uuid::Uuid;
@@ -19,19 +21,19 @@ use crate::sketch::{ExternalReference, GeometryElement, SketchPlane};
 const SAMPLES: usize = 48;
 
 /// A plane's point `p` (world) in its own 2D coordinates.
-fn to_2d(plane: &SketchPlane, p: Vec3) -> [f64; 2] {
-    let d = p - Vec3::from_array(plane.origin);
+fn to_2d(plane: &SketchPlane, p: DVec3) -> [f64; 2] {
+    let d = p - DVec3::from_array(plane.origin);
     [
-        f64::from(d.dot(Vec3::from_array(plane.x_axis))),
-        f64::from(d.dot(Vec3::from_array(plane.y_axis))),
+        d.dot(DVec3::from_array(plane.x_axis)),
+        d.dot(DVec3::from_array(plane.y_axis)),
     ]
 }
 
 /// A plane's own 2D point in the world.
-fn to_world(plane: &SketchPlane, x: f32, y: f32) -> Vec3 {
-    Vec3::from_array(plane.origin)
-        + Vec3::from_array(plane.x_axis) * x
-        + Vec3::from_array(plane.y_axis) * y
+fn to_world(plane: &SketchPlane, x: f64, y: f64) -> DVec3 {
+    DVec3::from_array(plane.origin)
+        + DVec3::from_array(plane.x_axis) * x
+        + DVec3::from_array(plane.y_axis) * y
 }
 
 /// What `reference` comes to on `plane` (the sketch's plane where it sits
@@ -89,7 +91,7 @@ fn project_element(
             .ok_or("an element's point is gone")?;
         Ok(to_2d(plane, to_world(&from, p.x, p.y)))
     };
-    let normal = |p: &SketchPlane| Vec3::from_array(p.normal).normalize_or_zero();
+    let normal = |p: &SketchPlane| DVec3::from_array(p.normal).normalize_or_zero();
     let facing = normal(&from).dot(normal(plane));
     let parallel = (facing.abs() - 1.0).abs() < 1e-5;
     let sampled = |points: Vec<crate::sketch::Vec2D>| {
@@ -110,7 +112,7 @@ fn project_element(
         },
         GeometryElement::Circle(c) if parallel => ProjectedEdge::Circle {
             centre: at(c.center)?,
-            radius: f64::from(c.radius),
+            radius: c.radius,
             range: (0.0, std::f64::consts::TAU),
         },
         GeometryElement::Arc(a) if parallel => {
@@ -129,7 +131,7 @@ fn project_element(
             }
             ProjectedEdge::Circle {
                 centre,
-                radius: f64::from(a.radius),
+                radius: a.radius,
                 range: (start, end),
             }
         }
@@ -145,9 +147,9 @@ pub(crate) fn element_samples(
 ) -> Option<Vec<crate::sketch::Vec2D>> {
     use crate::sketch::Vec2D;
     let pos = |id: Uuid| sketch.point_position(id);
-    let around = |c: Vec2D, point: &dyn Fn(f32) -> Vec2D, from: f32, to: f32| {
+    let around = |c: Vec2D, point: &dyn Fn(f64) -> Vec2D, from: f64, to: f64| {
         (0..=SAMPLES)
-            .map(|i| point(from + (to - from) * i as f32 / SAMPLES as f32))
+            .map(|i| point(from + (to - from) * i as f64 / SAMPLES as f64))
             .map(|p| Vec2D::new(c.x + p.x, c.y + p.y))
             .collect::<Vec<_>>()
     };
@@ -158,7 +160,7 @@ pub(crate) fn element_samples(
                 pos(c.center)?,
                 &|t| Vec2D::new(r * t.cos(), r * t.sin()),
                 0.0,
-                std::f32::consts::TAU,
+                std::f64::consts::TAU,
             )
         }
         GeometryElement::Arc(a) => {
@@ -177,7 +179,7 @@ pub(crate) fn element_samples(
             let c = pos(e.center)?;
             let m = e.major.to_glam();
             let w = m.perp() * e.ratio;
-            let point = |t: f32| Vec2D::from_glam(m * t.cos() + w * t.sin());
+            let point = |t: f64| Vec2D::from_glam(m * t.cos() + w * t.sin());
             let (from, to) = match e.arc {
                 Some(arc) => {
                     // The ends' angles in the ellipse's own frame.
@@ -188,11 +190,11 @@ pub(crate) fn element_samples(
                     };
                     let (s, mut t) = (param(pos(arc.start)?), param(pos(arc.end)?));
                     while t <= s {
-                        t += std::f32::consts::TAU;
+                        t += std::f64::consts::TAU;
                     }
                     (s, t)
                 }
-                None => (0.0, std::f32::consts::TAU),
+                None => (0.0, std::f64::consts::TAU),
             };
             around(c, &point, from, to)
         }
@@ -220,15 +222,17 @@ fn project_datum(
         .map(|body| document.body_placement(body))
         .unwrap_or_default();
     let frame = datum.frame();
-    let origin = Vec3::from_array(placement.point(frame.origin));
-    let x = Vec3::from_array(placement.direction(frame.x_axis)).normalize_or_zero();
-    let normal = Vec3::from_array(placement.direction(frame.normal)).normalize_or_zero();
+    let origin = DVec3::from_array(place_point(&placement, widen3(frame.origin)));
+    let x =
+        DVec3::from_array(place_direction(&placement, widen3(frame.x_axis))).normalize_or_zero();
+    let normal =
+        DVec3::from_array(place_direction(&placement, widen3(frame.normal))).normalize_or_zero();
     Ok(match datum.shape {
         DatumShape::Point | DatumShape::CoordinateSystem { .. } => {
             vec![ProjectedEdge::Point(to_2d(plane, origin))]
         }
         DatumShape::Line { length } => {
-            let h = x * (length * 0.5);
+            let h = x * (widen(length) * 0.5);
             vec![ProjectedEdge::Line {
                 start: to_2d(plane, origin - h),
                 end: to_2d(plane, origin + h),
@@ -237,7 +241,7 @@ fn project_datum(
         // Where the datum plane crosses this one, as long as the datum is
         // drawn, about the point of the crossing nearest the datum.
         DatumShape::Plane { size } => {
-            let n = Vec3::from_array(plane.normal).normalize_or_zero();
+            let n = DVec3::from_array(plane.normal).normalize_or_zero();
             let along = normal.cross(n);
             if along.length() < 1e-5 {
                 return Err("the datum plane is parallel to the sketch".to_string());
@@ -245,11 +249,11 @@ fn project_datum(
             let along = along.normalize();
             // From the datum's origin, within the datum plane and square to
             // the crossing, to where the sketch plane is.
-            let o = Vec3::from_array(plane.origin);
+            let o = DVec3::from_array(plane.origin);
             let toward = along.cross(normal);
             let t = (o - origin).dot(n) / toward.dot(n);
             let meet = origin + toward * t;
-            let h = along * (size * 0.5);
+            let h = along * (widen(size) * 0.5);
             vec![ProjectedEdge::Line {
                 start: to_2d(plane, meet - h),
                 end: to_2d(plane, meet + h),

@@ -1,6 +1,6 @@
 //! Application conversion, sampling and updates for sketch splines.
 //! Pure basis and fitting formulas live in [`sketch_solver::spline`]; this boundary alone
-//! converts sampled or refitted positions to stored f32 geometry.
+//! converts sampled or refitted positions to stored f64 geometry.
 
 use crate::sketch::{BSpline, GeometryElement, Sketch, Vec2D};
 use sketch_solver::spline::{Basis, solve_points};
@@ -21,12 +21,12 @@ pub fn basis_of(spline: &BSpline) -> Option<Basis> {
     )
 }
 
-/// Sample for the application, preserving the final f32 conversion.
+/// Sample for the application, preserving the final f64 conversion.
 pub fn sample_basis(basis: &Basis, control: &[[f64; 2]], samples: usize) -> Vec<Vec2D> {
     basis
         .sample(control, samples)
         .into_iter()
-        .map(|[x, y]| Vec2D::new(x as f32, y as f32))
+        .map(|[x, y]| Vec2D::new(x, y))
         .collect()
 }
 
@@ -65,11 +65,7 @@ pub fn refit_splines(sketch: &mut Sketch) {
         let Some(targets) = b
             .fit_points
             .iter()
-            .map(|id| {
-                sketch
-                    .point_position(*id)
-                    .map(|p| [f64::from(p.x), f64::from(p.y)])
-            })
+            .map(|id| sketch.point_position(*id).map(|p| [p.x, p.y]))
             .collect::<Option<Vec<_>>>()
         else {
             continue;
@@ -90,7 +86,7 @@ pub fn refit_splines(sketch: &mut Sketch) {
         };
         for (id, p) in b.control_points.iter().zip(control) {
             if !b.fit_points.contains(id) {
-                placed.push((*id, Vec2D::new(p[0] as f32, p[1] as f32)));
+                placed.push((*id, Vec2D::new(p[0], p[1])));
             }
         }
     }
@@ -106,11 +102,7 @@ impl BSpline {
     pub fn control_positions(&self, sketch: &Sketch) -> Option<Vec<[f64; 2]>> {
         self.control_points
             .iter()
-            .map(|id| {
-                sketch
-                    .point_position(*id)
-                    .map(|p| [f64::from(p.x), f64::from(p.y)])
-            })
+            .map(|id| sketch.point_position(*id).map(|p| [p.x, p.y]))
             .collect()
     }
 

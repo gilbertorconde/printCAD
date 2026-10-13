@@ -21,7 +21,7 @@ use crate::sketch::{
 };
 
 fn v(p: [f64; 2]) -> Vec2D {
-    Vec2D::new(p[0] as f32, p[1] as f32)
+    Vec2D::new(p[0], p[1])
 }
 
 /// Whether a range of angles closes the turn.
@@ -49,7 +49,7 @@ struct ProjectedConic {
     /// Along the axis, as long as the focal distance or the semi-major axis.
     axis: Vec2D,
     /// The hyperbola's semi-minor axis.
-    minor: f32,
+    minor: f64,
     start: [f64; 2],
     end: [f64; 2],
 }
@@ -95,7 +95,7 @@ fn conic_of(projected: &ProjectedEdge) -> Option<ProjectedConic> {
                 kind: ConicKind::Hyperbola,
                 origin: *centre,
                 axis: v(*major),
-                minor: minor[0].hypot(minor[1]) as f32,
+                minor: minor[0].hypot(minor[1]),
                 start: at(range.0),
                 end: at(range.1),
             })
@@ -124,11 +124,11 @@ pub fn add(sketch: &mut Sketch, projected: &ProjectedEdge, source: ExternalSourc
         } => {
             let c = point(sketch, *centre);
             let element = if full_turn(*range) {
-                GeometryElement::Circle(Circle::new(c, *radius as f32))
+                GeometryElement::Circle(Circle::new(c, *radius))
             } else {
                 let s = point(sketch, circle_point(*centre, *radius, range.0));
                 let e = point(sketch, circle_point(*centre, *radius, range.1));
-                GeometryElement::Arc(Arc::new(c, s, e, *radius as f32))
+                GeometryElement::Arc(Arc::new(c, s, e, *radius))
             };
             made.push(sketch.add_geometry(element));
         }
@@ -140,11 +140,11 @@ pub fn add(sketch: &mut Sketch, projected: &ProjectedEdge, source: ExternalSourc
         } => {
             let c = point(sketch, *centre);
             let element = if full_turn(*range) {
-                GeometryElement::Ellipse(Ellipse::new(c, v(*major), *ratio as f32))
+                GeometryElement::Ellipse(Ellipse::new(c, v(*major), *ratio))
             } else {
                 let s = point(sketch, ellipse_point(*centre, *major, *ratio, range.0));
                 let e = point(sketch, ellipse_point(*centre, *major, *ratio, range.1));
-                GeometryElement::Ellipse(Ellipse::new_arc(c, v(*major), *ratio as f32, s, e))
+                GeometryElement::Ellipse(Ellipse::new_arc(c, v(*major), *ratio, s, e))
             };
             made.push(sketch.add_geometry(element));
         }
@@ -229,7 +229,7 @@ fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> boo
         ) if full_turn(*range) => {
             place(sketch, circle.center, *centre);
             if let Some(GeometryElement::Circle(c)) = sketch.get_geometry_mut(circle.id) {
-                c.radius = *radius as f32;
+                c.radius = *radius;
             }
         }
         (
@@ -244,7 +244,7 @@ fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> boo
             place(sketch, arc.start, circle_point(*centre, *radius, range.0));
             place(sketch, arc.end, circle_point(*centre, *radius, range.1));
             if let Some(GeometryElement::Arc(a)) = sketch.get_geometry_mut(arc.id) {
-                a.radius = *radius as f32;
+                a.radius = *radius;
             }
         }
         (
@@ -271,7 +271,7 @@ fn update(sketch: &mut Sketch, group: &[Uuid], projected: &ProjectedEdge) -> boo
             }
             if let Some(GeometryElement::Ellipse(e)) = sketch.get_geometry_mut(ellipse.id) {
                 e.major = v(*major);
-                e.ratio = *ratio as f32;
+                e.ratio = *ratio;
             }
         }
         (
@@ -408,7 +408,7 @@ pub fn already_holds(sketch: &Sketch, group: &[Uuid], projected: &[ProjectedEdge
 
 /// How close a projection must come to external geometry already in the
 /// sketch to be the same curve again, mm.
-const REPEAT_MM: f32 = 1e-3;
+const REPEAT_MM: f64 = 1e-3;
 
 /// Bring one source's elements up to `projected`, the curves its edge or
 /// face comes to now: moved in place where they are the same kinds of
@@ -713,13 +713,12 @@ mod tests {
             let shape = crate::conic::Shape::of(&conic, &sketch).expect("a whole conic");
             for end in [conic.start, conic.end] {
                 let p = sketch.point_position(end).expect("an end");
-                let off = shape.distance([f64::from(p.x), f64::from(p.y)]);
+                let off = shape.distance([p.x, p.y]);
                 assert!(off.abs() < 1e-5, "{kind:?} end {off} off");
             }
             let at = sketch.point_position(conic.start).expect("the start");
             assert!(
-                (f64::from(at.x) - start[0]).abs() < 1e-5
-                    && (f64::from(at.y) - start[1]).abs() < 1e-5,
+                (at.x - start[0]).abs() < 1e-5 && (at.y - start[1]).abs() < 1e-5,
                 "{kind:?} starts at {at:?}, not {start:?}"
             );
             assert!(already_holds(&sketch, &group, &[edge(0.0)]));

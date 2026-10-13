@@ -11,7 +11,7 @@ use std::f64::consts::PI;
 use super::{Edge, Loop, Outline, P2, add, norm, polar, rotate, scale, sub};
 
 /// Chains a sprocket is made for: (name, pitch, roller diameter), mm.
-pub const SPROCKET_CHAINS: &[(&str, f32, f32)] = &[
+pub const SPROCKET_CHAINS: &[(&str, f64, f64)] = &[
     ("ISO 05B", 8.0, 5.0),
     ("ISO 06B", 9.525, 6.35),
     ("ISO 08B", 12.7, 8.51),
@@ -27,13 +27,13 @@ pub const SPROCKET_CHAINS: &[(&str, f32, f32)] = &[
 #[serde(default)]
 pub struct SprocketSpec {
     /// Chain pitch, mm.
-    pub pitch: f32,
+    pub pitch: f64,
     /// Roller diameter (the bush's, for a chain without rollers), mm.
-    pub roller: f32,
+    pub roller: f64,
     #[serde(deserialize_with = "super::count")]
     pub teeth: u32,
     /// Bore diameter, mm; 0 leaves it solid.
-    pub bore: f32,
+    pub bore: f64,
     /// A keyway in the bore.
     pub keyway: super::BoreKeyway,
 }
@@ -71,8 +71,8 @@ impl SprocketSpec {
     }
 
     pub fn geometry(&self) -> Result<SprocketGeometry, String> {
-        let p = f64::from(self.pitch);
-        let d1 = f64::from(self.roller);
+        let p = self.pitch;
+        let d1 = self.roller;
         if !(p > 0.0 && p.is_finite()) {
             return Err("the chain pitch must be more than zero".into());
         }
@@ -96,7 +96,7 @@ impl SprocketSpec {
             seating_angle,
             flank_radius,
         };
-        let bore = f64::from(self.bore);
+        let bore = self.bore;
         if bore < 0.0 || bore >= g.root_diameter {
             return Err("the bore must fit inside the root circle".into());
         }
@@ -124,7 +124,7 @@ impl SprocketSpec {
         if let Some(meet) = crossing(flank_center, g.flank_radius, half_tooth)
             && meet < tip_radius + 1e-9
         {
-            tip_radius = meet - 0.02 * f64::from(self.pitch);
+            tip_radius = meet - 0.02 * self.pitch;
         }
         let tip = circle_meet(flank_center, g.flank_radius, tip_radius, seat_end)
             .ok_or("the tooth flank never reaches the tip circle")?;
@@ -170,7 +170,7 @@ impl SprocketSpec {
             guides: vec![([0.0, 0.0], g.pitch_diameter / 2.0)],
             ..Outline::default()
         };
-        let bore = f64::from(self.bore);
+        let bore = self.bore;
         if self.keyway.on {
             outline
                 .holes
@@ -227,7 +227,7 @@ mod tests {
             ..SprocketSpec::default()
         };
         let g = spec.geometry().unwrap();
-        let want = f64::from(12.7f32) / (180f64 / 17.0).to_radians().sin();
+        let want = 12.7f64 / (180f64 / 17.0).to_radians().sin();
         assert!((g.pitch_diameter - want).abs() < 1e-9);
         assert_eq!(spec.chain(), Some("ISO 08B"));
     }
@@ -249,7 +249,7 @@ mod tests {
             .iter()
             .map(|p| norm(sub(*p, roller)))
             .fold(f64::MAX, f64::min);
-        assert!(clear >= f64::from(spec.roller) / 2.0, "{clear}");
+        assert!(clear >= spec.roller / 2.0, "{clear}");
         assert!((clear - g.seating_radius).abs() < 1e-6);
         assert_eq!(outline.loops[0].edges.len(), 4 * 18);
     }

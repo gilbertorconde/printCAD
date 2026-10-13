@@ -45,11 +45,11 @@ pub struct TextSpec {
     /// That asset's bytes, read for the outlines.
     pub font_data: Option<std::sync::Arc<Vec<u8>>>,
     /// The font's em in millimetres.
-    pub size: f32,
+    pub size: f64,
     /// Millimetres added between letters.
-    pub spacing: f32,
+    pub spacing: f64,
     /// Degrees the text turns counter-clockwise about its point.
-    pub angle: f32,
+    pub angle: f64,
 }
 
 impl Default for TextSpec {
@@ -177,8 +177,8 @@ struct Contours {
 }
 
 impl Contours {
-    fn place(&self, x: f32, y: f32) -> DVec2 {
-        self.at + DVec2::new(f64::from(x), f64::from(y)) * self.scale
+    fn place(&self, x: f64, y: f64) -> DVec2 {
+        self.at + DVec2::new(x, y) * self.scale
     }
 
     fn push(&mut self, seg: Seg, to: DVec2) {
@@ -193,23 +193,31 @@ impl Contours {
 impl ttf_parser::OutlineBuilder for Contours {
     fn move_to(&mut self, x: f32, y: f32) {
         self.close();
-        self.start = self.place(x, y);
+        self.start = self.place(x.into(), y.into());
         self.pen = self.start;
     }
 
     fn line_to(&mut self, x: f32, y: f32) {
-        let to = self.place(x, y);
+        let to = self.place(x.into(), y.into());
         self.push(Seg::Line(self.pen, to), to);
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
-        let to = self.place(x, y);
-        self.push(Seg::Quad(self.pen, self.place(x1, y1), to), to);
+        let to = self.place(x.into(), y.into());
+        self.push(
+            Seg::Quad(self.pen, self.place(x1.into(), y1.into()), to),
+            to,
+        );
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
-        let to = self.place(x, y);
-        let seg = Seg::Cubic(self.pen, self.place(x1, y1), self.place(x2, y2), to);
+        let to = self.place(x.into(), y.into());
+        let seg = Seg::Cubic(
+            self.pen,
+            self.place(x1.into(), y1.into()),
+            self.place(x2.into(), y2.into()),
+            to,
+        );
         self.push(seg, to);
     }
 
@@ -233,7 +241,7 @@ fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
     if spec.size.is_nan() || spec.size <= 0.0 {
         return Err("the text's size must be more than 0".to_string());
     }
-    let scale = f64::from(spec.size) / f64::from(face.units_per_em());
+    let scale = spec.size / f64::from(face.units_per_em());
     let line = f64::from(face.ascender() - face.descender() + face.line_gap()) * scale;
     let mut out = Contours {
         at: DVec2::ZERO,
@@ -256,9 +264,9 @@ fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
         face.outline_glyph(glyph, &mut out);
         ttf_parser::OutlineBuilder::close(&mut out);
         let advance = f64::from(face.glyph_hor_advance(glyph).unwrap_or(0)) * scale;
-        pen.x += advance + f64::from(spec.spacing);
+        pen.x += advance + spec.spacing;
     }
-    let turn = DVec2::from_angle(f64::from(spec.angle).to_radians());
+    let turn = DVec2::from_angle(spec.angle.to_radians());
     Ok(out
         .done
         .into_iter()
@@ -272,9 +280,7 @@ fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
 }
 
 fn new_point(sketch: &mut Sketch, made: &mut Vec<Uuid>, p: DVec2) -> Uuid {
-    let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-        p.x as f32, p.y as f32,
-    ))));
+    let id = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p.x, p.y))));
     made.push(id);
     id
 }
@@ -334,7 +340,7 @@ fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
                         *slot = match joins.get(k) {
                             Some(p) => {
                                 let id = sketch.add_geometry(GeometryElement::Point(Point::new(
-                                    Vec2D::new(p.x as f32, p.y as f32),
+                                    Vec2D::new(p.x, p.y),
                                 )));
                                 made.push(id);
                                 id
@@ -367,7 +373,7 @@ fn build(sketch: &mut Sketch, contours: Vec<Vec<Seg>>) -> Vec<Uuid> {
 /// A new text block of `spec` standing on a new point at `at`. Returns the
 /// block's id.
 pub fn add(sketch: &mut Sketch, at: Vec2D, spec: &TextSpec) -> Result<Uuid, String> {
-    let where_ = DVec2::new(f64::from(at.x), f64::from(at.y));
+    let where_ = DVec2::new(at.x, at.y);
     let outlines = contours(spec, where_)?;
     if outlines.is_empty() {
         return Err("the text has nothing to draw".to_string());
@@ -399,7 +405,7 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
     let at = sketch
         .point_position(anchor)
         .ok_or("the text's point is gone")?;
-    let outlines = contours(spec, DVec2::new(f64::from(at.x), f64::from(at.y)))?;
+    let outlines = contours(spec, DVec2::new(at.x, at.y))?;
     let old = std::mem::take(&mut sketch.texts[index].elements);
     remove_elements(sketch, &old);
     let elements = build(sketch, outlines);
@@ -496,7 +502,7 @@ mod tests {
             outline_points(sketch)
                 .iter()
                 .filter_map(|p| sketch.point_position(*p))
-                .fold(f32::MAX, |m, p| m.min(p.y))
+                .fold(f64::MAX, |m, p| m.min(p.y))
         };
         assert!(lowest(&sketch).abs() < 1e-3, "the L stands on the baseline");
         sketch.add_constraint(crate::sketch::ConstraintKind::FixedPoint {
@@ -523,7 +529,7 @@ mod tests {
         let widest = outline_points(&sketch)
             .iter()
             .filter_map(|p| sketch.point_position(*p))
-            .fold(f32::MIN, |m, p| m.max(p.x));
+            .fold(f64::MIN, |m, p| m.max(p.x));
         // Two letters about half an em wide each, at a 20 mm em.
         assert!(widest > 5.0 + 18.0, "two letters at 20 mm: {widest}");
     }
@@ -546,7 +552,7 @@ mod tests {
             &sketch,
             &mut clip,
             &outline,
-            &crate::tools::Similarity::translation(glam::Vec2::ZERO),
+            &crate::tools::Similarity::translation(glam::DVec2::ZERO),
         );
         assert_eq!(clip.texts.len(), 1, "the clipboard holds the text");
         crate::commands::paste(&mut sketch, &clip, Vec2D::new(30.0, 0.0));
@@ -563,7 +569,7 @@ mod tests {
             elements
                 .iter()
                 .filter_map(|p| sketch.point_position(*p))
-                .fold(f32::MAX, |m, p| m.min(p.x))
+                .fold(f64::MAX, |m, p| m.min(p.x))
         };
         let (before, other) = (
             left(&sketch, &pasted.elements),

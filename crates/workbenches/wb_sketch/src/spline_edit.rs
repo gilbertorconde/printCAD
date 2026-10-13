@@ -28,7 +28,7 @@ struct Made {
 }
 
 fn dv(p: Vec2D) -> DVec2 {
-    DVec2::new(f64::from(p.x), f64::from(p.y))
+    DVec2::new(p.x, p.y)
 }
 
 /// An arc of the ellipse `c + u cos θ + v sin θ` (a circle when `u` and `v`
@@ -96,7 +96,7 @@ fn made_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Made> {
             }
         }
         GeometryElement::Circle(k) => {
-            let r = f64::from(k.radius);
+            let r = k.radius;
             conic_arc(
                 pos(k.center)?,
                 DVec2::X * r,
@@ -107,9 +107,9 @@ fn made_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Made> {
         }
         GeometryElement::Ellipse(e) => {
             let u = dv(e.major);
-            let v = u.perp() * f64::from(e.ratio);
+            let v = u.perp() * e.ratio;
             let (t0, t1) = e.param_span(sketch)?;
-            let (t0, t1) = (f64::from(t0), f64::from(t1));
+            let (t0, t1) = (t0, t1);
             Made {
                 start: e.arc.map(|a| a.start),
                 end: e.arc.map(|a| a.end),
@@ -133,9 +133,7 @@ fn made_of(sketch: &Sketch, geom: &GeometryElement) -> Option<Made> {
 }
 
 fn new_point(sketch: &mut Sketch, p: DVec2) -> Uuid {
-    sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(
-        p.x as f32, p.y as f32,
-    ))))
+    sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(p.x, p.y))))
 }
 
 /// Every line, arc, circle, ellipse, arc of an ellipse, parabola and
@@ -406,7 +404,7 @@ fn store(sketch: &mut Sketch, id: Uuid, made: Lifted, keep: &dyn Fn(usize) -> Op
             match kept {
                 Some(pid) => {
                     if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(pid) {
-                        p.position = Vec2D::new(at.x as f32, at.y as f32);
+                        p.position = Vec2D::new(at.x, at.y);
                     }
                     pid
                 }
@@ -692,7 +690,7 @@ pub fn weight_of(sketch: &Sketch, spline: Uuid, point: Uuid) -> Option<f64> {
 
 /// A knot inserted into the spline nearest `cursor`, within `tol`, where
 /// it passes nearest it: the knot tool's click.
-pub fn knot_at_click(sketch: &mut Sketch, cursor: Vec2D, tol: f32) -> ToolEffect {
+pub fn knot_at_click(sketch: &mut Sketch, cursor: Vec2D, tol: f64) -> ToolEffect {
     let near = sketch
         .geometry
         .iter()
@@ -758,7 +756,7 @@ pub fn comb(sketch: &Sketch, spline: Uuid) -> Vec<(Vec2D, Vec2D)> {
         return Vec::new();
     }
     let scale = (hi - lo).length() * COMB_REACH / most;
-    let v = |p: DVec2| Vec2D::new(p.x as f32, p.y as f32);
+    let v = |p: DVec2| Vec2D::new(p.x, p.y);
     let tips: Vec<DVec2> = teeth.iter().map(|(p, k)| *p + *k * scale).collect();
     let mut out: Vec<(Vec2D, Vec2D)> = teeth
         .iter()
@@ -782,7 +780,7 @@ pub fn knot_points(sketch: &Sketch, spline: Uuid) -> Vec<(Vec2D, usize)> {
         .into_iter()
         .map(|(k, m)| {
             let q = lift.at(k);
-            (Vec2D::new((q[0] / q[2]) as f32, (q[1] / q[2]) as f32), m)
+            (Vec2D::new(q[0] / q[2], q[1] / q[2]), m)
         })
         .collect()
 }
@@ -792,7 +790,7 @@ mod tests {
     use super::*;
     use crate::sketch::{Arc, Circle, Line};
 
-    fn pt(sketch: &mut Sketch, x: f32, y: f32) -> Uuid {
+    fn pt(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
     }
 
@@ -807,7 +805,7 @@ mod tests {
             .expect("a spline")
     }
 
-    fn samples(sketch: &Sketch, spline: &BSpline) -> Vec<glam::Vec2> {
+    fn samples(sketch: &Sketch, spline: &BSpline) -> Vec<glam::DVec2> {
         crate::measure::curve_samples(sketch, spline.id).unwrap()
     }
 
@@ -826,7 +824,7 @@ mod tests {
         assert_eq!(spline.control_points[0], s);
         assert_eq!(*spline.control_points.last().unwrap(), e);
         for p in samples(&sketch, &spline) {
-            let r = (p - glam::Vec2::new(1.0, 2.0)).length();
+            let r = (p - glam::DVec2::new(1.0, 2.0)).length();
             assert!((r - 5.0).abs() < 1e-4, "{p:?} at {r}");
         }
     }
@@ -864,13 +862,13 @@ mod tests {
         sketch.add_geometry(GeometryElement::BSpline(BSpline::new(pts, false)))
     }
 
-    fn off_by(before: &[glam::Vec2], sketch: &Sketch, spline: &BSpline) -> f32 {
+    fn off_by(before: &[glam::DVec2], sketch: &Sketch, spline: &BSpline) -> f64 {
         let after = samples(sketch, spline);
         after
             .iter()
             .zip(before)
             .map(|(a, b)| (*a - *b).length())
-            .fold(0.0, f32::max)
+            .fold(0.0, f64::max)
     }
 
     #[test]
@@ -934,8 +932,8 @@ mod tests {
         let near = |sketch: &Sketch| {
             samples(sketch, &only_spline(sketch))
                 .iter()
-                .map(|p| (*p - glam::Vec2::new(5.0, 8.0)).length())
-                .fold(f32::MAX, f32::min)
+                .map(|p| (*p - glam::DVec2::new(5.0, 8.0)).length())
+                .fold(f64::MAX, f64::min)
         };
         let before = near(&sketch);
         assert!(set_weight(&mut sketch, id, peak, 4.0).changed);
@@ -971,13 +969,13 @@ mod tests {
         // A circle's curvature is the same all round: every tooth as long,
         // pointing out of it.
         let n = COMB_TEETH * (knots_of(&sketch, id).len() + 1) + 1;
-        let lengths: Vec<f32> = teeth[..n]
+        let lengths: Vec<f64> = teeth[..n]
             .iter()
             .map(|(a, b)| (b.to_glam() - a.to_glam()).length())
             .collect();
         let (lo, hi) = lengths
             .iter()
-            .fold((f32::MAX, f32::MIN), |(lo, hi), l| (lo.min(*l), hi.max(*l)));
+            .fold((f64::MAX, f64::MIN), |(lo, hi), l| (lo.min(*l), hi.max(*l)));
         assert!(hi - lo < 1e-2 * hi, "{lo}..{hi}");
         for (base, tip) in &teeth[..n] {
             assert!(tip.to_glam().length() > base.to_glam().length());

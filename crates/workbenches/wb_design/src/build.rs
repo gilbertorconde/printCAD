@@ -1863,7 +1863,7 @@ pub(crate) fn axis_in_sketch(
                 sketch
                     .sketch
                     .point_position(point)
-                    .map(|p| [f64::from(p.x), f64::from(p.y)])
+                    .map(|p| [p.x, p.y])
                     .ok_or_else(|| "the axis line has lost an end".to_string())
             };
             let (a, b) = (at(line.start)?, at(line.end)?);
@@ -2027,11 +2027,11 @@ fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
         match element {
             GeometryElement::Circle(circle) => {
                 if let Some(pos) = sketch.point_position(circle.center) {
-                    centers.push([pos.x as f64, pos.y as f64]);
+                    centers.push([pos.x, pos.y]);
                 }
             }
             GeometryElement::Point(point) if !referenced.contains(&point.id) => {
-                centers.push([point.position.x as f64, point.position.y as f64]);
+                centers.push([point.position.x, point.position.y]);
             }
             _ => {}
         }
@@ -2729,11 +2729,7 @@ fn loft_section(
             .collect();
         if let [p] = points.as_slice() {
             let plane = profile::plane_of(&sketch.plane);
-            let at = |i: usize| {
-                plane.origin[i]
-                    + plane.x_axis[i] * f64::from(p.x)
-                    + plane.y_axis[i] * f64::from(p.y)
-            };
+            let at = |i: usize| plane.origin[i] + plane.x_axis[i] * p.x + plane.y_axis[i] * p.y;
             return Ok(kernel_api::LoftSection::Point([at(0), at(1), at(2)]));
         }
     }
@@ -2759,7 +2755,7 @@ pub(crate) fn load_sketch(
 pub(crate) fn sketch_normal(document: &Document, sketch_id: FeatureId) -> Option<[f32; 3]> {
     load_sketch(document, sketch_id)
         .ok()
-        .map(|sketch| sketch.plane.normal)
+        .map(|sketch| wb_sketch::boundary::narrow3(sketch.plane.normal))
 }
 
 fn sketch_profile(
@@ -2884,8 +2880,8 @@ fn sketch_spine(
             wires: vec![ProfileWire {
                 names: Vec::new(),
                 segments: vec![ProfileSegment::Circle {
-                    center: [center.x as f64, center.y as f64],
-                    radius: circle.radius as f64,
+                    center: [center.x, center.y],
+                    radius: circle.radius,
                 }],
             }],
         });
@@ -2933,7 +2929,7 @@ fn sketch_spine(
     // An open path starts at the end nearer `near`, else at its first.
     let world = |id: uuid::Uuid| {
         sketch.point_position(id).map(|p| {
-            let (u, v) = (f64::from(p.x), f64::from(p.y));
+            let (u, v) = (p.x, p.y);
             [0, 1, 2].map(|k| plane.origin[k] + plane.x_axis[k] * u + plane.y_axis[k] * v)
         })
     };
@@ -2975,7 +2971,7 @@ fn spine_segment(
     let pos = |id: uuid::Uuid| -> Result<[f64; 2], String> {
         sketch
             .point_position(id)
-            .map(|p| [p.x as f64, p.y as f64])
+            .map(|p| [p.x, p.y])
             .ok_or_else(|| "spine references a missing point".into())
     };
     match element {
@@ -2994,17 +2990,12 @@ fn spine_segment(
             let center = pos(arc.center)?;
             let start = pos(arc.start)?;
             let end = pos(arc.end)?;
-            let start_vec = wb_sketch::sketch::Vec2D::new(
-                (start[0] - center[0]) as f32,
-                (start[1] - center[1]) as f32,
-            );
-            let end_vec = wb_sketch::sketch::Vec2D::new(
-                (end[0] - center[0]) as f32,
-                (end[1] - center[1]) as f32,
-            );
+            let start_vec =
+                wb_sketch::sketch::Vec2D::new(start[0] - center[0], start[1] - center[1]);
+            let end_vec = wb_sketch::sketch::Vec2D::new(end[0] - center[0], end[1] - center[1]);
             let (start_angle, sweep) =
                 wb_sketch::snap::arc_angles(start_vec.to_glam(), end_vec.to_glam());
-            let mid_angle = (start_angle + sweep * 0.5) as f64;
+            let mid_angle = start_angle + sweep * 0.5;
             let radius = ((start[0] - center[0]).powi(2) + (start[1] - center[1]).powi(2)).sqrt();
             let mid = [
                 center[0] + radius * mid_angle.cos(),
@@ -3243,7 +3234,7 @@ fn point_transforms(document: &Document, sketch: FeatureId) -> Result<Vec<Mat4>,
             _ => None,
         })
         .map(|p| {
-            let (x, y) = (f64::from(p.x), f64::from(p.y));
+            let (x, y) = (p.x, p.y);
             std::array::from_fn(|k| plane.origin[k] + plane.x_axis[k] * x + plane.y_axis[k] * y)
         })
         .collect();
@@ -3567,7 +3558,7 @@ pub fn sketch_plane_description(document: &Document, sketch: FeatureId) -> Strin
         return "invalid sketch".to_string();
     };
     let p = feature.plane;
-    let close = |a: [f32; 3], b: [f32; 3]| {
+    let close = |a: [f64; 3], b: [f64; 3]| {
         (a[0] - b[0]).abs() < 1e-5 && (a[1] - b[1]).abs() < 1e-5 && (a[2] - b[2]).abs() < 1e-5
     };
     for (preset, label) in [
@@ -4204,7 +4195,7 @@ mod tests {
             .unwrap();
 
         let mut hole_sketch = Sketch::new("holes");
-        for x in [2.0f32, 8.0] {
+        for x in [2.0f64, 8.0] {
             let center =
                 hole_sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, 2.5))));
             hole_sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 1.0)));

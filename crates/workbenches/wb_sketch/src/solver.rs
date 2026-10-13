@@ -67,7 +67,7 @@ fn solve_system(sketch: &mut Sketch, sys: System) -> SolveOutcome {
     iteration.outcome
 }
 
-/// Numerical output before storage rounding and application updates. Even
+/// Numerical output before it is stored and the application updates. Even
 /// a stalled attempt exposes its iteration count and effective threshold.
 struct Iteration {
     values: Vec<f64>,
@@ -231,26 +231,26 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
         match element {
             GeometryElement::Point(p) => {
                 if let Some(&i) = sys.point_vars.get(&adapter::point(p.id)) {
-                    p.position = Vec2D::new(x[i] as f32, x[i + 1] as f32);
+                    p.position = Vec2D::new(x[i], x[i + 1]);
                 }
             }
             GeometryElement::Circle(c) => {
                 if let Some(&i) = sys.radius_vars.get(&adapter::curve(c.id)) {
-                    c.radius = x[i] as f32;
+                    c.radius = x[i];
                 }
             }
             GeometryElement::Arc(a) => {
                 if let Some(&i) = sys.radius_vars.get(&adapter::curve(a.id)) {
-                    a.radius = x[i] as f32;
+                    a.radius = x[i];
                 }
             }
             // A minor radius dragged past the major one makes it the major:
             // the axes trade places, the same ellipse.
             GeometryElement::Ellipse(e) => {
                 if let Some(&k) = sys.shape_vars.get(&adapter::curve(e.id)) {
-                    let major = Vec2D::new(x[k] as f32, x[k + 1] as f32);
+                    let major = Vec2D::new(x[k], x[k + 1]);
                     let a = major.to_glam().length();
-                    let b = (x[k + 2] as f32).abs();
+                    let b = x[k + 2].abs();
                     if a > 1e-9 {
                         let (axis, ratio) = crate::geom2d::ellipse_axes(major.to_glam(), b);
                         if b > a {
@@ -263,10 +263,10 @@ fn write_back(sketch: &mut Sketch, sys: &System, x: &[f64]) {
             }
             GeometryElement::Conic(c) => {
                 if let Some(&k) = sys.shape_vars.get(&adapter::curve(c.id)) {
-                    let axis = Vec2D::new(x[k] as f32, x[k + 1] as f32);
+                    let axis = Vec2D::new(x[k], x[k + 1]);
                     if axis.to_glam().length() > 1e-9 {
                         c.axis = axis;
-                        c.minor = (x[k + 2] as f32).abs();
+                        c.minor = x[k + 2].abs();
                     }
                 }
             }
@@ -429,7 +429,7 @@ fn place_derived_foci(sketch: &mut Sketch, derived: &std::collections::HashSet<U
 /// pins down reports every point free, which is what its three rigid
 /// degrees of freedom mean.
 pub fn free_points(sketch: &Sketch) -> std::collections::HashSet<Uuid> {
-    const NUDGE: f32 = 0.25;
+    const NUDGE: f64 = 0.25;
     let mut base = sketch.clone();
     solve(&mut base);
     let points: Vec<(Uuid, Vec2D)> = base

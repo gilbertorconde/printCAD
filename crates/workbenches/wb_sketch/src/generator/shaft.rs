@@ -14,14 +14,14 @@ use super::{Edge, Loop, Outline, P2, add, norm, scale, sub};
 #[serde(default)]
 pub struct ShaftSection {
     /// Along the axis, mm.
-    pub length: f32,
-    pub diameter: f32,
+    pub length: f64,
+    pub diameter: f64,
     /// The chamfer on the outer edge of the step after this section (the
     /// last section: on the shaft's end), mm.
-    pub chamfer: f32,
+    pub chamfer: f64,
     /// The fillet in the inner corner of the step after this section (the
     /// last section: on the shaft's end when it has no chamfer), mm.
-    pub fillet: f32,
+    pub fillet: f64,
 }
 
 impl Default for ShaftSection {
@@ -40,7 +40,7 @@ impl Default for ShaftSection {
 pub struct ShaftSpec {
     pub sections: Vec<ShaftSection>,
     /// The chamfer on the outer edge of the shaft's first end, mm.
-    pub start_chamfer: f32,
+    pub start_chamfer: f64,
     /// What the shaft carries, for its stresses and deflection; nothing
     /// in its shape follows from them.
     pub loads: super::loads::ShaftLoads,
@@ -81,8 +81,8 @@ impl ShaftSpec {
         self.sections
             .iter()
             .map(|s| {
-                let r = f64::from(s.diameter) / 2.0;
-                std::f64::consts::PI * r * r * f64::from(s.length)
+                let r = s.diameter / 2.0;
+                std::f64::consts::PI * r * r * s.length
             })
             .sum()
     }
@@ -107,8 +107,8 @@ impl ShaftSpec {
                 ));
             }
         }
-        let size = |v: f32| f64::from(v);
-        let given = |v: f32, make: fn(f64) -> Corner| {
+        let size = |v: f64| v;
+        let given = |v: f64, make: fn(f64) -> Corner| {
             if v > 0.0 {
                 make(size(v))
             } else {

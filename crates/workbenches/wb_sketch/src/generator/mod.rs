@@ -97,17 +97,17 @@ impl Generator {
 
     /// The way its sketch's x runs on `face`, when it has one of its own:
     /// a keyway along the axis of the round face it is cut into.
-    pub fn runs_along(&self, face: &core_document::FaceRef) -> Option<[f32; 3]> {
+    pub fn runs_along(&self, face: &core_document::FaceRef) -> Option<[f64; 3]> {
         let Generator::Keyway(_) = self else {
             return None;
         };
         let (_, axis) = face.surface?.axis()?;
         let (a, n) = (
-            glam::Vec3::from_array(axis),
-            glam::Vec3::from_array(face.normal).normalize_or_zero(),
+            glam::DVec3::from_array(crate::boundary::widen3(axis)),
+            glam::DVec3::from_array(crate::boundary::widen3(face.normal)).normalize_or_zero(),
         );
         let along = (a - n * a.dot(n)).normalize_or_zero();
-        (along != glam::Vec3::ZERO).then(|| along.to_array())
+        (along != glam::DVec3::ZERO).then(|| along.to_array())
     }
 
     /// The curves its numbers make, or why they make none.
@@ -399,7 +399,7 @@ pub fn summary(generator: &Generator) -> serde_json::Value {
                 if spec.internal {
                     out
                 } else {
-                    with_keyway(out, &spec.keyway, f64::from(spec.bore))
+                    with_keyway(out, &spec.keyway, spec.bore)
                 }
             }
             Err(why) => json!({ "error": why }),
@@ -412,7 +412,7 @@ pub fn summary(generator: &Generator) -> serde_json::Value {
                     "root_diameter": g.root_diameter,
                 }),
                 &spec.keyway,
-                f64::from(spec.bore),
+                spec.bore,
             ),
             Err(why) => json!({ "error": why }),
         },
@@ -422,7 +422,7 @@ pub fn summary(generator: &Generator) -> serde_json::Value {
         },
         Generator::Shaft(spec) => {
             let mut out = json!({
-                "length": spec.sections.iter().map(|s| f64::from(s.length)).sum::<f64>(),
+                "length": spec.sections.iter().map(|s| s.length).sum::<f64>(),
             });
             if spec.loads.any() {
                 out["loads"] = match analyse(spec, &spec.loads) {
@@ -637,7 +637,7 @@ impl Ids {
 }
 
 fn v(p: P2) -> Vec2D {
-    Vec2D::new(p[0] as f32, p[1] as f32)
+    Vec2D::new(p[0], p[1])
 }
 
 impl Outline {
@@ -673,7 +673,7 @@ impl Outline {
                         // to end.
                         let (_, sweep) = arc_span(*center, pa, pb);
                         let (s, e) = if sweep >= 0.0 { (a, b) } else { (b, a) };
-                        let radius = norm(sub(pa, *center)) as f32;
+                        let radius = norm(sub(pa, *center)) as f64;
                         let mut arc = Arc::new(c, s, e, radius);
                         arc.id = ids.take();
                         GeometryElement::Arc(arc)
@@ -695,7 +695,7 @@ impl Outline {
         for (circles, guide) in [(&self.circles, false), (&self.guides, true)] {
             for (center, radius) in circles {
                 let c = point(sketch, &mut ids, *center);
-                let mut circle = Circle::new(c, *radius as f32);
+                let mut circle = Circle::new(c, *radius);
                 circle.id = ids.take();
                 let id = sketch.add_geometry(GeometryElement::Circle(circle));
                 if guide {

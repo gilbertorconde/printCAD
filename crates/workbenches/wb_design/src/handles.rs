@@ -177,18 +177,21 @@ pub(crate) fn sketch_centre(
     let points: Vec<Vec3> = wb_sketch::render::sketch_polylines(&feature.sketch, &feature.plane)
         .into_iter()
         .flatten()
-        .map(Vec3::from_array)
+        .map(|p| Vec3::from_array(wb_sketch::boundary::narrow3(p)))
         .collect();
     let (lo, hi) = points.iter().fold(
         (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN)),
         |(lo, hi), p| (lo.min(*p), hi.max(*p)),
     );
     let centre = if points.is_empty() {
-        Vec3::from_array(feature.plane.origin)
+        Vec3::from_array(wb_sketch::boundary::narrow3(feature.plane.origin))
     } else {
         (lo + hi) * 0.5
     };
-    Some((centre.to_array(), feature.plane.normal))
+    Some((
+        centre.to_array(),
+        wb_sketch::boundary::narrow3(feature.plane.normal),
+    ))
 }
 
 /// Whether the press at `pos` falls on the handle.

@@ -62,10 +62,10 @@ impl Cache {
 
 /// The picture's corners in sketch coordinates: top left, top right,
 /// bottom right, bottom left, turned about its middle.
-pub fn corners(image: &ReferenceImage, aspect: f32) -> [Vec2D; 4] {
+pub fn corners(image: &ReferenceImage, aspect: f64) -> [Vec2D; 4] {
     let (w, h) = (image.width / 2.0, image.width * aspect / 2.0);
     let (sin, cos) = image.angle_deg.to_radians().sin_cos();
-    let at = |x: f32, y: f32| {
+    let at = |x: f64, y: f64| {
         Vec2D::new(
             image.center.x + x * cos - y * sin,
             image.center.y + x * sin + y * cos,
@@ -83,7 +83,7 @@ pub fn corners(image: &ReferenceImage, aspect: f32) -> [Vec2D; 4] {
 pub struct Calibration {
     pub from: Vec2D,
     pub to: Vec2D,
-    pub length: f32,
+    pub length: f64,
     pub straighten: bool,
     pub centre: bool,
 }
@@ -102,9 +102,9 @@ pub fn calibrate(image: &ReferenceImage, calibration: &Calibration) -> Option<Re
     let mut line = (b - a) * scale;
     if calibration.straighten {
         let along = line.y.atan2(line.x);
-        let quarter = std::f32::consts::FRAC_PI_4;
+        let quarter = std::f64::consts::FRAC_PI_4;
         let turn = (along / quarter).round() * quarter - along;
-        let rotation = glam::Mat2::from_angle(turn);
+        let rotation = glam::DMat2::from_angle(turn);
         center = a + rotation * (center - a);
         line = rotation * line;
         angle_deg += turn.to_degrees();
@@ -135,7 +135,7 @@ mod tests {
         }
     }
 
-    fn close(a: Vec2D, x: f32, y: f32) -> bool {
+    fn close(a: Vec2D, x: f64, y: f64) -> bool {
         (a.x - x).abs() < 1e-3 && (a.y - y).abs() < 1e-3
     }
 
@@ -162,7 +162,7 @@ mod tests {
     /// its middle lands on the origin; the picture turns with it.
     #[test]
     fn calibration_straightens_and_centres_the_line() {
-        let tilt = 5f32.to_radians();
+        let tilt = 5f64.to_radians();
         let (from, to) = (
             Vec2D::new(2.0, 3.0),
             Vec2D::new(2.0 + 10.0 * tilt.cos(), 3.0 + 10.0 * tilt.sin()),
@@ -181,10 +181,10 @@ mod tests {
         // through the same turn and move.
         let carried = |p: Vec2D| {
             let (old, new) = (picture(), &done);
-            let local = glam::Mat2::from_angle(-old.angle_deg.to_radians())
+            let local = glam::DMat2::from_angle(-old.angle_deg.to_radians())
                 * (p.to_glam() - old.center.to_glam());
             Vec2D::from_glam(
-                new.center.to_glam() + glam::Mat2::from_angle(new.angle_deg.to_radians()) * local,
+                new.center.to_glam() + glam::DMat2::from_angle(new.angle_deg.to_radians()) * local,
             )
         };
         assert!(close(carried(from), -5.0, 0.0), "{:?}", carried(from));

@@ -524,7 +524,10 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
         surface: None,
         name: 0,
     };
-    let plane = wb_sketch::sketch::SketchPlane::from_face(point, face.normal);
+    let plane = wb_sketch::sketch::SketchPlane::from_face(
+        wb_sketch::boundary::widen3(point),
+        wb_sketch::boundary::widen3(face.normal),
+    );
     let mut sketch = wb_sketch::sketch::Sketch::new("side");
     sketch.plane = plane;
     let mut sketch = wb_sketch::SketchFeature::new(sketch, plane);
@@ -548,7 +551,7 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
         placed.origin
     );
     assert!(
-        (placed.origin[0] - hi[0]).abs() < 1e-3,
+        (placed.origin[0] - f64::from(hi[0])).abs() < 1e-3,
         "origin {:?}",
         placed.origin
     );

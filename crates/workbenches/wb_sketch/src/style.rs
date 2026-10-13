@@ -144,7 +144,7 @@ pub fn placement_label(feature: &crate::feature::SketchFeature) -> String {
     }
     let plane = &feature.plane;
     let label = plane_label(plane);
-    let offset: f32 = (0..3).map(|i| plane.origin[i] * plane.normal[i]).sum();
+    let offset: f64 = (0..3).map(|i| plane.origin[i] * plane.normal[i]).sum();
     if label == "Face plane" || offset.abs() < 1e-3 {
         label.to_string()
     } else {

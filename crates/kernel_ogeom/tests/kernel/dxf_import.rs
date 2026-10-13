@@ -213,7 +213,7 @@ fn a_recorded_import_replays_as_the_same_sketch() {
     assert_eq!(out.error, None, "{script}");
     let again = replay.sketch(&out.printed.concat());
 
-    let ends = |s: &Sketch| -> Vec<[f32; 4]> {
+    let ends = |s: &Sketch| -> Vec<[f64; 4]> {
         lines(s)
             .iter()
             .map(|l| {
@@ -273,7 +273,7 @@ fn arcs_and_circles_import_as_sketch_arcs_and_circles() {
     let id = scripting::Host::call(&mut host, "sketch.import_dxf", args).unwrap();
     let sketch = host.sketch(id.as_str().unwrap());
 
-    let circles: Vec<f32> = sketch
+    let circles: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {
@@ -282,7 +282,7 @@ fn arcs_and_circles_import_as_sketch_arcs_and_circles() {
         })
         .collect();
     assert_eq!(circles, vec![5.0]);
-    let arcs: Vec<f32> = sketch
+    let arcs: Vec<f64> = sketch
         .geometry
         .iter()
         .filter_map(|g| match g {

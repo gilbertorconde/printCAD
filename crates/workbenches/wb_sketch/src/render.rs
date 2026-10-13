@@ -1,24 +1,25 @@
 //! Sketch geometry as renderable meshes: thin quads, or a line list the
 //! renderer draws at a fixed pixel width.
 
+use crate::boundary::narrow3;
 use crate::sketch::{GeometryElement, Sketch, SketchPlane, Vec2D};
 use kernel_api::TriMesh;
 
 /// The sketch as world-space polylines: one per line, sampled curve, or
 /// point cross. Shared by the quad mesh and the line list.
-pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3]>> {
-    let x_axis = glam::Vec3::from_array(plane.x_axis);
-    let y_axis = glam::Vec3::from_array(plane.y_axis);
-    let origin = glam::Vec3::from_array(plane.origin);
+pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f64; 3]>> {
+    let x_axis = glam::DVec3::from_array(plane.x_axis);
+    let y_axis = glam::DVec3::from_array(plane.y_axis);
+    let origin = glam::DVec3::from_array(plane.origin);
     let to_world =
-        |pos: Vec2D| -> [f32; 3] { (origin + x_axis * pos.x + y_axis * pos.y).to_array() };
+        |pos: Vec2D| -> [f64; 3] { (origin + x_axis * pos.x + y_axis * pos.y).to_array() };
     let point = |id| {
         sketch.get_geometry(id).and_then(|g| match g {
             GeometryElement::Point(p) => Some(p.position),
             _ => None,
         })
     };
-    let mut out: Vec<Vec<[f32; 3]>> = Vec::new();
+    let mut out: Vec<Vec<[f64; 3]>> = Vec::new();
     // Projected geometry draws as drawn geometry does: the solid it came
     // from may have changed since, or be built from it.
     for geom in &sketch.geometry {
@@ -48,7 +49,7 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
                         (0..=segments)
                             .map(|i| {
                                 let angle =
-                                    (i as f32 / segments as f32) * 2.0 * std::f32::consts::PI;
+                                    (i as f64 / segments as f64) * 2.0 * std::f64::consts::PI;
                                 let offset = Vec2D::new(
                                     circle.radius * angle.cos(),
                                     circle.radius * angle.sin(),
@@ -73,7 +74,7 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
                     out.push(
                         (0..=segments)
                             .map(|i| {
-                                let angle = start_angle + (i as f32 / segments as f32) * sweep;
+                                let angle = start_angle + (i as f64 / segments as f64) * sweep;
                                 let offset =
                                     Vec2D::new(arc.radius * angle.cos(), arc.radius * angle.sin());
                                 to_world(center + offset)
@@ -107,10 +108,10 @@ pub fn sketch_polylines(sketch: &Sketch, plane: &SketchPlane) -> Vec<Vec<[f32; 3
 pub fn sketch_to_lines(sketch: &Sketch, plane: &SketchPlane) -> TriMesh {
     let mut positions = Vec::new();
     let mut edges = Vec::new();
-    let normal = glam::Vec3::from_array(plane.normal).normalize().to_array();
+    let normal = narrow3(glam::DVec3::from_array(plane.normal).normalize().to_array());
     for polyline in sketch_polylines(sketch, plane) {
         let base = positions.len() as u32;
-        positions.extend_from_slice(&polyline);
+        positions.extend(polyline.iter().map(|p| narrow3(*p)));
         for i in 1..polyline.len() as u32 {
             edges.push(base + i - 1);
             edges.push(base + i);

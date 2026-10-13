@@ -3,6 +3,7 @@
 use core_document::{DocumentResult, FeatureError, FeatureId, WorkbenchFeature, WorkbenchId};
 use serde::{Deserialize, Serialize};
 
+use crate::boundary::widen3;
 use crate::sketch::{Sketch, SketchPlane};
 
 /// A sketch feature that can be stored in the document's feature tree.
@@ -66,10 +67,10 @@ impl AttachedSupport {
     pub fn plane(&self) -> SketchPlane {
         let frame = self.datum().frame();
         SketchPlane {
-            origin: frame.origin,
-            normal: frame.normal,
-            x_axis: frame.x_axis,
-            y_axis: frame.y_axis(),
+            origin: widen3(frame.origin),
+            normal: widen3(frame.normal),
+            x_axis: widen3(frame.x_axis),
+            y_axis: widen3(frame.y_axis()),
         }
     }
 
@@ -95,20 +96,20 @@ pub struct DatumSupport {
     pub plane: Option<String>,
     /// Millimetres along the plane's normal.
     #[serde(default)]
-    pub offset: f32,
+    pub offset: f64,
     /// Millimetres across the plane, along its x and y.
     #[serde(default, skip_serializing_if = "is_zero2")]
-    pub shift: [f32; 2],
+    pub shift: [f64; 2],
     /// Degrees the sketch is turned about the plane's normal.
     #[serde(default, skip_serializing_if = "is_zero")]
-    pub turn: f32,
+    pub turn: f64,
 }
 
-fn is_zero(v: &f32) -> bool {
+fn is_zero(v: &f64) -> bool {
     *v == 0.0
 }
 
-fn is_zero2(v: &[f32; 2]) -> bool {
+fn is_zero2(v: &[f64; 2]) -> bool {
     *v == [0.0, 0.0]
 }
 
@@ -117,8 +118,8 @@ fn is_zero2(v: &[f32; 2]) -> bool {
 /// body's frame) and the plane the sketch had on it then.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct FaceSupport {
-    pub point: [f32; 3],
-    pub normal: [f32; 3],
+    pub point: [f64; 3],
+    pub normal: [f64; 3],
     #[serde(default)]
     pub name: kernel_api::TopoName,
     /// The sketch's plane when it was placed.
@@ -141,8 +142,8 @@ impl FaceSupport {
     /// The sketch placed with `placed` on `face`.
     pub fn on(face: &core_document::FaceRef, placed: SketchPlane) -> Self {
         Self {
-            point: face.point,
-            normal: face.normal,
+            point: widen3(face.point),
+            normal: widen3(face.normal),
             name: face.name,
             placed,
             lent_by: None,
@@ -179,15 +180,14 @@ impl FaceSupport {
     /// it, `normal` out of it): turned as the face turned, and carried
     /// along the face's normal onto it, never sliding across it.
     pub fn plane_at(&self, point: [f64; 3], normal: [f64; 3]) -> SketchPlane {
-        use glam::Vec3;
-        let n0 = Vec3::from_array(self.normal).normalize_or_zero();
-        let n1 =
-            Vec3::new(normal[0] as f32, normal[1] as f32, normal[2] as f32).normalize_or_zero();
-        let p0 = Vec3::from_array(self.point);
-        let p1 = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
-        let turn = glam::Quat::from_rotation_arc(n0, n1);
-        let turned = |v: [f32; 3]| (turn * Vec3::from_array(v)).to_array();
-        let origin = p0 + turn * (Vec3::from_array(self.placed.origin) - p0);
+        use glam::DVec3;
+        let n0 = DVec3::from_array(self.normal).normalize_or_zero();
+        let n1 = DVec3::from_array(normal).normalize_or_zero();
+        let p0 = DVec3::from_array(self.point);
+        let p1 = DVec3::from_array(point);
+        let turn = glam::DQuat::from_rotation_arc(n0, n1);
+        let turned = |v: [f64; 3]| (turn * DVec3::from_array(v)).to_array();
+        let origin = p0 + turn * (DVec3::from_array(self.placed.origin) - p0);
         let origin = origin + n1 * (p1 - origin).dot(n1);
         SketchPlane {
             origin: origin.to_array(),
@@ -218,10 +218,10 @@ impl DatumSupport {
             _ => return None,
         };
         let mut plane = SketchPlane {
-            origin: frame.origin,
-            normal: frame.normal,
-            x_axis: frame.x_axis,
-            y_axis: frame.y_axis(),
+            origin: widen3(frame.origin),
+            normal: widen3(frame.normal),
+            x_axis: widen3(frame.x_axis),
+            y_axis: widen3(frame.y_axis()),
         };
         for (o, n) in plane.origin.iter_mut().zip(plane.normal) {
             *o += n * self.offset;
@@ -232,12 +232,12 @@ impl DatumSupport {
     /// `plane` shifted across itself and turned about its normal as the
     /// support says.
     pub fn moved_within(&self, mut plane: SketchPlane) -> SketchPlane {
-        use glam::Vec3;
+        use glam::DVec3;
         let (x, y) = (
-            Vec3::from_array(plane.x_axis),
-            Vec3::from_array(plane.y_axis),
+            DVec3::from_array(plane.x_axis),
+            DVec3::from_array(plane.y_axis),
         );
-        let origin = Vec3::from_array(plane.origin) + x * self.shift[0] + y * self.shift[1];
+        let origin = DVec3::from_array(plane.origin) + x * self.shift[0] + y * self.shift[1];
         let (s, c) = self.turn.to_radians().sin_cos();
         plane.origin = origin.to_array();
         plane.x_axis = (x * c + y * s).to_array();
@@ -324,7 +324,7 @@ mod face_support {
             surface: None,
             name: 7,
         };
-        let placed = SketchPlane::from_face(top.point, top.normal);
+        let placed = SketchPlane::from_face(widen3(top.point), widen3(top.normal));
         let support = FaceSupport::on(&top, placed);
         // The face rises 5 mm, found at another spot of it: the sketch
         // rises with it and does not slide.
@@ -334,11 +334,11 @@ mod face_support {
         // The face turns to face +X through the same point: so does the
         // sketch, its normal with the face's.
         let turned = support.plane_at([3.0, 4.0, 10.0], [1.0, 0.0, 0.0]);
-        assert!((glam::Vec3::from_array(turned.normal) - glam::Vec3::X).length() < 1e-6);
-        let origin = glam::Vec3::from_array(turned.origin);
+        assert!((glam::DVec3::from_array(turned.normal) - glam::DVec3::X).length() < 1e-6);
+        let origin = glam::DVec3::from_array(turned.origin);
         assert!(
-            (origin - glam::Vec3::new(3.0, 4.0, 10.0))
-                .dot(glam::Vec3::X)
+            (origin - glam::DVec3::new(3.0, 4.0, 10.0))
+                .dot(glam::DVec3::X)
                 .abs()
                 < 1e-5
         );
