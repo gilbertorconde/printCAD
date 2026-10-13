@@ -7,6 +7,7 @@ pub mod primitive;
 pub mod project;
 pub mod surface;
 pub mod sweep;
+mod wrap;
 
 use ogeom::core::Tolerances;
 use ogeom::topo::{Model, Shape};

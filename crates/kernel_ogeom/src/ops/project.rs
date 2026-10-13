@@ -1,11 +1,12 @@
-//! A sketch carried onto faces of the solid along its plane's normal.
+//! A sketch carried onto faces of the solid along its plane's normal, or
+//! unrolled onto the cylinder or cone they lie on (`ops::wrap`).
 //!
 //! Each picked face is split along the curves where they land on it; the
 //! pieces the sketch's regions cover are what an emboss raises and a
 //! deboss sinks: each piece thickened into a slab of its own, out of the
 //! solid or into it, then fused on or cut away. A piece is told to be in a
-//! region by a point inside it, where it faces the sketch's plane, carried
-//! back onto that plane.
+//! region by a point inside it carried back onto the sketch's plane: along
+//! the normal from where the piece faces the plane, or unrolled.
 
 use kernel_api::{FaceProbe, Profile, ProjectMode};
 use ogeom::algo::{Containment, classify_in_solid, classify_on_face, copied};
@@ -16,6 +17,7 @@ use ogeom::offset::make_thick_sheet;
 use ogeom::topo::{Model, Shape};
 
 use super::tol;
+use super::wrap::Development;
 use crate::profile::{self, BuiltWire};
 
 pub fn apply(
@@ -25,6 +27,7 @@ pub fn apply(
     faces: &[FaceProbe],
     mode: ProjectMode,
     height: f64,
+    wrap: bool,
 ) -> Result<Shape, String> {
     if faces.is_empty() {
         return Err("pick the faces to project the sketch onto".into());
@@ -40,6 +43,23 @@ pub fn apply(
         .iter()
         .flat_map(|g| std::iter::once(&g.outer).chain(&g.holes))
         .collect();
+    let (development, wrapped) = if wrap {
+        let first = super::surface::picked_face(model, base, &faces[0])?;
+        let development = Development::of(model, &first, &wires, along)?;
+        let mut charts = Vec::new();
+        for pick in faces {
+            let face = super::surface::picked_face(model, base, pick)?;
+            if let Some(chart) = development.chart_of(model, &face)
+                && !charts.iter().any(|(s, _)| *s == chart.0)
+            {
+                charts.push(chart);
+            }
+        }
+        let wrapped = development.edges(model, &wires, &charts)?;
+        (Some(development), wrapped)
+    } else {
+        (None, Vec::new())
+    };
 
     // The picked faces split one after another; `pieces` holds what became
     // of them so far, carried through every later split.
@@ -51,18 +71,36 @@ pub fn apply(
         if pieces.iter().any(|p| p.node() == face.node()) {
             continue;
         }
-        let cuts: Vec<Shape> = wires
-            .iter()
-            .flat_map(|w| w.edges.iter())
-            .filter(|e| reaches(model, &face, e, along))
-            .cloned()
-            .collect();
+        let (cuts, projection): (Vec<Shape>, Projection) = match &development {
+            Some(development) => {
+                if !development.holds(model, &face) {
+                    return Err(
+                        "wrapping needs every picked face on the same cylinder or cone".into(),
+                    );
+                }
+                let cuts = wrapped
+                    .iter()
+                    .filter(|(_, points)| Development::lands(model, &face, points))
+                    .map(|(edge, _)| edge.clone())
+                    .collect();
+                (cuts, Projection::OnFace)
+            }
+            None => {
+                let cuts = wires
+                    .iter()
+                    .flat_map(|w| w.edges.iter())
+                    .filter(|e| reaches(model, &face, e, along))
+                    .cloned()
+                    .collect();
+                (cuts, Projection::Along(along))
+            }
+        };
         if cuts.is_empty() {
             // Nothing lands on it: it is wholly in a region or wholly out.
             pieces.push(face);
             continue;
         }
-        let split = split_face(model, &shape, &face, &cuts, Projection::Along(along), tol())
+        let split = split_face(model, &shape, &face, &cuts, projection, tol())
             .map_err(|e| format!("splitting a face along the sketch failed: {e}"))?;
         crate::naming::record(&split.history);
         let mut carried: Vec<Shape> = pieces
@@ -75,9 +113,11 @@ pub fn apply(
         cut_any = true;
     }
     if !cut_any {
-        return Err(
-            "the sketch's curves do not land on the picked faces along its plane's normal".into(),
-        );
+        return Err(if wrap {
+            "the wrapped sketch's curves do not land on the picked faces".into()
+        } else {
+            "the sketch's curves do not land on the picked faces along its plane's normal".into()
+        });
     }
     if mode == ProjectMode::Split {
         return Ok(shape);
@@ -85,10 +125,14 @@ pub fn apply(
 
     let mut covered = Vec::new();
     for piece in pieces {
-        let Some(inside) = point_inside(model, &piece, sketch, along) else {
+        let facing = development.is_none().then_some((sketch, along));
+        let Some(inside) = point_inside(model, &piece, facing) else {
             continue;
         };
-        let on_plane = onto_plane(sketch, along, inside);
+        let on_plane = match &development {
+            Some(development) => development.unwrap(inside),
+            None => onto_plane(sketch, along, inside),
+        };
         let in_region = built.faces.iter().any(|region| {
             classify_on_face(model, region, on_plane, Deflection::default(), tol())
                 .is_ok_and(|c| c == Containment::In)
@@ -141,19 +185,20 @@ fn reaches(model: &Model, face: &Shape, edge: &Shape, along: Direction) -> bool 
     })
 }
 
-/// A point well inside `face` where it faces the sketch's plane: the middle
-/// of its largest drawn triangle turned toward the plane, or of its largest
-/// one where none is.
+/// A point well inside `face`: the middle of its largest drawn triangle,
+/// given a sketch's plane and normal its largest turned toward the plane
+/// where one is.
 ///
 /// A piece wrapping round a solid also covers the far side, whose points
-/// carried onto the plane land in the same regions as the near side's: a
-/// point there would take the whole wrap for a region. The far side faces
-/// away from the plane, so it is passed over.
-fn point_inside(model: &Model, face: &Shape, sketch: &Profile, along: Direction) -> Option<Point> {
+/// carried straight onto the plane land in the same regions as the near
+/// side's: a point there would take the whole wrap for a region. The far
+/// side faces away from the plane, so it is passed over.
+fn point_inside(
+    model: &Model,
+    face: &Shape,
+    facing: Option<(&Profile, Direction)>,
+) -> Option<Point> {
     let drawn = triangulate_face(model, face, Deflection::default(), tol()).ok()?;
-    let o = sketch.plane.origin;
-    let origin = Point::new(o[0], o[1], o[2]);
-    let n = along.vector();
     let triangles: Vec<(Point, f64, bool)> = drawn
         .triangles
         .iter()
@@ -167,8 +212,12 @@ fn point_inside(model: &Model, face: &Shape, sketch: &Profile, along: Direction)
             // Wound outward, so its normal faces the plane where it points
             // back across the plane's normal from the side it stands on.
             let normal = (b - a).cross(c - a);
-            let facing = (middle - origin).dot(n) * normal.dot(n) <= 0.0;
-            (middle, normal.magnitude(), facing)
+            let toward = facing.is_none_or(|(sketch, along)| {
+                let o = sketch.plane.origin;
+                let n = along.vector();
+                (middle - Point::new(o[0], o[1], o[2])).dot(n) * normal.dot(n) <= 0.0
+            });
+            (middle, normal.magnitude(), toward)
         })
         .collect();
     let largest = |facing_only: bool| {

@@ -1391,6 +1391,18 @@ pub enum SolidOp {
         mode: ProjectMode,
         height: f64,
     },
+    /// A sketch unrolled onto the cylinder or cone its `faces` lie on, so
+    /// its lengths are kept on the surface: the sketch's middle lands where
+    /// a straight projection along its plane's normal puts it, and the
+    /// rest is laid round the surface from there, the way across the
+    /// axis turning about it and the way along the axis following it.
+    /// Otherwise as [`SolidOp::Project`].
+    Wrap {
+        profile: Profile,
+        faces: Vec<FaceProbe>,
+        mode: ProjectMode,
+        height: f64,
+    },
 }
 
 /// What a [`SolidOp::Project`] makes of the faces a sketch lands on.

@@ -765,7 +765,18 @@ pub fn execute_cached(
             } => {
                 let solid =
                     base.ok_or_else(|| err("projecting a sketch needs an existing solid".into()))?;
-                ops::project::apply(&mut model, &solid, profile, faces, *mode, *height)
+                ops::project::apply(&mut model, &solid, profile, faces, *mode, *height, false)
+                    .map_err(&err)?
+            }
+            SolidOp::Wrap {
+                profile,
+                faces,
+                mode,
+                height,
+            } => {
+                let solid =
+                    base.ok_or_else(|| err("wrapping a sketch needs an existing solid".into()))?;
+                ops::project::apply(&mut model, &solid, profile, faces, *mode, *height, true)
                     .map_err(&err)?
             }
             SolidOp::RemoveFaces { faces, face_names } => {
