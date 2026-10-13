@@ -375,6 +375,7 @@ fn hole_feature_drills_the_pad_through_the_full_stack() {
     doc.add_feature_in_body(
         DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -436,6 +437,7 @@ fn plate_with_nut_trap(depth: Option<f32>, trap: wb_design::NutTrap) -> Result<f
     doc.add_feature_in_body(
         DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -1234,6 +1236,7 @@ fn a_modeled_thread_cuts_its_groove_into_the_hole_wall() {
         .unwrap();
     let hole = |modeled_thread: bool| DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -2077,6 +2080,7 @@ fn drilled_block_solid(
 fn plain_hole(sketch: FeatureId, diameter: f32, depth: f32) -> DesignFeature {
     DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
@@ -2109,6 +2113,29 @@ fn volume(properties: &kernel_api::PhysicalProperties) -> f64 {
 }
 
 use std::f64::consts::PI;
+
+/// A hole started 2 mm above the top face drills only the 2 mm of its
+/// 4 mm depth that reach the material; started 3 mm in, all 4 mm, lower.
+#[test]
+fn a_hole_drills_from_where_its_start_puts_it() {
+    let block = 20.0 * 20.0 * 10.0;
+    let r = 3.0f64;
+    let removed = |offset: f32| {
+        let drilled = drilled_block(20.0, 10.0, |sketch| {
+            with_hole(plain_hole(sketch, 6.0, 4.0), |f| {
+                if let DesignFeature::Hole { start, .. } = f {
+                    start.offset = offset;
+                }
+            })
+        })
+        .unwrap_or_else(|e| panic!("builds: {e}"));
+        block - volume(&drilled)
+    };
+    let above = removed(-2.0);
+    assert!((above - PI * r * r * 2.0).abs() < 0.05, "{above}");
+    let within = removed(3.0);
+    assert!((within - PI * r * r * 4.0).abs() < 0.05, "{within}");
+}
 
 /// A 118° drill point below the depth adds its cone under the wall; within
 /// the depth the wall stops short so the tip lands on the depth.

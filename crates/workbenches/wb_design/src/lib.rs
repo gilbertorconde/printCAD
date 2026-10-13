@@ -35,9 +35,10 @@ pub use build::{
 pub use feature::{
     Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DesignFeature,
     DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
-    FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, LoftSection, MirrorPlane,
-    NutSide, NutTrap, PatternAxis, PipeCorner, PipeOrientation, PlaneTarget, RevolveAxis,
-    RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon, primitive_preset,
+    FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, HoleStart, LoftSection,
+    MirrorPlane, NutSide, NutTrap, PatternAxis, PipeCorner, PipeOrientation, PlaneTarget,
+    RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon,
+    primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, NutSize, NutStandard, ScrewSeat, ThreadSize, ThreadStandard,
@@ -617,6 +618,7 @@ impl DesignWorkbench {
                 (
                     DesignFeature::Hole {
                         cosmetic_thread: false,
+                        start: Default::default(),
                         clearance: None,
                         thread_length: Default::default(),
                         refine: false,
@@ -3011,6 +3013,7 @@ mod icon_coverage {
         let hole = |cosmetic_thread: bool| DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,

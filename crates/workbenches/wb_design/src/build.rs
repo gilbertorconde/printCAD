@@ -2084,7 +2084,6 @@ pub(crate) fn cosmetic_thread_lines(
         through_all,
         thread: Some(spec),
         thread_depth,
-        reversed,
         ..
     } = feature
     else {
@@ -2096,11 +2095,8 @@ pub(crate) fn cosmetic_thread_lines(
     let (Ok(size), Ok(sketch_feature)) = (spec.resolve(), load_sketch(document, *sketch)) else {
         return mesh;
     };
-    let plane = profile::plane_of(&sketch_feature.plane);
-    let into = if *reversed {
-        plane.normal
-    } else {
-        plane.normal.map(|c| -c)
+    let Ok((plane, into)) = hole_plane(document, feature, &sketch_feature) else {
+        return mesh;
     };
     let bore = f64::from(hole_diameter(feature)) * 0.5;
     let radius = bore * 0.98;
@@ -2228,7 +2224,7 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     };
     let size = thread.as_ref().map(ThreadSpec::resolve).transpose()?;
     let sketch_feature = load_sketch(document, *sketch)?;
-    let plane = profile::plane_of(&sketch_feature.plane);
+    let (plane, into) = hole_plane(document, feature, &sketch_feature)?;
     let centers = hole_centers(&sketch_feature.sketch);
     if centers.is_empty() {
         return Err("the hole sketch has no circles or points to place holes at".into());
@@ -2245,12 +2241,6 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
     let tan_taper = taper.to_radians().tan();
     // The drill's radius `down` into the material.
     let radius_at = |down: f64| radius - down * tan_taper;
-    // Into the material: against the sketch normal unless reversed.
-    let into = if *reversed {
-        plane.normal
-    } else {
-        plane.normal.map(|c| -c)
-    };
 
     let circles_profile = |radius: f64| Profile {
         plane,
@@ -2530,6 +2520,42 @@ fn hole_ops(document: &Document, feature: &DesignFeature) -> Result<Vec<SolidOp>
         }
     }
     Ok(ops)
+}
+
+/// The plane a hole starts drilling on, in its body's frame, and the way
+/// it drills into the material (against the sketch normal unless
+/// reversed): the sketch's plane carried along the drill to where the
+/// hole's start puts it.
+pub(crate) fn hole_plane(
+    document: &Document,
+    feature: &DesignFeature,
+    sketch: &SketchFeature,
+) -> Result<(kernel_api::ProfilePlane, [f64; 3]), String> {
+    let DesignFeature::Hole {
+        reversed, start, ..
+    } = feature
+    else {
+        return Err("not a hole feature".into());
+    };
+    let mut plane = profile::plane_of(&sketch.plane);
+    let into = if *reversed {
+        plane.normal
+    } else {
+        plane.normal.map(|c| -c)
+    };
+    if start.moves() {
+        let way = normalize(into).map_err(|_| "the hole's sketch has no normal".to_string())?;
+        let to_start = match (&start.face, start.at) {
+            (Some(face), _) => distance_to_plane(plane.origin, way, face_pick_plane(face))?,
+            (None, Some(at)) => distance_to_plane(plane.origin, way, start_plane(document, at)?)?,
+            (None, None) => 0.0,
+        };
+        let s = to_start + f64::from(start.offset);
+        for (o, w) in plane.origin.iter_mut().zip(way) {
+            *o += w * s;
+        }
+    }
+    Ok((plane, into))
 }
 
 /// A cone cut `down` along `into` below a hole center: `wide` in radius
@@ -4235,6 +4261,7 @@ mod tests {
         doc.add_feature_in_body(
             DesignFeature::Hole {
                 cosmetic_thread: false,
+                start: Default::default(),
                 clearance: None,
                 thread_length: Default::default(),
                 refine: false,
@@ -4368,6 +4395,7 @@ mod tests {
             .unwrap();
         let hole = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance,
             thread_length: length,
             refine: false,
@@ -4545,6 +4573,7 @@ mod tests {
         let mut hole = DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread: true,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4608,6 +4637,7 @@ mod tests {
         let hole = |thread_depth: f32| DesignFeature::Hole {
             boolean_tolerance: None,
             cosmetic_thread: true,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -4701,6 +4731,7 @@ mod tests {
             doc.add_feature_in_body(
                 DesignFeature::Hole {
                     cosmetic_thread: false,
+                    start: Default::default(),
                     clearance: None,
                     thread_length: Default::default(),
                     refine: false,
@@ -4755,6 +4786,7 @@ mod tests {
             .unwrap();
         let mut hole = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5102,6 +5134,7 @@ mod tests {
     fn metric_hole_diameter_uses_the_table() {
         let feature = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5128,6 +5161,7 @@ mod tests {
         assert!((hole_diameter(&feature) - 5.0).abs() < 1e-6, "M6 tap drill");
         let clearance = DesignFeature::Hole {
             cosmetic_thread: false,
+            start: Default::default(),
             clearance: None,
             thread_length: Default::default(),
             refine: false,
@@ -5451,6 +5485,46 @@ mod tests {
         );
         let refused = body_build_ops(&doc, body).unwrap_err().to_string();
         assert!(refused.contains("not flat"), "{refused}");
+    }
+
+    /// A hole starts on its sketch's plane, carried along the drill onto
+    /// another sketch's plane, then its offset further in; the plane it
+    /// starts on is a dependency.
+    #[test]
+    fn a_hole_starts_where_its_start_says() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let lifted = {
+            let mut s = Sketch::new("lifted");
+            s.plane.origin = [0.0, 0.0, 7.0];
+            let plane = s.plane;
+            SketchFeature::new(s, plane)
+        };
+        let lifted = doc
+            .add_feature_in_body(lifted, "lifted".into(), Some(body))
+            .unwrap();
+        let mut hole = match DesignFeature::from_json(&serde_json::json!({"Hole": {
+            "sketch": sketch_id, "diameter": 2.0, "depth": 3.0, "through_all": false,
+        }})) {
+            Ok(hole) => hole,
+            Err(e) => panic!("{e}"),
+        };
+        let start_z = |doc: &Document, hole: &DesignFeature| {
+            let sketch = load_sketch(doc, sketch_id).unwrap();
+            hole_plane(doc, hole, &sketch).unwrap().0.origin[2]
+        };
+        assert!(start_z(&doc, &hole).abs() < 1e-9);
+        if let DesignFeature::Hole { start, .. } = &mut hole {
+            start.offset = 2.0;
+        }
+        assert!(
+            (start_z(&doc, &hole) + 2.0).abs() < 1e-9,
+            "into the material"
+        );
+        if let DesignFeature::Hole { start, .. } = &mut hole {
+            start.at = Some(lifted);
+        }
+        assert!((start_z(&doc, &hole) - 5.0).abs() < 1e-9);
+        assert!(hole.dependencies().contains(&lifted));
     }
 
     #[test]

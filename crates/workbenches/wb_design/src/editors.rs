@@ -100,6 +100,7 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Taper", "taper"),
     ("Offset", "offset"),
     ("Second offset", "offset2"),
+    ("Start offset", "start_offset"),
     ("Angle", "angle"),
     ("Angle 2", "angle2"),
     ("Pitch", "pitch"),

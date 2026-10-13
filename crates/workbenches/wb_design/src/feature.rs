@@ -427,6 +427,29 @@ impl Attached {
     }
 }
 
+/// Where a hole starts drilling: its sketch's plane carried along the
+/// drill onto a datum plane, another sketch's plane or a flat face of the
+/// solid, then `offset` further in.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct HoleStart {
+    /// Millimetres further into the material; negative starts above.
+    pub offset: f32,
+    /// A datum plane or a sketch whose plane the hole starts on.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<FeatureId>,
+    /// A flat face of the solid the hole starts on, in place of `at`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub face: Option<FacePick>,
+}
+
+impl HoleStart {
+    /// The hole does not start on its sketch's plane.
+    pub fn moves(&self) -> bool {
+        self.offset != 0.0 || self.at.is_some() || self.face.is_some()
+    }
+}
+
 /// A pad's or pocket's less used settings.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -1601,6 +1624,9 @@ pub enum DesignFeature {
         /// A hexagonal pocket for a captive nut at one end.
         #[serde(default, deserialize_with = "nut_trap_or_flag")]
         nut_trap: Option<NutTrap>,
+        /// Where it starts drilling, when not on its sketch's plane.
+        #[serde(default)]
+        start: HoleStart,
         #[serde(default)]
         reversed: bool,
         /// Merge the coplanar faces the fuse or cut leaves behind.
@@ -2338,6 +2364,7 @@ impl DesignFeature {
             DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
                 extras.start_face.as_ref()
             }
+            DesignFeature::Hole { start, .. } => start.face.as_ref(),
             _ => None,
         }
     }
@@ -2347,6 +2374,7 @@ impl DesignFeature {
             DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
                 extras.start_face.as_mut()
             }
+            DesignFeature::Hole { start, .. } => start.face.as_mut(),
             _ => None,
         }
     }
@@ -2408,6 +2436,15 @@ impl WorkbenchFeature for DesignFeature {
             && let Some(start) = extras.start_at
         {
             deps.push(start);
+        }
+        if let DesignFeature::Hole {
+            start: HoleStart {
+                at: Some(start), ..
+            },
+            ..
+        } = self
+        {
+            deps.push(*start);
         }
         if let Some(originals) = self.originals() {
             deps.extend_from_slice(originals);

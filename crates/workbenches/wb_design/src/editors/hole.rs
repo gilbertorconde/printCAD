@@ -6,7 +6,7 @@ use egui::Ui;
 use ui_kit::tokens::*;
 use ui_kit::widgets::{check_row, mono_label};
 
-use super::{Formulas, deg_drag, label_cell, mm_drag, sketch_combo};
+use super::{Formulas, deg_drag, label_cell, mm_drag, sketch_combo, start_rows};
 use crate::feature::{DesignFeature, DrillPoint, HoleCut, HoleFit, NutSide, NutTrap, ThreadSpec};
 use crate::hole_tables::{NutStandard, ScrewSeat, ThreadStandard, user_cut_profiles};
 
@@ -62,6 +62,7 @@ pub(super) fn hole_editor(
         taper_deg,
         nut_trap,
         reversed,
+        start,
     } = feature
     else {
         return false;
@@ -400,6 +401,15 @@ pub(super) fn hole_editor(
         .map(|size| size.major);
     changed |= nut_trap_editor(ui, fx, feature_id, nut_trap, nominal, *through_all);
     changed |= check_row(ui, reversed, "Reversed").changed();
+    changed |= start_rows(
+        ui,
+        ctx,
+        body,
+        fx,
+        &mut start.at,
+        &mut start.face,
+        &mut start.offset,
+    );
     changed
 }
 

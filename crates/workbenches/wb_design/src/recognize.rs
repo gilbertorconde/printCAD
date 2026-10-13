@@ -153,6 +153,7 @@ fn drill(
 
     let hole = DesignFeature::Hole {
         cosmetic_thread: false,
+        start: Default::default(),
         clearance: None,
         thread_length: Default::default(),
         refine: false,
