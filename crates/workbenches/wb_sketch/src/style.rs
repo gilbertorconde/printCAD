@@ -76,6 +76,17 @@ pub fn element_icon(element: &GeometryElement) -> &'static str {
     }
 }
 
+/// The icon of an element's row in the sketch's element list: projected
+/// (external) geometry and its points draw the external geometry icon,
+/// their kind said beside it in words; the rest draw their kind's.
+pub fn element_row_icon(element: &GeometryElement, external: bool) -> &'static str {
+    if external {
+        "external-geometry"
+    } else {
+        element_icon(element)
+    }
+}
+
 /// The element's kind as a word.
 pub fn element_kind(element: &GeometryElement) -> &'static str {
     match element {
@@ -185,6 +196,15 @@ mod tests {
         assert_eq!(element_name(&sketch, a), "Point 1");
         assert_eq!(element_name(&sketch, l), "Line 1");
         assert_eq!(element_name(&sketch, c), "Point 3");
+    }
+
+    #[test]
+    fn projected_rows_draw_the_external_geometry_icon() {
+        let line = GeometryElement::Line(Line::new(Uuid::new_v4(), Uuid::new_v4()));
+        assert_eq!(element_row_icon(&line, false), "line");
+        let icon = element_row_icon(&line, true);
+        assert_eq!(icon, "external-geometry");
+        assert!(ui_kit::icon::exists(icon), "{icon}");
     }
 
     #[test]

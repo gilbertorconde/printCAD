@@ -15,7 +15,7 @@ use ui_kit::{mono, sans};
 use crate::boundary::widen3;
 use crate::sketch::{self, Constraint, Sketch, SketchPlane};
 use crate::solver;
-use crate::style::{constraint_icon, element_icon, element_kind, element_name};
+use crate::style::{constraint_icon, element_kind, element_name, element_row_icon};
 use crate::{ConstraintFilter, ElementFilter, SketchWorkbench, overlay};
 
 impl SketchWorkbench {
@@ -1597,6 +1597,7 @@ impl SketchWorkbench {
             .unwrap_or_default()
             .into_iter()
             .collect();
+        let external = sketch.external_ids();
         for geom in &sketch.geometry {
             let id = geom.id();
             if !self.element_filter.accepts(sketch, id) {
@@ -1614,7 +1615,12 @@ impl SketchWorkbench {
                 egui::Color32::TRANSPARENT
             };
             let hit = list_row(ui, fill, ("element_row", id), |ui| {
-                ui_kit::icon::draw(ui, element_icon(geom), 14.0, color);
+                ui_kit::icon::draw(
+                    ui,
+                    element_row_icon(geom, external.contains(&id)),
+                    14.0,
+                    color,
+                );
                 let mut name = element_name(sketch, id);
                 if sketch.is_construction(id) {
                     name.push_str(" (construction)");
