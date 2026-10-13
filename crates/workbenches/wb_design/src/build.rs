@@ -213,12 +213,14 @@ fn datums_asking(
                     .probes(),
                 // A primitive attached by a mode asks what the attachment
                 // asks.
+                // A feature starting on a face of the solid asks where the
+                // face is.
                 "wb.design" => match DesignFeature::from_json(&n.data).ok()? {
                     DesignFeature::Primitive {
                         attached: Some(attached),
                         ..
                     } => attached.probes(),
-                    _ => return None,
+                    feature => vec![feature.start_face()?.probe()],
                 },
                 "wb.sketch" => {
                     let sketch = wb_sketch::SketchFeature::from_json(&n.data).ok()?;
@@ -616,6 +618,9 @@ fn plan_feature(
         if subtractive { cut } else { additive_boolean }
     };
 
+    if feature.start_face().is_some() {
+        start_face_is_flat(document, feature_id).map_err(&fail)?;
+    }
     let start_index = plan.ops.len();
     match &feature {
         DesignFeature::Pad { profile_face, .. } | DesignFeature::Pocket { profile_face, .. } => {
@@ -1647,7 +1652,7 @@ fn extrude_op(
         boolean
     };
     if let Some(r) = borrowed {
-        if extras.start_offset != 0.0 || extras.start_at.is_some() || second.is_some() {
+        if extras.moves_start() || second.is_some() {
             return Err(
                 "a start offset or a second side's own taper takes a sketch's profile, not a face"
                     .into(),
@@ -1663,7 +1668,7 @@ fn extrude_op(
         }]);
     }
     Ok(match (profile_face, sketch) {
-        (Some(_), _) if extras.start_offset != 0.0 || extras.start_at.is_some() => {
+        (Some(_), _) if extras.moves_start() => {
             return Err("a start offset or plane takes a sketch's profile, not a face".into());
         }
         (Some(_), _) if second.is_some() => {
@@ -1676,15 +1681,18 @@ fn extrude_op(
         }],
         (None, Some(sketch)) => {
             let mut profile = sketch_profile(document, sketch, feature.regions())?;
-            if extras.start_offset != 0.0 || extras.start_at.is_some() {
+            if extras.moves_start() {
                 // Along the way the first side runs.
                 let way = normalize(custom.unwrap_or(profile.plane.normal))
                     .map_err(|_| "the extrusion direction is zero".to_string())?;
-                let to_start = match extras.start_at {
-                    Some(start) => {
+                let to_start = match (&extras.start_face, extras.start_at) {
+                    (Some(face), _) => {
+                        distance_to_plane(profile.plane.origin, way, face_pick_plane(face))?
+                    }
+                    (None, Some(start)) => {
                         distance_to_plane(profile.plane.origin, way, start_plane(document, start)?)?
                     }
-                    None => 0.0,
+                    (None, None) => 0.0,
                 };
                 let s =
                     to_start + f64::from(extras.start_offset) * if reversed { -1.0 } else { 1.0 };
@@ -1708,6 +1716,22 @@ fn extrude_op(
         }
         (None, None) => unreachable!("a profile was required above"),
     })
+}
+
+/// Refused when the last build found the face `feature` starts on curved:
+/// a start is a plane.
+fn start_face_is_flat(document: &Document, feature: FeatureId) -> Result<(), String> {
+    let answer = document
+        .probed_references(feature)
+        .and_then(|probed| probed.answers.first());
+    match answer {
+        Some(Ok(kernel_api::ProbeAnswer::Face { surface, .. }))
+            if !matches!(surface, kernel_api::FaceSurface::Plane { .. }) =>
+        {
+            Err("the face it starts on is not flat".into())
+        }
+        _ => Ok(()),
+    }
 }
 
 /// The plane an extrusion starts on, as a point and its normal in the
@@ -5380,6 +5404,53 @@ mod tests {
             .unwrap();
         let refused = body_build_ops(&doc, body).unwrap_err().to_string();
         assert!(refused.contains("runs along the plane"), "{refused}");
+    }
+
+    /// A pad starting on a face of the solid sweeps from the face's
+    /// plane, asks the solid before it where the face is, and is refused
+    /// once a build finds the face curved.
+    #[test]
+    fn a_pad_starts_on_the_face_it_picks() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        doc.add_feature_in_body(pad(sketch_id, 10.0), "Pad".into(), Some(body))
+            .unwrap();
+        let face = FacePick {
+            point: [1.0, 1.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        };
+        let mut boss = pad(sketch_id, 2.0);
+        if let DesignFeature::Pad { extras, .. } = &mut boss {
+            extras.start_face = Some(face);
+        }
+        let boss = doc
+            .add_feature_in_body(boss, "Boss".into(), Some(body))
+            .unwrap();
+        let mut plan = body_build_ops(&doc, body).unwrap();
+        plan.probes = datum_probes(&doc, body, &plan);
+        let SolidOp::Sweep { profile, .. } = &plan.ops[1] else {
+            panic!("a sweep");
+        };
+        assert!((profile.plane.origin[2] - 10.0).abs() < 1e-9);
+        assert_eq!(plan.probes.len(), 1);
+        assert_eq!(plan.probes[0].feature, boss);
+        assert_eq!(plan.probes[0].probe.after_op, 1, "the solid before it");
+        assert_eq!(plan.probes[0].probe.probe, face.probe());
+
+        doc.store_probe_answers(
+            &plan.probes,
+            &[Ok(kernel_api::ProbeAnswer::Face {
+                point: [1.0, 1.0, 10.0],
+                normal: [1.0, 0.0, 0.0],
+                surface: kernel_api::FaceSurface::Cylinder {
+                    origin: [0.0; 3],
+                    axis: [0.0, 0.0, 1.0],
+                    radius: 1.0,
+                },
+            })],
+        );
+        let refused = body_build_ops(&doc, body).unwrap_err().to_string();
+        assert!(refused.contains("not flat"), "{refused}");
     }
 
     #[test]

@@ -1530,6 +1530,114 @@ fn a_pad_on_a_datum_sketch_follows_the_datum() {
     assert!(registry.rebuild_jobs(&mut doc).is_empty(), "settled");
 }
 
+/// Sketch and Design registered, as the app has them.
+fn design_registry() -> core_document::DocumentService {
+    let mut registry = core_document::DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    registry
+}
+
+/// Rebuild as the host does, probes and all, until nothing is left to
+/// rebuild: what each build finds of the references its plan asks about
+/// goes back to the document, which may move features and rebuild again.
+fn settle_probing(
+    registry: &core_document::DocumentService,
+    doc: &mut Document,
+    kernel: &mut OgeomKernel,
+) {
+    for _ in 0..16 {
+        let jobs = registry.rebuild_jobs(doc);
+        if jobs.is_empty() {
+            return;
+        }
+        for job in jobs {
+            let Ok(plan) = job.plan else { continue };
+            if plan.ops.is_empty() {
+                continue;
+            }
+            let asked: Vec<kernel_api::ChainProbe> = plan.probes.iter().map(|p| p.probe).collect();
+            let result = kernel
+                .execute_solid_chain_probing(
+                    &plan.ops,
+                    &TessellationSettings::default(),
+                    None,
+                    &asked,
+                )
+                .unwrap_or_else(|e| panic!("{e:?}"));
+            doc.store_probe_answers(&plan.probes, &result.probes);
+            doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
+            doc.set_imported_geometry(
+                job.body,
+                core_document::ImportedGeometry {
+                    mesh: std::sync::Arc::new(result.mesh),
+                    source_asset: None,
+                    revision: 0,
+                    bounds_mm: result.bounds_mm,
+                    brep_blob_path: None,
+                    mesh_path: None,
+                    face_colors_path: None,
+                    health: None,
+                },
+            );
+        }
+    }
+    panic!("the rebuilds never settled");
+}
+
+/// A pad starting on the top face of the pad before it stands on that
+/// face, and follows it when the first pad grows.
+#[test]
+fn a_pad_starting_on_a_face_follows_the_face() {
+    use core_document::WorkbenchFeature;
+    let registry = design_registry();
+    let mut kernel = OgeomKernel::new();
+    let (mut doc, body, base) = setup(40.0, 40.0);
+    let first = doc
+        .add_feature_in_body(
+            pad_feature(base, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    // A 4 x 4 square drawn on the ground, started on the top face.
+    let ground = wb_sketch::sketch::SketchPlane {
+        origin: [18.0, 18.0, 0.0],
+        ..Default::default()
+    };
+    let small = doc
+        .add_feature_in_body(rect_sketch_on(ground, 4.0, 4.0), "small".into(), Some(body))
+        .unwrap();
+    let mut boss = pad_feature(small, 5.0, false, false);
+    if let DesignFeature::Pad { extras, .. } = &mut boss {
+        extras.start_face = Some(wb_design::FacePick {
+            point: [20.0, 20.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            name: 0,
+        });
+    }
+    doc.add_feature_in_body(boss, "Boss".into(), Some(body))
+        .unwrap();
+    let top = |doc: &Document| {
+        doc.imported_geometry(body)
+            .and_then(|g| g.bounds_mm)
+            .expect("a solid")
+            .1[2]
+    };
+    settle_probing(&registry, &mut doc, &mut kernel);
+    assert!((top(&doc) - 15.0).abs() < 1e-3, "{}", top(&doc));
+
+    doc.update_feature_data(first, pad_feature(base, 20.0, false, false).to_json())
+        .unwrap();
+    doc.mark_feature_dirty(first);
+    settle_probing(&registry, &mut doc, &mut kernel);
+    assert!((top(&doc) - 25.0).abs() < 1e-3, "followed: {}", top(&doc));
+}
+
 /// A symmetric pocket from the top face cuts half its depth into the
 /// material and half into the air above it.
 #[test]

@@ -232,6 +232,32 @@ impl FacePick {
         }
     }
 
+    /// What a build asks of the solid to find the face again.
+    pub fn probe(&self) -> kernel_api::ShapeProbe {
+        kernel_api::ShapeProbe::Face {
+            point: self.point.map(f64::from),
+            normal: self.normal.map(f64::from),
+            name: self.name,
+        }
+    }
+
+    /// The pick moved to where a build found its face: `false` when the
+    /// answer is not a face's, or the face is not flat.
+    pub fn take_answer(&mut self, answer: &Result<kernel_api::ProbeAnswer, String>) -> bool {
+        match answer {
+            Ok(kernel_api::ProbeAnswer::Face {
+                point,
+                normal,
+                surface: kernel_api::FaceSurface::Plane { .. },
+            }) => {
+                self.point = point.map(|c| c as f32);
+                self.normal = normal.map(|c| c as f32);
+                true
+            }
+            _ => false,
+        }
+    }
+
     /// Whether `other` names the same face: the same name, or (without
     /// one) the same point.
     pub fn same_place(&self, other: &FacePick) -> bool {
@@ -419,6 +445,11 @@ pub struct ExtrudeExtras {
     /// profile carried there along the way it runs.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_at: Option<FeatureId>,
+    /// A flat face of the solid the extrusion starts on, in place of
+    /// `start_at`: found again on the solid before the feature, as a
+    /// sketch placed on a face is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_face: Option<FacePick>,
     /// The second side's taper, when it differs from the first's.
     pub taper2_deg: Option<f32>,
     /// With a slanted direction, the length is measured along the
@@ -429,6 +460,11 @@ pub struct ExtrudeExtras {
 impl ExtrudeExtras {
     pub fn is_plain(&self) -> bool {
         *self == Self::default()
+    }
+
+    /// The profile does not start where it is drawn.
+    pub fn moves_start(&self) -> bool {
+        self.start_offset != 0.0 || self.start_at.is_some() || self.start_face.is_some()
     }
 }
 
@@ -2294,6 +2330,25 @@ impl DesignFeature {
             name.push_str(" LH");
         }
         Some(name)
+    }
+
+    /// The face of the solid the feature starts on, when it starts on one.
+    pub fn start_face(&self) -> Option<&FacePick> {
+        match self {
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_ref()
+            }
+            _ => None,
+        }
+    }
+
+    pub fn start_face_mut(&mut self) -> Option<&mut FacePick> {
+        match self {
+            DesignFeature::Pad { extras, .. } | DesignFeature::Pocket { extras, .. } => {
+                extras.start_face.as_mut()
+            }
+            _ => None,
+        }
     }
 
     /// True when this feature removes material (must not be a body's first).

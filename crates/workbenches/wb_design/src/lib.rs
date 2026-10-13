@@ -2377,8 +2377,8 @@ impl Workbench for DesignWorkbench {
         }
     }
 
-    /// A primitive attached by a mode takes what the last build found of
-    /// what it stands on.
+    /// A primitive attached by a mode, or a feature starting on a face,
+    /// takes what the last build found of what it stands on.
     fn derive_on_solid(
         &self,
         node: &core_document::FeatureNode,
@@ -2392,6 +2392,24 @@ impl Workbench for DesignWorkbench {
         let Ok(mut feature) = DesignFeature::from_json(values) else {
             return false;
         };
+        // A feature starting on a face takes where the face is now.
+        if let Some(asked) = DesignFeature::from_json(&node.data)
+            .ok()
+            .and_then(|made| made.start_face().map(|face| face.probe()))
+        {
+            let Some(face) = feature.start_face_mut() else {
+                return false;
+            };
+            let before = *face;
+            if probed.probes != [asked]
+                || !probed.answers.first().is_some_and(|a| face.take_answer(a))
+                || *face == before
+            {
+                return false;
+            }
+            *values = feature.to_json();
+            return true;
+        }
         let DesignFeature::Primitive {
             attached: Some(attached),
             ..
