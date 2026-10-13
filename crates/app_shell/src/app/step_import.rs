@@ -314,7 +314,7 @@ impl PrintCadApp {
                     result,
                 } => {
                     let reading = match result {
-                        Ok(props) => crate::ui::Physical::Ready(props),
+                        Ok(props) => crate::ui::Physical::Ready(Box::new(props)),
                         Err(error) => crate::ui::Physical::Failed(error),
                     };
                     self.session.physical.insert(body_id, (revision, reading));

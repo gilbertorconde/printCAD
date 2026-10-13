@@ -177,7 +177,7 @@ pub struct FileMarks<'a> {
 pub enum Physical {
     /// The kernel worker is measuring it.
     Measuring,
-    Ready(kernel_api::PhysicalProperties),
+    Ready(Box<kernel_api::PhysicalProperties>),
     /// The kernel could not measure it, and why.
     Failed(String),
 }

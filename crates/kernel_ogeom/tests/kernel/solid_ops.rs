@@ -3513,8 +3513,8 @@ fn a_skewed_prism_leans() {
     );
 }
 
-/// A workbench measuring a solid gets its volume and centre, in its own
-/// frame.
+/// A workbench measuring a solid gets its volume, centre and inertia, in
+/// its own frame: a 10 x 20 x 30 box turns most easily about its long side.
 #[test]
 fn a_bench_measures_a_box() {
     use kernel_api::KernelQueries;
@@ -3538,6 +3538,54 @@ fn a_bench_measures_a_box() {
     assert!(
         (c[0] - 5.0).abs() < 1e-6 && (c[1] - 10.0).abs() < 1e-6 && (c[2] - 15.0).abs() < 1e-6,
         "{c:?}"
+    );
+    let inertia = measured.inertia.expect("a solid has an inertia");
+    // m (b² + c²) / 12 about each axis through the centre.
+    let expected = [(250_000.0, 2), (500_000.0, 1), (650_000.0, 0)];
+    for ((moment, axis), (want, along)) in inertia.principal.iter().zip(expected) {
+        assert!((moment - want).abs() < 1e-3, "{inertia:?}");
+        assert!((axis[along].abs() - 1.0).abs() < 1e-9, "{inertia:?}");
+    }
+    assert!((inertia.about_centre[0][0] - 650_000.0).abs() < 1e-3);
+    assert!(inertia.about_centre[0][1].abs() < 1e-6, "{inertia:?}");
+}
+
+/// Two boxes side by side, measured between whole solids alike, have a
+/// combined inertia about their shared centre.
+#[test]
+fn two_solids_weigh_as_one() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let block = |x: f64| SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 10.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        placement: Placement {
+            origin: [x, 0.0, 0.0],
+            ..Placement::default()
+        },
+        op: BooleanOp::Fuse,
+    };
+    let mut first = block(0.0);
+    if let SolidOp::Primitive { op, .. } = &mut first {
+        *op = BooleanOp::NewSolid;
+    }
+    let solid = kernel
+        .execute_solid_chain(&[first, block(30.0)], &TessellationSettings::default())
+        .expect("two apart blocks build");
+    let measured = kernel_ogeom::QUERIES.measure(&solid.brep_blob).unwrap();
+    assert!((measured.centre_mm[0] - 20.0).abs() < 1e-6, "{measured:?}");
+    let inertia = measured.inertia.unwrap();
+    // Each cube: 1000 * 200 / 12 about its own centre, plus 1000 * 15² off
+    // the shared one about Y and Z.
+    let own = 1000.0 * 200.0 / 12.0;
+    assert!((inertia.about_centre[0][0] - 2.0 * own).abs() < 1e-3);
+    assert!((inertia.about_centre[1][1] - 2.0 * (own + 225_000.0)).abs() < 1e-3);
+    assert!(
+        (inertia.principal[0].1[0].abs() - 1.0).abs() < 1e-9,
+        "{inertia:?}"
     );
 }
 

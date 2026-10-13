@@ -1258,7 +1258,7 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "A body's volume, surface area, centre and bounds",
         )
         .param("body", ParamKind::Id, "")
-        .returns("{volume, area, centre, min, max, approximate}")
+        .returns("{volume, area, centre, min, max, approximate, inertia?}")
         .read_only()
         .note(
             "It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is \
@@ -1269,6 +1269,12 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
              `approximate` is true when some face had no closed form and the figures were \
              summed over its triangles: close (a fraction of a percent) rather than exact. \
              A mesh body is refused; it has no solid to measure.",
+        )
+        .note(
+            "`inertia`, where the body has a volume, is the volume's at unit density (mm⁵; \
+             times a density in g/mm³ it is g·mm²) about the centre, on the world's axes: \
+             `tensor`, three rows, and `principal`, the principal moments smallest first, \
+             each {moment, axis}.",
         )
         .see_also("doc.rebuild")
         .see_also("doc.faces")
@@ -1283,6 +1289,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             assert(math.abs(m.volume - math.pi * 25 * 10) < 1e-3, m.volume)
             assert(math.abs(m.max[3] - 10) < 1e-6 and math.abs(m.min[1] + 5) < 1e-6)
             assert(math.abs(m.centre[3] - 5) < 1e-6)
+            -- It turns most easily about its own axis: V r² / 2.
+            local least = m.inertia.principal[1]
+            assert(math.abs(least.moment - math.pi * 3125) < 1, least.moment)
+            assert(math.abs(math.abs(least.axis[3]) - 1) < 1e-6)
             "#,
         ),
         CommandSpec::new(
@@ -3619,6 +3629,18 @@ pub(crate) fn document_command(
                 .map_err(|e| CommandError::failed(e.to_string()))?;
             let c = props.centre_mm.map(|v| v as f32);
             let centre = document.body_placement(body).point(c);
+            let inertia = props.inertia.map(|inertia| {
+                let turned = crate::app::recompute::turned_inertia(
+                    &inertia,
+                    document.body_placement(body).quat(),
+                );
+                json!({
+                    "tensor": turned.about_centre,
+                    "principal": turned
+                        .principal
+                        .map(|(moment, axis)| json!({"moment": moment, "axis": axis})),
+                })
+            });
             Ok(json!({
                 "volume": props.volume_mm3,
                 "area": props.area_mm2,
@@ -3626,6 +3648,7 @@ pub(crate) fn document_command(
                 "min": min,
                 "max": max,
                 "approximate": props.approximate,
+                "inertia": inertia,
             }))
         }
         "doc.parameters" => {

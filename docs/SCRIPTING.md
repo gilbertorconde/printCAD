@@ -1090,12 +1090,13 @@ assert(rims == 2 and seams == 1, "the top and bottom rims and the side's seam")
 `pc.doc.measure`: A body's volume, surface area, centre and bounds.
 
 - `body` (id)
-- Returns {volume, area, centre, min, max, approximate}
+- Returns {volume, area, centre, min, max, approximate, inertia?}
 
 Notes:
 
 - It reads the built solid: run `pc.doc.rebuild()` first; a body not yet built is refused ("the body has no solid yet").
 - Volume is in mm³ and area in mm², the bounds and centre in world space. `approximate` is true when some face had no closed form and the figures were summed over its triangles: close (a fraction of a percent) rather than exact. A mesh body is refused; it has no solid to measure.
+- `inertia`, where the body has a volume, is the volume's at unit density (mm⁵; times a density in g/mm³ it is g·mm²) about the centre, on the world's axes: `tensor`, three rows, and `principal`, the principal moments smallest first, each {moment, axis}.
 
 See also `pc.doc.rebuild`, `pc.doc.faces`.
 
@@ -1110,6 +1111,10 @@ local m = pc.doc.measure{body = pc.doc.feature{id = pad}.body}
 assert(math.abs(m.volume - math.pi * 25 * 10) < 1e-3, m.volume)
 assert(math.abs(m.max[3] - 10) < 1e-6 and math.abs(m.min[1] + 5) < 1e-6)
 assert(math.abs(m.centre[3] - 5) < 1e-6)
+-- It turns most easily about its own axis: V r² / 2.
+local least = m.inertia.principal[1]
+assert(math.abs(least.moment - math.pi * 3125) < 1, least.moment)
+assert(math.abs(math.abs(least.axis[3]) - 1) < 1e-6)
 ```
 
 `pc.doc.print_layout`: Where the print layout puts each copy: every part flat on its resting face, as many as the parts list prints, packed on the bed.

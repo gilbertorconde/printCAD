@@ -737,18 +737,40 @@ impl PrintCadApp {
         if *measured != revision {
             return None;
         }
-        // The kernel measures the body's own shape; the centre is shown
-        // where the body sits.
+        // The kernel measures the body's own shape; the centre and the
+        // inertia's axes are shown where the body sits.
         Some(match reading {
             crate::ui::Physical::Ready(props) => {
-                let mut props = *props;
+                let mut props = **props;
                 let placement = self.session.document.body_placement(body);
                 let c = props.centre_mm.map(|v| v as f32);
                 props.centre_mm = placement.point(c).map(f64::from);
-                crate::ui::Physical::Ready(props)
+                if let Some(inertia) = &mut props.inertia {
+                    *inertia = turned_inertia(inertia, placement.quat());
+                }
+                crate::ui::Physical::Ready(Box::new(props))
             }
             other => other.clone(),
         })
+    }
+}
+
+/// An inertia measured in a body's own frame, on the world's axes once the
+/// body is turned by `turn`: the tensor R I Rᵀ, the principal axes turned.
+pub(crate) fn turned_inertia(
+    inertia: &kernel_api::Inertia,
+    turn: glam::Quat,
+) -> kernel_api::Inertia {
+    let r = glam::DMat3::from_quat(turn.as_dquat());
+    // Stored row by row; glam's columns are its rows transposed.
+    let tensor = glam::DMat3::from_cols_array_2d(&inertia.about_centre).transpose();
+    let world = (r * tensor * r.transpose()).transpose().to_cols_array_2d();
+    let principal = inertia
+        .principal
+        .map(|(moment, axis)| (moment, (r * glam::DVec3::from_array(axis)).to_array()));
+    kernel_api::Inertia {
+        about_centre: world,
+        principal,
     }
 }
 
@@ -883,6 +905,36 @@ pub(crate) fn store_built_solid(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A body stood on its side shows its inertia on the world's axes: a
+    /// long bar along X turned a quarter about Z lies along Y.
+    #[test]
+    fn a_turned_body_turns_its_inertia() {
+        let bar = kernel_api::Inertia {
+            about_centre: [[1.0, 0.0, 0.0], [0.0, 9.0, 0.5], [0.0, 0.5, 9.0]],
+            principal: [
+                (1.0, [1.0, 0.0, 0.0]),
+                (8.5, [0.0, 0.7, -0.7]),
+                (9.5, [0.0, 0.7, 0.7]),
+            ],
+        };
+        let turned = turned_inertia(
+            &bar,
+            glam::Quat::from_rotation_z(std::f32::consts::FRAC_PI_2),
+        );
+        let t = turned.about_centre;
+        assert!(
+            (t[0][0] - 9.0).abs() < 1e-6 && (t[1][1] - 1.0).abs() < 1e-6,
+            "{t:?}"
+        );
+        assert!(
+            (t[0][2] + 0.5).abs() < 1e-6 && (t[2][0] + 0.5).abs() < 1e-6,
+            "{t:?}"
+        );
+        let axis = turned.principal[0].1;
+        assert!((axis[1] - 1.0).abs() < 1e-6, "{axis:?}");
+        assert_eq!(turned.principal[0].0, 1.0);
+    }
 
     /// A moving body's mesh is coarser along and round its curves, and
     /// keeps everything else of the fine settings.

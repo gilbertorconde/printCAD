@@ -440,6 +440,20 @@ pub struct PhysicalProperties {
     /// percent on curved walls).
     #[serde(default)]
     pub approximate: bool,
+    /// The inertia of the volume at unit density, when there is one.
+    #[serde(default)]
+    pub inertia: Option<Inertia>,
+}
+
+/// A solid's inertia at unit density, in mm⁵ (times a density in mass per
+/// mm³ gives mass times mm²), in the solid's frame.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct Inertia {
+    /// The inertia tensor about the centre of mass, row by row.
+    pub about_centre: [[f64; 3]; 3],
+    /// The principal moments, smallest first, each with its axis through
+    /// the centre of mass (unit length; right-handed in that order).
+    pub principal: [(f64, [f64; 3]); 3],
 }
 
 /// Node type emitted by STEP import hierarchy reconstruction.

@@ -4152,6 +4152,7 @@ mod tests {
                 area_mm2: 600.0,
                 centre_mm: [1.0, 2.0, 3.0],
                 approximate: false,
+                inertia: None,
             })
         }
     }

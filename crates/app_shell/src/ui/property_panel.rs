@@ -915,10 +915,75 @@ fn physical_group(
                     format!("{about}{}", format_mass(v / 1000.0 * f64::from(m.density))),
                 )
             }))
+            .chain(
+                props
+                    .inertia
+                    .iter()
+                    .flat_map(|inertia| inertia_rows(inertia, unit, material, about)),
+            )
             .collect()
         }
     };
     ("Physical".to_string(), rows)
+}
+
+/// The inertia about the centre of mass: the tensor on the world's axes,
+/// then the principal moments, smallest first, each with its axis. With a
+/// material it is the mass's (g times the unit squared); without, the
+/// volume's at unit density (the unit to the fifth).
+fn inertia_rows(
+    inertia: &kernel_api::Inertia,
+    unit: Unit,
+    material: Option<&core_document::Material>,
+    about: &str,
+) -> Vec<PropRow> {
+    let per = f64::from(unit.mm_per_unit());
+    let label = unit.short_label();
+    let (scale, suffix) = match material {
+        // mm⁵ times g/cm³ (a thousandth of g/mm³) is g·mm².
+        Some(m) => (
+            f64::from(m.density) / 1000.0 / (per * per),
+            format!("g·{label}²"),
+        ),
+        None => (1.0 / per.powi(5), format!("{label}⁵")),
+    };
+    // What is a billionth of the largest moment is the integration's
+    // rounding, not a product of inertia.
+    let floor = inertia.principal[2].0.abs() * 1e-9;
+    let moment = |v: f64| {
+        let v = if v.abs() <= floor { 0.0 } else { v };
+        format!("{about}{} {suffix}", format_figure(v * scale))
+    };
+    let t = inertia.about_centre;
+    let mut rows = vec![
+        PropRow::mono("Ixx", moment(t[0][0])),
+        PropRow::mono("Iyy", moment(t[1][1])),
+        PropRow::mono("Izz", moment(t[2][2])),
+        PropRow::mono("Ixy", moment(t[0][1])),
+        PropRow::mono("Ixz", moment(t[0][2])),
+        PropRow::mono("Iyz", moment(t[1][2])),
+    ];
+    for (i, (value, axis)) in inertia.principal.iter().enumerate() {
+        rows.push(PropRow::mono(format!("I{}", i + 1), moment(*value)));
+        rows.push(PropRow::mono(
+            format!("Axis {}", i + 1),
+            // Two places and no minus on a zero, to fit the value column.
+            axis.map(|c| format!("{:.2}", if c.abs() < 0.005 { 0.0 } else { c }))
+                .join(" "),
+        ));
+    }
+    rows
+}
+
+/// A figure to about four significant digits: plainly while it reads so,
+/// in powers of ten when it is very large or small.
+fn format_figure(v: f64) -> String {
+    let size = v.abs();
+    if size == 0.0 || (0.01..1e6).contains(&size) {
+        format!("{v:.2}")
+    } else {
+        format!("{v:.3e}")
+    }
 }
 
 /// A mass in grams, or kilograms from a thousand.
@@ -1233,8 +1298,22 @@ mod tests {
             area_mm2: 2_400.0,
             centre_mm: [10.0, 20.0, 30.0],
             approximate: false,
+            // A 20 mm cube: 8000 (20² + 20²) / 12 about each axis.
+            inertia: Some(kernel_api::Inertia {
+                about_centre: [
+                    [533_333.33, -5e-10, 0.0],
+                    [0.0, 533_333.33, 0.0],
+                    [0.0, 0.0, 533_333.33],
+                ],
+                principal: [
+                    (533_333.33, [1.0, 0.0, 0.0]),
+                    (533_333.33, [0.0, 1.0, 0.0]),
+                    (533_333.33, [0.0, 0.0, 1.0]),
+                ],
+            }),
         };
-        let (title, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm, None);
+        let (title, rows) =
+            physical_group(&crate::ui::Physical::Ready(Box::new(props)), Unit::Cm, None);
         assert_eq!(title, "Physical");
         let value = |name: &str| {
             rows.iter()
@@ -1256,15 +1335,26 @@ mod tests {
             name: "PLA".into(),
             density: 1.25,
         };
-        let (_, rows) = physical_group(&crate::ui::Physical::Ready(props), Unit::Cm, Some(&pla));
+        let (_, rows) = physical_group(
+            &crate::ui::Physical::Ready(Box::new(props)),
+            Unit::Cm,
+            Some(&pla),
+        );
         let mass = rows.iter().find(|r| r.name == "Mass").unwrap();
         assert_eq!(mass.value, "10.00 g");
+        assert_eq!(value("Izz"), "5.33 cm⁵", "the volume's, at unit density");
+        assert_eq!(value("Ixy"), "0.00 cm⁵", "rounding is no product");
+        assert_eq!(value("Axis 3"), "0.00 0.00 1.00");
+        let moment = |rows: &[PropRow], name: &str| {
+            rows.iter().find(|r| r.name == name).unwrap().value.clone()
+        };
+        assert_eq!(moment(&rows, "I1"), "6.67 g·cm²", "the PLA's");
 
         let open = kernel_api::PhysicalProperties {
             volume_mm3: None,
             ..props
         };
-        let (_, rows) = physical_group(&crate::ui::Physical::Ready(open), Unit::Mm, None);
+        let (_, rows) = physical_group(&crate::ui::Physical::Ready(Box::new(open)), Unit::Mm, None);
         assert_eq!(rows[0].value, "encloses none");
     }
 
