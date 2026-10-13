@@ -160,6 +160,7 @@ fn main() {
                     if before { &full } else { detail },
                     None,
                     &[],
+                    &[],
                     (!before).then_some(&mut *cache),
                 )
                 .unwrap();
@@ -262,6 +263,7 @@ fn holed_plate(detail: &TessellationSettings, before: bool) {
                 detail,
                 None,
                 &[],
+                &[],
                 Some(&mut cache),
             )
             .unwrap();
@@ -276,6 +278,7 @@ fn holed_plate(detail: &TessellationSettings, before: bool) {
                 &tags,
                 detail,
                 None,
+                &[],
                 &[],
                 (!before).then_some(&mut cache),
             )
@@ -350,6 +353,7 @@ fn imported_part(detail: &TessellationSettings, before: bool) {
             &tags,
             detail,
             None,
+            &[],
             &[],
             (!before).then_some(&mut cache),
         ) {

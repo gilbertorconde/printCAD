@@ -65,7 +65,10 @@ pub use kernel_api::TriMesh;
 pub use notes::{Note, NoteId};
 pub use palette::SketchPalette;
 pub use placement::BodyPlacement;
-pub use rebuild::{BuildError, BuildPlan, PlanProbe, ProbedReferences, RebuildJob};
+pub use rebuild::{
+    BuildError, BuildPlan, PlanProbe, PlanProjection, ProbedReferences, ProjectedReferences,
+    RebuildJob,
+};
 pub use runtime::{
     CameraOrientRequest, EdgeCircle, EdgeRef, FaceOrigin, FaceRef, HookOutcome, HostRequest,
     InputResult, KeyCode, LogEntry, LogLevel, MouseButton, SketchAttachRequest,
@@ -232,6 +235,10 @@ pub struct Document {
     /// body's solid. Derived on each replica, never an op.
     #[serde(skip)]
     probed: HashMap<FeatureId, rebuild::ProbedReferences>,
+    /// What the last build projected for each feature from its body's
+    /// solid. Derived on each replica, never an op.
+    #[serde(skip)]
+    projected: HashMap<FeatureId, rebuild::ProjectedReferences>,
     /// The cosmetic threads the features in the bodies' builds declare,
     /// as the registry last worked them out. Derived on each replica,
     /// never an op.
@@ -731,6 +738,7 @@ impl Document {
             link_stale: Default::default(),
             built_against: HashMap::new(),
             probed: HashMap::new(),
+            projected: HashMap::new(),
             threads: Vec::new(),
         }
     }
@@ -3272,6 +3280,32 @@ impl Document {
                 );
             }
             self.set_probed_references(feature, references);
+        }
+    }
+
+    /// What the last build projected for `feature` from its body's solid.
+    pub fn projected_references(
+        &self,
+        feature: FeatureId,
+    ) -> Option<&rebuild::ProjectedReferences> {
+        self.projected.get(&feature)
+    }
+
+    /// Keep what a build projected for its features (`answers` to `asked`,
+    /// in order). Derived state: no op, and the document is not marked
+    /// edited; when it differs from what was kept, the formulas and what
+    /// follows from them are worked out again. A projection that failed
+    /// stays with its reason, for the feature to report.
+    pub fn store_projections(
+        &mut self,
+        asked: &[rebuild::PlanProjection],
+        answers: &[Result<Vec<kernel_api::ProjectedEdge>, String>],
+    ) {
+        for (feature, references) in rebuild::sort_projections(asked, answers) {
+            if self.projected.get(&feature) != Some(&references) {
+                self.projected.insert(feature, references);
+                self.mutation_seq = self.mutation_seq.wrapping_add(1);
+            }
         }
     }
 

@@ -72,6 +72,7 @@ impl PrintCadApp {
                         op_features: plan.op_features.iter().map(|id| id.0).collect(),
                         preview,
                         probes: plan.probes,
+                        projections: plan.projections,
                         partial: false,
                     };
                     // The edited feature first: what follows it waits
@@ -163,6 +164,7 @@ pub(crate) struct QueuedBuild {
     op_features: Vec<uuid::Uuid>,
     preview: Option<uuid::Uuid>,
     probes: Vec<core_document::PlanProbe>,
+    projections: Vec<core_document::PlanProjection>,
     /// It stops at the edited feature.
     partial: bool,
 }
@@ -181,6 +183,12 @@ impl QueuedBuild {
                 .probes
                 .iter()
                 .filter(|p| p.probe.after_op <= end)
+                .copied()
+                .collect(),
+            projections: self
+                .projections
+                .iter()
+                .filter(|p| p.projection.after_op <= end)
                 .copied()
                 .collect(),
             partial: true,
@@ -227,6 +235,7 @@ impl PrintCadApp {
             detail,
             build.preview,
             build.probes,
+            build.projections,
         );
         self.session.build_serials.insert(body, serial);
     }
@@ -1025,6 +1034,7 @@ mod tests {
             op_features: vec![a, b, b, c],
             preview,
             probes: Vec::new(),
+            projections: Vec::new(),
             partial: false,
         };
         let first = build(Some(b)).up_to_edited().expect("a feature follows");

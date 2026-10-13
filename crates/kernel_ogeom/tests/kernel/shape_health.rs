@@ -104,6 +104,7 @@ fn a_clean_imported_part_takes_a_pocket() {
             &TessellationSettings::default(),
             None,
             &[],
+            &[],
             None,
         )
         .expect("the pocket is cut");

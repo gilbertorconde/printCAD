@@ -4,8 +4,8 @@
 //! snapshots for patterns are in-model `Shape`s, with no per-op serialization.
 
 use kernel_api::{
-    BoolKind, BooleanOp, ChainError, ChainProbe, FeaturePreview, ProbeAnswer, SolidBuildResult,
-    SolidOp, TessellationSettings,
+    BoolKind, BooleanOp, ChainError, ChainProbe, ChainProjection, FeaturePreview, ProbeAnswer,
+    ProjectedEdge, SolidBuildResult, SolidOp, TessellationSettings,
 };
 use kernel_api::{Profile, TopoName, naming as names};
 use ogeom::math::{Point, Vector};
@@ -55,7 +55,13 @@ struct Saved {
     touched: Option<Vec<Shape>>,
     /// The probes asked of the solid before `at`, with their answers.
     answered: Vec<(ChainProbe, Result<ProbeAnswer, String>)>,
+    /// The projections asked of the solid before `at`, with what they came
+    /// to.
+    projected: Vec<(ChainProjection, Projected)>,
 }
+
+/// What a projection came to: its curves, or why there are none.
+type Projected = Result<Vec<ProjectedEdge>, String>;
 
 /// What one body's builds keep between them, so the next build replays
 /// only the history after what changed: the chain's state at the start of
@@ -87,7 +93,8 @@ pub struct ChainCache {
 /// too, and its result is this one's.
 struct AfterEdit {
     at: usize,
-    /// The ops after `at`, the meshing settings and the probes.
+    /// The ops after `at`, the meshing settings, the probes and the
+    /// projections.
     tail: u64,
     /// The snapshot of the solid the op made, hashed; `None` when the ops
     /// after it took less than twice as long as writing a snapshot, too
@@ -100,13 +107,14 @@ struct AfterEdit {
 impl ChainCache {
     /// Where a build of `prefix` (see [`prefix_keys`]) can resume: the
     /// kept state furthest along that agrees with it, no later than the
-    /// previewed feature's start and with every probe asked before it
-    /// answered.
+    /// previewed feature's start and with every probe and projection asked
+    /// before it answered.
     fn resume_point(
         &self,
         prefix: &[u64],
         preview: Option<&std::ops::Range<usize>>,
         probes: &[ChainProbe],
+        projections: &[ChainProjection],
     ) -> Option<&Saved> {
         self.saved
             .iter()
@@ -117,6 +125,12 @@ impl ChainCache {
                     .iter()
                     .filter(|p| p.after_op < s.at)
                     .all(|p| s.answered.iter().any(|(q, _)| q == p))
+            })
+            .filter(|s| {
+                projections
+                    .iter()
+                    .filter(|p| p.after_op < s.at)
+                    .all(|p| s.projected.iter().any(|(q, _)| q == p))
             })
             .max_by_key(|s| s.at)
     }
@@ -337,19 +351,22 @@ pub fn execute_named(
     preview: Option<std::ops::Range<usize>>,
     probes: &[ChainProbe],
 ) -> Result<SolidBuildResult, ChainError> {
-    execute_cached(ops_list, tags, detail, preview, probes, None)
+    execute_cached(ops_list, tags, detail, preview, probes, &[], None)
 }
 
 /// [`execute_named`], resuming from the state `cache` kept where the
 /// history agrees with the last builds', and keeping the states the next
 /// build may resume from: at the start of the first op that differs from
 /// the last build's (where the user is editing) and at the end.
+/// `projections` are answered as `probes` are, each of the solid as it
+/// stands after its `after_op` ops, in [`SolidBuildResult::projections`].
 pub fn execute_cached(
     ops_list: &[SolidOp],
     tags: &[TopoName],
     detail: &TessellationSettings,
     preview: Option<std::ops::Range<usize>>,
     probes: &[ChainProbe],
+    projections: &[ChainProjection],
     mut cache: Option<&mut ChainCache>,
 ) -> Result<SolidBuildResult, ChainError> {
     let chain_err = |op_index: usize, message: String| ChainError { op_index, message };
@@ -395,6 +412,16 @@ pub fn execute_cached(
             })
         })
         .collect();
+    let mut projected: Vec<Projected> = projections
+        .iter()
+        .map(|p| {
+            Err(if p.after_op == 0 {
+                "there is no solid before it".to_string()
+            } else {
+                "it stands past the end of the history".to_string()
+            })
+        })
+        .collect();
 
     // Where the last builds left a state this one agrees with, it starts
     // there. The op that differs from the last build's is where the next
@@ -409,7 +436,7 @@ pub fn execute_cached(
     let keys = cache.as_ref().map(|_| op_keys(ops_list, &op_tags));
     let prefix = keys.as_deref().map(prefix_keys);
     if let (Some(cache), Some(prefix), Some(keys)) = (cache.as_deref_mut(), prefix.as_ref(), keys) {
-        if let Some(saved) = cache.resume_point(prefix, preview.as_ref(), probes) {
+        if let Some(saved) = cache.resume_point(prefix, preview.as_ref(), probes, projections) {
             start = saved.at;
             model = saved.model.clone();
             current = saved.current.clone();
@@ -418,6 +445,11 @@ pub fn execute_cached(
             touched = saved.touched.clone();
             for (probe, answer) in probes.iter().zip(answers.iter_mut()) {
                 if let Some((_, known)) = saved.answered.iter().find(|(q, _)| q == probe) {
+                    *answer = known.clone();
+                }
+            }
+            for (asked, answer) in projections.iter().zip(projected.iter_mut()) {
+                if let Some((_, known)) = saved.projected.iter().find(|(q, _)| q == asked) {
                     *answer = known.clone();
                 }
             }
@@ -442,7 +474,10 @@ pub fn execute_cached(
             use std::hash::{Hash, Hasher};
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             keys[edited + 1..].hash(&mut hasher);
-            hash_json(serde_json::to_vec(&(detail, probes)), &mut hasher);
+            hash_json(
+                serde_json::to_vec(&(detail, probes, projections)),
+                &mut hasher,
+            );
             edit = Some((edited, hasher.finish()));
         }
         cache.last = keys;
@@ -474,6 +509,7 @@ pub fn execute_cached(
                 tools: tools.clone(),
                 touched: touched.clone(),
                 answered: answered_before(probes, &answers, index),
+                projected: answered_before(projections, &projected, index),
             });
         }
         let tag = op_tags[index];
@@ -488,6 +524,7 @@ pub fn execute_cached(
             && let Some(shape) = current.as_ref()
         {
             ask(&mut model, shape, index, probes, &mut answers);
+            project(&mut model, shape, index, projections, &mut projected);
         }
         let mut tool_names: Option<NameMap> = None;
         progress::context(format_args!(
@@ -974,6 +1011,13 @@ pub fn execute_cached(
         probes,
         &mut answers,
     );
+    project(
+        &mut model,
+        &final_shape,
+        ops_list.len(),
+        projections,
+        &mut projected,
+    );
     let names = named.take();
     let meshing = web_time::Instant::now();
     let reuse = cache.as_deref_mut().map(|c| &mut c.faces);
@@ -1034,6 +1078,7 @@ pub fn execute_cached(
         bounds_mm,
         preview,
         probes: answers,
+        projections: projected,
     };
     if let (Some(cache), Some((at, tail))) = (cache.as_deref_mut(), edit) {
         let worth = cache.every_edit || tail_took.is_some_and(|t| t > snapshot_took * 2);
@@ -1052,6 +1097,7 @@ pub fn execute_cached(
         && start < ops_list.len()
     {
         let answered = answered_before(probes, &result.probes, ops_list.len());
+        let projected = answered_before(projections, &result.projections, ops_list.len());
         let mut model = model;
         let mut roots = vec![final_shape.clone()];
         roots.extend(tools.iter().flatten().filter_map(|t| t.solid.clone()));
@@ -1065,6 +1111,7 @@ pub fn execute_cached(
             tools,
             touched,
             answered,
+            projected,
         });
     }
     Ok(result)
@@ -1122,18 +1169,53 @@ fn last_feature_start(tags: &[TopoName], ops: usize) -> usize {
     }
 }
 
-/// The probes asked of the solid before op `at`, with their answers.
-fn answered_before(
-    probes: &[ChainProbe],
-    answers: &[Result<ProbeAnswer, String>],
+/// The probes (or projections) asked of the solid before op `at`, with
+/// their answers.
+fn answered_before<Q: AskedAfter + Copy, A: Clone>(
+    probes: &[Q],
+    answers: &[A],
     at: usize,
-) -> Vec<(ChainProbe, Result<ProbeAnswer, String>)> {
+) -> Vec<(Q, A)> {
     probes
         .iter()
         .zip(answers)
-        .filter(|(p, _)| p.after_op < at)
+        .filter(|(p, _)| p.after_op() < at)
         .map(|(p, a)| (*p, a.clone()))
         .collect()
+}
+
+/// A question asked of the solid part way through the chain.
+trait AskedAfter {
+    /// How many ops make the solid it is asked of.
+    fn after_op(&self) -> usize;
+}
+
+impl AskedAfter for ChainProbe {
+    fn after_op(&self) -> usize {
+        self.after_op
+    }
+}
+
+impl AskedAfter for ChainProjection {
+    fn after_op(&self) -> usize {
+        self.after_op
+    }
+}
+
+/// Project what the projections asked of the solid after `after_op` ops
+/// name.
+fn project(
+    model: &mut Model,
+    shape: &Shape,
+    after_op: usize,
+    projections: &[ChainProjection],
+    projected: &mut [Projected],
+) {
+    for (asked, answer) in projections.iter().zip(projected.iter_mut()) {
+        if asked.after_op == after_op {
+            *answer = crate::queries::project_on(model, shape, &asked.probe);
+        }
+    }
 }
 
 /// Answer the probes asked of the solid after `after_op` ops.
@@ -1176,6 +1258,7 @@ fn feature_preview(
                 bounds_mm,
                 preview: None,
                 probes: Vec::new(),
+                projections: Vec::new(),
             }))
         }
         None => None,

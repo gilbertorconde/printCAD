@@ -134,6 +134,7 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
             }
             let plan = body_plan(document, body).map(|mut plan| {
                 plan.probes = datum_probes(document, body, &plan);
+                plan.projections = sketch_projections(document, body, &plan);
                 plan
             });
             RebuildJob { body, plan }
@@ -141,19 +142,77 @@ pub fn rebuild_jobs(document: &mut Document) -> Vec<RebuildJob> {
         .collect()
 }
 
-/// The datums of `body` that stand on its solid, each with what it asks
-/// of the solid summed up. Read from the datum as it was made: what a
-/// build found is the answer, never the question.
+/// The datums of `body` that stand on its solid, and its sketches that
+/// project its solid's edges, each with what it asks of the solid summed
+/// up. A datum is read as it was made: what a build found is the answer,
+/// never the question. A sketch asks onto its plane as evaluation left it.
 fn following_datums(document: &Document, body: BodyId) -> Vec<(FeatureId, u64)> {
     use std::hash::{Hash, Hasher};
-    datums_asking(document, body)
-        .into_iter()
-        .map(|(id, _, probes)| {
+    let mut asking: Vec<(FeatureId, std::collections::hash_map::DefaultHasher)> = Vec::new();
+    let mut add = |id: FeatureId, asked: String| match asking.iter_mut().find(|(f, _)| *f == id) {
+        Some((_, hasher)) => asked.hash(hasher),
+        None => {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
-            serde_json::to_string(&probes)
-                .unwrap_or_default()
-                .hash(&mut hasher);
-            (id, hasher.finish())
+            asked.hash(&mut hasher);
+            asking.push((id, hasher));
+        }
+    };
+    for (id, _, probes) in datums_asking(document, body) {
+        add(id, serde_json::to_string(&probes).unwrap_or_default());
+    }
+    for (id, _, asked) in sketches_projecting(document, body) {
+        add(id, serde_json::to_string(&asked).unwrap_or_default());
+    }
+    asking.into_iter().map(|(id, h)| (id, h.finish())).collect()
+}
+
+/// The sketches of `body` that take geometry from its own solid: id, place
+/// in the history and what each projects, onto its plane as evaluation
+/// left it (a sketch on a face where the face is).
+fn sketches_projecting(
+    document: &Document,
+    body: BodyId,
+) -> Vec<(FeatureId, u64, Vec<kernel_api::ProjectionProbe>)> {
+    let mut sketches: Vec<(FeatureId, u64, Vec<kernel_api::ProjectionProbe>)> = document
+        .feature_tree()
+        .all_nodes()
+        .filter(|(_, n)| {
+            n.body == Some(body) && !n.suppressed && n.workbench_id.as_str() == "wb.sketch"
+        })
+        .filter_map(|(id, n)| {
+            let data = document.feature_values(*id).unwrap_or(&n.data);
+            let asked = wb_sketch::SketchFeature::from_json(data)
+                .ok()?
+                .own_projections(body);
+            (!asked.is_empty()).then_some((*id, n.seq, asked))
+        })
+        .collect();
+    sketches.sort_by_key(|(id, seq, _)| (*seq, *id));
+    sketches
+}
+
+/// What the sketches of `body` project of its solid, each of the solid the
+/// features before the sketch make.
+pub fn sketch_projections(
+    document: &Document,
+    body: BodyId,
+    plan: &BuildPlan,
+) -> Vec<core_document::PlanProjection> {
+    let seq_of = |id: &FeatureId| document.get_feature_meta(*id).map(|n| n.seq);
+    sketches_projecting(document, body)
+        .into_iter()
+        .flat_map(|(feature, seq, asked)| {
+            let after_op = plan
+                .op_features
+                .iter()
+                .take_while(|f| seq_of(f).is_some_and(|s| s < seq))
+                .count();
+            asked
+                .into_iter()
+                .map(move |probe| core_document::PlanProjection {
+                    feature,
+                    projection: kernel_api::ChainProjection { after_op, probe },
+                })
         })
         .collect()
 }

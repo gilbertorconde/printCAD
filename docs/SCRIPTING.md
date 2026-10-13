@@ -2907,7 +2907,7 @@ Notes:
 - Each edge is a point on it and its direction there, in the body's own frame; `pc.doc.edges` gives both (where the body sits, the same until it is moved). The body must be built first (`pc.doc.rebuild()`), else it is refused ("that body has no solid shape").
 - It only guides unless `counts = true`; counted, the projected edges close a profile as drawn lines do. An edge square to the sketch plane projects to a point.
 - It returns {elements, constraints}: the curves and the points at their ends, the curves marked `external` by `pc.sketch.geometry`.
-- The projection follows its solid: rebuilt, the edge is found again by the faces it runs between (else by the point) and projected anew, the sketch unopened. A solid built from the sketch itself is projected again only when the sketch is opened.
+- The projection follows its solid: rebuilt, the edge is found again by the faces it runs between (else by the point) and projected anew, the sketch unopened. An edge of the sketch's own body is taken from the solid as it stands where the sketch is in the history, so what the sketch builds never moves it; another body's solid built from the sketch is projected again only when the sketch is opened.
 - A point names an edge only within a tenth of the body's diagonal of it; one farther from every edge is refused ("no edge near ..."). An edge the sketch already holds comes once: picked again, at any point along it, it is passed over, and a call that brings nothing new is refused ("... already in the sketch ...").
 
 See also `pc.sketch.intersection`, `pc.doc.edges`, `pc.sketch.external_defining`.

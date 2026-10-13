@@ -597,6 +597,53 @@ impl KernelQueries for OgeomQueries {
     }
 }
 
+/// What `probe` comes to on `root` as it stands: its edge projected onto
+/// its plane, or the curves where its face crosses the plane, in the
+/// plane's own coordinates. The edge is found between the faces it names
+/// while a chain names them, else nearest its point within a pick's reach.
+pub(crate) fn project_on(
+    model: &mut Model,
+    root: &Shape,
+    probe: &kernel_api::ProjectionProbe,
+) -> Result<Vec<ProjectedEdge>, String> {
+    let tol = tess::tolerances();
+    let near = Point::new(probe.point[0], probe.point[1], probe.point[2]);
+    let plane = plane_of(&probe.plane).map_err(|e| e.to_string())?;
+    if probe.section {
+        let face = nearest_of(model, root, ShapeType::Face, near)?;
+        let curves = face_section(model, root, &face, &plane)
+            .map_err(|e| e.to_string())?
+            .iter()
+            .map(|edge| {
+                project_edge_onto_plane(model, edge, &plane, tol)
+                    .map_err(|e| e.to_string())
+                    .and_then(|p| in_plane(p).map_err(|e| e.to_string()))
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+        if curves.is_empty() {
+            return Err("the face does not cross the sketch plane".into());
+        }
+        return Ok(curves);
+    }
+    let edge = match crate::naming::find_edge(model, root, probe.faces, near) {
+        Some(edge) => edge,
+        None => {
+            let (edge, distance) =
+                crate::ops::dressup::nearest_with_distance(model, root, ShapeType::Edge, near)?;
+            if distance > crate::ops::dressup::pick_reach(model, root) {
+                return Err(format!(
+                    "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+                    near.x, near.y, near.z
+                ));
+            }
+            edge
+        }
+    };
+    let projected =
+        project_edge_onto_plane(model, &edge, &plane, tol).map_err(|e| e.to_string())?;
+    Ok(vec![in_plane(projected).map_err(|e| e.to_string())?])
+}
+
 /// A profile plane as the kernel's.
 fn plane_of(plane: &ProfilePlane) -> KernelResult<Plane> {
     let tol = tess::tolerances();

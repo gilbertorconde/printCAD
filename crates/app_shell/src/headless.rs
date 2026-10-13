@@ -453,16 +453,21 @@ impl Headless {
                         .iter()
                         .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
                         .collect();
-                    match kernel.execute_solid_chain_named(
+                    let projections: Vec<kernel_api::ChainProjection> =
+                        plan.projections.iter().map(|p| p.projection).collect();
+                    match kernel.execute_solid_chain_projecting(
                         &plan.ops,
                         &tags,
                         &TessellationSettings::default(),
                         None,
                         &asked,
+                        &projections,
                     ) {
                         Ok(result) => {
                             self.document
                                 .store_probe_answers(&plan.probes, &result.probes);
+                            self.document
+                                .store_projections(&plan.projections, &result.projections);
                             crate::app::recompute::store_built_solid(
                                 &mut self.document,
                                 body,
@@ -486,6 +491,7 @@ impl Headless {
                             plan.ops.truncate(start);
                             plan.op_features.truncate(start);
                             plan.probes.retain(|p| p.probe.after_op <= start);
+                            plan.projections.retain(|p| p.projection.after_op <= start);
                         }
                     }
                 }

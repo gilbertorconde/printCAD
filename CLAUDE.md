@@ -674,8 +674,12 @@ as derived values whenever its solid changes (`derive_on_geometry`, given
 the kernel `DocumentService::set_kernel` holds, asked on the UI thread on
 a page as on the desktop, once per change of what it projects), the edge found by its faces' names
 (`ExternalSource::faces`, read from the mesh as it is added) before its
-point, except from a solid built from the sketch itself, which waits for
-the sketch to open. New projections take the
+point. From the sketch's own body it is the solid as it stands at the
+sketch's place in the history: Design's plan asks it
+(`BuildPlan::projections`, `kernel_api::ChainProjection`, answered by the
+chain beside its probes in `SolidBuildResult::projections`, kept by
+`Document::store_projections`), so what the sketch builds never moves it;
+another body's solid built from the sketch waits for the sketch to open. New projections take the
 Construction mode (a guide in it, counting out of it; the commands' `counts`
 flag, off unless given); projected ends at one spot join in the profile
 once per editing session (in place when the curve is the same kind). Its

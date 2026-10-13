@@ -247,6 +247,19 @@ impl DatumSupport {
 }
 
 impl SketchFeature {
+    /// What the sketch asks of its own body's solid, `body`, where it
+    /// stands in the body's history: each edge projected from that solid
+    /// and each section of one of its faces, onto the sketch's plane. The
+    /// build answers them, so the projections follow the solid as it was
+    /// before the features the sketch builds, never chasing their change.
+    pub fn own_projections(&self, body: core_document::BodyId) -> Vec<kernel_api::ProjectionProbe> {
+        crate::external::groups(&self.sketch)
+            .into_iter()
+            .filter(|(source, _)| source.reference.is_none() && source.body == body.0)
+            .map(|(source, _)| projection_probe(&self.plane, &source))
+            .collect()
+    }
+
     /// Whether editing the sketch cuts the view at its plane: its own
     /// choice when it made one, else `on_open`, the Sketcher's setting.
     pub fn shows_section(&self, on_open: bool) -> bool {
@@ -309,6 +322,25 @@ impl WorkbenchFeature for SketchFeature {
 
     fn name(&self) -> &str {
         &self.sketch.name
+    }
+}
+
+/// `source` projected onto the sketch plane `plane`, both in the frame of
+/// the body the sketch and the source share.
+pub(crate) fn projection_probe(
+    plane: &SketchPlane,
+    source: &crate::sketch::ExternalSource,
+) -> kernel_api::ProjectionProbe {
+    kernel_api::ProjectionProbe {
+        point: source.point,
+        faces: source.faces,
+        section: source.section,
+        plane: kernel_api::ProfilePlane {
+            origin: plane.origin,
+            x_axis: plane.x_axis,
+            y_axis: plane.y_axis,
+            normal: plane.normal,
+        },
     }
 }
 

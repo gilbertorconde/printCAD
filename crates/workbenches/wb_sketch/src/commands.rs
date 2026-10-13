@@ -1639,8 +1639,10 @@ pub fn register(context: &mut WorkbenchContext) {
         )
         .note(
             "The projection follows its solid: rebuilt, the edge is found again by the faces \
-             it runs between (else by the point) and projected anew, the sketch unopened. A \
-             solid built from the sketch itself is projected again only when the sketch is \
+             it runs between (else by the point) and projected anew, the sketch unopened. \
+             An edge of the sketch's own body is taken from the solid as it stands where the \
+             sketch is in the history, so what the sketch builds never moves it; another \
+             body's solid built from the sketch is projected again only when the sketch is \
              opened.",
         )
         .note(

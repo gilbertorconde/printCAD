@@ -57,7 +57,7 @@ enum News {
     /// Some of an import's bodies, ahead of its answer.
     Bodies(Vec<kernel_api::ImportedBody>),
     /// The job's answer; an import's carries no bodies, which came before.
-    Done(KernelResponse),
+    Done(Box<KernelResponse>),
     /// The worker panicked, and is about to stop.
     Panicked(String),
 }
@@ -190,7 +190,7 @@ impl Slot {
                             model,
                             raw_bytes,
                             ..
-                        } = &mut response
+                        } = &mut *response
                         {
                             // An import grows the worker's memory to the
                             // file's size; a fresh worker gives it back.
@@ -202,7 +202,7 @@ impl Slot {
                             }
                         }
                         *lock(&activity) = Activity::default();
-                        let _ = responses.send(response);
+                        let _ = responses.send(*response);
                     }
                     Some(News::Panicked(message)) => state.borrow_mut().panic = Some(message),
                     None => {}
@@ -614,7 +614,7 @@ pub fn kernel_worker_main(threads: usize) {
                     post(&scope, &News::Bodies(chunk));
                 }
             }
-            post(&scope, &News::Done(response));
+            post(&scope, &News::Done(Box::new(response)));
         })
     };
     scope.set_onmessage(Some(on_message.as_ref().unchecked_ref()));

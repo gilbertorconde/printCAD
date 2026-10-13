@@ -1788,6 +1788,10 @@ pub struct SolidBuildResult {
     pub preview: Option<Box<FeaturePreview>>,
     /// The answers to the chain's probes, in the order they were asked.
     pub probes: Vec<Result<ProbeAnswer, String>>,
+    /// The curves the chain's projections came to, in the order they were
+    /// asked.
+    #[serde(default)]
+    pub projections: Vec<Result<Vec<ProjectedEdge>, String>>,
 }
 
 /// What a feature being edited does to its body, beside the body without
@@ -2124,6 +2128,36 @@ pub struct ProbedCircle {
 pub struct ChainProbe {
     pub after_op: usize,
     pub probe: ShapeProbe,
+}
+
+/// A solid's edge projected onto a plane, or the curves where one of its
+/// faces crosses the plane: what a sketch takes from the solid it stands
+/// on, asked again of the solid a rebuild makes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+pub struct ProjectionProbe {
+    /// A point on the edge (on the face, for a section), in the solid's
+    /// own frame.
+    pub point: [f64; 3],
+    /// The names of the two faces the edge runs between: the edge is found
+    /// by them first, `point` choosing among its pieces, and by `point`
+    /// alone without them or when no edge runs between them.
+    #[serde(default)]
+    pub faces: [TopoName; 2],
+    /// The face nearest `point` is cut by the plane, in place of an edge
+    /// projected onto it.
+    #[serde(default)]
+    pub section: bool,
+    /// The plane, in the solid's own frame: the curves come in its own 2D
+    /// coordinates.
+    pub plane: ProfilePlane,
+}
+
+/// A projection asked part way through a solid-op chain: of the solid the
+/// first `after_op` ops make.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ChainProjection {
+    pub after_op: usize,
+    pub probe: ProjectionProbe,
 }
 
 /// The centre line of a pipe-like solid between two of its faces.

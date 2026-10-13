@@ -3050,10 +3050,13 @@ impl Workbench for SketchWorkbench {
     }
 
     /// A sketch's geometry projected from solids' edges and faces follows
-    /// the solids as they stand: projected again when what it comes from
-    /// changed, and moved in place where it is the same kinds of curve. A
-    /// solid built from the sketch itself, an edge gone or one now another
-    /// kind of curve waits for the sketch to be edited.
+    /// the solids: projected again when what it comes from changed, and
+    /// moved in place where it is the same kinds of curve. What comes from
+    /// the sketch's own body is what the body's build projected of its
+    /// solid where the sketch stands in the history, so the features built
+    /// from the sketch never move it; until a build has, a solid built
+    /// from the sketch waits. An edge gone or one now another kind of
+    /// curve waits for the sketch to be edited.
     fn derive_on_geometry(
         &self,
         node: &core_document::FeatureNode,
@@ -3061,17 +3064,22 @@ impl Workbench for SketchWorkbench {
         document: &core_document::Document,
         kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
-        let Some(kernel) = kernel else {
-            return false;
-        };
         let Ok(mut feature) = SketchFeature::from_json(values) else {
             return false;
         };
+        let built = document.projected_references(node.id);
         let groups: Vec<_> = external::groups(&feature.sketch)
             .into_iter()
-            .filter(|(source, _)| {
-                source.reference.is_none()
-                    && !solid_built_from(document, node.id, BodyId(source.body))
+            .filter(|(source, _)| source.reference.is_none())
+            .filter_map(|(source, group)| {
+                let answered = (node.body == Some(BodyId(source.body)))
+                    .then(|| built?.answer(&feature::projection_probe(&feature.plane, &source)))
+                    .flatten()
+                    .cloned();
+                if answered.is_none() && solid_built_from(document, node.id, BodyId(source.body)) {
+                    return None;
+                }
+                Some((source, group, answered))
             })
             .collect();
         if groups.is_empty() {
@@ -3084,12 +3092,21 @@ impl Workbench for SketchWorkbench {
         let known = cache.remove(&node.id).unwrap_or_default();
         let mut kept = HashMap::new();
         let mut moved = false;
-        for (source, group) in groups {
-            let key = projection_key(document, &plane, &source);
-            let projected = known
-                .get(&key)
-                .cloned()
-                .unwrap_or_else(|| project_source_in(document, Some(kernel), &plane, &source));
+        for (source, group, answered) in groups {
+            let projected = match answered {
+                Some(answered) => answered,
+                None => {
+                    let Some(kernel) = kernel else {
+                        continue;
+                    };
+                    let key = projection_key(document, &plane, &source);
+                    let projected = known.get(&key).cloned().unwrap_or_else(|| {
+                        project_source_in(document, Some(kernel), &plane, &source)
+                    });
+                    kept.insert(key, projected.clone());
+                    projected
+                }
+            };
             if let Ok(curves) = &projected
                 && !external::already_holds(&feature.sketch, &group, curves)
             {
@@ -3100,7 +3117,6 @@ impl Workbench for SketchWorkbench {
                     feature.sketch.geometry = was;
                 }
             }
-            kept.insert(key, projected);
         }
         cache.insert(node.id, kept);
         if moved {
@@ -6946,9 +6962,9 @@ fn solid_built_from(document: &core_document::Document, sketch: FeatureId, body:
 
 /// What sketch `id`'s lost external elements were worked out from: its
 /// plane, its external elements' sources and where its body sits, the
-/// solids they were projected from as they stand, and for elements from
-/// other sketches or datums the document's edit count. `None` when it has
-/// no external geometry.
+/// solids they were projected from as they stand, what its body's build
+/// projected for it, and for elements from other sketches or datums the
+/// document's edit count. `None` when it has no external geometry.
 fn external_stamp(document: &core_document::Document, id: FeatureId) -> Option<u64> {
     use std::hash::{Hash, Hasher};
     let values = document.feature_values(id)?;
@@ -6983,6 +6999,7 @@ fn external_stamp(document: &core_document::Document, id: FeatureId) -> Option<u
     if sources.values().any(|s| s.reference.is_some()) {
         document.mutation_seq().hash(&mut hasher);
     }
+    format!("{:?}", document.projected_references(id)).hash(&mut hasher);
     Some(hasher.finish())
 }
 
@@ -6998,10 +7015,25 @@ fn lost_external_elements(
         return Vec::new();
     };
     let plane = placed_plane(&feature.plane, &sketch_placement(document, id));
+    let own_body = document.get_feature_meta(id).and_then(|n| n.body);
+    let built = document.projected_references(id);
     external::groups(&feature.sketch)
         .into_iter()
-        .filter(|(source, _)| source.reference.is_some() || kernel.is_some())
-        .filter(|(source, _)| project_source_in(document, kernel, &plane, source).is_err())
+        .filter(|(source, _)| {
+            // From its own body: what the build projected where the sketch
+            // stands, once it has.
+            if source.reference.is_none() && own_body == Some(BodyId(source.body)) {
+                let probe = feature::projection_probe(&feature.plane, source);
+                if let Some(answer) = built.and_then(|b| b.answer(&probe)) {
+                    return answer.is_err();
+                }
+                if solid_built_from(document, id, BodyId(source.body)) {
+                    return false;
+                }
+            }
+            (source.reference.is_some() || kernel.is_some())
+                && project_source_in(document, kernel, &plane, source).is_err()
+        })
         .flat_map(|(_, group)| group)
         .collect()
 }

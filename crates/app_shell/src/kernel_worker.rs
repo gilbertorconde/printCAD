@@ -113,6 +113,8 @@ struct BuildRequest {
     preview: Option<Uuid>,
     /// What features standing on the solid ask of it part way through.
     probes: Vec<core_document::PlanProbe>,
+    /// What features project of the solid part way through.
+    projections: Vec<core_document::PlanProjection>,
     /// Which build this is, for [`KernelWorker::drop_build`].
     serial: u64,
 }
@@ -149,6 +151,9 @@ pub enum KernelResponse {
         elapsed: Duration,
         /// The probes the build was asked, answered in `result.probes`.
         probes: Vec<core_document::PlanProbe>,
+        /// The projections the build was asked, answered in
+        /// `result.projections`.
+        projections: Vec<core_document::PlanProjection>,
         /// Found among the solids kept, not built: `elapsed` says nothing
         /// of how long the body takes to build.
         kept: bool,
@@ -399,6 +404,7 @@ impl KernelWorker {
     /// Submit a body's chain. One response arrives per request. With
     /// `preview`, a feature being edited, the result also carries what that
     /// feature does (its tool, and the body without it).
+    #[expect(clippy::too_many_arguments)]
     pub fn request_build_solid(
         &mut self,
         body_id: Uuid,
@@ -407,6 +413,7 @@ impl KernelWorker {
         detail: TessellationSettings,
         preview: Option<Uuid>,
         probes: Vec<core_document::PlanProbe>,
+        projections: Vec<core_document::PlanProjection>,
     ) -> u64 {
         self.next_serial += 1;
         let serial = self.next_serial;
@@ -419,6 +426,7 @@ impl KernelWorker {
                 detail,
                 preview,
                 probes,
+                projections,
                 serial,
             })
             .is_ok()
@@ -707,17 +715,18 @@ struct BuiltSolids {
 
 impl BuiltSolids {
     /// What a build is made from, as one number: the ops, the features
-    /// they build, the detail, the preview and the probes.
+    /// they build, the detail, the preview, the probes and the projections.
     fn key(
         ops: &[SolidOp],
         op_features: &[Uuid],
         detail: &TessellationSettings,
         preview: &Option<std::ops::Range<usize>>,
         asked: &[kernel_api::ChainProbe],
+        projections: &[kernel_api::ChainProjection],
     ) -> Option<u64> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        serde_json::to_vec(&(ops, op_features, detail, preview, asked))
+        serde_json::to_vec(&(ops, op_features, detail, preview, asked, projections))
             .ok()?
             .hash(&mut hasher);
         Some(hasher.finish())
@@ -834,6 +843,7 @@ fn build(
         detail,
         preview,
         probes,
+        projections,
         serial,
     } = request;
     let started = Instant::now();
@@ -866,6 +876,7 @@ fn build(
             detail: &detail,
             range,
             probes: &probes,
+            projections: &projections,
         },
     );
     match outcome {
@@ -874,6 +885,7 @@ fn build(
             result,
             elapsed: started.elapsed(),
             probes,
+            projections,
             kept,
             failed: None,
         },
@@ -900,6 +912,10 @@ fn build(
                         .into_iter()
                         .filter(|p| p.probe.after_op <= start)
                         .collect();
+                    let projections: Vec<core_document::PlanProjection> = projections
+                        .into_iter()
+                        .filter(|p| p.projection.after_op <= start)
+                        .collect();
                     match run_chain(
                         kernel,
                         shared,
@@ -910,6 +926,7 @@ fn build(
                             detail: &detail,
                             range: None,
                             probes: &probes,
+                            projections: &projections,
                         },
                     ) {
                         Ok((result, kept)) => KernelResponse::SolidBuilt {
@@ -917,6 +934,7 @@ fn build(
                             result,
                             elapsed: started.elapsed(),
                             probes,
+                            projections,
                             kept,
                             failed: Some(BuildFailure {
                                 feature: failed_feature,
@@ -946,13 +964,14 @@ fn build(
 }
 
 /// What one chain run builds: the ops, the feature of each, the detail,
-/// the edited feature's ops and the probes asked.
+/// the edited feature's ops and the probes and projections asked.
 struct Chain<'a> {
     ops: &'a [kernel_api::SolidOp],
     op_features: &'a [Uuid],
     detail: &'a TessellationSettings,
     range: Option<std::ops::Range<usize>>,
     probes: &'a [core_document::PlanProbe],
+    projections: &'a [core_document::PlanProjection],
 }
 
 /// One chain run, from the solids kept when it was built alike before,
@@ -969,20 +988,30 @@ fn run_chain(
         detail,
         range,
         probes,
+        projections,
     } = chain;
     let asked: Vec<kernel_api::ChainProbe> = probes.iter().map(|p| p.probe).collect();
+    let projections: Vec<kernel_api::ChainProjection> =
+        projections.iter().map(|p| p.projection).collect();
     // Each op's faces are named after the feature it builds.
     let tags: Vec<kernel_api::TopoName> = op_features
         .iter()
         .map(|f| kernel_api::naming::name_of_id(f.as_bytes()))
         .collect();
-    let key = BuiltSolids::key(ops, op_features, detail, &range, &asked);
+    let key = BuiltSolids::key(ops, op_features, detail, &range, &asked, &projections);
     if let Some(result) = key.and_then(|key| lock(&shared.built).get(body_id, key)) {
         return Ok((result, true));
     }
     let mut states = lock(&shared.chains).take(body_id);
-    let outcome =
-        kernel.execute_solid_chain_cached(ops, &tags, detail, range, &asked, Some(&mut states));
+    let outcome = kernel.execute_solid_chain_cached(
+        ops,
+        &tags,
+        detail,
+        range,
+        &asked,
+        &projections,
+        Some(&mut states),
+    );
     lock(&shared.chains).put(body_id, states);
     if let (Ok(result), Some(key)) = (&outcome, key) {
         lock(&shared.built).keep(body_id, key, result);
@@ -1214,7 +1243,7 @@ mod tests {
         let mut built = BuiltSolids::default();
         let body = Uuid::new_v4();
         let detail = TessellationSettings::default();
-        let key = |ops: &[SolidOp]| BuiltSolids::key(ops, &[], &detail, &None, &[]).unwrap();
+        let key = |ops: &[SolidOp]| BuiltSolids::key(ops, &[], &detail, &None, &[], &[]).unwrap();
         let refine = [SolidOp::Refine];
         let result = SolidBuildResult {
             brep_blob: b"solid".to_vec(),
@@ -1408,11 +1437,19 @@ mod tests {
                 detail.clone(),
                 None,
                 Vec::new(),
+                Vec::new(),
             );
         }
         let last = Uuid::new_v4();
-        let waiting =
-            worker.request_build_solid(last, slow_chain(), Vec::new(), detail, None, Vec::new());
+        let waiting = worker.request_build_solid(
+            last,
+            slow_chain(),
+            Vec::new(),
+            detail,
+            None,
+            Vec::new(),
+            Vec::new(),
+        );
         assert!(worker.drop_build(waiting, None));
         let out = answers(&mut worker, busy + 1);
         let built = out
@@ -1462,6 +1499,7 @@ mod tests {
             detail.clone(),
             None,
             Vec::new(),
+            Vec::new(),
         );
         let out = answers(&mut worker, 1);
         let KernelResponse::SolidBuilt {
@@ -1484,6 +1522,7 @@ mod tests {
             detail,
             None,
             Vec::new(),
+            Vec::new(),
         );
         let out = answers(&mut worker, 1);
         assert!(
@@ -1505,6 +1544,7 @@ mod tests {
                 Vec::new(),
                 detail.clone(),
                 None,
+                Vec::new(),
                 Vec::new(),
             );
         }
@@ -1533,6 +1573,7 @@ mod tests {
             detail.clone(),
             None,
             Vec::new(),
+            Vec::new(),
         );
         while !running(&worker) {
             std::thread::sleep(Duration::from_millis(1));
@@ -1550,6 +1591,7 @@ mod tests {
             Vec::new(),
             detail,
             None,
+            Vec::new(),
             Vec::new(),
         );
         let since = loop {

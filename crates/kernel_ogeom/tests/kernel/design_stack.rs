@@ -5724,3 +5724,186 @@ fn holes_patterned_along_a_solid_edge_follow_it() {
         assert!((at[0].hypot(at[1]) - 25.0).abs() < 1e-3, "{at:?}");
     }
 }
+
+/// Rebuild as the host does, probes, projections and face names all,
+/// until nothing is left to rebuild; how many passes that took.
+fn settle_projecting(
+    registry: &core_document::DocumentService,
+    doc: &mut Document,
+    kernel: &mut OgeomKernel,
+) -> usize {
+    for pass in 0..16 {
+        let jobs = registry.rebuild_jobs(doc);
+        if jobs.is_empty() {
+            return pass;
+        }
+        for job in jobs {
+            let Ok(plan) = job.plan else { continue };
+            if plan.ops.is_empty() {
+                continue;
+            }
+            let asked: Vec<kernel_api::ChainProbe> = plan.probes.iter().map(|p| p.probe).collect();
+            let projections: Vec<kernel_api::ChainProjection> =
+                plan.projections.iter().map(|p| p.projection).collect();
+            let tags: Vec<kernel_api::TopoName> = plan
+                .op_features
+                .iter()
+                .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+                .collect();
+            let result = kernel
+                .execute_solid_chain_projecting(
+                    &plan.ops,
+                    &tags,
+                    &TessellationSettings::default(),
+                    None,
+                    &asked,
+                    &projections,
+                )
+                .unwrap_or_else(|e| panic!("{e:?}"));
+            doc.store_probe_answers(&plan.probes, &result.probes);
+            doc.store_projections(&plan.projections, &result.projections);
+            store_solid(doc, job.body, result);
+        }
+    }
+    panic!("the rebuilds never settled");
+}
+
+/// A sketch on a pad's top face counts the top's right edge, projected
+/// from its own body, in the profile a pocket cuts. The pocket takes that
+/// edge away, yet the projection is of the solid where the sketch stands,
+/// before the pocket: the rebuilds settle, and when the pad grows taller
+/// and wider the sketch rises with the face, the edge follows and the
+/// pocket is cut where the face and edge stand.
+#[test]
+fn an_edge_projected_from_the_sketchs_own_body_follows_it_through_a_pocket() {
+    use core_document::{CommandArgs, Workbench, WorkbenchFeature, WorkbenchRuntimeContext};
+    let mut registry = design_registry();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
+    let mut kernel = OgeomKernel::new();
+    // A block 40 x 40, 10 high.
+    let (mut doc, body, base) = setup(40.0, 40.0);
+    let pad = doc
+        .add_feature_in_body(
+            pad_feature(base, 10.0, false, false),
+            "Pad".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.mark_feature_stale(pad);
+    settle_projecting(&registry, &mut doc, &mut kernel);
+
+    // A sketch on the top face, following it.
+    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+        [0.0, 0.0, 10.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+    );
+    let mut on_top = SketchFeature::new(Sketch::new("top"), plane);
+    on_top.face = Some(wb_sketch::FaceSupport {
+        point: [20.0, 20.0, 10.0],
+        normal: [0.0, 0.0, 1.0],
+        name: 0,
+        placed: plane,
+        lent_by: None,
+    });
+    let sketch_id = doc
+        .add_feature_in_body(on_top, "top".into(), Some(body))
+        .unwrap();
+    // The top's right edge, counting, closed by three drawn lines into a
+    // strip 10 mm wide along it.
+    let mut sketcher = wb_sketch::SketchWorkbench::default();
+    let args: CommandArgs = serde_json::from_value(serde_json::json!({
+        "sketch": sketch_id.0.to_string(),
+        "counts": true,
+        "edges": [{"body": body.0.to_string(), "point": [40.0, 20.0, 10.0], "direction": [0.0, 1.0, 0.0]}],
+    }))
+    .unwrap();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    sketcher
+        .run_command("sketch.external", &args, &mut ctx)
+        .expect("the edge projects");
+    let mut feature = SketchFeature::from_json(doc.get_feature_data(sketch_id).unwrap()).unwrap();
+    let edge = feature
+        .sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) if feature.sketch.is_external(l.id) => Some(l.clone()),
+            _ => None,
+        })
+        .expect("the projected edge");
+    let y_of = |sketch: &Sketch, p| sketch.point_position(p).unwrap().y;
+    let (near, far) = if y_of(&feature.sketch, edge.start) < y_of(&feature.sketch, edge.end) {
+        (edge.start, edge.end)
+    } else {
+        (edge.end, edge.start)
+    };
+    let sketch = &mut feature.sketch;
+    let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(30.0, 0.0))));
+    let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(30.0, 40.0))));
+    for (s, e) in [(a, near), (far, b), (b, a)] {
+        sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
+    }
+    doc.update_feature_data(sketch_id, feature.to_json())
+        .unwrap();
+    let pocket = doc
+        .add_feature_in_body(pocket_feature(sketch_id, 3.0), "Pocket".into(), Some(body))
+        .unwrap();
+    doc.mark_feature_stale(pocket);
+    let passes = settle_projecting(&registry, &mut doc, &mut kernel);
+    assert!(passes <= 4, "settled in {passes} passes");
+    let volume = volume_of_body(&doc, &mut kernel, body);
+    assert!(
+        (volume - (40.0 * 40.0 * 10.0 - 10.0 * 40.0 * 3.0)).abs() < 1e-3,
+        "{volume}"
+    );
+
+    // The pad grows to 50 wide and 15 high.
+    let stored = doc.get_feature_data(sketch_id).unwrap().clone();
+    let mut wider = SketchFeature::from_json(doc.get_feature_data(base).unwrap()).unwrap();
+    for element in &mut wider.sketch.geometry {
+        if let GeometryElement::Point(p) = element
+            && p.position.x > 39.0
+        {
+            p.position.x = 50.0;
+        }
+    }
+    doc.update_feature_data(base, wider.to_json()).unwrap();
+    doc.update_feature_data(pad, pad_feature(base, 15.0, false, false).to_json())
+        .unwrap();
+    doc.mark_feature_dirty(pad);
+    let passes = settle_projecting(&registry, &mut doc, &mut kernel);
+    assert!(passes <= 6, "settled in {passes} passes");
+    let followed = SketchFeature::from_json(doc.feature_values(sketch_id).unwrap()).unwrap();
+    assert!(
+        (followed.plane.origin[2] - 15.0).abs() < 1e-6,
+        "{:?}",
+        followed.plane
+    );
+    for end in [near, far] {
+        let x = followed.sketch.point_position(end).unwrap().x;
+        assert!((x - 50.0).abs() < 1e-6, "the edge's end at x = {x}");
+    }
+    let volume = volume_of_body(&doc, &mut kernel, body);
+    assert!(
+        (volume - (50.0 * 40.0 * 15.0 - 20.0 * 40.0 * 3.0)).abs() < 1e-3,
+        "{volume}"
+    );
+    let (min, max) = mesh_bounds(&doc.imported_geometry(body).unwrap().mesh);
+    assert!(
+        (max[0] - 50.0).abs() < 1e-3 && (max[2] - 15.0).abs() < 1e-3,
+        "{min:?} {max:?}"
+    );
+    assert_eq!(
+        doc.get_feature_data(sketch_id),
+        Some(&stored),
+        "followed as derived values, the sketch's own data untouched"
+    );
+    // Nothing is reported lost.
+    let sketcher = wb_sketch::SketchWorkbench::default();
+    assert_eq!(
+        sketcher.feature_warning(&doc, Some(&kernel_ogeom::QUERIES), sketch_id),
+        None
+    );
+}

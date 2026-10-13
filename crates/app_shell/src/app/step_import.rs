@@ -189,6 +189,7 @@ impl PrintCadApp {
                     result,
                     elapsed,
                     probes,
+                    projections,
                     failed,
                     ..
                 } => {
@@ -200,6 +201,9 @@ impl PrintCadApp {
                     self.session
                         .document
                         .store_probe_answers(&probes, &result.probes);
+                    self.session
+                        .document
+                        .store_projections(&projections, &result.projections);
                     let mut result = result;
                     let complete = !partial;
                     match result.preview.take() {

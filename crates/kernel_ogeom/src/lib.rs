@@ -256,6 +256,7 @@ impl OgeomKernel {
     /// [`Self::execute_solid_chain_named`], resuming from what `cache`
     /// kept of this body's last builds where the history agrees, and
     /// keeping what the next build may resume from.
+    #[expect(clippy::too_many_arguments)]
     pub fn execute_solid_chain_cached(
         &mut self,
         ops: &[SolidOp],
@@ -263,13 +264,33 @@ impl OgeomKernel {
         detail: &TessellationSettings,
         preview: Option<std::ops::Range<usize>>,
         probes: &[kernel_api::ChainProbe],
+        projections: &[kernel_api::ChainProjection],
         cache: Option<&mut ChainCache>,
     ) -> Result<SolidBuildResult, ChainError> {
         self.initialize().map_err(|e| ChainError {
             op_index: 0,
             message: e.to_string(),
         })?;
-        chain::execute_cached(ops, tags, detail, preview, probes, cache)
+        chain::execute_cached(ops, tags, detail, preview, probes, projections, cache)
+    }
+
+    /// [`Self::execute_solid_chain_named`], with what `projections` come
+    /// to, each asked of the solid part way through the chain as a probe
+    /// is, in `SolidBuildResult::projections`.
+    pub fn execute_solid_chain_projecting(
+        &mut self,
+        ops: &[SolidOp],
+        tags: &[kernel_api::TopoName],
+        detail: &TessellationSettings,
+        preview: Option<std::ops::Range<usize>>,
+        probes: &[kernel_api::ChainProbe],
+        projections: &[kernel_api::ChainProjection],
+    ) -> Result<SolidBuildResult, ChainError> {
+        self.initialize().map_err(|e| ChainError {
+            op_index: 0,
+            message: e.to_string(),
+        })?;
+        chain::execute_cached(ops, tags, detail, preview, probes, projections, None)
     }
 
     /// [`Self::execute_solid_chain_probing`], naming the faces the ops make

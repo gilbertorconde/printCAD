@@ -137,7 +137,7 @@ impl Part {
             .execute_solid_chain_named(&plan.ops, &tags, &detail, None, &[])
             .unwrap();
         let cached = OgeomKernel::new()
-            .execute_solid_chain_cached(&plan.ops, &tags, &detail, None, &[], Some(cache))
+            .execute_solid_chain_cached(&plan.ops, &tags, &detail, None, &[], &[], Some(cache))
             .unwrap();
         (fresh, cached)
     }
