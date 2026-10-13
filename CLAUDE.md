@@ -325,7 +325,11 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   `problem`, semantic `compile`, `curves`, `spline`, `residual`, LM `solve`,
   rank/DoF `freedom` and `diagnosis`; optional serde. Its complete directory
   can be copied to another consumer without workspace inheritance.
-- `workbenches/wb_sketch`: sketcher: `tools.rs` + `tools/{draw,modify,
+- `workbenches/wb_sketch`: sketcher. Its model (`sketch.rs`: points,
+  radii, constraint values, `SketchPlane`) is `f64`, stored as the solver
+  answers it; `boundary.rs` is the one place values cross to and from the
+  `f32` of screens, GPU meshes, picks and the package contract (incoming
+  singles widened through their shortest decimal). `tools.rs` + `tools/{draw,modify,
   transform}.rs` (state machine), `geom2d.rs` (intersection/sampling math),
   `snap.rs`, `solver.rs` (sketch_solver adapter, storage write-back and
   application diagnostics),
@@ -830,8 +834,9 @@ drags are `step::drag`; Design records in `record_task` when a task
 closes, diffing against what the command makes alone (`default_feature`);
 Assembly in `record_joint`. The host maps its own UI commands in
 `recorded_of` and keeps calls in `PrintCadApp.recording`
-(`scripting::Recorder`, which names results and writes numbers exactly
-so a replay meets single-precision values bit for bit); nothing records
+(`scripting::Recorder`, which names results and writes numbers exactly,
+a double that is exactly a single as the single's digits, so a replay
+meets stored values bit for bit); nothing records
 while a script runs. The app's own
 commands: `doc.*` (the pure ones in `scripts::document_command`, shared
 with `headless.rs`), `app.*`, and every keymap command, the file ones
@@ -1175,6 +1180,9 @@ hacks, no silently degraded feature). Instead:
   buffers mapped asynchronously and collected after a non-blocking poll at
   the top of the next frames; wgpu keeps a replaced buffer alive until the
   GPU is done with it. Keep it that way.
+- `serde_json` is built with `float_roundtrip` (workspace): without it a
+  JSON number can parse one unit off the double it was written from, and
+  `f64` sketch values would not survive a save.
 - Serde compatibility: new fields on persisted types (features, sketch) take
   `#[serde(default)]` so old `.prtcad` files keep loading.
 - A `.prtcad`'s meshes are entries of their own (`mesh/<uuid>.bin`,
