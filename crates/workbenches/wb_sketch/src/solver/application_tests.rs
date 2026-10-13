@@ -90,8 +90,9 @@ mod tests {
         )))
     }
 
+    /// A solved value, to the solver's own precision.
     fn near(actual: f64, expected: f64) {
-        assert_near(actual, expected, 1e-3);
+        assert_near(actual, expected, 1e-6);
     }
 
     /// The constraints the tests add most, by kind; each answers its id.
@@ -1215,15 +1216,15 @@ mod tests {
         }
         converged(&mut sketch);
         let joint = sketch.point_position(s).unwrap();
-        near(joint.x, 10.0);
-        near(joint.y, 0.0);
+        assert_near(joint.x, 10.0, 1e-3);
+        assert_near(joint.y, 0.0, 1e-3);
         let center = sketch.point_position(c).unwrap();
-        near(center.x, 10.0);
+        assert_near(center.x, 10.0, 1e-3);
         let r = match sketch.get_geometry(arc) {
             Some(GeometryElement::Arc(a)) => a.radius,
             _ => unreachable!(),
         };
-        near(center.y.abs(), r);
+        assert_near(center.y.abs(), r, 1e-3);
 
         // A point and the two curves meeting at it take the same join.
         let selected: std::collections::HashSet<Uuid> = [b, line, arc].into();
