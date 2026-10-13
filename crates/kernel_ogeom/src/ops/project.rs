@@ -53,8 +53,9 @@ pub fn apply(
         }
         let cuts: Vec<Shape> = wires
             .iter()
-            .filter(|w| reaches(model, &face, w, along))
-            .flat_map(|w| w.edges.iter().cloned())
+            .flat_map(|w| w.edges.iter())
+            .filter(|e| reaches(model, &face, e, along))
+            .cloned()
             .collect();
         if cuts.is_empty() {
             // Nothing lands on it: it is wholly in a region or wholly out.
@@ -113,18 +114,25 @@ pub fn apply(
     Ok(shape)
 }
 
-/// Whether some point of `wire`, carried along `along` either way, meets
-/// `face` as drawn.
-fn reaches(model: &Model, face: &Shape, wire: &BuiltWire, along: Direction) -> bool {
+/// Whether some point of `edge`, carried along `along` either way, meets
+/// `face` as drawn. The edge is walked a quarter millimetre at a time, so a
+/// straight edge crossing the face with both ends off it is found.
+fn reaches(model: &Model, face: &Shape, edge: &Shape, along: Direction) -> bool {
     let Ok(drawn) = triangulate_face(model, face, Deflection::default(), tol()) else {
         return true;
     };
-    let mut points = Vec::new();
-    for edge in &wire.edges {
-        if let Ok(line) = ogeom::mesh::polyline_of_edge(model, edge, Deflection::default(), tol()) {
-            points.extend(line);
+    let Ok(line) = ogeom::mesh::polyline_of_edge(model, edge, Deflection::default(), tol()) else {
+        return true;
+    };
+    let mut points = Vec::with_capacity(line.len());
+    for pair in line.windows(2) {
+        let steps = ((pair[0].distance(pair[1]) / 0.25).ceil() as usize).clamp(1, 400);
+        for k in 0..steps {
+            let f = k as f64 / steps as f64;
+            points.push(pair[0] + (pair[1] - pair[0]) * f);
         }
     }
+    points.extend(line.last().copied());
     points.iter().any(|&p| {
         drawn.triangles.iter().any(|t| {
             let [a, b, c] = t.map(|i| drawn.positions[i as usize]);

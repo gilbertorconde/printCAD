@@ -162,6 +162,39 @@ fn a_sketch_that_misses_the_face_says_so() {
 }
 
 #[test]
+fn a_sketch_running_past_the_face_embosses_what_lands() {
+    // From z = 8 up past the cylinder's top: the top edge lands nowhere.
+    let plain = std::f64::consts::PI * RADIUS * RADIUS * HEIGHT;
+    let line = |start: [f64; 2], end: [f64; 2]| ProfileSegment::Line { start, end };
+    let mut tall = rectangle();
+    tall.wires = vec![ProfileWire::new(vec![
+        line([-3.0, 8.0], [3.0, 8.0]),
+        line([3.0, 8.0], [3.0, 30.0]),
+        line([3.0, 30.0], [-3.0, 30.0]),
+        line([-3.0, 30.0], [-3.0, 8.0]),
+    ])];
+    let result = OgeomKernel::new()
+        .execute_solid_chain(
+            &[
+                cylinder(),
+                SolidOp::Project {
+                    profile: tall,
+                    faces: vec![side()],
+                    mode: ProjectMode::Emboss,
+                    height: 1.0,
+                },
+            ],
+            &TessellationSettings::default(),
+        )
+        .unwrap_or_else(|e| panic!("{}", e.message));
+    let (_, sound) = faces_and_soundness(&result);
+    assert!(sound, "the embossed solid checks sound");
+    let added = span() * (11.0f64.powi(2) - RADIUS.powi(2)) / 2.0 * (HEIGHT - 8.0);
+    let gained = volume(&result) - plain;
+    assert!((gained - added).abs() < 0.02 * added, "{gained} vs {added}");
+}
+
+#[test]
 fn a_region_with_a_hole_embosses_around_the_hole() {
     let plain = std::f64::consts::PI * RADIUS * RADIUS * HEIGHT;
     let mut ring = rectangle();
