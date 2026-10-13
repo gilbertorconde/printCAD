@@ -70,7 +70,7 @@ pub enum HostTask {
     /// Every part laid flat on the bed, for export or the slicer.
     PrintLayout,
     /// A body repeated as linked copies in a row or a ring.
-    Array(super::array_task::ArrayTask),
+    Array(Box<super::array_task::ArrayTask>),
 }
 
 #[derive(Debug, Clone)]
@@ -344,7 +344,7 @@ impl HostTask {
             Self::Texture(t) => format!("Surface texture · {}", body_name(document, t.body())),
             Self::Note(t) => format!("Note · {}", body_name(document, t.body)),
             Self::PrintLayout => "Print layout".to_string(),
-            Self::Array(t) => format!("Array · {}", body_name(document, t.source())),
+            Self::Array(t) => format!("Array · {}", t.subject(document)),
             Self::History(t) => format!(
                 "Move · {}",
                 document

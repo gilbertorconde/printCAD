@@ -40,8 +40,8 @@ use thiserror::Error;
 use uuid::Uuid;
 
 pub use arrays::{
-    ArrayError, ArrayId, ArrayInstance, ArrayPattern, CopyArray, PathSource, PathStation,
-    path_stations,
+    ArrayError, ArrayId, ArrayInstance, ArrayMember, ArrayPattern, CopyArray, PathSource,
+    PathStation, path_stations,
 };
 pub use asset::{AssetReference, AssetType};
 pub use command::{

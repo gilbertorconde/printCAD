@@ -1979,6 +1979,26 @@ fn attach_body_menu(
                     delete = true;
                     ui.close();
                 }
+                let repeated = options
+                    .bench_menus
+                    .is_some_and(|(d, _)| d.array_of_component(component).is_some());
+                let label = if repeated {
+                    "Edit array…"
+                } else {
+                    "Array of copies…"
+                };
+                if menu_entry(ui, label, None)
+                    .on_hover_text(
+                        "Copies of every body in the component, held together, in a row, a \
+                         ring, along a path or at points, in the task panel",
+                    )
+                    .clicked()
+                {
+                    result.local = Some(super::MenuLocal::Task(super::OpenTask::ComponentArray(
+                        component,
+                    )));
+                    ui.close();
+                }
                 bench_command =
                     bench_menu_entries(ui, options, MenuScope::TreeComponent(component));
             });

@@ -44,6 +44,8 @@ pub enum OpenTask {
     EditNote(NoteId),
     /// The array that owns or repeats the body, or a new one of it.
     Array(BodyId),
+    /// The array that repeats the component, or a new one of it.
+    ComponentArray(core_document::ComponentId),
 }
 
 /// A body as a script names it: its id, with its name beside.

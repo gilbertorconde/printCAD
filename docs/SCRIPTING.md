@@ -560,7 +560,8 @@ assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
 
 `pc.doc.array`: Repeat a body along a line, around an axis, along a path or at points, each repeat a linked copy.
 
-- `body` (id): The body repeated, the array's source
+- `body` (id, optional): The body repeated, the array's source; or give `component`
+- `component` (id, optional): A component repeated in place of a body: every body in it copied, each occurrence's copies held together in a rigid component of their own
 - `count` (integer, optional): Occurrences, the source counted: 3 is the source and two copies; for points, every point when left out
 - `kind` (string, optional): "linear" (along a line, the default), "polar" (around an axis), "path" (along a sketch's curves or an edge) or "points" (at a sketch's points)
 - `sketch` (id, optional): path: the sketch whose curves the copies run along; points: the sketch whose points (those no curve ends or centres on) they stand at
@@ -573,7 +574,7 @@ assert(math.abs(pc.doc.measure{body = copy}.volume - 1600) < 1e-6, "it follows")
 - `center` (any, optional): polar: {x, y, z}, a point on the axis; the origin when left out
 - `angle` (number, optional): polar: degrees between neighbours; a whole turn shared out when left out
 - `skip` (list, optional): Occurrences left out, numbered from 1 (0 is the source)
-- Returns {id, instances}: the array's id and its copies' body ids, in order
+- Returns {id, instances, components}: the array's id, the copies of its source body in order and, for a component, the component each occurrence's copies sit in
 
 Notes:
 

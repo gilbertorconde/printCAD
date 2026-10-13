@@ -305,6 +305,64 @@ fn a_path_array_places_copies_at_its_stations_turned_when_aligned_and_replays() 
 }
 
 #[test]
+fn a_component_array_copies_every_body_together_and_skips_whole_occurrences() {
+    let mut live = Document::new("t");
+    let peg = part(&mut live);
+    let cap = part(&mut live);
+    live.set_body_placement(cap, BodyPlacement::new(Quat::IDENTITY, Vec3::Z * 5.0));
+    let unit = live.create_component("Pin".into(), None).unwrap();
+    live.set_body_component(peg, Some(unit)).unwrap();
+    live.set_body_component(cap, Some(unit)).unwrap();
+    let baseline = live.clone();
+    let _ = live.take_pending_ops();
+
+    let array = live
+        .create_component_array(unit, row(20.0), 3)
+        .expect("an array of the component");
+    assert_eq!(live.bodies().len(), 6, "two copies of each body");
+    let second = live.copy_array(array).unwrap().instances[1].clone();
+    assert_eq!(second.members.len(), 1);
+    let cap_copy = second.members[0].body;
+    let drawn = |doc: &Document, body| doc.imported_geometry(body).unwrap().mesh.positions[0];
+    assert!(
+        close(drawn(&live, cap_copy), [40.0, 0.0, 5.0]),
+        "the cap's own offset kept"
+    );
+    let group = second.group.expect("each occurrence held together");
+    assert_eq!(live.component_bodies(group), vec![second.body, cap_copy]);
+    assert!(!live.component(group).unwrap().flexible);
+
+    // Moving a body of the component carries its copies.
+    live.set_body_placement(cap, BodyPlacement::new(Quat::IDENTITY, Vec3::Z * 7.0));
+    assert!(close(drawn(&live, cap_copy), [40.0, 0.0, 7.0]));
+
+    // Deleting one copy skips its whole occurrence.
+    assert!(live.skip_array_instance(cap_copy));
+    let a = live.copy_array(array).unwrap();
+    assert_eq!(a.skipped, vec![2]);
+    assert!(live.bodies().iter().all(|b| b.id != second.body));
+    assert!(live.component(group).is_none());
+    assert_eq!(live.array_instance(cap_copy), None);
+
+    let ops = live.take_pending_ops();
+    let json = serde_json::to_string(&ops).unwrap();
+    let ops: Vec<core_document::op::DocumentOp> = serde_json::from_str(&json).unwrap();
+    let mut replica = baseline;
+    for op in &ops {
+        replica.apply_op(op);
+    }
+    assert_eq!(
+        live.replicated_projection(),
+        replica.replicated_projection()
+    );
+    let empty = live.create_component("Empty".into(), None).unwrap();
+    assert_eq!(
+        live.create_component_array(empty, row(5.0), 2),
+        Err(core_document::ArrayError::EmptyComponent)
+    );
+}
+
+#[test]
 fn a_point_array_stands_a_copy_at_each_point_after_the_first() {
     let mut doc = Document::new("t");
     let source = part(&mut doc);

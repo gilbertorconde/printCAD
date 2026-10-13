@@ -450,7 +450,17 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             "Repeat a body along a line, around an axis, along a path or at points, each \
              repeat a linked copy",
         )
-        .param("body", ParamKind::Id, "The body repeated, the array's source")
+        .optional(
+            "body",
+            ParamKind::Id,
+            "The body repeated, the array's source; or give `component`",
+        )
+        .optional(
+            "component",
+            ParamKind::Id,
+            "A component repeated in place of a body: every body in it copied, each \
+             occurrence's copies held together in a rigid component of their own",
+        )
         .optional(
             "count",
             ParamKind::Integer,
@@ -517,7 +527,10 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             ParamKind::List,
             "Occurrences left out, numbered from 1 (0 is the source)",
         )
-        .returns("{id, instances}: the array's id and its copies' body ids, in order")
+        .returns(
+            "{id, instances, components}: the array's id, the copies of its source body in \
+             order and, for a component, the component each occurrence's copies sit in",
+        )
         .note(
             "The array owns its copies: each is a linked copy of the source, placed where \
              its occurrence is from where the source sits, so moving the source carries \
@@ -586,6 +599,27 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
             assert(#at.instances == 1, "the first point is the source's")
             local m = pc.doc.measure{body = at.instances[1]}
             assert(math.abs(m.min[1] - 30) < 1e-4 and math.abs(m.min[2] - 15) < 1e-4)
+            "#,
+        )
+        .example(
+            "A component repeated, its bodies together",
+            r#"
+            local function box(x)
+              local s = pc.sketch.new{plane = "XY"}
+              pc.sketch.rect{sketch = s, x = x, y = 0, width = 5, height = 5}
+              return pc.doc.feature{id = pc.design.pad{sketch = s, length = 5}}.body
+            end
+            local a, b = box(0), box(10)
+            assert(#pc.doc.rebuild() == 0)
+            local pair = pc.asm.component{bodies = {a, b}, name = "Pair"}
+            local row = pc.doc.array{component = pair, count = 3, direction = {0, 1, 0},
+                                     spacing = 20}
+            assert(#pc.doc.bodies() == 6, "two copies of each body")
+            assert(#row.components == 2, "each occurrence a component of its own")
+            pc.asm.move{body = a, by = {0, 0, 4}}
+            local last = pc.doc.measure{body = row.instances[2]}
+            assert(math.abs(last.min[2] - 40) < 1e-4 and math.abs(last.min[3] - 4) < 1e-4,
+                   "moving the component carries its copies")
             "#,
         ),
         CommandSpec::new(
@@ -3363,13 +3397,22 @@ pub(crate) fn document_command(
             Ok(json!(copy.0.to_string()))
         }
         "doc.array" => {
-            let body = body_arg(document, &a)?;
+            let component = a.opt_id("component")?.map(core_document::ComponentId);
+            let body = match component {
+                Some(c) => *document
+                    .component_bodies(c)
+                    .first()
+                    .ok_or_else(|| array_refusal(&core_document::ArrayError::EmptyComponent))?,
+                None => body_arg(document, &a)?,
+            };
             let given = count_arg(&a)?;
             let pattern = array_pattern(document, registry, body, given.unwrap_or(1), None, &a)?;
             let count = array_count(given, &pattern)?;
-            let id = document
-                .create_copy_array(body, pattern.clone(), count)
-                .map_err(|e| array_refusal(&e))?;
+            let id = match component {
+                Some(c) => document.create_component_array(c, pattern.clone(), count),
+                None => document.create_copy_array(body, pattern.clone(), count),
+            }
+            .map_err(|e| array_refusal(&e))?;
             if let Some(skip) = skip_arg(&a)? {
                 document
                     .set_copy_array(id, pattern, count, skip)
@@ -4289,17 +4332,31 @@ fn array_refusal(error: &core_document::ArrayError) -> CommandError {
         | ArrayError::PathTooShort { .. }
         | ArrayError::TooFewPlaces { .. } => "count",
         ArrayError::BadPattern => "direction",
+        ArrayError::EmptyComponent => "component",
     };
     CommandError::bad(name, error.to_string())
 }
 
 /// An array as the array commands answer: its id and its copies' bodies.
 fn array_answer(document: &core_document::Document, id: core_document::ArrayId) -> Value {
-    let instances: Vec<String> = document
-        .copy_array(id)
-        .map(|a| a.instances.iter().map(|i| i.body.0.to_string()).collect())
-        .unwrap_or_default();
-    json!({"id": id.0.to_string(), "instances": instances})
+    let Some(array) = document.copy_array(id) else {
+        return json!({"id": id.0.to_string(), "instances": []});
+    };
+    let instances: Vec<String> = array
+        .instances
+        .iter()
+        .map(|i| i.body.0.to_string())
+        .collect();
+    let mut answer = json!({"id": id.0.to_string(), "instances": instances});
+    if array.component.is_some() {
+        let groups: Vec<Value> = array
+            .instances
+            .iter()
+            .map(|i| json!(i.group.map(|g| g.0.to_string())))
+            .collect();
+        answer["components"] = json!(groups);
+    }
+    answer
 }
 
 fn body_arg(document: &core_document::Document, a: &Args) -> Result<BodyId, CommandError> {

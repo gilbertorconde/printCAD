@@ -10,7 +10,7 @@ use glam::{Quat, Vec3};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{Body, BodyId, BodyPlacement, Document, FeatureId, op};
+use crate::{Body, BodyId, BodyPlacement, ComponentId, Document, FeatureId, op};
 
 /// Unique identifier for an array in the document.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
@@ -225,23 +225,62 @@ pub fn path_stations(
     Ok((0..count).map(|k| (step * f64::from(k)).min(1.0)).collect())
 }
 
-/// One copy an array owns: which occurrence it is and its body.
+/// One occurrence an array owns: which it is and the copy of its source,
+/// with the copies of the rest of a component it repeats.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ArrayInstance {
     /// Its place in the array, from 1 (0 is the source).
     pub index: u32,
+    /// The copy of the array's source.
     pub body: BodyId,
     /// The name its body is made with.
     pub name: String,
+    /// The copies of the component's other bodies, each with the body it
+    /// copies; empty for an array of one body.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub members: Vec<ArrayMember>,
+    /// The rigid component the occurrence's copies sit in, holding them
+    /// together, when the array repeats a component.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<ComponentId>,
 }
 
-/// A body repeated: the source, and a linked copy at each further
-/// occurrence the array does not skip.
+/// A copy of one of a repeated component's bodies.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArrayMember {
+    /// The body of the component it copies.
+    pub of: BodyId,
+    pub body: BodyId,
+    pub name: String,
+}
+
+impl ArrayInstance {
+    /// Every copy of the occurrence, each with the body it copies: the
+    /// source's first.
+    pub fn copies(&self, source: BodyId) -> Vec<(BodyId, BodyId, &str)> {
+        std::iter::once((source, self.body, self.name.as_str()))
+            .chain(self.members.iter().map(|m| (m.of, m.body, m.name.as_str())))
+            .collect()
+    }
+
+    /// Whether `body` is one of its copies.
+    pub fn holds(&self, body: BodyId) -> bool {
+        self.body == body || self.members.iter().any(|m| m.body == body)
+    }
+}
+
+/// A body, or a component's bodies, repeated: the source, and linked
+/// copies at each further occurrence the array does not skip.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CopyArray {
     pub id: ArrayId,
     pub name: String,
+    /// The body repeated; for a component, its first body, which the
+    /// copies of each occurrence count as theirs.
     pub source: BodyId,
+    /// The component repeated, every body in it copied together.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub component: Option<ComponentId>,
     pub pattern: ArrayPattern,
     /// Occurrences, the source counted: 3 is the source and two copies.
     pub count: u32,
@@ -256,9 +295,26 @@ pub struct CopyArray {
 }
 
 impl CopyArray {
-    /// The instance whose body is `body`.
+    /// The instance one of whose copies is `body`.
     pub fn instance_of(&self, body: BodyId) -> Option<&ArrayInstance> {
-        self.instances.iter().find(|i| i.body == body)
+        self.instances.iter().find(|i| i.holds(body))
+    }
+
+    /// Whether it repeats `body`: its source, or a body of the component
+    /// it repeats that it has copies of.
+    pub fn repeats(&self, body: BodyId) -> bool {
+        self.source == body
+            || self
+                .instances
+                .iter()
+                .any(|i| i.members.iter().any(|m| m.of == body))
+    }
+
+    /// Every body its occurrences hold.
+    pub fn copy_bodies(&self) -> impl Iterator<Item = BodyId> + '_ {
+        self.instances
+            .iter()
+            .flat_map(|i| std::iter::once(i.body).chain(i.members.iter().map(|m| m.body)))
     }
 }
 
@@ -282,6 +338,8 @@ pub enum ArrayError {
     PathTooShort { fits: u32 },
     #[error("is more than the {places} places the path or points give")]
     TooFewPlaces { places: u32 },
+    #[error("is not a component of this document, or holds no body")]
+    EmptyComponent,
 }
 
 impl Document {
@@ -301,13 +359,21 @@ impl Document {
             .find_map(|a| Some((a, a.instance_of(body)?)))
     }
 
-    /// The arrays that repeat `body`.
+    /// The arrays that repeat `body`, alone or with its component.
     pub fn arrays_of_source(&self, body: BodyId) -> Vec<ArrayId> {
         self.copy_arrays
             .iter()
-            .filter(|a| a.source == body)
+            .filter(|a| a.repeats(body))
             .map(|a| a.id)
             .collect()
+    }
+
+    /// The array that repeats `component`.
+    pub fn array_of_component(&self, component: ComponentId) -> Option<ArrayId> {
+        self.copy_arrays
+            .iter()
+            .find(|a| a.component == Some(component))
+            .map(|a| a.id)
     }
 
     /// A spacing that leaves 10 mm between neighbours along `direction`:
@@ -340,6 +406,39 @@ impl Document {
             return Err(ArrayError::SourceIsInstance);
         }
         let base = entry.name.clone();
+        self.make_array(source, None, &base, pattern, count)
+    }
+
+    /// Repeat every body of `component` together, `count` times (the
+    /// component counted) by `pattern`: each occurrence a rigid component
+    /// of linked copies, one of each of its bodies.
+    pub fn create_component_array(
+        &mut self,
+        component: ComponentId,
+        pattern: ArrayPattern,
+        count: u32,
+    ) -> Result<ArrayId, ArrayError> {
+        let base = self
+            .component(component)
+            .ok_or(ArrayError::EmptyComponent)?
+            .name
+            .clone();
+        let bodies = self.component_bodies(component);
+        let source = *bodies.first().ok_or(ArrayError::EmptyComponent)?;
+        if bodies.iter().any(|b| self.array_instance(*b).is_some()) {
+            return Err(ArrayError::SourceIsInstance);
+        }
+        self.make_array(source, Some(component), &base, pattern, count)
+    }
+
+    fn make_array(
+        &mut self,
+        source: BodyId,
+        component: Option<ComponentId>,
+        base: &str,
+        pattern: ArrayPattern,
+        count: u32,
+    ) -> Result<ArrayId, ArrayError> {
         let names: Vec<&str> = self.copy_arrays.iter().map(|a| a.name.as_str()).collect();
         let name = crate::next_indexed_name(&format!("{base} array"), names.into_iter());
         let id = ArrayId::new();
@@ -347,6 +446,7 @@ impl Document {
             id,
             name,
             source,
+            component,
             pattern: pattern.clone(),
             count: 1,
             skipped: Vec::new(),
@@ -435,28 +535,65 @@ impl Document {
         skipped.retain(|i| (1..count).contains(i));
         skipped.sort_unstable();
         skipped.dedup();
-        let base = self
-            .bodies
-            .iter()
-            .find(|b| b.id == array.source)
-            .map(|b| b.name.clone())
-            .ok_or(ArrayError::NoSuchBody)?;
+        let name_of = |body: BodyId| {
+            self.bodies
+                .iter()
+                .find(|b| b.id == body)
+                .map(|b| b.name.clone())
+        };
+        let base = name_of(array.source).ok_or(ArrayError::NoSuchBody)?;
+        // A component's bodies as they are now, the source first.
+        let others: Vec<(BodyId, String)> = match array.component {
+            None => Vec::new(),
+            Some(component) => {
+                let bodies = self.component_bodies(component);
+                if !bodies.contains(&array.source) {
+                    return Err(ArrayError::EmptyComponent);
+                }
+                bodies
+                    .into_iter()
+                    .filter(|b| *b != array.source)
+                    .filter_map(|b| Some((b, name_of(b)?)))
+                    .collect()
+            }
+        };
         let mut names: Vec<String> = self.bodies.iter().map(|b| b.name.clone()).collect();
+        let mut fresh = |base: &str| {
+            let name = crate::next_indexed_name(base, names.iter().map(String::as_str));
+            names.push(name.clone());
+            name
+        };
         let mut instances = Vec::new();
         for index in 1..count {
             if skipped.contains(&index) {
                 continue;
             }
-            if let Some(kept) = array.instances.iter().find(|i| i.index == index) {
-                instances.push(kept.clone());
-                continue;
-            }
-            let name = crate::next_indexed_name(&base, names.iter().map(String::as_str));
-            names.push(name.clone());
+            let kept = array.instances.iter().find(|i| i.index == index);
+            let (body, name) = match kept {
+                Some(kept) => (kept.body, kept.name.clone()),
+                None => (BodyId::new(), fresh(&base)),
+            };
+            let members = others
+                .iter()
+                .map(|(of, base)| {
+                    kept.and_then(|k| k.members.iter().find(|m| m.of == *of))
+                        .cloned()
+                        .unwrap_or_else(|| ArrayMember {
+                            of: *of,
+                            body: BodyId::new(),
+                            name: fresh(base),
+                        })
+                })
+                .collect();
+            let group = array
+                .component
+                .map(|_| kept.and_then(|k| k.group).unwrap_or_default());
             instances.push(ArrayInstance {
                 index,
-                body: BodyId::new(),
+                body,
                 name,
+                members,
+                group,
             });
         }
         array.pattern = pattern;
@@ -471,13 +608,21 @@ impl Document {
     pub(crate) fn apply_set_copy_array(&mut self, id: ArrayId, array: Option<&CopyArray>) {
         let at = self.copy_arrays.iter().position(|a| a.id == id);
         let old = at.map(|i| self.copy_arrays.remove(i));
-        let kept: Vec<BodyId> = array
-            .map(|a| a.instances.iter().map(|i| i.body).collect())
+        let kept: Vec<BodyId> = array.map(|a| a.copy_bodies().collect()).unwrap_or_default();
+        let kept_groups: Vec<ComponentId> = array
+            .map(|a| a.instances.iter().filter_map(|i| i.group).collect())
             .unwrap_or_default();
-        for instance in old.iter().flat_map(|a| &a.instances) {
-            if !kept.contains(&instance.body) {
-                self.drop_body(instance.body);
+        if let Some(old) = &old {
+            for body in old.copy_bodies().filter(|b| !kept.contains(b)) {
+                self.drop_body(body);
             }
+            let gone: Vec<ComponentId> = old
+                .instances
+                .iter()
+                .filter_map(|i| i.group)
+                .filter(|g| !kept_groups.contains(g))
+                .collect();
+            self.components.retain(|c| !gone.contains(&c.id));
         }
         let Some(array) = array else {
             return;
@@ -489,21 +634,41 @@ impl Document {
             .unwrap_or(self.copy_arrays.len())
             .min(self.copy_arrays.len());
         self.copy_arrays.insert(at, array.clone());
-        let (root, mirror) = self
-            .bodies
-            .iter()
-            .find(|b| b.id == array.source)
-            .map(|b| (b.copy_of.unwrap_or(b.id), b.mirror))
-            .expect("the source is there");
+        // The occurrences' components sit beside the one repeated.
+        let parent = array
+            .component
+            .and_then(|c| self.component(c))
+            .and_then(|c| c.parent);
         for instance in &array.instances {
-            if self.bodies.iter().any(|b| b.id == instance.body) {
-                continue;
+            if let Some(group) = instance.group
+                && self.component(group).is_none()
+            {
+                self.components.push(crate::Component {
+                    id: group,
+                    name: format!("{} {}", array.name, instance.index),
+                    parent,
+                    flexible: false,
+                });
             }
-            let mut body = Body::new(instance.body, instance.name.clone(), array.created_at);
-            body.copy_of = Some(root);
-            body.mirror = mirror;
-            self.bodies.push(body);
-            self.refresh_copy(instance.body);
+            for (of, copy, name) in instance.copies(array.source) {
+                if self.bodies.iter().any(|b| b.id == copy) {
+                    continue;
+                }
+                let Some((root, mirror)) = self
+                    .bodies
+                    .iter()
+                    .find(|b| b.id == of)
+                    .map(|b| (b.copy_of.unwrap_or(b.id), b.mirror))
+                else {
+                    continue;
+                };
+                let mut body = Body::new(copy, name.to_string(), array.created_at);
+                body.copy_of = Some(root);
+                body.mirror = mirror;
+                body.component = instance.group;
+                self.bodies.push(body);
+                self.refresh_copy(copy);
+            }
         }
         self.place_array(id);
     }
@@ -514,11 +679,16 @@ impl Document {
         let Some(array) = self.copy_array(id) else {
             return;
         };
-        let source = self.body_placement(array.source);
         let places: Vec<(BodyId, BodyPlacement)> = array
             .instances
             .iter()
-            .map(|i| (i.body, array.pattern.motion(i.index).after(&source)))
+            .flat_map(|i| {
+                let motion = array.pattern.motion(i.index);
+                i.copies(array.source)
+                    .into_iter()
+                    .map(move |(of, copy, _)| (of, copy, motion))
+            })
+            .map(|(of, copy, motion)| (copy, motion.after(&self.body_placement(of))))
             .collect();
         for (body, placement) in places {
             if let Some(entry) = self.bodies.iter_mut().find(|b| b.id == body) {
@@ -529,7 +699,10 @@ impl Document {
     }
 
     /// What taking `body` away does to the arrays: an array of it goes
-    /// with its copies, and an array that owned it skips its occurrence.
+    /// with its copies (for a component, the array of its first body), an
+    /// array of its component loses its copies of it, and an array that
+    /// owned it skips its occurrence, the rest of that occurrence's copies
+    /// with it.
     pub(crate) fn arrays_lose_body(&mut self, body: BodyId) {
         let gone: Vec<CopyArray> = self
             .copy_arrays
@@ -538,18 +711,33 @@ impl Document {
             .cloned()
             .collect();
         self.copy_arrays.retain(|a| a.source != body);
-        for array in gone {
-            for instance in array.instances {
-                self.drop_body(instance.body);
-            }
+        let mut drop: Vec<BodyId> = Vec::new();
+        let mut groups: Vec<ComponentId> = Vec::new();
+        for array in &gone {
+            drop.extend(array.copy_bodies());
+            groups.extend(array.instances.iter().filter_map(|i| i.group));
         }
         for array in &mut self.copy_arrays {
-            if let Some(at) = array.instances.iter().position(|i| i.body == body) {
+            if let Some(at) = array.instances.iter().position(|i| i.holds(body)) {
                 let instance = array.instances.remove(at);
+                drop.extend(instance.copies(array.source).into_iter().map(|c| c.1));
+                groups.extend(instance.group);
                 array.skipped.push(instance.index);
                 array.skipped.sort_unstable();
             }
+            for instance in &mut array.instances {
+                instance.members.retain(|m| {
+                    if m.of == body {
+                        drop.push(m.body);
+                    }
+                    m.of != body
+                });
+            }
         }
+        for copy in drop.into_iter().filter(|b| *b != body) {
+            self.drop_body(copy);
+        }
+        self.components.retain(|c| !groups.contains(&c.id));
     }
 }
 

@@ -309,6 +309,12 @@ inside, on a component's row, makes an empty one in it. `asm.component`,
 `asm.component_set`, `asm.component_add` and `asm.component_remove` do
 the same from a script.
 
+Array of copies… on a component's row repeats the whole component in a
+row, a ring, along a path or at points: each occurrence is a rigid
+component of linked copies, one of each of its bodies, standing where
+the array puts it from where the component sits (`doc.array` with
+`component`).
+
 ## Parts from other files
 
 File › Import of a printCAD file (`.prtcad`) brings in every visible body

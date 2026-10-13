@@ -195,7 +195,13 @@ impl UiLayer {
                 task
             }
             OpenTask::Array(body) => {
-                host_tasks::HostTask::Array(array_task::ArrayTask::open(document, body))
+                host_tasks::HostTask::Array(Box::new(array_task::ArrayTask::open(document, body)))
+            }
+            OpenTask::ComponentArray(component) => {
+                let Some(task) = array_task::ArrayTask::open_component(document, component) else {
+                    return;
+                };
+                host_tasks::HostTask::Array(Box::new(task))
             }
         };
         self.host_task = Some((tab.into(), task));

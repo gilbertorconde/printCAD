@@ -5,8 +5,8 @@
 //! as it was (or takes away the one the task made).
 
 use core_document::{
-    ArrayId, ArrayPattern, BodyId, CopyArray, Document, DocumentService, FeatureId, PathSource,
-    Recorded,
+    ArrayId, ArrayPattern, BodyId, ComponentId, CopyArray, Document, DocumentService, FeatureId,
+    PathSource, Recorded,
 };
 use egui::{RichText, Ui};
 use serde_json::{Value, json};
@@ -76,6 +76,8 @@ const KINDS: &[(Kind, &str)] = &[
 #[derive(Debug, Clone)]
 pub struct ArrayTask {
     source: BodyId,
+    /// The component repeated, every body in it copied together.
+    component: Option<ComponentId>,
     /// The array, once there is one: the task makes it on its first frame
     /// when it was opened on a body without one.
     array: Option<ArrayId>,
@@ -112,8 +114,31 @@ impl ArrayTask {
             .map(|(a, _)| a.id)
             .or_else(|| document.arrays_of_source(body).first().copied())
             .and_then(|id| document.copy_array(id).cloned());
+        Self::on(document, body, None, existing)
+    }
+
+    /// The task for `component`: the array that repeats it, or a new row
+    /// of three of it. `None` when it holds no body.
+    pub fn open_component(document: &Document, component: ComponentId) -> Option<Self> {
+        let existing = document
+            .array_of_component(component)
+            .and_then(|id| document.copy_array(id).cloned());
+        let source = match &existing {
+            Some(array) => array.source,
+            None => *document.component_bodies(component).first()?,
+        };
+        Some(Self::on(document, source, Some(component), existing))
+    }
+
+    fn on(
+        document: &Document,
+        body: BodyId,
+        component: Option<ComponentId>,
+        existing: Option<CopyArray>,
+    ) -> Self {
         let mut task = Self {
             source: body,
+            component,
             array: None,
             start: None,
             kind: Kind::Row,
@@ -134,6 +159,7 @@ impl ArrayTask {
         };
         if let Some(array) = existing {
             task.source = array.source;
+            task.component = array.component;
             task.array = Some(array.id);
             task.count = array.count as f32;
             task.skipped = array.skipped.clone();
@@ -176,6 +202,19 @@ impl ArrayTask {
 
     pub fn source(&self) -> BodyId {
         self.source
+    }
+
+    /// What it repeats, by name: the component, or the body.
+    pub fn subject(&self, document: &Document) -> String {
+        match self.component.and_then(|c| document.component(c)) {
+            Some(component) => component.name.clone(),
+            None => document
+                .bodies()
+                .iter()
+                .find(|b| b.id == self.source)
+                .map(|b| b.name.clone())
+                .unwrap_or_default(),
+        }
     }
 
     /// The row the view's handle drags: the array, its direction and its
@@ -255,11 +294,15 @@ impl ArrayTask {
             }
         };
         let result = match self.array {
-            None => document
-                .create_copy_array(self.source, pattern, self.count())
-                .map(|id| {
-                    self.array = Some(id);
-                }),
+            None => match self.component {
+                Some(component) => {
+                    document.create_component_array(component, pattern, self.count())
+                }
+                None => document.create_copy_array(self.source, pattern, self.count()),
+            }
+            .map(|id| {
+                self.array = Some(id);
+            }),
             Some(id) => document.set_copy_array(id, pattern, self.count(), self.skipped.clone()),
         };
         self.refused = result.err().map(|e| format!("The count {e}."));
@@ -317,7 +360,10 @@ impl ArrayTask {
                 "doc.set_array"
             }
             _ => {
-                args["body"] = json!(self.source.0.to_string());
+                match self.component {
+                    Some(component) => args["component"] = json!(component.0.to_string()),
+                    None => args["body"] = json!(self.source.0.to_string()),
+                }
                 "doc.array"
             }
         };
@@ -826,6 +872,33 @@ mod tests {
         let end = frame(&mut task, &mut doc, &registry, false, true);
         assert!(matches!(end, Some(HostTaskEnd::Cancelled)));
         assert_eq!(doc.copy_array(id).cloned(), before, "the same copies again");
+    }
+
+    #[test]
+    fn a_components_task_repeats_every_body_and_records_the_component() {
+        let registry = DocumentService::default();
+        let mut doc = Document::new("t");
+        let a = doc.create_body(None);
+        let b = doc.create_body(None);
+        let unit = doc.create_component("Pair".into(), None).unwrap();
+        doc.set_body_component(a, Some(unit)).unwrap();
+        doc.set_body_component(b, Some(unit)).unwrap();
+        let mut task = ArrayTask::open_component(&doc, unit).expect("a task");
+        assert_eq!(task.subject(&doc), "Pair");
+        frame(&mut task, &mut doc, &registry, false, false);
+        assert_eq!(doc.bodies().len(), 6, "a row of three of the pair");
+        let end = frame(&mut task, &mut doc, &registry, true, false);
+        let Some(HostTaskEnd::Accepted(_, ref calls)) = end else {
+            panic!("accepted");
+        };
+        assert_eq!(calls[0].args["component"], json!(unit.0.to_string()));
+        let copy = doc.copy_arrays()[0].instances[0].members[0].body;
+        let again = ArrayTask::open(&doc, copy);
+        assert_eq!(
+            again.component,
+            Some(unit),
+            "a copy opens its component's array"
+        );
     }
 
     #[test]
