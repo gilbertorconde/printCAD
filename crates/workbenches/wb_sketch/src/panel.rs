@@ -2263,28 +2263,69 @@ fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) 
     changed |= edit.lost_focus();
     ui.end_row();
     ui_kit::widgets::field_label(ui, "Font");
+    // An installed font, by family, or a font file: chosen before one is
+    // named, the choice is remembered here until it is.
+    const INSTALLED: usize = usize::MAX - 1;
+    const FILE: usize = usize::MAX;
     let fonts = crate::text::FONTS;
-    let mut which = fonts
-        .iter()
-        .position(|(name, _)| *name == spec.font)
-        .unwrap_or(usize::MAX);
+    let mode_id = ui.id().with((salt, "font_mode"));
+    let mut which = match fonts.iter().position(|(name, _)| *name == spec.font) {
+        Some(i) => ui
+            .data(|d| d.get_temp::<usize>(mode_id))
+            .filter(|m| *m >= INSTALLED)
+            .unwrap_or(i),
+        None if crate::text::is_file(&spec.font) => FILE,
+        None => INSTALLED,
+    };
     let mut options: Vec<(usize, &str)> = fonts
         .iter()
         .enumerate()
         .map(|(i, (name, _))| (i, *name))
         .collect();
-    options.push((usize::MAX, "A font file"));
-    if select_field(ui, (salt, "font"), &mut which, &options, 160.0) && which != usize::MAX {
-        spec.font = fonts[which].0.to_string();
-        changed = true;
+    // A browser page has no installed fonts.
+    if !cfg!(target_arch = "wasm32") {
+        options.push((INSTALLED, "An installed font"));
+    }
+    options.push((FILE, "A font file"));
+    if select_field(ui, (salt, "font"), &mut which, &options, 160.0) {
+        if which < INSTALLED {
+            spec.font = fonts[which].0.to_string();
+            spec.font_asset = None;
+            changed = true;
+            ui.data_mut(|d| d.remove::<usize>(mode_id));
+        } else {
+            ui.data_mut(|d| d.insert_temp(mode_id, which));
+        }
     }
     ui.end_row();
-    if which == usize::MAX {
+    let named = !crate::text::is_bundled(&spec.font);
+    if which == INSTALLED {
+        ui_kit::widgets::field_label(ui, "Family");
+        let families = crate::text::installed_families();
+        let mut family = families
+            .iter()
+            .position(|f| named && f.eq_ignore_ascii_case(&spec.font))
+            .unwrap_or(usize::MAX);
+        let options: Vec<(usize, &str)> = families
+            .iter()
+            .enumerate()
+            .map(|(i, f)| (i, f.as_str()))
+            .collect();
+        if select_field(ui, (salt, "family"), &mut family, &options, 160.0)
+            && let Some(name) = families.get(family)
+        {
+            spec.font = name.clone();
+            spec.font_asset = None;
+            changed = true;
+        }
+        ui.end_row();
+    }
+    if which == FILE {
         ui_kit::widgets::field_label(ui, "File");
-        let mut path = if fonts.iter().any(|(n, _)| *n == spec.font) {
-            String::new()
-        } else {
+        let mut path = if named {
             spec.font.clone()
+        } else {
+            String::new()
         };
         let edit = ui.add(
             egui::TextEdit::singleline(&mut path)
@@ -2294,6 +2335,7 @@ fn text_fields(ui: &mut egui::Ui, salt: &str, spec: &mut crate::text::TextSpec) 
         );
         if edit.changed() {
             spec.font = path;
+            spec.font_asset = None;
         }
         changed |= edit.lost_focus();
         ui.end_row();

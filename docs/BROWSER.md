@@ -64,4 +64,7 @@ is found again on the next visit ([Camera](CAMERA.md)).
   path.
 - The scripts folder: scripts run from a file you pick.
 - Installing a package from a GitHub address.
+- Fonts installed on the machine for sketch text: the page offers the
+  bundled fonts, and text in a font a desktop kept in the
+  document is made from the kept copy as anywhere.
 - The command line.

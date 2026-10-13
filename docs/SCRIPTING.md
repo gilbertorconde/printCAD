@@ -2473,7 +2473,7 @@ assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
 - `sketch` (id): The sketch to draw in
 - `text` (string): What it says; a new line starts a line
 - `at` (list): Where its point goes, {x, y}
-- `font` (string, optional): IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, or a font file's path (IBM Plex Sans)
+- `font` (string, optional): IBM Plex Sans, IBM Plex Sans SemiBold, IBM Plex Mono, the family of a font installed on the machine, or a font file's path (IBM Plex Sans)
 - `font_asset` (string, optional): The document asset a font file was kept as, which a recording names
 - `size` (number, optional): The font's em, mm (10)
 - `spacing` (number, optional): Added between letters, mm (0)
@@ -2482,10 +2482,10 @@ assert(math.abs(m.volume - (50 * 30 - 6 * math.pi * 4)) < 0.01, m.volume)
 
 Notes:
 
-- A font file named by its path is kept in the document the first time it is used, so the text is made again from it on any machine; a font neither carried nor kept is refused with why.
+- A font installed on the machine, named by its family, or a font file named by its path, is kept in the document the first time it is used, so the text is made again from it on any machine; a font neither carried nor kept is refused with why. A browser page has no installed fonts.
 - `at` is where the baseline starts: the letters stand on it, capitals reaching about 0.7 of `size`, the em.
 - The letters are closed outlines that pad as they read; dragging the point returned moves the whole text.
-- A `font` that is not one of the three bundled names is read as a file path, refused when no such file is there. Text with nothing to draw is refused.
+- A `font` that is not one of the three bundled names is a file's path when it looks like one (a path separator, or a font file's extension) or names a file there, else an installed family, its letters' case aside; the family a font gives is what the block records. Text with nothing to draw is refused.
 
 See also `pc.sketch.text_edit`.
 

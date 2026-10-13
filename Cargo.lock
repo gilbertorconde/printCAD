@@ -5638,6 +5638,7 @@ version = "0.1.0"
 dependencies = [
  "core_document",
  "egui",
+ "fontdb",
  "glam 0.33.7",
  "image",
  "printcad-kernel-api",

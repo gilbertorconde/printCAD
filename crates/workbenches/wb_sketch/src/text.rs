@@ -14,8 +14,8 @@ use uuid::Uuid;
 
 use crate::sketch::{BSpline, GeometryElement, Line, Point, Sketch, TextBlock, Vec2D};
 
-/// The fonts that come with the application, by name. Any other font is a
-/// file's path.
+/// The fonts that come with the application, by name. Any other font is
+/// one installed on the machine, by its family name, or a file's path.
 pub const FONTS: &[(&str, &[u8])] = &[
     (
         "IBM Plex Sans",
@@ -44,6 +44,8 @@ pub struct TextSpec {
     pub font_asset: Option<Uuid>,
     /// That asset's bytes, read for the outlines.
     pub font_data: Option<std::sync::Arc<Vec<u8>>>,
+    /// Which font of that file is meant, for a file holding several.
+    pub font_index: u32,
     /// The font's em in millimetres.
     pub size: f64,
     /// Millimetres added between letters.
@@ -59,6 +61,7 @@ impl Default for TextSpec {
             font: DEFAULT_FONT.to_string(),
             font_asset: None,
             font_data: None,
+            font_index: 0,
             size: 10.0,
             spacing: 0.0,
             angle: 0.0,
@@ -73,6 +76,7 @@ impl TextSpec {
             font: block.font.clone(),
             font_asset: block.font_asset,
             font_data: None,
+            font_index: 0,
             size: block.size,
             spacing: block.spacing,
             angle: block.angle,
@@ -80,65 +84,231 @@ impl TextSpec {
     }
 }
 
-fn font_bytes(spec: &TextSpec) -> Result<Cow<'_, [u8]>, String> {
+fn font_bytes(spec: &TextSpec) -> Result<(Cow<'_, [u8]>, u32), String> {
     let font = spec.font.as_str();
     if let Some((_, bytes)) = FONTS.iter().find(|(name, _)| *name == font) {
-        return Ok(Cow::Borrowed(bytes));
+        return Ok((Cow::Borrowed(bytes), 0));
     }
     if let Some(data) = &spec.font_data {
-        return Ok(Cow::Borrowed(data.as_slice()));
+        return Ok((Cow::Borrowed(data.as_slice()), spec.font_index));
     }
     std::fs::read(font)
-        .map(Cow::Owned)
+        .map(|bytes| (Cow::Owned(bytes), 0))
         .map_err(|e| format!("the font {font} is not in the document and cannot be read: {e}"))
+}
+
+/// A font found installed on the machine.
+#[derive(Debug, Clone)]
+pub struct InstalledFont {
+    /// Its family name as the font gives it.
+    pub family: String,
+    /// Its file's bytes.
+    pub bytes: Vec<u8>,
+    /// Which font of the file it is, for a file holding several.
+    pub index: u32,
+    /// The file's name, which the kept asset records.
+    pub file: Option<String>,
+}
+
+/// The installed fonts, looked through once, the first time one is asked
+/// for.
+#[cfg(not(target_arch = "wasm32"))]
+fn system_fonts() -> &'static fontdb::Database {
+    static FONTS: std::sync::OnceLock<fontdb::Database> = std::sync::OnceLock::new();
+    FONTS.get_or_init(|| {
+        let mut db = fontdb::Database::new();
+        db.load_system_fonts();
+        db
+    })
+}
+
+/// The regular font of the installed family `family`, its letters' case
+/// aside.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn installed_font(family: &str) -> Option<InstalledFont> {
+    let db = system_fonts();
+    let wanted = family.trim();
+    let name = db.faces().find_map(|face| {
+        face.families
+            .iter()
+            .map(|(name, _)| name)
+            .find(|name| name.eq_ignore_ascii_case(wanted))
+            .cloned()
+    })?;
+    let id = db.query(&fontdb::Query {
+        families: &[fontdb::Family::Name(&name)],
+        ..Default::default()
+    })?;
+    let file = match &db.face(id)?.source {
+        fontdb::Source::File(path) | fontdb::Source::SharedFile(path, _) => {
+            path.file_name().map(|n| n.to_string_lossy().to_string())
+        }
+        fontdb::Source::Binary(_) => None,
+    };
+    db.with_face_data(id, |bytes, index| InstalledFont {
+        family: name.clone(),
+        bytes: bytes.to_vec(),
+        index,
+        file,
+    })
+}
+
+/// A browser page has no installed fonts to look through.
+#[cfg(target_arch = "wasm32")]
+pub fn installed_font(_family: &str) -> Option<InstalledFont> {
+    None
+}
+
+/// The family names of the installed fonts, sorted.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn installed_families() -> &'static [String] {
+    static FAMILIES: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    FAMILIES.get_or_init(|| {
+        let mut names: Vec<String> = system_fonts()
+            .faces()
+            .filter_map(|face| face.families.first().map(|(name, _)| name.clone()))
+            .collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names.dedup();
+        names
+    })
+}
+
+/// None on a browser page.
+#[cfg(target_arch = "wasm32")]
+pub fn installed_families() -> &'static [String] {
+    &[]
+}
+
+/// Whether `font` is one the application carries.
+pub fn is_bundled(font: &str) -> bool {
+    FONTS.iter().any(|(name, _)| *name == font)
+}
+
+/// Whether `font` names a font file rather than an installed family.
+pub fn is_file(font: &str) -> bool {
+    let lower = font.to_ascii_lowercase();
+    font.contains(['/', '\\'])
+        || [".ttf", ".otf", ".ttc", ".otc"]
+            .iter()
+            .any(|e| lower.ends_with(e))
+}
+
+/// The font file `document` keeps as asset `id`: its bytes and which font
+/// of the file is meant.
+fn kept_font(document: &core_document::Document, id: Uuid) -> Option<(Vec<u8>, u32)> {
+    let bytes = document.asset_bytes(id)?;
+    let index = document
+        .get_asset(id)
+        .and_then(|a| a.metadata.get("index"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|i| u32::try_from(i).ok())
+        .unwrap_or(0);
+    Some((bytes.to_vec(), index))
+}
+
+/// Ready `spec`'s font from what `document` keeps, changing nothing: a
+/// font the application carries needs nothing, one kept in the document
+/// is read from its asset. Whether the font is ready.
+pub fn read_kept_font(document: &core_document::Document, spec: &mut TextSpec) -> bool {
+    if is_bundled(&spec.font) {
+        return true;
+    }
+    match spec.font_asset.and_then(|id| kept_font(document, id)) {
+        Some((bytes, index)) => {
+            spec.font_data = Some(std::sync::Arc::new(bytes));
+            spec.font_index = index;
+            true
+        }
+        None => false,
+    }
 }
 
 /// Ready `spec`'s font from `document`: a font the application carries
 /// needs nothing; one kept in the document is read from its asset; a font
-/// file named by its path is read and kept in the document (once for the
-/// same file), so the text can be made again on any machine.
+/// file named by its path, or a font installed on the machine named by its
+/// family, is read and kept in the document (once for the same font), so
+/// the text can be made again on any machine.
 pub fn load_font(
     document: &mut core_document::Document,
     spec: &mut TextSpec,
 ) -> Result<(), String> {
-    if FONTS.iter().any(|(name, _)| *name == spec.font) {
+    load_font_from(document, spec, &installed_font)
+}
+
+/// [`load_font`], with `installed` finding a font installed by family.
+pub fn load_font_from(
+    document: &mut core_document::Document,
+    spec: &mut TextSpec,
+    installed: &dyn Fn(&str) -> Option<InstalledFont>,
+) -> Result<(), String> {
+    if is_bundled(&spec.font) {
         spec.font_asset = None;
         spec.font_data = None;
+        spec.font_index = 0;
         return Ok(());
     }
-    if let Some(bytes) = spec.font_asset.and_then(|id| document.asset_bytes(id)) {
-        spec.font_data = Some(std::sync::Arc::new(bytes.to_vec()));
+    if read_kept_font(document, spec) {
         return Ok(());
     }
-    let bytes = std::fs::read(&spec.font)
-        .map_err(|e| format!("cannot read the font {}: {e}", spec.font))?;
-    ttf_parser::Face::parse(&bytes, 0)
+    let path = std::path::Path::new(&spec.font);
+    let found = if is_file(&spec.font) || path.is_file() {
+        let bytes =
+            std::fs::read(path).map_err(|e| format!("cannot read the font {}: {e}", spec.font))?;
+        InstalledFont {
+            family: String::new(),
+            bytes,
+            index: 0,
+            file: path.file_name().map(|n| n.to_string_lossy().to_string()),
+        }
+    } else {
+        installed(&spec.font).ok_or_else(|| {
+            format!(
+                "no font named {} is installed here or kept in the document",
+                spec.font
+            )
+        })?
+    };
+    ttf_parser::Face::parse(&found.bytes, found.index)
         .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
     let kept = document
         .assets()
         .filter(|asset| asset.metadata.get("kind").and_then(|k| k.as_str()) == Some("font"))
         .map(|asset| asset.id)
-        .find(|id| document.asset_bytes(*id) == Some(bytes.as_slice()));
+        .find(|id| {
+            kept_font(document, *id)
+                .is_some_and(|(bytes, index)| index == found.index && bytes == found.bytes)
+        });
     let id = kept.unwrap_or_else(|| {
-        let file = std::path::Path::new(&spec.font)
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string());
-        let extension = std::path::Path::new(&spec.font)
-            .extension()
+        let extension = found
+            .file
+            .as_deref()
+            .and_then(|f| std::path::Path::new(f).extension())
             .and_then(|e| e.to_str())
             .unwrap_or("ttf")
             .to_ascii_lowercase();
+        let mut about = serde_json::json!({"kind": "font", "file": found.file});
+        if !found.family.is_empty() {
+            about["family"] = serde_json::json!(found.family);
+        }
+        if found.index != 0 {
+            about["index"] = serde_json::json!(found.index);
+        }
         document.add_asset_with_data(
             core_document::AssetReference::new(
                 format!("assets/font-{}.{extension}", Uuid::new_v4()),
                 core_document::AssetType::Other,
-                serde_json::json!({"kind": "font", "file": file}),
+                about,
             ),
-            bytes.clone(),
+            found.bytes.clone(),
         )
     });
+    if !found.family.is_empty() {
+        spec.font = found.family;
+    }
     spec.font_asset = Some(id);
-    spec.font_data = Some(std::sync::Arc::new(bytes));
+    spec.font_data = Some(std::sync::Arc::new(found.bytes));
+    spec.font_index = found.index;
     Ok(())
 }
 
@@ -235,8 +405,8 @@ impl ttf_parser::OutlineBuilder for Contours {
 
 /// The closed contours `spec` lays out with its point at `at`.
 fn contours(spec: &TextSpec, at: DVec2) -> Result<Vec<Vec<Seg>>, String> {
-    let bytes = font_bytes(spec)?;
-    let face = ttf_parser::Face::parse(&bytes, 0)
+    let (bytes, index) = font_bytes(spec)?;
+    let face = ttf_parser::Face::parse(&bytes, index)
         .map_err(|e| format!("{} is not a font this can read: {e}", spec.font))?;
     if spec.size.is_nan() || spec.size <= 0.0 {
         return Err("the text's size must be more than 0".to_string());
@@ -581,6 +751,24 @@ mod tests {
         follow(&mut sketch);
         assert!((left(&sketch, &pasted.elements) - before - 10.0).abs() < 1e-3);
         assert!((left(&sketch, &first.elements) - other).abs() < 1e-6);
+    }
+
+    /// A family the machine lists is found by its name in any case and
+    /// lays out text. A machine with no fonts installed has none to try.
+    #[test]
+    fn an_installed_family_is_found_by_name() {
+        let Some(family) = installed_families().first() else {
+            return;
+        };
+        let found = installed_font(&family.to_ascii_uppercase()).expect("listed, so found");
+        assert_eq!(&found.family, family);
+        let spec = TextSpec {
+            font: found.family,
+            font_data: Some(std::sync::Arc::new(found.bytes)),
+            font_index: found.index,
+            ..spec("A")
+        };
+        assert!(contours(&spec, DVec2::ZERO).is_ok());
     }
 
     #[test]
