@@ -508,8 +508,10 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   (`WGPU_BACKEND` picks one), the GPU chosen by `preferred_gpu` or for
   performance. Shaders are WGSL (`shaders/`), validated by naga in its
   tests. GPU picking with async readback (`readback.rs`: a buffer per pick
-  or picture, mapped once its frame is done); per-body mesh cache keyed by
-  (id, revision). Edges are instanced screen-space quads (`vs_edge`), any
+  or picture, mapped once its frame is done); mesh cache keyed by the
+  body's id, or the shared mesh's key when a `BodySubmission` carries a
+  `MeshInstance` (its mesh drawn moved by `Draw.model`), and revision.
+  Edges are instanced screen-space quads (`vs_edge`), any
   width on any backend; the clipping plane discards per fragment. The pick
   pass writes depth into a colour target as well, since a depth texture
   cannot be copied in part, and, where the device has
@@ -723,16 +725,26 @@ its snapshot, the kernel's mirror of the source's (`KernelQueries::mirror`),
 which `drive_mirrored_copies` asks the kernel worker for
 (`copies_awaiting_shape`, kept by `set_mirrored_shape` only while the
 source still has the snapshot it was made from). Arrays of linked copies
-(`core_document/src/arrays.rs`: `CopyArray`, a source, an
-`ArrayPattern` (linear or polar, in the document's axes), a count and
-skipped occurrences, kept in `Document::copy_arrays`) own their copies:
-one op, `SetCopyArray`, carries the whole array with its copies' ids
-resolved, its apply making missing copies, dropping unlisted ones and
-placing each at `pattern.motion(index).after(source placement)`; moving
+(`core_document/src/arrays.rs`: `CopyArray`, a source body or a
+component, an `ArrayPattern` (linear, polar, a path's stations or a
+sketch's points, in the document's axes), a count and skipped
+occurrences, kept in `Document::copy_arrays`) own their copies: one op,
+`SetCopyArray`, carries the whole array with its copies' ids resolved,
+its apply making missing copies, dropping unlisted ones and placing each
+at `pattern.motion(index).after(placement of what it copies)`; moving
 the source re-places them inside `SetBodyPlacement`'s apply, and
-`remove_body` on a copy skips its occurrence instead. The body menu's
-Array of copies… is `ui/array_task.rs`; commands `doc.array` and
-`doc.set_array`.
+`remove_body` on a copy skips its occurrence instead. A component
+array's occurrence copies every body of it (`ArrayInstance::members`)
+into a rigid component of its own (`group`). A path or point pattern
+carries the stations or points it was read with: the host reads them
+(`app/array_paths.rs`: a bench's `Workbench::feature_paths`, chains and
+free points, through the kernel's `wire_frames`, or a solid edge through
+`edge_frames`) whenever the array is made or edited. The body menu's
+Array of copies… is `ui/array_task.rs` (a component's tree row too;
+a row's spacing drags in the view, `app/array_handle.rs`); commands
+`doc.array` and `doc.set_array`. A copy that draws its source's mesh as
+it is submits that shared mesh with its placement as a
+`render_wgpu::MeshInstance`, so the GPU holds it once.
 
 **Base solids.** An imported, converted or repaired solid takes features
 by becoming its body's base: `Document::set_body_base` (op `SetBodyBase`,
