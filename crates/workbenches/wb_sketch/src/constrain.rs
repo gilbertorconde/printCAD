@@ -1034,22 +1034,20 @@ mod tests {
         let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 1.0))));
         let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(1.0, 10.0))));
         let pair = |x, y| SelectionShape::of(&sketch, &HashSet::from([x, y]));
-        assert!(matches!(
-            kinds_for("horizontal", &pair(a, b), &sketch).unwrap()[..],
-            [ConstraintKind::HorizontalPoints { .. }]
-        ));
-        assert!(matches!(
-            kinds_for("vertical", &pair(a, c), &sketch).unwrap()[..],
-            [ConstraintKind::VerticalPoints { .. }]
-        ));
-        assert!(matches!(
-            kinds_for("horizontal_vertical", &pair(a, b), &sketch).unwrap()[..],
-            [ConstraintKind::HorizontalPoints { .. }]
-        ));
-        assert!(matches!(
-            kinds_for("horizontal_vertical", &pair(a, c), &sketch).unwrap()[..],
-            [ConstraintKind::VerticalPoints { .. }]
-        ));
+        for (tool, other, level) in [
+            ("horizontal", b, true),
+            ("vertical", c, false),
+            ("horizontal_vertical", b, true),
+            ("horizontal_vertical", c, false),
+        ] {
+            let kinds = kinds_for(tool, &pair(a, other), &sketch).unwrap();
+            let took = match kinds[..] {
+                [ConstraintKind::HorizontalPoints { .. }] => true,
+                [ConstraintKind::VerticalPoints { .. }] => false,
+                _ => panic!("{tool}: {kinds:?}"),
+            };
+            assert_eq!(took, level, "{tool}: whether level");
+        }
         let slanted = sketch.add_geometry(GeometryElement::Line(Line::new(a, c)));
         assert!(matches!(
             kinds_for(
@@ -1180,10 +1178,33 @@ mod tests {
         assert!((ratio - expected).abs() < 1e-4, "{ratio}");
     }
 
+    /// The dimension tool takes what the selection's shape asks for, and
+    /// never guesses an arc's length.
     #[test]
-    fn the_dimension_tool_never_guesses_an_arc_length() {
-        let (sketch, _, _, _, arc) = sketch_with_an_arc();
-        let shape = SelectionShape::of(&sketch, &HashSet::from([arc]));
-        assert_eq!(dimension_for(&shape), Some("radius_diameter"));
+    fn the_dimension_tool_picks_what_the_selection_takes() {
+        let (mut sketch, b, line, circle, arc) = sketch_with_an_arc();
+        let Some(GeometryElement::Line(l)) = sketch.get_geometry(line) else {
+            panic!("a line")
+        };
+        let a = l.start;
+        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 5.0))));
+        let other = sketch.add_geometry(GeometryElement::Line(Line::new(a, c)));
+        for (what, ids, tool) in [
+            ("a circle", vec![circle], Some("radius_diameter")),
+            ("an arc", vec![arc], Some("radius_diameter")),
+            ("two lines", vec![line, other], Some("angle")),
+            (
+                "two lines and their corner",
+                vec![a, line, other],
+                Some("angle"),
+            ),
+            ("two points", vec![a, b], Some("distance")),
+            ("a line and a circle", vec![line, circle], Some("distance")),
+            ("a point and a circle", vec![b, circle], Some("distance")),
+            ("nothing", vec![], None),
+        ] {
+            let shape = SelectionShape::of(&sketch, &ids.into_iter().collect());
+            assert_eq!(dimension_for(&shape), tool, "{what}");
+        }
     }
 }

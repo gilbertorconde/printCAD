@@ -4076,6 +4076,29 @@ mod tests {
         run(id, args.as_object().unwrap(), &mut ctx)
     }
 
+    /// A call that must succeed: its answer.
+    /// Whether the call is refused.
+    fn refused(doc: &mut Document, id: &str, args: Value) -> bool {
+        call(doc, id, args).is_err()
+    }
+
+    fn ok(doc: &mut Document, id: &str, args: Value) -> Value {
+        call(doc, id, args).unwrap_or_else(|e| panic!("{id}: {e}"))
+    }
+
+    fn feature_id(id: &Value) -> FeatureId {
+        FeatureId(Uuid::parse_str(id.as_str().unwrap()).unwrap())
+    }
+
+    /// The stored sketch feature a command answered with the id of.
+    fn feature_of(doc: &Document, id: &Value) -> SketchFeature {
+        SketchFeature::from_json(doc.get_feature_data(feature_id(id)).unwrap()).unwrap()
+    }
+
+    fn sketch_of(doc: &Document, id: &Value) -> Sketch {
+        feature_of(doc, id).sketch
+    }
+
     /// A picture file comes in as a document asset and lies in a new
     /// sketch named after it; it moves, sizes and goes by its id.
     #[test]
@@ -4085,12 +4108,11 @@ mod tests {
             .save(&path)
             .unwrap();
         let mut doc = Document::new("t");
-        let made = call(
+        let made = ok(
             &mut doc,
             "sketch.image",
             json!({"path": path.to_string_lossy(), "width": 40.0}),
-        )
-        .unwrap();
+        );
         let _ = std::fs::remove_file(&path);
         let sketch = FeatureId(Uuid::parse_str(made["sketch"].as_str().unwrap()).unwrap());
         let image = made["image"].as_str().unwrap().to_string();
@@ -4105,12 +4127,11 @@ mod tests {
         assert_eq!(placed.width, 40.0);
         assert!(doc.asset_bytes(placed.asset).is_some(), "the file is kept");
 
-        call(
+        ok(
             &mut doc,
             "sketch.set_image",
             json!({"sketch": sketch.0.to_string(), "image": image, "x": 5.0, "angle": 30.0}),
-        )
-        .unwrap();
+        );
         let feature = SketchFeature::from_json(doc.get_feature_data(sketch).unwrap()).unwrap();
         let moved = &feature.sketch.images[0];
         assert_eq!(
@@ -4118,22 +4139,18 @@ mod tests {
             (5.0, 30.0, 40.0)
         );
 
-        call(
+        ok(
             &mut doc,
             "sketch.set_image",
             json!({"sketch": sketch.0.to_string(), "image": image, "remove": true}),
-        )
-        .unwrap();
+        );
         let feature = SketchFeature::from_json(doc.get_feature_data(sketch).unwrap()).unwrap();
         assert!(feature.sketch.images.is_empty());
-        assert!(
-            call(
-                &mut doc,
-                "sketch.image",
-                json!({"path": "/nonexistent/picture.png"})
-            )
-            .is_err()
-        );
+        assert!(refused(
+            &mut doc,
+            "sketch.image",
+            json!({"path": "/nonexistent/picture.png"})
+        ));
     }
 
     /// `sketch.new{on = datum}` draws the sketch on the datum and keeps it
@@ -4162,14 +4179,13 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        let made = call(
+        let made = ok(
             &mut doc,
             "sketch.new",
             json!({"on": datum.0.to_string(), "plane": "xz", "offset": 2.0}),
-        )
-        .unwrap();
-        let id = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
-        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        );
+        let id = feature_id(&made);
+        let feature = feature_of(&doc, &made);
         assert_eq!(
             feature.support,
             Some(DatumSupport {
@@ -4183,12 +4199,11 @@ mod tests {
         assert_eq!(doc.feature_tree().dependencies(id), vec![datum]);
         assert_eq!(doc.get_feature_meta(id).unwrap().body, Some(body));
 
-        call(
+        ok(
             &mut doc,
             "sketch.set_plane",
             json!({"sketch": made, "normal": [0, 0, 1]}),
-        )
-        .unwrap();
+        );
         let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
         assert_eq!(feature.support, None);
         assert!(doc.feature_tree().dependencies(id).is_empty());
@@ -4197,14 +4212,13 @@ mod tests {
     #[test]
     fn a_new_sketch_can_be_a_generators() {
         let mut doc = Document::new("t");
-        let made = call(
+        let made = ok(
             &mut doc,
             "sketch.new",
             json!({"plane": "XZ", "generator": "sprocket"}),
-        )
-        .unwrap();
-        let id = FeatureId(uuid::Uuid::parse_str(made.as_str().unwrap()).unwrap());
-        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        );
+        let id = feature_id(&made);
+        let feature = feature_of(&doc, &made);
         assert!(matches!(
             feature.generator,
             Some(crate::generator::Generator::Sprocket(_))
@@ -4212,23 +4226,22 @@ mod tests {
         assert!(!feature.sketch.geometry.is_empty());
         assert_eq!(feature.plane.normal, SketchPlane::xz().normal);
         assert_eq!(doc.get_feature_meta(id).unwrap().name, "Sprocket");
-        let again = call(&mut doc, "sketch.new", json!({"generator": "sprocket"})).unwrap();
-        let again = FeatureId(uuid::Uuid::parse_str(again.as_str().unwrap()).unwrap());
+        let again = ok(&mut doc, "sketch.new", json!({"generator": "sprocket"}));
+        let again = feature_id(&again);
         assert_eq!(doc.get_feature_meta(again).unwrap().name, "Sprocket_1");
-        assert!(call(&mut doc, "sketch.new", json!({"generator": "cam"})).is_err());
+        assert!(refused(&mut doc, "sketch.new", json!({"generator": "cam"})));
     }
 
     #[test]
     fn scripted_text_is_laid_out_and_changed() {
         let mut doc = Document::new("t");
-        let sketch = call(&mut doc, "sketch.new", json!({"plane": "XY"})).unwrap();
-        let made = call(
+        let sketch = ok(&mut doc, "sketch.new", json!({"plane": "XY"}));
+        let made = ok(
             &mut doc,
             "sketch.text",
             json!({"sketch": sketch, "text": "Hi", "at": [2, 3], "size": 8}),
-        )
-        .unwrap();
-        let id = FeatureId(uuid::Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
+        );
+        let id = feature_id(&sketch);
         let read = |doc: &Document| {
             SketchFeature::from_json(doc.get_feature_data(id).unwrap())
                 .unwrap()
@@ -4239,38 +4252,33 @@ mod tests {
         assert_eq!(made["point"], json!(s.texts[0].anchor.to_string()));
         let wires = crate::profile::extract_wires(&s).unwrap().len();
         assert!(wires >= 3, "an H and an i: {wires}");
-        call(
+        ok(
             &mut doc,
             "sketch.text_edit",
             json!({"sketch": sketch, "block": made["text"], "text": "HHH"}),
-        )
-        .unwrap();
+        );
         let s = read(&doc);
         assert_eq!(s.texts[0].text, "HHH");
         assert_eq!(crate::profile::extract_wires(&s).unwrap().len(), 3);
-        assert!(
-            call(
-                &mut doc,
-                "sketch.text",
-                json!({"sketch": sketch, "text": "x", "at": [0, 0], "font": "/no/such.ttf"}),
-            )
-            .is_err()
-        );
+        assert!(refused(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": sketch, "text": "x", "at": [0, 0], "font": "/no/such.ttf"})
+        ));
     }
 
     #[test]
     fn a_scripted_rectangle_is_one_closed_profile() {
         let mut doc = Document::new("t");
-        let sketch = call(&mut doc, "sketch.new", json!({"plane": "XZ"})).unwrap();
-        let lines = call(
+        let sketch = ok(&mut doc, "sketch.new", json!({"plane": "XZ"}));
+        let lines = ok(
             &mut doc,
             "sketch.rect",
             json!({"sketch": sketch, "x": 0, "y": 0, "width": 20, "height": 10}),
-        )
-        .unwrap();
+        );
         assert_eq!(lines.as_array().unwrap().len(), 4);
-        let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
-        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        let id = feature_id(&sketch);
+        let feature = feature_of(&doc, &sketch);
         let points = feature
             .sketch
             .geometry
@@ -4293,22 +4301,20 @@ mod tests {
     fn a_negative_axis_distance_runs_the_other_way() {
         for (kind, axis) in [("distance_x", 0), ("distance_y", 1)] {
             let mut doc = Document::new("t");
-            let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
-            let line = call(
+            let sketch = ok(&mut doc, "sketch.new", json!({}));
+            let line = ok(
                 &mut doc,
                 "sketch.line",
                 json!({"sketch": sketch, "x1": 0, "y1": 0, "x2": 5, "y2": 3}),
-            )
-            .unwrap();
-            call(
+            );
+            ok(
                 &mut doc,
                 "sketch.constrain",
                 json!({"sketch": sketch, "kind": kind, "items": [line], "value": -7}),
-            )
-            .unwrap();
-            let status = call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap();
+            );
+            let status = ok(&mut doc, "sketch.status", json!({"sketch": sketch}));
             assert_eq!(status["conflicting"], json!([]), "{kind}");
-            let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+            let geometry = ok(&mut doc, "sketch.geometry", json!({"sketch": sketch}));
             let points = geometry
                 .as_array()
                 .unwrap()
@@ -4326,14 +4332,13 @@ mod tests {
     fn arcs_and_ellipses_count_five_degrees_of_freedom() {
         let dof = |tool: &str, points: Value| {
             let mut doc = Document::new("t");
-            let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
-            call(
+            let sketch = ok(&mut doc, "sketch.new", json!({}));
+            ok(
                 &mut doc,
                 "sketch.draw",
                 json!({"sketch": sketch, "tool": tool, "points": points}),
-            )
-            .unwrap();
-            call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap()["dof"].clone()
+            );
+            ok(&mut doc, "sketch.status", json!({"sketch": sketch}))["dof"].clone()
         };
         assert_eq!(dof("arc3", json!([[0, 0], [10, 0], [5, 3]])), json!(5));
         assert_eq!(dof("ellipse", json!([[0, 0], [10, 0], [0, 4]])), json!(5));
@@ -4365,17 +4370,16 @@ mod tests {
             ),
         ] {
             let mut doc = Document::new("t");
-            let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
-            call(
+            let sketch = ok(&mut doc, "sketch.new", json!({}));
+            ok(
                 &mut doc,
                 "sketch.draw",
                 json!({"sketch": sketch, "tool": tool, "points": points, "params": params}),
-            )
-            .unwrap();
-            let status = call(&mut doc, "sketch.status", json!({"sketch": sketch})).unwrap();
+            );
+            let status = ok(&mut doc, "sketch.status", json!({"sketch": sketch}));
             assert_eq!(status["dof"], json!(dof), "{tool}");
             assert_eq!(status["redundant"], json!([]), "{tool}");
-            let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+            let geometry = ok(&mut doc, "sketch.geometry", json!({"sketch": sketch}));
             let first = geometry
                 .as_array()
                 .unwrap()
@@ -4383,13 +4387,12 @@ mod tests {
                 .find(|g| g["kind"] == "line" || g["kind"] == "arc")
                 .unwrap()["id"]
                 .clone();
-            call(
+            ok(
                 &mut doc,
                 "sketch.drag",
                 json!({"sketch": sketch, "items": [first], "by": [1.5, 2.5]}),
-            )
-            .unwrap();
-            let geometry = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+            );
+            let geometry = ok(&mut doc, "sketch.geometry", json!({"sketch": sketch}));
             let radii: Vec<f64> = geometry
                 .as_array()
                 .unwrap()
@@ -4413,7 +4416,7 @@ mod tests {
     #[test]
     fn array_settings_given_to_a_drawing_tool_are_refused() {
         let mut doc = Document::new("t");
-        let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let sketch = ok(&mut doc, "sketch.new", json!({}));
         let error = call(
             &mut doc,
             "sketch.draw",
@@ -4429,21 +4432,18 @@ mod tests {
     #[test]
     fn a_rectangle_and_a_polyline_hold_their_level_and_upright_sides() {
         let mut doc = Document::new("t");
-        let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
-        call(
+        let sketch = ok(&mut doc, "sketch.new", json!({}));
+        ok(
             &mut doc,
             "sketch.rect",
             json!({"sketch": sketch, "x": 0, "y": 0, "width": 10, "height": 5}),
-        )
-        .unwrap();
-        call(
+        );
+        ok(
             &mut doc,
             "sketch.polyline",
             json!({"sketch": sketch, "points": [[20, 0], [30, 0], [34, 6]]}),
-        )
-        .unwrap();
-        let kinds: Vec<String> = call(&mut doc, "sketch.constraints", json!({"sketch": sketch}))
-            .unwrap()
+        );
+        let kinds: Vec<String> = ok(&mut doc, "sketch.constraints", json!({"sketch": sketch}))
             .as_array()
             .unwrap()
             .iter()
@@ -4460,16 +4460,15 @@ mod tests {
     #[test]
     fn lines_drawn_end_to_end_share_their_points() {
         let mut doc = Document::new("t");
-        let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let sketch = ok(&mut doc, "sketch.new", json!({}));
         for (x1, y1, x2, y2) in [(0, 0, 10, 0), (10, 0, 0, 10), (0, 10, 0, 0)] {
-            call(
+            ok(
                 &mut doc,
                 "sketch.line",
                 json!({"sketch": sketch, "x1": x1, "y1": y1, "x2": x2, "y2": y2}),
-            )
-            .unwrap();
+            );
         }
-        let listed = call(&mut doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+        let listed = ok(&mut doc, "sketch.geometry", json!({"sketch": sketch}));
         let points = listed
             .as_array()
             .unwrap()
@@ -4490,14 +4489,12 @@ mod tests {
             if let Some(given) = given {
                 face["follows"] = json!(given);
             }
-            let sketch = call(
+            let sketch = ok(
                 &mut doc,
                 "sketch.new",
                 json!({"body": body.0.to_string(), "attachment": {"Face": {"face": face}}}),
-            )
-            .unwrap();
-            let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
-            let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+            );
+            let feature = feature_of(&doc, &sketch);
             let Some(core_document::DatumAttachment::Face { face }) =
                 feature.attached.map(|a| a.attachment)
             else {
@@ -4520,26 +4517,21 @@ mod tests {
                 at([0.0, 10.0, 5.0]),
             ],
         };
-        let sketch = call(
+        let sketch = ok(
             &mut doc,
             "sketch.new",
             json!({"body": body.0.to_string(), "attachment": attachment}),
-        )
-        .unwrap();
-        let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
-        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        );
+        let feature = feature_of(&doc, &sketch);
         assert_eq!(feature.attached.map(|a| a.attachment), Some(attachment));
         let (o, n) = (feature.plane.origin, feature.plane.normal);
         assert!((o[2] - 5.0).abs() < 1e-5, "{o:?}");
         assert!((n[2].abs() - 1.0).abs() < 1e-5, "{n:?}");
-        assert!(
-            call(
-                &mut doc,
-                "sketch.new",
-                json!({"body": body.0.to_string(), "attachment": {"Nonsense": 1}}),
-            )
-            .is_err()
-        );
+        assert!(refused(
+            &mut doc,
+            "sketch.new",
+            json!({"body": body.0.to_string(), "attachment": {"Nonsense": 1}})
+        ));
     }
 
     #[test]
@@ -4560,15 +4552,13 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        let sketch = call(&mut doc, "sketch.new", json!({"on": datum.0.to_string()})).unwrap();
-        call(
+        let sketch = ok(&mut doc, "sketch.new", json!({"on": datum.0.to_string()}));
+        ok(
             &mut doc,
             "sketch.attachment",
             json!({"sketch": sketch, "offset": 3.0, "shift": [5.0, 0.0], "turn": 90.0}),
-        )
-        .unwrap();
-        let id = FeatureId(Uuid::parse_str(sketch.as_str().unwrap()).unwrap());
-        let feature = SketchFeature::from_json(doc.get_feature_data(id).unwrap()).unwrap();
+        );
+        let feature = feature_of(&doc, &sketch);
         let near = |a: [f64; 3], b: [f64; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-5);
         assert!(
             near(feature.plane.origin, [5.0, 0.0, 3.0]),
@@ -4581,14 +4571,13 @@ mod tests {
             feature.plane
         );
         assert!(near(feature.plane.y_axis, [-1.0, 0.0, 0.0]));
-        let free = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let free = ok(&mut doc, "sketch.new", json!({}));
         assert!(
-            call(
+            refused(
                 &mut doc,
                 "sketch.attachment",
                 json!({"sketch": free, "turn": 5.0})
-            )
-            .is_err(),
+            ),
             "only a sketch on a datum"
         );
     }
@@ -4600,22 +4589,20 @@ mod tests {
         };
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let first = call(&mut doc, "sketch.new", json!({"body": body.0.to_string()})).unwrap();
+        let first = ok(&mut doc, "sketch.new", json!({"body": body.0.to_string()}));
         for (x1, y1, x2, y2) in [(0, 0, 10, 0), (10, 0, 10, 6), (10, 6, 0, 6), (0, 6, 0, 0)] {
-            call(
+            ok(
                 &mut doc,
                 "sketch.line",
                 json!({"sketch": first, "x1": x1, "y1": y1, "x2": x2, "y2": y2}),
-            )
-            .unwrap();
+            );
         }
-        let second = call(&mut doc, "sketch.new", json!({"body": body.0.to_string()})).unwrap();
-        let made = call(
+        let second = ok(&mut doc, "sketch.new", json!({"body": body.0.to_string()}));
+        let made = ok(
             &mut doc,
             "sketch.external_from",
             json!({"sketch": second, "from": first}),
-        )
-        .unwrap();
+        );
         assert_eq!(
             made["elements"].as_array().map(Vec::len),
             Some(12),
@@ -4633,13 +4620,12 @@ mod tests {
             "said nothing, it only guides"
         );
         // Asked to count, it closes a profile of its own.
-        let third = call(&mut doc, "sketch.new", json!({"body": body.0.to_string()})).unwrap();
-        call(
+        let third = ok(&mut doc, "sketch.new", json!({"body": body.0.to_string()}));
+        ok(
             &mut doc,
             "sketch.external_from",
             json!({"sketch": third, "from": first, "counts": true}),
-        )
-        .unwrap();
+        );
         let counted = sketch_of(&doc, &third);
         assert!(counted.external.values().all(|s| s.defining));
         let wires = crate::profile::extract_wires(&counted).expect("the rectangle counts");
@@ -4665,12 +4651,11 @@ mod tests {
                 Some(body),
             )
             .unwrap();
-        call(
+        ok(
             &mut doc,
             "sketch.external_from",
             json!({"sketch": second, "from": datum.0.to_string()}),
-        )
-        .unwrap();
+        );
         let with_datum = sketch_of(&doc, &second);
         let crossing = with_datum.geometry.iter().any(|g| matches!(
             g,
@@ -4681,18 +4666,17 @@ mod tests {
             "the crossing runs along x, 20 long about the origin"
         );
         assert!(
-            call(
+            refused(
                 &mut doc,
                 "sketch.external_from",
                 json!({"sketch": second, "from": second})
-            )
-            .is_err(),
+            ),
             "not from itself"
         );
 
         // The first sketch's far corner moves; brought up to it again, the
         // copy follows.
-        let first_id = FeatureId(Uuid::parse_str(first.as_str().unwrap()).unwrap());
+        let first_id = feature_id(&first);
         let mut data = doc.get_feature_data(first_id).unwrap().clone();
         let mut edited = SketchFeature::from_json(&data).unwrap();
         for g in &mut edited.sketch.geometry {
@@ -4704,7 +4688,7 @@ mod tests {
         }
         data = edited.to_json();
         doc.update_feature_data(first_id, data).unwrap();
-        let second_id = FeatureId(Uuid::parse_str(second.as_str().unwrap()).unwrap());
+        let second_id = feature_id(&second);
         let mut feature =
             SketchFeature::from_json(doc.get_feature_data(second_id).unwrap()).unwrap();
         let placed = crate::placed_plane(&feature.plane, &crate::sketch_placement(&doc, second_id));
@@ -4718,13 +4702,6 @@ mod tests {
             GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(12.0, 7.0)).length() < 1e-4
         ));
         assert!(moved, "the copy's corner followed");
-    }
-
-    fn sketch_of(doc: &Document, id: &Value) -> Sketch {
-        let id = FeatureId(Uuid::parse_str(id.as_str().unwrap()).unwrap());
-        SketchFeature::from_json(doc.get_feature_data(id).unwrap())
-            .unwrap()
-            .sketch
     }
 
     fn line_length(sketch: &Sketch, id: &Value) -> f64 {
@@ -4742,42 +4719,38 @@ mod tests {
     #[test]
     fn constraints_drive_the_geometry_and_the_status_counts_them() {
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let line = call(
+        let s = ok(&mut doc, "sketch.new", json!({}));
+        let line = ok(
             &mut doc,
             "sketch.line",
             json!({"sketch": s, "x1": 1, "y1": 1, "x2": 9, "y2": 2}),
-        )
-        .unwrap();
-        let free = call(&mut doc, "sketch.status", json!({"sketch": s})).unwrap()["dof"]
+        );
+        let free = ok(&mut doc, "sketch.status", json!({"sketch": s}))["dof"]
             .as_i64()
             .unwrap();
-        call(
+        ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": s, "kind": "horizontal", "items": [line]}),
-        )
-        .unwrap();
-        let dim = call(
+        );
+        let dim = ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": s, "kind": "dimension", "items": [line], "value": 25}),
-        )
-        .unwrap();
+        );
         let sketch = sketch_of(&doc, &s);
         assert!((line_length(&sketch, &line) - 25.0).abs() < 1e-3);
-        let status = call(&mut doc, "sketch.status", json!({"sketch": s})).unwrap();
+        let status = ok(&mut doc, "sketch.status", json!({"sketch": s}));
         assert_eq!(status["dof"].as_i64().unwrap(), free - 2);
         assert_eq!(status["solved"], json!(true));
 
-        call(
+        ok(
             &mut doc,
             "sketch.set_value",
             json!({"sketch": s, "constraint": dim[0], "value": 40}),
-        )
-        .unwrap();
+        );
         assert!((line_length(&sketch_of(&doc, &s), &line) - 40.0).abs() < 1e-3);
-        let listed = call(&mut doc, "sketch.constraints", json!({"sketch": s})).unwrap();
+        let listed = ok(&mut doc, "sketch.constraints", json!({"sketch": s}));
         assert_eq!(listed.as_array().unwrap().len(), 2);
 
         // The origin takes constraints by name.
@@ -4789,29 +4762,26 @@ mod tests {
                 _ => None,
             })
             .unwrap();
-        call(
+        ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": s, "kind": "coincident", "items": [start.to_string(), "origin"]}),
-        )
-        .unwrap();
+        );
         let sketch = sketch_of(&doc, &s);
         assert!(sketch.point_position(start).unwrap().to_glam().length() < 1e-3);
 
-        call(
+        ok(
             &mut doc,
             "sketch.delete",
             json!({"sketch": s, "items": [dim[0]]}),
-        )
-        .unwrap();
+        );
         assert_eq!(sketch_of(&doc, &s).constraints.len(), 2);
         assert!(
-            call(
+            refused(
                 &mut doc,
                 "sketch.constrain",
                 json!({"sketch": s, "kind": "parallel", "items": [line]})
-            )
-            .is_err(),
+            ),
             "parallel takes two lines"
         );
     }
@@ -4819,41 +4789,38 @@ mod tests {
     #[test]
     fn a_sketch_takes_a_plane_of_its_own() {
         let mut doc = Document::new("t");
-        let s = call(
+        let s = ok(
             &mut doc,
             "sketch.new",
             json!({"normal": [1, 0, 0], "origin": [5, 0, 0], "x_axis": [0, 1, 0]}),
-        )
-        .unwrap();
+        );
         let plane = sketch_of(&doc, &s).plane;
         assert_eq!(plane.origin, [5.0, 0.0, 0.0]);
         assert_eq!(plane.x_axis, [0.0, 1.0, 0.0]);
         assert_eq!(plane.y_axis, [0.0, 0.0, 1.0]);
-        assert!(call(&mut doc, "sketch.new", json!({"normal": [0, 0, 0]})).is_err());
+        assert!(refused(
+            &mut doc,
+            "sketch.new",
+            json!({"normal": [0, 0, 0]})
+        ));
     }
 
     #[test]
     fn bad_arguments_are_refused() {
         let mut doc = Document::new("t");
-        let sketch = call(&mut doc, "sketch.new", json!({})).unwrap();
-        assert!(
-            call(
-                &mut doc,
-                "sketch.circle",
-                json!({"sketch": sketch, "x": 0, "y": 0, "radius": -1})
-            )
-            .is_err()
-        );
-        assert!(call(&mut doc, "sketch.new", json!({"plane": "AB"})).is_err());
+        let sketch = ok(&mut doc, "sketch.new", json!({}));
+        assert!(refused(
+            &mut doc,
+            "sketch.circle",
+            json!({"sketch": sketch, "x": 0, "y": 0, "radius": -1})
+        ));
+        assert!(refused(&mut doc, "sketch.new", json!({"plane": "AB"})));
         let not_a_sketch = Uuid::new_v4().to_string();
-        assert!(
-            call(
-                &mut doc,
-                "sketch.point",
-                json!({"sketch": not_a_sketch, "x": 0, "y": 0})
-            )
-            .is_err()
-        );
+        assert!(refused(
+            &mut doc,
+            "sketch.point",
+            json!({"sketch": not_a_sketch, "x": 0, "y": 0})
+        ));
     }
 
     fn registry() -> core_document::DocumentService {
@@ -4864,13 +4831,9 @@ mod tests {
         registry
     }
 
-    fn feature_id(id: &Value) -> FeatureId {
-        FeatureId(Uuid::parse_str(id.as_str().unwrap()).unwrap())
-    }
-
     /// The radius of the sketch's one circle, as `sketch.geometry` reads it.
     fn listed_radius(doc: &mut Document, sketch: &Value) -> f64 {
-        let listed = call(doc, "sketch.geometry", json!({"sketch": sketch})).unwrap();
+        let listed = ok(doc, "sketch.geometry", json!({"sketch": sketch}));
         listed
             .as_array()
             .unwrap()
@@ -4886,20 +4849,18 @@ mod tests {
     fn a_projection_whose_source_is_gone_warns() {
         let registry = registry();
         let mut doc = Document::new("t");
-        let base = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let line = call(
+        let base = ok(&mut doc, "sketch.new", json!({}));
+        let line = ok(
             &mut doc,
             "sketch.line",
             json!({"sketch": base, "x1": 0, "y1": 0, "x2": 5, "y2": 1}),
-        )
-        .unwrap();
-        let top = call(&mut doc, "sketch.new", json!({"offset": 10})).unwrap();
-        call(
+        );
+        let top = ok(&mut doc, "sketch.new", json!({"offset": 10}));
+        ok(
             &mut doc,
             "sketch.external_from",
             json!({"sketch": top, "from": base}),
-        )
-        .unwrap();
+        );
         let warning = |doc: &mut Document| {
             registry.evaluate(doc);
             let id = feature_id(&top);
@@ -4908,12 +4869,11 @@ mod tests {
         };
         assert_eq!(warning(&mut doc), None, "its source stands");
 
-        call(
+        ok(
             &mut doc,
             "sketch.delete",
             json!({"sketch": base, "items": [line]}),
-        )
-        .unwrap();
+        );
         let said = warning(&mut doc).expect("a warning");
         assert!(said.starts_with("1 projected element"), "{said}");
     }
@@ -4926,36 +4886,32 @@ mod tests {
     fn geometry_from_another_sketch_follows_it_without_the_sketch_being_opened() {
         let registry = registry();
         let mut doc = Document::new("t");
-        let base = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let circle = call(
+        let base = ok(&mut doc, "sketch.new", json!({}));
+        let circle = ok(
             &mut doc,
             "sketch.circle",
             json!({"sketch": base, "x": 0, "y": 0, "radius": 2}),
-        )
-        .unwrap();
-        let dim = call(
+        );
+        let dim = ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": base, "kind": "radius", "items": [circle], "value": 2}),
-        )
-        .unwrap()[0]
-            .clone();
-        let top = call(&mut doc, "sketch.new", json!({"offset": 10})).unwrap();
-        call(
+        )[0]
+        .clone();
+        let top = ok(&mut doc, "sketch.new", json!({"offset": 10}));
+        ok(
             &mut doc,
             "sketch.external_from",
             json!({"sketch": top, "from": base, "counts": true}),
-        )
-        .unwrap();
+        );
         registry.evaluate(&mut doc);
         assert!((listed_radius(&mut doc, &top) - 2.0).abs() < 1e-5);
 
-        call(
+        ok(
             &mut doc,
             "sketch.set_value",
             json!({"sketch": base, "constraint": dim, "value": 3}),
-        )
-        .unwrap();
+        );
         registry.evaluate(&mut doc);
         assert!((listed_radius(&mut doc, &top) - 3.0).abs() < 1e-5);
         let built = crate::stored_sketch(&doc, feature_id(&top)).unwrap();
@@ -4971,7 +4927,7 @@ mod tests {
         registry.evaluate(&mut doc);
         assert!((listed_radius(&mut doc, &base) - 4.0).abs() < 1e-5);
         assert!((listed_radius(&mut doc, &top) - 4.0).abs() < 1e-5);
-        let listed = call(&mut doc, "sketch.constraints", json!({"sketch": base})).unwrap();
+        let listed = ok(&mut doc, "sketch.constraints", json!({"sketch": base}));
         assert!((listed[0]["value"].as_f64().unwrap() - 4.0).abs() < 1e-5);
         // Derived: the copy's own data is as it was made.
         assert!(
@@ -4988,47 +4944,40 @@ mod tests {
     #[test]
     fn external_elements_are_made_to_count_as_they_were_returned() {
         let mut doc = Document::new("t");
-        let base = call(&mut doc, "sketch.new", json!({})).unwrap();
-        call(
+        let base = ok(&mut doc, "sketch.new", json!({}));
+        ok(
             &mut doc,
             "sketch.rect",
             json!({"sketch": base, "x": 0, "y": 0, "width": 4, "height": 4}),
-        )
-        .unwrap();
-        let top = call(&mut doc, "sketch.new", json!({"offset": 10})).unwrap();
-        let made = call(
+        );
+        let top = ok(&mut doc, "sketch.new", json!({"offset": 10}));
+        let made = ok(
             &mut doc,
             "sketch.external_from",
             json!({"sketch": top, "from": base}),
-        )
-        .unwrap();
+        );
         assert!(crate::profile::extract_wires(&sketch_of(&doc, &top)).is_err());
-        call(
+        ok(
             &mut doc,
             "sketch.external_defining",
             json!({"sketch": top, "items": made["elements"]}),
-        )
-        .unwrap();
+        );
         assert_eq!(
             crate::profile::extract_wires(&sketch_of(&doc, &top))
                 .unwrap()
                 .len(),
             1
         );
-        let own = call(
+        let own = ok(
             &mut doc,
             "sketch.point",
             json!({"sketch": top, "x": 20, "y": 20}),
-        )
-        .unwrap();
-        assert!(
-            call(
-                &mut doc,
-                "sketch.external_defining",
-                json!({"sketch": top, "items": [own]}),
-            )
-            .is_err()
         );
+        assert!(refused(
+            &mut doc,
+            "sketch.external_defining",
+            json!({"sketch": top, "items": [own]})
+        ));
         // The same sketch again brings nothing twice.
         let again = call(
             &mut doc,
@@ -5043,20 +4992,18 @@ mod tests {
     #[test]
     fn a_radius_turns_into_a_diameter_and_back() {
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let circle = call(
+        let s = ok(&mut doc, "sketch.new", json!({}));
+        let circle = ok(
             &mut doc,
             "sketch.circle",
             json!({"sketch": s, "x": 0, "y": 0, "radius": 2}),
-        )
-        .unwrap();
-        let dim = call(
+        );
+        let dim = ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": s, "kind": "radius", "items": [circle], "value": 2}),
-        )
-        .unwrap()[0]
-            .clone();
+        )[0]
+        .clone();
         let key = dim.as_str().unwrap().to_string();
         doc.set_feature_formula(feature_id(&s), &key, Some("1 mm + 1 mm".into()))
             .unwrap();
@@ -5087,18 +5034,16 @@ mod tests {
             Some("1 mm + 1 mm")
         );
         assert!(switch(&mut doc, "chord").is_err());
-        let line = call(
+        let line = ok(
             &mut doc,
             "sketch.line",
             json!({"sketch": s, "x1": 0, "y1": 0, "x2": 5, "y2": 1}),
-        )
-        .unwrap();
-        let length = call(
+        );
+        let length = ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": s, "kind": "distance", "items": [line], "value": 5}),
-        )
-        .unwrap();
+        );
         let refused = call(
             &mut doc,
             "sketch.set_constraint",
@@ -5116,18 +5061,17 @@ mod tests {
         std::fs::write(&path, crate::text::FONTS[2].1).unwrap();
         let font = path.to_string_lossy().to_string();
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let s = ok(&mut doc, "sketch.new", json!({}));
         let fonts = |doc: &Document| {
             doc.assets()
                 .filter(|a| a.metadata.get("kind").and_then(|k| k.as_str()) == Some("font"))
                 .count()
         };
-        let made = call(
+        let made = ok(
             &mut doc,
             "sketch.text",
             json!({"sketch": s, "text": "A", "at": [0, 0], "font": font}),
-        )
-        .unwrap();
+        );
         assert_eq!(fonts(&doc), 1);
         std::fs::remove_file(&path).unwrap();
         call(
@@ -5141,12 +5085,11 @@ mod tests {
         assert!(block.font_asset.is_some());
 
         std::fs::write(&path, crate::text::FONTS[2].1).unwrap();
-        call(
+        ok(
             &mut doc,
             "sketch.text",
             json!({"sketch": s, "text": "C", "at": [0, 20], "font": font}),
-        )
-        .unwrap();
+        );
         assert_eq!(fonts(&doc), 1, "the same file is kept once");
         std::fs::remove_file(&path).unwrap();
         let missing = call(
@@ -5180,7 +5123,7 @@ mod tests {
                 })
         };
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let s = ok(&mut doc, "sketch.new", json!({}));
         let mut spec = crate::text::TextSpec {
             text: "A".to_string(),
             font: "printcad kept family".to_string(),
@@ -5196,7 +5139,7 @@ mod tests {
         let mut args = crate::text_args(&spec, None);
         args["sketch"] = s.clone();
         args["at"] = json!([0, 0]);
-        let made = call(&mut doc, "sketch.text", args).unwrap();
+        let made = ok(&mut doc, "sketch.text", args);
 
         let bytes = doc.save_to_bytes(core_document::Compression::None).unwrap();
         let mut reopened = Document::load_from_bytes(bytes).unwrap();
@@ -5233,13 +5176,12 @@ mod tests {
     fn a_variable_sets_a_texts_size() {
         let registry = registry();
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let made = call(
+        let s = ok(&mut doc, "sketch.new", json!({}));
+        let made = ok(
             &mut doc,
             "sketch.text",
             json!({"sketch": s, "text": "I", "at": [0, 0], "size": 10}),
-        )
-        .unwrap();
+        );
         let block = made["text"].as_str().unwrap().to_string();
         let sizes = doc.add_variable_set("Label").unwrap();
         doc.set_variable(sizes, "height", "10 mm", None).unwrap();
@@ -5275,13 +5217,12 @@ mod tests {
     #[test]
     fn constraint_kinds_and_flags_are_checked() {
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let line = call(
+        let s = ok(&mut doc, "sketch.new", json!({}));
+        let line = ok(
             &mut doc,
             "sketch.line",
             json!({"sketch": s, "x1": 0, "y1": 0, "x2": 5, "y2": 1}),
-        )
-        .unwrap();
+        );
         let unknown = call(
             &mut doc,
             "sketch.constrain",
@@ -5293,12 +5234,11 @@ mod tests {
             unknown.contains("no constraint") && unknown.contains("horizontal"),
             "{unknown}"
         );
-        let flat = call(
+        let flat = ok(
             &mut doc,
             "sketch.constrain",
             json!({"sketch": s, "kind": "horizontal", "items": [line]}),
-        )
-        .unwrap();
+        );
         let set = |doc: &mut Document, args: Value| {
             let mut args = args;
             args["sketch"] = s.clone();
@@ -5314,33 +5254,30 @@ mod tests {
     #[test]
     fn a_sketch_whose_constraints_conflict_gives_no_profile() {
         let mut doc = Document::new("t");
-        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
-        let sides = call(
+        let s = ok(&mut doc, "sketch.new", json!({}));
+        let sides = ok(
             &mut doc,
             "sketch.rect",
             json!({"sketch": s, "x": 0, "y": 0, "width": 4, "height": 4}),
-        )
-        .unwrap();
+        );
         let length = |doc: &mut Document, value: f64| {
-            call(
+            ok(
                 doc,
                 "sketch.constrain",
                 json!({"sketch": s, "kind": "distance", "items": [sides[0]], "value": value}),
             )
-            .unwrap()
         };
         length(&mut doc, 4.0);
         let second = length(&mut doc, 8.0);
-        let status = call(&mut doc, "sketch.status", json!({"sketch": s})).unwrap();
+        let status = ok(&mut doc, "sketch.status", json!({"sketch": s}));
         assert_eq!(status["solved"], false);
         let why = crate::profile::extract_wires(&sketch_of(&doc, &s)).unwrap_err();
         assert!(why.to_string().contains("does not solve"), "{why}");
-        call(
+        ok(
             &mut doc,
             "sketch.delete",
             json!({"sketch": s, "items": second}),
-        )
-        .unwrap();
+        );
         assert!(crate::profile::extract_wires(&sketch_of(&doc, &s)).is_ok());
     }
 }

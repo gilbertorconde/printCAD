@@ -431,6 +431,7 @@ pub fn refresh_group(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_kinds::arc_of;
 
     fn source() -> ExternalSource {
         ExternalSource {
@@ -538,14 +539,7 @@ mod tests {
             .collect();
         assert_eq!(kinds, ["circle", "arc", "line", "line"]);
         // The arc's ends sit on the circle where its angles say.
-        let arc = sketch
-            .geometry
-            .iter()
-            .find_map(|g| match g {
-                GeometryElement::Arc(a) => Some(a.clone()),
-                _ => None,
-            })
-            .unwrap();
+        let arc = arc_of(&sketch);
         let end = sketch.point_position(arc.end).unwrap();
         assert!(end.x.abs() < 1e-6 && (end.y - 2.0).abs() < 1e-6);
     }

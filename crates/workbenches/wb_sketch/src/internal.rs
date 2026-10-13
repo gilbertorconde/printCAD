@@ -331,6 +331,24 @@ mod tests {
         sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(c, v(5.0, 0.0), 0.6)))
     }
 
+    /// The ellipse of [`ellipse`], its centre fixed where it is.
+    fn fixed_ellipse(sketch: &mut Sketch) -> Uuid {
+        let e = ellipse(sketch);
+        let centre = ellipse_of(sketch, e).center;
+        sketch.add_constraint(ConstraintKind::FixedPoint {
+            point: centre,
+            position: v(1.0, 2.0),
+        });
+        e
+    }
+
+    fn ellipse_of(sketch: &Sketch, id: Uuid) -> Ellipse {
+        match sketch.get_geometry(id) {
+            Some(GeometryElement::Ellipse(el)) => el.clone(),
+            _ => panic!("{id} is no ellipse"),
+        }
+    }
+
     #[test]
     fn an_ellipse_shows_its_axes_and_foci_where_they_are() {
         let mut sketch = Sketch::new("t");
@@ -501,9 +519,7 @@ mod tests {
             matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
             "{outcome:?}"
         );
-        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
-            panic!()
-        };
+        let el = ellipse_of(&sketch, e);
         assert!((el.major.to_glam().length() - 10.0).abs() < 1e-3);
         assert!((el.ratio - 0.4).abs() < 1e-4);
         assert!(el.major.x.abs() < 1e-3, "the minor axis lies level");
@@ -518,15 +534,7 @@ mod tests {
     #[test]
     fn a_minor_axis_dragged_past_the_major_becomes_the_major() {
         let mut sketch = Sketch::new("t");
-        let e = ellipse(&mut sketch);
-        let centre = match sketch.get_geometry(e) {
-            Some(GeometryElement::Ellipse(el)) => el.center,
-            _ => panic!(),
-        };
-        sketch.add_constraint(ConstraintKind::FixedPoint {
-            point: centre,
-            position: v(1.0, 2.0),
-        });
+        let e = fixed_ellipse(&mut sketch);
         show(&mut sketch, e);
         let foci = [
             role(&sketch, e, InternalRole::Focus1),
@@ -550,9 +558,7 @@ mod tests {
         }
         crate::solver::solve_holding(&mut sketch, &[end]);
         let shape = |sketch: &Sketch| {
-            let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
-                panic!()
-            };
+            let el = ellipse_of(sketch, e);
             (el.major, el.ratio)
         };
         let (major, ratio) = shape(&sketch);
@@ -578,15 +584,7 @@ mod tests {
     #[test]
     fn an_ellipse_with_its_foci_drags_through_a_circle() {
         let mut sketch = Sketch::new("t");
-        let e = ellipse(&mut sketch);
-        let centre = match sketch.get_geometry(e) {
-            Some(GeometryElement::Ellipse(el)) => el.center,
-            _ => panic!(),
-        };
-        sketch.add_constraint(ConstraintKind::FixedPoint {
-            point: centre,
-            position: v(1.0, 2.0),
-        });
+        let e = fixed_ellipse(&mut sketch);
         show(&mut sketch, e);
         let minor = role(&sketch, e, InternalRole::MinorAxis);
         let Some(GeometryElement::Line(line)) = sketch.get_geometry(minor) else {
@@ -608,9 +606,7 @@ mod tests {
             );
             assert!(aligned(&sketch, e), "everything sits on the ellipse at {y}");
         }
-        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
-            panic!()
-        };
+        let el = ellipse_of(&sketch, e);
         assert!(el.major.x.abs() < 1e-3, "upright: {:?}", el.major);
         assert!((el.major.to_glam().length() - 8.0).abs() < 1e-3);
         assert!((el.ratio - 5.0 / 8.0).abs() < 1e-3, "{}", el.ratio);
@@ -646,9 +642,7 @@ mod tests {
             radius: 8.0,
         });
         crate::solver::solve(&mut sketch);
-        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
-            panic!()
-        };
+        let el = ellipse_of(&sketch, e);
         assert!((el.major.to_glam().length() - 8.0).abs() < 1e-3);
         assert!((el.ratio - 5.0 / 8.0).abs() < 1e-3);
         let names = |sketch: &Sketch| {
@@ -671,15 +665,7 @@ mod tests {
     #[test]
     fn a_focus_dragged_through_the_centre_turns_the_ellipse() {
         let mut sketch = Sketch::new("t");
-        let e = ellipse(&mut sketch);
-        let centre = match sketch.get_geometry(e) {
-            Some(GeometryElement::Ellipse(el)) => el.center,
-            _ => panic!(),
-        };
-        sketch.add_constraint(ConstraintKind::FixedPoint {
-            point: centre,
-            position: v(1.0, 2.0),
-        });
+        let e = fixed_ellipse(&mut sketch);
         show(&mut sketch, e);
         let (focus, other) = (
             role(&sketch, e, InternalRole::Focus1),
@@ -710,9 +696,7 @@ mod tests {
             );
             assert!(aligned(&sketch, e), "on the ellipse at {at:?}");
         }
-        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
-            panic!()
-        };
+        let el = ellipse_of(&sketch, e);
         assert!(el.major.x.abs() < 1e-3, "upright: {:?}", el.major);
         assert!(el.ratio < 1.0);
         assert!(near(sketch.point_position(joined).unwrap(), v(1.0, -1.0)));
@@ -723,6 +707,8 @@ mod tests {
         );
     }
 
+    /// One focus put somewhere new with the centre free: the solver
+    /// mirrors it through the centre for the other focus.
     #[test]
     fn a_dragged_focus_reshapes_the_ellipse_and_the_rest_follows() {
         let mut sketch = Sketch::new("t");
@@ -735,10 +721,8 @@ mod tests {
         crate::solver::solve_holding(&mut sketch, &[focus]);
         assert!(near(sketch.point_position(focus).unwrap(), v(6.0, 2.0)));
         assert!(aligned(&sketch, e));
-        let Some(GeometryElement::Ellipse(el)) = sketch.get_geometry(e) else {
-            panic!()
-        };
-        assert!(el.ratio <= 1.0 && el.ratio > 0.0);
+        let ratio = ellipse_of(&sketch, e).ratio;
+        assert!(ratio <= 1.0 && ratio > 0.0);
     }
 
     #[test]

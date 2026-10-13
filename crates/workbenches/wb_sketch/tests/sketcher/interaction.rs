@@ -3,16 +3,16 @@
 //! shell does: clicks arrive as viewport pixels and are raycast onto the
 //! sketch plane by the workbench itself.
 
+use crate::{
+    CAM_POS, VIEWPORT, all_arcs, all_lines, all_points, arc_of, circle_of, ellipse_of, holds,
+    line_of, number_text, spline_of, view_proj,
+};
 use core_document::{
     Document, FeatureId, KeyCode, MarkKind, MouseButton, ScreenSpaceMark, SketchPalette,
     ViewportPick, Workbench, WorkbenchFeature, WorkbenchInputEvent, WorkbenchRuntimeContext,
 };
-use glam::{Mat4, Vec3};
 use wb_sketch::sketch::{GeometryElement, Sketch};
 use wb_sketch::{SketchFeature, SketchWorkbench};
-
-const VIEWPORT: (u32, u32, u32, u32) = (0, 0, 800, 600);
-const CAM_POS: [f32; 3] = [0.0, 0.0, 50.0];
 
 fn pal() -> SketchPalette {
     SketchPalette::default()
@@ -25,21 +25,6 @@ fn same_color(a: [f32; 3], b: [f32; 3]) -> bool {
 
 fn is_icon(mark: &ScreenSpaceMark, icon: &str) -> bool {
     matches!(mark.kind, MarkKind::Icon { name, .. } if name == icon)
-}
-
-/// Vulkan-convention view-projection matching the app camera: perspective
-/// with the Y flip baked in, looking straight down +Z at the default XY
-/// sketch plane.
-fn view_proj() -> [[f32; 4]; 4] {
-    let proj = glam::camera::rh::proj::directx::perspective(
-        60f32.to_radians(),
-        800.0 / 600.0,
-        0.1,
-        1000.0,
-    );
-    let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
-    let view = glam::camera::rh::view::look_at_mat4(Vec3::from_array(CAM_POS), Vec3::ZERO, Vec3::Y);
-    (flip_y * proj * view).to_cols_array_2d()
 }
 
 /// Mimics the app shell: owns the document, carries `active_document_object`
@@ -59,6 +44,8 @@ struct Harness {
     edges: Vec<core_document::EdgeRef>,
     /// Whether the bench took the last event.
     consumed: bool,
+    /// What the bench's hooks recorded, in order.
+    recorded: Vec<core_document::Recorded>,
 }
 
 impl Harness {
@@ -73,7 +60,15 @@ impl Harness {
             kernel: None,
             edges: Vec::new(),
             consumed: false,
+            recorded: Vec::new(),
         }
+    }
+
+    /// A harness editing a fresh sketch.
+    fn sketching() -> Self {
+        let mut h = Self::new();
+        h.create_sketch();
+        h
     }
 
     fn event(&mut self, event: WorkbenchInputEvent, tool: Option<&str>) {
@@ -91,8 +86,10 @@ impl Harness {
         ctx.kernel = self.kernel;
         ctx.selected_edges = self.edges.clone();
         self.consumed = self.wb.on_input(&event, tool, &mut ctx).consumed;
-        self.active_object = ctx.active_document_object;
-        let requests = ctx.take_requests();
+        let outcome = core_document::HookOutcome::take(&mut ctx);
+        self.active_object = outcome.active_document_object;
+        self.recorded.extend(outcome.recorded);
+        let requests = outcome.requests;
         self.view_turned |= requests
             .iter()
             .any(|r| matches!(r, core_document::HostRequest::OrientCamera(_)));
@@ -109,83 +106,154 @@ impl Harness {
         frame_ctx.kernel = self.kernel;
         frame_ctx.selected_edges = self.edges.clone();
         self.wb.on_frame(0.016, &mut frame_ctx);
+        let outcome = core_document::HookOutcome::take(&mut frame_ctx);
+        self.recorded.extend(outcome.recorded);
     }
 
     /// A click on the model's edge `edge` where the view shows it, as the
     /// host makes it: the press and release are the host's when the bench
     /// leaves them, and the edge is picked. Whether the bench left them.
     fn pick_edge(&mut self, edge: core_document::EdgeRef) -> bool {
-        let viewport_pos = {
-            let mut ctx =
-                WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-            ctx.view_proj = Some(self.vp);
-            ctx.world_to_viewport(edge.point)
-                .expect("the edge projects into the viewport")
-        };
-        self.event(
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some("sketch.select"),
-        );
+        let pos = self.with_ctx(|_, ctx| ctx.world_to_viewport(edge.point));
+        let pos = pos.expect("the edge projects into the viewport");
+        self.press_px(pos);
         let left = !self.consumed;
         if left {
             self.edges = vec![edge];
         }
-        self.event(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some("sketch.select"),
-        );
+        self.release_px(pos);
         left && !self.consumed
     }
 
     /// Viewport pixel coordinates for a sketch-plane point (the inverse of
     /// what the workbench's raycast will compute).
     fn px_of(&mut self, x: f64, y: f64) -> (f32, f32) {
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(self.vp);
-        ctx.world_to_viewport([x as f32, y as f32, 0.0])
+        self.with_ctx(|_, ctx| ctx.world_to_viewport([x as f32, y as f32, 0.0]))
             .expect("sketch point projects into the viewport")
     }
 
-    fn click(&mut self, x: f64, y: f64, tool: &str) {
-        let viewport_pos = self.px_of(x, y);
-        self.event(
+    /// A mouse button pressed (or let go) at raw viewport pixels.
+    fn button(
+        &mut self,
+        press: bool,
+        button: MouseButton,
+        pos: (f32, f32),
+        tool: Option<&str>,
+        ctrl: bool,
+    ) {
+        let viewport_pos = pos;
+        let event = if press {
             WorkbenchInputEvent::MousePress {
-                button: MouseButton::Left,
+                button,
                 viewport_pos,
-            },
-            Some(tool),
-        );
+            }
+        } else {
+            WorkbenchInputEvent::MouseRelease {
+                button,
+                viewport_pos,
+            }
+        };
+        self.event_with_ctrl(event, tool, ctrl);
+    }
+
+    fn click(&mut self, x: f64, y: f64, tool: &str) {
+        let pos = self.px_of(x, y);
+        self.button(true, MouseButton::Left, pos, Some(tool), false);
+    }
+
+    /// A lone line from `a` to `b`: two clicks with the line tool, then
+    /// Escape to end the chain.
+    fn line(&mut self, a: (f64, f64), b: (f64, f64)) {
+        self.click(a.0, a.1, "sketch.line");
+        self.click(b.0, b.1, "sketch.line");
+        self.key(KeyCode::Escape, Some("sketch.line"));
+    }
+
+    /// Change the edited sketch as the document stores it, outside any
+    /// tool.
+    fn edit_sketch<R>(&mut self, f: impl FnOnce(&mut Sketch) -> R) -> R {
+        let id = self.active_object.expect("a sketch");
+        let data = self.doc.get_feature_data(id).unwrap();
+        let mut feature = SketchFeature::from_json(data).unwrap();
+        let out = f(&mut feature.sketch);
+        self.doc.update_feature_data(id, feature.to_json()).unwrap();
+        out
+    }
+
+    /// A toolbar button pressed: the tool activated.
+    fn activate(&mut self, tool: &str) {
+        self.event(WorkbenchInputEvent::ToolActivated, Some(tool));
+    }
+
+    /// A registered action run while `tool` is in hand.
+    fn action(&mut self, id: &str, tool: &str) {
+        let id = id.to_string();
+        self.event(WorkbenchInputEvent::Action { id }, Some(tool));
+    }
+
+    /// A press and release in place.
+    fn full_click(&mut self, x: f64, y: f64, tool: &str) {
+        self.click(x, y, tool);
+        self.release(x, y, tool);
+    }
+
+    /// A press and release in place with the select tool.
+    fn tap(&mut self, x: f64, y: f64) {
+        self.full_click(x, y, "sketch.select");
+    }
+
+    /// Keys pressed in turn, written as text: digits and `-` are their
+    /// keys, `\t` is Tab, `\n` Enter and `\x1b` Escape.
+    fn keys(&mut self, keys: &str, tool: Option<&str>) {
+        for c in keys.chars() {
+            let key = match c {
+                '0' => KeyCode::Key0,
+                '1' => KeyCode::Key1,
+                '2' => KeyCode::Key2,
+                '3' => KeyCode::Key3,
+                '4' => KeyCode::Key4,
+                '5' => KeyCode::Key5,
+                '6' => KeyCode::Key6,
+                '7' => KeyCode::Key7,
+                '8' => KeyCode::Key8,
+                '9' => KeyCode::Key9,
+                '-' => KeyCode::Minus,
+                '\t' => KeyCode::Tab,
+                '\n' => KeyCode::Enter,
+                '\x1b' => KeyCode::Escape,
+                other => panic!("no key for {other:?}"),
+            };
+            self.key(key, tool);
+        }
+    }
+
+    /// A line typed 25 long from the origin, the chain ended: where its
+    /// dimension's label is drawn.
+    fn typed_line_label(&mut self) -> (f32, f32) {
+        self.create_sketch();
+        self.click(0.0, 0.0, "sketch.line");
+        self.keys("25\n\x1b", Some("sketch.line"));
+        let labels = self.labels();
+        let dim = labels.iter().find(|l| l.background && l.text == "25");
+        let dim = dim.expect("dimension label drawn");
+        (dim.pos[0], dim.pos[1])
+    }
+
+    /// A double click at raw viewport pixels, as the editor opens.
+    fn double_press_px(&mut self, pos: (f32, f32)) {
+        self.press_px(pos);
+        self.release_px(pos);
+        self.press_px(pos);
     }
 
     fn click_ctrl(&mut self, x: f64, y: f64, tool: &str) {
-        let viewport_pos = self.px_of(x, y);
-        self.event_with_ctrl(
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some(tool),
-            true,
-        );
+        let pos = self.px_of(x, y);
+        self.button(true, MouseButton::Left, pos, Some(tool), true);
     }
 
     fn release_ctrl(&mut self, x: f64, y: f64, tool: &str) {
-        let viewport_pos = self.px_of(x, y);
-        self.event_with_ctrl(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some(tool),
-            true,
-        );
+        let pos = self.px_of(x, y);
+        self.button(false, MouseButton::Left, pos, Some(tool), true);
     }
 
     /// A key press, followed as the app follows it by the text it types
@@ -243,14 +311,8 @@ impl Harness {
     }
 
     fn release(&mut self, x: f64, y: f64, tool: &str) {
-        let viewport_pos = self.px_of(x, y);
-        self.event(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some(tool),
-        );
+        let pos = self.px_of(x, y);
+        self.button(false, MouseButton::Left, pos, Some(tool), false);
     }
 
     fn mouse_move(&mut self, x: f64, y: f64, tool: &str) {
@@ -268,71 +330,65 @@ impl Harness {
 
     fn counts(&self) -> (usize, usize, usize, usize) {
         let sketch = self.sketch();
-        let mut p = 0;
-        let mut l = 0;
-        let mut c = 0;
-        let mut a = 0;
-        for g in &sketch.geometry {
-            match g {
-                GeometryElement::Point(_) => p += 1,
-                GeometryElement::Line(_) => l += 1,
-                GeometryElement::Circle(_) => c += 1,
-                GeometryElement::Arc(_) => a += 1,
-                _ => {}
-            }
-        }
-        (p, l, c, a)
+        (
+            all_points(&sketch).len(),
+            all_lines(&sketch).len(),
+            crate::all_circles(&sketch).len(),
+            all_arcs(&sketch).len(),
+        )
+    }
+
+    /// Run `f` on the bench with the context the app shell gives it for
+    /// the active sketch in this view.
+    fn with_ctx<R>(
+        &mut self,
+        f: impl FnOnce(&mut SketchWorkbench, &mut WorkbenchRuntimeContext) -> R,
+    ) -> R {
+        let mut ctx =
+            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
+        ctx.view_proj = Some(self.vp);
+        ctx.active_document_object = self.active_object;
+        f(&mut self.wb, &mut ctx)
     }
 
     /// Screen-space labels (constraint glyphs + on-view readouts), exactly
     /// as the app shell fetches them each frame.
     fn labels(&mut self) -> Vec<core_document::ScreenSpaceLabel> {
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(self.vp);
-        ctx.active_document_object = self.active_object;
-        self.wb.get_screen_space_labels(&ctx, self.active_object)
+        let active = self.active_object;
+        self.with_ctx(|wb, ctx| wb.get_screen_space_labels(ctx, active))
     }
 
     /// Screen-space marks (point dots, constraint icons), as the app shell
     /// fetches them each frame.
     fn marks(&mut self) -> Vec<ScreenSpaceMark> {
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(self.vp);
-        ctx.active_document_object = self.active_object;
-        self.wb.get_screen_space_marks(&ctx, self.active_object)
+        let active = self.active_object;
+        self.with_ctx(|wb, ctx| wb.get_screen_space_marks(ctx, active))
+    }
+
+    /// Screen-space lines, as the app shell fetches them each frame.
+    fn overlays(&mut self) -> Vec<core_document::ScreenSpaceOverlay> {
+        let active = self.active_object;
+        self.with_ctx(|wb, ctx| wb.get_screen_space_overlays(ctx, active))
     }
 
     /// The viewport HUD the workbench wants drawn this frame.
     fn hud(&mut self) -> Option<core_document::ViewportHud> {
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(self.vp);
-        ctx.active_document_object = self.active_object;
-        self.wb.viewport_hud(&ctx)
+        self.with_ctx(|wb, ctx| wb.viewport_hud(ctx))
+    }
+
+    /// Commit the dimension editor's text, as its Enter does.
+    fn commit_dim_edit(&mut self) {
+        self.with_ctx(|wb, ctx| wb.commit_dim_edit(ctx));
     }
 
     /// Press/release at raw viewport pixels (glyph clicks: labels report
     /// their position in pixels, not sketch coordinates).
     fn press_px(&mut self, pos: (f32, f32)) {
-        self.event(
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Left,
-                viewport_pos: pos,
-            },
-            Some("sketch.select"),
-        );
+        self.button(true, MouseButton::Left, pos, Some("sketch.select"), false);
     }
 
     fn release_px(&mut self, pos: (f32, f32)) {
-        self.event(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Left,
-                viewport_pos: pos,
-            },
-            Some("sketch.select"),
-        );
+        self.button(false, MouseButton::Left, pos, Some("sketch.select"), false);
     }
 
     fn drag(&mut self, from: (f64, f64), to: (f64, f64)) {
@@ -361,41 +417,14 @@ impl Harness {
     }
 
     fn right_click(&mut self, x: f64, y: f64, tool: &str) {
-        let viewport_pos = self.px_of(x, y);
-        self.event(
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Right,
-                viewport_pos,
-            },
-            Some(tool),
-        );
-        self.event(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Right,
-                viewport_pos,
-            },
-            Some(tool),
-        );
+        self.right_drag((x, y), (x, y), tool);
     }
 
     /// Right press, move, release: the camera's pan gesture.
     fn right_drag(&mut self, from: (f64, f64), to: (f64, f64), tool: &str) {
-        let start = self.px_of(from.0, from.1);
-        let end = self.px_of(to.0, to.1);
-        self.event(
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Right,
-                viewport_pos: start,
-            },
-            Some(tool),
-        );
-        self.event(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Right,
-                viewport_pos: end,
-            },
-            Some(tool),
-        );
+        let (start, end) = (self.px_of(from.0, from.1), self.px_of(to.0, to.1));
+        self.button(true, MouseButton::Right, start, Some(tool), false);
+        self.button(false, MouseButton::Right, end, Some(tool), false);
     }
 
     /// Select elements by dragging a box over them (select mode).
@@ -407,15 +436,6 @@ impl Harness {
 }
 
 #[test]
-fn create_sketch_registers_feature() {
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    assert!(h.doc.get_feature_data(id).is_some());
-    let (p, l, c, a) = h.counts();
-    assert_eq!((p, l, c, a), (0, 0, 0, 0));
-}
-
-#[test]
 fn create_action_opens_picker_instead_of_creating() {
     let mut h = Harness::new();
     h.event(
@@ -423,6 +443,7 @@ fn create_action_opens_picker_instead_of_creating() {
         Some("sketch.create"),
     );
     // No feature yet: the plane picker is pending in the panel.
+    assert!(h.wb.shows_origin_planes());
     assert!(h.active_object.is_none());
     assert_eq!(h.doc.feature_tree().all_nodes().count(), 0);
 }
@@ -491,12 +512,12 @@ fn cross_workbench_sketch_request_is_consumed() {
         ctx.attach_request.is_none(),
         "the sketch workbench takes the pending request"
     );
+    assert!(h.wb.shows_origin_planes(), "and opens the plane picker");
 }
 
 #[test]
 fn dragging_a_point_moves_it_and_leaves_it_selected() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 7.0, "sketch.line");
 
@@ -506,20 +527,15 @@ fn dragging_a_point_moves_it_and_leaves_it_selected() {
     h.release(14.0, 9.0, "sketch.select");
 
     let sketch = h.sketch();
-    let moved = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position),
-            _ => None,
-        })
+    let moved = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position)
         .any(|p| (p.x - 14.0).abs() < 0.05 && (p.y - 9.0).abs() < 0.05);
     assert!(moved, "endpoint followed the drag");
 
     // The dragged point stays selected, and a press+release without
     // movement adds the other endpoint: Delete takes the whole line.
-    h.click(0.0, 0.0, "sketch.select");
-    h.release(0.0, 0.0, "sketch.select");
+    h.tap(0.0, 0.0);
     h.key(KeyCode::Delete, Some("sketch.select"));
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (0, 0), "both endpoints deleted with their line");
@@ -527,14 +543,23 @@ fn dragging_a_point_moves_it_and_leaves_it_selected() {
 
 #[test]
 fn dragging_a_constrained_point_respects_constraints() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Axis-snapped horizontal line gets an auto Horizontal constraint.
     // Off the axes: a point there would pin to the origin or an axis.
     h.click(3.0, 4.0, "sketch.line");
+    // Slightly off-horizontal: within the 8px snap tolerance at this zoom.
     h.click(18.0, 4.05, "sketch.line");
     let sketch = h.sketch();
     assert_eq!(sketch.constraints.len(), 1);
+    assert!(matches!(
+        sketch.constraints[0].kind,
+        wb_sketch::sketch::ConstraintKind::Horizontal { .. }
+    ));
+    let ys: Vec<f64> = point_positions(&sketch).iter().map(|p| p.y).collect();
+    assert!(
+        ys.iter().all(|y| (y - 4.0).abs() < 1e-4),
+        "snapped level: {ys:?}"
+    );
 
     // Drag the far endpoint up and sideways: the solver must keep the line
     // horizontal (y's equal) while the x movement sticks.
@@ -542,69 +567,42 @@ fn dragging_a_constrained_point_respects_constraints() {
     h.mouse_move(23.0, 10.0, "sketch.select");
     h.release(23.0, 10.0, "sketch.select");
 
-    let sketch = h.sketch();
-    let ys: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.y),
-            _ => None,
-        })
-        .collect();
+    let positions = point_positions(&h.sketch());
     assert!(
-        (ys[0] - ys[1]).abs() < 1e-3,
-        "line stayed horizontal under drag: {ys:?}"
+        (positions[0].y - positions[1].y).abs() < 1e-3,
+        "line stayed horizontal under drag: {positions:?}"
     );
-    let max_x = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.x),
-            _ => None,
-        })
-        .fold(f64::MIN, f64::max);
+    let max_x = positions.iter().map(|p| p.x).fold(f64::MIN, f64::max);
     assert!(max_x > 20.0, "x movement applied: {max_x}");
 }
 
 #[test]
 fn two_clicks_draw_a_line_through_the_full_stack() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
+    assert_eq!(h.counts(), (0, 0, 0, 0), "nothing before the segment ends");
     h.click(10.0, 6.0, "sketch.line");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (2, 1));
+    // The raycast produced accurate sketch coordinates.
+    assert!(h.point_at(0.0, 0.0) && h.point_at(10.0, 6.0));
 
-    // Verify the raycast produced accurate sketch coordinates.
-    let sketch = h.sketch();
-    let mut positions: Vec<(f64, f64)> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(pt) => Some((pt.position.x, pt.position.y)),
-            _ => None,
-        })
-        .collect();
-    positions.sort_by(|a, b| a.0.total_cmp(&b.0));
-    assert!((positions[0].0).abs() < 0.05 && (positions[0].1).abs() < 0.05);
-    assert!((positions[1].0 - 10.0).abs() < 0.05 && (positions[1].1 - 6.0).abs() < 0.05);
-}
-
-#[test]
-fn chained_lines_share_vertices() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.5, "sketch.line");
-    h.click(10.0, 8.0, "sketch.line");
+    // The chain goes on from the last end: one point per segment, the
+    // corner shared.
+    h.click(20.0, 3.0, "sketch.line");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (3, 2), "chain adds one point per segment");
+    let sketch = h.sketch();
+    let ends: Vec<_> = all_lines(&sketch)
+        .into_iter()
+        .map(|l| (l.start, l.end))
+        .collect();
+    assert_eq!(ends[0].1, ends[1].0, "the corner is one point");
 }
 
 #[test]
 fn escape_cancels_pending_segment_without_orphans() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
     let (p, l, _, _) = h.counts();
@@ -612,22 +610,8 @@ fn escape_cancels_pending_segment_without_orphans() {
 }
 
 #[test]
-fn rectangle_tool_produces_constrained_rectangle() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.rect");
-    h.click(15.0, 12.0, "sketch.rect");
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (4, 4));
-    let sketch = h.sketch();
-    assert_eq!(sketch.constraints.len(), 4, "2 horizontal + 2 vertical");
-}
-
-#[test]
 fn circle_and_arc_tools_work_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.circle");
     h.click(5.0, 0.0, "sketch.circle");
     h.click(15.0, 0.0, "sketch.arc");
@@ -636,77 +620,13 @@ fn circle_and_arc_tools_work_end_to_end() {
     let (_, _, c, a) = h.counts();
     assert_eq!((c, a), (1, 1));
     let sketch = h.sketch();
-    let circle_r = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.radius),
-            _ => None,
-        })
-        .unwrap();
+    let circle_r = circle_of(&sketch).radius;
     assert!((circle_r - 5.0).abs() < 0.05, "radius {circle_r}");
 }
 
 #[test]
-fn deleting_a_line_takes_the_points_nothing_else_uses() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    // Select mid-span with the select tool, then delete.
-    h.click(5.0, 3.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (0, 0), "line removed with its endpoints");
-}
-
-#[test]
-fn deleting_a_point_cascades_to_its_line() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    // Click exactly on an endpoint: point wins the hit-test. Point
-    // selection resolves on release (press begins a potential drag).
-    h.click(10.0, 7.0, "sketch.select");
-    h.release(10.0, 7.0, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!(
-        (p, l),
-        (0, 0),
-        "the line cascaded away, and its now-unused endpoints with it"
-    );
-}
-
-#[test]
-fn horizontal_axis_snap_adds_auto_constraint() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.line");
-    // Slightly off-horizontal: within the 8px snap tolerance at this zoom.
-    h.click(18.0, 4.05, "sketch.line");
-    let sketch = h.sketch();
-    assert_eq!(sketch.constraints.len(), 1);
-    let ys: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.y),
-            _ => None,
-        })
-        .collect();
-    assert!(
-        ys.iter().all(|y| (y - 4.0).abs() < 1e-4),
-        "snapped level: {ys:?}"
-    );
-}
-
-#[test]
 fn endpoint_snap_reuses_vertex_for_closed_profiles() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Triangle: three chained segments, last click near the start vertex.
     h.click(0.0, 0.0, "sketch.line");
     h.click(20.0, 3.0, "sketch.line");
@@ -718,21 +638,17 @@ fn endpoint_snap_reuses_vertex_for_closed_profiles() {
 
 #[test]
 fn overlays_are_generated_while_editing() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(10.0, 8.0, "sketch.rect");
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let overlays = h.overlays();
     // 2 axis lines + 4 rectangle edges; the 4 corner points are marks.
     assert!(
         overlays.len() >= 2 + 4,
         "expected axes + rectangle overlays, got {}",
         overlays.len()
     );
-    let marks = h.wb.get_screen_space_marks(&ctx, h.active_object);
+    let marks = h.marks();
     let dots = marks
         .iter()
         .filter(|m| matches!(m.kind, MarkKind::Dot { .. }))
@@ -745,37 +661,18 @@ fn overlays_are_generated_while_editing() {
 /// from the arc's end.
 #[test]
 fn dragging_from_a_line_s_end_draws_a_tangent_arc() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 0.0, "sketch.line");
     // Press on the end, drag, let go.
     h.click(10.0, 0.0, "sketch.line");
-    for (x, y) in [(12.0, 1.0), (15.0, 5.0)] {
-        let viewport_pos = h.px_of(x, y);
-        h.event(
-            WorkbenchInputEvent::MouseMove { viewport_pos },
-            Some("sketch.line"),
-        );
-    }
-    let viewport_pos = h.px_of(15.0, 5.0);
-    h.event(
-        WorkbenchInputEvent::MouseRelease {
-            button: MouseButton::Left,
-            viewport_pos,
-        },
-        Some("sketch.line"),
-    );
+    h.mouse_move(12.0, 1.0, "sketch.line");
+    h.mouse_move(15.0, 5.0, "sketch.line");
+    h.release(15.0, 5.0, "sketch.line");
     let (_, lines, _, arcs) = h.counts();
     assert_eq!((lines, arcs), (1, 1), "the line, then the arc");
     let sketch = h.sketch();
-    assert!(
-        sketch
-            .constraints
-            .iter()
-            .any(|c| matches!(c.kind, ConstraintKind::Tangent { .. })),
-        "held tangent to the line"
-    );
+    assert!(holds(&sketch, "Tangent", None), "held tangent to the line");
     // The line tool draws on from the arc's end.
     h.click(15.0, 15.0, "sketch.line");
     let (points, lines, _, arcs) = h.counts();
@@ -783,19 +680,11 @@ fn dragging_from_a_line_s_end_draws_a_tangent_arc() {
     assert_eq!(points, 5, "the ends shared, plus the arc's centre");
 
     // A press that does not move is a click there: no arc.
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 0.0, "sketch.line");
     h.click(10.0, 0.0, "sketch.line");
-    let viewport_pos = h.px_of(10.0, 0.0);
-    h.event(
-        WorkbenchInputEvent::MouseRelease {
-            button: MouseButton::Left,
-            viewport_pos,
-        },
-        Some("sketch.line"),
-    );
+    h.release(10.0, 0.0, "sketch.line");
     assert_eq!(h.counts().3, 0);
 }
 
@@ -840,11 +729,8 @@ fn closed_regions_are_shaded_while_editing() {
         ctx.kernel = Some(kernel);
         h.wb.get_overlay_meshes(&ctx, h.active_object).len()
     };
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
     assert_eq!(shaded(&mut h), 0, "nothing closes");
     h.click(0.0, 5.0, "sketch.rect");
     h.click(10.0, 12.0, "sketch.rect");
@@ -860,26 +746,21 @@ fn closed_regions_are_shaded_while_editing() {
 fn loose_ends_are_ringed_between_shapes() {
     let rings = |h: &mut Harness| {
         let conflict = core_document::SketchPalette::default().conflict;
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        h.wb.get_screen_space_overlays(&ctx, h.active_object)
+        h.overlays()
             .iter()
             .filter(|o| o.color == conflict)
             .count()
             // A ring is drawn in 48 segments.
             / 48
     };
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 0.0, "sketch.line");
     assert_eq!(rings(&mut h), 0, "mid-shape, nothing is ringed");
     h.key(KeyCode::Escape, Some("sketch.line"));
     assert_eq!(rings(&mut h), 2, "the lone line's ends are ringed");
 
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(10.0, 8.0, "sketch.rect");
     assert_eq!(rings(&mut h), 0, "a closed outline has no loose end");
@@ -887,37 +768,15 @@ fn loose_ends_are_ringed_between_shapes() {
 
 #[test]
 fn construction_geometry_renders_dashed() {
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
 
-    let dashed_of = |h: &mut Harness| {
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        h.wb.get_screen_space_overlays(&ctx, h.active_object)
-            .iter()
-            .filter(|o| o.dash.is_some())
-            .count()
-    };
+    let dashed_of = |h: &mut Harness| h.overlays().iter().filter(|o| o.dash.is_some()).count();
     let solid_count = dashed_of(&mut h);
 
     // Flag the line as construction directly on the stored feature (no
     // selection involved, so the element renders in its base style).
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    let line_id = feature
-        .sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
-    feature.sketch.set_construction(line_id, true);
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.edit_sketch(|s| s.set_construction(line_ids(s)[0], true));
 
     let dashed_count = dashed_of(&mut h);
     assert_eq!(solid_count, 0, "normal geometry draws solid");
@@ -925,92 +784,6 @@ fn construction_geometry_renders_dashed() {
         dashed_count >= 1,
         "construction line carries a dash pattern: {dashed_count} dashed overlays"
     );
-}
-
-#[test]
-fn polygon_tool_draws_closed_hexagon_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.polygon");
-    h.click(6.0, 0.0, "sketch.polygon");
-    let (p, l, c, a) = h.counts();
-    // Six vertices and the centre, six sides, the construction circle
-    // that holds it regular.
-    assert_eq!((p, l, c, a), (7, 6, 1, 0), "default 6 sides");
-    // Closed loop through shared vertices: the profile extractor accepts it.
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 6);
-}
-
-#[test]
-fn slot_tool_draws_closed_slot_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.slot");
-    h.click(12.0, 0.0, "sketch.slot");
-    let (p, l, c, a) = h.counts();
-    assert_eq!(
-        (p, l, c, a),
-        (6, 2, 0, 2),
-        "junctions + centers, sides, caps"
-    );
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 4);
-}
-
-#[test]
-fn fillet_tool_rounds_rectangle_corner_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.rect");
-    h.click(15.0, 12.0, "sketch.rect");
-    // Click the shared corner point with the fillet tool (default r=2).
-    h.click(15.0, 12.0, "sketch.fillet");
-    let (p, l, c, a) = h.counts();
-    assert_eq!((p, l, c, a), (6, 4, 0, 1), "corner replaced by arc");
-    let sketch = h.sketch();
-    assert_eq!(
-        sketch.constraints.len(),
-        6,
-        "rectangle H/V constraints survive the fillet, and the arc is tangent to both sides"
-    );
-    let tangents = sketch
-        .constraints
-        .iter()
-        .filter(|c| matches!(c.kind, wb_sketch::sketch::ConstraintKind::Tangent { .. }))
-        .count();
-    assert_eq!(tangents, 2);
-    let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 5, "4 lines + 1 corner arc");
-}
-
-#[test]
-fn construction_action_toggles_selected_line() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    // Select the line mid-span, then fire the construction action (an
-    // Action tool arrives as the active tool for one input event).
-    h.click(5.0, 3.5, "sketch.select");
-    h.key(KeyCode::A, Some("sketch.construction"));
-    let sketch = h.sketch();
-    let line_id = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
-    assert!(sketch.is_construction(line_id), "line flagged construction");
-    // Firing again flips it back.
-    h.key(KeyCode::A, Some("sketch.construction"));
-    assert!(!h.sketch().is_construction(line_id));
 }
 
 /// Construction mode belongs to the sketch it was turned on in: another
@@ -1030,15 +803,7 @@ fn construction_mode_is_kept_per_sketch() {
     );
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 7.0, "sketch.line");
-    let line = h
-        .sketch()
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
+    let line = line_ids(&h.sketch())[0];
     assert!(!h.sketch().is_construction(line));
 
     h.key(KeyCode::Escape, Some("sketch.line"));
@@ -1055,39 +820,14 @@ fn construction_mode_is_kept_per_sketch() {
 /// converts what is picked rather than switching the drawing mode.
 #[test]
 fn the_construction_button_converts_what_is_picked() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
     let mid = h.px_of(5.0, 3.5);
-    h.event(
-        WorkbenchInputEvent::MousePress {
-            button: MouseButton::Left,
-            viewport_pos: mid,
-        },
-        None,
-    );
-    h.event(
-        WorkbenchInputEvent::MouseRelease {
-            button: MouseButton::Left,
-            viewport_pos: mid,
-        },
-        None,
-    );
-    h.event(
-        WorkbenchInputEvent::ToolActivated,
-        Some("sketch.construction"),
-    );
+    h.button(true, MouseButton::Left, mid, None, false);
+    h.button(false, MouseButton::Left, mid, None, false);
+    h.activate("sketch.construction");
     let sketch = h.sketch();
-    let line = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
+    let line = line_ids(&sketch)[0];
     assert!(sketch.is_construction(line), "the picked line is converted");
     assert!(
         !h.wb.tool_toggled("sketch.construction"),
@@ -1100,43 +840,18 @@ fn the_construction_button_converts_what_is_picked() {
 /// projected one by counting in the profile.
 #[test]
 fn the_construction_button_converts_projected_geometry_with_the_rest() {
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(0.0, 8.0, "sketch.line");
-    h.click(10.0, 8.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    let lines: Vec<uuid::Uuid> = h
-        .sketch()
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .collect();
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
+    h.line((0.0, 8.0), (10.0, 8.0));
+    let lines: Vec<uuid::Uuid> = line_ids(&h.sketch());
     let (drawn, projected) = (lines[0], lines[1]);
     // The second line stands in for one projected from a datum.
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    feature.sketch.external.insert(
-        projected,
-        wb_sketch::sketch::ExternalSource::of_reference(
-            wb_sketch::sketch::ExternalReference::Datum {
-                datum: uuid::Uuid::new_v4(),
-            },
-        ),
-    );
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.edit_sketch(|s| s.external.insert(projected, datum_source()));
     h.key(KeyCode::A, None);
 
     h.click(5.0, 0.0, "sketch.select");
     h.click_ctrl(5.0, 8.0, "sketch.select");
-    h.event(
-        WorkbenchInputEvent::ToolActivated,
-        Some("sketch.construction"),
-    );
+    h.activate("sketch.construction");
     let sketch = h.sketch();
     assert!(
         sketch.is_construction(drawn),
@@ -1147,10 +862,7 @@ fn the_construction_button_converts_projected_geometry_with_the_rest() {
         "the projected one still guides"
     );
 
-    h.event(
-        WorkbenchInputEvent::ToolActivated,
-        Some("sketch.construction"),
-    );
+    h.activate("sketch.construction");
     let sketch = h.sketch();
     assert!(!sketch.is_construction(drawn), "back to normal");
     assert!(
@@ -1164,34 +876,27 @@ fn the_construction_button_converts_projected_geometry_with_the_rest() {
 /// on its ends and made to count: one closed profile to extrude.
 #[test]
 fn a_projected_arc_closed_by_a_line_is_a_profile() {
-    use wb_sketch::sketch::{Arc, ExternalReference, ExternalSource, Point, Vec2D};
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    let sketch = &mut feature.sketch;
-    let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-    let start = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
-    let end = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-10.0, 0.0))));
-    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, 10.0)));
-    let source = ExternalSource::of_reference(ExternalReference::Datum {
-        datum: uuid::Uuid::new_v4(),
+    use wb_sketch::sketch::Arc;
+    let mut h = Harness::sketching();
+    let arc = h.edit_sketch(|s| {
+        let [centre, start, end] = [0.0, 10.0, -10.0].map(|x| point(s, x, 0.0));
+        let arc = s.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, 10.0)));
+        let source = datum_source();
+        for part in [centre, start, end, arc] {
+            s.external.insert(part, source);
+        }
+        arc
     });
-    for part in [centre, start, end, arc] {
-        sketch.external.insert(part, source);
-    }
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
     h.key(KeyCode::A, None);
 
-    // A line from end to end, clicked on the arc's ends.
-    h.click(10.0, 0.0, "sketch.line");
-    h.click(-10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    // A line from end to end, clicked on the arc's ends: it cannot move,
+    // so the sketch has no freedom left, and says so.
+    h.line((10.0, 0.0), (-10.0, 0.0));
+    let badge = h.hud().and_then(|hud| hud.badge).map(|(_, text)| text);
+    assert_eq!(badge.as_deref(), Some("0 DoF"), "{:?}", h.sketch().geometry);
     // The arc made normal geometry.
     h.click(0.0, 10.0, "sketch.select");
-    h.event(
-        WorkbenchInputEvent::ToolActivated,
-        Some("sketch.construction"),
-    );
+    h.activate("sketch.construction");
 
     let sketch = h.sketch();
     assert!(sketch.external[&arc].defining, "the arc counts");
@@ -1200,88 +905,32 @@ fn a_projected_arc_closed_by_a_line_is_a_profile() {
     assert_eq!(wires[0].segments.len(), 2, "the arc and the line");
 }
 
-/// A line drawn on the ends of a projected arc cannot move: the sketch has
-/// no freedom left, and says so.
-#[test]
-fn a_line_on_projected_ends_leaves_no_freedom() {
-    use wb_sketch::sketch::{Arc, ExternalReference, ExternalSource, Point, Vec2D};
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    let sketch = &mut feature.sketch;
-    let centre = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-    let start = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
-    let end = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(-10.0, 0.0))));
-    let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(centre, start, end, 10.0)));
-    let source = ExternalSource::of_reference(ExternalReference::Datum {
-        datum: uuid::Uuid::new_v4(),
-    });
-    for part in [centre, start, end, arc] {
-        sketch.external.insert(part, source);
-    }
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
-    h.key(KeyCode::A, None);
-    h.click(10.0, 0.0, "sketch.line");
-    h.click(-10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    let badge = h.hud().and_then(|hud| hud.badge).map(|(_, text)| text);
-    let sketch = h.sketch();
-    let lines: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some((l.start, l.end)),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        badge.as_deref(),
-        Some("0 DoF"),
-        "lines {lines:?}, arc ends {start} {end}"
-    );
-}
-
 /// As with an arc, a line drawn on the ends of a projected spline cannot
 /// move.
 #[test]
 fn a_line_on_projected_spline_ends_leaves_no_freedom() {
-    use wb_sketch::sketch::{BSpline, ExternalReference, ExternalSource, Point, Vec2D};
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    let sketch = &mut feature.sketch;
-    let source = ExternalSource::of_reference(ExternalReference::Datum {
-        datum: uuid::Uuid::new_v4(),
+    use wb_sketch::sketch::BSpline;
+    let mut h = Harness::sketching();
+    let poles = h.edit_sketch(|s| {
+        let poles: Vec<_> = [(10.0, 0.0), (10.0, 6.0), (4.0, 10.0), (-4.0, 10.0)]
+            .into_iter()
+            .chain([(-10.0, 6.0), (-10.0, 0.0)])
+            .map(|(x, y)| point(s, x, y))
+            .collect();
+        let spline = s.add_geometry(GeometryElement::BSpline(BSpline::new(poles.clone(), false)));
+        let source = datum_source();
+        for part in poles.iter().copied().chain([spline]) {
+            s.external.insert(part, source);
+        }
+        poles
     });
-    let mut poles = Vec::new();
-    for (x, y) in [
-        (10.0, 0.0),
-        (10.0, 6.0),
-        (4.0, 10.0),
-        (-4.0, 10.0),
-        (-10.0, 6.0),
-        (-10.0, 0.0),
-    ] {
-        let p = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
-        sketch.external.insert(p, source);
-        poles.push(p);
-    }
-    let spline = sketch.add_geometry(GeometryElement::BSpline(BSpline::new(poles.clone(), false)));
-    sketch.external.insert(spline, source);
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
     h.key(KeyCode::A, None);
-    h.click(10.0, 0.0, "sketch.line");
-    h.click(-10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((10.0, 0.0), (-10.0, 0.0));
     let badge = h.hud().and_then(|hud| hud.badge).map(|(_, text)| text);
     let sketch = h.sketch();
-    let lines: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some((l.start, l.end)),
-            _ => None,
-        })
+    let lines: Vec<_> = all_lines(&sketch)
+        .into_iter()
+        .map(|l| (l.start, l.end))
         .collect();
     let constraints: Vec<_> = sketch
         .constraints
@@ -1303,13 +952,10 @@ fn a_line_on_projected_spline_ends_leaves_no_freedom() {
 
 #[test]
 fn construction_toggle_with_empty_selection_flips_mode() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Nothing selected: the action toggles construction *mode*.
     h.key(KeyCode::A, Some("sketch.construction"));
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((0.0, 0.0), (10.0, 7.0));
     let sketch = h.sketch();
     assert!(
         sketch
@@ -1321,9 +967,7 @@ fn construction_toggle_with_empty_selection_flips_mode() {
 
     // Toggle the mode back off: new geometry is normal again.
     h.key(KeyCode::A, Some("sketch.construction"));
-    h.click(30.0, 0.0, "sketch.line");
-    h.click(40.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((30.0, 0.0), (40.0, 7.0));
     let sketch = h.sketch();
     let construction = sketch
         .geometry
@@ -1341,98 +985,31 @@ fn construction_toggle_with_empty_selection_flips_mode() {
 /// stays normal, or the profile would open.
 #[test]
 fn construction_mode_leaves_a_fillet_on_a_profile_normal() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
-    let before: Vec<uuid::Uuid> = h.sketch().geometry.iter().map(|g| g.id()).collect();
-
     h.key(KeyCode::A, Some("sketch.construction")); // mode ON, empty selection
     h.click(12.0, 8.0, "sketch.fillet");
 
     let sketch = h.sketch();
-    let (new_flagged, old_flagged): (Vec<bool>, Vec<bool>) = (
+    assert_eq!(all_arcs(&sketch).len(), 1, "the fillet made its arc");
+    assert!(
         sketch
             .geometry
             .iter()
-            .filter(|g| !before.contains(&g.id()))
-            .map(|g| sketch.is_construction(g.id()))
-            .collect(),
-        sketch
-            .geometry
-            .iter()
-            .filter(|g| before.contains(&g.id()))
-            .map(|g| sketch.is_construction(g.id()))
-            .collect(),
+            .all(|g| !sketch.is_construction(g.id())),
+        "the fillet's arc and points, and the rectangle, stay part of the profile"
     );
-    assert!(!new_flagged.is_empty(), "fillet added geometry");
-    assert!(
-        new_flagged.iter().all(|&c| !c),
-        "the fillet's arc and points stay part of the profile"
-    );
-    assert!(
-        old_flagged.iter().all(|&c| !c),
-        "pre-existing rectangle untouched"
-    );
-}
-
-#[test]
-fn construction_toggle_with_selection_leaves_mode_untouched() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-
-    // Select the line, then fire the action: only the line flips, and the
-    // mode stays OFF.
-    h.click(5.0, 3.5, "sketch.select");
-    h.key(KeyCode::A, Some("sketch.construction"));
-    let sketch = h.sketch();
-    let line_id = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
-    assert!(sketch.is_construction(line_id));
-
-    // New geometry stays normal: the selection path never touched the mode.
-    h.key(KeyCode::Escape, Some("sketch.select")); // clear selection
-    h.click(30.0, 0.0, "sketch.line");
-    h.click(40.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    let sketch = h.sketch();
-    let construction = sketch
-        .geometry
-        .iter()
-        .filter(|g| sketch.is_construction(g.id()))
-        .count();
-    assert_eq!(construction, 1, "only the toggled line is construction");
 }
 
 #[test]
 fn construction_on_a_mixed_selection_converts_all_of_it() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(0.0, 20.0, "sketch.line");
-    h.click(10.0, 27.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
+    h.line((0.0, 20.0), (10.0, 27.0));
 
     let sketch = h.sketch();
-    let lines: Vec<uuid::Uuid> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .collect();
+    let lines: Vec<uuid::Uuid> = line_ids(&sketch);
     assert_eq!(lines.len(), 2);
 
     // Pre-flag the first line only, then convert a selection of both: all
@@ -1454,55 +1031,50 @@ fn construction_on_a_mixed_selection_converts_all_of_it() {
         !sketch.is_construction(lines[0]) && !sketch.is_construction(lines[1]),
         "both normal again"
     );
+
+    // Converting a selection leaves the mode off: a new line is normal.
+    h.key(KeyCode::A, Some("sketch.construction"));
+    h.key(KeyCode::Escape, Some("sketch.select")); // clear selection
+    h.line((30.0, 0.0), (40.0, 7.0));
+    let sketch = h.sketch();
+    let construction = sketch
+        .geometry
+        .iter()
+        .filter(|g| sketch.is_construction(g.id()))
+        .count();
+    assert_eq!(construction, 2, "only the converted lines are construction");
 }
 
 #[test]
 fn editing_a_dimension_constraint_re_solves_the_sketch() {
     use wb_sketch::sketch::{Constraint, ConstraintKind};
 
-    let mut h = Harness::new();
-    let id = h.create_sketch();
+    let mut h = Harness::sketching();
     // Axis-snapped horizontal line: 10 long, auto Horizontal constraint.
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 0.05, "sketch.line");
 
     // Add a Length constraint directly on the stored feature (the panel's
     // "Add Constraint" buttons are egui-only) plus a fixed anchor.
-    let sketch = h.sketch();
-    let line = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.clone()),
-            _ => None,
-        })
-        .unwrap();
-    let anchor = sketch.point_position(line.start).unwrap();
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    feature.sketch.add_constraint(ConstraintKind::FixedPoint {
-        point: line.start,
-        position: anchor,
+    let line = line_of(&h.sketch());
+    let constraint_idx = h.edit_sketch(|s| {
+        let position = s.point_position(line.start).unwrap();
+        let point = line.start;
+        s.add_constraint(ConstraintKind::FixedPoint { point, position });
+        s.add_constraint(ConstraintKind::Length {
+            line: line.id,
+            length: 10.0,
+        });
+        s.constraints.len() - 1
     });
-    feature.sketch.add_constraint(ConstraintKind::Length {
-        line: line.id,
-        length: 10.0,
-    });
-    let constraint_idx = feature.sketch.constraints.len() - 1;
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
 
     // Edit the dimension through the panel's code path: replace in place,
     // re-solve, store.
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    h.wb.update_constraint(
-        &mut ctx,
-        constraint_idx,
-        Constraint::new(ConstraintKind::Length {
-            line: line.id,
-            length: 20.0,
-        }),
-    );
+    let longer = Constraint::new(ConstraintKind::Length {
+        line: line.id,
+        length: 20.0,
+    });
+    h.with_ctx(|wb, ctx| wb.update_constraint(ctx, constraint_idx, longer));
 
     let sketch = h.sketch();
     let start = sketch.point_position(line.start).unwrap().to_glam();
@@ -1525,205 +1097,159 @@ fn editing_a_dimension_constraint_re_solves_the_sketch() {
 /// L2 (0,20)→(10,27); mid-spans at (5,3.5) and (5,23.5).
 fn two_lines(h: &mut Harness) {
     h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(0.0, 20.0, "sketch.line");
-    h.click(10.0, 27.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((0.0, 0.0), (10.0, 7.0));
+    h.line((0.0, 20.0), (10.0, 27.0));
     assert_eq!(h.counts(), (4, 2, 0, 0));
-}
-
-#[test]
-fn clicking_a_second_element_adds_it_to_the_selection() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    // Click L1, then L2: selection inside a sketch accumulates with no
-    // modifier, so Delete removes both.
-    h.click(5.0, 3.5, "sketch.select");
-    h.click(5.0, 23.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (0, 0), "both lines deleted with their endpoints");
-}
-
-#[test]
-fn ctrl_click_still_accumulates() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    h.click(5.0, 3.5, "sketch.select");
-    h.click_ctrl(5.0, 23.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (0, 0), "both lines deleted with their endpoints");
-}
-
-#[test]
-fn clicking_a_selected_element_again_drops_it() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    h.click(5.0, 3.5, "sketch.select");
-    h.click(5.0, 23.5, "sketch.select");
-    // Click L1 again and release in place: it leaves the selection (the
-    // press keeps it so a drag can carry it), L2 stays.
-    h.click(5.0, 3.5, "sketch.select");
-    h.release(5.0, 3.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 1), "only L2 was still selected");
-}
-
-#[test]
-fn an_empty_click_clears_the_selection() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-
-    // A click on empty space is the gesture that clears, with or without
-    // the modifier: Delete afterwards is a no-op.
-    h.click(5.0, 3.5, "sketch.select");
-    h.click_ctrl(50.0, 3.5, "sketch.select");
-    h.release_ctrl(50.0, 3.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    assert_eq!(h.counts(), (4, 2, 0, 0), "ctrl empty click cleared it too");
-
-    h.click(5.0, 23.5, "sketch.select");
-    h.click(50.0, 3.5, "sketch.select");
-    h.release(50.0, 3.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    assert_eq!(
-        h.counts(),
-        (4, 2, 0, 0),
-        "empty click cleared the selection"
-    );
-}
-
-#[test]
-fn ctrl_click_accumulates_points_via_release() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    // Point selection resolves on release-without-move; ctrl at press time
-    // makes it additive. Both endpoints of L1 selected → Delete cascades L1.
-    h.click(0.0, 0.0, "sketch.select");
-    h.release(0.0, 0.0, "sketch.select");
-    h.click_ctrl(10.0, 7.0, "sketch.select");
-    h.release_ctrl(10.0, 7.0, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 1), "both L1 endpoints deleted, cascading L1");
-}
-
-#[test]
-fn clicking_a_curve_then_a_point_selects_both() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    // Select L1 (curve), then click an L2 endpoint: both are selected, so
-    // Delete takes L1 and cascades L2 from its endpoint.
-    h.click(5.0, 3.5, "sketch.select");
-    h.click(0.0, 20.0, "sketch.select");
-    h.release(0.0, 20.0, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (0, 0), "both lines gone, with every endpoint");
 }
 
 /// `two_lines` plus a third line off to the right: L3 (20,0)→(28,7).
 fn three_lines(h: &mut Harness) {
     two_lines(h);
-    h.click(20.0, 0.0, "sketch.line");
-    h.click(28.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((20.0, 0.0), (28.0, 7.0));
     assert_eq!(h.counts(), (6, 3, 0, 0));
 }
 
+/// Each selection gesture on `two_lines` (or `three_lines`), told by what
+/// Delete leaves afterwards: (points, lines).
 #[test]
-fn box_selection_selects_fully_inside_elements() {
-    let mut h = Harness::new();
-    three_lines(&mut h);
-    // Box around L1 and L2 (and their endpoints); L3 stays outside.
-    h.click(-2.0, -2.0, "sketch.select");
-    h.mouse_move(12.0, 28.5, "sketch.select");
-    h.release(12.0, 28.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (2, 1), "L1+L2 and their endpoints deleted, L3 kept");
-}
-
-#[test]
-fn box_selection_excludes_partially_covered_elements() {
-    let mut h = Harness::new();
-    three_lines(&mut h);
-    // The box covers L1 fully but cuts L2 mid-span: only L1 (with its
-    // endpoints) is selected; L2's inside endpoint at (0,20) also counts.
-    h.click(-2.0, -2.0, "sketch.select");
-    h.mouse_move(12.0, 23.0, "sketch.select");
-    h.release(12.0, 23.0, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    // L1 + endpoints gone; L2 cascaded via its (0,20) endpoint, taking the
-    // other one with it; L3 intact.
-    assert_eq!((p, l), (2, 1), "straddling line cascades via its endpoint");
-}
-
-#[test]
-fn a_box_adds_to_the_existing_selection() {
-    let mut h = Harness::new();
-    three_lines(&mut h);
-    // Select L3, then box around L1+L2: everything is selected.
-    h.click(24.0, 3.5, "sketch.select");
-    h.click(-2.0, -2.0, "sketch.select");
-    h.mouse_move(12.0, 28.5, "sketch.select");
-    h.release(12.0, 28.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!((p, l), (0, 0), "every line and its endpoints deleted");
-}
-
-#[test]
-fn tiny_box_drag_behaves_as_click_clear() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    h.click(5.0, 3.5, "sketch.select"); // select L1
-    // Sub-threshold drag on empty space: plain empty click → clear.
-    h.click(15.0, 10.0, "sketch.select");
-    h.mouse_move(15.05, 10.05, "sketch.select");
-    h.release(15.05, 10.05, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    assert_eq!(
-        h.counts(),
-        (4, 2, 0, 0),
-        "selection was cleared, Delete no-op"
-    );
-}
-
-#[test]
-fn escape_cancels_box_selection_and_keeps_prior_selection() {
-    let mut h = Harness::new();
-    two_lines(&mut h);
-    h.click(5.0, 3.5, "sketch.select"); // select L1
-    // Start a box that would engulf L2, but cancel it with Escape.
-    h.click(-2.0, 15.0, "sketch.select");
-    h.mouse_move(12.0, 28.5, "sketch.select");
-    h.key(KeyCode::Escape, Some("sketch.select"));
-    h.release(12.0, 28.5, "sketch.select");
-    h.key(KeyCode::Delete, Some("sketch.select"));
-    let (p, l, _, _) = h.counts();
-    assert_eq!(
-        (p, l),
-        (2, 1),
-        "box cancelled: only pre-selected L1 deleted, with its endpoints"
-    );
+fn selection_gestures_decide_what_delete_takes() {
+    const SEL: &str = "sketch.select";
+    type Gesture = fn(&mut Harness);
+    let cases: [(&str, bool, Gesture, (usize, usize)); 12] = [
+        (
+            "a second click adds to the selection, no modifier needed",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.click(5.0, 23.5, SEL);
+            },
+            (0, 0),
+        ),
+        (
+            "ctrl click still accumulates",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.click_ctrl(5.0, 23.5, SEL);
+            },
+            (0, 0),
+        ),
+        (
+            // The press keeps it so a drag can carry it; the release in
+            // place drops it.
+            "clicking a selected element again drops it",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.click(5.0, 23.5, SEL);
+                h.tap(5.0, 3.5);
+            },
+            (2, 1),
+        ),
+        (
+            "a ctrl click on empty space clears",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.click_ctrl(50.0, 3.5, SEL);
+                h.release_ctrl(50.0, 3.5, SEL);
+            },
+            (4, 2),
+        ),
+        (
+            "an empty click clears",
+            false,
+            |h| {
+                h.click(5.0, 23.5, SEL);
+                h.tap(50.0, 3.5);
+            },
+            (4, 2),
+        ),
+        (
+            // Points resolve on release; ctrl at the press makes it
+            // additive. Both ends of L1 go, and L1 with them.
+            "ctrl accumulates points through their release",
+            false,
+            |h| {
+                h.tap(0.0, 0.0);
+                h.click_ctrl(10.0, 7.0, SEL);
+                h.release_ctrl(10.0, 7.0, SEL);
+            },
+            (2, 1),
+        ),
+        (
+            // L2 goes because its end does: the delete cascades.
+            "a curve then a point selects both",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.tap(0.0, 20.0);
+            },
+            (0, 0),
+        ),
+        (
+            "a box selects what lies wholly inside it",
+            true,
+            |h| h.box_select(-2.0, -2.0, 12.0, 28.5),
+            (2, 1),
+        ),
+        (
+            // L1 is inside, L2 is cut mid-span but its (0,20) end is in
+            // the box, so L2 cascades away with it; L3 stays.
+            "a box leaves a straddling curve and takes its inside end",
+            true,
+            |h| h.box_select(-2.0, -2.0, 12.0, 23.0),
+            (2, 1),
+        ),
+        (
+            "a box adds to the selection",
+            true,
+            |h| {
+                h.click(24.0, 3.5, SEL);
+                h.box_select(-2.0, -2.0, 12.0, 28.5);
+            },
+            (0, 0),
+        ),
+        (
+            "a box drag under the threshold is an empty click",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.box_select(15.0, 10.0, 15.05, 10.05);
+            },
+            (4, 2),
+        ),
+        (
+            "Escape drops the box and keeps what was selected",
+            false,
+            |h| {
+                h.click(5.0, 3.5, SEL);
+                h.click(-2.0, 15.0, SEL);
+                h.mouse_move(12.0, 28.5, SEL);
+                h.key(KeyCode::Escape, Some(SEL));
+                h.release(12.0, 28.5, SEL);
+            },
+            (2, 1),
+        ),
+    ];
+    for (name, three, gesture, left) in cases {
+        let mut h = Harness::new();
+        if three {
+            three_lines(&mut h);
+        } else {
+            two_lines(&mut h);
+        }
+        gesture(&mut h);
+        h.key(KeyCode::Delete, Some(SEL));
+        let (p, l, _, _) = h.counts();
+        assert_eq!((p, l), left, "{name}");
+    }
 }
 
 #[test]
 fn box_selection_draws_dashed_rectangle_overlay() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    let overlays_of = |h: &mut Harness| {
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        h.wb.get_screen_space_overlays(&ctx, h.active_object).len()
-    };
+    let mut h = Harness::sketching();
+    let overlays_of = |h: &mut Harness| h.overlays().len();
     let idle_count = overlays_of(&mut h); // axes only
     // Start clear of the axes and the origin, which are selectable.
     h.click(4.0, 4.0, "sketch.select");
@@ -1741,8 +1267,7 @@ fn box_selection_draws_dashed_rectangle_overlay() {
 
 #[test]
 fn box_selection_covers_circles_and_arcs() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Circle center (0,0) r=5; arc centered (15,0) from (19,0) CCW to (15,6).
     h.click(0.0, 0.0, "sketch.circle");
     h.click(5.0, 0.0, "sketch.circle");
@@ -1766,14 +1291,7 @@ fn box_selection_covers_circles_and_arcs() {
     h.release(20.0, 1.0, "sketch.select");
     h.key(KeyCode::A, Some("sketch.construction"));
     let sketch = h.sketch();
-    let arc_id = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(arc) => Some(arc.id),
-            _ => None,
-        })
-        .unwrap();
+    let arc_id = arc_of(&sketch).id;
     assert!(
         !sketch.is_construction(arc_id),
         "arc not fully inside the flat box: not selected, not flipped"
@@ -1794,20 +1312,14 @@ fn box_selection_covers_circles_and_arcs() {
 
 #[test]
 fn ellipse_tool_extracts_ellipse_profile() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.ellipse"); // center
     h.click(10.0, 0.0, "sketch.ellipse"); // major vertex
+    assert_eq!(h.counts(), (0, 0, 0, 0), "nothing before completion");
     h.click(5.0, 4.0, "sketch.ellipse"); // minor extent → ratio 0.4
+    assert_eq!(h.counts().0, 1, "just the centre point");
     let sketch = h.sketch();
-    let ellipse = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .expect("ellipse created");
+    let ellipse = ellipse_of(&sketch);
     assert!(
         (ellipse.ratio - 0.4).abs() < 0.01,
         "ratio {}",
@@ -1824,17 +1336,15 @@ fn ellipse_tool_extracts_ellipse_profile() {
 
 #[test]
 fn bspline_draw_closes_profile_with_line() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Three control points, finished with a right click.
     h.click(0.0, 0.0, "sketch.bspline");
     h.click(5.0, 6.0, "sketch.bspline");
     h.click(10.0, 0.0, "sketch.bspline");
+    assert!(h.sketch().geometry.is_empty(), "nothing before the finish");
     h.right_click(10.0, 0.0, "sketch.bspline");
     // Close the open spline with a line snapped to its end control points.
-    h.click(10.0, 0.0, "sketch.line");
-    h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((10.0, 0.0), (0.0, 0.0));
 
     let sketch = h.sketch();
     assert_eq!(sketch.geometry.len(), 5, "3 points + spline + line");
@@ -1850,66 +1360,65 @@ fn bspline_draw_closes_profile_with_line() {
 
 #[test]
 fn trim_middle_span_leaves_two_lines_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Horizontal target and two vertical cutters.
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(20.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(5.0, -5.0, "sketch.line");
-    h.click(5.0, 5.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(15.0, -5.0, "sketch.line");
-    h.click(15.0, 5.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((0.0, 0.0), (20.0, 0.0));
+    h.line((5.0, -5.0), (5.0, 5.0));
+    h.line((15.0, -5.0), (15.0, 5.0));
     assert_eq!(h.counts(), (6, 3, 0, 0));
 
     h.click(10.0, 0.0, "sketch.trim");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (8, 4), "middle span removed, two halves left");
+    // The halves end exactly at the cutters.
+    let sketch = h.sketch();
+    let spans: Vec<(f64, f64)> = all_lines(&sketch)
+        .iter()
+        .filter_map(|l| {
+            let (a, b) = (at(&sketch, l.start), at(&sketch, l.end));
+            (a.y.abs() < 1e-6 && b.y.abs() < 1e-6).then(|| (a.x.min(b.x), a.x.max(b.x)))
+        })
+        .collect();
+    for want in [(0.0, 5.0), (15.0, 20.0)] {
+        let kept = spans
+            .iter()
+            .any(|s| (s.0 - want.0).abs() < 0.05 && (s.1 - want.1).abs() < 0.05);
+        assert!(kept, "{want:?} kept: {spans:?}");
+    }
 }
 
 #[test]
 fn extend_line_to_intersection_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(5.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(10.0, -5.0, "sketch.line");
-    h.click(10.0, 5.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (5.0, 0.0));
+    // Two walls: the nearer one wins.
+    h.line((10.0, -5.0), (10.0, 5.0));
+    h.line((14.0, -5.0), (14.0, 5.0));
 
     // Click the end half of the short line.
     h.click(4.0, 0.0, "sketch.extend");
-    let sketch = h.sketch();
-    let reached = sketch.geometry.iter().any(|g| match g {
-        GeometryElement::Point(p) => {
-            (p.position.x - 10.0).abs() < 0.05 && p.position.y.abs() < 0.05
-        }
-        _ => false,
-    });
-    assert!(reached, "endpoint moved onto the wall");
-    assert_eq!(h.counts(), (4, 2, 0, 0), "no new geometry, endpoint moved");
+    assert!(h.point_at(10.0, 0.0), "endpoint moved onto the nearer wall");
+    assert_eq!(h.counts(), (6, 3, 0, 0), "no new geometry, endpoint moved");
+    // Nothing lies behind the start: extending that end changes nothing.
+    let before = h.sketch();
+    h.click(1.0, 0.0, "sketch.extend");
+    assert_eq!(point_positions(&h.sketch()), point_positions(&before));
 }
 
 #[test]
 fn split_line_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
 
     h.click(4.0, 0.0, "sketch.split");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (3, 2), "split point shared by both halves");
+    assert!(h.point_at(4.0, 0.0), "the split lands where clicked");
 }
 
 #[test]
 fn offset_rectangle_end_to_end_produces_closed_loop() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
     h.box_select(-2.0, -2.0, 14.0, 10.0);
@@ -1921,22 +1430,15 @@ fn offset_rectangle_end_to_end_produces_closed_loop() {
     assert_eq!((p, l), (8, 8));
     let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 2, "original + offset are both closed loops");
-    let inset = h.sketch().geometry.iter().any(|g| match g {
-        GeometryElement::Point(p) => {
-            (p.position.x - 2.0).abs() < 0.05 && (p.position.y - 2.0).abs() < 0.05
-        }
-        _ => false,
-    });
-    assert!(inset, "offset corner 2mm inside the original");
+    for (x, y) in [(2.0, 2.0), (10.0, 2.0), (10.0, 6.0), (2.0, 6.0)] {
+        assert!(h.point_at(x, y), "offset corner ({x}, {y}) 2mm inside");
+    }
 }
 
 #[test]
 fn translate_copy_makes_n_copies_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(8.0, 3.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (8.0, 3.0));
     h.click(4.0, 1.5, "sketch.select"); // select the line
     h.wb.tool_params_mut().copies = 2;
 
@@ -1945,106 +1447,170 @@ fn translate_copy_makes_n_copies_end_to_end() {
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (6, 3), "original + 2 copies");
     // Second copy endpoint at (28, 3).
-    let far = h.sketch().geometry.iter().any(|g| match g {
-        GeometryElement::Point(p) => {
-            (p.position.x - 28.0).abs() < 0.05 && (p.position.y - 3.0).abs() < 0.05
-        }
-        _ => false,
-    });
-    assert!(far, "second copy landed at 2Δ");
+    assert!(h.point_at(28.0, 3.0), "second copy landed at 2Δ");
 }
 
 #[test]
 fn mirror_about_line_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Mirror axis along the x-axis, subject line above it.
-    h.click(-10.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(2.0, 2.0, "sketch.line");
-    h.click(8.0, 5.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((-10.0, 0.0), (10.0, 0.0));
+    h.line((2.0, 2.0), (8.0, 5.0));
     h.click(5.0, 3.5, "sketch.select"); // select the subject line
 
     // One click on the axis line (away from any point) mirrors immediately.
     h.click(0.0, 0.0, "sketch.mirror");
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (6, 3), "mirrored copy added");
-    let mirrored = h.sketch().geometry.iter().any(|g| match g {
-        GeometryElement::Point(p) => {
-            (p.position.x - 8.0).abs() < 0.05 && (p.position.y + 5.0).abs() < 0.05
-        }
-        _ => false,
-    });
-    assert!(mirrored, "endpoint mirrored to (8, -5)");
+    assert!(h.point_at(2.0, -2.0), "endpoint mirrored to (2, -2)");
+    assert!(h.point_at(8.0, -5.0), "endpoint mirrored to (8, -5)");
+    assert!(
+        h.point_at(2.0, 2.0) && h.point_at(8.0, 5.0),
+        "originals stay"
+    );
 }
 
 #[test]
 fn arc3_and_circle3_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(5.0, 0.0, "sketch.arc3");
     h.click(0.0, 5.0, "sketch.arc3");
     h.click(3.5355, 3.5355, "sketch.arc3"); // rim point on the CCW side
     h.click(12.0, 0.0, "sketch.circle3");
     h.click(18.0, 0.0, "sketch.circle3");
+    assert_eq!(h.counts().2, 0, "no circle before the third click");
     h.click(12.0, 8.0, "sketch.circle3");
     let (_, _, c, a) = h.counts();
     assert_eq!((c, a), (1, 1));
     let sketch = h.sketch();
-    let arc_r = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(arc) => Some(arc.radius),
-            _ => None,
-        })
-        .unwrap();
+    let arc_r = arc_of(&sketch).radius;
     // The circumcircle is sensitive to the pixel-rounded rim click.
     assert!((arc_r - 5.0).abs() < 0.2, "arc radius {arc_r}");
-    let circle_r = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.radius),
-            _ => None,
-        })
-        .unwrap();
-    assert!((circle_r - 5.0).abs() < 0.05, "circle radius {circle_r}");
-}
-
-#[test]
-fn rect_center_tool_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(5.0, 3.0, "sketch.rect_center");
-    h.click(9.0, 5.0, "sketch.rect_center");
-    let (p, l, _, _) = h.counts();
-    // Four corners and the centre they are symmetric about.
-    assert_eq!((p, l), (5, 4));
-    assert_eq!(
-        h.sketch().constraints.len(),
-        5,
-        "H/V constraints as rect, and the symmetry"
+    let circle = circle_of(&sketch);
+    assert!(
+        (circle.radius - 5.0).abs() < 0.05,
+        "circle radius {}",
+        circle.radius
     );
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 4);
+    let centre = sketch.point_position(circle.center).unwrap().to_glam();
+    assert!(
+        (centre - glam::DVec2::new(15.0, 4.0)).length() < 0.1,
+        "the circle passes through all three clicks: centre {centre:?}"
+    );
 }
 
+/// Each shape tool, clicked through the view, makes its shape whole: what
+/// it adds (points, lines, circles, arcs), the one closed profile and its
+/// segments, the constraints that hold it, and where its corners land.
 #[test]
-fn arc_slot_tool_end_to_end_closed_profile() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.arc_slot"); // arc center
-    h.click(8.0, 0.0, "sketch.arc_slot"); // centerline start (r = 8)
-    h.click(0.0, 8.0, "sketch.arc_slot"); // quarter-turn end
-    let (p, l, _, a) = h.counts();
-    assert_eq!((p, l, a), (7, 0, 4), "rails + caps");
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 4);
+fn shape_tools_draw_closed_profiles_end_to_end() {
+    // Off the axes: a point there would pin to the origin or an axis.
+    let rect = [(3.0, 4.0, "sketch.rect"), (15.0, 12.0, "sketch.rect")];
+    type Row<'a> = (
+        &'a str,
+        Vec<(f64, f64, &'a str)>,
+        (usize, usize, usize, usize),
+        usize,
+        Option<usize>,
+        &'a [(f64, f64)],
+    );
+    let rows: [Row; 5] = [
+        // Two horizontal and two vertical constraints.
+        ("rectangle", rect.to_vec(), (4, 4, 0, 0), 4, Some(4), &[]),
+        // Six vertices and the centre, the construction circle holding
+        // them regular.
+        (
+            "hexagon",
+            vec![(0.0, 0.0, "sketch.polygon"), (6.0, 0.0, "sketch.polygon")],
+            (7, 6, 1, 0),
+            6,
+            None,
+            &[],
+        ),
+        // Corners mirrored through the centre: the rectangle's four and
+        // the symmetry.
+        (
+            "centred rectangle",
+            vec![
+                (5.0, 3.0, "sketch.rect_center"),
+                (9.0, 5.0, "sketch.rect_center"),
+            ],
+            (5, 4, 0, 0),
+            4,
+            Some(5),
+            &[(1.0, 1.0), (9.0, 1.0), (9.0, 5.0), (1.0, 5.0)],
+        ),
+        // The corner an arc (default radius 2), the rectangle's four kept
+        // and the arc tangent to both sides.
+        (
+            "fillet",
+            [&rect[..], &[(15.0, 12.0, "sketch.fillet")]].concat(),
+            (6, 4, 0, 1),
+            5,
+            Some(6),
+            &[],
+        ),
+        // The corner a line (default length 2) between setback points.
+        (
+            "chamfer",
+            [&rect[..], &[(15.0, 12.0, "sketch.chamfer")]].concat(),
+            (5, 5, 0, 0),
+            5,
+            None,
+            &[(13.0, 12.0), (15.0, 10.0)],
+        ),
+    ];
+    for (what, clicks, counts, segments, constraints, corners) in rows {
+        let mut h = Harness::sketching();
+        let (last, first) = clicks.split_last().unwrap();
+        for &(x, y, tool) in first {
+            h.click(x, y, tool);
+        }
+        if first.len() == 1 {
+            assert_eq!(h.counts(), (0, 0, 0, 0), "{what}: nothing before it ends");
+        }
+        h.click(last.0, last.1, last.2);
+        assert_eq!(h.counts(), counts, "{what}");
+        let sketch = h.sketch();
+        let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
+        assert_eq!(wires.len(), 1, "{what}: one closed loop");
+        assert_eq!(wires[0].segments.len(), segments, "{what}");
+        if let Some(n) = constraints {
+            assert_eq!(
+                sketch.constraints.len(),
+                n,
+                "{what}: {:?}",
+                sketch.constraints
+            );
+        }
+        if what == "fillet" {
+            let tangents = sketch
+                .constraints
+                .iter()
+                .filter(|c| matches!(c.kind, ConstraintKind::Tangent { .. }));
+            assert_eq!(tangents.count(), 2, "the arc tangent to both sides");
+        }
+        for &(x, y) in corners {
+            assert!(h.point_at(x, y), "{what}: a corner at ({x}, {y})");
+        }
+    }
+}
+
+/// A projection's source, standing in for a datum's.
+fn datum_source() -> wb_sketch::sketch::ExternalSource {
+    use wb_sketch::sketch::{ExternalReference, ExternalSource};
+    let datum = uuid::Uuid::new_v4();
+    ExternalSource::of_reference(ExternalReference::Datum { datum })
+}
+
+fn point(sketch: &mut Sketch, x: f64, y: f64) -> uuid::Uuid {
+    use wb_sketch::sketch::{Point, Vec2D};
+    sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+}
+
+/// The sketch's lines, in the order they were drawn.
+fn line_ids(sketch: &Sketch) -> Vec<uuid::Uuid> {
+    all_lines(sketch).into_iter().map(|l| l.id).collect()
 }
 
 /// Where a point of the sketch is.
@@ -2057,14 +1623,7 @@ fn at(sketch: &Sketch, id: uuid::Uuid) -> glam::DVec2 {
 /// gap across, so it runs on tangent into both rails and the caps are
 /// one size.
 fn assert_arc_slot_shape(sketch: &Sketch, what: &str) {
-    let arcs: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .collect();
+    let arcs: Vec<_> = all_arcs(sketch);
     assert_eq!(arcs.len(), 4, "{what}");
     let (rails, caps): (Vec<_>, Vec<_>) = arcs
         .iter()
@@ -2127,11 +1686,15 @@ fn an_arc_slot_holds_its_shape_when_dragged() {
         ("sweep", (3.0, 12.0), (-4.0, 9.0)),
         ("centre", (3.0, 2.0), (5.0, 4.0)),
     ] {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         h.click(3.0, 2.0, "sketch.arc_slot");
         h.click(13.0, 2.0, "sketch.arc_slot");
         h.click(3.0, 12.0, "sketch.arc_slot");
+        let (p, l, _, a) = h.counts();
+        assert_eq!((p, l, a), (7, 0, 4), "rails + caps");
+        let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].segments.len(), 4);
         assert_arc_slot_shape(&h.sketch(), "drawn");
 
         drag_in_steps(&mut h, from, to, 8);
@@ -2157,10 +1720,13 @@ fn a_slot_holds_its_shape_when_dragged() {
         ("end in one move", (13.0, 3.0), (15.0, 7.0), 1),
         ("start in one move", (3.0, 3.0), (2.0, 5.0), 1),
     ] {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         h.click(3.0, 3.0, "sketch.slot");
         h.click(13.0, 3.0, "sketch.slot");
+        assert_eq!(h.counts(), (6, 2, 0, 2), "junctions + centres, sides, caps");
+        let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
+        assert_eq!(wires.len(), 1);
+        assert_eq!(wires[0].segments.len(), 4);
 
         drag_in_steps(&mut h, from, to, steps);
         let sketch = h.sketch();
@@ -2169,14 +1735,7 @@ fn a_slot_holds_its_shape_when_dragged() {
             "{what}: the dragged point followed: {:?}",
             point_positions(&sketch)
         );
-        let caps: Vec<_> = sketch
-            .geometry
-            .iter()
-            .filter_map(|g| match g {
-                GeometryElement::Arc(a) => Some(a.clone()),
-                _ => None,
-            })
-            .collect();
+        let caps: Vec<_> = all_arcs(&sketch);
         assert_eq!(caps.len(), 2, "{what}");
         let (a, b) = (at(&sketch, caps[0].center), at(&sketch, caps[1].center));
         let axis = (b - a).normalize();
@@ -2209,33 +1768,13 @@ fn a_slot_holds_its_shape_when_dragged() {
 }
 
 #[test]
-fn chamfer_tool_end_to_end() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.rect");
-    h.click(12.0, 8.0, "sketch.rect");
-    h.click(12.0, 8.0, "sketch.chamfer"); // default length 2
-    let (p, l, _, a) = h.counts();
-    assert_eq!((p, l, a), (5, 5, 0), "corner replaced by chamfer line");
-    let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 5);
-}
-
-#[test]
 fn trim_hover_highlights_removable_span() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
 
     // Hover the line with the trim tool active.
     h.mouse_move(5.0, 0.0, "sketch.trim");
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let overlays = h.overlays();
     let highlight = overlays
         .iter()
         .filter(|o| o.thickness > 2.5 && same_color(o.color, pal().trim))
@@ -2250,20 +1789,15 @@ fn trim_hover_highlights_removable_span() {
 fn clicking_near_a_line_attaches_new_point_onto_it() {
     use wb_sketch::sketch::ConstraintKind;
 
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Base line along X (gets an auto Horizontal from the axis snap).
     // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((3.0, 4.0), (23.0, 4.0));
 
     // Start a new line just off the base line, away from its ends and its
     // middle: the start point is projected ONTO the line and constrained
     // to it.
-    h.click(8.0, 4.5, "sketch.line");
-    h.click(17.0, 12.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((8.0, 4.5), (17.0, 12.0));
 
     let sketch = h.sketch();
     let on_line = sketch
@@ -2289,44 +1823,24 @@ fn clicking_near_a_line_attaches_new_point_onto_it() {
 
 #[test]
 fn fully_constrained_sketch_renders_green() {
-    use wb_sketch::sketch::{Constraint, ConstraintKind, Vec2D};
+    use wb_sketch::sketch::{Constraint, ConstraintKind};
 
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
 
     // Fix both endpoints on the stored feature, then trigger the panel's
     // re-solve path so `is_fully_constrained` updates.
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    let points: Vec<(uuid::Uuid, Vec2D)> = feature
-        .sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some((p.id, p.position)),
-            _ => None,
-        })
-        .collect();
-    for (point, position) in &points {
-        feature.sketch.add_constraint(ConstraintKind::FixedPoint {
-            point: *point,
-            position: *position,
-        });
-    }
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.edit_sketch(|s| {
+        for p in all_points(s) {
+            let (point, position) = (p.id, p.position);
+            s.add_constraint(ConstraintKind::FixedPoint { point, position });
+        }
+    });
     let first = h.sketch().constraints[0].clone();
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    h.wb.update_constraint(&mut ctx, 0, Constraint::new(first.kind.clone()));
+    h.with_ctx(|wb, ctx| wb.update_constraint(ctx, 0, Constraint::new(first.kind.clone())));
 
     assert!(h.sketch().is_fully_constrained);
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let overlays = h.overlays();
     let green = overlays
         .iter()
         .filter(|o| same_color(o.color, pal().fully_constrained))
@@ -2341,13 +1855,12 @@ fn fully_constrained_sketch_renders_green() {
 fn no_geometry_created_without_active_sketch() {
     let mut h = Harness::new();
     // No create_sketch: clicks must be no-ops without a panic.
-    let viewport_pos = (400.0, 300.0);
-    h.event(
-        WorkbenchInputEvent::MousePress {
-            button: MouseButton::Left,
-            viewport_pos,
-        },
+    h.button(
+        true,
+        MouseButton::Left,
+        (400.0, 300.0),
         Some("sketch.line"),
+        false,
     );
     assert!(h.active_object.is_none());
     assert_eq!(h.doc.feature_tree().all_nodes().count(), 0);
@@ -2372,23 +1885,16 @@ fn distance_constraints(sketch: &Sketch) -> Vec<(f64, bool)> {
 
 #[test]
 fn typed_length_enter_creates_line_with_driving_distance() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.keys("25\n", Some("sketch.line"));
 
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (2, 1), "Enter committed the pending point");
     let sketch = h.sketch();
-    let pts: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(pt) => Some(pt.position),
-            _ => None,
-        })
+    let pts: Vec<_> = all_points(&sketch)
+        .into_iter()
+        .map(|pt| pt.position)
         .collect();
     let len = (pts[1] - pts[0]).to_glam().length();
     assert!((len - 25.0).abs() < 1e-3, "line length {len}");
@@ -2399,30 +1905,21 @@ fn typed_length_enter_creates_line_with_driving_distance() {
 
 #[test]
 fn tab_focuses_angle_field_and_click_keeps_typed_angle_free() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.key(KeyCode::Tab, Some("sketch.line")); // focus: angle
-    h.key(KeyCode::Key4, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
+    h.keys("45", Some("sketch.line"));
     h.click(10.0, 0.0, "sketch.line"); // length from cursor, direction typed
 
     let sketch = h.sketch();
     assert!(distance_constraints(&sketch).is_empty(), "no length typed");
     assert!(
-        !sketch
-            .constraints
-            .iter()
-            .any(|c| matches!(c.kind, ConstraintKind::AngleToAxis { .. })),
+        !holds(&sketch, "AngleToAxis", None),
         "a click shapes the geometry from the typed angle but leaves it free"
     );
-    let end = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position),
-            _ => None,
-        })
+    let end = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position)
         .find(|p| p.to_glam().length() > 1.0)
         .unwrap();
     let want = 10.0 * std::f64::consts::FRAC_1_SQRT_2;
@@ -2436,57 +1933,34 @@ fn tab_focuses_angle_field_and_click_keeps_typed_angle_free() {
 
 #[test]
 fn typed_length_and_angle_commit_exact_polar() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key0, Some("sketch.line"));
-    h.key(KeyCode::Tab, Some("sketch.line"));
-    h.key(KeyCode::Key9, Some("sketch.line"));
-    h.key(KeyCode::Key0, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.keys("20\t90\n", Some("sketch.line"));
 
     let sketch = h.sketch();
-    let end = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position),
-            _ => None,
-        })
+    let end = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position)
         .find(|p| p.to_glam().length() > 1.0)
         .expect("end point");
     assert!(end.x.abs() < 1e-3 && (end.y - 20.0).abs() < 1e-3);
     assert_eq!(distance_constraints(&sketch), vec![(20.0, true)]);
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::AngleToAxis { angle_rad, .. }
-            if (angle_rad.to_degrees() - 90.0).abs() < 1e-3
-    )));
+    assert!(holds(&sketch, "AngleToAxis", Some(90.0)));
 }
 
 #[test]
 fn rect_typed_width_height_creates_edge_lengths() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Off the axes: a point there would pin to the origin or an axis.
     h.click(3.0, 4.0, "sketch.rect");
-    h.key(KeyCode::Key1, Some("sketch.rect"));
-    h.key(KeyCode::Key2, Some("sketch.rect"));
-    h.key(KeyCode::Tab, Some("sketch.rect"));
-    h.key(KeyCode::Key8, Some("sketch.rect"));
-    h.key(KeyCode::Enter, Some("sketch.rect"));
+    h.keys("12\t8\n", Some("sketch.rect"));
 
     let (p, l, _, _) = h.counts();
     assert_eq!((p, l), (4, 4));
     let sketch = h.sketch();
-    let corner = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(pt) => Some(pt.position),
-            _ => None,
-        })
+    let corner = all_points(&sketch)
+        .into_iter()
+        .map(|pt| pt.position)
         .find(|p| (p.x - 15.0).abs() < 1e-3 && (p.y - 12.0).abs() < 1e-3);
     assert!(corner.is_some(), "opposite corner 12 across and 8 up");
     let mut lengths: Vec<f64> = sketch
@@ -2508,22 +1982,12 @@ fn rect_typed_width_height_creates_edge_lengths() {
 
 #[test]
 fn circle_typed_diameter_creates_diameter_constraint() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.circle");
-    h.key(KeyCode::Key1, Some("sketch.circle"));
-    h.key(KeyCode::Key0, Some("sketch.circle"));
-    h.key(KeyCode::Enter, Some("sketch.circle"));
+    h.keys("10\n", Some("sketch.circle"));
 
     let sketch = h.sketch();
-    let radius = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.radius),
-            _ => None,
-        })
-        .expect("circle committed");
+    let radius = circle_of(&sketch).radius;
     assert!((radius - 5.0).abs() < 1e-3, "radius {radius}");
     assert!(sketch.constraints.iter().any(|c| matches!(
         c.kind,
@@ -2533,12 +1997,9 @@ fn circle_typed_diameter_creates_diameter_constraint() {
 
 #[test]
 fn slot_typed_length_creates_center_distance_constraint() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.slot");
-    h.key(KeyCode::Key1, Some("sketch.slot"));
-    h.key(KeyCode::Key2, Some("sketch.slot"));
-    h.key(KeyCode::Enter, Some("sketch.slot"));
+    h.keys("12\n", Some("sketch.slot"));
 
     let (p, l, _, a) = h.counts();
     assert_eq!((p, l, a), (6, 2, 2), "slot committed");
@@ -2547,8 +2008,7 @@ fn slot_typed_length_creates_center_distance_constraint() {
 
 #[test]
 fn arc_typed_radius_defers_constraint_until_arc_commits() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.arc"); // center
     h.key(KeyCode::Key5, Some("sketch.arc"));
     h.key(KeyCode::Enter, Some("sketch.arc")); // start point at typed radius
@@ -2559,57 +2019,31 @@ fn arc_typed_radius_defers_constraint_until_arc_commits() {
     h.click(0.0, 5.0, "sketch.arc"); // end click materializes the arc
 
     let sketch = h.sketch();
-    let radius = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.radius),
-            _ => None,
-        })
-        .expect("arc committed");
+    let radius = arc_of(&sketch).radius;
     assert!((radius - 5.0).abs() < 1e-3, "radius {radius}");
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::Radius { radius, .. } if (radius - 5.0).abs() < 1e-5
-    )));
+    assert!(holds(&sketch, "Radius", Some(5.0)));
 }
 
 #[test]
 fn polygon_typed_radius_creates_construction_circumcircle() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.polygon");
-    h.key(KeyCode::Key6, Some("sketch.polygon"));
-    h.key(KeyCode::Enter, Some("sketch.polygon"));
+    h.keys("6\n", Some("sketch.polygon"));
 
     let sketch = h.sketch();
     let (p, l, c, _) = h.counts();
     assert_eq!((p, l, c), (7, 6, 1), "hexagon + center + circumcircle");
-    let circle = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(circ) => Some(circ),
-            _ => None,
-        })
-        .unwrap();
+    let circle = circle_of(&sketch);
     assert!((circle.radius - 6.0).abs() < 1e-3);
     assert!(
         sketch.is_construction(circle.id),
         "circumcircle is construction"
     );
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::Radius { radius, .. } if (radius - 6.0).abs() < 1e-5
-    )));
+    assert!(holds(&sketch, "Radius", Some(6.0)));
     // The vertices sit on the typed circumradius.
-    let on_radius = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(pt) => Some(pt.position),
-            _ => None,
-        })
+    let on_radius = all_points(&sketch)
+        .into_iter()
+        .map(|pt| pt.position)
         .filter(|p| (p.to_glam().length() - 6.0).abs() < 1e-3)
         .count();
     assert_eq!(on_radius, 6);
@@ -2617,8 +2051,7 @@ fn polygon_typed_radius_creates_construction_circumcircle() {
 
 #[test]
 fn escape_clears_typed_buffer_then_cancels_tool() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Off the axes: a point there would pin to the origin or an axis.
     h.click(3.0, 4.0, "sketch.line");
     h.key(KeyCode::Key9, Some("sketch.line"));
@@ -2639,11 +2072,9 @@ fn escape_clears_typed_buffer_then_cancels_tool() {
 
 #[test]
 fn backspace_edits_typed_buffer_before_deleting_geometry() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key9, Some("sketch.line"));
+    h.keys("29", Some("sketch.line"));
     h.key(KeyCode::Backspace, Some("sketch.line")); // "29" → "2"
     h.key(KeyCode::Key0, Some("sketch.line")); // "20"
     h.key(KeyCode::Enter, Some("sketch.line"));
@@ -2652,13 +2083,9 @@ fn backspace_edits_typed_buffer_before_deleting_geometry() {
 
 /// Every point of the sketch, where it is.
 fn point_positions(sketch: &Sketch) -> Vec<glam::DVec2> {
-    sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.to_glam()),
-            _ => None,
-        })
+    all_points(sketch)
+        .into_iter()
+        .map(|p| p.position.to_glam())
         .collect()
 }
 
@@ -2670,14 +2097,11 @@ fn has_point_near(sketch: &Sketch, x: f64, y: f64) -> bool {
 
 #[test]
 fn typed_arc_sweep_turns_the_end_and_holds_the_angle() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(2.0, 3.0, "sketch.arc"); // centre
     h.click(12.0, 3.0, "sketch.arc"); // start
     h.mouse_move(5.0, -4.0, "sketch.arc");
-    h.key(KeyCode::Key9, Some("sketch.arc"));
-    h.key(KeyCode::Key0, Some("sketch.arc"));
-    h.key(KeyCode::Enter, Some("sketch.arc"));
+    h.keys("90\n", Some("sketch.arc"));
 
     let sketch = h.sketch();
     assert_eq!(h.counts().3, 1, "the arc is made");
@@ -2695,15 +2119,9 @@ fn typed_arc_sweep_turns_the_end_and_holds_the_angle() {
 
 #[test]
 fn typed_polygon_rotation_turns_its_first_vertex() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(2.0, 3.0, "sketch.polygon");
-    h.key(KeyCode::Key1, Some("sketch.polygon"));
-    h.key(KeyCode::Key0, Some("sketch.polygon"));
-    h.key(KeyCode::Tab, Some("sketch.polygon"));
-    h.key(KeyCode::Key3, Some("sketch.polygon"));
-    h.key(KeyCode::Key0, Some("sketch.polygon"));
-    h.key(KeyCode::Enter, Some("sketch.polygon"));
+    h.keys("10\t30\n", Some("sketch.polygon"));
 
     let sketch = h.sketch();
     let (cos, sin) = (30f64.to_radians().cos(), 30f64.to_radians().sin());
@@ -2713,66 +2131,39 @@ fn typed_polygon_rotation_turns_its_first_vertex() {
         point_positions(&sketch)
     );
     // A hexagon's first side runs at the turn + 90° + 30°.
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::AngleToAxis { angle_rad, .. }
-            if (angle_rad.to_degrees() - 150.0).abs() < 1e-3
-    )));
+    assert!(holds(&sketch, "AngleToAxis", Some(150.0)));
 }
 
 #[test]
 fn typed_slot_width_sizes_the_caps() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(2.0, 3.0, "sketch.slot");
     h.mouse_move(10.0, 3.5, "sketch.slot");
-    h.key(KeyCode::Key2, Some("sketch.slot"));
-    h.key(KeyCode::Key0, Some("sketch.slot"));
+    h.keys("20", Some("sketch.slot"));
     h.key(KeyCode::Tab, Some("sketch.slot")); // angle
     h.key(KeyCode::Tab, Some("sketch.slot")); // width
-    h.key(KeyCode::Key6, Some("sketch.slot"));
-    h.key(KeyCode::Enter, Some("sketch.slot"));
+    h.keys("6\n", Some("sketch.slot"));
 
     let sketch = h.sketch();
-    let caps: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.radius),
-            _ => None,
-        })
-        .collect();
+    let caps: Vec<f64> = all_arcs(&sketch).into_iter().map(|a| a.radius).collect();
     assert_eq!(caps.len(), 2);
     assert!(caps.iter().all(|r| (r - 3.0).abs() < 1e-3), "{caps:?}");
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::Radius { radius, .. } if (radius - 3.0).abs() < 1e-5
-    )));
+    assert!(holds(&sketch, "Radius", Some(3.0)));
     assert_eq!(distance_constraints(&sketch), vec![(20.0, true)]);
 }
 
 #[test]
 fn typed_arc_slot_sweep_and_width_size_the_slot() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.arc_slot"); // arc center
     h.click(8.0, 0.0, "sketch.arc_slot"); // centerline start (r = 8)
     h.mouse_move(5.0, 6.0, "sketch.arc_slot");
-    h.key(KeyCode::Key9, Some("sketch.arc_slot"));
-    h.key(KeyCode::Key0, Some("sketch.arc_slot"));
+    h.keys("90", Some("sketch.arc_slot"));
     h.key(KeyCode::Tab, Some("sketch.arc_slot")); // width
-    h.key(KeyCode::Key3, Some("sketch.arc_slot"));
-    h.key(KeyCode::Enter, Some("sketch.arc_slot"));
+    h.keys("3\n", Some("sketch.arc_slot"));
 
     let sketch = h.sketch();
-    let mut radii: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.radius),
-            _ => None,
-        })
-        .collect();
+    let mut radii: Vec<f64> = all_arcs(&sketch).into_iter().map(|a| a.radius).collect();
     radii.sort_by(f64::total_cmp);
     // Two caps half the width across, rails half the width either side of r = 8.
     assert_eq!(radii.len(), 4, "{radii:?}");
@@ -2784,27 +2175,15 @@ fn typed_arc_slot_sweep_and_width_size_the_slot() {
         "the centerline ends a quarter turn round: {:?}",
         point_positions(&sketch)
     );
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::Radius { radius, .. } if (radius - 1.5).abs() < 1e-5
-    )));
-    assert!(sketch.constraints.iter().any(|c| matches!(
-        c.kind,
-        ConstraintKind::ArcAngle { angle_rad, .. }
-            if (angle_rad.to_degrees() - 90.0).abs() < 1e-3
-    )));
+    assert!(holds(&sketch, "Radius", Some(1.5)));
+    assert!(holds(&sketch, "ArcAngle", Some(90.0)));
 }
 
 #[test]
 fn typed_x_and_y_place_the_first_point() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.mouse_move(30.0, 20.0, "sketch.line");
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Tab, Some("sketch.line"));
-    h.key(KeyCode::Minus, Some("sketch.line"));
-    h.key(KeyCode::Key7, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.keys("5\t-7\n", Some("sketch.line"));
     h.click(20.0, 13.0, "sketch.line");
 
     let sketch = h.sketch();
@@ -2846,8 +2225,7 @@ fn a_formula_or_a_paste_types_a_length() {
 
 #[test]
 fn an_unfinished_formula_commits_nothing() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(3.0, 4.0, "sketch.line");
     h.type_text("2 *", Some("sketch.line"));
     h.key(KeyCode::Enter, Some("sketch.line"));
@@ -2859,8 +2237,7 @@ fn an_unfinished_formula_commits_nothing() {
 
 #[test]
 fn a_typed_length_keeps_its_way_as_the_cursor_crosses_the_start() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(3.0, 4.0, "sketch.line");
     h.mouse_move(13.0, 4.5, "sketch.line");
     h.key(KeyCode::Key8, Some("sketch.line"));
@@ -2884,8 +2261,7 @@ fn a_typed_length_keeps_its_way_as_the_cursor_crosses_the_start() {
 
 #[test]
 fn glyph_click_selects_constraint_and_delete_removes_it() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Off the axes: a point there would pin to the origin or an axis.
     h.click(3.0, 4.0, "sketch.line");
     h.click(18.0, 4.05, "sketch.line"); // axis snap → auto Horizontal
@@ -2907,11 +2283,8 @@ fn glyph_click_selects_constraint_and_delete_removes_it() {
 
 #[test]
 fn geometry_delete_still_works_when_no_constraint_selected() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(15.0, 0.05, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (15.0, 0.05));
 
     // Click the line away from its H glyph (which sits near the midpoint).
     h.click(3.0, 0.0, "sketch.select");
@@ -2928,26 +2301,14 @@ fn geometry_delete_still_works_when_no_constraint_selected() {
 #[test]
 fn escape_puts_a_dragged_label_back() {
     let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
-    h.key(KeyCode::Escape, Some("sketch.line"));
-
-    let labels = h.labels();
-    let dim = labels
-        .iter()
-        .find(|l| l.background && l.text == "25")
-        .expect("dimension label drawn")
-        .clone();
-    h.press_px((dim.pos[0], dim.pos[1]));
+    let pos = h.typed_line_label();
+    h.press_px(pos);
     h.mouse_move(5.0, 8.0, "sketch.select");
     h.key(KeyCode::Escape, Some("sketch.select"));
     h.release(5.0, 8.0, "sketch.select");
     let back = h.labels();
     let label = back.iter().find(|l| l.text == "25").unwrap();
-    assert_eq!(label.pos, dim.pos);
+    assert_eq!(label.pos, [pos.0, pos.1]);
     assert!(
         h.sketch()
             .constraints
@@ -2960,19 +2321,8 @@ fn escape_puts_a_dragged_label_back() {
 #[test]
 fn dimension_label_drag_updates_label_offset() {
     let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
-    h.key(KeyCode::Escape, Some("sketch.line")); // end the chain
-
-    let labels = h.labels();
-    let dim = labels
-        .iter()
-        .find(|l| l.background && l.text == "25")
-        .expect("dimension label drawn");
-    h.press_px((dim.pos[0], dim.pos[1]));
+    let pos = h.typed_line_label();
+    h.press_px(pos);
     let seq = h.doc.mutation_seq();
     h.mouse_move(5.0, 6.0, "sketch.select");
     h.mouse_move(5.0, 8.0, "sketch.select");
@@ -2984,7 +2334,7 @@ fn dimension_label_drag_updates_label_offset() {
     assert!(
         h.labels()
             .iter()
-            .all(|l| l.text != "25" || l.pos != dim.pos),
+            .all(|l| l.text != "25" || l.pos != [pos.0, pos.1]),
         "the label follows the drag"
     );
     h.release(5.0, 8.0, "sketch.select");
@@ -3010,22 +2360,8 @@ fn dimension_label_drag_updates_label_offset() {
 #[test]
 fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
     let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
-    h.key(KeyCode::Escape, Some("sketch.line"));
-
-    let labels = h.labels();
-    let dim = labels
-        .iter()
-        .find(|l| l.background && l.text == "25")
-        .expect("dimension label drawn");
-    let pos = (dim.pos[0], dim.pos[1]);
-    h.press_px(pos);
-    h.release_px(pos);
-    h.press_px(pos);
+    let pos = h.typed_line_label();
+    h.double_press_px(pos);
 
     let edit =
         h.wb.pending_dim_edit()
@@ -3033,23 +2369,23 @@ fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
     assert_eq!(edit.text, "25");
     assert!(edit.driving);
 
+    // A value typed and cancelled leaves the constraint as it was.
+    h.wb.pending_dim_edit_mut().unwrap().text = "99".to_string();
+    h.wb.cancel_dim_edit();
+    assert!(h.wb.pending_dim_edit().is_none());
+    assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
+    h.double_press_px(pos);
+
     // Type a new value and commit through the same path the popup uses.
     h.wb.pending_dim_edit_mut().unwrap().text = "30".to_string();
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    h.wb.commit_dim_edit(&mut ctx);
+    h.commit_dim_edit();
 
     let sketch = h.sketch();
     assert!(h.wb.pending_dim_edit().is_none(), "editor closed on commit");
     assert_eq!(distance_constraints(&sketch), vec![(30.0, true)]);
-    let pts: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position),
-            _ => None,
-        })
+    let pts: Vec<_> = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position)
         .collect();
     let len = (pts[1] - pts[0]).to_glam().length();
     assert!(
@@ -3059,39 +2395,11 @@ fn double_click_dimension_glyph_opens_editor_and_commit_applies() {
 }
 
 #[test]
-fn dim_edit_cancel_leaves_constraint_untouched() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
-    h.key(KeyCode::Escape, Some("sketch.line"));
-
-    let labels = h.labels();
-    let dim = labels.iter().find(|l| l.background).unwrap();
-    let pos = (dim.pos[0], dim.pos[1]);
-    h.press_px(pos);
-    h.release_px(pos);
-    h.press_px(pos);
-    assert!(h.wb.pending_dim_edit().is_some());
-    h.wb.pending_dim_edit_mut().unwrap().text = "99".to_string();
-    h.wb.cancel_dim_edit();
-    assert!(h.wb.pending_dim_edit().is_none());
-    assert_eq!(distance_constraints(&h.sketch()), vec![(25.0, true)]);
-}
-
-#[test]
 fn glyph_click_keeps_geometry_selection() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(18.0, 4.05, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(30.0, 30.0, "sketch.line");
-    h.click(40.0, 38.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((3.0, 4.0), (18.0, 4.05));
+    h.line((30.0, 30.0), (40.0, 38.0));
 
     // Select the first line, then ctrl-click its H glyph: both stay
     // selected, and Delete takes both in one step.
@@ -3102,20 +2410,10 @@ fn glyph_click_keeps_geometry_selection() {
         .find(|m| is_icon(m, "constraint-horizontal"))
         .unwrap();
     let pos = (glyph.pos[0], glyph.pos[1]);
-    h.event_with_ctrl(
-        WorkbenchInputEvent::MousePress {
-            button: MouseButton::Left,
-            viewport_pos: pos,
-        },
-        Some("sketch.select"),
-        true,
-    );
+    h.button(true, MouseButton::Left, pos, Some("sketch.select"), true);
     h.key(KeyCode::Delete, Some("sketch.select"));
     assert!(
-        !h.sketch()
-            .constraints
-            .iter()
-            .any(|c| matches!(c.kind, ConstraintKind::Horizontal { .. })),
+        !holds(&h.sketch(), "Horizontal", None),
         "the constraint went"
     );
     let (p, l, _, _) = h.counts();
@@ -3128,12 +2426,9 @@ fn glyph_click_keeps_geometry_selection() {
 
 #[test]
 fn selected_constraint_highlights_glyph_and_geometry() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Off the axes: a point there would pin to the origin or an axis.
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(18.0, 4.05, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((3.0, 4.0), (18.0, 4.05));
 
     let marks = h.marks();
     let glyph = marks
@@ -3155,10 +2450,7 @@ fn selected_constraint_highlights_glyph_and_geometry() {
         glyph.color
     );
     // Referenced line drawn in the constraint colour: shown, not selected.
-    let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-    ctx.view_proj = Some(h.vp);
-    ctx.active_document_object = h.active_object;
-    let overlays = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+    let overlays = h.overlays();
     let referenced_lines = overlays
         .iter()
         .filter(|o| same_color(o.color, pal().constraint))
@@ -3172,8 +2464,7 @@ fn selected_constraint_highlights_glyph_and_geometry() {
 
 #[test]
 fn live_readouts_follow_the_cursor_while_drawing() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.mouse_move(3.0, 4.0, "sketch.line");
     let hud = h.hud().expect("hud while editing");
@@ -3210,14 +2501,11 @@ fn live_readouts_follow_the_cursor_while_drawing() {
 
 #[test]
 fn dragging_a_line_carries_both_ends_and_the_line_attached_to_it() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // A chain off the axes: L1 (3,4)→(13,4), L2 (13,4)→(13,14). They share the corner
     // point, so moving L1 has to bring L2's start with it.
     h.click(3.0, 4.0, "sketch.line");
-    h.click(13.0, 4.0, "sketch.line");
-    h.click(13.0, 14.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((13.0, 4.0), (13.0, 14.0));
 
     // Grab L1 mid-span and move it 4 up.
     h.drag((8.0, 4.0), (8.0, 8.0));
@@ -3235,12 +2523,8 @@ fn dragging_inside_a_selection_moves_every_selected_element() {
     let mut h = Harness::new();
     // Two free lines off the axes, where nothing pins them.
     h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(13.0, 11.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(3.0, 24.0, "sketch.line");
-    h.click(13.0, 31.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((3.0, 4.0), (13.0, 11.0));
+    h.line((3.0, 24.0), (13.0, 31.0));
     // Select both lines, then drag from a point of one of them.
     h.click(8.0, 7.5, "sketch.select");
     h.click(8.0, 27.5, "sketch.select");
@@ -3252,11 +2536,8 @@ fn dragging_inside_a_selection_moves_every_selected_element() {
 
 #[test]
 fn a_drag_below_the_snap_tolerance_leaves_the_geometry_alone() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
 
     h.drag((5.0, 0.0), (5.05, 0.05));
     assert!(
@@ -3267,29 +2548,19 @@ fn a_drag_below_the_snap_tolerance_leaves_the_geometry_alone() {
 
 #[test]
 fn right_click_on_an_idle_tool_asks_for_the_select_tool() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 0.0, "sketch.line");
     // Mid-chain the right click ends the chain and keeps the tool.
     h.right_click(10.0, 0.0, "sketch.line");
     assert_eq!(h.tool_request, None, "the chain ended, the tool stayed");
+    // A right drag pans instead.
+    h.right_drag((20.0, 20.0), (30.0, 26.0), "sketch.line");
+    assert_eq!(h.tool_request, None, "the pan left the tool alone");
 
     // With nothing in flight it hands the pointer back to Select.
     h.right_click(20.0, 20.0, "sketch.line");
     assert_eq!(h.tool_request.as_deref(), Some("sketch.select"));
-}
-
-#[test]
-fn a_right_drag_pans_instead_of_changing_the_tool() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-
-    h.right_drag((20.0, 20.0), (30.0, 26.0), "sketch.line");
-    assert_eq!(h.tool_request, None, "the pan left the tool alone");
 }
 
 #[test]
@@ -3317,15 +2588,12 @@ fn selecting_two_lines_enables_the_constraint_tools_that_fit_them() {
 
 #[test]
 fn a_point_can_be_pinned_to_the_origin_from_the_viewport() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(6.0, 4.0, "sketch.point");
 
     // Select the point, then the crossing of the axes.
-    h.click(6.0, 4.0, "sketch.select");
-    h.release(6.0, 4.0, "sketch.select");
-    h.click(0.0, 0.0, "sketch.select");
-    h.release(0.0, 0.0, "sketch.select");
+    h.tap(6.0, 4.0);
+    h.tap(0.0, 0.0);
     assert!(
         h.tool_enabled("sketch.constrain.coincident"),
         "a point and the origin fit a coincident constraint"
@@ -3345,12 +2613,9 @@ fn a_point_can_be_pinned_to_the_origin_from_the_viewport() {
 
 #[test]
 fn a_line_can_be_squared_against_an_axis() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // A line that is clearly not horizontal, away from the axes.
-    h.click(4.0, 4.0, "sketch.line");
-    h.click(12.0, 9.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((4.0, 4.0), (12.0, 9.0));
 
     h.click(8.0, 6.5, "sketch.select");
     h.click(20.0, 0.0, "sketch.select"); // the X axis, clear of the line
@@ -3362,13 +2627,9 @@ fn a_line_can_be_squared_against_an_axis() {
 
     h.key(KeyCode::A, Some("sketch.constrain.parallel"));
     let sketch = h.sketch();
-    let ys: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.y),
-            _ => None,
-        })
+    let ys: Vec<f64> = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position.y)
         .collect();
     assert!(
         ys.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-3),
@@ -3378,8 +2639,7 @@ fn a_line_can_be_squared_against_an_axis() {
 
 #[test]
 fn the_axes_and_the_origin_cannot_be_deleted() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(6.0, 4.0, "sketch.point");
     h.click(0.0, 0.0, "sketch.select"); // the origin
     h.release(0.0, 0.0, "sketch.select");
@@ -3468,91 +2728,39 @@ fn the_start_card_command_opens_a_blank_sketch_on_the_selected_body() {
     assert_eq!(h.wb.editing_feature(), Some(created));
 }
 
+/// With grid snapping on, a drawn line's clicks land on grid points, and
+/// a move's base and target round to the grid as a drawing click does, so
+/// the move is a whole number of grid steps.
 #[test]
-fn with_grid_snapping_on_a_drawn_line_lands_on_grid_points() {
-    let mut h = Harness::new();
-    h.create_sketch();
+fn with_grid_snapping_on_clicks_land_on_grid_points() {
+    let mut h = Harness::sketching();
     h.wb.options.grid_on = true;
     h.wb.options.grid_snap = true;
     h.wb.options.grid_auto = false;
     h.wb.options.grid_size = 5.0;
     h.click(1.2, 0.8, "sketch.line");
     h.click(10.9, -0.3, "sketch.line");
-    let sketch = h.sketch();
-    let mut points: Vec<(f64, f64)> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some((p.position.x, p.position.y)),
-            _ => None,
-        })
-        .collect();
-    points.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    assert_eq!(points.len(), 2);
-    assert!(
-        (points[0].0 - 0.0).abs() < 0.05 && points[0].1.abs() < 0.05,
-        "{points:?}"
-    );
-    assert!(
-        (points[1].0 - 10.0).abs() < 0.05 && points[1].1.abs() < 0.05,
-        "{points:?}"
-    );
-}
-
-/// With grid snapping on, a move's base and target round to the grid as a
-/// drawing click does, so the move is a whole number of grid steps.
-#[test]
-fn with_grid_snapping_on_a_move_goes_by_grid_steps() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
     h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(5.0, 0.0, "sketch.select");
-    h.wb.options.grid_on = true;
-    h.wb.options.grid_snap = true;
-    h.wb.options.grid_auto = false;
-    h.wb.options.grid_size = 5.0;
+    assert_eq!(h.counts().0, 2);
+    assert!(h.point_at(0.0, 0.0) && h.point_at(10.0, 0.0));
 
+    h.tap(5.0, 0.0);
     h.click(20.4, 20.9, "sketch.translate"); // base, rounds to (20, 20)
     h.click(31.1, 24.2, "sketch.translate"); // target, rounds to (30, 25)
-    let sketch = h.sketch();
-    let mut xs: Vec<(f64, f64)> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some((p.position.x, p.position.y)),
-            _ => None,
-        })
-        .collect();
-    xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    assert!(
-        (xs[0].0 - 10.0).abs() < 0.05 && (xs[0].1 - 5.0).abs() < 0.05,
-        "{xs:?}"
-    );
-    assert!(
-        (xs[1].0 - 20.0).abs() < 0.05 && (xs[1].1 - 5.0).abs() < 0.05,
-        "{xs:?}"
-    );
+    let moved = point_positions(&h.sketch());
+    assert!(h.point_at(10.0, 5.0) && h.point_at(20.0, 5.0), "{moved:?}");
 }
 
 #[test]
 fn hidden_constraints_leave_no_glyph_on_the_viewport() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.line");
     h.click(10.0, 0.0, "sketch.line");
     // The axis snap gave the line a horizontal constraint, drawn as a glyph.
     assert!(!h.marks().is_empty());
-    h.event(
-        WorkbenchInputEvent::ToolActivated,
-        Some("sketch.show_constraints"),
-    );
+    h.activate("sketch.show_constraints");
     let geometry_marks = h.marks().len();
-    h.event(
-        WorkbenchInputEvent::ToolActivated,
-        Some("sketch.show_constraints"),
-    );
+    h.activate("sketch.show_constraints");
     assert!(h.marks().len() > geometry_marks, "glyphs come back");
 }
 
@@ -3560,35 +2768,16 @@ fn hidden_constraints_leave_no_glyph_on_the_viewport() {
 /// order switch puts construction on top.
 #[test]
 fn rendering_order_decides_which_geometry_draws_on_top() {
-    let mut h = Harness::new();
-    let id = h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(0.0, 5.0, "sketch.line");
-    h.click(10.0, 5.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 0.0));
+    h.line((0.0, 5.0), (10.0, 5.0));
     // The line drawn first becomes construction.
-    let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-    let first_line = feature
-        .sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
-    feature.sketch.set_construction(first_line, true);
-    h.doc.update_feature_data(id, feature.to_json()).unwrap();
+    h.edit_sketch(|s| s.set_construction(line_ids(s)[0], true));
 
     // Where the dashed (construction) segments and the normal ones fall in
     // the draw order: the later-drawn is on top.
     let order = |h: &mut Harness| {
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        let lines = h.wb.get_screen_space_overlays(&ctx, h.active_object);
+        let lines = h.overlays();
         let last_dashed = lines.iter().rposition(|o| o.dash.is_some()).unwrap();
         let first_dashed = lines.iter().position(|o| o.dash.is_some()).unwrap();
         let normal: Vec<usize> = lines
@@ -3661,12 +2850,7 @@ fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
         "{:?}",
         names(&mut h)
     );
-    h.event(
-        WorkbenchInputEvent::Action {
-            id: "sketch.polyline_arc".into(),
-        },
-        Some("sketch.polyline"),
-    );
+    h.action("sketch.polyline_arc", "sketch.polyline");
     assert!(
         names(&mut h).contains(&("Shift+A".to_string(), "square arcs")),
         "the key names the next kind of segment: {:?}",
@@ -3680,12 +2864,9 @@ fn the_polyline_switch_is_a_registered_action_named_by_its_bound_key() {
 #[test]
 fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
     use wb_sketch::sketch::{ORIGIN_ID, X_AXIS_ID, Y_AXIS_ID};
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // Near the origin, then near the X axis far from it.
-    h.click(0.05, -0.04, "sketch.line");
-    h.click(12.0, 0.08, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((0.05, -0.04), (12.0, 0.08));
     // A circle centred near the Y axis.
     h.click(-0.07, 6.0, "sketch.circle");
     h.click(2.0, 6.0, "sketch.circle");
@@ -3701,13 +2882,9 @@ fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
     assert!(pinned(ORIGIN_ID), "the line's start is on the origin");
     assert!(pinned(X_AXIS_ID), "the line's end is on the X axis");
     assert!(pinned(Y_AXIS_ID), "the circle's centre is on the Y axis");
-    let points: Vec<[f64; 2]> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some([p.position.x, p.position.y]),
-            _ => None,
-        })
+    let points: Vec<[f64; 2]> = all_points(&sketch)
+        .into_iter()
+        .map(|p| [p.position.x, p.position.y])
         .collect();
     assert!(
         points
@@ -3730,15 +2907,10 @@ fn drawing_snaps_to_the_origin_and_the_axes_and_pins_to_them() {
 fn a_click_by_a_line_s_middle_lands_on_it_and_stays_there() {
     use wb_sketch::sketch::ConstraintKind;
 
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 4.0));
     // Near the middle (13, 4), not on it.
-    h.click(13.2, 4.3, "sketch.line");
-    h.click(17.0, 12.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((13.2, 4.3), (17.0, 12.0));
 
     let sketch = h.sketch();
     let (point, _) = sketch
@@ -3763,28 +2935,16 @@ fn a_click_by_a_line_s_middle_lands_on_it_and_stays_there() {
 fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
     use wb_sketch::sketch::ConstraintKind;
 
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 14.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(3.0, 14.0, "sketch.line");
-    h.click(13.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 14.0));
+    h.line((3.0, 14.0), (13.0, 4.0));
     // The two cross at (9⅔, 7⅓), away from either's middle; a circle
     // centred just off it.
     h.click(9.8, 7.5, "sketch.circle");
     h.click(16.0, 9.0, "sketch.circle");
 
     let sketch = h.sketch();
-    let center = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            wb_sketch::sketch::GeometryElement::Circle(c) => Some(c.center),
-            _ => None,
-        })
-        .expect("a circle");
+    let center = circle_of(&sketch).center;
     let p = sketch.point_position(center).unwrap();
     assert!(
         (p.x - 29.0 / 3.0).abs() < 1e-3 && (p.y - 22.0 / 3.0).abs() < 1e-3,
@@ -3800,42 +2960,13 @@ fn a_click_by_two_lines_crossing_lands_on_the_crossing() {
     assert_eq!(held, 2, "held on both lines");
 }
 
-/// A snap's name stands above the readout card beside the cursor, not
-/// under it.
-#[test]
-fn the_snap_cue_clears_the_readout_card() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(10.0, 20.0, "sketch.line");
-    h.mouse_move(23.2, 4.2, "sketch.line");
-
-    let cue = h
-        .labels()
-        .into_iter()
-        .find(|l| l.text == "Endpoint")
-        .expect("the endpoint cue");
-    let card = h.hud().and_then(|hud| hud.ovp).expect("the readout card");
-    // The pill: 11 px text and its padding, about 20 px tall.
-    let cue_bottom = cue.pos[1] + 10.0;
-    assert!(
-        cue_bottom <= card.anchor[1],
-        "the cue's bottom {cue_bottom} runs below the card's top {}",
-        card.anchor[1]
-    );
-}
-
 /// The cue names what the cursor would snap to, and the click lands there:
-/// the same answer for both.
+/// the same answer for both. It stands above the readout card beside the
+/// cursor, not under it.
 #[test]
 fn the_snap_cue_names_where_the_click_lands() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 4.0));
     let cue = |h: &mut Harness| {
         h.labels().into_iter().map(|l| l.text).find(|t| {
             ["Endpoint", "Midpoint", "On curve", "On axis", "Origin"].contains(&t.as_str())
@@ -3855,36 +2986,31 @@ fn the_snap_cue_names_where_the_click_lands() {
     // A rectangle from the origin to the line's far end: its second corner,
     // which the cue marks as the endpoint, is that very point.
     h.click(0.1, 0.1, "sketch.rect");
-    h.click(23.2, 4.2, "sketch.rect");
-    let sketch = h.sketch();
-    let ends: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            wb_sketch::sketch::GeometryElement::Point(p)
-                if (p.position.x - 23.0).abs() < 1e-3 && (p.position.y - 4.0).abs() < 1e-3 =>
-            {
-                Some(p.id)
-            }
-            _ => None,
-        })
-        .collect();
-    assert_eq!(
-        ends.len(),
-        1,
-        "the corner is the line's end, not a copy of it"
+    h.mouse_move(23.2, 4.2, "sketch.rect");
+    let cue = h.labels().into_iter().find(|l| l.text == "Endpoint");
+    let cue = cue.expect("the endpoint cue");
+    let card = h.hud().and_then(|hud| hud.ovp).expect("the readout card");
+    // The pill: 11 px text and its padding, about 20 px tall.
+    let cue_bottom = cue.pos[1] + 10.0;
+    assert!(
+        cue_bottom <= card.anchor[1],
+        "the cue's bottom {cue_bottom} runs below the card's top {}",
+        card.anchor[1]
     );
+    h.click(23.2, 4.2, "sketch.rect");
+    let ends = point_positions(&h.sketch())
+        .into_iter()
+        .filter(|p| (*p - glam::DVec2::new(23.0, 4.0)).length() < 1e-3)
+        .count();
+    assert_eq!(ends, 1, "the corner is the line's end, not a copy of it");
 }
 
 /// With snapping off, no cue promises a snap the click will not make.
 #[test]
 fn with_snapping_off_there_is_no_cue_and_no_snap() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.event(WorkbenchInputEvent::ToolActivated, Some("sketch.snap"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 4.0));
+    h.activate("sketch.snap");
     h.mouse_move(13.2, 4.2, "sketch.line");
     assert!(
         !h.labels().iter().any(|l| l.text == "Midpoint"),
@@ -3908,11 +3034,8 @@ fn with_snapping_off_there_is_no_cue_and_no_snap() {
 fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
     use wb_sketch::sketch::{ConstraintKind, GeometryElement};
 
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(23.0, 4.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (23.0, 4.0));
     h.click(30.0, 10.0, "sketch.circle");
     h.click(35.0, 10.0, "sketch.circle");
 
@@ -3947,8 +3070,7 @@ fn a_segment_snaps_square_to_a_line_and_touching_a_circle() {
 /// first corner is not finished by the rounded rectangle's first click.
 #[test]
 fn a_new_tool_starts_fresh() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.rect");
     h.click(20.0, 20.0, "sketch.rect:rounded");
     assert_eq!(h.counts().1, 0, "no rectangle came of the stale corner");
@@ -3964,8 +3086,7 @@ fn a_new_tool_starts_fresh() {
 /// any other shape half drawn.
 #[test]
 fn right_click_finishes_a_polyline_and_drops_a_half_drawn_shape() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(3.0, 3.0, "sketch.polyline");
     h.click(13.0, 3.0, "sketch.polyline");
     h.right_click(13.0, 3.0, "sketch.polyline");
@@ -3984,11 +3105,8 @@ fn right_click_finishes_a_polyline_and_drops_a_half_drawn_shape() {
 /// is not deleted.
 #[test]
 fn backspace_while_typing_never_deletes_the_selection() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 3.0, "sketch.line");
-    h.click(13.0, 3.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 3.0), (13.0, 3.0));
     h.key(KeyCode::Escape, Some("sketch.line"));
     h.click(8.0, 3.0, "sketch.select");
     h.click(30.0, 30.0, "sketch.line");
@@ -4003,14 +3121,9 @@ fn backspace_while_typing_never_deletes_the_selection() {
 /// same click would add is left out, not doubled into a redundancy.
 #[test]
 fn a_typed_level_angle_is_not_repeated_by_an_auto_horizontal() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(3.0, 3.0, "sketch.line");
-    h.key(KeyCode::Key1, Some("sketch.line"));
-    h.key(KeyCode::Key0, Some("sketch.line"));
-    h.key(KeyCode::Tab, Some("sketch.line"));
-    h.key(KeyCode::Key0, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
+    h.keys("10\t0\n", Some("sketch.line"));
 
     let sketch = h.sketch();
     let has = |f: fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
@@ -4026,11 +3139,8 @@ fn a_typed_level_angle_is_not_repeated_by_an_auto_horizontal() {
 /// constraint tools see one line.
 #[test]
 fn a_boxed_line_is_selected_without_its_endpoints() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(3.0, 4.0, "sketch.line");
-    h.click(13.0, 4.1, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((3.0, 4.0), (13.0, 4.1));
     h.key(KeyCode::Escape, Some("sketch.line"));
     h.box_select(1.0, 2.0, 15.0, 6.0);
     h.key(KeyCode::A, Some("sketch.constrain.dimension"));
@@ -4048,23 +3158,14 @@ fn a_boxed_line_is_selected_without_its_endpoints() {
 /// clicked, at the size typed.
 #[test]
 fn a_three_point_circle_takes_a_typed_diameter() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(3.0, 3.0, "sketch.circle:3pt");
     h.click(9.0, 3.0, "sketch.circle:3pt");
-    h.key(KeyCode::Key1, Some("sketch.circle:3pt"));
-    h.key(KeyCode::Key0, Some("sketch.circle:3pt"));
+    h.keys("10", Some("sketch.circle:3pt"));
     h.mouse_move(6.0, 8.0, "sketch.circle:3pt");
     h.key(KeyCode::Enter, Some("sketch.circle:3pt"));
     let sketch = h.sketch();
-    let circle = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.clone()),
-            _ => None,
-        })
-        .expect("a circle");
+    let circle = circle_of(&sketch);
     assert!(
         (circle.radius - 5.0).abs() < 1e-3,
         "radius {}",
@@ -4085,18 +3186,8 @@ fn a_three_point_circle_takes_a_typed_diameter() {
 fn typing_into_the_dimension_editor_lands_every_key_at_once() {
     use core_document::{TaskRequest, Workbench};
     let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.key(KeyCode::Key2, Some("sketch.line"));
-    h.key(KeyCode::Key5, Some("sketch.line"));
-    h.key(KeyCode::Enter, Some("sketch.line"));
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    let labels = h.labels();
-    let dim = labels.iter().find(|l| l.background).expect("a dimension");
-    let pos = (dim.pos[0], dim.pos[1]);
-    h.press_px(pos);
-    h.release_px(pos);
-    h.press_px(pos);
+    let pos = h.typed_line_label();
+    h.double_press_px(pos);
     h.release_px(pos);
     assert!(h.wb.pending_dim_edit().is_some());
 
@@ -4157,17 +3248,11 @@ fn typing_into_the_dimension_editor_lands_every_key_at_once() {
 /// between opposite edges, which stop short of the rounded corners.
 #[test]
 fn a_typed_rounded_rectangle_keeps_its_width_and_height() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     let tool = "sketch.rect:rounded";
     h.click(5.0, 5.0, tool);
     h.mouse_move(12.0, 9.0, tool);
-    h.key(KeyCode::Key2, Some(tool));
-    h.key(KeyCode::Key0, Some(tool));
-    h.key(KeyCode::Tab, Some(tool));
-    h.key(KeyCode::Key1, Some(tool));
-    h.key(KeyCode::Key0, Some(tool));
-    h.key(KeyCode::Enter, Some(tool));
+    h.keys("20\t10\n", Some(tool));
 
     let sketch = h.sketch();
     let has = |f: fn(&ConstraintKind) -> bool| sketch.constraints.iter().any(|c| f(&c.kind));
@@ -4196,12 +3281,6 @@ mod curve_constraints {
     use super::*;
     use wb_sketch::sketch::{ConstraintKind, X_AXIS_ID};
 
-    /// Press and release at a sketch point in select mode.
-    fn pick(h: &mut Harness, x: f64, y: f64) {
-        h.click(x, y, "sketch.select");
-        h.release(x, y, "sketch.select");
-    }
-
     /// Draw an arc about `(cx, cy)` from `radius` right of it, a quarter
     /// turn counter-clockwise.
     fn quarter_arc(h: &mut Harness, cx: f64, cy: f64, radius: f64) {
@@ -4211,14 +3290,7 @@ mod curve_constraints {
     }
 
     fn arc_length_of(sketch: &Sketch) -> f64 {
-        let arc = sketch
-            .geometry
-            .iter()
-            .find_map(|g| match g {
-                GeometryElement::Arc(a) => Some(a.clone()),
-                _ => None,
-            })
-            .expect("an arc");
+        let arc = arc_of(sketch);
         let c = sketch.point_position(arc.center).unwrap().to_glam();
         let s = sketch.point_position(arc.start).unwrap().to_glam() - c;
         let e = sketch.point_position(arc.end).unwrap().to_glam() - c;
@@ -4242,26 +3314,18 @@ mod curve_constraints {
                     labels.iter().map(|l| &l.text).collect::<Vec<_>>()
                 )
             });
-        let pos = (label.pos[0], label.pos[1]);
-        h.press_px(pos);
-        h.release_px(pos);
-        h.press_px(pos);
+        h.double_press_px((label.pos[0], label.pos[1]));
         h.wb.pending_dim_edit_mut()
             .expect("a double click opens the editor")
             .text = text.to_string();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        h.wb.commit_dim_edit(&mut ctx);
+        h.commit_dim_edit();
     }
 
     #[test]
     fn an_arc_takes_a_length_along_it_that_a_formula_can_set() {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         quarter_arc(&mut h, 10.0, 0.0, 4.0);
-        pick(
-            &mut h,
+        h.tap(
             10.0 + 4.0 * std::f64::consts::FRAC_1_SQRT_2,
             4.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
@@ -4302,44 +3366,24 @@ mod curve_constraints {
     }
 
     #[test]
-    fn the_dimension_tool_sets_the_gap_between_two_circles() {
-        let mut h = Harness::new();
-        h.create_sketch();
+    fn a_new_dimension_opens_its_editor_on_what_it_measured() {
+        let mut h = Harness::sketching();
         h.click(0.0, 0.0, "sketch.circle");
         h.click(3.0, 0.0, "sketch.circle");
         h.click(12.0, 0.0, "sketch.circle");
         h.click(14.0, 0.0, "sketch.circle");
-        pick(&mut h, 0.0, 3.0);
-        pick(&mut h, 12.0, 2.0);
+        h.tap(0.0, 3.0);
+        h.tap(12.0, 2.0);
         assert!(h.tool_enabled("sketch.constrain.dimension"));
         h.key(KeyCode::A, Some("sketch.constrain.dimension"));
-        let sketch = h.sketch();
-        let gap = sketch
-            .constraints
-            .iter()
-            .find_map(|c| match c.kind {
+        let gap_of = |sketch: &Sketch| {
+            sketch.constraints.iter().find_map(|c| match c.kind {
                 ConstraintKind::Gap { distance, .. } => Some(distance),
                 _ => None,
             })
-            .unwrap_or_else(|| panic!("a gap: {:?}", sketch.constraints));
+        };
+        let gap = gap_of(&h.sketch()).expect("a gap");
         assert!((gap - 7.0).abs() < 0.05, "{gap}");
-        assert!(
-            h.labels().iter().any(|l| l.background && l.text == "7"),
-            "the gap is labelled"
-        );
-    }
-
-    #[test]
-    fn a_new_dimension_opens_its_editor_on_what_it_measured() {
-        let mut h = Harness::new();
-        h.create_sketch();
-        h.click(0.0, 0.0, "sketch.circle");
-        h.click(3.0, 0.0, "sketch.circle");
-        h.click(12.0, 0.0, "sketch.circle");
-        h.click(14.0, 0.0, "sketch.circle");
-        pick(&mut h, 0.0, 3.0);
-        pick(&mut h, 12.0, 2.0);
-        h.key(KeyCode::A, Some("sketch.constrain.dimension"));
         let edit = h.wb.pending_dim_edit().expect("the editor opened").clone();
         assert!(edit.new && edit.select_all && edit.save_as.is_none());
         assert_eq!(edit.text, "7");
@@ -4352,32 +3396,19 @@ mod curve_constraints {
 
         // A value typed and Enter: the gap takes it.
         h.wb.pending_dim_edit_mut().unwrap().text = "5".to_string();
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        h.wb.commit_dim_edit(&mut ctx);
-        let gap = h
-            .sketch()
-            .constraints
-            .iter()
-            .find_map(|c| match c.kind {
-                ConstraintKind::Gap { distance, .. } => Some(distance),
-                _ => None,
-            })
-            .unwrap();
+        h.commit_dim_edit();
+        let gap = gap_of(&h.sketch()).unwrap();
         assert!((gap - 5.0).abs() < 1e-4, "{gap}");
     }
 
     #[test]
     fn radius_or_diameter_dimensions_the_first_and_equals_the_rest() {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         h.click(0.0, 0.0, "sketch.circle");
         h.click(3.0, 0.0, "sketch.circle");
         quarter_arc(&mut h, 12.0, 0.0, 5.0);
-        pick(&mut h, 0.0, 3.0);
-        pick(
-            &mut h,
+        h.tap(0.0, 3.0);
+        h.tap(
             12.0 + 5.0 * std::f64::consts::FRAC_1_SQRT_2,
             5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
@@ -4391,12 +3422,7 @@ mod curve_constraints {
             "the circle, drawn first, takes a diameter: {:?}",
             sketch.constraints
         );
-        assert!(
-            sketch
-                .constraints
-                .iter()
-                .any(|c| matches!(c.kind, ConstraintKind::EqualRadius { .. }))
-        );
+        assert!(holds(&sketch, "EqualRadius", None));
         let radii: Vec<f64> = sketch
             .geometry
             .iter()
@@ -4414,18 +3440,14 @@ mod curve_constraints {
 
     #[test]
     fn the_angle_tool_measures_where_a_line_leaves_an_arc() {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         quarter_arc(&mut h, 0.0, 0.0, 5.0);
         // A line on from the arc's start, snapped onto it.
-        h.click(5.0, 0.0, "sketch.line");
-        h.click(9.0, 3.0, "sketch.line");
+        h.line((5.0, 0.0), (9.0, 3.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
-        h.key(KeyCode::Escape, Some("sketch.line"));
-        pick(&mut h, 5.0, 0.0);
-        pick(&mut h, 7.0, 1.5);
-        pick(
-            &mut h,
+        h.tap(5.0, 0.0);
+        h.tap(7.0, 1.5);
+        h.tap(
             5.0 * std::f64::consts::FRAC_1_SQRT_2,
             5.0 * std::f64::consts::FRAC_1_SQRT_2,
         );
@@ -4460,22 +3482,17 @@ mod curve_constraints {
 
     #[test]
     fn a_refraction_bends_a_ray_at_an_interface_to_a_ratio_of_indices() {
-        let mut h = Harness::new();
-        h.create_sketch();
-        h.click(-10.0, 2.0, "sketch.line");
-        h.click(10.0, 2.0, "sketch.line");
-        h.key(KeyCode::Escape, Some("sketch.line"));
+        let mut h = Harness::sketching();
+        h.line((-10.0, 2.0), (10.0, 2.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
         // The ray in, met on the interface, and the ray out from there.
         h.click(-4.0, 6.0, "sketch.line");
-        h.click(0.0, 2.0, "sketch.line");
-        h.click(3.0, -2.0, "sketch.line");
+        h.line((0.0, 2.0), (3.0, -2.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
-        h.key(KeyCode::Escape, Some("sketch.line"));
-        pick(&mut h, 0.0, 2.0);
-        pick(&mut h, -2.0, 4.0);
-        pick(&mut h, 1.5, 0.0);
-        pick(&mut h, 7.0, 2.0);
+        h.tap(0.0, 2.0);
+        h.tap(-2.0, 4.0);
+        h.tap(1.5, 0.0);
+        h.tap(7.0, 2.0);
         assert!(h.tool_enabled("sketch.constrain.refraction"));
         h.key(KeyCode::A, Some("sketch.constrain.refraction"));
         let sketch = h.sketch();
@@ -4540,68 +3557,49 @@ mod curve_constraints {
     /// parallel to the axis say the same thing.
     fn level_line_against_the_axis(h: &mut Harness) {
         h.create_sketch();
-        h.click(4.0, 4.0, "sketch.line");
-        h.click(12.0, 4.02, "sketch.line");
-        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.line((4.0, 4.0), (12.0, 4.02));
         h.key(KeyCode::Escape, Some("sketch.line"));
         assert!(
-            h.sketch()
-                .constraints
-                .iter()
-                .any(|c| matches!(c.kind, ConstraintKind::Horizontal { .. })),
+            holds(&h.sketch(), "Horizontal", None),
             "the line was drawn level"
         );
-        pick(h, 8.0, 4.0);
-        pick(h, 20.0, 0.0);
+        h.tap(8.0, 4.0);
+        h.tap(20.0, 0.0);
     }
 
+    /// A parallel to the axis repeats the line's horizontal: with the
+    /// preference on, the new one takes the older one's place; off, both
+    /// stay.
     #[test]
-    fn with_the_preference_on_a_new_constraint_takes_the_one_it_repeats() {
-        let mut h = Harness::new();
-        h.wb.options.auto_remove_redundant = true;
-        level_line_against_the_axis(&mut h);
-        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
-        let kinds: Vec<ConstraintKind> =
-            h.sketch().constraints.into_iter().map(|c| c.kind).collect();
-        assert!(
-            kinds.iter().any(|k| matches!(
-                k,
-                ConstraintKind::Parallel { line2, .. } if *line2 == X_AXIS_ID
-            )),
-            "the new one stays: {kinds:?}"
-        );
-        assert!(
-            !kinds
-                .iter()
-                .any(|k| matches!(k, ConstraintKind::Horizontal { .. })),
-            "the older one it repeated went: {kinds:?}"
-        );
-    }
-
-    #[test]
-    fn with_the_preference_off_both_stay() {
-        let mut h = Harness::new();
-        h.wb.options.auto_remove_redundant = false;
-        level_line_against_the_axis(&mut h);
-        h.key(KeyCode::A, Some("sketch.constrain.parallel"));
-        let kinds: Vec<ConstraintKind> =
-            h.sketch().constraints.into_iter().map(|c| c.kind).collect();
-        assert!(
-            kinds
-                .iter()
-                .any(|k| matches!(k, ConstraintKind::Horizontal { .. }))
-                && kinds
+    fn a_new_constraint_takes_the_one_it_repeats_as_the_preference_says() {
+        for remove in [true, false] {
+            let mut h = Harness::new();
+            h.wb.options.auto_remove_redundant = remove;
+            level_line_against_the_axis(&mut h);
+            h.key(KeyCode::A, Some("sketch.constrain.parallel"));
+            let kinds: Vec<ConstraintKind> =
+                h.sketch().constraints.into_iter().map(|c| c.kind).collect();
+            assert!(
+                kinds.iter().any(|k| matches!(
+                    k,
+                    ConstraintKind::Parallel { line2, .. } if *line2 == X_AXIS_ID
+                )),
+                "the new one stays ({remove}): {kinds:?}"
+            );
+            assert_eq!(
+                kinds
                     .iter()
-                    .any(|k| matches!(k, ConstraintKind::Parallel { .. })),
-            "{kinds:?}"
-        );
+                    .any(|k| matches!(k, ConstraintKind::Horizontal { .. })),
+                !remove,
+                "whether the older one it repeated stays ({remove}): {kinds:?}"
+            );
+        }
     }
 }
 
 #[test]
 fn rectangle_variants_draw_turned_rectangles_and_frames() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
         h.click(x, y, "sketch.rect:3pt");
     }
@@ -4626,16 +3624,11 @@ fn rectangle_variants_draw_turned_rectangles_and_frames() {
 
 #[test]
 fn dragging_the_trim_tool_trims_every_span_it_crosses() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // A horizontal wall and three posts through it.
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(20.0, 0.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((0.0, 0.0), (20.0, 0.0));
     for x in [5.0, 10.0, 15.0] {
-        h.click(x, -5.0, "sketch.line");
-        h.click(x, 5.0, "sketch.line");
-        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.line((x, -5.0), (x, 5.0));
     }
     // Pressed on empty space, dragged across the posts above the wall.
     h.click(2.0, 3.0, "sketch.trim");
@@ -4666,22 +3659,14 @@ fn dragging_the_trim_tool_trims_every_span_it_crosses() {
 
 #[test]
 fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     let tool = "sketch.bspline:through";
     for (x, y) in [(1.0, 1.0), (5.0, 6.0), (10.0, 4.0), (14.0, 8.0)] {
         h.click(x, y, tool);
     }
     h.key(KeyCode::Enter, Some(tool));
     let sketch = h.sketch();
-    let spline = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.clone()),
-            _ => None,
-        })
-        .expect("a spline");
+    let spline = spline_of(&sketch);
     assert_eq!(spline.fit_points.len(), 4);
     let near = |sketch: &Sketch, b: &wb_sketch::sketch::BSpline, x: f64, y: f64| {
         b.points(sketch, 2000)
@@ -4697,14 +3682,7 @@ fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
     h.mouse_move(10.0, 1.0, "sketch.select");
     h.release(10.0, 1.0, "sketch.select");
     let sketch = h.sketch();
-    let spline = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let spline = spline_of(&sketch);
     assert!(
         near(&sketch, &spline, 10.0, 1.0),
         "follows the dragged point"
@@ -4714,18 +3692,13 @@ fn a_spline_through_points_goes_through_the_clicks_and_bends_with_them() {
 
 #[test]
 fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(1.0, 1.0, "sketch.line");
-    h.click(9.0, 1.0, "sketch.line");
-    h.click(15.0, 3.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((9.0, 1.0), (15.0, 3.0));
     h.key(KeyCode::Escape, Some("sketch.select"));
-    h.click(5.0, 1.0, "sketch.select");
-    h.release(5.0, 1.0, "sketch.select");
+    h.tap(5.0, 1.0);
     assert!(!h.tool_enabled("sketch.join"), "one curve joins nothing");
-    h.click(12.0, 2.0, "sketch.select");
-    h.release(12.0, 2.0, "sketch.select");
+    h.tap(12.0, 2.0);
     assert!(h.tool_enabled("sketch.join"));
     // Two lines meeting at a kink: no smooth spline keeps within the
     // tolerance there, and the curves are left as they are.
@@ -4742,15 +3715,12 @@ fn join_lights_up_for_two_curves_and_leaves_a_kink_alone() {
 
 #[test]
 fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
         h.click(x, y, "sketch.ellipse:parabola");
     }
     // Its ends at (-3, 3) and (5, 3): a line snapped to both closes it.
-    h.click(5.0, 3.0, "sketch.line");
-    h.click(-3.0, 3.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((5.0, 3.0), (-3.0, 3.0));
     for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
         h.click(x, y, "sketch.ellipse:hyperbola");
     }
@@ -4764,9 +3734,7 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
     assert!(h.point_at(15.0, 3.0) && h.point_at(15.0, -1.0));
     let wires = wb_sketch::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1, "the hyperbola's open arc is left out");
-    h.click(15.0, 3.0, "sketch.line");
-    h.click(15.0, -1.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((15.0, 3.0), (15.0, -1.0));
     let wires = wb_sketch::profile::extract_wires(&h.sketch()).unwrap();
     assert_eq!(wires.len(), 2);
 
@@ -4790,15 +3758,13 @@ fn arcs_of_parabola_and_hyperbola_draw_from_the_ellipse_menu_and_close_profiles(
 #[test]
 fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
     use wb_sketch::sketch::{ConstraintKind, InternalRole};
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.ellipse");
     h.click(10.0, 0.0, "sketch.ellipse");
     h.click(5.0, 4.0, "sketch.ellipse");
     assert!(!h.tool_enabled("sketch.internal_geometry"));
     // The top of the ellipse selects it.
-    h.click(0.0, 4.0, "sketch.select");
-    h.release(0.0, 4.0, "sketch.select");
+    h.tap(0.0, 4.0);
     assert!(h.tool_enabled("sketch.internal_geometry"));
     h.key(KeyCode::A, Some("sketch.internal_geometry"));
     let sketch = h.sketch();
@@ -4827,14 +3793,7 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
     h.mouse_move(12.0, 0.0, "sketch.select");
     h.release(12.0, 0.0, "sketch.select");
     let sketch = h.sketch();
-    let ellipse = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let ellipse = ellipse_of(&sketch);
     let a = ellipse.major.to_glam().length();
     assert!(a > 10.5, "the major radius grew to {a}");
     let f = (a * a - (a * ellipse.ratio).powi(2)).sqrt();
@@ -4844,20 +3803,13 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
     assert!(h.point_at(focus.x, focus.y), "the focus followed");
 
     // Selecting the ellipse alone, the action hides it all again.
-    h.click(30.0, 30.0, "sketch.select");
-    h.release(30.0, 30.0, "sketch.select");
+    h.tap(30.0, 30.0);
     let t = std::f64::consts::FRAC_PI_4;
     let on = centre.to_glam() + u * a * t.cos() + u.perp() * a * ellipse.ratio * t.sin();
-    h.click(on.x, on.y, "sketch.select");
-    h.release(on.x, on.y, "sketch.select");
+    h.tap(on.x, on.y);
     h.key(KeyCode::A, Some("sketch.internal_geometry"));
     let sketch = h.sketch();
-    assert!(
-        !sketch
-            .constraints
-            .iter()
-            .any(|c| matches!(c.kind, ConstraintKind::InternalAlignment { .. }))
-    );
+    assert!(!holds(&sketch, "InternalAlignment", None));
     assert_eq!(
         sketch.geometry.len(),
         2,
@@ -4870,19 +3822,15 @@ fn internal_geometry_shows_on_a_selected_ellipse_follows_a_drag_and_hides() {
 /// foci on its new major axis.
 #[test]
 fn an_ellipse_showing_its_foci_drags_through_a_circle() {
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.click(0.0, 0.0, "sketch.ellipse");
     h.click(10.0, 0.0, "sketch.ellipse");
     h.click(5.0, 4.0, "sketch.ellipse");
-    h.click(0.0, 4.0, "sketch.select");
-    h.release(0.0, 4.0, "sketch.select");
+    h.tap(0.0, 4.0);
     h.key(KeyCode::A, Some("sketch.internal_geometry"));
     // The centre held, the minor axis's top end dragged from 4 up to 14.
-    h.click(30.0, 30.0, "sketch.select");
-    h.release(30.0, 30.0, "sketch.select");
-    h.click(0.0, 0.0, "sketch.select");
-    h.release(0.0, 0.0, "sketch.select");
+    h.tap(30.0, 30.0);
+    h.tap(0.0, 0.0);
     h.key(KeyCode::A, Some("sketch.constrain.lock"));
     h.click(0.0, 4.0, "sketch.select");
     for k in 1..=40 {
@@ -4890,14 +3838,7 @@ fn an_ellipse_showing_its_foci_drags_through_a_circle() {
     }
     h.release(0.0, 14.0, "sketch.select");
     let sketch = h.sketch();
-    let ellipse = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let ellipse = ellipse_of(&sketch);
     let a = ellipse.major.to_glam().length();
     assert!(
         ellipse.major.x.abs() < 1e-2 && (a - 14.0).abs() < 1e-2,
@@ -4918,13 +3859,9 @@ fn an_ellipse_showing_its_foci_drags_through_a_circle() {
 
 #[test]
 fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(2.0, 3.0, "sketch.line");
-    h.click(12.0, 5.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(7.0, 4.0, "sketch.select");
-    h.release(7.0, 4.0, "sketch.select");
+    let mut h = Harness::sketching();
+    h.line((2.0, 3.0), (12.0, 5.0));
+    h.tap(7.0, 4.0);
     h.key(KeyCode::A, Some("sketch.constrain.horizontal"));
     h.key(KeyCode::Escape, Some("sketch.select"));
     let glyph = h
@@ -4948,13 +3885,9 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
     h.mouse_move(12.0, 9.0, "sketch.select");
     h.release(12.0, 9.0, "sketch.select");
     let sketch = h.sketch();
-    let ys: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.y),
-            _ => None,
-        })
+    let ys: Vec<f64> = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position.y)
         .collect();
     assert!((ys[0] - ys[1]).abs() < 1e-3, "{ys:?}");
     // The parked layer shows it, and only it.
@@ -4970,16 +3903,12 @@ fn a_parked_constraint_leaves_the_view_until_its_layer_shows_and_still_holds() {
 fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     use wb_sketch::ConstraintFilter;
     use wb_sketch::sketch::ConstraintKind;
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     // A rectangle: four axis constraints. A free line beside it, sized.
     h.click(2.0, 2.0, "sketch.rect");
     h.click(12.0, 8.0, "sketch.rect");
-    h.click(20.0, 2.0, "sketch.line");
-    h.click(24.0, 9.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(22.0, 5.5, "sketch.select");
-    h.release(22.0, 5.5, "sketch.select");
+    h.line((20.0, 2.0), (24.0, 9.0));
+    h.tap(22.0, 5.5);
     h.key(KeyCode::A, Some("sketch.constrain.dimension"));
     // The new dimension's editor opened; Escape keeps what it measured.
     assert!(h.wb.pending_dim_edit().is_some());
@@ -5005,8 +3934,7 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     // The rectangle's bottom edge: its own axis constraint, not its
     // neighbours'.
     h.key(KeyCode::Escape, Some("sketch.select"));
-    h.click(7.0, 2.0, "sketch.select");
-    h.release(7.0, 2.0, "sketch.select");
+    h.tap(7.0, 2.0);
     let related = listed(&mut h, ConstraintFilter::Related);
     let sketch = h.sketch();
     assert_eq!(related.len(), 1);
@@ -5018,8 +3946,7 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
     );
     // Its corner: the constraints of both edges meeting there.
     h.key(KeyCode::Escape, Some("sketch.select"));
-    h.click(2.0, 2.0, "sketch.select");
-    h.release(2.0, 2.0, "sketch.select");
+    h.tap(2.0, 2.0);
     let related = listed(&mut h, ConstraintFilter::Related);
     let sketch = h.sketch();
     let kinds: Vec<_> = related
@@ -5037,12 +3964,7 @@ fn the_constraint_list_filters_by_kind_and_by_the_selection() {
 fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
     let mut h = Harness::new();
     let id = h.create_sketch();
-    let clip = |h: &mut Harness| {
-        let mut ctx = WorkbenchRuntimeContext::new(&mut h.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(h.vp);
-        ctx.active_document_object = h.active_object;
-        h.wb.clip_plane(&ctx)
-    };
+    let clip = |h: &mut Harness| h.with_ctx(|wb, ctx| wb.clip_plane(ctx));
     // A sketch opens uncut.
     assert_eq!(clip(&mut h), None);
     assert!(!h.wb.tool_toggled("sketch.section_view"));
@@ -5068,11 +3990,8 @@ fn section_view_cuts_the_scene_at_the_sketch_plane_and_stays_with_the_sketch() {
 #[test]
 fn cancelling_a_sketch_session_puts_the_sketch_back() {
     use core_document::{TaskRequest, Workbench};
-    let mut h = Harness::new();
-    h.create_sketch();
-    h.click(0.0, 0.0, "sketch.line");
-    h.click(10.0, 7.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    let mut h = Harness::sketching();
+    h.line((0.0, 0.0), (10.0, 7.0));
     assert_eq!(h.counts().1, 1, "a line drawn");
     let ctx = egui::Context::default();
     ui_kit::theme::apply_theme(&ctx);
@@ -5104,7 +4023,7 @@ fn cancelling_a_sketch_session_puts_the_sketch_back() {
 /// length.
 mod default_label_placement {
     use super::*;
-    use wb_sketch::sketch::{Arc, ConstraintKind, Line, Point, Vec2D};
+    use wb_sketch::sketch::{Arc, ConstraintKind, Line};
 
     /// The painter's pill around a label: the monospace advance plus its
     /// padding.
@@ -5144,14 +4063,8 @@ mod default_label_placement {
     }
 
     fn sketch_with(h: &mut Harness, build: impl FnOnce(&mut Sketch)) {
-        let id = h.create_sketch();
-        let mut feature = SketchFeature::from_json(h.doc.get_feature_data(id).unwrap()).unwrap();
-        build(&mut feature.sketch);
-        h.doc.update_feature_data(id, feature.to_json()).unwrap();
-    }
-
-    fn point(sketch: &mut Sketch, x: f64, y: f64) -> uuid::Uuid {
-        sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
+        h.create_sketch();
+        h.edit_sketch(build);
     }
 
     #[test]
@@ -5215,24 +4128,18 @@ mod double_click {
 
     fn double_click(h: &mut Harness, x: f64, y: f64) {
         for _ in 0..2 {
-            h.click(x, y, "sketch.select");
-            h.release(x, y, "sketch.select");
+            h.tap(x, y);
         }
     }
 
     #[test]
     fn a_curve_takes_its_chain_and_leaves_what_it_does_not_touch() {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         // A two-segment polyline and a stray line apart from it.
         h.click(-10.0, 0.0, "sketch.line");
-        h.click(0.0, 0.0, "sketch.line");
-        h.click(0.0, 8.0, "sketch.line");
+        h.line((0.0, 0.0), (0.0, 8.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
-        h.key(KeyCode::Escape, Some("sketch.line"));
-        h.click(6.0, -6.0, "sketch.line");
-        h.click(12.0, -6.0, "sketch.line");
-        h.key(KeyCode::Escape, Some("sketch.line"));
+        h.line((6.0, -6.0), (12.0, -6.0));
         h.key(KeyCode::Escape, Some("sketch.line"));
         assert_eq!(h.counts().1, 3);
 
@@ -5247,14 +4154,11 @@ mod double_click {
 
     #[test]
     fn empty_space_turns_the_view_square_on() {
-        let mut h = Harness::new();
-        h.create_sketch();
+        let mut h = Harness::sketching();
         h.view_turned = false;
-        h.click(5.0, 5.0, "sketch.select");
-        h.release(5.0, 5.0, "sketch.select");
+        h.tap(5.0, 5.0);
         assert!(!h.view_turned, "one click only clears the selection");
-        h.click(5.0, 5.0, "sketch.select");
-        h.release(5.0, 5.0, "sketch.select");
+        h.tap(5.0, 5.0);
         assert!(h.view_turned);
     }
 }
@@ -5262,18 +4166,9 @@ mod double_click {
 /// A slanted line from (1, 10) to (11, 15), its chain ended: what the
 /// direction and extension snaps below follow.
 fn slanted_line(h: &mut Harness) -> uuid::Uuid {
-    h.click(1.0, 10.0, "sketch.line");
-    h.click(11.0, 15.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((1.0, 10.0), (11.0, 15.0));
     let sketch = h.sketch();
-    sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .expect("the line")
+    line_of(&sketch).id
 }
 
 /// The direction of line `id`, unit length.
@@ -5298,57 +4193,45 @@ fn other_line(sketch: &Sketch, id: uuid::Uuid) -> uuid::Uuid {
         .expect("a second line")
 }
 
+/// A line drawn a little off parallel or square to another ends exactly
+/// so, and is held so.
 #[test]
-fn a_line_drawn_nearly_parallel_to_another_ends_parallel_and_held_so() {
+fn a_line_drawn_nearly_parallel_or_square_to_another_ends_so_and_held_so() {
     use wb_sketch::sketch::ConstraintKind;
-    let mut h = Harness::new();
-    h.create_sketch();
-    let first = slanted_line(&mut h);
-    // Along (2, 1) from (2, -12) the end would be (12, -7): a little off.
-    h.click(2.0, -12.0, "sketch.line");
-    h.click(12.0, -6.7, "sketch.line");
-    let sketch = h.sketch();
-    let second = other_line(&sketch, first);
-    let cross = direction(&sketch, first).perp_dot(direction(&sketch, second));
-    assert!(cross.abs() < 1e-4, "parallel: {cross}");
-    assert!(
-        sketch.constraints.iter().any(|c| matches!(
-            c.kind,
-            ConstraintKind::Parallel { line1, line2 } if line1 == second && line2 == first
-        )),
-        "{:?}",
-        sketch.constraints
-    );
-}
-
-#[test]
-fn a_line_drawn_nearly_square_to_another_ends_square_and_held_so() {
-    use wb_sketch::sketch::ConstraintKind;
-    let mut h = Harness::new();
-    h.create_sketch();
-    let first = slanted_line(&mut h);
-    // Along (-1, 2) from (2, -12) the end would be (-2, -4): a little off.
-    h.click(2.0, -12.0, "sketch.line");
-    h.click(-2.3, -4.0, "sketch.line");
-    let sketch = h.sketch();
-    let second = other_line(&sketch, first);
-    let dot = direction(&sketch, first).dot(direction(&sketch, second));
-    assert!(dot.abs() < 1e-4, "square: {dot}");
-    assert!(
-        sketch.constraints.iter().any(|c| matches!(
-            c.kind,
-            ConstraintKind::Perpendicular { line1, line2 } if line1 == second && line2 == first
-        )),
-        "{:?}",
-        sketch.constraints
-    );
+    // Along (2, 1) from (2, -12) the end would be (12, -7), along (-1, 2)
+    // it would be (-2, -4): each a little off.
+    for (what, end) in [("parallel", (12.0, -6.7)), ("square", (-2.3, -4.0))] {
+        let mut h = Harness::sketching();
+        let first = slanted_line(&mut h);
+        h.click(2.0, -12.0, "sketch.line");
+        h.click(end.0, end.1, "sketch.line");
+        let sketch = h.sketch();
+        let second = other_line(&sketch, first);
+        let (d1, d2) = (direction(&sketch, first), direction(&sketch, second));
+        let off = if what == "parallel" {
+            d1.perp_dot(d2)
+        } else {
+            d1.dot(d2)
+        };
+        assert!(off.abs() < 1e-4, "{what}: {off}");
+        assert!(
+            sketch.constraints.iter().any(|c| match c.kind {
+                ConstraintKind::Parallel { line1, line2 } if what == "parallel" =>
+                    line1 == second && line2 == first,
+                ConstraintKind::Perpendicular { line1, line2 } if what == "square" =>
+                    line1 == second && line2 == first,
+                _ => false,
+            }),
+            "{what}: {:?}",
+            sketch.constraints
+        );
+    }
 }
 
 #[test]
 fn a_point_on_a_line_s_extension_is_held_on_the_line() {
     use wb_sketch::sketch::ConstraintKind;
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     let first = slanted_line(&mut h);
     // A third of the line's length past its far end, 0.3 off to the side.
     let off = glam::DVec2::new(-1.0, 2.0).normalize() * 0.3;
@@ -5377,12 +4260,8 @@ fn a_point_on_a_line_s_extension_is_held_on_the_line() {
 /// Two lines apart, the end of the second dragged onto the end of the
 /// first and rested there for `rest`.
 fn drag_end_onto_end(h: &mut Harness, rest: std::time::Duration) -> Sketch {
-    h.click(2.0, 3.0, "sketch.line");
-    h.click(8.0, 6.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
-    h.click(12.0, -5.0, "sketch.line");
-    h.click(18.0, -9.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((2.0, 3.0), (8.0, 6.0));
+    h.line((12.0, -5.0), (18.0, -9.0));
     h.click(18.0, -9.0, "sketch.select");
     h.mouse_move(8.0, 6.0, "sketch.select");
     std::thread::sleep(rest);
@@ -5399,44 +4278,32 @@ fn coincident_count(sketch: &Sketch) -> usize {
         .count()
 }
 
+/// A point dragged onto another and rested there past the delay joins it;
+/// one let go before the delay stays free.
 #[test]
-fn a_point_dragged_onto_another_and_rested_there_joins_it() {
-    let mut h = Harness::new();
-    h.create_sketch();
+fn a_point_dragged_onto_another_joins_it_once_rested_there() {
+    let mut h = Harness::sketching();
+    let sketch = drag_end_onto_end(&mut h, std::time::Duration::ZERO);
+    assert_eq!(coincident_count(&sketch), 0, "{:?}", sketch.constraints);
+
+    let mut h = Harness::sketching();
     h.wb.options.drag_constraint_delay_ms = 40.0;
     let sketch = drag_end_onto_end(&mut h, std::time::Duration::from_millis(80));
     assert_eq!(coincident_count(&sketch), 1, "{:?}", sketch.constraints);
-    let at_target = sketch
-        .geometry
+    let at_target = point_positions(&sketch)
         .iter()
-        .filter(|g| match g {
-            GeometryElement::Point(p) => {
-                (p.position.to_glam() - glam::DVec2::new(8.0, 6.0)).length() < 0.1
-            }
-            _ => false,
-        })
+        .filter(|p| (**p - glam::DVec2::new(8.0, 6.0)).length() < 0.1)
         .count();
     assert_eq!(at_target, 2, "both ends where the first line ends");
 }
 
 #[test]
-fn a_point_let_go_before_the_delay_stays_free() {
-    let mut h = Harness::new();
-    h.create_sketch();
-    let sketch = drag_end_onto_end(&mut h, std::time::Duration::ZERO);
-    assert_eq!(coincident_count(&sketch), 0, "{:?}", sketch.constraints);
-}
-
-#[test]
 fn a_point_dragged_onto_a_line_is_held_on_it() {
     use wb_sketch::sketch::ConstraintKind;
-    let mut h = Harness::new();
-    h.create_sketch();
+    let mut h = Harness::sketching();
     h.wb.options.drag_constraint_delay_ms = 0.0;
     let first = slanted_line(&mut h);
-    h.click(12.0, -5.0, "sketch.line");
-    h.click(18.0, -9.0, "sketch.line");
-    h.key(KeyCode::Escape, Some("sketch.line"));
+    h.line((12.0, -5.0), (18.0, -9.0));
     h.click(18.0, -9.0, "sketch.select");
     h.mouse_move(6.0, 12.6, "sketch.select");
     h.release(6.0, 12.6, "sketch.select");
@@ -5449,26 +4316,6 @@ fn a_point_dragged_onto_a_line_is_held_on_it() {
         "{:?}",
         sketch.constraints
     );
-}
-
-/// The character a number key types, as the app sends it after the key.
-fn number_text(key: KeyCode) -> Option<&'static str> {
-    Some(match key {
-        KeyCode::Key0 => "0",
-        KeyCode::Key1 => "1",
-        KeyCode::Key2 => "2",
-        KeyCode::Key3 => "3",
-        KeyCode::Key4 => "4",
-        KeyCode::Key5 => "5",
-        KeyCode::Key6 => "6",
-        KeyCode::Key7 => "7",
-        KeyCode::Key8 => "8",
-        KeyCode::Key9 => "9",
-        KeyCode::Period => ".",
-        KeyCode::Comma => ",",
-        KeyCode::Minus => "-",
-        _ => return None,
-    })
 }
 
 /// A sketch on the XY plane beside the block of `block_kernel`, with its
@@ -5493,8 +4340,7 @@ fn stored(h: &Harness) -> serde_json::Value {
 fn selected_point(h: &mut Harness, x: f64, y: f64) {
     h.click(x, y, "sketch.point");
     h.key(KeyCode::Escape, Some("sketch.point"));
-    h.click(x, y, "sketch.select");
-    h.release(x, y, "sketch.select");
+    h.tap(x, y);
 }
 
 /// The block's left edge, picked `up` along it.
@@ -5587,25 +4433,16 @@ fn coincident_takes_a_model_vertex() {
 /// A sketch circle made tangent to a round edge of the model.
 #[test]
 fn tangent_takes_a_round_model_edge() {
-    use wb_sketch::sketch::ConstraintKind;
     let (mut h, body) = beside_the_block();
     h.click(40.0, 15.0, "sketch.circle");
     h.click(42.0, 15.0, "sketch.circle");
     h.key(KeyCode::Escape, Some("sketch.circle"));
-    h.click(42.0, 15.0, "sketch.select");
-    h.release(42.0, 15.0, "sketch.select");
+    h.tap(42.0, 15.0);
     h.key(KeyCode::A, Some("sketch.constrain.tangent"));
     assert!(h.pick_edge(rim(body)));
 
     let sketch = h.sketch();
-    assert!(
-        sketch
-            .constraints
-            .iter()
-            .any(|c| matches!(c.kind, ConstraintKind::Tangent { .. })),
-        "{:?}",
-        sketch.constraints
-    );
+    assert!(holds(&sketch, "Tangent", None), "{:?}", sketch.constraints);
     let circles: Vec<(f64, f64, f64)> = sketch
         .geometry
         .iter()
@@ -5651,8 +4488,7 @@ fn an_armed_tool_takes_sketch_and_model_picks_and_reuses_projections() {
     assert_eq!(h.sketch().constraints.len(), 1);
 
     h.key(KeyCode::A, Some("sketch.constrain.distance"));
-    h.click(6.0, 2.0, "sketch.select");
-    h.release(6.0, 2.0, "sketch.select");
+    h.tap(6.0, 2.0);
     assert!(h.pick_edge(left_edge(body, 3.0)));
     let sketch = h.sketch();
     assert_eq!(sketch.constraints.len(), 2);
@@ -5712,7 +4548,7 @@ fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
             serde_json::to_value(SketchFeature::new(sketch, plane)).unwrap(),
         )
         .unwrap();
-    h.event(WorkbenchInputEvent::ToolActivated, Some("sketch.repair"));
+    h.activate("sketch.repair");
     let repaired = h.sketch();
     let wires = wb_sketch::profile::extract_wires(&repaired).unwrap();
     assert_eq!(wires.len(), 1);
@@ -5723,3 +4559,6 @@ fn repair_action_closes_an_imported_outline_and_drops_stale_construction() {
         assert!(!repaired.is_construction(kept), "a drawn end stays drawn");
     }
 }
+
+#[path = "recording.rs"]
+mod recording;

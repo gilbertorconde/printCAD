@@ -789,20 +789,10 @@ pub fn knot_points(sketch: &Sketch, spline: Uuid) -> Vec<(Vec2D, usize)> {
 mod tests {
     use super::*;
     use crate::sketch::{Arc, Circle, Line};
+    use crate::test_kinds::spline_of;
 
     fn pt(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
         sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))))
-    }
-
-    fn only_spline(sketch: &Sketch) -> BSpline {
-        sketch
-            .geometry
-            .iter()
-            .find_map(|g| match g {
-                GeometryElement::BSpline(b) => Some(b.clone()),
-                _ => None,
-            })
-            .expect("a spline")
     }
 
     fn samples(sketch: &Sketch, spline: &BSpline) -> Vec<glam::DVec2> {
@@ -820,7 +810,7 @@ mod tests {
         let effect = to_bspline(&mut sketch, &[arc].into_iter().collect());
         assert!(effect.changed);
         assert!(sketch.get_geometry(arc).is_none());
-        let spline = only_spline(&sketch);
+        let spline = spline_of(&sketch);
         assert_eq!(spline.control_points[0], s);
         assert_eq!(*spline.control_points.last().unwrap(), e);
         for p in samples(&sketch, &spline) {
@@ -835,7 +825,7 @@ mod tests {
         let c = pt(&mut sketch, 0.0, 0.0);
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 4.0)));
         to_bspline(&mut sketch, &[circle].into_iter().collect());
-        let spline = only_spline(&sketch);
+        let spline = spline_of(&sketch);
         assert_eq!(
             spline.control_points[0],
             *spline.control_points.last().unwrap()
@@ -875,15 +865,15 @@ mod tests {
     fn raising_the_degree_or_inserting_a_knot_keeps_the_curve() {
         let mut sketch = Sketch::new("t");
         let id = wavy(&mut sketch);
-        let before = samples(&sketch, &only_spline(&sketch));
+        let before = samples(&sketch, &spline_of(&sketch));
         let items: HashSet<Uuid> = [id].into_iter().collect();
         assert!(change_degree(&mut sketch, &items, 1).changed);
-        let raised = only_spline(&sketch);
+        let raised = spline_of(&sketch);
         assert_eq!(raised.degree, 4);
         assert!(off_by(&before, &sketch, &raised) < 1e-3);
         let t = param_near(&sketch, id, Vec2D::new(7.0, 3.0)).unwrap();
         assert!(add_knot(&mut sketch, id, t).changed);
-        let knotted = only_spline(&sketch);
+        let knotted = spline_of(&sketch);
         assert_eq!(
             knotted.control_points.len(),
             raised.control_points.len() + 1
@@ -904,17 +894,17 @@ mod tests {
                 .1,
             4
         );
-        assert!(off_by(&before, &sketch, &only_spline(&sketch)) < 1e-3);
+        assert!(off_by(&before, &sketch, &spline_of(&sketch)) < 1e-3);
     }
 
     #[test]
     fn lowering_the_degree_stays_near_and_keeps_the_ends() {
         let mut sketch = Sketch::new("t");
         let id = wavy(&mut sketch);
-        let first = only_spline(&sketch).control_points[0];
+        let first = spline_of(&sketch).control_points[0];
         let items: HashSet<Uuid> = [id].into_iter().collect();
         assert!(change_degree(&mut sketch, &items, -1).changed);
-        let lowered = only_spline(&sketch);
+        let lowered = spline_of(&sketch);
         assert_eq!(lowered.degree, 2);
         assert_eq!(lowered.control_points[0], first);
         let end = sketch
@@ -927,10 +917,10 @@ mod tests {
     fn a_weight_pulls_the_curve_toward_its_point() {
         let mut sketch = Sketch::new("t");
         let id = wavy(&mut sketch);
-        let spline = only_spline(&sketch);
+        let spline = spline_of(&sketch);
         let peak = spline.control_points[1];
         let near = |sketch: &Sketch| {
-            samples(sketch, &only_spline(sketch))
+            samples(sketch, &spline_of(sketch))
                 .iter()
                 .map(|p| (*p - glam::DVec2::new(5.0, 8.0)).length())
                 .fold(f64::MAX, f64::min)
@@ -940,7 +930,7 @@ mod tests {
         assert!(near(&sketch) < before * 0.7);
         assert_eq!(weight_of(&sketch, id, peak), Some(4.0));
         assert!(set_weight(&mut sketch, id, peak, 1.0).changed);
-        assert!(only_spline(&sketch).weights.is_empty());
+        assert!(spline_of(&sketch).weights.is_empty());
     }
 
     #[test]
@@ -950,7 +940,7 @@ mod tests {
         let b = pt(&mut sketch, 9.0, 3.0);
         let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
         to_bspline(&mut sketch, &[line].into_iter().collect());
-        let spline = only_spline(&sketch);
+        let spline = spline_of(&sketch);
         assert_eq!((spline.control_points[0], spline.control_points[3]), (a, b));
         for p in samples(&sketch, &spline) {
             assert!((p.y - p.x / 3.0).abs() < 1e-4);
@@ -963,7 +953,7 @@ mod tests {
         let c = pt(&mut sketch, 0.0, 0.0);
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 4.0)));
         to_bspline(&mut sketch, &[circle].into_iter().collect());
-        let id = only_spline(&sketch).id;
+        let id = spline_of(&sketch).id;
         let teeth = comb(&sketch, id);
         assert!(!teeth.is_empty());
         // A circle's curvature is the same all round: every tooth as long,

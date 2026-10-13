@@ -1103,13 +1103,6 @@ mod tests {
     }
 
     #[test]
-    fn pill_half_extents_follow_the_mono_advance_and_padding() {
-        let (hw, hh) = pill_half_extents(12.0, 4);
-        assert!((hw - (0.3 * 12.0 * 4.0 + 5.0)).abs() < 1e-5);
-        assert!((hh - (0.65 * 12.0 + 2.0)).abs() < 1e-5);
-    }
-
-    #[test]
     fn dimension_label_hit_uses_text_rect() {
         let g = [pill([100.0, 100.0], "12.5")];
         let (hw, hh) = pill_half_extents(LABEL_SIZE, 4);

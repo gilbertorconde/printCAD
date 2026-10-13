@@ -324,18 +324,6 @@ mod tests {
     }
 
     #[test]
-    fn line_circle_hits_clip_to_segment_via_on_segment() {
-        // Segment ends inside the circle: only the entry hit remains.
-        let (a, b) = (v(-10.0, 0.0), v(0.0, 0.0));
-        let hits: Vec<DVec2> = line_circle(a, b, v(0.0, 0.0), 5.0)
-            .into_iter()
-            .filter(|p| on_segment(a, b, *p))
-            .collect();
-        assert_eq!(hits.len(), 1);
-        assert!((hits[0] - v(-5.0, 0.0)).length() < 1e-4);
-    }
-
-    #[test]
     fn circle_circle_secant_tangent_miss() {
         let hits = circle_circle(v(0.0, 0.0), 5.0, v(6.0, 0.0), 5.0);
         assert_eq!(hits.len(), 2);

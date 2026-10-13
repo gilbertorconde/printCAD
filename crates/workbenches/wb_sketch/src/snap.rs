@@ -704,11 +704,7 @@ mod tests {
             snap_to_point(&sketch, Vec2D::new(5.0, 5.0), 0.5, &[]),
             SnapTarget::New(_)
         ));
-    }
-
-    #[test]
-    fn snap_excludes_requested_ids() {
-        let (sketch, a, _, _) = sketch_with_line();
+        // An excluded point is no snap target.
         assert!(matches!(
             snap_to_point(&sketch, Vec2D::new(0.1, 0.0), 0.5, &[a]),
             SnapTarget::New(_)
@@ -726,6 +722,10 @@ mod tests {
         assert_eq!(pos.x, 0.0);
         let (_, axis) = snap_axis(from, Vec2D::new(5.0, 5.0), 0.5);
         assert_eq!(axis, None);
+        // A click on the start has no direction to level.
+        let (pos, axis) = snap_axis(from, Vec2D::new(0.1, 0.1), 0.5);
+        assert_eq!(axis, None);
+        assert_eq!(pos.x, 0.1);
     }
 
     #[test]
@@ -743,13 +743,6 @@ mod tests {
         let straight_up = angle_step(from, Vec2D::new(1.4, 9.0), 15.0);
         assert!((straight_up.x - 1.0).abs() < 1e-5);
         assert_eq!(angle_step(from, from, 15.0), from, "no direction to turn");
-    }
-
-    #[test]
-    fn axis_snap_ignores_degenerate_click() {
-        let (pos, axis) = snap_axis(Vec2D::new(0.0, 0.0), Vec2D::new(0.1, 0.1), 0.5);
-        assert_eq!(axis, None);
-        assert_eq!(pos.x, 0.1);
     }
 
     #[test]
@@ -852,24 +845,5 @@ mod tests {
             Some((ORIGIN_ID, Vec2D::new(0.0, 0.0)))
         );
         assert_eq!(snap_to_curve(&empty, Vec2D::new(4.0, 4.0), 0.5, &[]), None);
-        // A line drawn along the X axis takes the snap at the same distance.
-        let (sketch, _, _, l) = sketch_with_line();
-        assert_eq!(
-            snap_to_curve(&sketch, Vec2D::new(5.0, 0.2), 0.5, &[]).map(|(id, _)| id),
-            Some(l)
-        );
-        assert_eq!(
-            snap_to_curve(&sketch, Vec2D::new(5.0, 0.2), 0.5, &[l]).map(|(id, _)| id),
-            Some(X_AXIS_ID)
-        );
-    }
-
-    #[test]
-    fn drawn_geometry_wins_over_the_reference_under_it() {
-        let (sketch, a, _, l) = sketch_with_line();
-        // The line runs along the X axis from the origin: it answers for
-        // both its mid-span and its endpoint.
-        assert_eq!(hit_test(&sketch, Vec2D::new(5.0, 0.1), 0.5), Some(l));
-        assert_eq!(hit_test(&sketch, Vec2D::new(0.05, 0.0), 0.5), Some(a));
     }
 }

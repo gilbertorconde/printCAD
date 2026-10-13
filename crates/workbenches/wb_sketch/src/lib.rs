@@ -7201,6 +7201,51 @@ pub(crate) fn carbon_copy_log(name: &str, count: usize, constraints: usize) -> S
     format!("Carbon copy of {name}: {count} elements, {constraints} constraints")
 }
 
+/// A sketch feature named `name` added to `doc` in `body`.
+#[cfg(test)]
+fn add_sketch(
+    doc: &mut core_document::Document,
+    sketch: Sketch,
+    plane: SketchPlane,
+    name: &str,
+    body: Option<BodyId>,
+) -> FeatureId {
+    let feature = SketchFeature::new(sketch, plane);
+    doc.add_feature_in_body(feature, name.into(), body).unwrap()
+}
+
+/// The tests' reading of a sketch's elements by kind: `$all` lists them,
+/// `$first` takes the first.
+#[cfg(test)]
+pub(crate) mod test_kinds {
+    use crate::sketch::{self, GeometryElement, Sketch};
+
+    macro_rules! kind {
+        ($all:ident, $variant:ident $(, $first:ident)?) => {
+            pub(crate) fn $all(sketch: &Sketch) -> Vec<sketch::$variant> {
+                let of = |g: &GeometryElement| match g {
+                    GeometryElement::$variant(e) => Some(e.clone()),
+                    _ => None,
+                };
+                sketch.geometry.iter().filter_map(of).collect()
+            }
+            $(pub(crate) fn $first(sketch: &Sketch) -> sketch::$variant {
+                $all(sketch)
+                    .into_iter()
+                    .next()
+                    .expect("an element of the kind")
+            })?
+        };
+    }
+    kind!(all_points, Point);
+    kind!(all_lines, Line, line_of);
+    kind!(all_arcs, Arc, arc_of);
+    kind!(all_circles, Circle, circle_of);
+    kind!(all_ellipses, Ellipse, ellipse_of);
+    kind!(all_splines, BSpline, spline_of);
+    kind!(all_conics, Conic, conic_of);
+}
+
 #[cfg(test)]
 mod constraint_filter {
     use super::*;
@@ -7400,27 +7445,6 @@ mod icon_coverage {
 #[cfg(test)]
 mod dimension_tool {
     use super::*;
-    use sketch::{Circle, Line, Point};
-
-    #[test]
-    fn the_dimension_tool_picks_what_the_selection_takes() {
-        let mut sketch = Sketch::new("t");
-        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(10.0, 0.0))));
-        let c = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 5.0))));
-        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        let other = sketch.add_geometry(GeometryElement::Line(Line::new(a, c)));
-        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
-        let shape =
-            |ids: &[Uuid]| constrain::SelectionShape::of(&sketch, &ids.iter().copied().collect());
-        assert_eq!(dimension_for(&shape(&[circle])), Some("radius_diameter"));
-        assert_eq!(dimension_for(&shape(&[line, other])), Some("angle"));
-        assert_eq!(dimension_for(&shape(&[a, line, other])), Some("angle"));
-        assert_eq!(dimension_for(&shape(&[a, b])), Some("distance"));
-        assert_eq!(dimension_for(&shape(&[line, circle])), Some("distance"));
-        assert_eq!(dimension_for(&shape(&[b, circle])), Some("distance"));
-        assert_eq!(dimension_for(&shape(&[])), None);
-    }
 
     #[test]
     fn the_grid_step_follows_the_zoom_in_one_two_five_steps() {
@@ -7440,6 +7464,7 @@ mod dimension_tool {
 mod sketch_picker {
     use super::*;
     use crate::sketch::ConstraintKind;
+    use crate::test_kinds::{all_points, line_of};
     use core_document::Document;
     use sketch::{Line, Point};
 
@@ -7456,13 +7481,7 @@ mod sketch_picker {
         let other_id = doc
             .add_feature_in_body(SketchFeature::new(other, from), "other".into(), None)
             .unwrap();
-        let edited = doc
-            .add_feature_in_body(
-                SketchFeature::new(Sketch::new("edited"), onto),
-                "edited".into(),
-                None,
-            )
-            .unwrap();
+        let edited = add_sketch(&mut doc, Sketch::new("edited"), onto, "edited", None);
         let wb = SketchWorkbench {
             active_sketch_id: Some(edited),
             ..SketchWorkbench::default()
@@ -7475,14 +7494,7 @@ mod sketch_picker {
     }
 
     fn points(sketch: &Sketch) -> Vec<Vec2D> {
-        sketch
-            .geometry
-            .iter()
-            .filter_map(|g| match g {
-                GeometryElement::Point(p) => Some(p.position),
-                _ => None,
-            })
-            .collect()
+        all_points(sketch).into_iter().map(|p| p.position).collect()
     }
 
     fn shifted(dx: f64, dy: f64, dz: f64) -> SketchPlane {
@@ -7492,77 +7504,62 @@ mod sketch_picker {
         }
     }
 
+    /// A carbon copy from a parallel plane keeps the line where it stands
+    /// and its constraints, turned with it: from a shifted plane in place,
+    /// from a facing one mirrored (still level), from a quarter-turned one
+    /// upright.
     #[test]
-    fn a_carbon_copy_from_a_shifted_plane_keeps_its_place_and_constraints() {
-        let (mut doc, mut wb, other) = scene(shifted(5.0, 0.0, 20.0), SketchPlane::xy());
-        let mut ctx = ctx(&mut doc);
-        wb.carbon_copy(&mut ctx, other);
-        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
-        assert_eq!(copy.geometry.len(), 3);
-        assert_eq!(copy.constraints.len(), 2);
-        let pts = points(&copy);
-        assert!(
-            pts.iter()
-                .any(|p| (p.x - 5.0).abs() < 1e-4 && p.y.abs() < 1e-4)
-        );
-        assert!(
-            pts.iter()
-                .any(|p| (p.x - 15.0).abs() < 1e-4 && p.y.abs() < 1e-4)
-        );
-    }
-
-    #[test]
-    fn a_carbon_copy_from_a_facing_plane_is_mirrored_with_its_constraints() {
+    fn a_carbon_copy_from_a_parallel_plane_lands_where_the_line_stands() {
         let facing = SketchPlane {
             normal: [0.0, 0.0, -1.0],
             x_axis: [-1.0, 0.0, 0.0],
             ..SketchPlane::xy()
         };
-        let (mut doc, mut wb, other) = scene(facing, SketchPlane::xy());
-        let mut ctx = ctx(&mut doc);
-        wb.carbon_copy(&mut ctx, other);
-        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
-        assert_eq!(copy.geometry.len(), 3);
-        assert!(points(&copy).iter().any(|p| (p.x + 10.0).abs() < 1e-4));
-        // Mirrored about the y axis, a horizontal line stays horizontal.
-        assert!(
-            copy.constraints
-                .iter()
-                .any(|c| matches!(c.kind, ConstraintKind::Horizontal { .. }))
-        );
-        assert!(copy.constraints.iter().any(
-            |c| matches!(c.kind, ConstraintKind::Length { length, .. } if (length - 10.0).abs() < 1e-4)
-        ));
-    }
-
-    /// From a plane turned a quarter against this one, the horizontal line
-    /// comes vertical, and its constraint with it.
-    #[test]
-    fn a_carbon_copy_from_a_quarter_turned_plane_turns_its_constraints() {
         let turned = SketchPlane {
             x_axis: [0.0, 1.0, 0.0],
             y_axis: [-1.0, 0.0, 0.0],
             ..SketchPlane::xy()
         };
-        let (mut doc, mut wb, other) = scene(turned, SketchPlane::xy());
-        let mut ctx = ctx(&mut doc);
-        wb.carbon_copy(&mut ctx, other);
-        let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
-        assert!(
-            points(&copy)
+        // The plane, where the line's ends land, and what holds it there.
+        for (what, from, ends, held) in [
+            (
+                "shifted",
+                shifted(5.0, 0.0, 20.0),
+                [(5.0, 0.0), (15.0, 0.0)],
+                "Horizontal",
+            ),
+            ("facing", facing, [(0.0, 0.0), (-10.0, 0.0)], "Horizontal"),
+            ("turned", turned, [(0.0, 0.0), (0.0, 10.0)], "Vertical"),
+        ] {
+            let (mut doc, mut wb, other) = scene(from, SketchPlane::xy());
+            let mut ctx = ctx(&mut doc);
+            wb.carbon_copy(&mut ctx, other);
+            let mut copy = wb.get_active_sketch(&ctx).unwrap().sketch;
+            assert_eq!(copy.geometry.len(), 3, "{what}");
+            for (x, y) in ends {
+                let lands = |p: &Vec2D| (p.x - x).abs() < 1e-4 && (p.y - y).abs() < 1e-4;
+                assert!(points(&copy).iter().any(lands), "{what}: ({x}, {y})");
+            }
+            let kinds: Vec<String> = copy
+                .constraints
                 .iter()
-                .any(|p| p.x.abs() < 1e-4 && (p.y - 10.0).abs() < 1e-4)
-        );
-        assert_eq!(copy.constraints.len(), 2);
-        assert!(
-            copy.constraints
-                .iter()
-                .any(|c| matches!(c.kind, ConstraintKind::Vertical { .. }))
-        );
-        assert!(matches!(
-            crate::solver::solve(&mut copy.clone()),
-            crate::solver::SolveOutcome::Converged { .. }
-        ));
+                .map(|c| format!("{:?}", c.kind))
+                .collect();
+            assert_eq!(kinds.len(), 2, "{what}");
+            assert!(
+                kinds.iter().any(|k| k.starts_with(held)),
+                "{what}: {kinds:?}"
+            );
+            assert!(
+                copy.constraints.iter().any(|c| matches!(c.kind, ConstraintKind::Length { length, .. } if (length - 10.0).abs() < 1e-4)),
+                "{what}: the length comes along"
+            );
+            let solved = crate::solver::solve(&mut copy);
+            assert!(
+                matches!(solved, crate::solver::SolveOutcome::Converged { .. }),
+                "{what}"
+            );
+        }
     }
 
     /// Geometry the other sketch projected from elsewhere is projected in
@@ -7574,28 +7571,13 @@ mod sketch_picker {
             datum: Uuid::new_v4(),
         });
         let mut data = SketchFeature::from_json(doc.get_feature_data(other).unwrap()).unwrap();
-        let line = data
-            .sketch
-            .geometry
-            .iter()
-            .find_map(|g| match g {
-                GeometryElement::Line(l) => Some(l.id),
-                _ => None,
-            })
-            .unwrap();
+        let line = line_of(&data.sketch).id;
         data.sketch.external.insert(line, source);
         doc.update_feature_data(other, data.to_json()).unwrap();
         let mut ctx = ctx(&mut doc);
         wb.carbon_copy(&mut ctx, other);
         let copy = wb.get_active_sketch(&ctx).unwrap().sketch;
-        let copied = copy
-            .geometry
-            .iter()
-            .find_map(|g| match g {
-                GeometryElement::Line(l) => Some(l.id),
-                _ => None,
-            })
-            .unwrap();
+        let copied = line_of(&copy).id;
         assert_eq!(copy.external.get(&copied), Some(&source));
     }
 
@@ -7654,13 +7636,13 @@ mod placed_body {
     fn a_sketch_on_a_moved_body_is_edited_where_it_sits_and_stored_in_its_frame() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let sketch = doc
-            .add_feature_in_body(
-                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
-                "s".into(),
-                Some(body),
-            )
-            .unwrap();
+        let sketch = add_sketch(
+            &mut doc,
+            Sketch::new("s"),
+            SketchPlane::xy(),
+            "s",
+            Some(body),
+        );
         let placement = BodyPlacement::new(
             glam::Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
             glam::Vec3::new(0.0, 0.0, 20.0),
@@ -7848,13 +7830,13 @@ mod close_sketch {
     #[test]
     fn the_close_tool_ends_the_session_through_the_host_as_the_panel_does() {
         let mut doc = Document::new("t");
-        let sketch = doc
-            .add_feature_in_body(
-                SketchFeature::new(Sketch::new("Sketch001"), SketchPlane::xy()),
-                "Sketch001".into(),
-                None,
-            )
-            .unwrap();
+        let sketch = add_sketch(
+            &mut doc,
+            Sketch::new("Sketch001"),
+            SketchPlane::xy(),
+            "Sketch001",
+            None,
+        );
         let mut wb = SketchWorkbench {
             active_sketch_id: Some(sketch),
             ..SketchWorkbench::default()
@@ -7882,6 +7864,7 @@ mod close_sketch {
 #[cfg(test)]
 mod external_geometry {
     use super::*;
+    use crate::test_kinds::all_points;
     use core_document::{BodyPlacement, Document, EdgeRef};
     use kernel_api::{KernelQueries, KernelResult, ProfilePlane, ProjectedEdge};
 
@@ -7931,13 +7914,13 @@ mod external_geometry {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
         doc.set_imported_brep_data(body, b"ogeom shape".to_vec(), Vec::new());
-        let sketch = doc
-            .add_feature_in_body(
-                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
-                "s".into(),
-                Some(body),
-            )
-            .unwrap();
+        let sketch = add_sketch(
+            &mut doc,
+            Sketch::new("s"),
+            SketchPlane::xy(),
+            "s",
+            Some(body),
+        );
         let mut wb = SketchWorkbench {
             active_sketch_id: Some(sketch),
             external_refreshed: Some(sketch),
@@ -7966,13 +7949,9 @@ mod external_geometry {
         let stored = stored_sketch(ctx.document, sketch).unwrap().sketch;
         assert_eq!(stored.external.len(), 2, "both lines came in");
         assert!(stored.external.values().all(|s| s.section));
-        let xs: Vec<f64> = stored
-            .geometry
-            .iter()
-            .filter_map(|g| match g {
-                GeometryElement::Point(p) => Some(p.position.x),
-                _ => None,
-            })
+        let xs: Vec<f64> = all_points(&stored)
+            .into_iter()
+            .map(|p| p.position.x)
             .collect();
         assert!(
             xs.iter()
@@ -7995,13 +7974,13 @@ mod external_geometry {
             body,
             BodyPlacement::new(glam::Quat::IDENTITY, glam::Vec3::new(0.0, 3.0, 0.0)),
         );
-        let sketch = doc
-            .add_feature_in_body(
-                SketchFeature::new(Sketch::new("s"), SketchPlane::xy()),
-                "s".into(),
-                Some(body),
-            )
-            .unwrap();
+        let sketch = add_sketch(
+            &mut doc,
+            Sketch::new("s"),
+            SketchPlane::xy(),
+            "s",
+            Some(body),
+        );
         let mut wb = SketchWorkbench {
             active_sketch_id: Some(sketch),
             last_tool: Some("sketch.external".to_string()),
@@ -8049,6 +8028,7 @@ mod external_geometry {
 mod formulas {
     use super::*;
     use crate::sketch::{Constraint, ConstraintKind};
+    use crate::test_kinds::all_points;
     use core_document::{Document, DocumentService};
     use sketch::{Line, Point};
 
@@ -8086,36 +8066,35 @@ mod formulas {
         (doc, wb, id, length_id)
     }
 
+    fn ctx(doc: &mut Document) -> WorkbenchRuntimeContext<'_> {
+        WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600))
+    }
+
+    /// The registry with the sketcher in it, as the app evaluates with.
+    fn registry() -> DocumentService {
+        let mut registry = DocumentService::default();
+        registry
+            .register_workbench(Box::new(SketchWorkbench::default()))
+            .unwrap();
+        registry
+    }
+
     fn line_length(wb: &SketchWorkbench, doc: &mut Document) -> f64 {
-        let ctx = WorkbenchRuntimeContext::new(doc, [0.0, 0.0, 50.0], [0.0; 3], (0, 0, 800, 600));
-        let feature = wb.get_active_sketch(&ctx).unwrap();
-        let xs: Vec<f64> = feature
-            .sketch
-            .geometry
-            .iter()
-            .filter_map(|g| match g {
-                GeometryElement::Point(p) => Some(p.position.x),
-                _ => None,
-            })
+        let feature = wb.get_active_sketch(&ctx(doc)).unwrap();
+        let xs: Vec<f64> = all_points(&feature.sketch)
+            .into_iter()
+            .map(|p| p.position.x)
             .collect();
         xs.iter().cloned().fold(f64::MIN, f64::max) - xs.iter().cloned().fold(f64::MAX, f64::min)
     }
 
     #[test]
     fn a_dimension_set_by_a_formula_solves_and_follows_its_variable_while_open() {
-        let mut registry = DocumentService::default();
-        registry
-            .register_workbench(Box::new(SketchWorkbench::default()))
-            .unwrap();
+        let registry = registry();
         let (mut doc, mut wb, id, length) = scene();
         registry.evaluate(&mut doc);
         {
-            let mut ctx = WorkbenchRuntimeContext::new(
-                &mut doc,
-                [0.0, 0.0, 50.0],
-                [0.0; 3],
-                (0, 0, 800, 600),
-            );
+            let mut ctx = ctx(&mut doc);
             wb.set_dimension(&mut ctx, length, "Sizes.w / 2", true);
         }
         assert_eq!(
@@ -8133,12 +8112,7 @@ mod formulas {
 
         // A value typed with a unit takes the formula away.
         {
-            let mut ctx = WorkbenchRuntimeContext::new(
-                &mut doc,
-                [0.0, 0.0, 50.0],
-                [0.0; 3],
-                (0, 0, 800, 600),
-            );
+            let mut ctx = ctx(&mut doc);
             wb.set_dimension(&mut ctx, length, "1 in", true);
         }
         assert_eq!(doc.feature_formula(id, &length.to_string()), None);
@@ -8148,20 +8122,12 @@ mod formulas {
 
     #[test]
     fn saving_a_value_as_a_variable_makes_it_and_binds_the_dimension() {
-        let mut registry = DocumentService::default();
-        registry
-            .register_workbench(Box::new(SketchWorkbench::default()))
-            .unwrap();
+        let registry = registry();
         let (mut doc, mut wb, id, length) = scene();
         registry.evaluate(&mut doc);
         // Into a new set: the name is free, the set is made for it.
         {
-            let mut ctx = WorkbenchRuntimeContext::new(
-                &mut doc,
-                [0.0, 0.0, 50.0],
-                [0.0; 3],
-                (0, 0, 800, 600),
-            );
+            let mut ctx = ctx(&mut doc);
             let save = SaveAs {
                 name: "wall".into(),
                 set: None,
@@ -8189,12 +8155,7 @@ mod formulas {
         // Into a set that is there: a formula typed is the variable's.
         let sizes = doc.object_named("Sizes").unwrap();
         {
-            let mut ctx = WorkbenchRuntimeContext::new(
-                &mut doc,
-                [0.0, 0.0, 50.0],
-                [0.0; 3],
-                (0, 0, 800, 600),
-            );
+            let mut ctx = ctx(&mut doc);
             let save = SaveAs {
                 name: "half".into(),
                 set: Some(sizes),
@@ -8213,10 +8174,7 @@ mod formulas {
     #[test]
     fn a_field_is_offered_the_variables_of_its_kind_under_free_names() {
         let (mut doc, ..) = scene();
-        let mut registry = DocumentService::default();
-        registry
-            .register_workbench(Box::new(SketchWorkbench::default()))
-            .unwrap();
+        let registry = registry();
         let sizes = doc.object_named("Sizes").unwrap();
         doc.set_variable(sizes, "tilt", "30 deg", None).unwrap();
         registry.evaluate(&mut doc);
@@ -8434,13 +8392,7 @@ mod passive_regions {
             )));
         }
         let mut doc = Document::new("t");
-        let id = doc
-            .add_feature_in_body(
-                SketchFeature::new(sketch, SketchPlane::xy()),
-                "t".into(),
-                None,
-            )
-            .unwrap();
+        let id = add_sketch(&mut doc, sketch, SketchPlane::xy(), "t", None);
         (doc, id)
     }
 
@@ -8453,6 +8405,8 @@ mod passive_regions {
         bench.passive_geometry(doc, id, node).unwrap().region
     }
 
+    /// A closed sketch offers its loops to shade while regions are shaded;
+    /// an open one shades nothing.
     #[test]
     fn a_closed_sketch_offers_its_loops_to_shade_when_regions_are_shaded() {
         let (doc, id) = triangle(true);
@@ -8460,13 +8414,9 @@ mod passive_regions {
         let shaded = region(&bench, &doc, id).expect("a region");
         assert_eq!(shaded.profile.wires.len(), 1);
         assert!(shaded.profile.plane.origin[2] > 0.0, "a hair off the plane");
+        let (open, open_id) = triangle(false);
+        assert!(region(&bench, &open, open_id).is_none(), "open: no region");
         bench.options.shade_regions = false;
         assert!(region(&bench, &doc, id).is_none());
-    }
-
-    #[test]
-    fn an_open_sketch_shades_nothing() {
-        let (doc, id) = triangle(false);
-        assert!(region(&SketchWorkbench::default(), &doc, id).is_none());
     }
 }

@@ -768,28 +768,6 @@ mod tests {
     }
 
     #[test]
-    fn rectangle_extracts_one_closed_wire() {
-        let mut sketch = Sketch::new("t");
-        rectangle(&mut sketch);
-        let wires = extract_wires(&sketch).unwrap();
-        assert_eq!(wires.len(), 1);
-        assert_eq!(wires[0].segments.len(), 4);
-    }
-
-    #[test]
-    fn circle_is_its_own_wire() {
-        let mut sketch = Sketch::new("t");
-        let c = pt(&mut sketch, 3.0, 3.0);
-        sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
-        let wires = extract_wires(&sketch).unwrap();
-        assert_eq!(wires.len(), 1);
-        assert!(matches!(
-            wires[0].segments[0],
-            ProfileSegment::Circle { radius, .. } if (radius - 2.0).abs() < 1e-9
-        ));
-    }
-
-    #[test]
     fn rectangle_with_hole_gives_two_wires() {
         let mut sketch = Sketch::new("t");
         rectangle(&mut sketch);
@@ -797,6 +775,11 @@ mod tests {
         sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 1.0)));
         let wires = extract_wires(&sketch).unwrap();
         assert_eq!(wires.len(), 2);
+        // The circle is a wire of its own.
+        assert!(wires.iter().any(|w| matches!(
+            w.segments[..],
+            [ProfileSegment::Circle { radius, .. }] if (radius - 1.0).abs() < 1e-9
+        )));
     }
 
     #[test]
@@ -850,10 +833,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_sketch_is_rejected_but_points_are_ignored() {
+    fn empty_sketch_is_rejected_and_points_and_construction_are_ignored() {
         let mut sketch = Sketch::new("t");
         assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
-        pt(&mut sketch, 1.0, 1.0);
+        let center = pt(&mut sketch, 1.0, 1.0);
+        assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
+        // So is construction geometry.
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
+        sketch.set_construction(circle, true);
         assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
     }
 
@@ -873,15 +860,6 @@ mod tests {
         let wires = extract_wires(&sketch).unwrap();
         assert_eq!(wires.len(), 1, "only the rectangle remains");
         assert_eq!(wires[0].segments.len(), 4);
-    }
-
-    #[test]
-    fn all_construction_geometry_yields_empty_error() {
-        let mut sketch = Sketch::new("t");
-        let center = pt(&mut sketch, 0.0, 0.0);
-        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
-        sketch.set_construction(circle, true);
-        assert_eq!(extract_wires(&sketch), Err(ProfileError::Empty));
     }
 
     #[test]

@@ -927,9 +927,16 @@ fn corpus_checks_geometric_meaning_and_held_fallback() {
     for (mut sketch, held) in cases() {
         let name = sketch.name.clone();
         let result = solve_holding(&mut sketch, &held);
-        if name == "conflict" {
-            assert!(matches!(result, SolveOutcome::NotConverged { .. }));
+        if name == "empty" {
+            assert_eq!(result, SolveOutcome::NothingToSolve);
+            assert!(!sketch.is_fully_constrained);
+        } else if name == "conflict" {
+            match result {
+                SolveOutcome::NotConverged { residual } => assert!(residual > 1e-3),
+                other => panic!("{name}: {other:?}"),
+            }
             assert!(sketch.unsolved);
+            assert!(!sketch.is_fully_constrained);
         } else if name == "held_success" || name == "held_fallback" || name == "ordinary" {
             assert!(
                 matches!(result, SolveOutcome::Converged { .. }),

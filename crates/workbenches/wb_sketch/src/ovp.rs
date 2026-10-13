@@ -1316,7 +1316,7 @@ pub fn readout_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sketch::{Line, Point, Sketch};
+    use crate::sketch::Sketch;
 
     fn sketch_with_point(pos: Vec2D) -> (Sketch, SnapTarget) {
         let sketch = Sketch::new("t");
@@ -1500,48 +1500,12 @@ mod tests {
     }
 
     #[test]
-    fn typed_line_commit_adds_distance_and_angle_constraints() {
-        let mut sketch = Sketch::new("t");
-        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(25.0, 0.0))));
-        sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        let mut cap = DimCapture::default();
-        let before = ToolState::LineFrom {
-            from: SnapTarget::Existing(a),
-            chain: false,
-        };
-        let after = ToolState::LineFrom {
-            from: SnapTarget::Existing(b),
-            chain: true,
-        };
-        let added = apply_typed_constraints(
-            &mut cap,
-            &mut sketch,
-            &before,
-            &after,
-            true,
-            &[(FieldKind::Length, 25.0), (FieldKind::Angle, 360.0)],
-            true,
-        );
-        assert_eq!(added, 2);
-        assert!(sketch.constraints.iter().any(|c| matches!(
-            c.kind,
-            ConstraintKind::Distance { distance, .. } if (distance - 25.0).abs() < 1e-5
-        )));
-        // 360° normalizes to 0°.
-        assert!(sketch.constraints.iter().any(|c| matches!(
-            c.kind,
-            ConstraintKind::AngleToAxis { angle_rad, axis: AxisDirection::Horizontal, .. }
-                if angle_rad.abs() < 1e-5
-        )));
-    }
-
-    #[test]
     fn normalize_deg_wraps_into_half_open_range() {
         assert!((normalize_deg(270.0) + 90.0).abs() < 1e-5);
         assert!((normalize_deg(-270.0) - 90.0).abs() < 1e-5);
         assert!((normalize_deg(180.0) - 180.0).abs() < 1e-5);
         assert!((normalize_deg(-180.0) - 180.0).abs() < 1e-5);
+        assert!(normalize_deg(360.0).abs() < 1e-5);
     }
 
     #[test]

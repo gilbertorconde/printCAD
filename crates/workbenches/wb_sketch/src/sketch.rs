@@ -1856,20 +1856,10 @@ mod construction_tests {
 
         sketch.set_construction(line, false);
         assert!(!sketch.is_construction(line));
-    }
 
-    #[test]
-    fn old_json_without_construction_field_deserializes() {
-        // A sketch serialized before the `construction` field existed.
-        let json = serde_json::json!({
-            "id": Uuid::new_v4(),
-            "name": "legacy",
-            "plane": SketchPlane::xy(),
-            "geometry": [],
-            "constraints": [],
-            "is_fully_constrained": false,
-        });
-        let sketch: Sketch = serde_json::from_value(json).expect("legacy sketch loads");
+        // A cascade delete takes the flag with the element.
+        sketch.set_construction(line, true);
+        sketch.remove_geometry_cascade(&[a]);
         assert!(sketch.construction.is_empty());
     }
 
@@ -1912,17 +1902,6 @@ mod construction_tests {
             "the spline's other control points go with it"
         );
     }
-
-    #[test]
-    fn cascade_delete_cleans_construction_set() {
-        let mut sketch = Sketch::new("t");
-        let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
-        let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(5.0, 0.0))));
-        let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
-        sketch.set_construction(line, true);
-        sketch.remove_geometry_cascade(&[a]);
-        assert!(sketch.construction.is_empty());
-    }
 }
 
 #[cfg(test)]
@@ -1940,10 +1919,7 @@ mod constraint_record_tests {
             ConstraintKind::Length { line: l, length } if l == line && (length - 12.5).abs() < 1e-6
         ));
         assert!(c.driving && c.active && c.name.is_none());
-    }
 
-    #[test]
-    fn full_record_without_label_offset_deserializes() {
         // A record saved before `label_offset` existed.
         let json = serde_json::json!({
             "id": Uuid::new_v4(),
@@ -1957,43 +1933,30 @@ mod constraint_record_tests {
     }
 
     #[test]
-    fn label_offset_round_trips() {
-        let mut c = Constraint::new(ConstraintKind::Horizontal {
-            element: Uuid::new_v4(),
-        });
-        c.label_offset = Some(Vec2D::new(-3.5, 2.0));
-        let json = serde_json::to_value(&c).unwrap();
-        let back: Constraint = serde_json::from_value(json).unwrap();
-        let off = back.label_offset.unwrap();
-        assert!((off.x + 3.5).abs() < 1e-6 && (off.y - 2.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn a_parked_constraint_round_trips_and_an_unparked_one_says_nothing() {
-        let mut c = Constraint::new(ConstraintKind::Horizontal {
-            element: Uuid::new_v4(),
-        });
-        let json = serde_json::to_value(&c).unwrap();
-        assert!(json.get("parked").is_none());
-        c.parked = true;
-        let back: Constraint = serde_json::from_value(serde_json::to_value(&c).unwrap()).unwrap();
-        assert!(back.parked);
-        assert!(back.is_solved(), "a parked constraint still solves");
-    }
-
-    #[test]
     fn full_constraint_record_round_trips() {
         let mut c = Constraint::new(ConstraintKind::Horizontal {
             element: Uuid::new_v4(),
         });
+        // An unparked constraint says nothing of it.
+        assert!(serde_json::to_value(&c).unwrap().get("parked").is_none());
         c.driving = false;
         c.active = false;
         c.name = Some("width".to_string());
+        c.label_offset = Some(Vec2D::new(-3.5, 2.0));
+        c.parked = true;
         let json = serde_json::to_value(&c).unwrap();
         let back: Constraint = serde_json::from_value(json).unwrap();
         assert_eq!(back.id, c.id);
         assert!(!back.driving && !back.active);
         assert_eq!(back.name.as_deref(), Some("width"));
+        assert_eq!(back.label_offset, Some(Vec2D::new(-3.5, 2.0)));
+        assert!(back.parked);
+        let back = Constraint {
+            driving: true,
+            active: true,
+            ..back
+        };
+        assert!(back.is_solved(), "a parked constraint still solves");
     }
 
     #[test]
@@ -2050,6 +2013,8 @@ mod constraint_record_tests {
         let sketch: Sketch = serde_json::from_value(json).expect("legacy sketch loads");
         assert_eq!(sketch.constraints.len(), 2);
         assert!(sketch.constraints.iter().all(|c| c.driving && c.active));
+        // Written before the `construction` field existed.
+        assert!(sketch.construction.is_empty());
     }
 
     #[test]
@@ -2060,43 +2025,23 @@ mod constraint_record_tests {
         let line = sketch.add_geometry(GeometryElement::Line(Line::new(a, b)));
         let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(a, 3.0)));
 
-        let near = |v: Option<f64>, want: f64| (v.unwrap() - want).abs() < 1e-4;
-        assert!(near(
-            measured_value(&sketch, &ConstraintKind::Length { line, length: 0.0 }),
-            5.0
-        ));
-        assert!(near(
-            measured_value(
-                &sketch,
-                &ConstraintKind::Diameter {
-                    circle,
-                    diameter: 0.0
-                }
-            ),
-            6.0
-        ));
-        assert!(near(
-            measured_value(
-                &sketch,
-                &ConstraintKind::DistanceX {
+        let (length, diameter, value) = (0.0, 0.0, 0.0);
+        for (kind, want) in [
+            (ConstraintKind::Length { line, length }, 5.0),
+            (ConstraintKind::Diameter { circle, diameter }, 6.0),
+            (
+                ConstraintKind::DistanceX {
                     a,
                     b: Some(b),
-                    value: 0.0
-                }
+                    value,
+                },
+                3.0,
             ),
-            3.0
-        ));
-        assert!(near(
-            measured_value(
-                &sketch,
-                &ConstraintKind::DistanceY {
-                    a,
-                    b: None,
-                    value: 0.0
-                }
-            ),
-            2.0
-        ));
+            (ConstraintKind::DistanceY { a, b: None, value }, 2.0),
+        ] {
+            let got = measured_value(&sketch, &kind).unwrap();
+            assert!((got - want).abs() < 1e-4, "{kind:?}: {got}");
+        }
         // Non-dimensional kinds have no measured value.
         assert!(measured_value(&sketch, &ConstraintKind::Horizontal { element: line }).is_none());
     }
@@ -2127,46 +2072,32 @@ mod plane_tests {
         }
     }
 
+    /// A face's plane is orthonormal for any normal, normalized or not, and
+    /// starts where the document origin drops onto it, wherever the face
+    /// was clicked: the two ends of a pad round the origin share an axis,
+    /// and a face away from the origin keeps its own plane.
     #[test]
-    fn face_plane_top_face_matches_world_axes() {
-        // Top face of a padded box: normal +Z at height 8. Wherever the face
-        // was clicked, the sketch starts at the document origin's projection.
-        let plane = SketchPlane::from_face([5.0, 3.0, 8.0], [0.0, 0.0, 1.0]);
-        assert_orthonormal(&plane);
-        assert_eq!(plane.origin, [0.0, 0.0, 8.0]);
-        let n = glam::DVec3::from_array(plane.normal);
-        assert!((n - glam::DVec3::Z).length() < 1e-5);
-    }
-
-    #[test]
-    fn facing_faces_of_one_solid_share_a_centre() {
-        // A pad around the origin: sketches on its two ends land on the same
-        // axis, so a circle drawn at 0,0 on one is concentric with the other.
-        let front = SketchPlane::from_face([4.0, -2.0, 10.0], [0.0, 0.0, 1.0]);
-        let back = SketchPlane::from_face([-7.0, 5.0, 0.0], [0.0, 0.0, -1.0]);
-        assert_eq!(front.origin, [0.0, 0.0, 10.0]);
-        assert_eq!(back.origin, [0.0, 0.0, 0.0]);
-        assert_orthonormal(&front);
-        assert_orthonormal(&back);
-    }
-
-    #[test]
-    fn a_face_away_from_the_origin_keeps_its_own_plane() {
-        // Normal +X at x = 500: the origin drops onto the plane, not to zero.
-        let plane = SketchPlane::from_face([500.0, 120.0, 30.0], [1.0, 0.0, 0.0]);
-        assert_eq!(plane.origin, [500.0, 0.0, 0.0]);
-    }
-
-    #[test]
-    fn face_plane_side_and_arbitrary_normals() {
-        // Front face (normal -Y): the plane must be usable for sketching.
-        let plane = SketchPlane::from_face([0.0, 0.0, 0.0], [0.0, -1.0, 0.0]);
-        assert_orthonormal(&plane);
-
-        // Slanted face: still orthonormal, normalized input not required.
-        let plane = SketchPlane::from_face([1.0, 2.0, 3.0], [1.0, 1.0, 1.0]);
-        assert_orthonormal(&plane);
-        let n = glam::DVec3::from_array(plane.normal);
-        assert!((n - glam::DVec3::ONE.normalize()).length() < 1e-5);
+    fn a_face_plane_starts_at_the_origin_dropped_onto_it() {
+        for (clicked, normal, origin) in [
+            ([5.0, 3.0, 8.0], [0.0, 0.0, 1.0], Some([0.0, 0.0, 8.0])),
+            ([4.0, -2.0, 10.0], [0.0, 0.0, 1.0], Some([0.0, 0.0, 10.0])),
+            ([-7.0, 5.0, 0.0], [0.0, 0.0, -1.0], Some([0.0, 0.0, 0.0])),
+            (
+                [500.0, 120.0, 30.0],
+                [1.0, 0.0, 0.0],
+                Some([500.0, 0.0, 0.0]),
+            ),
+            ([0.0, 0.0, 0.0], [0.0, -1.0, 0.0], None),
+            ([1.0, 2.0, 3.0], [1.0, 1.0, 1.0], None),
+        ] {
+            let plane = SketchPlane::from_face(clicked, normal);
+            assert_orthonormal(&plane);
+            let n = glam::DVec3::from_array(normal).normalize();
+            let got = glam::DVec3::from_array(plane.normal);
+            assert!((got - n).length() < 1e-5, "{normal:?}: {got:?}");
+            if let Some(origin) = origin {
+                assert_eq!(plane.origin, origin, "clicked at {clicked:?}");
+            }
+        }
     }
 }

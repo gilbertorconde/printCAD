@@ -2,57 +2,97 @@ use std::collections::HashSet;
 
 use super::*;
 use crate::sketch::{Arc, Circle, ConstraintKind, Line};
+use crate::test_kinds::*;
 
-/// Forward to [`super::handle_click`] with default params and an empty
-/// selection (most tools don't consume either).
-fn handle_click(
-    state: &mut ToolState,
-    tool: &str,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-) -> ToolEffect {
-    click_p(
-        state,
-        tool,
-        sketch,
-        cursor,
-        snap_tol,
-        &ToolParams::default(),
-    )
+/// A cursor given as a point or as `(x, y)`.
+trait At {
+    fn at(self) -> Vec2D;
+}
+impl At for Vec2D {
+    fn at(self) -> Vec2D {
+        self
+    }
+}
+impl At for (f64, f64) {
+    fn at(self) -> Vec2D {
+        Vec2D::new(self.0, self.1)
+    }
 }
 
-/// Like [`handle_click`] but with explicit params.
-fn click_p(
+/// Click `tool` with default params and an empty selection (most tools
+/// consume neither).
+fn click(
     state: &mut ToolState,
     tool: &str,
     sketch: &mut Sketch,
-    cursor: Vec2D,
+    cursor: impl At,
     snap_tol: f64,
-    params: &ToolParams,
 ) -> ToolEffect {
-    super::handle_click(
-        state,
-        tool,
-        sketch,
-        cursor,
-        snap_tol,
-        params,
-        &HashSet::new(),
-    )
+    With::new(&ToolParams::default(), &HashSet::new(), snap_tol).click(state, sketch, tool, cursor)
 }
 
-/// Like [`handle_click`] but with an explicit selection.
-fn click_sel(
-    state: &mut ToolState,
-    tool: &str,
-    sketch: &mut Sketch,
-    cursor: Vec2D,
-    snap_tol: f64,
-    params: &ToolParams,
-    selected: &HashSet<Uuid>,
-) -> ToolEffect {
-    super::handle_click(state, tool, sketch, cursor, snap_tol, params, selected)
+/// The default parameters as `f` changes them.
+fn params(f: impl FnOnce(&mut ToolParams)) -> ToolParams {
+    let mut p = ToolParams::default();
+    f(&mut p);
+    p
+}
+
+/// What a test's clicks carry besides where they land: the tool's
+/// parameters, the selection and the snap tolerance.
+struct With {
+    params: ToolParams,
+    selected: HashSet<Uuid>,
+    tol: f64,
+}
+
+impl With {
+    fn new(params: &ToolParams, selected: &HashSet<Uuid>, tol: f64) -> Self {
+        Self {
+            params: *params,
+            selected: selected.clone(),
+            tol,
+        }
+    }
+
+    fn click(
+        &self,
+        state: &mut ToolState,
+        sketch: &mut Sketch,
+        tool: &str,
+        cursor: impl At,
+    ) -> ToolEffect {
+        let at = cursor.at();
+        super::handle_click(
+            state,
+            tool,
+            sketch,
+            at,
+            self.tol,
+            &self.params,
+            &self.selected,
+        )
+    }
+
+    /// Every cursor in turn; the last click's effect.
+    fn clicks<C: At>(
+        &self,
+        state: &mut ToolState,
+        sketch: &mut Sketch,
+        tool: &str,
+        cursors: impl IntoIterator<Item = C>,
+    ) -> ToolEffect {
+        let mut last = None;
+        for at in cursors {
+            last = Some(self.click(state, sketch, tool, at));
+        }
+        last.expect("at least one click")
+    }
+}
+
+/// An empty sketch and a tool at rest.
+fn fresh() -> (Sketch, ToolState) {
+    (Sketch::new("t"), ToolState::default())
 }
 
 fn count_kind(sketch: &Sketch, f: impl Fn(&GeometryElement) -> bool) -> usize {
@@ -69,6 +109,20 @@ fn arcs(s: &Sketch) -> usize {
 }
 fn circles(s: &Sketch) -> usize {
     count_kind(s, |g| matches!(g, GeometryElement::Circle(_)))
+}
+
+/// Whether a point of the sketch stands within 1e-4 of `(x, y)`.
+fn has_point(sketch: &Sketch, x: f64, y: f64) -> bool {
+    sketch.geometry.iter().any(|g| match g {
+        GeometryElement::Point(p) => (p.position - Vec2D::new(x, y)).to_glam().length() < 1e-4,
+        _ => false,
+    })
+}
+
+/// Fix a point where it stands.
+fn pin(sketch: &mut Sketch, point: Uuid) {
+    let position = sketch.point_position(point).unwrap();
+    sketch.add_constraint(ConstraintKind::FixedPoint { point, position });
 }
 
 fn pt(sketch: &mut Sketch, x: f64, y: f64) -> Uuid {
@@ -92,163 +146,21 @@ fn point_use_counts(sketch: &Sketch) -> std::collections::HashMap<Uuid, usize> {
 }
 
 #[test]
-fn line_chain_shares_points() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    assert_eq!(
-        points(&sketch),
-        0,
-        "no geometry before the segment completes"
-    );
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(10.0, 5.0),
-        0.5,
-    );
-    assert_eq!((points(&sketch), lines(&sketch)), (2, 1));
-    // Chain continues: third click adds ONE new point + one line.
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(20.0, 0.0),
-        0.5,
-    );
-    assert_eq!((points(&sketch), lines(&sketch)), (3, 2));
-    // Shared middle vertex.
-    let line_elems: Vec<&Line> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some(l),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(line_elems[0].end, line_elems[1].start);
-}
-
-#[test]
-fn cancelled_first_click_leaves_no_geometry() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    let _ = ToolState::Idle; // Escape would just drop the state
-    assert!(sketch.geometry.is_empty());
-}
-
-#[test]
 fn line_snaps_end_to_existing_point() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let existing = pt(&mut sketch, 10.0, 0.0);
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(10.2, 0.1),
-        0.5,
-    );
-    let line = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l),
-            _ => None,
-        })
-        .unwrap();
+    click(&mut state, "sketch.line", &mut sketch, (0.0, 0.0), 0.5);
+    click(&mut state, "sketch.line", &mut sketch, (10.2, 0.1), 0.5);
+    let line = line_of(&sketch);
     assert_eq!(line.end, existing, "end point reused, not duplicated");
     assert_eq!(points(&sketch), 2);
 }
 
 #[test]
-fn nearly_horizontal_line_gets_auto_constraint() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(3.0, 4.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(15.0, 4.3),
-        0.5,
-    );
-    assert_eq!(sketch.constraints.len(), 1);
-    assert!(matches!(
-        sketch.constraints[0].kind,
-        ConstraintKind::Horizontal { .. }
-    ));
-    // And the geometry was snapped level.
-    let ys: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.y),
-            _ => None,
-        })
-        .collect();
-    assert_eq!(ys, vec![4.0, 4.0]);
-}
-
-#[test]
-fn rectangle_builds_four_lines_with_constraints() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(2.0, 3.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(10.0, 8.0),
-        0.5,
-    );
-    assert_eq!((points(&sketch), lines(&sketch)), (4, 4));
-    assert_eq!(sketch.constraints.len(), 4);
-    assert!(state.is_idle());
-    // Corners form a closed loop: every point used exactly twice.
-    let uses = point_use_counts(&sketch);
-    assert!(uses.values().all(|&n| n == 2));
-}
-
-#[test]
 fn a_rectangle_freed_of_the_axes_turns_as_a_whole() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for at in [Vec2D::new(2.0, 1.0), Vec2D::new(12.0, 6.0)] {
-        handle_click(&mut state, "sketch.rect", &mut sketch, at, 0.5);
+        click(&mut state, "sketch.rect", &mut sketch, at, 0.5);
     }
     let all: HashSet<Uuid> = sketch.geometry.iter().map(GeometryElement::id).collect();
     assert_eq!(remove_axis_alignment(&mut sketch, &all), 4);
@@ -286,10 +198,7 @@ fn a_rectangle_freed_of_the_axes_turns_as_a_whole() {
             _ => None,
         })
         .unwrap();
-    sketch.add_constraint(ConstraintKind::FixedPoint {
-        point: origin,
-        position: Vec2D::new(2.0, 1.0),
-    });
+    pin(&mut sketch, origin);
     if let Some(GeometryElement::Point(p)) = sketch.get_geometry_mut(corner) {
         p.position = Vec2D::new(8.0, 8.0);
     }
@@ -320,192 +229,83 @@ fn a_rectangle_freed_of_the_axes_turns_as_a_whole() {
     )));
 }
 
+/// A shape a tool cannot make draws nothing, and where the reason is not
+/// plain from the clicks, says why.
 #[test]
-fn degenerate_rectangle_rejected() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    let fx = handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(0.0, 5.0),
-        0.5,
-    );
-    assert!(!fx.changed);
-    assert!(sketch.geometry.is_empty());
-}
-
-#[test]
-fn rect_center_builds_symmetric_rectangle() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.rect_center",
-        &mut sketch,
-        Vec2D::new(5.0, 3.0),
-        0.5,
-    );
-    assert!(sketch.geometry.is_empty(), "nothing before completion");
-    let fx = handle_click(
-        &mut state,
-        "sketch.rect_center",
-        &mut sketch,
-        Vec2D::new(9.0, 5.0),
-        0.5,
-    );
-    assert!(fx.changed);
-    assert!(state.is_idle());
-    // Four corners and the centre they are symmetric about.
-    assert_eq!((points(&sketch), lines(&sketch)), (5, 4));
-    assert_eq!(
-        sketch.constraints.len(),
-        5,
-        "2 horizontal + 2 vertical + the symmetry"
-    );
-    // Corners are mirrored through the center: (1,1) .. (9,5).
-    let mut xs: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) if !sketch.is_construction(p.id) => Some(p.position.x),
-            _ => None,
-        })
-        .collect();
-    xs.sort_by(f64::total_cmp);
-    assert_eq!(xs, vec![1.0, 1.0, 9.0, 9.0]);
-}
-
-#[test]
-fn circle_two_clicks() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.circle",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.circle",
-        &mut sketch,
-        Vec2D::new(4.0, 5.0),
-        0.5,
-    );
-    let circle = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c),
-            _ => None,
-        })
-        .unwrap();
-    assert!((circle.radius - 5.0).abs() < 1e-5);
-    assert!(state.is_idle());
-}
-
-#[test]
-fn circle3_builds_circumscribed_circle() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    for (x, y) in [(0.0, 0.0), (6.0, 0.0)] {
-        handle_click(
-            &mut state,
+fn degenerate_shapes_draw_nothing() {
+    let plain = ToolParams::default();
+    // Half the width, 6, is more than the centreline's radius, 5.
+    let wide_slot = params(|p| p.slot_width = 12.0);
+    let thick_wall = params(|p| p.offset_distance = 3.0);
+    type Case<'a> = (&'a str, &'a str, &'a ToolParams, &'a [(f64, f64)], bool);
+    let cases: [Case; 7] = [
+        (
+            "a rectangle with no width",
+            "sketch.rect",
+            &plain,
+            &[(0.0, 0.0), (0.0, 5.0)],
+            false,
+        ),
+        (
+            "a circle through three collinear points",
             "sketch.circle3",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-        );
+            &plain,
+            &[(0.0, 0.0), (5.0, 0.0), (10.0, 0.0)],
+            false,
+        ),
+        (
+            "a polygon whose vertex is its centre",
+            "sketch.polygon",
+            &plain,
+            &[(1.0, 1.0), (1.0, 1.0)],
+            false,
+        ),
+        (
+            "a slot with no length",
+            "sketch.slot",
+            &plain,
+            &[(3.0, 3.0), (3.0, 3.0)],
+            false,
+        ),
+        (
+            "an arc slot wider than its radius",
+            "sketch.arc_slot",
+            &wide_slot,
+            &[(0.0, 0.0), (5.0, 0.0), (0.0, 5.0)],
+            false,
+        ),
+        (
+            "a three-point rectangle whose third click is on its first edge's line",
+            "sketch.rect3",
+            &plain,
+            &[(1.0, 1.0), (5.0, 1.0), (9.0, 1.0)],
+            false,
+        ),
+        (
+            "a frame too thin for its wall",
+            "sketch.rect_frame",
+            &thick_wall,
+            &[(1.0, 1.0), (11.0, 6.0)],
+            true,
+        ),
+    ];
+    for (what, tool, params, clicks, says_why) in cases {
+        let (mut sketch, mut state) = fresh();
+        let w = With::new(params, &HashSet::new(), 0.1);
+        let fx = w.clicks(&mut state, &mut sketch, tool, clicks.iter().copied());
+        assert!(!fx.changed, "{what}");
+        assert!(sketch.geometry.is_empty(), "{what}");
+        assert_eq!(fx.log.is_some(), says_why, "{what}: whether it says why");
     }
-    assert!(sketch.geometry.is_empty(), "nothing before completion");
-    let fx = handle_click(
-        &mut state,
-        "sketch.circle3",
-        &mut sketch,
-        Vec2D::new(0.0, 8.0),
-        0.1,
-    );
-    assert!(fx.changed);
-    assert!(state.is_idle());
-    let circle = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.clone()),
-            _ => None,
-        })
-        .unwrap();
-    let center = sketch.point_position(circle.center).unwrap();
-    assert!((center.to_glam() - glam::DVec2::new(3.0, 4.0)).length() < 1e-3);
-    assert!((circle.radius - 5.0).abs() < 1e-3);
-}
-
-#[test]
-fn circle3_rejects_collinear_points() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    for (x, y) in [(0.0, 0.0), (5.0, 0.0)] {
-        handle_click(
-            &mut state,
-            "sketch.circle3",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-        );
-    }
-    let fx = handle_click(
-        &mut state,
-        "sketch.circle3",
-        &mut sketch,
-        Vec2D::new(10.0, 0.0),
-        0.1,
-    );
-    assert!(!fx.changed);
-    assert!(sketch.geometry.is_empty());
 }
 
 #[test]
 fn arc_three_clicks_end_projected_to_radius() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.arc",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-    );
-    handle_click(
-        &mut state,
-        "sketch.arc",
-        &mut sketch,
-        Vec2D::new(5.0, 0.0),
-        0.1,
-    );
-    handle_click(
-        &mut state,
-        "sketch.arc",
-        &mut sketch,
-        Vec2D::new(0.0, 7.0),
-        0.1,
-    );
-    let arc = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.arc", &mut sketch, (0.0, 0.0), 0.1);
+    click(&mut state, "sketch.arc", &mut sketch, (5.0, 0.0), 0.1);
+    click(&mut state, "sketch.arc", &mut sketch, (0.0, 7.0), 0.1);
+    let arc = arc_of(&sketch);
     assert!((arc.radius - 5.0).abs() < 1e-5);
     let end = sketch.point_position(arc.end).unwrap();
     assert!(
@@ -517,39 +317,19 @@ fn arc_three_clicks_end_projected_to_radius() {
 
 #[test]
 fn arc3_stores_ccw_arc_through_rim_point() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     // Endpoints (5,0) and (0,5); rim point on the short CCW side.
-    handle_click(
+    click(&mut state, "sketch.arc3", &mut sketch, (5.0, 0.0), 0.1);
+    click(&mut state, "sketch.arc3", &mut sketch, (0.0, 5.0), 0.1);
+    let fx = click(
         &mut state,
         "sketch.arc3",
         &mut sketch,
-        Vec2D::new(5.0, 0.0),
-        0.1,
-    );
-    handle_click(
-        &mut state,
-        "sketch.arc3",
-        &mut sketch,
-        Vec2D::new(0.0, 5.0),
-        0.1,
-    );
-    let fx = handle_click(
-        &mut state,
-        "sketch.arc3",
-        &mut sketch,
-        Vec2D::new(3.5355, 3.5355),
+        (3.5355, 3.5355),
         0.1,
     );
     assert!(fx.changed);
-    let arc = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let arc = arc_of(&sketch);
     let c = sketch.point_position(arc.center).unwrap().to_glam();
     let s = sketch.point_position(arc.start).unwrap().to_glam();
     let e = sketch.point_position(arc.end).unwrap().to_glam();
@@ -571,39 +351,19 @@ fn arc3_stores_ccw_arc_through_rim_point() {
 
 #[test]
 fn arc3_swaps_endpoints_for_clockwise_rim_point() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.arc3",
-        &mut sketch,
-        Vec2D::new(5.0, 0.0),
-        0.1,
-    );
-    handle_click(
-        &mut state,
-        "sketch.arc3",
-        &mut sketch,
-        Vec2D::new(0.0, 5.0),
-        0.1,
-    );
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.arc3", &mut sketch, (5.0, 0.0), 0.1);
+    click(&mut state, "sketch.arc3", &mut sketch, (0.0, 5.0), 0.1);
     // Rim point on the far (clockwise) side: endpoints must swap so the
     // stored CCW sweep passes through it.
-    handle_click(
+    click(
         &mut state,
         "sketch.arc3",
         &mut sketch,
-        Vec2D::new(-3.5355, -3.5355),
+        (-3.5355, -3.5355),
         0.1,
     );
-    let arc = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let arc = arc_of(&sketch);
     let c = sketch.point_position(arc.center).unwrap().to_glam();
     let s = sketch.point_position(arc.start).unwrap().to_glam();
     let e = sketch.point_position(arc.end).unwrap().to_glam();
@@ -617,89 +377,10 @@ fn arc3_swaps_endpoints_for_clockwise_rim_point() {
 }
 
 #[test]
-fn ellipse_three_clicks_sets_major_and_ratio() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.ellipse",
-        &mut sketch,
-        Vec2D::new(1.0, 2.0),
-        0.1,
-    );
-    handle_click(
-        &mut state,
-        "sketch.ellipse",
-        &mut sketch,
-        Vec2D::new(5.0, 2.0),
-        0.1,
-    );
-    assert!(sketch.geometry.is_empty(), "nothing before completion");
-    let fx = handle_click(
-        &mut state,
-        "sketch.ellipse",
-        &mut sketch,
-        Vec2D::new(1.0, 3.5),
-        0.1,
-    );
-    assert!(fx.changed);
-    assert!(state.is_idle());
-    let ellipse = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .unwrap();
-    assert!((ellipse.major.x - 4.0).abs() < 1e-4);
-    assert!(ellipse.major.y.abs() < 1e-4);
-    assert!((ellipse.ratio - 1.5 / 4.0).abs() < 1e-4);
-    assert_eq!(points(&sketch), 1, "just the center point");
-}
-
-#[test]
-fn bspline_clicks_then_finish_builds_spline() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    for (x, y) in [(0.0, 0.0), (4.0, 6.0), (9.0, -2.0), (14.0, 3.0)] {
-        handle_click(
-            &mut state,
-            "sketch.bspline",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-        );
-    }
-    assert!(sketch.geometry.is_empty(), "nothing before finish");
-    let fx = super::finish_click_sequence(&mut state, &mut sketch, &ToolParams::default());
-    assert!(fx.changed);
-    assert!(state.is_idle());
-    let spline = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.clone()),
-            _ => None,
-        })
-        .unwrap();
-    assert_eq!(spline.control_points.len(), 4);
-    assert!(!spline.periodic);
-    assert_eq!(points(&sketch), 4);
-}
-
-#[test]
 fn bspline_with_too_few_points_cancels() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for (x, y) in [(0.0, 0.0), (4.0, 6.0)] {
-        handle_click(
-            &mut state,
-            "sketch.bspline",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-        );
+        click(&mut state, "sketch.bspline", &mut sketch, (x, y), 0.1);
     }
     let fx = super::finish_click_sequence(&mut state, &mut sketch, &ToolParams::default());
     assert!(!fx.changed);
@@ -709,31 +390,17 @@ fn bspline_with_too_few_points_cancels() {
 
 #[test]
 fn bspline_periodic_param_is_respected() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        bspline_periodic: true,
-        ..ToolParams::default()
-    };
-    for (x, y) in [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)] {
-        click_p(
-            &mut state,
-            "sketch.bspline",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-            &params,
-        );
-    }
+    let (mut sketch, mut state) = fresh();
+    let params = params(|p| p.bspline_periodic = true);
+    let w = With::new(&params, &HashSet::new(), 0.1);
+    w.clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.bspline",
+        [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)],
+    );
     super::finish_click_sequence(&mut state, &mut sketch, &params);
-    let spline = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let spline = spline_of(&sketch);
     assert!(spline.periodic);
     // A periodic spline is a closed wire on its own.
     let wires = crate::profile::extract_wires(&sketch).unwrap();
@@ -743,29 +410,12 @@ fn bspline_periodic_param_is_respected() {
 #[test]
 fn polygon_two_clicks_builds_closed_ngon() {
     for sides in [3u32, 6, 12] {
-        let mut sketch = Sketch::new("t");
-        let mut state = ToolState::default();
-        let params = ToolParams {
-            polygon_sides: sides,
-            ..ToolParams::default()
-        };
-        click_p(
-            &mut state,
-            "sketch.polygon",
-            &mut sketch,
-            Vec2D::new(2.0, 1.0),
-            0.5,
-            &params,
-        );
+        let (mut sketch, mut state) = fresh();
+        let params = params(|p| p.polygon_sides = sides);
+        let w = With::new(&params, &HashSet::new(), 0.5);
+        w.click(&mut state, &mut sketch, "sketch.polygon", (2.0, 1.0));
         assert!(sketch.geometry.is_empty(), "nothing before completion");
-        let fx = click_p(
-            &mut state,
-            "sketch.polygon",
-            &mut sketch,
-            Vec2D::new(7.0, 1.0),
-            0.5,
-            &params,
-        );
+        let fx = w.click(&mut state, &mut sketch, "sketch.polygon", (7.0, 1.0));
         assert!(fx.changed);
         assert!(state.is_idle());
         let n = sides as usize;
@@ -780,6 +430,7 @@ fn polygon_two_clicks_builds_closed_ngon() {
             n,
             "closed loop for n={n}"
         );
+        assert!(has_point(&sketch, 7.0, 1.0), "the second click is a vertex");
         // All vertices on the circumscribed circle of radius 5, and held
         // there, every side as long as the first.
         let center = Vec2D::new(2.0, 1.0);
@@ -806,77 +457,13 @@ fn polygon_two_clicks_builds_closed_ngon() {
 }
 
 #[test]
-fn polygon_first_vertex_at_click_position() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.polygon",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.polygon",
-        &mut sketch,
-        Vec2D::new(3.0, 4.0),
-        0.5,
-    );
-    let hit = sketch.geometry.iter().any(|g| match g {
-        GeometryElement::Point(p) => (p.position - Vec2D::new(3.0, 4.0)).to_glam().length() < 1e-4,
-        _ => false,
-    });
-    assert!(hit, "clicked vertex is a polygon vertex");
-}
-
-#[test]
-fn degenerate_polygon_rejected() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.polygon",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.5,
-    );
-    let fx = handle_click(
-        &mut state,
-        "sketch.polygon",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.5,
-    );
-    assert!(!fx.changed, "vertex == center is degenerate");
-    assert!(sketch.geometry.is_empty());
-}
-
-#[test]
 fn slot_two_clicks_builds_closed_stadium() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        slot_width: 4.0,
-        ..ToolParams::default()
-    };
-    click_p(
-        &mut state,
-        "sketch.slot",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-        &params,
-    );
+    let (mut sketch, mut state) = fresh();
+    let params = params(|p| p.slot_width = 4.0);
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    w.click(&mut state, &mut sketch, "sketch.slot", (0.0, 0.0));
     assert!(sketch.geometry.is_empty(), "nothing before completion");
-    let fx = click_p(
-        &mut state,
-        "sketch.slot",
-        &mut sketch,
-        Vec2D::new(10.0, 0.0),
-        0.5,
-        &params,
-    );
+    let fx = w.click(&mut state, &mut sketch, "sketch.slot", (10.0, 0.0));
     assert!(fx.changed);
     assert!(state.is_idle());
     // 4 junction points + 2 arc centers, 2 lines, 2 cap arcs.
@@ -912,141 +499,6 @@ fn slot_two_clicks_builds_closed_stadium() {
     );
 }
 
-#[test]
-fn slot_works_on_diagonal_centerline() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.slot",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.slot",
-        &mut sketch,
-        Vec2D::new(7.0, 9.0),
-        0.5,
-    );
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 4);
-}
-
-#[test]
-fn degenerate_slot_rejected() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.slot",
-        &mut sketch,
-        Vec2D::new(3.0, 3.0),
-        0.5,
-    );
-    let fx = handle_click(
-        &mut state,
-        "sketch.slot",
-        &mut sketch,
-        Vec2D::new(3.0, 3.0),
-        0.5,
-    );
-    assert!(!fx.changed, "zero-length centerline is degenerate");
-    assert!(sketch.geometry.is_empty());
-}
-
-#[test]
-fn arc_slot_three_clicks_builds_closed_profile() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        slot_width: 2.0,
-        ..ToolParams::default()
-    };
-    // Center, centerline start (r=5), quarter-turn end.
-    click_p(
-        &mut state,
-        "sketch.arc_slot",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-    );
-    click_p(
-        &mut state,
-        "sketch.arc_slot",
-        &mut sketch,
-        Vec2D::new(5.0, 0.0),
-        0.1,
-        &params,
-    );
-    assert!(sketch.geometry.is_empty(), "nothing before completion");
-    let fx = click_p(
-        &mut state,
-        "sketch.arc_slot",
-        &mut sketch,
-        Vec2D::new(0.0, 5.0),
-        0.1,
-        &params,
-    );
-    assert!(fx.changed);
-    assert!(state.is_idle());
-    // Center + 2 cap centers + 4 rail junctions; 4 arcs, no lines.
-    assert_eq!((points(&sketch), lines(&sketch), arcs(&sketch)), (7, 0, 4));
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 4);
-    // Rail radii are r ± width/2.
-    let mut radii: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.radius),
-            _ => None,
-        })
-        .collect();
-    radii.sort_by(f64::total_cmp);
-    assert_eq!(radii, vec![1.0, 1.0, 4.0, 6.0]);
-}
-
-#[test]
-fn arc_slot_rejects_width_wider_than_radius() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        slot_width: 12.0, // half-width 6 > centerline radius 5
-        ..ToolParams::default()
-    };
-    click_p(
-        &mut state,
-        "sketch.arc_slot",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-    );
-    click_p(
-        &mut state,
-        "sketch.arc_slot",
-        &mut sketch,
-        Vec2D::new(5.0, 0.0),
-        0.1,
-        &params,
-    );
-    let fx = click_p(
-        &mut state,
-        "sketch.arc_slot",
-        &mut sketch,
-        Vec2D::new(0.0, 5.0),
-        0.1,
-        &params,
-    );
-    assert!(!fx.changed);
-    assert!(sketch.geometry.is_empty());
-}
-
 /// Rectangle (0,0)-(w,h) built from shared corner points.
 fn build_rectangle(sketch: &mut Sketch, w: f64, h: f64) -> [Uuid; 4] {
     let a = pt(sketch, 0.0, 0.0);
@@ -1060,38 +512,17 @@ fn build_rectangle(sketch: &mut Sketch, w: f64, h: f64) -> [Uuid; 4] {
     [a, b, c, d]
 }
 
-fn fillet_params(radius: f64) -> ToolParams {
-    ToolParams {
-        fillet_radius: radius,
-        ..ToolParams::default()
-    }
-}
-
 #[test]
 fn fillet_rounds_rectangle_corner_tangentially() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     build_rectangle(&mut sketch, 12.0, 8.0);
-    let mut state = ToolState::default();
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(12.0, 8.0),
-        0.5,
-        &fillet_params(2.0),
-    );
+    let w = With::new(&params(|p| p.fillet_radius = 2.0), &HashSet::new(), 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.fillet", (12.0, 8.0));
     assert!(fx.changed);
     // Corner point replaced by 2 tangent points + 1 arc center.
     assert_eq!((points(&sketch), lines(&sketch), arcs(&sketch)), (6, 4, 1));
 
-    let arc = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let arc = arc_of(&sketch);
     let center = sketch.point_position(arc.center).unwrap();
     let start = sketch.point_position(arc.start).unwrap();
     let end = sketch.point_position(arc.end).unwrap();
@@ -1123,97 +554,38 @@ fn fillet_rounds_rectangle_corner_tangentially() {
 }
 
 #[test]
-fn fillet_radius_too_large_rejected() {
-    let mut sketch = Sketch::new("t");
+fn a_fillet_that_cannot_be_made_changes_nothing() {
+    // A 3 × 3 rectangle, and a line of two collinear halves along y = 20.
+    let (mut sketch, _) = fresh();
     build_rectangle(&mut sketch, 3.0, 3.0);
-    let mut state = ToolState::default();
-    // 90° corner: tangent offset equals the radius; 4 > 3 cannot fit.
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(3.0, 3.0),
-        0.5,
-        &fillet_params(4.0),
-    );
-    assert!(!fx.changed);
-    assert_eq!(
-        (points(&sketch), lines(&sketch), arcs(&sketch)),
-        (4, 4, 0),
-        "sketch untouched"
-    );
-}
-
-#[test]
-fn fillet_ignores_non_corner_clicks() {
-    let mut sketch = Sketch::new("t");
-    let a = pt(&mut sketch, 0.0, 0.0);
-    let b = pt(&mut sketch, 10.0, 0.0);
-    line_between(&mut sketch, a, b);
-    let mut state = ToolState::default();
-    let params = fillet_params(2.0);
-
-    // Empty space: no point within tolerance.
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(5.0, 5.0),
-        0.5,
-        &params,
-    );
-    assert!(!fx.changed);
-    // Endpoint with only ONE line attached.
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-        &params,
-    );
-    assert!(!fx.changed);
-    assert_eq!((points(&sketch), lines(&sketch), arcs(&sketch)), (2, 1, 0));
-}
-
-#[test]
-fn fillet_rejects_collinear_segments() {
-    let mut sketch = Sketch::new("t");
-    let a = pt(&mut sketch, 0.0, 0.0);
-    let m = pt(&mut sketch, 5.0, 0.0);
-    let b = pt(&mut sketch, 10.0, 0.0);
+    let [a, m, b] = [0.0, 5.0, 10.0].map(|x| pt(&mut sketch, x, 20.0));
     line_between(&mut sketch, a, m);
     line_between(&mut sketch, m, b);
-    let mut state = ToolState::default();
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(5.0, 0.0),
-        0.5,
-        &fillet_params(1.0),
-    );
-    assert!(!fx.changed, "collinear corner has no angle to round");
-    assert_eq!((points(&sketch), lines(&sketch), arcs(&sketch)), (3, 2, 0));
+    for (what, radius, at) in [
+        // A 90° corner's tangent offset is the radius: 4 cannot fit in 3.
+        ("a radius too large", 4.0, (3.0, 3.0)),
+        ("empty space", 1.0, (5.0, 10.0)),
+        ("an end with one line", 1.0, (0.0, 20.0)),
+        ("a corner with no angle", 1.0, (5.0, 20.0)),
+    ] {
+        // Each row is a first click: a curve picked by the row before
+        // would take this click as its second.
+        let mut state = ToolState::default();
+        let w = With::new(&params(|p| p.fillet_radius = radius), &HashSet::new(), 0.5);
+        let fx = w.click(&mut state, &mut sketch, "sketch.fillet", at);
+        assert!(!fx.changed, "{what}");
+        let counts = (points(&sketch), lines(&sketch), arcs(&sketch));
+        assert_eq!(counts, (7, 6, 0), "{what}: the sketch untouched");
+    }
 }
 
 #[test]
 fn fillet_drops_constraints_on_removed_corner() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let [.., c, _] = build_rectangle(&mut sketch, 12.0, 8.0);
-    sketch.add_constraint(ConstraintKind::FixedPoint {
-        point: c,
-        position: Vec2D::new(12.0, 8.0),
-    });
-    let mut state = ToolState::default();
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(12.0, 8.0),
-        0.5,
-        &fillet_params(2.0),
-    );
+    pin(&mut sketch, c);
+    let w = With::new(&params(|p| p.fillet_radius = 2.0), &HashSet::new(), 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.fillet", (12.0, 8.0));
     assert!(fx.changed);
     assert!(
         !sketch
@@ -1235,98 +607,14 @@ fn fillet_drops_constraints_on_removed_corner() {
 }
 
 #[test]
-fn chamfer_cuts_rectangle_corner_with_line() {
-    let mut sketch = Sketch::new("t");
-    build_rectangle(&mut sketch, 12.0, 8.0);
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        chamfer_length: 2.0,
-        ..ToolParams::default()
-    };
-    let fx = click_p(
-        &mut state,
-        "sketch.chamfer",
-        &mut sketch,
-        Vec2D::new(12.0, 8.0),
-        0.5,
-        &params,
-    );
-    assert!(fx.changed);
-    // Corner point replaced by 2 setback points; extra chamfer line.
-    assert_eq!((points(&sketch), lines(&sketch), arcs(&sketch)), (5, 5, 0));
-    // Setback points 2mm from the removed corner along each edge.
-    let expect = [glam::DVec2::new(10.0, 8.0), glam::DVec2::new(12.0, 6.0)];
-    for target in expect {
-        assert!(
-            sketch.geometry.iter().any(|g| match g {
-                GeometryElement::Point(p) => (p.position.to_glam() - target).length() < 1e-4,
-                _ => false,
-            }),
-            "setback point at {target:?}"
-        );
-    }
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 1);
-    assert_eq!(wires[0].segments.len(), 5, "4 shortened edges + chamfer");
-}
-
-#[test]
-fn trim_middle_span_leaves_two_lines() {
-    let mut sketch = Sketch::new("t");
-    // Horizontal target crossed by two vertical cutters at x=5 and x=15.
-    let a = pt(&mut sketch, 0.0, 0.0);
-    let b = pt(&mut sketch, 20.0, 0.0);
-    line_between(&mut sketch, a, b);
-    let c1a = pt(&mut sketch, 5.0, -5.0);
-    let c1b = pt(&mut sketch, 5.0, 5.0);
-    line_between(&mut sketch, c1a, c1b);
-    let c2a = pt(&mut sketch, 15.0, -5.0);
-    let c2b = pt(&mut sketch, 15.0, 5.0);
-    line_between(&mut sketch, c2a, c2b);
-
-    let mut state = ToolState::default();
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(10.0, 0.1),
-        0.5,
-    );
-    assert!(fx.changed);
-    assert_eq!((points(&sketch), lines(&sketch)), (8, 4), "two halves left");
-    // The retained halves end exactly at the cutters.
-    let spans: Vec<(f64, f64)> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => {
-                let s = sketch.point_position(l.start)?;
-                let e = sketch.point_position(l.end)?;
-                (s.y.abs() < 1e-4 && e.y.abs() < 1e-4).then(|| (s.x.min(e.x), s.x.max(e.x)))
-            }
-            _ => None,
-        })
-        .collect();
-    assert!(spans.contains(&(0.0, 5.0)), "left half kept: {spans:?}");
-    assert!(spans.contains(&(15.0, 20.0)), "right half kept: {spans:?}");
-}
-
-#[test]
 fn trim_without_intersections_deletes_element_and_orphans() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, 0.0, 0.0);
     let b = pt(&mut sketch, 10.0, 0.0);
     let l = line_between(&mut sketch, a, b);
     sketch.add_constraint(ConstraintKind::Horizontal { element: l });
 
-    let mut state = ToolState::default();
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(5.0, 0.1),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.trim", &mut sketch, (5.0, 0.1), 0.5);
     assert!(fx.changed);
     assert!(sketch.geometry.is_empty(), "line and orphan endpoints gone");
     assert!(sketch.constraints.is_empty(), "line constraint dropped");
@@ -1334,7 +622,7 @@ fn trim_without_intersections_deletes_element_and_orphans() {
 
 #[test]
 fn trim_end_span_keeps_shared_endpoint() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     // Horizontal line whose start also anchors another line; one cutter.
     let a = pt(&mut sketch, 0.0, 0.0);
     let b = pt(&mut sketch, 20.0, 0.0);
@@ -1347,14 +635,7 @@ fn trim_end_span_keeps_shared_endpoint() {
 
     // Click past the cutter: the (5..20) span goes; endpoint b is orphaned
     // and removed, endpoint a stays (still used by the second line).
-    let mut state = ToolState::default();
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(12.0, 0.1),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.trim", &mut sketch, (12.0, 0.1), 0.5);
     assert!(fx.changed);
     assert!(sketch.get_geometry(a).is_some(), "shared endpoint kept");
     assert!(
@@ -1379,7 +660,7 @@ fn trim_end_span_keeps_shared_endpoint() {
 
 #[test]
 fn trim_circle_span_becomes_arc_keeping_id() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let center = pt(&mut sketch, 0.0, 0.0);
     let circle_id = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 5.0)));
     sketch.add_constraint(ConstraintKind::Radius {
@@ -1392,24 +673,10 @@ fn trim_circle_span_becomes_arc_keeping_id() {
     line_between(&mut sketch, a, b);
 
     // Click the right side of the rim: that half is removed.
-    let mut state = ToolState::default();
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(5.1, 0.0),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.trim", &mut sketch, (5.1, 0.0), 0.5);
     assert!(fx.changed);
     assert_eq!(circles(&sketch), 0);
-    let arc = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(arc) => Some(arc.clone()),
-            _ => None,
-        })
-        .unwrap();
+    let arc = arc_of(&sketch);
     assert_eq!(arc.id, circle_id, "arc keeps the circle's id");
     assert_eq!(sketch.constraints.len(), 1, "radius constraint survives");
     // Kept half passes through (-5, 0).
@@ -1440,19 +707,15 @@ fn trim_cuts_at_the_axes_when_asked_and_holds_the_end_there() {
         line_between(&mut sketch, a, b);
         (sketch, a)
     };
-    let axes = ToolParams {
-        cut_at_axes: true,
-        ..ToolParams::default()
-    };
+    let axes = params(|p| p.cut_at_axes = true);
 
     let (mut sketch, a) = crossing();
-    let fx = click_p(
+    let w = With::new(&axes, &HashSet::new(), 0.5);
+    let fx = w.click(
         &mut ToolState::default(),
-        "sketch.trim",
         &mut sketch,
-        Vec2D::new(5.0, 3.1),
-        0.5,
-        &axes,
+        "sketch.trim",
+        (5.0, 3.1),
     );
     assert!(fx.changed);
     assert_eq!(lines(&sketch), 1);
@@ -1479,11 +742,11 @@ fn trim_cuts_at_the_axes_when_asked_and_holds_the_end_there() {
     );
 
     let (mut sketch, _) = crossing();
-    handle_click(
+    click(
         &mut ToolState::default(),
         "sketch.trim",
         &mut sketch,
-        Vec2D::new(5.0, 3.1),
+        (5.0, 3.1),
         0.5,
     );
     assert_eq!(lines(&sketch), 0, "off, nothing cuts it");
@@ -1497,17 +760,13 @@ fn extend_reaches_an_axis_when_asked() {
     let a = pt(&mut sketch, 4.0, 8.0);
     let b = pt(&mut sketch, 4.0, 3.0);
     line_between(&mut sketch, a, b);
-    let axes = ToolParams {
-        cut_at_axes: true,
-        ..ToolParams::default()
-    };
-    let fx = click_p(
+    let axes = params(|p| p.cut_at_axes = true);
+    let w = With::new(&axes, &HashSet::new(), 0.5);
+    let fx = w.click(
         &mut ToolState::default(),
-        "sketch.extend",
         &mut sketch,
-        Vec2D::new(4.1, 4.0),
-        0.5,
-        &axes,
+        "sketch.extend",
+        (4.1, 4.0),
     );
     assert!(fx.changed);
     let end = sketch.point_position(b).unwrap();
@@ -1522,49 +781,8 @@ fn extend_reaches_an_axis_when_asked() {
 }
 
 #[test]
-fn extend_line_reaches_nearest_intersection() {
-    let mut sketch = Sketch::new("t");
-    let a = pt(&mut sketch, 0.0, 0.0);
-    let b = pt(&mut sketch, 5.0, 0.0);
-    line_between(&mut sketch, a, b);
-    // Two vertical walls; the nearer one (x=10) must win.
-    let w1a = pt(&mut sketch, 10.0, -5.0);
-    let w1b = pt(&mut sketch, 10.0, 5.0);
-    line_between(&mut sketch, w1a, w1b);
-    let w2a = pt(&mut sketch, 14.0, -5.0);
-    let w2b = pt(&mut sketch, 14.0, 5.0);
-    line_between(&mut sketch, w2a, w2b);
-
-    let mut state = ToolState::default();
-    // Click the end half of the short line.
-    let fx = handle_click(
-        &mut state,
-        "sketch.extend",
-        &mut sketch,
-        Vec2D::new(4.0, 0.1),
-        0.5,
-    );
-    assert!(fx.changed);
-    let end = sketch.point_position(b).unwrap();
-    assert!(
-        (end.to_glam() - glam::DVec2::new(10.0, 0.0)).length() < 1e-3,
-        "end extended to the nearest wall: {end:?}"
-    );
-
-    // No intersection behind the start: extending that end is a no-op.
-    let fx = handle_click(
-        &mut state,
-        "sketch.extend",
-        &mut sketch,
-        Vec2D::new(1.0, 0.1),
-        0.5,
-    );
-    assert!(!fx.changed);
-}
-
-#[test]
 fn extend_arc_end_reaches_circle() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     // Quarter arc around origin from (5,0) to (0,5).
     let c = pt(&mut sketch, 0.0, 0.0);
     let s = pt(&mut sketch, 5.0, 0.0);
@@ -1575,15 +793,8 @@ fn extend_arc_end_reaches_circle() {
     let w2 = pt(&mut sketch, -2.0, 0.0);
     line_between(&mut sketch, w1, w2);
 
-    let mut state = ToolState::default();
     // Click near the arc's end half (close to (0,5)).
-    let fx = handle_click(
-        &mut state,
-        "sketch.extend",
-        &mut sketch,
-        Vec2D::new(0.5, 5.0),
-        0.6,
-    );
+    let fx = click(&mut state, "sketch.extend", &mut sketch, (0.5, 5.0), 0.6);
     assert!(fx.changed);
     let end = sketch.point_position(e).unwrap().to_glam();
     assert!(
@@ -1593,64 +804,18 @@ fn extend_arc_end_reaches_circle() {
 }
 
 #[test]
-fn split_line_at_click_shares_new_point() {
-    let mut sketch = Sketch::new("t");
-    let a = pt(&mut sketch, 0.0, 0.0);
-    let b = pt(&mut sketch, 10.0, 0.0);
-    let l = line_between(&mut sketch, a, b);
-
-    let mut state = ToolState::default();
-    let fx = handle_click(
-        &mut state,
-        "sketch.split",
-        &mut sketch,
-        Vec2D::new(4.0, 0.1),
-        0.5,
-    );
-    assert!(fx.changed);
-    assert_eq!((points(&sketch), lines(&sketch)), (3, 2));
-    // The halves share the new midpoint; the original id survives.
-    let halves: Vec<Line> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.clone()),
-            _ => None,
-        })
-        .collect();
-    assert!(halves.iter().any(|h| h.id == l));
-    assert_eq!(halves[0].end, halves[1].start, "shared split point");
-    let m = sketch.point_position(halves[0].end).unwrap();
-    assert!((m.to_glam() - glam::DVec2::new(4.0, 0.0)).length() < 1e-3);
-}
-
-#[test]
 fn split_arc_produces_two_ccw_arcs() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let c = pt(&mut sketch, 0.0, 0.0);
     let s = pt(&mut sketch, 5.0, 0.0);
     let e = pt(&mut sketch, -5.0, 0.0);
     sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
 
-    let mut state = ToolState::default();
     // Click the top of the semicircle.
-    let fx = handle_click(
-        &mut state,
-        "sketch.split",
-        &mut sketch,
-        Vec2D::new(0.0, 5.1),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.split", &mut sketch, (0.0, 5.1), 0.5);
     assert!(fx.changed);
     assert_eq!(arcs(&sketch), 2);
-    let arcs_v: Vec<Arc> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .collect();
+    let arcs_v: Vec<Arc> = all_arcs(&sketch);
     assert_eq!(arcs_v[0].end, arcs_v[1].start, "shared split point");
     assert!(
         sketch.constraints.iter().any(|c| matches!(
@@ -1672,68 +837,15 @@ fn split_arc_produces_two_ccw_arcs() {
 }
 
 #[test]
-fn offset_rectangle_inward_builds_closed_loop() {
-    let mut sketch = Sketch::new("t");
-    build_rectangle(&mut sketch, 10.0, 5.0);
-    let selected: HashSet<Uuid> = sketch
-        .geometry
-        .iter()
-        .filter(|g| matches!(g, GeometryElement::Line(_)))
-        .map(|g| g.id())
-        .collect();
-    let params = ToolParams {
-        offset_distance: 1.0,
-        ..ToolParams::default()
-    };
-    let mut state = ToolState::default();
-    // Click inside: the copy shrinks inward.
-    let fx = click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(5.0, 2.5),
-        0.5,
-        &params,
-        &selected,
-    );
-    assert!(fx.changed);
-    assert_eq!((points(&sketch), lines(&sketch)), (8, 8));
-    let wires = crate::profile::extract_wires(&sketch).unwrap();
-    assert_eq!(wires.len(), 2, "original + offset loop both closed");
-    // The offset corners sit 1mm inside the original ones.
-    for corner in [(1.0, 1.0), (9.0, 1.0), (9.0, 4.0), (1.0, 4.0)] {
-        let target = glam::DVec2::new(corner.0, corner.1);
-        assert!(
-            sketch.geometry.iter().any(|g| match g {
-                GeometryElement::Point(p) => (p.position.to_glam() - target).length() < 1e-3,
-                _ => false,
-            }),
-            "inset corner at {target:?}"
-        );
-    }
-}
-
-#[test]
 fn offset_single_circle_is_concentric() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let center = pt(&mut sketch, 3.0, 3.0);
     let circle_id = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 5.0)));
     let selected: HashSet<Uuid> = [circle_id].into_iter().collect();
-    let params = ToolParams {
-        offset_distance: 2.0,
-        ..ToolParams::default()
-    };
-    let mut state = ToolState::default();
+    let params = params(|p| p.offset_distance = 2.0);
     // Click outside the rim: the copy grows.
-    let fx = click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(12.0, 3.0),
-        0.5,
-        &params,
-        &selected,
-    );
+    let w = With::new(&params, &selected, 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (12.0, 3.0));
     assert!(fx.changed);
     let radii: Vec<f64> = sketch
         .geometry
@@ -1754,30 +866,25 @@ fn offset_single_circle_is_concentric() {
 
 #[test]
 fn translate_moves_selection_and_shared_points() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, 0.0, 0.0);
     let b = pt(&mut sketch, 10.0, 0.0);
     let l = line_between(&mut sketch, a, b);
     let selected: HashSet<Uuid> = [l].into_iter().collect();
     let params = ToolParams::default();
-    let mut state = ToolState::default();
-    click_sel(
+    let w = With::new(&params, &selected, 0.1);
+    w.click(
         &mut state,
-        "sketch.translate",
         &mut sketch,
-        Vec2D::new(20.0, 20.0), // base (empty space)
-        0.1,
-        &params,
-        &selected,
+        "sketch.translate",
+        Vec2D::new(20.0, 20.0),
     );
-    let fx = click_sel(
+    let w = With::new(&params, &selected, 0.1);
+    let fx = w.click(
         &mut state,
-        "sketch.translate",
         &mut sketch,
-        Vec2D::new(25.0, 23.0), // destination: Δ = (5, 3)
-        0.1,
-        &params,
-        &selected,
+        "sketch.translate",
+        Vec2D::new(25.0, 23.0),
     );
     assert!(fx.changed);
     assert!(state.is_idle());
@@ -1790,7 +897,7 @@ fn translate_moves_selection_and_shared_points() {
 
 #[test]
 fn translate_with_copies_builds_array_preserving_sharing() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     // Two lines sharing a middle point: internal sharing must be preserved
     // in each copy.
     let a = pt(&mut sketch, 0.0, 0.0);
@@ -1799,28 +906,15 @@ fn translate_with_copies_builds_array_preserving_sharing() {
     let l1 = line_between(&mut sketch, a, m);
     let l2 = line_between(&mut sketch, m, b);
     let selected: HashSet<Uuid> = [l1, l2].into_iter().collect();
-    let params = ToolParams {
-        copies: 2,
-        ..ToolParams::default()
-    };
-    let mut state = ToolState::default();
-    click_sel(
+    let params = params(|p| p.copies = 2);
+    let w = With::new(&params, &selected, 0.1);
+    w.click(&mut state, &mut sketch, "sketch.translate", (20.0, 20.0));
+    let w = With::new(&params, &selected, 0.1);
+    let fx = w.click(
         &mut state,
-        "sketch.translate",
         &mut sketch,
-        Vec2D::new(20.0, 20.0),
-        0.1,
-        &params,
-        &selected,
-    );
-    let fx = click_sel(
-        &mut state,
         "sketch.translate",
-        &mut sketch,
-        Vec2D::new(40.0, 20.0), // Δ = (20, 0)
-        0.1,
-        &params,
-        &selected,
+        Vec2D::new(40.0, 20.0),
     );
     assert!(fx.changed);
     // Originals + 2 copies: 9 points, 6 lines.
@@ -1833,51 +927,23 @@ fn translate_with_copies_builds_array_preserving_sharing() {
     let doubles = uses.values().filter(|&&n| n == 2).count();
     assert_eq!(doubles, 3, "one shared apex per copy + original");
     // Second copy apex at (5,5) + 2Δ = (45, 5).
-    assert!(sketch.geometry.iter().any(|g| match g {
-        GeometryElement::Point(p) =>
-            (p.position.to_glam() - glam::DVec2::new(45.0, 5.0)).length() < 1e-3,
-        _ => false,
-    }));
+    assert!(has_point(&sketch, 45.0, 5.0));
 }
 
 #[test]
 fn rotate_selection_about_pivot() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, 0.0, 0.0);
     let b = pt(&mut sketch, 10.0, 0.0);
     let l = line_between(&mut sketch, a, b);
     let selected: HashSet<Uuid> = [l].into_iter().collect();
     let params = ToolParams::default();
-    let mut state = ToolState::default();
     // Pivot at the origin, where it snaps to point `a` at the same spot.
-    click_sel(
-        &mut state,
-        "sketch.rotate",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
+    let w = With::new(&params, &selected, 0.1);
+    w.click(&mut state, &mut sketch, "sketch.rotate", (0.0, 0.0));
     // Reference along +x, target along +y: 90° CCW.
-    click_sel(
-        &mut state,
-        "sketch.rotate",
-        &mut sketch,
-        Vec2D::new(20.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
-    let fx = click_sel(
-        &mut state,
-        "sketch.rotate",
-        &mut sketch,
-        Vec2D::new(0.0, 20.0),
-        0.1,
-        &params,
-        &selected,
-    );
+    w.click(&mut state, &mut sketch, "sketch.rotate", (20.0, 0.0));
+    let fx = w.click(&mut state, &mut sketch, "sketch.rotate", (0.0, 20.0));
     assert!(fx.changed);
     let pb = sketch.point_position(b).unwrap().to_glam();
     assert!(
@@ -1932,21 +998,18 @@ fn rotate_full_turn_spreads_the_elements_evenly_from_one_click() {
         rotate_full_turn: true,
         ..ToolParams::default()
     };
-    let fx = click_sel(
+    let w = With::new(&params, &selected, 0.1);
+    let fx = w.click(
         &mut ToolState::default(),
-        "sketch.rotate",
         &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-        &selected,
+        "sketch.rotate",
+        (0.0, 0.0),
     );
     assert!(fx.changed);
     assert_eq!(lines(&sketch), 4, "the original and three copies");
     for want in [(0.0, 10.0), (-10.0, 0.0), (0.0, -10.0)] {
         assert!(
-            sketch.geometry.iter().any(|g| matches!(g,
-                GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::from(want)).length() < 1e-3)),
+            has_point(&sketch, want.0, want.1),
             "a copy's start at {want:?}"
         );
     }
@@ -1969,7 +1032,7 @@ fn rotate_full_turn_spreads_the_elements_evenly_from_one_click() {
 /// runs through them in order with the original in the middle.
 #[test]
 fn translate_symmetric_copies_go_both_ways() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, 0.0, 0.0);
     let b = pt(&mut sketch, 0.0, 4.0);
     let l = line_between(&mut sketch, a, b);
@@ -1980,22 +1043,16 @@ fn translate_symmetric_copies_go_both_ways() {
         copies_linked: true,
         ..ToolParams::default()
     };
-    let mut state = ToolState::default();
-    for at in [Vec2D::new(20.0, 20.0), Vec2D::new(25.0, 20.0)] {
-        click_sel(
-            &mut state,
-            "sketch.translate",
-            &mut sketch,
-            at,
-            0.1,
-            &params,
-            &selected,
-        );
-    }
+    let w = With::new(&params, &selected, 0.1);
+    w.clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.translate",
+        [Vec2D::new(20.0, 20.0), Vec2D::new(25.0, 20.0)],
+    );
     assert_eq!(lines(&sketch), 3);
     for x in [-5.0f64, 5.0] {
-        assert!(sketch.geometry.iter().any(|g| matches!(g,
-            GeometryElement::Point(p) if (p.position.to_glam() - glam::DVec2::new(x, 0.0)).length() < 1e-3)));
+        assert!(has_point(&sketch, x, 0.0));
     }
     let (points, distance) = sketch
         .constraints
@@ -2014,103 +1071,27 @@ fn translate_symmetric_copies_go_both_ways() {
 
 #[test]
 fn scale_selection_scales_radii_too() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let center = pt(&mut sketch, 4.0, 0.0);
     let circle_id = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
     let selected: HashSet<Uuid> = [circle_id].into_iter().collect();
     let params = ToolParams::default();
-    let mut state = ToolState::default();
     // Base at the origin, reference at (10, 0), target at (20, 0): a factor
     // of 2, clicked clear of the circle's points so nothing snaps.
-    click_sel(
-        &mut state,
-        "sketch.scale",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
-    click_sel(
-        &mut state,
-        "sketch.scale",
-        &mut sketch,
-        Vec2D::new(10.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
-    let fx = click_sel(
-        &mut state,
-        "sketch.scale",
-        &mut sketch,
-        Vec2D::new(20.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
+    let w = With::new(&params, &selected, 0.1);
+    w.click(&mut state, &mut sketch, "sketch.scale", (0.0, 0.0));
+    w.click(&mut state, &mut sketch, "sketch.scale", (10.0, 0.0));
+    let fx = w.click(&mut state, &mut sketch, "sketch.scale", (20.0, 0.0));
     assert!(fx.changed);
     let c = sketch.point_position(center).unwrap().to_glam();
     assert!((c - glam::DVec2::new(8.0, 0.0)).length() < 1e-3);
-    let r = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.radius),
-            _ => None,
-        })
-        .unwrap();
+    let r = circle_of(&sketch).radius;
     assert!((r - 4.0).abs() < 1e-3, "radius scaled with the geometry");
 }
 
 #[test]
-fn mirror_about_line_element_copies_geometry() {
-    let mut sketch = Sketch::new("t");
-    // Axis: the x-axis as a line element. Subject: a line above it.
-    let ax_a = pt(&mut sketch, -20.0, 0.0);
-    let ax_b = pt(&mut sketch, 20.0, 0.0);
-    line_between(&mut sketch, ax_a, ax_b);
-    let a = pt(&mut sketch, 2.0, 2.0);
-    let b = pt(&mut sketch, 8.0, 5.0);
-    let l = line_between(&mut sketch, a, b);
-    let selected: HashSet<Uuid> = [l].into_iter().collect();
-    let params = ToolParams::default();
-    let mut state = ToolState::default();
-    // Click the axis line mid-span (no point nearby).
-    let fx = click_sel(
-        &mut state,
-        "sketch.mirror",
-        &mut sketch,
-        Vec2D::new(12.0, 0.1),
-        0.5,
-        &params,
-        &selected,
-    );
-    assert!(fx.changed);
-    assert!(state.is_idle());
-    assert_eq!((points(&sketch), lines(&sketch)), (6, 3));
-    // Mirrored endpoints at (2,-2) and (8,-5); originals untouched.
-    for target in [glam::DVec2::new(2.0, -2.0), glam::DVec2::new(8.0, -5.0)] {
-        assert!(
-            sketch.geometry.iter().any(|g| match g {
-                GeometryElement::Point(p) => (p.position.to_glam() - target).length() < 1e-3,
-                _ => false,
-            }),
-            "mirrored point at {target:?}"
-        );
-    }
-    assert!(
-        (sketch.point_position(a).unwrap() - Vec2D::new(2.0, 2.0))
-            .to_glam()
-            .length()
-            .abs()
-            < 1e-6
-    );
-}
-
-#[test]
 fn mirror_arc_copy_stays_ccw() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     // Upper semicircle arc from (5,0) to (-5,0), mirrored about the x-axis.
     let c = pt(&mut sketch, 0.0, 0.0);
     let s = pt(&mut sketch, 5.0, 0.0);
@@ -2118,26 +1099,10 @@ fn mirror_arc_copy_stays_ccw() {
     let arc_id = sketch.add_geometry(GeometryElement::Arc(Arc::new(c, s, e, 5.0)));
     let selected: HashSet<Uuid> = [arc_id].into_iter().collect();
     let params = ToolParams::default();
-    let mut state = ToolState::default();
     // Two-point axis along the x-axis (empty space clicks).
-    click_sel(
-        &mut state,
-        "sketch.mirror",
-        &mut sketch,
-        Vec2D::new(-20.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
-    let fx = click_sel(
-        &mut state,
-        "sketch.mirror",
-        &mut sketch,
-        Vec2D::new(20.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
+    let w = With::new(&params, &selected, 0.1);
+    w.click(&mut state, &mut sketch, "sketch.mirror", (-20.0, 0.0));
+    let fx = w.click(&mut state, &mut sketch, "sketch.mirror", (20.0, 0.0));
     assert!(fx.changed);
     assert_eq!(arcs(&sketch), 2);
     // The mirrored arc must pass through (0,-5) with a CCW sweep of π.
@@ -2163,42 +1128,18 @@ fn mirror_arc_copy_stays_ccw() {
     assert!((sweep - std::f64::consts::PI).abs() < 1e-3);
 }
 
-#[test]
-fn point_tool_places_point() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let fx = handle_click(
-        &mut state,
-        "sketch.point",
-        &mut sketch,
-        Vec2D::new(2.0, 3.0),
-        0.5,
-    );
-    assert!(fx.changed);
-    assert_eq!(points(&sketch), 1);
-    assert!(state.is_idle());
-}
-
 /// Two ends of the major axis, then a rim point: the ellipse is centred
 /// between the ends and passes through the rim point.
 #[test]
 fn a_three_point_ellipse_passes_through_its_rim_point() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for p in [Vec2D::new(-4.0, 0.0), Vec2D::new(4.0, 0.0)] {
-        handle_click(&mut state, "sketch.ellipse3", &mut sketch, p, 0.01);
+        click(&mut state, "sketch.ellipse3", &mut sketch, p, 0.01);
     }
     assert!(sketch.geometry.is_empty(), "nothing before the rim point");
     let rim = Vec2D::new(2.0, 3.0_f64.sqrt());
-    assert!(handle_click(&mut state, "sketch.ellipse3", &mut sketch, rim, 0.01).changed);
-    let ellipse = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .expect("an ellipse");
+    assert!(click(&mut state, "sketch.ellipse3", &mut sketch, rim, 0.01).changed);
+    let ellipse = ellipse_of(&sketch);
     let center = sketch.point_position(ellipse.center).expect("its center");
     assert!(center.to_glam().length() < 1e-5, "centred between the ends");
     assert!((ellipse.major.to_glam().length() - 4.0).abs() < 1e-4);
@@ -2215,14 +1156,13 @@ fn a_three_point_ellipse_passes_through_its_rim_point() {
 /// elliptical arc from start to end.
 #[test]
 fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for p in [
         Vec2D::new(0.0, 0.0),
         Vec2D::new(4.0, 0.0),
         Vec2D::new(4.0 * (0.5f64).sqrt(), 2.0 * (0.5f64).sqrt()),
     ] {
-        handle_click(&mut state, "sketch.ellipse_arc", &mut sketch, p, 0.01);
+        click(&mut state, "sketch.ellipse_arc", &mut sketch, p, 0.01);
     }
     assert!(
         !sketch
@@ -2231,23 +1171,16 @@ fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
             .any(|g| matches!(g, GeometryElement::Ellipse(_)))
     );
     assert!(
-        handle_click(
+        click(
             &mut state,
             "sketch.ellipse_arc",
             &mut sketch,
-            Vec2D::new(-3.0, 0.5),
+            (-3.0, 0.5),
             0.01
         )
         .changed
     );
-    let ellipse = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .expect("an arc of ellipse");
+    let ellipse = ellipse_of(&sketch);
     let arc = ellipse.arc.expect("it is an arc");
     assert!((ellipse.ratio - 0.5).abs() < 1e-4);
     let (t0, t1) = ellipse.param_span(&sketch).expect("a span");
@@ -2283,10 +1216,9 @@ fn an_arc_of_ellipse_ends_on_its_ellipse_and_profiles_as_an_arc() {
 /// closes the shape into one profile.
 #[test]
 fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     let click = |state: &mut ToolState, sketch: &mut Sketch, x: f64, y: f64| {
-        handle_click(state, "sketch.polyline", sketch, Vec2D::new(x, y), 0.2).changed
+        click(state, "sketch.polyline", sketch, (x, y), 0.2).changed
     };
     click(&mut state, &mut sketch, 0.0, 0.0);
     assert!(click(&mut state, &mut sketch, 10.0, 0.0));
@@ -2309,14 +1241,7 @@ fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
     assert!(click(&mut state, &mut sketch, 0.0, 0.0));
     assert!(state.is_idle(), "a click on the start closes the polyline");
 
-    let arcs: Vec<Arc> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .collect();
+    let arcs: Vec<Arc> = all_arcs(&sketch);
     assert_eq!(arcs.len(), 1);
     let center = sketch.point_position(arcs[0].center).expect("center");
     assert!((center.x - 10.0).abs() < 1e-4 && (center.y - 5.0).abs() < 1e-4);
@@ -2339,15 +1264,14 @@ fn a_polyline_chains_lines_and_a_tangent_arc_into_a_closed_shape() {
 
 #[test]
 fn a_transform_with_nothing_selected_says_so_at_its_first_click() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::Idle;
+    let (mut sketch, mut state) = fresh();
     for tool in [
         "sketch.translate",
         "sketch.rotate",
         "sketch.scale",
         "sketch.mirror",
     ] {
-        let effect = handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.5);
+        let effect = click(&mut state, tool, &mut sketch, (1.0, 1.0), 0.5);
         assert!(!effect.changed);
         assert!(effect.log.is_some(), "{tool} says why");
         assert!(state.is_idle(), "{tool} did not start");
@@ -2358,39 +1282,21 @@ fn a_transform_with_nothing_selected_says_so_at_its_first_click() {
 /// vertical constraints turn with it instead of pulling it back.
 #[test]
 fn a_rotated_rectangle_stays_rotated_and_square() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::Idle;
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(20.0, 10.0),
-        0.5,
-    );
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.rect", &mut sketch, (0.0, 0.0), 0.5);
+    click(&mut state, "sketch.rect", &mut sketch, (20.0, 10.0), 0.5);
     let everything: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
     let angle = 30f64.to_radians();
-    for p in [
-        Vec2D::new(0.0, 0.0),
-        Vec2D::new(10.0, 0.0),
-        Vec2D::new(10.0 * angle.cos(), 10.0 * angle.sin()),
-    ] {
-        click_sel(
-            &mut state,
-            "sketch.rotate",
-            &mut sketch,
-            p,
-            0.5,
-            &ToolParams::default(),
-            &everything,
-        );
-    }
+    With::new(&ToolParams::default(), &everything, 0.5).clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.rotate",
+        [
+            Vec2D::new(0.0, 0.0),
+            Vec2D::new(10.0, 0.0),
+            Vec2D::new(10.0 * angle.cos(), 10.0 * angle.sin()),
+        ],
+    );
     crate::solver::solve(&mut sketch);
     let lines: Vec<glam::DVec2> = sketch
         .geometry
@@ -2421,22 +1327,9 @@ fn a_rotated_rectangle_stays_rotated_and_square() {
 /// rectangle to the solver.
 #[test]
 fn a_copy_carries_the_constraints_of_what_it_copies() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::Idle;
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(20.0, 10.0),
-        0.5,
-    );
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.rect", &mut sketch, (0.0, 0.0), 0.5);
+    click(&mut state, "sketch.rect", &mut sketch, (20.0, 10.0), 0.5);
     let shape = |sketch: &Sketch| {
         sketch
             .constraints
@@ -2465,52 +1358,19 @@ fn a_copy_carries_the_constraints_of_what_it_copies() {
 /// the fillet.
 #[test]
 fn a_fillet_on_a_dimensioned_corner_survives_the_solve() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::Idle;
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(3.0, 3.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.rect",
-        &mut sketch,
-        Vec2D::new(23.0, 13.0),
-        0.5,
-    );
-    let bottom = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Line(l) => Some(l.id),
-            _ => None,
-        })
-        .unwrap();
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.rect", &mut sketch, (3.0, 3.0), 0.5);
+    click(&mut state, "sketch.rect", &mut sketch, (23.0, 13.0), 0.5);
+    let bottom = line_of(&sketch).id;
     sketch.add_constraint(ConstraintKind::Length {
         line: bottom,
         length: 20.0,
     });
-    let params = ToolParams {
-        fillet_radius: 3.0,
-        ..ToolParams::default()
-    };
-    let effect = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(23.0, 3.0),
-        0.5,
-        &params,
-    );
+    let params = params(|p| p.fillet_radius = 3.0);
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    let effect = w.click(&mut state, &mut sketch, "sketch.fillet", (23.0, 3.0));
     assert!(effect.changed);
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
-        "{outcome:?}"
-    );
+    converged(&mut sketch);
     let arc = sketch.geometry.iter().find_map(|g| match g {
         GeometryElement::Arc(a) => Some(a.clone()),
         _ => None,
@@ -2526,32 +1386,24 @@ fn a_fillet_on_a_dimensioned_corner_survives_the_solve() {
     );
 }
 
-/// A split line's halves stay on one level line.
+/// A split line's halves share the split point, on the line where it was
+/// clicked, and stay on one level line.
 #[test]
 fn a_split_line_stays_one_line() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::Idle;
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(3.0, 4.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.line",
-        &mut sketch,
-        Vec2D::new(23.0, 4.0),
-        0.5,
-    );
-    handle_click(
-        &mut state,
-        "sketch.split",
-        &mut sketch,
-        Vec2D::new(10.0, 4.0),
-        0.5,
-    );
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.line", &mut sketch, (3.0, 4.0), 0.5);
+    click(&mut state, "sketch.line", &mut sketch, (23.0, 4.0), 0.5);
+    let line = sketch
+        .geometry
+        .iter()
+        .find(|g| matches!(g, GeometryElement::Line(_)));
+    let line = line.unwrap().id();
+    click(&mut state, "sketch.split", &mut sketch, (10.0, 4.1), 0.5);
+    let halves: Vec<Line> = all_lines(&sketch);
+    assert!(halves.iter().any(|h| h.id == line), "the line keeps its id");
+    assert_eq!(halves[0].end, halves[1].start, "shared split point");
+    let m = sketch.point_position(halves[0].end).unwrap();
+    assert!((m.to_glam() - glam::DVec2::new(10.0, 4.0)).length() < 1e-3);
     let level = sketch
         .constraints
         .iter()
@@ -2560,39 +1412,47 @@ fn a_split_line_stays_one_line() {
     assert_eq!(level, 2, "both halves level");
 }
 
-/// The shapes a tool constrains as it draws them are held consistently:
-/// they solve, and nothing is redundant or in conflict.
+/// The shapes a tool constrains as it draws them close one profile and
+/// are held consistently: they solve, nothing is redundant or in
+/// conflict, and what is left free is the shape's own freedom (a straight
+/// slot's two ends and width; an arc slot's centre, its two rails' radii
+/// and the angles its ends stand at).
 #[test]
 fn shape_tools_constrain_their_shapes_cleanly() {
-    for (tool, clicks) in [
+    // The tool, its clicks, the profile's segments and the freedom left.
+    type Case<'a> = (&'a str, &'a [(f64, f64)], usize, Option<i32>);
+    let cases: [Case; 5] = [
+        ("sketch.slot", &[(2.0, 2.0), (12.0, 5.0)], 4, None),
+        ("sketch.slot", &[(3.0, 3.0), (13.0, 3.0)], 4, Some(5)),
         (
-            "sketch.slot",
-            vec![Vec2D::new(2.0, 2.0), Vec2D::new(12.0, 5.0)],
+            "sketch.arc_slot",
+            &[(3.0, 2.0), (13.0, 2.0), (3.0, 12.0)],
+            4,
+            Some(6),
         ),
-        (
-            "sketch.polygon",
-            vec![Vec2D::new(2.0, 2.0), Vec2D::new(7.0, 3.0)],
-        ),
-        (
-            "sketch.rect_center",
-            vec![Vec2D::new(5.0, 3.0), Vec2D::new(9.0, 5.0)],
-        ),
-    ] {
-        let mut sketch = Sketch::new("t");
-        let mut state = ToolState::Idle;
-        for at in clicks {
-            handle_click(&mut state, tool, &mut sketch, at, 0.5);
+        ("sketch.polygon", &[(2.0, 2.0), (7.0, 3.0)], 6, None),
+        ("sketch.rect_center", &[(5.0, 3.0), (9.0, 5.0)], 4, None),
+    ];
+    for (tool, clicks, segments, dof) in cases {
+        let (mut sketch, mut state) = fresh();
+        for &at in clicks {
+            click(&mut state, tool, &mut sketch, at, 0.5);
+        }
+        assert!(state.is_idle(), "{tool} committed");
+        let wires = crate::profile::extract_wires(&sketch).unwrap();
+        assert_eq!(wires.len(), 1, "{tool} {clicks:?}");
+        assert_eq!(wires[0].segments.len(), segments, "{tool} {clicks:?}");
+        let diagnosis = crate::solver::diagnose(&sketch);
+        assert!(diagnosis.analyzed, "{tool}");
+        assert!(diagnosis.redundant.is_empty(), "{tool}: {diagnosis:?}");
+        assert!(diagnosis.conflicting.is_empty(), "{tool}: {diagnosis:?}");
+        if let Some(dof) = dof {
+            assert_eq!(diagnosis.dof, dof, "{tool}");
         }
         let outcome = crate::solver::solve(&mut sketch);
         assert!(
             matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
             "{tool}: {outcome:?}"
-        );
-        let diagnosis = crate::solver::diagnose(&sketch);
-        assert!(diagnosis.conflicting.is_empty(), "{tool} conflicts");
-        assert!(
-            diagnosis.redundant.is_empty(),
-            "{tool} has redundant constraints"
         );
     }
 }
@@ -2628,24 +1488,17 @@ fn assert_rectangle(sketch: &Sketch) {
 
 #[test]
 fn a_rectangle_from_three_corners_turns_with_its_first_edge() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for p in [(1.0, 1.0), (9.0, 7.0)] {
-        let fx = handle_click(
-            &mut state,
-            "sketch.rect3",
-            &mut sketch,
-            Vec2D::new(p.0, p.1),
-            0.1,
-        );
+        let fx = click(&mut state, "sketch.rect3", &mut sketch, (p.0, p.1), 0.1);
         assert!(!fx.changed, "nothing before the third click");
     }
     // The third click only says how wide: 5 to the left of the edge.
-    let fx = handle_click(
+    let fx = click(
         &mut state,
         "sketch.rect3",
         &mut sketch,
-        Vec2D::new(1.0 - 3.0 + 2.0, 1.0 + 4.0 + 1.5),
+        (1.0 - 3.0 + 2.0, 1.0 + 4.0 + 1.5),
         0.1,
     );
     assert!(fx.changed && state.is_idle());
@@ -2669,43 +1522,13 @@ fn a_rectangle_from_three_corners_turns_with_its_first_edge() {
 }
 
 #[test]
-fn a_third_click_on_the_first_edge_line_draws_nothing() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.rect3",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.1,
-    );
-    handle_click(
-        &mut state,
-        "sketch.rect3",
-        &mut sketch,
-        Vec2D::new(5.0, 1.0),
-        0.1,
-    );
-    let fx = handle_click(
-        &mut state,
-        "sketch.rect3",
-        &mut sketch,
-        Vec2D::new(9.0, 1.0),
-        0.1,
-    );
-    assert!(!fx.changed);
-    assert!(sketch.geometry.is_empty());
-}
-
-#[test]
 fn a_rectangle_from_its_centre_and_two_corners() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     let tool = "sketch.rect_center3";
-    handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.1);
-    handle_click(&mut state, tool, &mut sketch, Vec2D::new(5.0, 4.0), 0.1);
+    click(&mut state, tool, &mut sketch, (1.0, 1.0), 0.1);
+    click(&mut state, tool, &mut sketch, (5.0, 4.0), 0.1);
     // Toward the next corner: it lands as far out as the first.
-    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(-5.0, 9.0), 0.1);
+    let fx = click(&mut state, tool, &mut sketch, (-5.0, 9.0), 0.1);
     assert!(fx.changed && state.is_idle());
     assert_eq!((points(&sketch), lines(&sketch)), (5, 4));
     assert_rectangle(&sketch);
@@ -2744,28 +1567,11 @@ fn a_rectangle_from_its_centre_and_two_corners() {
 
 #[test]
 fn a_frame_is_two_rectangles_a_dimensioned_wall_apart() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        offset_distance: 1.5,
-        ..ToolParams::default()
-    };
-    click_p(
-        &mut state,
-        "sketch.rect_frame",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.1,
-        &params,
-    );
-    let fx = click_p(
-        &mut state,
-        "sketch.rect_frame",
-        &mut sketch,
-        Vec2D::new(11.0, 7.0),
-        0.1,
-        &params,
-    );
+    let (mut sketch, mut state) = fresh();
+    let params = params(|p| p.offset_distance = 1.5);
+    let w = With::new(&params, &HashSet::new(), 0.1);
+    w.click(&mut state, &mut sketch, "sketch.rect_frame", (1.0, 1.0));
+    let fx = w.click(&mut state, &mut sketch, "sketch.rect_frame", (11.0, 7.0));
     assert!(fx.changed && state.is_idle());
     assert_eq!((points(&sketch), lines(&sketch)), (8, 8));
     assert_eq!(sketch.constraints.len(), 12, "8 H/V + 4 wall distances");
@@ -2787,10 +1593,7 @@ fn a_frame_is_two_rectangles_a_dimensioned_wall_apart() {
             *value = 2.0;
         }
     }
-    assert!(matches!(
-        crate::solver::solve(&mut sketch),
-        crate::solver::SolveOutcome::Converged { .. }
-    ));
+    converged(&mut sketch);
     for c in &sketch.constraints {
         if let ConstraintKind::DistanceX { a, b: Some(b), .. } = c.kind {
             let gap = sketch.point_position(b).unwrap() - sketch.point_position(a).unwrap();
@@ -2798,34 +1601,6 @@ fn a_frame_is_two_rectangles_a_dimensioned_wall_apart() {
         }
     }
     assert_eq!(crate::profile::extract_wires(&sketch).unwrap().len(), 2);
-}
-
-#[test]
-fn a_frame_too_thin_for_its_wall_says_so() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    let params = ToolParams {
-        offset_distance: 3.0,
-        ..ToolParams::default()
-    };
-    click_p(
-        &mut state,
-        "sketch.rect_frame",
-        &mut sketch,
-        Vec2D::new(1.0, 1.0),
-        0.1,
-        &params,
-    );
-    let fx = click_p(
-        &mut state,
-        "sketch.rect_frame",
-        &mut sketch,
-        Vec2D::new(11.0, 6.0),
-        0.1,
-        &params,
-    );
-    assert!(!fx.changed && fx.log.is_some());
-    assert!(sketch.geometry.is_empty());
 }
 
 #[test]
@@ -2850,17 +1625,6 @@ fn a_trim_stroke_finds_what_it_crosses_first() {
     assert!(next_stroke_crossing(&sketch, from, Vec2D::new(0.5, 4.0)).is_none());
 }
 
-fn spline_of(sketch: &Sketch) -> crate::sketch::BSpline {
-    sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.clone()),
-            _ => None,
-        })
-        .expect("a spline")
-}
-
 /// The spline passes within `tol` of `p`.
 fn passes_through(sketch: &Sketch, spline: &crate::sketch::BSpline, p: Vec2D, tol: f64) -> bool {
     spline
@@ -2872,24 +1636,15 @@ fn passes_through(sketch: &Sketch, spline: &crate::sketch::BSpline, p: Vec2D, to
 
 #[test]
 fn a_spline_through_points_passes_through_every_click_and_follows_them() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     let params = ToolParams {
         bspline_interpolate: true,
         bspline_degree: 4,
         ..ToolParams::default()
     };
     let clicks = [(1.0, 1.0), (4.0, 5.0), (8.0, 6.0), (12.0, 2.0), (15.0, 4.0)];
-    for (x, y) in clicks {
-        click_p(
-            &mut state,
-            "sketch.bspline",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-            &params,
-        );
-    }
+    let w = With::new(&params, &HashSet::new(), 0.1);
+    w.clicks(&mut state, &mut sketch, "sketch.bspline", clicks);
     let fx = finish_click_sequence(&mut state, &mut sketch, &params);
     assert!(fx.changed);
     let spline = spline_of(&sketch);
@@ -2939,8 +1694,7 @@ fn a_spline_through_points_passes_through_every_click_and_follows_them() {
 
 #[test]
 fn a_closed_spline_through_points_is_its_own_profile() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     let params = ToolParams {
         bspline_interpolate: true,
         bspline_periodic: true,
@@ -2948,16 +1702,8 @@ fn a_closed_spline_through_points_is_its_own_profile() {
         ..ToolParams::default()
     };
     let clicks = [(1.0, 1.0), (9.0, 1.0), (9.0, 7.0), (1.0, 7.0)];
-    for (x, y) in clicks {
-        click_p(
-            &mut state,
-            "sketch.bspline",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-            &params,
-        );
-    }
+    let w = With::new(&params, &HashSet::new(), 0.1);
+    w.clicks(&mut state, &mut sketch, "sketch.bspline", clicks);
     finish_click_sequence(&mut state, &mut sketch, &params);
     let spline = spline_of(&sketch);
     assert!(spline.periodic && spline.knots.is_empty());
@@ -2978,29 +1724,21 @@ fn a_closed_spline_through_points_is_its_own_profile() {
 #[test]
 fn a_control_point_spline_takes_its_degree_and_a_cubic_stays_as_it_was() {
     for (degree, nurbs) in [(2, true), (3, false), (5, true)] {
-        let mut sketch = Sketch::new("t");
-        let mut state = ToolState::default();
-        let params = ToolParams {
-            bspline_degree: degree,
-            ..ToolParams::default()
-        };
-        for (x, y) in [
-            (1.0, 1.0),
-            (3.0, 5.0),
-            (6.0, 6.0),
-            (8.0, 2.0),
-            (10.0, 5.0),
-            (12.0, 1.0),
-        ] {
-            click_p(
-                &mut state,
-                "sketch.bspline",
-                &mut sketch,
-                Vec2D::new(x, y),
-                0.1,
-                &params,
-            );
-        }
+        let (mut sketch, mut state) = fresh();
+        let params = params(|p| p.bspline_degree = degree);
+        With::new(&params, &HashSet::new(), 0.1).clicks(
+            &mut state,
+            &mut sketch,
+            "sketch.bspline",
+            [
+                (1.0, 1.0),
+                (3.0, 5.0),
+                (6.0, 6.0),
+                (8.0, 2.0),
+                (10.0, 5.0),
+                (12.0, 1.0),
+            ],
+        );
         finish_click_sequence(&mut state, &mut sketch, &params);
         let spline = spline_of(&sketch);
         assert_eq!(spline.degree, degree);
@@ -3123,17 +1861,6 @@ fn join_refuses_branches_gaps_and_circles() {
     assert_eq!(arcs(&sketch), 1, "nothing was touched");
 }
 
-fn conic_of(sketch: &Sketch) -> crate::sketch::Conic {
-    sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Conic(c) => Some(c.clone()),
-            _ => None,
-        })
-        .expect("a conic")
-}
-
 /// How far each end of every conic arc is from its curve.
 fn worst_end_miss(sketch: &Sketch) -> f64 {
     sketch
@@ -3155,14 +1882,13 @@ fn worst_end_miss(sketch: &Sketch) -> f64 {
 
 #[test]
 fn an_arc_of_parabola_from_vertex_focus_and_two_ends() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     let tool = "sketch.parabola";
     for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0)] {
-        let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(x, y), 0.1);
+        let fx = click(&mut state, tool, &mut sketch, (x, y), 0.1);
         assert!(!fx.changed);
     }
-    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(5.0, 7.0), 0.1);
+    let fx = click(&mut state, tool, &mut sketch, (5.0, 7.0), 0.1);
     assert!(fx.changed && state.is_idle());
     assert_eq!(points(&sketch), 3, "vertex and two ends");
     let conic = conic_of(&sketch);
@@ -3196,16 +1922,15 @@ fn an_arc_of_parabola_from_vertex_focus_and_two_ends() {
 
 #[test]
 fn an_arc_of_hyperbola_opens_as_wide_as_its_start_says() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     let tool = "sketch.hyperbola";
-    handle_click(&mut state, tool, &mut sketch, Vec2D::new(1.0, 1.0), 0.1);
-    handle_click(&mut state, tool, &mut sketch, Vec2D::new(4.0, 1.0), 0.1);
+    click(&mut state, tool, &mut sketch, (1.0, 1.0), 0.1);
+    click(&mut state, tool, &mut sketch, (4.0, 1.0), 0.1);
     // Inside the vertex no branch passes: the click is ignored.
-    handle_click(&mut state, tool, &mut sketch, Vec2D::new(3.0, 3.0), 0.1);
+    click(&mut state, tool, &mut sketch, (3.0, 3.0), 0.1);
     assert!(matches!(state, ToolState::ConicAxis { .. }));
-    handle_click(&mut state, tool, &mut sketch, Vec2D::new(6.0, 3.0), 0.1);
-    let fx = handle_click(&mut state, tool, &mut sketch, Vec2D::new(9.0, -1.0), 0.1);
+    click(&mut state, tool, &mut sketch, (6.0, 3.0), 0.1);
+    let fx = click(&mut state, tool, &mut sketch, (9.0, -1.0), 0.1);
     assert!(fx.changed);
     let conic = conic_of(&sketch);
     assert!((conic.minor - 1.5).abs() < 1e-4, "{}", conic.minor);
@@ -3222,34 +1947,14 @@ fn an_arc_of_hyperbola_opens_as_wide_as_its_start_says() {
 
 #[test]
 fn a_conic_arc_splits_into_two_of_the_same_curve() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
-        handle_click(
-            &mut state,
-            "sketch.parabola",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-        );
+        click(&mut state, "sketch.parabola", &mut sketch, (x, y), 0.1);
     }
     // At the vertex, right on the curve.
-    let fx = handle_click(
-        &mut state,
-        "sketch.split",
-        &mut sketch,
-        Vec2D::new(1.0, 1.05),
-        0.1,
-    );
+    let fx = click(&mut state, "sketch.split", &mut sketch, (1.0, 1.05), 0.1);
     assert!(fx.changed, "{:?}", fx.log);
-    let halves: Vec<crate::sketch::Conic> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Conic(c) => Some(c.clone()),
-            _ => None,
-        })
-        .collect();
+    let halves: Vec<crate::sketch::Conic> = all_conics(&sketch);
     assert_eq!(halves.len(), 2);
     assert_eq!(halves[0].center, halves[1].center);
     assert_eq!(halves[0].end, halves[1].start);
@@ -3260,16 +1965,9 @@ fn a_conic_arc_splits_into_two_of_the_same_curve() {
 
 #[test]
 fn a_turned_or_mirrored_conic_keeps_its_ends_on_it() {
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
+    let (mut sketch, mut state) = fresh();
     for (x, y) in [(1.0, 1.0), (4.0, 1.0), (6.0, 3.0), (9.0, -1.0)] {
-        handle_click(
-            &mut state,
-            "sketch.hyperbola",
-            &mut sketch,
-            Vec2D::new(x, y),
-            0.1,
-        );
+        click(&mut state, "sketch.hyperbola", &mut sketch, (x, y), 0.1);
     }
     let all: HashSet<Uuid> = sketch.geometry.iter().map(|g| g.id()).collect();
     let turn = Similarity::rotation_about(glam::DVec2::new(2.0, 2.0), 0.7);
@@ -3318,15 +2016,8 @@ fn a_mirror_about_a_point_can_move_the_original_or_keep_a_linked_image() {
         ..ToolParams::default()
     };
     let mut state = ToolState::default();
-    let fx = click_sel(
-        &mut state,
-        "sketch.mirror",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
+    let w = With::new(&params, &selected, 0.1);
+    let fx = w.click(&mut state, &mut sketch, "sketch.mirror", (0.0, 0.0));
     assert!(fx.changed);
     assert_eq!(lines(&sketch), 1, "only the image is left");
     assert!(find(&sketch, -2.0, -2.0).is_some() && find(&sketch, 2.0, 2.0).is_none());
@@ -3341,15 +2032,8 @@ fn a_mirror_about_a_point_can_move_the_original_or_keep_a_linked_image() {
         ..ToolParams::default()
     };
     let mut state = ToolState::default();
-    click_sel(
-        &mut state,
-        "sketch.mirror",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.1,
-        &params,
-        &selected,
-    );
+    let w = With::new(&params, &selected, 0.1);
+    w.click(&mut state, &mut sketch, "sketch.mirror", (0.0, 0.0));
     let image = find(&sketch, -2.0, -2.0).expect("the image of the first end");
     sketch.add_constraint(ConstraintKind::FixedPoint {
         point: a,
@@ -3365,34 +2049,16 @@ fn a_mirror_about_a_point_can_move_the_original_or_keep_a_linked_image() {
 
 #[test]
 fn a_scale_with_copies_keeps_the_original_and_scales_each_copy_again() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let center = pt(&mut sketch, 4.0, 0.0);
     let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(center, 2.0)));
     let selected: HashSet<Uuid> = [circle].into();
-    let params = ToolParams {
-        copies: 2,
-        ..ToolParams::default()
-    };
-    let mut state = ToolState::default();
+    let params = params(|p| p.copies = 2);
     for x in [0.0, 10.0, 20.0] {
-        click_sel(
-            &mut state,
-            "sketch.scale",
-            &mut sketch,
-            Vec2D::new(x, 0.0),
-            0.1,
-            &params,
-            &selected,
-        );
+        let w = With::new(&params, &selected, 0.1);
+        w.click(&mut state, &mut sketch, "sketch.scale", (x, 0.0));
     }
-    let mut radii: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Circle(c) => Some(c.radius),
-            _ => None,
-        })
-        .collect();
+    let mut radii: Vec<f64> = all_circles(&sketch).iter().map(|c| c.radius).collect();
     radii.sort_by(f64::total_cmp);
     assert_eq!(radii.len(), 3, "the original and two copies");
     for (got, want) in radii.iter().zip([2.0, 4.0, 8.0]) {
@@ -3403,23 +2069,15 @@ fn a_scale_with_copies_keeps_the_original_and_scales_each_copy_again() {
 #[test]
 fn a_polyline_arc_can_leave_square_to_the_last_segment_or_back_along_it() {
     let arc_center = |segment: PolySegment| {
-        let mut sketch = Sketch::new("t");
-        let mut state = ToolState::default();
+        let (mut sketch, mut state) = fresh();
         let click = |state: &mut ToolState, sketch: &mut Sketch, x: f64, y: f64| {
-            handle_click(state, "sketch.polyline", sketch, Vec2D::new(x, y), 0.2).changed
+            click(state, "sketch.polyline", sketch, (x, y), 0.2).changed
         };
         click(&mut state, &mut sketch, 0.0, 0.0);
         click(&mut state, &mut sketch, 10.0, 0.0);
         set_polyline_segment(&mut state, segment);
         assert!(click(&mut state, &mut sketch, 20.0, 0.0));
-        let arc = sketch
-            .geometry
-            .iter()
-            .find_map(|g| match g {
-                GeometryElement::Arc(a) => Some(a.clone()),
-                _ => None,
-            })
-            .expect("an arc");
+        let arc = arc_of(&sketch);
         (
             sketch.point_position(arc.center).unwrap(),
             arc.radius,
@@ -3439,39 +2097,13 @@ fn a_polyline_arc_can_leave_square_to_the_last_segment_or_back_along_it() {
     );
     // Leaving (10, 0) back along -x and ending at (10, 8): a turn about
     // (10, 4).
-    let mut sketch = Sketch::new("t");
-    let mut state = ToolState::default();
-    handle_click(
-        &mut state,
-        "sketch.polyline",
-        &mut sketch,
-        Vec2D::new(0.0, 0.0),
-        0.2,
-    );
-    handle_click(
-        &mut state,
-        "sketch.polyline",
-        &mut sketch,
-        Vec2D::new(10.0, 0.0),
-        0.2,
-    );
+    let (mut sketch, mut state) = fresh();
+    click(&mut state, "sketch.polyline", &mut sketch, (0.0, 0.0), 0.2);
+    click(&mut state, "sketch.polyline", &mut sketch, (10.0, 0.0), 0.2);
     set_polyline_segment(&mut state, PolySegment::Reverse);
-    let made = handle_click(
-        &mut state,
-        "sketch.polyline",
-        &mut sketch,
-        Vec2D::new(10.0, 8.0),
-        0.2,
-    );
+    let made = click(&mut state, "sketch.polyline", &mut sketch, (10.0, 8.0), 0.2);
     assert!(made.changed);
-    let arc = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::Arc(a) => Some(a.clone()),
-            _ => None,
-        })
-        .expect("a reversed arc");
+    let arc = arc_of(&sketch);
     let c = sketch.point_position(arc.center).unwrap();
     assert!(
         (c.x - 10.0).abs() < 1e-4 && (c.y - 4.0).abs() < 1e-4,
@@ -3496,21 +2128,14 @@ fn the_arc(sketch: &Sketch) -> (glam::DVec2, Arc) {
 #[test]
 fn a_fillet_rounds_the_corner_of_a_line_and_an_arc() {
     // A D: the upper half of a circle of 10 closed by its diameter.
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let c = pt(&mut sketch, 0.0, 0.0);
     let r = pt(&mut sketch, 10.0, 0.0);
     let l = pt(&mut sketch, -10.0, 0.0);
     line_between(&mut sketch, l, r);
     sketch.add_geometry(GeometryElement::Arc(Arc::new(c, r, l, 10.0)));
-    let mut state = ToolState::Idle;
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(10.0, 0.0),
-        0.5,
-        &fillet_params(2.0),
-    );
+    let w = With::new(&params(|p| p.fillet_radius = 2.0), &HashSet::new(), 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.fillet", (10.0, 0.0));
     assert!(fx.changed, "{:?}", fx.log);
     let (centre, _) = the_arc(&sketch);
     // Inside the D: 2 above the line, 8 from the circle's centre.
@@ -3519,43 +2144,25 @@ fn a_fillet_rounds_the_corner_of_a_line_and_an_arc() {
     let wires = crate::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1);
     assert_eq!(wires[0].segments.len(), 3);
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
-        "{outcome:?}"
-    );
+    converged(&mut sketch);
 }
 
 #[test]
 fn a_fillet_joins_two_lines_that_do_not_meet() {
     // An L with its corner missing: each line stops short of it.
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, 3.0, 0.0);
     let b = pt(&mut sketch, 10.0, 0.0);
     let c = pt(&mut sketch, 0.0, 4.0);
     let d = pt(&mut sketch, 0.0, 10.0);
     let bottom = line_between(&mut sketch, a, b);
     let side = line_between(&mut sketch, c, d);
-    let mut state = ToolState::Idle;
-    let params = fillet_params(1.0);
-    let first = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(8.0, 0.0),
-        0.5,
-        &params,
-    );
+    let params = params(|p| p.fillet_radius = 1.0);
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    let first = w.click(&mut state, &mut sketch, "sketch.fillet", (8.0, 0.0));
     assert!(!first.changed);
     assert!(matches!(state, ToolState::CornerFirst { .. }));
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(0.0, 8.0),
-        0.5,
-        &params,
-    );
+    let fx = w.click(&mut state, &mut sketch, "sketch.fillet", (0.0, 8.0));
     assert!(fx.changed, "{:?}", fx.log);
     assert!(state.is_idle());
     let (centre, arc) = the_arc(&sketch);
@@ -3582,61 +2189,46 @@ fn a_fillet_joins_two_lines_that_do_not_meet() {
 
 #[test]
 fn a_fillet_trims_lines_that_cross() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, -5.0, 0.0);
     let b = pt(&mut sketch, 10.0, 0.0);
     let c = pt(&mut sketch, 0.0, -5.0);
     let d = pt(&mut sketch, 0.0, 10.0);
     line_between(&mut sketch, a, b);
     line_between(&mut sketch, c, d);
-    let mut state = ToolState::Idle;
-    let params = fillet_params(2.0);
-    for at in [Vec2D::new(8.0, 0.0), Vec2D::new(0.0, 8.0)] {
-        click_p(&mut state, "sketch.fillet", &mut sketch, at, 0.5, &params);
-    }
+    let params = params(|p| p.fillet_radius = 2.0);
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    w.clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.fillet",
+        [Vec2D::new(8.0, 0.0), Vec2D::new(0.0, 8.0)],
+    );
     let (centre, _) = the_arc(&sketch);
     assert!(
         (centre - glam::DVec2::new(2.0, 2.0)).length() < 1e-4,
         "{centre:?}"
     );
     // The parts past the crossing are cut away.
-    let lowest = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position),
-            _ => None,
-        })
+    let lowest = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position)
         .fold(f64::MAX, |m, p| m.min(p.x).min(p.y));
     assert!(lowest > -1e-4, "{lowest}");
 }
 
 #[test]
 fn a_fillet_touches_a_circle_and_leaves_it_whole() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let o = pt(&mut sketch, 0.0, 0.0);
     let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(o, 5.0)));
     let a = pt(&mut sketch, 8.0, -10.0);
     let b = pt(&mut sketch, 8.0, 10.0);
     line_between(&mut sketch, a, b);
-    let mut state = ToolState::Idle;
-    let params = fillet_params(2.0);
-    click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(0.0, 5.0),
-        0.5,
-        &params,
-    );
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(8.0, 8.0),
-        0.5,
-        &params,
-    );
+    let params = params(|p| p.fillet_radius = 2.0);
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    w.click(&mut state, &mut sketch, "sketch.fillet", (0.0, 5.0));
+    let fx = w.click(&mut state, &mut sketch, "sketch.fillet", (8.0, 8.0));
     assert!(fx.changed, "{:?}", fx.log);
     let (centre, _) = the_arc(&sketch);
     assert!((centre.length() - 7.0).abs() < 1e-3, "{centre:?}");
@@ -3650,32 +2242,27 @@ fn a_fillet_touches_a_circle_and_leaves_it_whole() {
 
 #[test]
 fn a_chamfer_joins_two_lines_that_do_not_meet() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let a = pt(&mut sketch, 3.0, 0.0);
     let b = pt(&mut sketch, 10.0, 0.0);
     let c = pt(&mut sketch, 0.0, 4.0);
     let d = pt(&mut sketch, 0.0, 10.0);
     line_between(&mut sketch, a, b);
     line_between(&mut sketch, c, d);
-    let mut state = ToolState::Idle;
     let params = ToolParams {
         chamfer_length: 2.0,
         corner_keep: true,
         ..ToolParams::default()
     };
-    for at in [Vec2D::new(8.0, 0.0), Vec2D::new(0.0, 8.0)] {
-        click_p(&mut state, "sketch.chamfer", &mut sketch, at, 0.5, &params);
-    }
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    w.clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.chamfer",
+        [Vec2D::new(8.0, 0.0), Vec2D::new(0.0, 8.0)],
+    );
     assert_eq!(lines(&sketch), 3);
-    let has = |x: f64, y: f64| {
-        sketch.geometry.iter().any(|g| match g {
-            GeometryElement::Point(p) => {
-                (p.position.to_glam() - glam::DVec2::new(x, y)).length() < 1e-4
-            }
-            _ => false,
-        })
-    };
-    assert!(has(2.0, 0.0) && has(0.0, 2.0));
+    assert!(has_point(&sketch, 2.0, 0.0) && has_point(&sketch, 0.0, 2.0));
     // The corner is kept, as construction, on both lines.
     let corner = sketch
         .geometry
@@ -3698,26 +2285,16 @@ fn a_chamfer_joins_two_lines_that_do_not_meet() {
 
 #[test]
 fn a_fillet_can_keep_the_corner_and_what_holds_it() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let [.., c, _] = build_rectangle(&mut sketch, 12.0, 8.0);
-    sketch.add_constraint(ConstraintKind::FixedPoint {
-        point: c,
-        position: Vec2D::new(12.0, 8.0),
-    });
-    let mut state = ToolState::Idle;
+    pin(&mut sketch, c);
     let params = ToolParams {
         fillet_radius: 2.0,
         corner_keep: true,
         ..ToolParams::default()
     };
-    let fx = click_p(
-        &mut state,
-        "sketch.fillet",
-        &mut sketch,
-        Vec2D::new(12.0, 8.0),
-        0.5,
-        &params,
-    );
+    let w = With::new(&params, &HashSet::new(), 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.fillet", (12.0, 8.0));
     assert!(fx.changed);
     assert!(sketch.is_construction(c));
     assert!(sketch.constraints.iter().any(|con| matches!(
@@ -3726,11 +2303,7 @@ fn a_fillet_can_keep_the_corner_and_what_holds_it() {
     )));
     let wires = crate::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 1);
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
-        "{outcome:?}"
-    );
+    converged(&mut sketch);
 }
 
 fn offset_params(f: impl FnOnce(&mut ToolParams)) -> ToolParams {
@@ -3755,18 +2328,10 @@ fn selected_rectangle(sketch: &mut Sketch) -> HashSet<Uuid> {
 
 #[test]
 fn an_offset_outward_can_round_its_corners() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let selected = selected_rectangle(&mut sketch);
-    let mut state = ToolState::Idle;
-    let fx = click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(5.0, -3.0),
-        0.5,
-        &offset_params(|p| p.offset_round = true),
-        &selected,
-    );
+    let w = With::new(&offset_params(|p| p.offset_round = true), &selected, 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
     assert!(fx.changed);
     // Four copies and four quarter arcs about the original corners.
     assert_eq!((lines(&sketch), arcs(&sketch)), (8, 4));
@@ -3783,56 +2348,36 @@ fn an_offset_outward_can_round_its_corners() {
     }
     let wires = crate::profile::extract_wires(&sketch).unwrap();
     assert_eq!(wires.len(), 2);
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
-        "{outcome:?}"
-    );
+    converged(&mut sketch);
 }
 
 #[test]
 fn an_inward_offset_does_not_round_its_corners() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let selected = selected_rectangle(&mut sketch);
-    let mut state = ToolState::Idle;
-    click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(5.0, 2.5),
-        0.5,
-        &offset_params(|p| p.offset_round = true),
-        &selected,
-    );
+    let w = With::new(&offset_params(|p| p.offset_round = true), &selected, 0.5);
+    w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 2.5));
     assert_eq!((lines(&sketch), arcs(&sketch)), (8, 0));
 }
 
 #[test]
 fn an_offset_to_both_sides_replacing_the_original() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let selected = selected_rectangle(&mut sketch);
-    let mut state = ToolState::Idle;
-    click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(5.0, 2.5),
-        0.5,
-        &offset_params(|p| {
+    let w = With {
+        params: offset_params(|p| {
             p.offset_both = true;
             p.offset_delete = true;
         }),
-        &selected,
-    );
+        selected: selected.clone(),
+        tol: 0.5,
+    };
+    w.click(&mut state, &mut sketch, "sketch.offset", (5.0, 2.5));
     assert_eq!(lines(&sketch), 8);
     assert!(selected.iter().all(|id| sketch.get_geometry(*id).is_none()));
-    let xs: Vec<f64> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.x),
-            _ => None,
-        })
+    let xs: Vec<f64> = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position.x)
         .collect();
     assert!(xs.iter().any(|x| (x - 1.0).abs() < 1e-4));
     assert!(xs.iter().any(|x| (x + 1.0).abs() < 1e-4));
@@ -3844,29 +2389,22 @@ fn an_offset_to_both_sides_replacing_the_original() {
 
 #[test]
 fn a_linked_offset_follows_its_dimension() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let selected = selected_rectangle(&mut sketch);
     for g in sketch.geometry.clone() {
         if let GeometryElement::Point(p) = g {
-            sketch.add_constraint(ConstraintKind::FixedPoint {
-                point: p.id,
-                position: p.position,
-            });
+            pin(&mut sketch, p.id);
         }
     }
-    let mut state = ToolState::Idle;
-    click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(5.0, -3.0),
-        0.5,
-        &offset_params(|p| {
+    let w = With {
+        params: offset_params(|p| {
             p.offset_linked = true;
             p.offset_round = true;
         }),
-        &selected,
-    );
+        selected: selected.clone(),
+        tol: 0.5,
+    };
+    w.click(&mut state, &mut sketch, "sketch.offset", (5.0, -3.0));
     let offset = sketch
         .constraints
         .iter()
@@ -3878,19 +2416,11 @@ fn a_linked_offset_follows_its_dimension() {
     assert_eq!(pairs.len(), 4);
     let kind = crate::sketch::with_dimension_value(&sketch.constraints[offset].kind, 2.5);
     sketch.constraints[offset].kind = kind;
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
-        "{outcome:?}"
-    );
+    converged(&mut sketch);
     // Every copy stands 2.5 out, the corners round with radius 2.5.
-    let lowest = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some(p.position.y),
-            _ => None,
-        })
+    let lowest = all_points(&sketch)
+        .into_iter()
+        .map(|p| p.position.y)
         .fold(f64::MAX, f64::min);
     assert!((lowest + 2.5).abs() < 1e-3, "{lowest}");
     for g in &sketch.geometry {
@@ -3904,7 +2434,7 @@ fn a_linked_offset_follows_its_dimension() {
 
 #[test]
 fn an_ellipse_offsets_as_a_closed_spline() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let c = pt(&mut sketch, 0.0, 0.0);
     let ellipse = sketch.add_geometry(GeometryElement::Ellipse(crate::sketch::Ellipse::new(
         c,
@@ -3912,25 +2442,10 @@ fn an_ellipse_offsets_as_a_closed_spline() {
         0.5,
     )));
     let selected: HashSet<Uuid> = [ellipse].into_iter().collect();
-    let mut state = ToolState::Idle;
-    let fx = click_sel(
-        &mut state,
-        "sketch.offset",
-        &mut sketch,
-        Vec2D::new(0.0, 9.0),
-        0.5,
-        &offset_params(|p| p.offset_distance = 2.0),
-        &selected,
-    );
+    let w = With::new(&offset_params(|p| p.offset_distance = 2.0), &selected, 0.5);
+    let fx = w.click(&mut state, &mut sketch, "sketch.offset", (0.0, 9.0));
     assert!(fx.changed, "{:?}", fx.log);
-    let spline = sketch
-        .geometry
-        .iter()
-        .find_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.id),
-            _ => None,
-        })
-        .expect("a spline copy");
+    let spline = spline_of(&sketch).id;
     let samples = crate::measure::curve_samples(&sketch, spline).unwrap();
     // Outside the ellipse, about 2 from it: at its ends 12 out along x and
     // 7 up at its top.
@@ -3970,17 +2485,10 @@ fn ellipse_arc_span(sketch: &Sketch, id: Uuid) -> Option<(f64, f64)> {
 
 #[test]
 fn trimming_a_whole_ellipse_leaves_an_arc_of_it() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (ellipse, _) = ellipse_and_line(&mut sketch, false);
-    let mut state = ToolState::Idle;
     // Click its right end, past the line: that part goes.
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(10.0, 0.0),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.trim", &mut sketch, (10.0, 0.0), 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let (t0, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
     let x_at = |t: f64| 10.0 * t.cos();
@@ -3992,11 +2500,10 @@ fn trimming_a_whole_ellipse_leaves_an_arc_of_it() {
 
 #[test]
 fn trimming_an_arc_of_an_ellipse_shortens_it() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (ellipse, _) = ellipse_and_line(&mut sketch, true);
-    let mut state = ToolState::Idle;
     let near_right = Vec2D::new(10.0 * 0.3f64.cos(), 5.0 * 0.3f64.sin());
-    let fx = handle_click(&mut state, "sketch.trim", &mut sketch, near_right, 0.5);
+    let fx = click(&mut state, "sketch.trim", &mut sketch, near_right, 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let (t0, t1) = ellipse_arc_span(&sketch, ellipse).unwrap();
     assert!((10.0 * t0.cos() - 4.0).abs() < 1e-3, "starts at the line");
@@ -4004,29 +2511,17 @@ fn trimming_an_arc_of_an_ellipse_shortens_it() {
         (t1 - std::f64::consts::PI).abs() < 1e-3,
         "still ends at (-10, 0)"
     );
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(
-        matches!(outcome, crate::solver::SolveOutcome::Converged { .. }),
-        "{outcome:?}"
-    );
+    converged(&mut sketch);
 }
 
 #[test]
 fn splitting_an_arc_of_an_ellipse_makes_two_that_meet() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (ellipse, _) = ellipse_and_line(&mut sketch, true);
-    let mut state = ToolState::Idle;
     let top = Vec2D::new(0.0, 5.0);
-    let fx = handle_click(&mut state, "sketch.split", &mut sketch, top, 0.5);
+    let fx = click(&mut state, "sketch.split", &mut sketch, top, 0.5);
     assert!(fx.changed, "{:?}", fx.log);
-    let arcs: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Ellipse(e) => Some(e.clone()),
-            _ => None,
-        })
-        .collect();
+    let arcs: Vec<_> = all_ellipses(&sketch);
     assert_eq!(arcs.len(), 2);
     let first = arcs.iter().find(|e| e.id == ellipse).unwrap();
     let second = arcs.iter().find(|e| e.id != ellipse).unwrap();
@@ -4035,7 +2530,7 @@ fn splitting_an_arc_of_an_ellipse_makes_two_that_meet() {
 
 #[test]
 fn extending_an_arc_of_an_ellipse_to_a_line() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let c = pt(&mut sketch, 0.0, 0.0);
     // A quarter from (10, 0) to the top (0, 5).
     let s = pt(&mut sketch, 10.0, 0.0);
@@ -4050,9 +2545,8 @@ fn extending_an_arc_of_an_ellipse_to_a_line() {
     let a = pt(&mut sketch, -6.0, -8.0);
     let b = pt(&mut sketch, -6.0, 8.0);
     line_between(&mut sketch, a, b);
-    let mut state = ToolState::Idle;
     let near_end = Vec2D::new(10.0 * 1.4f64.cos(), 5.0 * 1.4f64.sin());
-    let fx = handle_click(&mut state, "sketch.extend", &mut sketch, near_end, 0.5);
+    let fx = click(&mut state, "sketch.extend", &mut sketch, near_end, 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let end = sketch.point_position(e).unwrap();
     assert!((end.x + 6.0).abs() < 1e-3 && end.y > 0.0, "{end:?}");
@@ -4089,13 +2583,12 @@ fn spline_samples(sketch: &Sketch, id: Uuid) -> Vec<glam::DVec2> {
 
 #[test]
 fn trimming_a_spline_keeps_the_rest_of_the_same_curve() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (spline, pts) = spline_and_line(&mut sketch, false);
     let before = spline_samples(&sketch, spline);
-    let mut state = ToolState::Idle;
     // Click near its far end, right of the line.
     let near_end = before[before.len() - 8];
-    let fx = handle_click(
+    let fx = click(
         &mut state,
         "sketch.trim",
         &mut sketch,
@@ -4130,12 +2623,11 @@ fn trimming_a_spline_keeps_the_rest_of_the_same_curve() {
 
 #[test]
 fn splitting_a_spline_makes_two_meeting_at_one_point() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (spline, pts) = spline_and_line(&mut sketch, false);
     let before = spline_samples(&sketch, spline);
-    let mut state = ToolState::Idle;
     let at = before[before.len() / 3];
-    let fx = handle_click(
+    let fx = click(
         &mut state,
         "sketch.split",
         &mut sketch,
@@ -4143,14 +2635,7 @@ fn splitting_a_spline_makes_two_meeting_at_one_point() {
         0.5,
     );
     assert!(fx.changed, "{:?}", fx.log);
-    let splines: Vec<_> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::BSpline(b) => Some(b.clone()),
-            _ => None,
-        })
-        .collect();
+    let splines: Vec<_> = all_splines(&sketch);
     assert_eq!(splines.len(), 2);
     let first = splines.iter().find(|b| b.id == spline).unwrap();
     let second = splines.iter().find(|b| b.id != spline).unwrap();
@@ -4166,7 +2651,7 @@ fn splitting_a_spline_makes_two_meeting_at_one_point() {
 
 #[test]
 fn trimming_a_closed_spline_opens_it() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (spline, _) = spline_and_line(&mut sketch, true);
     let before = spline_samples(&sketch, spline);
     let right = before
@@ -4174,8 +2659,7 @@ fn trimming_a_closed_spline_opens_it() {
         .copied()
         .max_by(|a, b| a.x.total_cmp(&b.x))
         .unwrap();
-    let mut state = ToolState::Idle;
-    let fx = handle_click(
+    let fx = click(
         &mut state,
         "sketch.trim",
         &mut sketch,
@@ -4199,17 +2683,10 @@ fn trimming_a_closed_spline_opens_it() {
 
 #[test]
 fn a_line_trims_back_to_an_ellipse_it_crosses() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (_, line) = ellipse_and_line(&mut sketch, false);
-    let mut state = ToolState::Idle;
     // The line's top, outside the ellipse, goes.
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(4.0, 7.0),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.trim", &mut sketch, (4.0, 7.0), 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let GeometryElement::Line(l) = sketch.get_geometry(line).unwrap() else {
         panic!()
@@ -4221,7 +2698,7 @@ fn a_line_trims_back_to_an_ellipse_it_crosses() {
 
 #[test]
 fn trimming_a_parabola_moves_its_end_to_the_crossing() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let v = pt(&mut sketch, 0.0, 0.0);
     let s = pt(&mut sketch, 9.0, -6.0);
     let e = pt(&mut sketch, 9.0, 6.0);
@@ -4236,14 +2713,7 @@ fn trimming_a_parabola_moves_its_end_to_the_crossing() {
     let a = pt(&mut sketch, 4.0, -10.0);
     let b = pt(&mut sketch, 4.0, 10.0);
     line_between(&mut sketch, a, b);
-    let mut state = ToolState::Idle;
-    let fx = handle_click(
-        &mut state,
-        "sketch.trim",
-        &mut sketch,
-        Vec2D::new(6.25, 5.0),
-        0.5,
-    );
+    let fx = click(&mut state, "sketch.trim", &mut sketch, (6.25, 5.0), 0.5);
     assert!(fx.changed, "{:?}", fx.log);
     let GeometryElement::Conic(k) = sketch.get_geometry(parabola).unwrap() else {
         panic!()
@@ -4277,10 +2747,7 @@ fn set_dimension(sketch: &mut Sketch, pick: impl Fn(&ConstraintKind) -> bool, va
 /// A circle of radius 2 about (0, 0), its centre fixed, selected.
 fn fixed_circle(sketch: &mut Sketch, x: f64, y: f64) -> (Uuid, Uuid, HashSet<Uuid>) {
     let c = pt(sketch, x, y);
-    sketch.add_constraint(ConstraintKind::FixedPoint {
-        point: c,
-        position: Vec2D::new(x, y),
-    });
+    pin(sketch, c);
     let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(c, 2.0)));
     sketch.add_constraint(ConstraintKind::Radius {
         circle,
@@ -4302,25 +2769,20 @@ fn circle_centres(sketch: &Sketch) -> Vec<glam::DVec2> {
 
 #[test]
 fn linked_translated_copies_follow_the_original_and_one_pitch() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let (_, circle, selected) = fixed_circle(&mut sketch, 0.0, 0.0);
     let params = ToolParams {
         copies: 3,
         copies_linked: true,
         ..ToolParams::default()
     };
-    let mut state = ToolState::Idle;
-    for at in [Vec2D::new(0.0, 0.0), Vec2D::new(10.0, 0.0)] {
-        click_sel(
-            &mut state,
-            "sketch.translate",
-            &mut sketch,
-            at,
-            0.01,
-            &params,
-            &selected,
-        );
-    }
+    let w = With::new(&params, &selected, 0.01);
+    w.clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.translate",
+        [Vec2D::new(0.0, 0.0), Vec2D::new(10.0, 0.0)],
+    );
     assert_eq!(circle_centres(&sketch).len(), 4);
     set_dimension(
         &mut sketch,
@@ -4347,34 +2809,25 @@ fn linked_translated_copies_follow_the_original_and_one_pitch() {
 
 #[test]
 fn linked_rotated_copies_turn_by_one_angle() {
-    let mut sketch = Sketch::new("t");
+    let (mut sketch, mut state) = fresh();
     let o = pt(&mut sketch, 0.0, 0.0);
-    sketch.add_constraint(ConstraintKind::FixedPoint {
-        point: o,
-        position: Vec2D::new(0.0, 0.0),
-    });
+    pin(&mut sketch, o);
     let (_, _, selected) = fixed_circle(&mut sketch, 10.0, 0.0);
     let params = ToolParams {
         copies: 2,
         copies_linked: true,
         ..ToolParams::default()
     };
-    let mut state = ToolState::Idle;
-    for at in [
-        Vec2D::new(0.0, 0.0),
-        Vec2D::new(10.0, 0.0),
-        Vec2D::new(0.0, 10.0),
-    ] {
-        click_sel(
-            &mut state,
-            "sketch.rotate",
-            &mut sketch,
-            at,
-            0.01,
-            &params,
-            &selected,
-        );
-    }
+    With::new(&params, &selected, 0.01).clicks(
+        &mut state,
+        &mut sketch,
+        "sketch.rotate",
+        [
+            Vec2D::new(0.0, 0.0),
+            Vec2D::new(10.0, 0.0),
+            Vec2D::new(0.0, 10.0),
+        ],
+    );
     let pitch = sketch
         .constraints
         .iter()
@@ -4507,11 +2960,7 @@ fn a_group_made_from_a_selection_has_three_degrees_of_freedom_and_drags_whole() 
         axis: crate::sketch::AxisDirection::Horizontal,
         angle_rad: 0.5,
     });
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(matches!(
-        outcome,
-        crate::solver::SolveOutcome::Converged { .. }
-    ));
+    converged(&mut sketch);
     let [a, b, c] = side_lengths(&sketch, corners);
     assert!((a - 4.0).abs() < 1e-4 && (b - 5.0).abs() < 1e-4 && (c - 3.0).abs() < 1e-4);
     assert_eq!(crate::solver::dof_estimate(&sketch), 2);
@@ -4562,11 +3011,7 @@ fn copies_of_a_group_hold_their_own_shape_where_they_land() {
     }
     assert_eq!(crate::solver::dof_estimate(&sketch), 9);
     let before = sketch.geometry.clone();
-    let outcome = crate::solver::solve(&mut sketch);
-    assert!(matches!(
-        outcome,
-        crate::solver::SolveOutcome::Converged { .. }
-    ));
+    converged(&mut sketch);
     for (was, now) in before.iter().zip(&sketch.geometry) {
         if let (GeometryElement::Point(was), GeometryElement::Point(now)) = (was, now) {
             assert!((was.position - now.position).to_glam().length() < 1e-4);
@@ -4599,33 +3044,5 @@ fn copying_a_group_moves_its_reference_with_the_copy() {
             .expect("a copied corner");
         let want = turn.apply(sketch.point_position(*original).unwrap());
         assert!((*at - want).to_glam().length() < 1e-5);
-    }
-}
-
-/// A fresh slot's constraints are independent: none says what the others
-/// already do, and what is left free is the shape's own freedom (a straight
-/// slot's two ends and width; an arc slot's centre, its two rails' radii
-/// and the angles its ends stand at).
-#[test]
-fn fresh_slots_carry_no_redundant_constraint() {
-    for (tool, clicks, dof) in [
-        ("sketch.slot", &[(3.0, 3.0), (13.0, 3.0)][..], 5),
-        (
-            "sketch.arc_slot",
-            &[(3.0, 2.0), (13.0, 2.0), (3.0, 12.0)][..],
-            6,
-        ),
-    ] {
-        let mut sketch = Sketch::new("t");
-        let mut state = ToolState::default();
-        for &(x, y) in clicks {
-            handle_click(&mut state, tool, &mut sketch, Vec2D::new(x, y), 0.5);
-        }
-        assert!(state.is_idle(), "{tool} committed");
-        let diagnosis = crate::solver::diagnose(&sketch);
-        assert!(diagnosis.analyzed, "{tool}");
-        assert!(diagnosis.redundant.is_empty(), "{tool}: {diagnosis:?}");
-        assert!(diagnosis.conflicting.is_empty(), "{tool}: {diagnosis:?}");
-        assert_eq!(diagnosis.dof, dof, "{tool}");
     }
 }

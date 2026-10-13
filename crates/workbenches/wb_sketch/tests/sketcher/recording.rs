@@ -3,146 +3,14 @@
 //! go in as viewport events, come out as `pc.sketch.*` calls, and run
 //! again on the document as it was before.
 
+use super::Harness;
+use crate::{CAM_POS, VIEWPORT, all_points};
 use core_document::{
     CommandArgs, CommandError, CommandResult, CommandSpec, Document, FeatureId, HookOutcome,
-    KeyCode, MouseButton, Recorded, Workbench, WorkbenchContext, WorkbenchFeature,
-    WorkbenchInputEvent, WorkbenchRuntimeContext,
+    KeyCode, Recorded, Workbench, WorkbenchContext, WorkbenchFeature, WorkbenchRuntimeContext,
 };
-use glam::{Mat4, Vec3};
 use wb_sketch::sketch::{GeometryElement, Sketch};
 use wb_sketch::{SketchFeature, SketchWorkbench};
-
-const VIEWPORT: (u32, u32, u32, u32) = (0, 0, 800, 600);
-const CAM_POS: [f32; 3] = [0.0, 0.0, 50.0];
-
-fn view_proj() -> [[f32; 4]; 4] {
-    let proj = glam::camera::rh::proj::directx::perspective(
-        60f32.to_radians(),
-        800.0 / 600.0,
-        0.1,
-        1000.0,
-    );
-    let flip_y = Mat4::from_scale(Vec3::new(1.0, -1.0, 1.0));
-    let view = glam::camera::rh::view::look_at_mat4(Vec3::from_array(CAM_POS), Vec3::ZERO, Vec3::Y);
-    (flip_y * proj * view).to_cols_array_2d()
-}
-
-/// The app shell's part: hooks run, their outcome carried and what they
-/// recorded kept.
-struct Session {
-    doc: Document,
-    wb: SketchWorkbench,
-    active: Option<FeatureId>,
-    recorded: Vec<Recorded>,
-    /// The kernel the host hands the bench, when a test has a model.
-    kernel: Option<&'static dyn kernel_api::KernelQueries>,
-    /// The model's edges the host has picked.
-    edges: Vec<core_document::EdgeRef>,
-}
-
-impl Session {
-    fn ctx(&mut self) -> WorkbenchRuntimeContext<'_> {
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0, 0.0, 0.0], VIEWPORT);
-        ctx.view_proj = Some(view_proj());
-        ctx.active_document_object = self.active;
-        ctx
-    }
-
-    fn event(&mut self, event: WorkbenchInputEvent, tool: Option<&str>) {
-        let active = self.active;
-        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
-        ctx.view_proj = Some(view_proj());
-        ctx.active_document_object = active;
-        ctx.kernel = self.kernel;
-        ctx.selected_edges = self.edges.clone();
-        self.wb.on_input(&event, tool, &mut ctx);
-        let outcome = HookOutcome::take(&mut ctx);
-        self.active = outcome.active_document_object;
-        self.recorded.extend(outcome.recorded);
-        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
-        ctx.view_proj = Some(view_proj());
-        ctx.active_document_object = self.active;
-        ctx.kernel = self.kernel;
-        ctx.selected_edges = self.edges.clone();
-        self.wb.on_frame(0.016, &mut ctx);
-        self.recorded.extend(HookOutcome::take(&mut ctx).recorded);
-    }
-
-    fn px(&mut self, x: f32, y: f32) -> (f32, f32) {
-        self.ctx().world_to_viewport([x, y, 0.0]).unwrap()
-    }
-
-    fn press(&mut self, x: f32, y: f32, tool: &str) {
-        let viewport_pos = self.px(x, y);
-        self.event(
-            WorkbenchInputEvent::MousePress {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some(tool),
-        );
-    }
-
-    fn release(&mut self, x: f32, y: f32, tool: &str) {
-        let viewport_pos = self.px(x, y);
-        self.event(
-            WorkbenchInputEvent::MouseRelease {
-                button: MouseButton::Left,
-                viewport_pos,
-            },
-            Some(tool),
-        );
-    }
-
-    fn click(&mut self, x: f32, y: f32, tool: &str) {
-        self.press(x, y, tool);
-        self.release(x, y, tool);
-    }
-
-    /// A click on the model's edge `edge` where the view shows it, which
-    /// the host takes and picks the edge with.
-    fn pick_edge(&mut self, edge: core_document::EdgeRef) {
-        let viewport_pos = self.ctx().world_to_viewport(edge.point).unwrap();
-        let press = WorkbenchInputEvent::MousePress {
-            button: MouseButton::Left,
-            viewport_pos,
-        };
-        self.event(press, Some("sketch.select"));
-        self.edges = vec![edge];
-        let release = WorkbenchInputEvent::MouseRelease {
-            button: MouseButton::Left,
-            viewport_pos,
-        };
-        self.event(release, Some("sketch.select"));
-    }
-
-    fn move_to(&mut self, x: f32, y: f32, tool: &str) {
-        let viewport_pos = self.px(x, y);
-        self.event(WorkbenchInputEvent::MouseMove { viewport_pos }, Some(tool));
-    }
-
-    /// A key press, followed as the app follows it by the text it types
-    /// while the bench takes typed values.
-    fn key(&mut self, key: KeyCode, tool: Option<&str>) {
-        let text = number_text(key).filter(|_| self.wb.takes_numeric_input());
-        self.event(WorkbenchInputEvent::KeyPress { key }, tool);
-        if let Some(text) = text {
-            self.event(
-                WorkbenchInputEvent::Text {
-                    text: text.to_string(),
-                },
-                tool,
-            );
-        }
-    }
-
-    fn sketch(&self, id: FeatureId) -> Sketch {
-        SketchFeature::from_json(self.doc.get_feature_data(id).unwrap())
-            .unwrap()
-            .sketch
-    }
-}
 
 /// The bench's commands, run on a document, for the replay.
 struct Replay {
@@ -214,34 +82,34 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
 
     // A rectangle, a line chain of two segments ending on the
     // rectangle's corner, a circle, and a slanted line.
-    s.click(2.0, 2.0, "sketch.rect");
-    s.click(14.0, 9.0, "sketch.rect");
-    s.click(-10.0, -3.0, "sketch.line");
-    s.click(-4.0, -8.0, "sketch.line");
-    s.click(2.0, 2.0, "sketch.line");
+    s.full_click(2.0, 2.0, "sketch.rect");
+    s.full_click(14.0, 9.0, "sketch.rect");
+    s.full_click(-10.0, -3.0, "sketch.line");
+    s.full_click(-4.0, -8.0, "sketch.line");
+    s.full_click(2.0, 2.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
-    s.click(-9.0, 7.0, "sketch.circle");
-    s.click(-6.5, 7.0, "sketch.circle");
-    s.click(3.0, -12.0, "sketch.line");
-    s.click(12.0, -6.0, "sketch.line");
+    s.full_click(-9.0, 7.0, "sketch.circle");
+    s.full_click(-6.5, 7.0, "sketch.circle");
+    s.full_click(3.0, -12.0, "sketch.line");
+    s.full_click(12.0, -6.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
 
     // The slanted line, dimensioned at its measured length, then dragged
     // by its middle.
-    s.click(7.5, -9.0, "sketch.select");
+    s.full_click(7.5, -9.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.constrain.dimension"));
     s.key(KeyCode::Escape, Some("sketch.select"));
-    s.press(7.5, -9.0, "sketch.select");
-    s.move_to(8.5, -7.0, "sketch.select");
+    s.click(7.5, -9.0, "sketch.select");
+    s.mouse_move(8.5, -7.0, "sketch.select");
     s.release(8.5, -7.0, "sketch.select");
     s.key(KeyCode::Escape, Some("sketch.select"));
 
     // The circle deleted.
-    s.click(-6.5, 7.0, "sketch.select");
+    s.full_click(-6.5, 7.0, "sketch.select");
     s.key(KeyCode::Delete, Some("sketch.select"));
     s.key(KeyCode::A, None);
 
-    let done = summary(&s.sketch(id));
+    let done = summary(&s.sketch());
     assert!(!done.0.is_empty());
     let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(
@@ -259,7 +127,7 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
         s.recorded
     );
 
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 /// Lines snapped parallel and square to another, a point on its extension,
@@ -269,25 +137,25 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
 fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
     let (mut s, id, before) = session_on_a_sketch();
     s.wb.options.drag_constraint_delay_ms = 0.0;
-    s.click(1.0, 10.0, "sketch.line");
-    s.click(11.0, 15.0, "sketch.line");
+    s.full_click(1.0, 10.0, "sketch.line");
+    s.full_click(11.0, 15.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
-    s.click(2.0, -12.0, "sketch.line");
-    s.click(12.0, -6.7, "sketch.line");
-    s.click(6.4, 4.1, "sketch.line");
+    s.full_click(2.0, -12.0, "sketch.line");
+    s.full_click(12.0, -6.7, "sketch.line");
+    s.full_click(6.4, 4.1, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
-    s.click(14.1, 16.8, "sketch.point");
-    s.press(6.5, 4.0, "sketch.select");
-    s.move_to(1.0, 10.0, "sketch.select");
+    s.full_click(14.1, 16.8, "sketch.point");
+    s.click(6.5, 4.0, "sketch.select");
+    s.mouse_move(1.0, 10.0, "sketch.select");
     s.release(1.0, 10.0, "sketch.select");
 
     for kind in ["Parallel", "Perpendicular", "PointOnLine", "Coincident"] {
         let held = s
-            .sketch(id)
+            .sketch()
             .constraints
             .iter()
             .any(|c| format!("{:?}", c.kind).starts_with(kind));
-        assert!(held, "{kind}: {:?}", s.sketch(id).constraints);
+        assert!(held, "{kind}: {:?}", s.sketch().constraints);
     }
     let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(
@@ -296,7 +164,7 @@ fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
         "{:#?}",
         s.recorded
     );
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 /// A line tool's arc, dragged from the end it draws from, records with the
@@ -304,16 +172,16 @@ fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
 #[test]
 fn a_dragged_arc_replays_as_it_was_drawn() {
     let (mut s, id, before) = session_on_a_sketch();
-    s.click(0.0, 0.0, "sketch.line");
+    s.full_click(0.0, 0.0, "sketch.line");
+    s.full_click(10.0, 0.0, "sketch.line");
     s.click(10.0, 0.0, "sketch.line");
-    s.press(10.0, 0.0, "sketch.line");
-    s.move_to(12.0, 1.0, "sketch.line");
-    s.move_to(15.0, 5.0, "sketch.line");
+    s.mouse_move(12.0, 1.0, "sketch.line");
+    s.mouse_move(15.0, 5.0, "sketch.line");
     s.release(15.0, 5.0, "sketch.line");
-    s.click(15.0, 15.0, "sketch.line");
+    s.full_click(15.0, 15.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
 
-    let done = summary(&s.sketch(id));
+    let done = summary(&s.sketch());
     assert!(done.1.contains(&"arc"), "{done:?}");
     let draws: Vec<&Recorded> = s
         .recorded
@@ -321,13 +189,28 @@ fn a_dragged_arc_replays_as_it_was_drawn() {
         .filter(|r| r.id == "sketch.draw")
         .collect();
     assert_eq!(draws.len(), 1, "one line tool run: {:#?}", s.recorded);
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 /// Write `recorded` as a script, run it on `before`, and check sketch `id`
 /// comes out as `done`.
 fn assert_replays(recorded: &[Recorded], before: Document, id: FeatureId, live: &Sketch) {
     let done = summary(live);
+    let (doc, script) = replay(recorded, before, Some(&crate::block_kernel::BLOCK));
+    let replayed = SketchFeature::from_json(doc.get_feature_data(id).unwrap())
+        .unwrap()
+        .sketch;
+    assert_eq!(summary(&replayed), done, "{script}");
+    assert_eq!(point_bits(&replayed), point_bits(live), "{script}");
+}
+
+/// Write `recorded` as a script and run it on `before`: the document it
+/// leaves, and the script.
+fn replay(
+    recorded: &[Recorded],
+    before: Document,
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
+) -> (Document, String) {
     let mut recorder = scripting::Recorder::default();
     for call in recorded {
         recorder.push(call);
@@ -339,52 +222,27 @@ fn assert_replays(recorded: &[Recorded], before: Document, id: FeatureId, live: 
         doc: before,
         wb: SketchWorkbench::default(),
         specs: context.commands().to_vec(),
-        kernel: Some(&crate::block_kernel::BLOCK),
+        kernel,
     };
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
-    let replayed = SketchFeature::from_json(replay.doc.get_feature_data(id).unwrap())
-        .unwrap()
-        .sketch;
-    assert_eq!(summary(&replayed), done, "{script}");
-    assert_eq!(point_bits(&replayed), point_bits(live), "{script}");
+    (replay.doc, script)
 }
 
 /// Every point's coordinates as bits, in order: a replay that meets the
 /// session to the last bit has the same.
 fn point_bits(sketch: &Sketch) -> Vec<(u64, u64)> {
-    let mut points: Vec<(u64, u64)> = sketch
-        .geometry
-        .iter()
-        .filter_map(|g| match g {
-            GeometryElement::Point(p) => Some((p.position.x.to_bits(), p.position.y.to_bits())),
-            _ => None,
-        })
+    let mut points: Vec<(u64, u64)> = all_points(sketch)
+        .into_iter()
+        .map(|p| (p.position.x.to_bits(), p.position.y.to_bits()))
         .collect();
     points.sort();
     points
 }
 
-fn session_on_a_sketch() -> (Session, FeatureId, Document) {
-    let mut s = Session {
-        doc: Document::new("recorded"),
-        wb: SketchWorkbench::default(),
-        active: None,
-        recorded: Vec::new(),
-        kernel: None,
-        edges: Vec::new(),
-    };
-    let plane = Sketch::new("s").plane;
-    let id = s
-        .doc
-        .add_feature_in_body(
-            SketchFeature::new(Sketch::new("s"), plane),
-            "s".into(),
-            None,
-        )
-        .unwrap();
-    s.active = Some(id);
-    s.key(KeyCode::A, None);
+fn session_on_a_sketch() -> (Harness, FeatureId, Document) {
+    let mut s = Harness::new();
+    let id = s.create_sketch();
     let before = s.doc.clone();
     (s, id, before)
 }
@@ -394,31 +252,23 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
     let (mut s, id, before) = session_on_a_sketch();
     // A line whose length is typed, committed with Enter: a driving
     // distance comes with it.
-    s.click(1.0, 1.0, "sketch.line");
-    s.move_to(6.0, 1.5, "sketch.line");
-    s.key(KeyCode::Key1, Some("sketch.line"));
-    s.key(KeyCode::Key2, Some("sketch.line"));
-    s.key(KeyCode::Enter, Some("sketch.line"));
-    s.key(KeyCode::Escape, Some("sketch.line"));
+    s.full_click(1.0, 1.0, "sketch.line");
+    s.mouse_move(6.0, 1.5, "sketch.line");
+    s.keys("12\n\x1b", Some("sketch.line"));
     // A polyline: a straight segment, then tangent arcs.
-    s.click(-12.0, -2.0, "sketch.polyline");
-    s.click(-6.0, -2.0, "sketch.polyline");
-    s.event(
-        WorkbenchInputEvent::Action {
-            id: "sketch.polyline_arc".into(),
-        },
-        Some("sketch.polyline"),
-    );
-    s.click(-3.0, -5.0, "sketch.polyline");
+    s.full_click(-12.0, -2.0, "sketch.polyline");
+    s.full_click(-6.0, -2.0, "sketch.polyline");
+    s.action("sketch.polyline_arc", "sketch.polyline");
+    s.full_click(-3.0, -5.0, "sketch.polyline");
     s.key(KeyCode::Escape, Some("sketch.polyline"));
     // A spline through four points, finished with Enter.
     for (x, y) in [(-10.0, 6.0), (-7.0, 9.0), (-3.0, 6.0), (0.0, 9.0)] {
-        s.click(x, y, "sketch.bspline");
+        s.full_click(x, y, "sketch.bspline");
     }
     s.key(KeyCode::Enter, Some("sketch.bspline"));
     s.key(KeyCode::A, None);
 
-    let sketch = s.sketch(id);
+    let sketch = s.sketch();
     assert!(
         sketch
             .constraints
@@ -431,54 +281,44 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
         done.1.contains(&"arc") && done.1.contains(&"bspline"),
         "{done:?}"
     );
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 #[test]
 fn typed_sweeps_widths_and_a_first_point_replay_too() {
     let (mut s, id, before) = session_on_a_sketch();
     // A line from a typed first point.
-    s.move_to(4.0, 4.0, "sketch.line");
-    s.key(KeyCode::Key3, Some("sketch.line"));
-    s.key(KeyCode::Tab, Some("sketch.line"));
-    s.key(KeyCode::Key2, Some("sketch.line"));
-    s.key(KeyCode::Enter, Some("sketch.line"));
-    s.click(9.0, 5.0, "sketch.line");
+    s.mouse_move(4.0, 4.0, "sketch.line");
+    s.keys("3\t2\n", Some("sketch.line"));
+    s.full_click(9.0, 5.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
     // An arc turned through a typed sweep.
-    s.click(-8.0, 3.0, "sketch.arc");
-    s.click(-3.0, 3.0, "sketch.arc");
-    s.key(KeyCode::Key4, Some("sketch.arc"));
-    s.key(KeyCode::Key5, Some("sketch.arc"));
-    s.key(KeyCode::Enter, Some("sketch.arc"));
+    s.full_click(-8.0, 3.0, "sketch.arc");
+    s.full_click(-3.0, 3.0, "sketch.arc");
+    s.keys("45\n", Some("sketch.arc"));
     // A slot of a typed width, the cursor crossing back over its start
     // after its length is typed.
-    s.click(2.0, -6.0, "sketch.slot");
-    s.move_to(8.0, -5.5, "sketch.slot");
+    s.full_click(2.0, -6.0, "sketch.slot");
+    s.mouse_move(8.0, -5.5, "sketch.slot");
     s.key(KeyCode::Key9, Some("sketch.slot"));
-    s.move_to(-4.0, -6.5, "sketch.slot");
-    s.key(KeyCode::Tab, Some("sketch.slot"));
-    s.key(KeyCode::Tab, Some("sketch.slot"));
-    s.key(KeyCode::Key2, Some("sketch.slot"));
-    s.key(KeyCode::Enter, Some("sketch.slot"));
+    s.mouse_move(-4.0, -6.5, "sketch.slot");
+    s.keys("\t\t2\n", Some("sketch.slot"));
     s.key(KeyCode::A, None);
 
-    let sketch = s.sketch(id);
+    let sketch = s.sketch();
     let done = summary(&sketch);
     assert!(done.1.contains(&"arc"), "{done:?}");
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
-impl Session {
+impl Harness {
     /// A menu command of the bench, as the Edit menu runs it.
     fn edit_menu(&mut self, id: &str) {
-        let active = self.active;
-        let mut ctx = WorkbenchRuntimeContext::new(&mut self.doc, CAM_POS, [0.0; 3], VIEWPORT);
-        ctx.view_proj = Some(view_proj());
-        ctx.active_document_object = active;
-        self.wb
-            .on_command(id, &core_document::MenuScope::EditMenu, &mut ctx);
-        self.recorded.extend(HookOutcome::take(&mut ctx).recorded);
+        let recorded = self.with_ctx(|wb, ctx| {
+            wb.on_command(id, &core_document::MenuScope::EditMenu, ctx);
+            HookOutcome::take(ctx).recorded
+        });
+        self.recorded.extend(recorded);
     }
 }
 
@@ -515,19 +355,19 @@ fn all_sketches(doc: &Document) -> Vec<(String, [i64; 9], Summary)> {
 #[test]
 fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
     let (mut s, _, before) = session_on_a_sketch();
-    s.click(2.0, 2.0, "sketch.rect");
-    s.click(10.0, 8.0, "sketch.rect");
-    s.click(-8.0, 6.0, "sketch.circle");
-    s.click(-5.5, 6.0, "sketch.circle");
+    s.full_click(2.0, 2.0, "sketch.rect");
+    s.full_click(10.0, 8.0, "sketch.rect");
+    s.full_click(-8.0, 6.0, "sketch.circle");
+    s.full_click(-5.5, 6.0, "sketch.circle");
     s.key(KeyCode::Escape, Some("sketch.select"));
     // The circle, repeated in a two by two array.
-    s.click(-5.5, 6.0, "sketch.select");
+    s.full_click(-5.5, 6.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.array"));
     s.key(KeyCode::Escape, Some("sketch.select"));
     // The rectangle's bottom edge cut, and pasted where the cursor is.
-    s.click(6.0, 2.0, "sketch.select");
+    s.full_click(6.0, 2.0, "sketch.select");
     s.edit_menu("edit.cut");
-    s.move_to(-12.0, -10.0, "sketch.select");
+    s.mouse_move(-12.0, -10.0, "sketch.select");
     s.edit_menu("edit.paste");
     s.key(KeyCode::Escape, Some("sketch.select"));
     // A mirrored copy as a sketch of its own, then this one's plane
@@ -550,39 +390,25 @@ fn arrays_clipboard_mirrors_planes_and_clearing_replay_too() {
     let done = all_sketches(&s.doc);
     assert_eq!(done.len(), 2, "the sketch and its mirror");
 
-    let mut recorder = scripting::Recorder::default();
-    for call in &s.recorded {
-        recorder.push(call);
-    }
-    let script = recorder.script("Recorded in a test");
-    let mut context = WorkbenchContext::default();
-    SketchWorkbench::default().configure(&mut context);
-    let mut replay = Replay {
-        doc: before,
-        wb: SketchWorkbench::default(),
-        specs: context.commands().to_vec(),
-        kernel: None,
-    };
-    let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
-    assert_eq!(out.error, None, "{script}");
-    assert_eq!(all_sketches(&replay.doc), done, "{script}");
+    let (doc, script) = replay(&s.recorded, before, None);
+    assert_eq!(all_sketches(&doc), done, "{script}");
 }
 
 #[test]
 fn turned_rectangles_and_a_frame_replay_too() {
     let (mut s, id, before) = session_on_a_sketch();
     for (x, y) in [(1.0, 1.0), (9.0, 7.0), (0.0, 6.5)] {
-        s.click(x, y, "sketch.rect:3pt");
+        s.full_click(x, y, "sketch.rect:3pt");
     }
     for (x, y) in [(-10.0, 1.0), (-6.0, 4.0), (-16.0, 9.0)] {
-        s.click(x, y, "sketch.rect:center3pt");
+        s.full_click(x, y, "sketch.rect:center3pt");
     }
     for (x, y) in [(2.0, -12.0), (14.0, -3.0)] {
-        s.click(x, y, "sketch.rect:frame");
+        s.full_click(x, y, "sketch.rect:frame");
     }
     s.key(KeyCode::A, None);
 
-    let done = summary(&s.sketch(id));
+    let done = summary(&s.sketch());
     assert_eq!(
         done.1.iter().filter(|c| **c == "line").count(),
         16,
@@ -592,122 +418,112 @@ fn turned_rectangles_and_a_frame_replay_too() {
         s.recorded.iter().filter(|r| r.id == "sketch.draw").count(),
         3
     );
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 #[test]
 fn a_trim_stroke_replays_as_one_call() {
     let (mut s, id, before) = session_on_a_sketch();
-    s.click(0.0, 0.0, "sketch.line");
-    s.click(20.0, 0.0, "sketch.line");
+    s.full_click(0.0, 0.0, "sketch.line");
+    s.full_click(20.0, 0.0, "sketch.line");
     s.key(KeyCode::Escape, Some("sketch.line"));
     for x in [5.0, 10.0, 15.0] {
-        s.click(x, -5.0, "sketch.line");
-        s.click(x, 5.0, "sketch.line");
+        s.full_click(x, -5.0, "sketch.line");
+        s.full_click(x, 5.0, "sketch.line");
         s.key(KeyCode::Escape, Some("sketch.line"));
     }
-    s.press(2.0, 3.0, "sketch.trim");
-    s.move_to(18.0, 3.0, "sketch.trim");
+    s.click(2.0, 3.0, "sketch.trim");
+    s.mouse_move(18.0, 3.0, "sketch.trim");
     s.release(18.0, 3.0, "sketch.trim");
     s.key(KeyCode::A, None);
     let draws = s.recorded.iter().filter(|r| r.id == "sketch.draw").count();
     assert_eq!(draws, 5, "four lines and one stroke: {:#?}", s.recorded);
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 #[test]
 fn a_spline_through_points_replays_too() {
     let (mut s, id, before) = session_on_a_sketch();
     for (x, y) in [(1.0, 1.0), (5.0, 6.0), (10.0, 4.0), (14.0, 8.0)] {
-        s.click(x, y, "sketch.bspline:through");
+        s.full_click(x, y, "sketch.bspline:through");
     }
     s.key(KeyCode::Enter, Some("sketch.bspline:through"));
     for (x, y) in [(-12.0, -2.0), (-6.0, -8.0), (-2.0, -3.0)] {
-        s.click(x, y, "sketch.bspline:through_periodic");
+        s.full_click(x, y, "sketch.bspline:through_periodic");
     }
     s.key(KeyCode::Enter, Some("sketch.bspline:through_periodic"));
     s.key(KeyCode::A, None);
-    let sketch = s.sketch(id);
+    let sketch = s.sketch();
     let fitted = sketch
         .geometry
         .iter()
         .filter(|g| matches!(g, GeometryElement::BSpline(b) if !b.fit_points.is_empty()))
         .count();
     assert_eq!(fitted, 2);
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 #[test]
 fn joining_a_polyline_leaves_one_spline_and_replays() {
     let (mut s, id, before) = session_on_a_sketch();
-    s.click(1.0, 1.0, "sketch.polyline");
-    s.click(11.0, 1.0, "sketch.polyline");
-    s.event(
-        WorkbenchInputEvent::Action {
-            id: "sketch.polyline_arc".into(),
-        },
-        Some("sketch.polyline"),
-    );
-    s.click(16.0, 6.0, "sketch.polyline");
+    s.full_click(1.0, 1.0, "sketch.polyline");
+    s.full_click(11.0, 1.0, "sketch.polyline");
+    s.action("sketch.polyline_arc", "sketch.polyline");
+    s.full_click(16.0, 6.0, "sketch.polyline");
     // The switch cycles square and reversed arcs before lines again.
     for _ in 0..3 {
-        s.event(
-            WorkbenchInputEvent::Action {
-                id: "sketch.polyline_arc".into(),
-            },
-            Some("sketch.polyline"),
-        );
+        s.action("sketch.polyline_arc", "sketch.polyline");
     }
-    s.click(16.0, 16.0, "sketch.polyline");
+    s.full_click(16.0, 16.0, "sketch.polyline");
     s.key(KeyCode::Escape, Some("sketch.polyline"));
     s.key(KeyCode::Escape, Some("sketch.select"));
     let arc_middle = (
-        11.0 + 5.0 * std::f32::consts::FRAC_1_SQRT_2,
-        6.0 - 5.0 * std::f32::consts::FRAC_1_SQRT_2,
+        11.0 + 5.0 * std::f64::consts::FRAC_1_SQRT_2,
+        6.0 - 5.0 * std::f64::consts::FRAC_1_SQRT_2,
     );
     for (x, y) in [(6.0, 1.0), arc_middle, (16.0, 11.0)] {
-        s.click(x, y, "sketch.select");
+        s.full_click(x, y, "sketch.select");
     }
     s.key(KeyCode::A, Some("sketch.join"));
     s.key(KeyCode::A, None);
 
-    let sketch = s.sketch(id);
+    let sketch = s.sketch();
     let done = summary(&sketch);
     assert_eq!(done.1, ["bspline"], "{done:?}");
     assert!(s.recorded.iter().any(|r| r.id == "sketch.join"));
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 #[test]
 fn conic_arcs_replay_too() {
     let (mut s, id, before) = session_on_a_sketch();
     for (x, y) in [(1.0, 1.0), (1.0, 3.0), (-3.0, 2.0), (5.0, 7.0)] {
-        s.click(x, y, "sketch.ellipse:parabola");
+        s.full_click(x, y, "sketch.ellipse:parabola");
     }
     for (x, y) in [(10.0, 1.0), (13.0, 1.0), (15.0, 3.0), (18.0, -1.0)] {
-        s.click(x, y, "sketch.ellipse:hyperbola");
+        s.full_click(x, y, "sketch.ellipse:hyperbola");
     }
-    s.click(1.0, 1.05, "sketch.split");
+    s.full_click(1.0, 1.05, "sketch.split");
     s.key(KeyCode::A, None);
-    let done = summary(&s.sketch(id));
+    let done = summary(&s.sketch());
     assert_eq!(done.1, ["conic", "conic", "conic"], "{done:?}");
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 #[test]
 fn editing_aids_replay_too() {
     let (mut s, id, before) = session_on_a_sketch();
-    s.click(0.0, 0.0, "sketch.ellipse");
-    s.click(10.0, 0.0, "sketch.ellipse");
-    s.click(5.0, 4.0, "sketch.ellipse");
-    s.click(0.0, 4.0, "sketch.select");
+    s.full_click(0.0, 0.0, "sketch.ellipse");
+    s.full_click(10.0, 0.0, "sketch.ellipse");
+    s.full_click(5.0, 4.0, "sketch.ellipse");
+    s.full_click(0.0, 4.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.internal_geometry"));
     s.key(KeyCode::Escape, Some("sketch.select"));
     // A rectangle let go of the axes.
-    s.click(20.0, 1.0, "sketch.rect");
-    s.click(30.0, 6.0, "sketch.rect");
-    s.press(19.0, -1.0, "sketch.select");
-    s.move_to(31.0, 7.0, "sketch.select");
+    s.full_click(20.0, 1.0, "sketch.rect");
+    s.full_click(30.0, 6.0, "sketch.rect");
+    s.click(19.0, -1.0, "sketch.select");
+    s.mouse_move(31.0, 7.0, "sketch.select");
     s.release(31.0, 7.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.remove_axis_alignment"));
     s.key(KeyCode::Escape, Some("sketch.select"));
@@ -725,27 +541,7 @@ fn editing_aids_replay_too() {
         "{:#?}",
         s.recorded
     );
-    assert_replays(&s.recorded, before, id, &s.sketch(id));
-}
-
-/// The character a number key types, as the app sends it after the key.
-fn number_text(key: KeyCode) -> Option<&'static str> {
-    Some(match key {
-        KeyCode::Key0 => "0",
-        KeyCode::Key1 => "1",
-        KeyCode::Key2 => "2",
-        KeyCode::Key3 => "3",
-        KeyCode::Key4 => "4",
-        KeyCode::Key5 => "5",
-        KeyCode::Key6 => "6",
-        KeyCode::Key7 => "7",
-        KeyCode::Key8 => "8",
-        KeyCode::Key9 => "9",
-        KeyCode::Period => ".",
-        KeyCode::Comma => ",",
-        KeyCode::Minus => "-",
-        _ => return None,
-    })
+    assert_replays(&s.recorded, before, id, &s.sketch());
 }
 
 /// Constraints taken to edges and a vertex of the model replay: each new
@@ -758,20 +554,20 @@ fn constraints_on_model_edges_replay_with_their_projections() {
     let body = add_block(&mut s.doc);
     s.kernel = Some(&BLOCK);
     let before = s.doc.clone();
-    s.click(5.0, 5.0, "sketch.point");
-    s.click(14.0, 13.0, "sketch.point");
+    s.full_click(5.0, 5.0, "sketch.point");
+    s.full_click(14.0, 13.0, "sketch.point");
     s.key(KeyCode::Escape, Some("sketch.point"));
 
     // The first point's distance to the block's left edge, then the
     // second point onto the corner that edge ends at.
-    s.click(5.0, 5.0, "sketch.select");
+    s.full_click(5.0, 5.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.constrain.distance"));
     s.pick_edge(edge_at(body, [20.0, 5.0, DEPTH], [0.0, 1.0, 0.0]));
-    s.click(14.0, 13.0, "sketch.select");
+    s.full_click(14.0, 13.0, "sketch.select");
     s.key(KeyCode::A, Some("sketch.constrain.coincident"));
     s.pick_edge(edge_at(body, [20.0, 9.9, DEPTH], [0.0, 1.0, 0.0]));
 
-    let sketch = s.sketch(id);
+    let sketch = s.sketch();
     assert_eq!(sketch.external.len(), 1, "{:?}", sketch.external);
     assert_eq!(sketch.constraints.len(), 2, "{:?}", sketch.constraints);
     let kinds: Vec<&str> = s
