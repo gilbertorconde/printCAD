@@ -91,20 +91,8 @@ pub(crate) fn pointer(
         world: ctx.hovered_world_pos,
         body: ctx.hovered_body_id.map(|b| b.to_string()),
         selected_body: ctx.selected_body_id.map(|b| b.to_string()),
-        face: ctx.selected_face.map(|f| bench_api::FaceRef {
-            point: f.point,
-            normal: f.normal,
-            surface: f.surface,
-        }),
-        faces: ctx
-            .picked_faces()
-            .into_iter()
-            .map(|f| bench_api::FaceRef {
-                point: f.point,
-                normal: f.normal,
-                surface: f.surface,
-            })
-            .collect(),
+        face: ctx.selected_face.map(face_ref),
+        faces: ctx.picked_faces().into_iter().map(face_ref).collect(),
         edges: ctx
             .selected_edges
             .iter()
@@ -118,10 +106,20 @@ pub(crate) fn pointer(
                     normal: c.normal,
                     radius: c.radius,
                 }),
+                faces: e.faces.iter().all(|n| *n != 0).then_some(e.faces),
             })
             .collect(),
         active_feature: ctx.active_document_object.map(|f| f.0.to_string()),
         ctrl: ctx.ctrl_down,
+    }
+}
+
+fn face_ref(f: core_document::FaceRef) -> bench_api::FaceRef {
+    bench_api::FaceRef {
+        point: f.point,
+        normal: f.normal,
+        surface: f.surface,
+        name: (f.name != 0).then_some(f.name),
     }
 }
 
@@ -258,8 +256,8 @@ mod tests {
     use super::*;
     use core_document::{Document, EdgeCircle, EdgeRef, FaceRef};
 
-    /// A package hears every face picked, the last as `face`, and a round
-    /// edge's circle.
+    /// A package hears every face picked, the last as `face`, a round
+    /// edge's circle, and the kernel's names for faces and edges.
     #[test]
     fn the_pointer_carries_every_face_and_an_edges_circle() {
         let mut doc = Document::new("t");
@@ -268,7 +266,7 @@ mod tests {
             point: [0.0, 0.0, z],
             normal: [0.0, 0.0, 1.0],
             surface: None,
-            name: 0,
+            name: z as u64,
         };
         ctx.selected_faces = vec![face(1.0), face(2.0)];
         ctx.selected_face = Some(face(2.0));
@@ -282,20 +280,26 @@ mod tests {
                 normal: [0.0, 0.0, 1.0],
                 radius: 3.0,
             }),
-            faces: [0, 0],
+            faces: [1, 2],
         }];
         let pointer = pointer(&ctx, None);
         let heights: Vec<f32> = pointer.faces.iter().map(|f| f.point[2]).collect();
         assert_eq!(heights, [1.0, 2.0]);
         assert_eq!(pointer.face.map(|f| f.point[2]), Some(2.0));
         assert_eq!(pointer.edges[0].circle.map(|c| c.radius), Some(3.0));
+        assert_eq!(pointer.face.and_then(|f| f.name), Some(2));
+        assert_eq!(pointer.edges[0].faces, Some([1, 2]));
         // As a package reads it: an older one passes over what it does not
         // know, a newer one reads a host that left it out as none.
         let json = serde_json::to_value(&pointer).unwrap();
         let mut older = json.clone();
         older.as_object_mut().unwrap().remove("faces");
-        older["edges"][0].as_object_mut().unwrap().remove("circle");
+        older["face"].as_object_mut().unwrap().remove("name");
+        let edge = older["edges"][0].as_object_mut().unwrap();
+        edge.remove("circle");
+        edge.remove("faces");
         let read: bench_api::Pointer = serde_json::from_value(older).unwrap();
         assert!(read.faces.is_empty() && read.edges[0].circle.is_none());
+        assert!(read.face.unwrap().name.is_none() && read.edges[0].faces.is_none());
     }
 }

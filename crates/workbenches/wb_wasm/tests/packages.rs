@@ -463,6 +463,171 @@ fn a_package_reads_a_sketch_s_profile_in_world_space() {
     );
 }
 
+/// A geometry question the probe relays to the host, with the kernel at
+/// hand as it is while a command runs in the app.
+fn ask(
+    registry: &mut DocumentService,
+    document: &mut Document,
+    command: &str,
+    args: Value,
+) -> Value {
+    let mut ctx =
+        WorkbenchRuntimeContext::new(document, [0.0, 0.0, 100.0], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    let args = json!({"command": command, "args": args});
+    registry
+        .workbench_mut(&WorkbenchId::new("test.probe"))
+        .unwrap()
+        .run_command(
+            "test.probe.geom",
+            &args.as_object().cloned().unwrap(),
+            &mut ctx,
+        )
+        .unwrap_or_else(|e| panic!("{command}: {e}"))
+}
+
+fn distance(a: [f64; 3], b: [f64; 3]) -> f64 {
+    (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f64>().sqrt()
+}
+
+/// A package's rod (radius 5, 20 tall, its body standing at (100, 0, 0))
+/// built as the host builds it: the package asks where a plane crosses
+/// it and what bounds its faces, each answer where the body sits and
+/// with the kernel's names, a face found again by its name; the thread
+/// its plan declares winds round the rod from its top, whichever bench is
+/// open.
+#[test]
+fn a_package_sections_its_rod_reads_its_faces_and_threads_it() {
+    let package = installed("tests/probe", "probe.wasm", "probe-geometry");
+    let mut registry = registry_with(&package, Capabilities::default());
+    let mut document = Document::new("probe");
+    let made = run(
+        &mut registry,
+        &mut document,
+        "test.probe",
+        "test.probe.rod",
+        json!({"radius": 5.0, "height": 20.0, "pitch": 2.0, "length": 10.0}),
+    )
+    .expect("makes a rod");
+    let body = core_document::BodyId(made["body"].as_str().unwrap().parse().unwrap());
+    let feature = feature_of(&made["feature"]);
+    let jobs = registry.rebuild_jobs(&mut document);
+    let plan = jobs.into_iter().next().unwrap().plan.expect("a plan");
+    let tags: Vec<_> = plan
+        .op_features
+        .iter()
+        .map(|f| kernel_api::naming::name_of_id(f.0.as_bytes()))
+        .collect();
+    let built = kernel_ogeom::OgeomKernel::new()
+        .execute_solid_chain_named(
+            &plan.ops,
+            &tags,
+            &kernel_api::TessellationSettings::default(),
+            None,
+            &[],
+        )
+        .expect("the rod builds");
+    document.set_imported_brep_data(body, built.brep_blob, Vec::new());
+    document.set_imported_geometry(
+        body,
+        core_document::ImportedGeometry {
+            mesh: std::sync::Arc::new(built.mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: built.bounds_mm,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
+    let axis = |z: f64| [100.0, 0.0, z];
+
+    // Across the rod halfway up: one closed circle round its axis.
+    let section: bench_api::Section = serde_json::from_value(ask(
+        &mut registry,
+        &mut document,
+        "geom.section",
+        json!({"body": made["body"], "plane": {
+            "origin": [0, 0, 10], "normal": [0, 0, 1], "x_axis": [1, 0, 0]
+        }}),
+    ))
+    .expect("a section");
+    let [cut] = section.loops.as_slice() else {
+        panic!("{section:?}");
+    };
+    assert!(cut.closed);
+    let side_name = cut.curves[0].face.expect("the side is named");
+    for curve in &cut.curves {
+        let kernel_api::ProjectedEdge::Circle { centre, radius, .. } = curve.curve else {
+            panic!("{curve:?}");
+        };
+        assert!((centre[0] - 100.0).abs() < 1e-4 && centre[1].abs() < 1e-4);
+        assert!((radius - 5.0).abs() < 1e-6);
+        assert!(
+            curve
+                .points
+                .iter()
+                .all(|p| (distance(*p, axis(10.0)) - 5.0).abs() < 1e-3)
+        );
+        assert_eq!(curve.face, Some(side_name));
+    }
+
+    // The top's one loop is its rim, between the top and the side.
+    let top: bench_api::FaceLoops = serde_json::from_value(ask(
+        &mut registry,
+        &mut document,
+        "geom.face_loops",
+        json!({"body": made["body"], "point": [101, 1, 20]}),
+    ))
+    .unwrap();
+    let top_name = top.name.expect("the top is named");
+    assert_ne!(top_name, side_name);
+    let [rim] = top.loops.as_slice() else {
+        panic!("{top:?}");
+    };
+    let circle = rim[0].circle.expect("the rim is round");
+    assert!((circle.radius - 5.0).abs() < 1e-3);
+    assert!((circle.center[0] - 100.0).abs() < 1e-3 && (circle.center[2] - 20.0).abs() < 1e-3);
+    let length: f64 = rim.iter().map(|e| e.length).sum();
+    assert!(
+        (length - 10.0 * std::f64::consts::PI).abs() < 0.5,
+        "{length}"
+    );
+    for edge in rim {
+        let mut faces = edge.faces.expect("the rim is named");
+        faces.sort_unstable();
+        let mut want = [top_name, side_name];
+        want.sort_unstable();
+        assert_eq!(faces, want);
+    }
+
+    // The side found by its name alone has its seam twice.
+    let side: bench_api::FaceLoops = serde_json::from_value(ask(
+        &mut registry,
+        &mut document,
+        "geom.face_loops",
+        json!({"body": made["body"], "name": side_name}),
+    ))
+    .unwrap();
+    assert_eq!(side.name, Some(side_name));
+    assert_eq!(side.loops.iter().flatten().filter(|e| e.seam).count(), 2);
+
+    // The thread: just outside the side, from the top 10 mm down at 2 mm
+    // a turn, where the body sits.
+    let thread = registry
+        .feature_geometry(&document, feature)
+        .expect("the rod's thread draws");
+    let points = &thread.mesh.positions;
+    assert_eq!(points.len(), 5 * 24 + 1);
+    for p in points {
+        let off = distance(p.map(f64::from), axis(f64::from(p[2])));
+        assert!(off > 5.0 && off < 5.2, "{p:?}");
+    }
+    assert!((points[0][2] - 20.0).abs() < 1e-3);
+    assert!((points[points.len() - 1][2] - 10.0).abs() < 1e-3);
+}
+
 #[test]
 fn a_package_job_stops_when_its_task_is_cancelled() {
     let package = installed("tests/probe", "probe.wasm", "probe-cancel");

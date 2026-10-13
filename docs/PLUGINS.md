@@ -236,11 +236,31 @@ hiding it, placing a body). Calls are allowed while the bench handles an
 event, a panel change, a menu entry or a command, and refused while it
 draws or plans. A feature's data is any JSON the bench likes.
 
-Two calls only read: `geom.holes {body}` lists the round holes in a
-body's solid (each `{entry, direction, diameter, depth, through,
-drill_point_deg}`), and `geom.face_edges {body, point}` the edges round
-the face at a point (each `{point, direction}` halfway along it), both
-where the body sits. They are answered when the other calls are.
+Four calls only read, each answering where the body sits, and are
+answered when the other calls are:
+
+- `geom.holes {body}` lists the round holes in a body's solid (each
+  `{entry, direction, diameter, depth, through, drill_point_deg}`).
+- `geom.face_edges {body, point}` lists the edges round the face at a
+  point (each `{point, direction}` halfway along it).
+- `geom.section {body, plane: {origin, normal, x_axis?}, face?}`
+  answers a `Section`: where the plane crosses the solid, or with `face`
+  (a point) only the face there, as loops of curves end to end (closed
+  round a solid's cut), each curve exact in the plane's 2D coordinates
+  (along its `x_axis` and `y_axis`, which the answer's `plane` gives),
+  with points along it and the name of the face it crosses.
+- `geom.face_loops {body, point?, name?}` answers `FaceLoops`: the face's
+  name and its boundary loops, the outer one first, each edge with its
+  points in loop order, its length, a round one's `circle`, whether it
+  is the seam a round face meets itself along, and the names of the two
+  faces it runs between. A face is asked by its name (of several, the
+  one nearest `point`) or at `point`.
+
+The names are the kernel's: a face is named by the feature and the
+sketch element that made it and keeps its name through rebuilds, so a
+package keeps a face's or an edge's name rather than a point, and finds
+it again with `geom.face_loops {name}`. A pick carries them too
+(`FaceRef::name`, `EdgeRef::faces`). Imported solids name no faces.
 
 **Bought parts.** `Registration::bought_kinds` names those of its kinds
 whose bodies are bought rather than made, such as catalog screws and
@@ -256,6 +276,17 @@ the nodes it is handed) already has the formulas' values in.
 body: kernel operations (`SolidOp`: extrusions, revolutions, lofts,
 booleans, fillets and the rest), each naming the feature it is for. The
 kernel runs them natively; a failing op marks its feature.
+
+A plan may also declare cosmetic threads (`Rebuild::threads`, each a
+`CosmeticThread`): a thread on a round face of the solid it builds,
+never modelled. The face keeps its size (a bore its tap drill, a shank
+its major diameter) and a helix of the thread's pitch is drawn just off
+it, inside a bore and outside a shank, from the face's end nearest the
+thread's `point` for its `length` (0 the whole face), in every bench and
+never exported. The face is found by its `name` while the solid has a
+face of that name, else at `point` (in the body's own frame, as the
+ops are). The thread draws while its `feature` shows; its designation
+is the package's to put in the feature's `kind_label`.
 
 **Panels.** A bench declares its task panel and Preferences page as
 widgets (`Widget`): headings, a header with an icon, text, read-only
@@ -307,7 +338,8 @@ splines. The CAM package reads a pocket's outline this way.
 with what is under the cursor and what is selected (`Pointer`: the ray,
 the point and body hit, the picked face and every face picked (`faces`,
 in the order picked), the picked edges (a circular one with its
-`circle`: centre, axis and radius), the active feature).
+`circle`: centre, axis and radius), the active feature; faces and edges
+carry the kernel's names where the solid has them).
 A double click on a feature's tree row arrives as `Event::EditFeature`,
 the cue to open its task; selecting a feature alone never opens one.
 

@@ -44,6 +44,20 @@ struct Inner {
     info: HashMap<u64, FeatureInfo>,
     params: HashMap<u64, Vec<Parameter>>,
     settings_panel: Option<Vec<Widget>>,
+    threads: HashMap<BodyId, Threads>,
+}
+
+/// The cosmetic threads a body's plan declared, and what they were
+/// planned from.
+struct Threads {
+    /// The document's edit count when last checked.
+    seq: u64,
+    /// The history the plan was made from.
+    history: u64,
+    declared: Vec<bench_api::CosmeticThread>,
+    /// Each feature's helices, drawn on the body's geometry of this
+    /// revision.
+    drawn: Option<(u64, HashMap<String, kernel_api::TriMesh>)>,
 }
 
 /// Load `package`, allowing it `granted` of what it asks for.
@@ -148,6 +162,7 @@ pub(crate) fn assemble(
             info: HashMap::new(),
             params: HashMap::new(),
             settings_panel: None,
+            threads: HashMap::new(),
         }),
     })
 }
@@ -189,6 +204,36 @@ pub(crate) fn invalidate_owned(document: &mut Document, package: &PackageInfo, b
             }
         }
     }
+}
+
+/// What a plan for `body` is made from: the package's features in it up
+/// to its tip, suppressed ones left out.
+fn body_history(
+    document: &Document,
+    package: &PackageInfo,
+    body: BodyId,
+) -> bench_api::BodyHistory {
+    let tip_seq = document
+        .bodies()
+        .iter()
+        .find(|b| b.id == body)
+        .and_then(|b| b.tip)
+        .and_then(|tip| document.get_feature_meta(tip))
+        .map(|n| n.seq);
+    let features = owned_in_body(document, package, body)
+        .into_iter()
+        .filter_map(|id| document.get_feature_meta(id))
+        .filter(|n| !n.suppressed && tip_seq.is_none_or(|seq| n.seq <= seq))
+        .map(|n| convert::node(document, n))
+        .collect();
+    bench_api::BodyHistory {
+        body: body.0.to_string(),
+        features,
+    }
+}
+
+fn history_key(history: &bench_api::BodyHistory) -> u64 {
+    hash_of(serde_json::to_string(history).unwrap_or_default())
 }
 
 /// The package's features in `body`, in history order.
@@ -286,6 +331,53 @@ impl WasmWorkbench {
             inner.stale = true;
         }
         Some(value)
+    }
+
+    /// `body`'s threads as its plan declares them, planned again only when
+    /// the history the last plan was made from changed: a document opened
+    /// keeps the solids it was saved with and plans nothing until asked
+    /// here.
+    fn plan_threads<'a>(
+        &self,
+        inner: &'a mut Inner,
+        document: &Document,
+        body: BodyId,
+    ) -> &'a mut Threads {
+        let seq = document.mutation_seq();
+        let current = inner.threads.get(&body).is_some_and(|t| t.seq == seq);
+        if !current {
+            let history = body_history(document, &self.package, body);
+            let key = history_key(&history);
+            match inner.threads.get_mut(&body) {
+                Some(threads) if threads.history == key => threads.seq = seq,
+                _ => {
+                    let name = history.body.clone();
+                    let declared = serde_json::to_string(&bench_api::RebuildRequest {
+                        bodies: vec![history],
+                    })
+                    .ok()
+                    .and_then(|json| {
+                        self.read_call(inner, document, Budget::Long, |b| b.rebuild(&json))
+                    })
+                    .and_then(|json| {
+                        parse::<Vec<bench_api::Rebuild>>(self.id(), "the rebuild plans", &json)
+                    })
+                    .and_then(|plans| plans.into_iter().find(|r| r.body == name))
+                    .map(|r| r.threads)
+                    .unwrap_or_default();
+                    inner.threads.insert(
+                        body,
+                        Threads {
+                            seq,
+                            history: key,
+                            declared,
+                            drawn: None,
+                        },
+                    );
+                }
+            }
+        }
+        inner.threads.get_mut(&body).expect("planned above")
     }
 
     /// The frame, asked again when the document, the selection or the
@@ -546,6 +638,51 @@ impl Workbench for WasmWorkbench {
         info
     }
 
+    /// The cosmetic threads the body's plan declares for the feature, each
+    /// a helix over its round face.
+    fn passive_geometry(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &FeatureNode,
+    ) -> Option<core_document::PassiveGeometry> {
+        let body = node.body?;
+        let revision = document.imported_geometry(body)?.revision;
+        let mut inner = self.inner();
+        let threads = self.plan_threads(&mut inner, document, body);
+        let feature = id.0.to_string();
+        if !threads.declared.iter().any(|t| t.feature == feature) {
+            return None;
+        }
+        if threads.drawn.as_ref().is_none_or(|(r, _)| *r != revision) {
+            let (mesh, _) = document.local_geometry(body)?;
+            let mut drawn: HashMap<String, kernel_api::TriMesh> = HashMap::new();
+            for thread in &threads.declared {
+                let helix = crate::geometry::thread_helix(&mesh, thread);
+                if helix.len() < 2 {
+                    continue;
+                }
+                let lines = drawn.entry(thread.feature.clone()).or_default();
+                let base = lines.positions.len() as u32;
+                for (i, p) in helix.iter().enumerate() {
+                    lines.positions.push(*p);
+                    lines.normals.push([0.0, 0.0, 1.0]);
+                    if i > 0 {
+                        lines.edges.extend([base + i as u32 - 1, base + i as u32]);
+                    }
+                }
+            }
+            threads.drawn = Some((revision, drawn));
+        }
+        let mesh = threads.drawn.as_ref()?.1.get(&feature)?.clone();
+        Some(core_document::PassiveGeometry {
+            mesh,
+            revision: hash_of((threads.history, revision)),
+            tint: core_document::PassiveTint::External,
+            region: None,
+        })
+    }
+
     fn locks_view_to_plane(&self) -> bool {
         self.inner().frame.locks_view
     }
@@ -714,26 +851,12 @@ impl Workbench for WasmWorkbench {
                 None => document.clear_feature_dirty(*id),
             }
         }
-        let mut request = bench_api::RebuildRequest::default();
-        for body in &bodies {
-            let tip_seq = document
-                .bodies()
+        let request = bench_api::RebuildRequest {
+            bodies: bodies
                 .iter()
-                .find(|b| b.id == *body)
-                .and_then(|b| b.tip)
-                .and_then(|tip| document.get_feature_meta(tip))
-                .map(|n| n.seq);
-            let features = owned_in_body(document, &self.package, *body)
-                .into_iter()
-                .filter_map(|id| document.get_feature_meta(id))
-                .filter(|n| !n.suppressed && tip_seq.is_none_or(|seq| n.seq <= seq))
-                .map(|n| convert::node(document, n))
-                .collect();
-            request.bodies.push(bench_api::BodyHistory {
-                body: body.0.to_string(),
-                features,
-            });
-        }
+                .map(|body| body_history(document, &self.package, *body))
+                .collect(),
+        };
         // Settled before planning, or a plan that fails comes back every
         // frame: the features planned and the dirty features they read.
         for body in &bodies {
@@ -765,6 +888,26 @@ impl Workbench for WasmWorkbench {
                 })
                 .collect();
         };
+        let seq = document.mutation_seq();
+        for history in &request.bodies {
+            let Ok(body) = crate::host::body_id(&history.body) else {
+                continue;
+            };
+            let declared = rebuilds
+                .iter()
+                .find(|r| r.body == history.body)
+                .map(|r| r.threads.clone())
+                .unwrap_or_default();
+            inner.threads.insert(
+                body,
+                Threads {
+                    seq,
+                    history: history_key(history),
+                    declared,
+                    drawn: None,
+                },
+            );
+        }
         rebuilds
             .into_iter()
             .filter_map(|rebuild| {

@@ -13,6 +13,8 @@ mod convert;
 mod engine;
 #[cfg(any(feature = "runtime", target_arch = "wasm32"))]
 mod exports;
+#[cfg(any(feature = "runtime", target_arch = "wasm32"))]
+mod geometry;
 #[cfg(feature = "runtime")]
 mod guest;
 #[cfg(any(feature = "runtime", target_arch = "wasm32"))]

@@ -1,10 +1,12 @@
 //! A package reaching what the examples leave out, for the host's tests: a
 //! sketch's profile read in world space, a long job that its task's Escape
-//! stops, an editable table cell, a number a formula drives and a file
-//! handed to the save dialog.
+//! stops, an editable table cell, a number a formula drives, a file
+//! handed to the save dialog, the host's geometry questions and a rod
+//! built with a cosmetic thread.
 
 #![allow(clippy::needless_update)]
 
+use printcad_bench_sdk::api::kernel_api::{BooleanOp, Placement, PrimitiveKind};
 use printcad_bench_sdk::api::*;
 use printcad_bench_sdk::{Bench, Value, bench, host, json, serde_json};
 
@@ -31,20 +33,61 @@ impl Bench for Probe {
         };
         Registration {
             label: "Probe".into(),
-            commands: ["profile", "add", "size", "state", "cell", "save"]
-                .into_iter()
-                .map(command)
-                .collect(),
+            commands: [
+                "profile", "add", "size", "state", "cell", "save", "geom", "rod",
+            ]
+            .into_iter()
+            .map(command)
+            .collect(),
             ..Default::default()
         }
     }
 
-    fn feature_info(&self, _node: &Node) -> FeatureInfo {
+    fn feature_info(&self, node: &Node) -> FeatureInfo {
         FeatureInfo {
             kind_label: "Thing".into(),
-            builds_solid: false,
+            builds_solid: node.data.get("rod").is_some(),
             ..Default::default()
         }
+    }
+
+    /// A rod is a cylinder standing on its base, threaded from its top.
+    fn rebuild(&mut self, request: RebuildRequest) -> Vec<Rebuild> {
+        request
+            .bodies
+            .into_iter()
+            .filter_map(|history| {
+                let node = history
+                    .features
+                    .iter()
+                    .find(|n| n.data.get("rod").is_some())?;
+                let number = |key: &str| node.data["rod"][key].as_f64().unwrap_or_default();
+                let (radius, height) = (number("radius"), number("height"));
+                Some(Rebuild {
+                    body: history.body.clone(),
+                    plan: Plan::Ops {
+                        ops: vec![SolidOp::Primitive {
+                            kind: PrimitiveKind::Cylinder {
+                                radius,
+                                height,
+                                angle_deg: 360.0,
+                            },
+                            placement: Placement::default(),
+                            op: BooleanOp::NewSolid,
+                        }],
+                        op_features: vec![node.id.clone()],
+                    },
+                    threads: vec![CosmeticThread {
+                        feature: node.id.clone(),
+                        point: [radius, 0.0, height],
+                        pitch: number("pitch"),
+                        length: number("length"),
+                        ..Default::default()
+                    }],
+                    ..Default::default()
+                })
+            })
+            .collect()
     }
 
     fn parameters(&self, _node: &Node) -> Vec<Parameter> {
@@ -72,6 +115,31 @@ impl Bench for Probe {
             "test.probe.size" => {
                 let node = host::feature(text("id")).ok_or("no such thing")?;
                 Ok(node.data["size"].clone())
+            }
+            "test.probe.geom" => host::call(
+                text("command"),
+                args.get("args").cloned().unwrap_or(Value::Null),
+            ),
+            // A rod in a body of its own standing at (100, 0, 0).
+            "test.probe.rod" => {
+                let body = host::create_body(Some("Rod"))?;
+                let rod = json!({
+                    "radius": args.get("radius").cloned().unwrap_or(json!(5.0)),
+                    "height": args.get("height").cloned().unwrap_or(json!(20.0)),
+                    "pitch": args.get("pitch").cloned().unwrap_or(json!(1.0)),
+                    "length": args.get("length").cloned().unwrap_or(json!(0.0)),
+                });
+                let feature = host::add_feature(KIND, "Rod", Some(&body), json!({ "rod": rod }))?;
+                let mut matrix = [0.0; 16];
+                for i in 0..4 {
+                    matrix[i * 5] = 1.0;
+                }
+                matrix[3] = 100.0;
+                host::call(
+                    calls::SET_PLACEMENT,
+                    json!({"body": body, "matrix": matrix.to_vec()}),
+                )?;
+                Ok(json!({"body": body, "feature": feature}))
             }
             "test.probe.state" => Ok(json!(self.state.unwrap_or("none"))),
             "test.probe.cell" => Ok(json!(self.cell)),

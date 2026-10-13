@@ -413,6 +413,34 @@ pub struct BodyHistory {
 pub struct Rebuild {
     pub body: String,
     pub plan: Plan,
+    /// Threads drawn on round faces of the solid the plan builds.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub threads: Vec<CosmeticThread>,
+}
+
+/// A thread drawn on a round face, never modelled: the face keeps its
+/// size (a bore its tap drill, a shank its major diameter) and a helix of
+/// the thread's pitch is drawn just off it, inside a bore and outside a
+/// shank, in every bench and never exported.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CosmeticThread {
+    /// The feature it belongs to: drawn while that feature shows.
+    pub feature: String,
+    /// A point on the round face, in the body's own frame, as the plan's
+    /// ops are.
+    pub point: [f64; 3],
+    /// The face's name ([`FaceRef::name`], `geom.face_loops`), found
+    /// before `point` while the solid still has a face of that name.
+    #[serde(default)]
+    pub name: Option<u64>,
+    /// mm a turn.
+    pub pitch: f64,
+    /// How far it runs from the face's end nearest `point`; 0 runs the
+    /// whole face.
+    #[serde(default)]
+    pub length: f64,
+    #[serde(default)]
+    pub left_handed: bool,
 }
 
 /// What a [`Rebuild`] asks of the kernel.
@@ -491,6 +519,10 @@ pub struct FaceRef {
     /// The face's exact surface, when known.
     #[serde(default)]
     pub surface: Option<kernel_api::FaceSurface>,
+    /// The kernel's name for the face, which a rebuild keeps: what
+    /// `geom.face_loops` and a [`CosmeticThread`] find it by.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -503,6 +535,10 @@ pub struct EdgeRef {
     /// one.
     #[serde(default)]
     pub circle: Option<EdgeCircle>,
+    /// The names of the two faces it runs between, which name the edge
+    /// across rebuilds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub faces: Option<[u64; 2]>,
 }
 
 /// A circular edge's centre and axis (world space) and radius, mm.
@@ -1306,6 +1342,73 @@ pub mod calls {
     /// `point` (world), each `{point, direction}` halfway along it, where
     /// the body sits. Read only, answered as `geom.holes` is.
     pub const GEOM_FACE_EDGES: &str = "geom.face_edges";
+    /// `{body, plane: {origin, normal, x_axis?}, face?}` →
+    /// [`Section`](crate::Section): where the plane (world) crosses the body's
+    /// solid, or with `face` (a point, world) only the face there. Read
+    /// only, answered as `geom.holes` is.
+    pub const GEOM_SECTION: &str = "geom.section";
+    /// `{body, point?, name?}` → [`FaceLoops`](crate::FaceLoops): the
+    /// boundary loops of the face named `name` (the one of several
+    /// nearest `point`), or of the face at `point` (world). Read only,
+    /// answered as `geom.holes` is.
+    pub const GEOM_FACE_LOOPS: &str = "geom.face_loops";
+}
+
+/// What `geom.section` answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Section {
+    /// The plane as cut, world space: the curves' 2D coordinates run
+    /// along its `x_axis` and `y_axis`.
+    pub plane: kernel_api::ProfilePlane,
+    pub loops: Vec<SectionLoop>,
+}
+
+/// Curves of a section end to end: closed round a solid's cut, open where
+/// a sheet's edge stops it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionLoop {
+    pub closed: bool,
+    pub curves: Vec<SectionCurve>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SectionCurve {
+    /// The exact curve, in the plane's 2D coordinates.
+    pub curve: kernel_api::ProjectedEdge,
+    /// The loop runs against the way `curve` does.
+    #[serde(default)]
+    pub reversed: bool,
+    /// Points along it in the loop's order, world space.
+    pub points: Vec<[f64; 3]>,
+    /// The name of the face it crosses, when the solid names its faces.
+    #[serde(default)]
+    pub face: Option<u64>,
+}
+
+/// What `geom.face_loops` answers.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FaceLoops {
+    /// The face's name, when the solid names its faces.
+    #[serde(default)]
+    pub name: Option<u64>,
+    /// The outer loop first, then the holes, each edge in turn.
+    pub loops: Vec<Vec<LoopEdge>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LoopEdge {
+    /// Points along it in the loop's order, world space.
+    pub points: Vec<[f64; 3]>,
+    pub length: f64,
+    #[serde(default)]
+    pub circle: Option<EdgeCircle>,
+    /// The edge a round face meets itself along, in its loop twice.
+    #[serde(default)]
+    pub seam: bool,
+    /// The names of the two faces it runs between (as
+    /// [`EdgeRef::faces`]).
+    #[serde(default)]
+    pub faces: Option<[u64; 2]>,
 }
 
 #[cfg(test)]
