@@ -141,6 +141,36 @@ pub struct TextBlock {
     pub elements: Vec<Uuid>,
     /// Where the point stood when the outlines were last placed.
     pub placed: Vec2D,
+    /// The size, spacing and angle the outlines were made at. Formulas
+    /// set the block's own, and the outlines are made again where the
+    /// two differ; a block without it was made at its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outlined: Option<TextShape>,
+}
+
+/// A text block's size, spacing and angle.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct TextShape {
+    pub size: f64,
+    pub spacing: f64,
+    pub angle: f64,
+}
+
+impl TextBlock {
+    /// The size, spacing and angle it stands at now.
+    pub fn shape(&self) -> TextShape {
+        TextShape {
+            size: self.size,
+            spacing: self.spacing,
+            angle: self.angle,
+        }
+    }
+
+    /// Whether its outlines were made at another size, spacing or angle
+    /// than its own.
+    pub fn outlines_stale(&self) -> bool {
+        self.outlined.is_some_and(|made| made != self.shape())
+    }
 }
 
 /// How far the solver goes on a sketch: how many steps it takes at most,

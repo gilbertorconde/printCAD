@@ -83,7 +83,38 @@ pub fn parameters(node: &FeatureNode) -> Vec<Parameter> {
         }
         out.push(p);
     }
+    // Each text block's size, spacing and angle, kept under the block's
+    // id; its outlines are made again at what they come to.
+    for (i, block) in feature.sketch.texts.iter().enumerate() {
+        let what = text_label(&block.text);
+        for (field, label, dim) in [
+            ("size", "size", Dim::LENGTH),
+            ("spacing", "spacing", Dim::LENGTH),
+            ("angle", "angle", Dim::ANGLE),
+        ] {
+            out.push(
+                Parameter::new(
+                    "",
+                    &format!("{what} {label}"),
+                    dim,
+                    format!("/sketch/texts/{i}/{field}"),
+                )
+                .keyed(format!("{}/{field}", block.id))
+                .unnamed(),
+            );
+        }
+    }
     out
+}
+
+/// What the UI calls a text block: its first line, cut short.
+fn text_label(text: &str) -> String {
+    let line = text.lines().next().unwrap_or("").trim();
+    let mut short: String = line.chars().take(16).collect();
+    if line.chars().count() > 16 {
+        short.push('…');
+    }
+    format!("Text \"{short}\"")
 }
 
 /// Solve the sketch for the values its formulas gave it; a generated

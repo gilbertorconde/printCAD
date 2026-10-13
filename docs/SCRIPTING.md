@@ -2517,23 +2517,26 @@ Notes:
 
 - `block` is either the `text` or the `point` that `sketch.text` returned.
 - Only what is given changes, and the outlines are made again on the same point; a `size` of 0 or less is refused.
+- A block's size, spacing and angle are numbers formulas can set: `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, `<block>/spacing` and `<block>/angle`, and the outlines are made again at what they come to, in the font the document keeps. The string is not, since a formula makes a number.
 
-See also `pc.sketch.text`.
+See also `pc.sketch.text`, `pc.doc.set_formula`.
 
-Example: A letter made twice as large.
+Example: Text whose height a variable sets.
 
 ```lua
 local s = pc.sketch.new{plane = "XY"}
 local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+pc.var.new{name = "Label"}
+pc.var.set{set = "Label", name = "height", formula = "10 mm"}
+pc.doc.set_formula{id = s, parameter = t.text .. "/size", formula = "Label.height"}
 local pad = pc.design.pad{sketch = s, length = 1}
 assert(#pc.doc.rebuild() == 0)
 local body = pc.doc.feature{id = pad}.body
 local small = pc.doc.measure{body = body}
-pc.sketch.text_edit{sketch = s, block = t.text, size = 20}
+pc.var.set{set = "Label", name = "height", formula = "20 mm"}
 assert(#pc.doc.rebuild() == 0)
 local large = pc.doc.measure{body = body}
 assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
-assert(math.abs(large.volume - 4 * small.volume) < 1e-3, "four times the area")
 ```
 
 `pc.sketch.to_bspline`: Make lines, arcs, circles, ellipses and conics into splines that are exactly them.

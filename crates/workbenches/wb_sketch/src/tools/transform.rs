@@ -631,6 +631,7 @@ fn copy_texts(
                 id
             }
         };
+        let made = block.outlined.unwrap_or_else(|| block.shape());
         sketch.texts.push(crate::sketch::TextBlock {
             id: Uuid::new_v4(),
             anchor,
@@ -639,6 +640,11 @@ fn copy_texts(
             size: block.size * xf.scale_factor(),
             spacing: block.spacing * xf.scale_factor(),
             angle: block.angle + turn,
+            outlined: Some(crate::sketch::TextShape {
+                size: made.size * xf.scale_factor(),
+                spacing: made.spacing * xf.scale_factor(),
+                angle: made.angle + turn,
+            }),
             ..block.clone()
         });
     }

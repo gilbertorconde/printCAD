@@ -3040,6 +3040,9 @@ impl Workbench for SketchWorkbench {
             moved = true;
         }
         moved |= follow_references(&mut feature, node.id, values_of, document);
+        // Text whose size or angle formulas set is made again in the font
+        // the document keeps.
+        moved |= crate::text::follow_values(&mut feature.sketch, document);
         if moved {
             *values = feature.to_json();
         }

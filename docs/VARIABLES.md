@@ -1,7 +1,8 @@
 # Variables and formulas
 
 Any number in a model can be a formula: a pad's length, a hole's diameter,
-a sketch dimension, a joint's offset, a datum's offset, the components of a
+a sketch dimension, a sketch text's size, spacing and angle, a joint's
+offset, a datum's offset, the components of a
 pad's or pocket's custom direction (`Pad.direction_x`, `_y`, `_z`). A formula can read
 variables and the numbers of other objects, and everything that depends on
 it rebuilds when they change.
@@ -94,6 +95,12 @@ Each feature's numbers have names: a pad's `length`, a pocket's `depth`, a
 hole's `diameter`, a fillet's `radius`, a pattern's `occurrences`, a
 datum's `offset_z`. A sketch dimension can be read once it has a name.
 `pc.doc.parameters{id = ...}` lists them all.
+
+A text in a sketch lists its size, spacing and angle among the sketch's
+numbers (`Text "v1" size`), which a formula can set but no formula reads.
+Set by a formula, the letters are made again at the new value in the font
+the document keeps. Formulas make numbers, so the text's string is not one
+of them.
 
 Renaming an object or a variable rewrites every formula that refers to
 it. A formula that reads itself, however far round, is reported as a loop;

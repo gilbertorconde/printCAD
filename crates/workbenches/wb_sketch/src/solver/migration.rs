@@ -346,6 +346,7 @@ fn cases() -> Vec<(Sketch, Vec<Uuid>)> {
         anchor,
         elements: vec![a, b, l],
         placed: Vec2D::new(0.0, 0.0),
+        outlined: None,
     });
     fixed(&mut sketch, anchor, 7.0, 9.0);
     add(sketch, vec![]);

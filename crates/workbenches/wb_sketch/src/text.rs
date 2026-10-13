@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use glam::DVec2;
 use uuid::Uuid;
 
-use crate::sketch::{BSpline, GeometryElement, Line, Point, Sketch, TextBlock, Vec2D};
+use crate::sketch::{BSpline, GeometryElement, Line, Point, Sketch, TextBlock, TextShape, Vec2D};
 
 /// The fonts that come with the application, by name. Any other font is
 /// one installed on the machine, by its family name, or a file's path.
@@ -562,11 +562,19 @@ pub fn add(sketch: &mut Sketch, at: Vec2D, spec: &TextSpec) -> Result<Uuid, Stri
         anchor,
         elements,
         placed: at,
+        outlined: Some(TextShape {
+            size: spec.size,
+            spacing: spec.spacing,
+            angle: spec.angle,
+        }),
     });
     Ok(id)
 }
 
-/// Make block `id` again as `spec` says, where its point stands now.
+/// Make block `id` again as `spec` says, where its point stands now. When
+/// the new outlines are made of the same pieces as the old (the size,
+/// spacing or angle changed, not the letters), the old elements take the
+/// new shape and keep their ids, and with them whatever refers to them.
 pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), String> {
     let Some(index) = sketch.texts.iter().position(|b| b.id == id) else {
         return Err("no such text".to_string());
@@ -576,9 +584,29 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
         .point_position(anchor)
         .ok_or("the text's point is gone")?;
     let outlines = contours(spec, DVec2::new(at.x, at.y))?;
-    let old = std::mem::take(&mut sketch.texts[index].elements);
-    remove_elements(sketch, &old);
-    let elements = build(sketch, outlines);
+    let mut scratch = Sketch::new("text");
+    let made = build(&mut scratch, outlines.clone());
+    let old = sketch.texts[index].elements.clone();
+    let alike = made.len() == old.len()
+        && made.iter().zip(&old).all(|(new, old)| {
+            match (scratch.get_geometry(*new), sketch.get_geometry(*old)) {
+                (Some(a), Some(b)) => std::mem::discriminant(a) == std::mem::discriminant(b),
+                _ => false,
+            }
+        });
+    let elements = if alike {
+        for (new, old) in made.iter().zip(&old) {
+            if let (Some(GeometryElement::Point(p)), Some(GeometryElement::Point(q))) =
+                (scratch.get_geometry(*new), sketch.get_geometry_mut(*old))
+            {
+                q.position = p.position;
+            }
+        }
+        old
+    } else {
+        remove_elements(sketch, &old);
+        build(sketch, outlines)
+    };
     let block = &mut sketch.texts[index];
     block.text = spec.text.clone();
     block.font = spec.font.clone();
@@ -588,7 +616,33 @@ pub fn change(sketch: &mut Sketch, id: Uuid, spec: &TextSpec) -> Result<(), Stri
     block.angle = spec.angle;
     block.elements = elements;
     block.placed = at;
+    block.outlined = Some(block.shape());
     Ok(())
+}
+
+/// Make again the outlines of every block whose size, spacing or angle
+/// formulas have set to other than the outlines were made at, its font
+/// read from what `document` keeps. Whether any changed. A block whose
+/// font is neither carried nor kept, or whose values make no text, keeps
+/// the outlines it has.
+pub fn follow_values(sketch: &mut Sketch, document: &core_document::Document) -> bool {
+    let stale: Vec<Uuid> = sketch
+        .texts
+        .iter()
+        .filter(|b| b.outlines_stale())
+        .map(|b| b.id)
+        .collect();
+    let mut moved = false;
+    for id in stale {
+        let Some(block) = sketch.texts.iter().find(|b| b.id == id) else {
+            continue;
+        };
+        let mut spec = TextSpec::of(block);
+        if read_kept_font(document, &mut spec) || is_file(&spec.font) {
+            moved |= change(sketch, id, &spec).is_ok();
+        }
+    }
+    moved
 }
 
 /// Take elements away without the text-block bookkeeping that removing

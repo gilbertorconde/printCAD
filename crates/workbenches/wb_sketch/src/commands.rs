@@ -1131,7 +1131,33 @@ pub fn register(context: &mut WorkbenchContext) {
             "Only what is given changes, and the outlines are made again on the same point; \
              a `size` of 0 or less is refused.",
         )
+        .note(
+            "A block's size, spacing and angle are numbers formulas can set: \
+             `pc.doc.parameters` of the sketch lists them under the keys `<block>/size`, \
+             `<block>/spacing` and `<block>/angle`, and the outlines are made again at what \
+             they come to, in the font the document keeps. The string is not, since a \
+             formula makes a number.",
+        )
         .see_also("sketch.text")
+        .see_also("doc.set_formula")
+        .example(
+            "Text whose height a variable sets",
+            r#"
+            local s = pc.sketch.new{plane = "XY"}
+            local t = pc.sketch.text{sketch = s, text = "I", at = {0, 0}, size = 10}
+            pc.var.new{name = "Label"}
+            pc.var.set{set = "Label", name = "height", formula = "10 mm"}
+            pc.doc.set_formula{id = s, parameter = t.text .. "/size", formula = "Label.height"}
+            local pad = pc.design.pad{sketch = s, length = 1}
+            assert(#pc.doc.rebuild() == 0)
+            local body = pc.doc.feature{id = pad}.body
+            local small = pc.doc.measure{body = body}
+            pc.var.set{set = "Label", name = "height", formula = "20 mm"}
+            assert(#pc.doc.rebuild() == 0)
+            local large = pc.doc.measure{body = body}
+            assert(math.abs(large.max[2] - 2 * small.max[2]) < 1e-3, "twice as tall")
+            "#,
+        )
         .example(
             "A letter made twice as large",
             r#"
@@ -5196,6 +5222,52 @@ mod tests {
                 .contains("is installed here"),
             "a family neither installed nor kept is refused with why"
         );
+    }
+
+    /// A text block's size set by a variable: the outlines the document
+    /// builds from are made again at its value, keeping their elements,
+    /// and the block's stored data is left as it was made.
+    #[test]
+    fn a_variable_sets_a_texts_size() {
+        let registry = registry();
+        let mut doc = Document::new("t");
+        let s = call(&mut doc, "sketch.new", json!({})).unwrap();
+        let made = call(
+            &mut doc,
+            "sketch.text",
+            json!({"sketch": s, "text": "I", "at": [0, 0], "size": 10}),
+        )
+        .unwrap();
+        let block = made["text"].as_str().unwrap().to_string();
+        let sizes = doc.add_variable_set("Label").unwrap();
+        doc.set_variable(sizes, "height", "10 mm", None).unwrap();
+        doc.set_feature_formula(
+            feature_id(&s),
+            format!("{block}/size"),
+            Some("Label.height".into()),
+        )
+        .unwrap();
+        let height = |doc: &Document| {
+            let built = crate::stored_sketch(doc, feature_id(&s)).unwrap().sketch;
+            let ys: Vec<f64> = crate::text::outline_points(&built)
+                .iter()
+                .filter_map(|p| built.point_position(*p))
+                .map(|p| p.y)
+                .collect();
+            let elements = built.texts[0].elements.clone();
+            let top = ys.iter().copied().fold(f64::MIN, f64::max);
+            let bottom = ys.iter().copied().fold(f64::MAX, f64::min);
+            (top - bottom, elements)
+        };
+        registry.evaluate(&mut doc);
+        let (small, elements) = height(&doc);
+        doc.set_variable(sizes, "height", "25 mm", None).unwrap();
+        registry.evaluate(&mut doc);
+        let (large, kept) = height(&doc);
+        assert!((large / small - 2.5).abs() < 1e-6, "{small} then {large}");
+        assert_eq!(kept, elements, "the same elements, reshaped");
+        let stored = sketch_of(&doc, &s).texts[0].clone();
+        assert_eq!(stored.size, 10.0, "the stored data is as it was made");
     }
 
     #[test]
