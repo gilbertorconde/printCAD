@@ -472,6 +472,24 @@ impl KernelQueries for OgeomQueries {
         tess::write_blob(&model, &copy)
     }
 
+    fn edge_of(&self, brep: &[u8], near: [f64; 3]) -> KernelResult<Vec<u8>> {
+        let (mut model, root) = tess::read_blob(brep)?;
+        let probe = Point::new(near[0], near[1], near[2]);
+        let (edge, distance) =
+            crate::ops::dressup::nearest_with_distance(&mut model, &root, ShapeType::Edge, probe)
+                .map_err(other)?;
+        if distance > crate::ops::dressup::pick_reach(&model, &root) {
+            return Err(other(format!(
+                "no edge near ({:.3}, {:.3}, {:.3}): the nearest is {distance:.3} mm away",
+                near[0], near[1], near[2]
+            )));
+        }
+        let copy = ogeom::algo::copied(&mut model, &edge)
+            .map_err(|e| other(format!("copying the edge failed: {e}")))?
+            .shape;
+        tess::write_blob(&model, &copy)
+    }
+
     fn read_dxf(&self, text: &str) -> KernelResult<kernel_api::Drawing2d> {
         crate::dxf::read_dxf(text)
     }

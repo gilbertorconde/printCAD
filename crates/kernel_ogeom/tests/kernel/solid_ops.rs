@@ -3627,6 +3627,106 @@ fn two_solids_are_as_near_as_their_facing_walls() {
     assert!(crossing.distance_mm.abs() < 1e-6, "{crossing:?}");
 }
 
+/// An edge taken out of a solid measures against another edge or a face
+/// as a face does: the boxes' nearest edges, and an edge to the facing wall.
+#[test]
+fn edges_are_as_near_as_their_closest_points() {
+    use kernel_api::KernelQueries;
+    let mut kernel = new_kernel();
+    let cube = [SolidOp::Primitive {
+        kind: PrimitiveKind::Box {
+            length: 10.0,
+            width: 10.0,
+            height: 10.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }];
+    let solid = kernel
+        .execute_solid_chain(&cube, &TessellationSettings::default())
+        .expect("a box builds");
+    let blob = &solid.brep_blob;
+    let shifted = [
+        [1.0, 0.0, 0.0, 17.0],
+        [0.0, 1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+        [0.0, 0.0, 0.0, 1.0],
+    ];
+    let queries = &kernel_ogeom::QUERIES;
+    // The upright edge at x = 10, y = 0 and the top edge along y at x = 0
+    // of the box moved 17 along x: nearest at their shared corner height.
+    let upright = queries.edge_of(blob, [10.0, 0.0, 5.0]).unwrap();
+    let top = queries.edge_of(blob, [0.0, 5.0, 10.0]).unwrap();
+    let gap = queries.gap(&upright, &top, &shifted).unwrap();
+    assert!((gap.distance_mm - 7.0).abs() < 1e-6, "{gap:?}");
+    assert!(
+        (gap.on_a[2] - 10.0).abs() < 1e-6 && gap.on_a[1].abs() < 1e-6,
+        "{gap:?}"
+    );
+    let wall = queries.face_of(blob, [0.0, 5.0, 5.0]).unwrap();
+    let to_wall = queries.gap(&upright, &wall, &shifted).unwrap();
+    assert!((to_wall.distance_mm - 7.0).abs() < 1e-6, "{to_wall:?}");
+    assert!(
+        queries.edge_of(blob, [5.0, 5.0, 60.0]).is_err(),
+        "no edge there"
+    );
+}
+
+/// A cone's wall knows its half angle and a torus its two radii.
+#[test]
+fn a_cone_and_a_torus_carry_their_sizes() {
+    use kernel_api::FaceSurface;
+    let built = |kind| {
+        let ops = [SolidOp::Primitive {
+            kind,
+            placement: Placement::default(),
+            op: BooleanOp::NewSolid,
+        }];
+        new_kernel()
+            .execute_solid_chain(&ops, &TessellationSettings::default())
+            .expect("the primitive builds")
+            .mesh
+    };
+    let cone = built(PrimitiveKind::Cone {
+        radius1: 10.0,
+        radius2: 5.0,
+        height: 10.0,
+        angle_deg: 360.0,
+    });
+    let half_angle = cone
+        .face_surfaces
+        .iter()
+        .find_map(|s| match s {
+            FaceSurface::Cone { half_angle, .. } => Some(*half_angle),
+            _ => None,
+        })
+        .expect("the side is a cone");
+    assert!(
+        (half_angle.to_degrees() - 0.5f32.atan().to_degrees()).abs() < 1e-3,
+        "{half_angle}"
+    );
+    let torus = built(PrimitiveKind::Torus {
+        radius1: 10.0,
+        radius2: 2.0,
+        angle1_deg: -180.0,
+        angle2_deg: 180.0,
+        angle3_deg: 360.0,
+    });
+    let radii = torus
+        .face_surfaces
+        .iter()
+        .find_map(|s| match s {
+            FaceSurface::Torus {
+                major_radius,
+                minor_radius,
+                ..
+            } => Some((*major_radius, *minor_radius)),
+            _ => None,
+        })
+        .expect("a torus");
+    assert_eq!(radii, (10.0, 2.0));
+}
+
 /// A solid mirrored across a plane keeps its volume and lands on the other
 /// side of it.
 #[test]

@@ -16,7 +16,8 @@
 //!   [`PanelEvent`], [`MenuScope`], [`PanelSlot`], [`Button`]) are
 //!   `#[non_exhaustive]`, as are `kernel_api`'s `FaceSurface` and
 //!   `ProfileSegment`: a match on them needs a wildcard arm, so a new
-//!   variant does not break it. (The `exhaustive` feature lifts this for
+//!   variant does not break it, and binds a variant's fields with `..`,
+//!   so a new field does not either. (The `exhaustive` feature lifts this for
 //!   printCAD itself, which makes every variant it sends; a package leaves
 //!   it off.)
 //! - Structs a package fills in derive `Default`; fill them with

@@ -1140,9 +1140,11 @@ pub(crate) fn doc_commands() -> Vec<CommandSpec> {
                  as features take faces and edges",
             )
             .returns(
-                "a list of {index, kind, point, area, normal?, axis?, radius?, name?}: \
-                 point lies on the face, normal is a flat face's outward one, \
-                 axis a turned face's {point, direction}",
+                "a list of {index, kind, point, area, normal?, axis?, radius?, half_angle?, \
+                 major_radius?, minor_radius?, name?}: point lies on the face, normal is a \
+                 flat face's outward one, axis a turned face's {point, direction}, \
+                 half_angle a cone's wall off its axis in degrees, major_radius and \
+                 minor_radius a torus's",
             )
             .read_only()
             .note(
@@ -4590,6 +4592,17 @@ fn faces_of(mesh: &kernel_api::TriMesh) -> Value {
                 kernel_api::FaceSurface::Sphere { radius, center } => {
                     out["radius"] = json!(radius);
                     out["centre"] = json!(center);
+                }
+                kernel_api::FaceSurface::Cone { half_angle, .. } => {
+                    out["half_angle"] = json!(half_angle.to_degrees());
+                }
+                kernel_api::FaceSurface::Torus {
+                    major_radius,
+                    minor_radius,
+                    ..
+                } => {
+                    out["major_radius"] = json!(major_radius);
+                    out["minor_radius"] = json!(minor_radius);
                 }
                 _ => {}
             }

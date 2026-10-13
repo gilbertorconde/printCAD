@@ -194,12 +194,26 @@ pub enum FaceSurface {
         axis: [f32; 3],
         radius: f32,
     },
-    /// A circular cone about the line through `apex` along `axis`.
-    Cone { apex: [f32; 3], axis: [f32; 3] },
+    /// A circular cone about the line through `apex` along `axis`, its
+    /// wall `half_angle` (radians, positive) off the axis.
+    Cone {
+        apex: [f32; 3],
+        axis: [f32; 3],
+        #[serde(default)]
+        half_angle: f32,
+    },
     /// A sphere.
     Sphere { center: [f32; 3], radius: f32 },
-    /// A torus about the line through `center` along `axis`.
-    Torus { center: [f32; 3], axis: [f32; 3] },
+    /// A torus about the line through `center` along `axis`: its tube's
+    /// centre `major_radius` from the axis, the tube `minor_radius` round.
+    Torus {
+        center: [f32; 3],
+        axis: [f32; 3],
+        #[serde(default)]
+        major_radius: f32,
+        #[serde(default)]
+        minor_radius: f32,
+    },
     /// Any other surface: a spline, a sweep.
     #[default]
     Other,
@@ -211,8 +225,8 @@ impl FaceSurface {
     pub fn axis(&self) -> Option<([f32; 3], [f32; 3])> {
         match *self {
             FaceSurface::Cylinder { origin, axis, .. } => Some((origin, axis)),
-            FaceSurface::Cone { apex, axis } => Some((apex, axis)),
-            FaceSurface::Torus { center, axis } => Some((center, axis)),
+            FaceSurface::Cone { apex, axis, .. } => Some((apex, axis)),
+            FaceSurface::Torus { center, axis, .. } => Some((center, axis)),
             _ => None,
         }
     }
@@ -238,17 +252,29 @@ impl FaceSurface {
                 axis: direction(axis),
                 radius,
             },
-            FaceSurface::Cone { apex, axis } => FaceSurface::Cone {
+            FaceSurface::Cone {
+                apex,
+                axis,
+                half_angle,
+            } => FaceSurface::Cone {
                 apex: point(apex),
                 axis: direction(axis),
+                half_angle,
             },
             FaceSurface::Sphere { center, radius } => FaceSurface::Sphere {
                 center: point(center),
                 radius,
             },
-            FaceSurface::Torus { center, axis } => FaceSurface::Torus {
+            FaceSurface::Torus {
+                center,
+                axis,
+                major_radius,
+                minor_radius,
+            } => FaceSurface::Torus {
                 center: point(center),
                 axis: direction(axis),
+                major_radius,
+                minor_radius,
             },
             FaceSurface::Other => FaceSurface::Other,
         }
@@ -2294,6 +2320,14 @@ pub trait KernelQueries: Send + Sync {
     fn face_of(&self, _brep: &[u8], _near: [f64; 3]) -> KernelResult<Vec<u8>> {
         Err(KernelError::Unsupported(
             "taking a face out of a solid".into(),
+        ))
+    }
+
+    /// The edge of `brep` nearest `near` (in the shape's own frame), as a
+    /// native-format snapshot of its own.
+    fn edge_of(&self, _brep: &[u8], _near: [f64; 3]) -> KernelResult<Vec<u8>> {
+        Err(KernelError::Unsupported(
+            "taking an edge out of a solid".into(),
         ))
     }
 

@@ -155,7 +155,9 @@ habits:
   `FaceSurface` and `ProfileSegment` are `#[non_exhaustive]`: a new kind
   of event or curve comes in a patch release, and a `_ =>` arm leaves it
   to the default. A package built with an older SDK passes over an event
-  it does not know.
+  it does not know. Bind a received variant's fields with `..` too
+  (`FaceSurface::Cone { axis, .. }`): a patch release may add one, as it
+  added a cone's half angle and a torus's radii.
 - **Fill the contract's structs with `..Default::default()`.** `Registration`,
   `Tool`, `Command`, `Param`, `Parameter`, `FeatureInfo`, `Rebuild`,
   `Task`, `Polyline`, `Label`, `Mesh`, `MenuItem` and the rest derive

@@ -299,6 +299,7 @@ fn hole_of(
                 FaceSurface::Cone {
                     apex,
                     axis: cone_axis,
+                    ..
                 } => {
                     let apex = f64s(apex);
                     let off = sub(apex, origin);

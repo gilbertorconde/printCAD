@@ -1022,7 +1022,7 @@ assert(all[1].label[3] == 10 and all[1].visible and not all[1].on_face)
 
 - `body` (id)
 - `frame` (string, optional): world (the default): where the body sits; body: in the body's own frame, as features take faces and edges
-- Returns a list of {index, kind, point, area, normal?, axis?, radius?, name?}: point lies on the face, normal is a flat face's outward one, axis a turned face's {point, direction}
+- Returns a list of {index, kind, point, area, normal?, axis?, radius?, half_angle?, major_radius?, minor_radius?, name?}: point lies on the face, normal is a flat face's outward one, axis a turned face's {point, direction}, half_angle a cone's wall off its axis in degrees, major_radius and minor_radius a torus's
 
 Notes:
 

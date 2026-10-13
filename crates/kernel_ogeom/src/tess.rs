@@ -618,6 +618,7 @@ pub(crate) fn face_surface(model: &Model, face: &Shape, facing: [f32; 3]) -> Fac
             FaceSurface::Cone {
                 apex: point(c.apex()),
                 axis: direction(c.frame().z()),
+                half_angle: c.half_angle().abs() as f32,
             }
         }
         SurfaceGeometry::Sphere(sphere) => {
@@ -632,6 +633,8 @@ pub(crate) fn face_surface(model: &Model, face: &Shape, facing: [f32; 3]) -> Fac
             FaceSurface::Torus {
                 center: point(t.centre()),
                 axis: direction(t.frame().z()),
+                major_radius: t.major_radius() as f32,
+                minor_radius: t.minor_radius() as f32,
             }
         }
         _ => FaceSurface::Other,
