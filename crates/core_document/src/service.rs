@@ -21,6 +21,8 @@ pub struct DocumentService {
     order: Vec<WorkbenchId>,
     /// Feature kind → the bench that claimed it.
     owners: HashMap<String, WorkbenchId>,
+    /// The kernel evaluation asks of solids (`Workbench::derive_on_geometry`).
+    kernel: Option<&'static dyn kernel_api::KernelQueries>,
 }
 
 impl std::fmt::Debug for DocumentService {
@@ -38,6 +40,12 @@ struct WorkbenchEntry {
 }
 
 impl DocumentService {
+    /// The kernel evaluation asks of solids: without one, what follows a
+    /// solid's edges stays where it was until it is edited.
+    pub fn set_kernel(&mut self, kernel: &'static dyn kernel_api::KernelQueries) {
+        self.kernel = Some(kernel);
+    }
+
     pub fn register_workbench(&mut self, workbench: Box<dyn Workbench>) -> DocumentResult<()> {
         let descriptor = workbench.descriptor();
         if self.workbenches.contains_key(descriptor.id.as_str()) {
@@ -276,12 +284,12 @@ impl DocumentService {
                     .or_else(|| document.get_feature_data(id).cloned())
             };
             let mut moved = owner.derive(node, &mut values, &values_of, document);
-            moved |= owner.derive_on_geometry(node, &mut values, document);
             if node.workbench_id.as_str() != crate::datum::DATUM_KIND
                 && let Some(probed) = document.probed_references(node.id)
             {
                 moved |= owner.derive_on_solid(node, &mut values, probed);
             }
+            moved |= owner.derive_on_geometry(node, &mut values, document, self.kernel);
             // A datum takes what the last build found of what it stands on.
             if node.workbench_id.as_str() == crate::datum::DATUM_KIND {
                 let own = node.body;

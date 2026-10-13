@@ -1609,6 +1609,12 @@ pub fn register(context: &mut WorkbenchContext) {
              the curves marked `external` by `pc.sketch.geometry`.",
         )
         .note(
+            "The projection follows its solid: rebuilt, the edge is found again by the faces \
+             it runs between (else by the point) and projected anew, the sketch unopened. A \
+             solid built from the sketch itself is projected again only when the sketch is \
+             opened.",
+        )
+        .note(
             "A point names an edge only within a tenth of the body's diagonal of it; one \
              farther from every edge is refused (\"no edge near ...\"). An edge the sketch \
              already holds comes once: picked again, at any point along it, it is passed \
@@ -3510,6 +3516,7 @@ fn external_sources(
                 section: false,
                 defining: false,
                 reference: None,
+                faces: [0; 2],
             })
         })
         .collect()
@@ -3539,6 +3546,7 @@ fn section_sources(
                 section: true,
                 defining: false,
                 reference: None,
+                faces: [0; 2],
             })
         })
         .collect()
@@ -3557,6 +3565,7 @@ pub(crate) fn add_external(
     let mut repeated = 0;
     let mut last_error = None;
     for source in edges {
+        let source = &crate::with_edge_names(ctx.document, *source);
         match crate::project_source(ctx, plane, source) {
             Ok(curves) => {
                 // An edge or element the sketch already holds comes once.

@@ -100,6 +100,7 @@ fn main() -> Result<()> {
         init_tracing_subscriber().context("tracing subscriber init failed")?;
 
     let mut registry = DocumentService::default();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
     register_all_workbenches(&mut registry)?;
 
     app_log::info(format!(
@@ -214,6 +215,7 @@ fn main() {
     kernel_ogeom::files::set_reader(platform::read);
 
     let mut registry = DocumentService::default();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
     if let Err(err) = register_all_workbenches(&mut registry) {
         error!("the workbenches did not register: {err}");
         return;

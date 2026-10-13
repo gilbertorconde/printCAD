@@ -440,6 +440,7 @@ mod tests {
             section: false,
             defining: false,
             reference: None,
+            faces: [0; 2],
         }
     }
 
@@ -601,6 +602,7 @@ mod tests {
             section: true,
             defining: false,
             reference: None,
+            faces: [0; 2],
             ..source()
         };
         let mut sketch = Sketch::new("t");
@@ -625,6 +627,7 @@ mod tests {
                 section: false,
                 defining: false,
                 reference: None,
+                faces: [0; 2],
                 ..face
             },
         );

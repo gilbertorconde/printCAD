@@ -174,7 +174,8 @@ fn bring_in(
     sketch: &mut Sketch,
     pick: &ModelPick,
 ) -> Result<(Uuid, Option<Projected>), String> {
-    let curves = crate::project_source(ctx, plane, &pick.source)?;
+    let source = crate::with_edge_names(ctx.document, pick.source);
+    let curves = crate::project_source(ctx, plane, &source)?;
     let held = crate::external::groups(sketch)
         .into_iter()
         .map(|(_, group)| group)
@@ -182,7 +183,7 @@ fn bring_in(
     // A vertex another projection already ends at is taken as it is.
     if pick.vertex && held.is_none() {
         let mut probe = sketch.clone();
-        let probed = add_projection(&mut probe, &curves, pick.source);
+        let probed = add_projection(&mut probe, &curves, source);
         if let Some(end) = nearest_point(&probe, &probed, pick.at)
             && let Some(at) = probe.point_position(end)
             && let Some(existing) = sketch
@@ -201,9 +202,9 @@ fn bring_in(
         Some(group) => (group, None),
         None => {
             let before = commands::ids_of(sketch);
-            let made = add_projection(sketch, &curves, pick.source);
+            let made = add_projection(sketch, &curves, source);
             let projected = Projected {
-                source: pick.source,
+                source,
                 made: commands::made_since(sketch, &before),
             };
             (made, Some(projected))
@@ -451,6 +452,7 @@ impl SketchWorkbench {
             section: false,
             defining: false,
             reference: None,
+            faces: [0; 2],
         };
         let world = glam::DVec3::from_array(widen3(edge.point));
         let rel = world - glam::DVec3::from_array(plane.origin);

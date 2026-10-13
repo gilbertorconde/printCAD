@@ -654,7 +654,13 @@ and stores the result as geometry marked in `Sketch::external` with its
 drawn geometry is, left out of profiles until marked as counting (`ExternalSource::defining`, which the
 Construction button switches as it does construction for drawn curves),
 drawn in the external colour (dashed while a guide, solid once it
-counts), never dragged, and projected again. New projections take the
+counts), never dragged, and projected again: when the sketch opens, and
+as derived values whenever its solid changes (`derive_on_geometry`, given
+the kernel `DocumentService::set_kernel` holds, asked on the UI thread on
+a page as on the desktop, once per change of what it projects), the edge found by its faces' names
+(`ExternalSource::faces`, read from the mesh as it is added) before its
+point, except from a solid built from the sketch itself, which waits for
+the sketch to open. New projections take the
 Construction mode (a guide in it, counting out of it; the commands' `counts`
 flag, off unless given); projected ends at one spot join in the profile
 once per editing session (in place when the curve is the same kind). Its

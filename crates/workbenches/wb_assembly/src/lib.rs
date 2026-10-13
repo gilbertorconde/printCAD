@@ -2115,6 +2115,7 @@ impl Workbench for AssemblyWorkbench {
         node: &FeatureNode,
         values: &mut serde_json::Value,
         document: &core_document::Document,
+        _kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
         if node.workbench_id.as_str() != JOINT_KIND {
             return false;

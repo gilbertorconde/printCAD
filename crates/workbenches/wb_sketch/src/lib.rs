@@ -582,6 +582,10 @@ pub struct SketchWorkbench {
     /// Each sketch's external elements whose edge, face, element or datum
     /// could not be found, with what that was worked out for.
     lost_external: std::sync::Mutex<HashMap<FeatureId, (u64, Vec<Uuid>)>>,
+    /// What each sketch's solid edges and faces came to when evaluation
+    /// last projected them, by what they were projected from
+    /// (`projection_key`).
+    solid_projections: std::sync::Mutex<HashMap<FeatureId, HashMap<u64, Projection>>>,
     /// A picture being calibrated from two points picked on it.
     calibrating: Option<Calibrating>,
     /// On-view parameter capture for the active drawing tool.
@@ -3036,6 +3040,66 @@ impl Workbench for SketchWorkbench {
             moved = true;
         }
         moved |= follow_references(&mut feature, node.id, values_of, document);
+        if moved {
+            *values = feature.to_json();
+        }
+        moved
+    }
+
+    /// A sketch's geometry projected from solids' edges and faces follows
+    /// the solids as they stand: projected again when what it comes from
+    /// changed, and moved in place where it is the same kinds of curve. A
+    /// solid built from the sketch itself, an edge gone or one now another
+    /// kind of curve waits for the sketch to be edited.
+    fn derive_on_geometry(
+        &self,
+        node: &core_document::FeatureNode,
+        values: &mut serde_json::Value,
+        document: &core_document::Document,
+        kernel: Option<&dyn kernel_api::KernelQueries>,
+    ) -> bool {
+        let Some(kernel) = kernel else {
+            return false;
+        };
+        let Ok(mut feature) = SketchFeature::from_json(values) else {
+            return false;
+        };
+        let groups: Vec<_> = external::groups(&feature.sketch)
+            .into_iter()
+            .filter(|(source, _)| {
+                source.reference.is_none()
+                    && !solid_built_from(document, node.id, BodyId(source.body))
+            })
+            .collect();
+        if groups.is_empty() {
+            return false;
+        }
+        let plane = placed_plane(&feature.plane, &sketch_placement(document, node.id));
+        let Ok(mut cache) = self.solid_projections.lock() else {
+            return false;
+        };
+        let known = cache.remove(&node.id).unwrap_or_default();
+        let mut kept = HashMap::new();
+        let mut moved = false;
+        for (source, group) in groups {
+            let key = projection_key(document, &plane, &source);
+            let projected = known
+                .get(&key)
+                .cloned()
+                .unwrap_or_else(|| project_source_in(document, Some(kernel), &plane, &source));
+            if let Ok(curves) = &projected
+                && !external::already_holds(&feature.sketch, &group, curves)
+            {
+                let was = feature.sketch.geometry.clone();
+                if external::refresh_in_place(&mut feature.sketch, &group, curves) {
+                    moved = true;
+                } else {
+                    feature.sketch.geometry = was;
+                }
+            }
+            kept.insert(key, projected);
+        }
+        cache.insert(node.id, kept);
         if moved {
             *values = feature.to_json();
         }
@@ -5910,6 +5974,7 @@ impl SketchWorkbench {
                     section: false,
                     defining,
                     reference: None,
+                    faces: [0; 2],
                 }
             })
             .collect();
@@ -6004,6 +6069,7 @@ impl SketchWorkbench {
                     section: false,
                     defining,
                     reference: None,
+                    faces: [0; 2],
                 })
                 .collect(),
             Err(why) => {
@@ -6036,6 +6102,7 @@ impl SketchWorkbench {
             section: true,
             defining: !self.construction_mode(),
             reference: None,
+            faces: [0; 2],
         };
         let before = commands::ids_of(&feature.sketch);
         let added =
@@ -6714,10 +6781,128 @@ fn project_source_in(
         }
         return Ok(curves);
     }
+    // A named edge is found by its faces' names wherever it went, the
+    // point it was picked at after.
+    let near = (source.faces != [0; 2])
+        .then(|| {
+            let [a, b] = source.faces;
+            outline_point_near(document, body, source.point, |names| {
+                names == [a, b] || names == [b, a]
+            })
+        })
+        .flatten()
+        .map_or(source.point, |(point, _)| point);
     kernel
-        .project_edge(brep, f(source.point), &plane)
+        .project_edge(brep, f(near), &plane)
         .map(|edge| vec![edge])
         .map_err(|e| e.to_string())
+}
+
+/// `source` with the names of the faces its edge runs between, read from
+/// its body's mesh where the edge nearest its point is, when it is an
+/// edge of a solid and has none yet.
+pub(crate) fn with_edge_names(
+    document: &core_document::Document,
+    mut source: sketch::ExternalSource,
+) -> sketch::ExternalSource {
+    if source.reference.is_none() && !source.section && source.faces == [0; 2] {
+        source.faces = outline_point_near(document, BodyId(source.body), source.point, |_| true)
+            .map(|(_, names)| names)
+            .unwrap_or_default();
+    }
+    source
+}
+
+/// The point of `body`'s outline, in its own mesh and frame, nearest
+/// `point` on an edge whose faces' names `takes` accepts, and those names.
+/// `None` when its mesh has no edges it accepts.
+fn outline_point_near(
+    document: &core_document::Document,
+    body: BodyId,
+    point: [f64; 3],
+    takes: impl Fn([kernel_api::TopoName; 2]) -> bool,
+) -> Option<([f64; 3], [kernel_api::TopoName; 2])> {
+    let (mesh, _) = document.local_geometry(body)?;
+    let at = glam::DVec3::from_array(point);
+    let position = |i: u32| glam::Vec3::from_array(mesh.positions[i as usize]).as_dvec3();
+    let mut best: Option<(f64, glam::DVec3, [kernel_api::TopoName; 2])> = None;
+    for (pair, edge) in mesh.edges.as_chunks::<2>().0.iter().zip(&mesh.edge_ids) {
+        let names = mesh
+            .edge_faces
+            .get(*edge as usize)
+            .copied()
+            .unwrap_or_default();
+        if !takes(names) {
+            continue;
+        }
+        let (a, b) = (position(pair[0]), position(pair[1]));
+        let along = b - a;
+        let t = if along.length_squared() > 0.0 {
+            ((at - a).dot(along) / along.length_squared()).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let on = a + along * t;
+        let distance = on.distance(at);
+        if best.is_none_or(|(d, _, _)| distance < d) {
+            best = Some((distance, on, names));
+        }
+    }
+    best.map(|(_, on, names)| (on.to_array(), names))
+}
+
+/// A solid's edge or face projected onto a sketch plane: the curves it
+/// comes to, or why it could not be projected.
+type Projection = Result<Vec<kernel_api::ProjectedEdge>, String>;
+
+/// What projecting `source` onto `plane` (where the sketch's body sits)
+/// gives depends on: the source, the plane, and the source's solid and
+/// where its body sits.
+fn projection_key(
+    document: &core_document::Document,
+    plane: &SketchPlane,
+    source: &sketch::ExternalSource,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    format!("{source:?} {plane:?}").hash(&mut hasher);
+    let body = BodyId(source.body);
+    document
+        .imported_geometry(body)
+        .map(|g| g.revision)
+        .hash(&mut hasher);
+    format!("{:?}", document.body_placement(body)).hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Whether `body`'s solid as it stands is built, in part, from `sketch`:
+/// a feature taking from it, directly or through others, in the body's
+/// history up to its tip. Following that solid's edges would chase the
+/// sketch's own change.
+fn solid_built_from(document: &core_document::Document, sketch: FeatureId, body: BodyId) -> bool {
+    let tree = document.feature_tree();
+    let tip = document
+        .bodies()
+        .iter()
+        .find(|b| b.id == body)
+        .and_then(|b| b.tip)
+        .and_then(|tip| tree.get_node(tip))
+        .map(|n| n.seq);
+    let mut seen = HashSet::new();
+    let mut next = tree.dependents(sketch);
+    while let Some(id) = next.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        if let Some(node) = tree.get_node(id)
+            && node.body == Some(body)
+            && tip.is_none_or(|tip| node.seq <= tip)
+        {
+            return true;
+        }
+        next.extend(tree.dependents(id));
+    }
+    false
 }
 
 /// What sketch `id`'s lost external elements were worked out from: its

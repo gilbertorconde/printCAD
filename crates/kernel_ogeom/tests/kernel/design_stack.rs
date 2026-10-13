@@ -1613,20 +1613,7 @@ fn settle(doc: &mut Document, kernel: &mut OgeomKernel) {
             if let Ok(result) =
                 kernel.execute_solid_chain(&plan.ops, &TessellationSettings::default())
             {
-                doc.set_imported_brep_data(job.body, result.brep_blob, Vec::new());
-                doc.set_imported_geometry(
-                    job.body,
-                    core_document::ImportedGeometry {
-                        mesh: std::sync::Arc::new(result.mesh),
-                        source_asset: None,
-                        revision: 0,
-                        bounds_mm: result.bounds_mm,
-                        brep_blob_path: None,
-                        mesh_path: None,
-                        face_colors_path: None,
-                        health: None,
-                    },
-                );
+                store_solid(doc, job.body, result);
             }
         }
     }
@@ -5088,4 +5075,152 @@ fn embossed_text_measures_what_it_adds() {
     let (measured, _) = volume_and_soundness(&raised);
     // The letters add some 17 mm³.
     assert!(measured > plain + 15.0, "{} added", measured - plain);
+}
+
+/// A sketch whose profile counts an edge projected from another body's
+/// pad follows the pad when its length changes, without the sketch being
+/// opened: evaluation projects the edge again, and the body padded from
+/// the sketch grows with it. What the sketch stores is left as it was.
+#[test]
+fn a_counting_projected_edge_follows_its_pad_without_the_sketch_opened() {
+    use core_document::{
+        CommandArgs, DocumentService, Workbench, WorkbenchFeature, WorkbenchRuntimeContext,
+    };
+    let mut registry = DocumentService::default();
+    registry
+        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
+        .unwrap();
+    registry
+        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
+        .unwrap();
+    registry.set_kernel(&kernel_ogeom::QUERIES);
+    let mut kernel = OgeomKernel::new();
+    let settle = |doc: &mut Document, kernel: &mut OgeomKernel| {
+        for _ in 0..16 {
+            let jobs = registry.rebuild_jobs(doc);
+            if jobs.is_empty() {
+                return;
+            }
+            for job in jobs {
+                let plan = job.plan.expect("a plan");
+                let result = kernel
+                    .execute_solid_chain(&plan.ops, &TessellationSettings::default())
+                    .expect("it builds");
+                store_solid(doc, job.body, result);
+            }
+        }
+        panic!("the rebuilds never settled");
+    };
+
+    // A block 40 mm wide and 10 mm high, and in front of it a sketch
+    // standing upright, x across and z up, in a body of its own.
+    let (mut doc, block, base) = setup(40.0, 10.0);
+    let pad = doc
+        .add_feature_in_body(
+            pad_feature(base, 10.0, false, false),
+            "Pad".into(),
+            Some(block),
+        )
+        .unwrap();
+    doc.mark_feature_stale(pad);
+    settle(&mut doc, &mut kernel);
+    let other = doc.create_body(Some("Other".into()));
+    let plane = wb_sketch::sketch::SketchPlane::from_frame(
+        [0.0, -5.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+    );
+    let sketch_id = doc
+        .add_feature_in_body(
+            SketchFeature::new(Sketch::new("front"), plane),
+            "front".into(),
+            Some(other),
+        )
+        .unwrap();
+    // The block's front top edge, counting, closed by three drawn lines.
+    let mut sketcher = wb_sketch::SketchWorkbench::default();
+    let args: CommandArgs = serde_json::from_value(serde_json::json!({
+        "sketch": sketch_id.0.to_string(),
+        "counts": true,
+        "edges": [{"body": block.0.to_string(), "point": [20.0, 0.0, 10.0], "direction": [1.0, 0.0, 0.0]}],
+    }))
+    .unwrap();
+    let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
+    ctx.kernel = Some(&kernel_ogeom::QUERIES);
+    sketcher
+        .run_command("sketch.external", &args, &mut ctx)
+        .expect("the edge projects");
+    let mut feature = SketchFeature::from_json(doc.get_feature_data(sketch_id).unwrap()).unwrap();
+    let edge = feature
+        .sketch
+        .geometry
+        .iter()
+        .find_map(|g| match g {
+            GeometryElement::Line(l) if feature.sketch.is_external(l.id) => Some(l.clone()),
+            _ => None,
+        })
+        .expect("the projected edge");
+    let x_of = |sketch: &Sketch, p| sketch.point_position(p).unwrap().x;
+    let (left, right) = if x_of(&feature.sketch, edge.start) < x_of(&feature.sketch, edge.end) {
+        (edge.start, edge.end)
+    } else {
+        (edge.end, edge.start)
+    };
+    let sketch = &mut feature.sketch;
+    let a = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(0.0, 0.0))));
+    let b = sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 0.0))));
+    for (s, e) in [(a, b), (b, right), (left, a)] {
+        sketch.add_geometry(GeometryElement::Line(Line::new(s, e)));
+    }
+    doc.update_feature_data(sketch_id, feature.to_json())
+        .unwrap();
+    let wall = doc
+        .add_feature_in_body(
+            pad_feature(sketch_id, 2.0, false, false),
+            "Wall".into(),
+            Some(other),
+        )
+        .unwrap();
+    doc.mark_feature_stale(wall);
+    settle(&mut doc, &mut kernel);
+    let height = |doc: &Document| {
+        let (min, max) = mesh_bounds(&doc.imported_geometry(other).unwrap().mesh);
+        max[2] - min[2]
+    };
+    assert!((height(&doc) - 10.0).abs() < 1e-3, "{}", height(&doc));
+
+    // The block's pad grows to 15 mm: the edge, the sketch's profile and
+    // the wall padded from it follow.
+    let stored = doc.get_feature_data(sketch_id).unwrap().clone();
+    doc.update_feature_data(pad, pad_feature(base, 15.0, false, false).to_json())
+        .unwrap();
+    doc.mark_feature_dirty(pad);
+    settle(&mut doc, &mut kernel);
+    let followed = SketchFeature::from_json(doc.feature_values(sketch_id).unwrap()).unwrap();
+    let edge_height = followed.sketch.point_position(right).unwrap().y;
+    assert!((edge_height - 15.0).abs() < 1e-6, "{edge_height}");
+    assert!((height(&doc) - 15.0).abs() < 1e-3, "{}", height(&doc));
+    assert_eq!(
+        doc.get_feature_data(sketch_id),
+        Some(&stored),
+        "followed as derived values, the sketch's own data untouched"
+    );
+}
+
+/// Store a built solid on `body` as the host does.
+fn store_solid(doc: &mut Document, body: BodyId, result: kernel_api::SolidBuildResult) {
+    doc.set_imported_brep_data(body, result.brep_blob, Vec::new());
+    doc.set_imported_geometry(
+        body,
+        core_document::ImportedGeometry {
+            mesh: std::sync::Arc::new(result.mesh),
+            source_asset: None,
+            revision: 0,
+            bounds_mm: result.bounds_mm,
+            brep_blob_path: None,
+            mesh_path: None,
+            face_colors_path: None,
+            health: None,
+        },
+    );
 }

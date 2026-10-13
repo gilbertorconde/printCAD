@@ -188,6 +188,15 @@ pub struct ExternalSource {
     /// `point` and `direction` say nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<ExternalReference>,
+    /// The names of the two faces a projected edge runs between, when its
+    /// solid names them: the edge is found by them first, so it is found
+    /// wherever a rebuild moved it, and by `point` after.
+    #[serde(default, skip_serializing_if = "unnamed")]
+    pub faces: [kernel_api::TopoName; 2],
+}
+
+fn unnamed(faces: &[kernel_api::TopoName; 2]) -> bool {
+    *faces == [0; 2]
 }
 
 /// What external geometry refers to when it is not a solid's edge or face.
@@ -209,6 +218,7 @@ impl ExternalSource {
             section: false,
             defining: false,
             reference: Some(reference),
+            faces: [0; 2],
         }
     }
 }

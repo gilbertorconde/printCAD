@@ -1030,6 +1030,7 @@ mod external_profile_tests {
                 section: false,
                 defining: false,
                 reference: None,
+                faces: [0; 2],
             },
         );
         assert!(
@@ -1055,6 +1056,7 @@ mod external_profile_tests {
                 section: false,
                 defining: true,
                 reference: None,
+                faces: [0; 2],
             };
             let corners = [(104.5, 90.46158), (150.0, 90.46158), (120.0, 120.0)];
             for i in 0..3 {

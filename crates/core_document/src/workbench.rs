@@ -815,13 +815,17 @@ pub trait Workbench: Send {
 
     /// Bring an owned feature's working data up to date with the bodies'
     /// geometry as it stands (a joint finds its faces again, by name, on a
-    /// body rebuilt). Answers whether it changed anything. Derived, never
+    /// body rebuilt; a sketch projects solids' edges again). `kernel`
+    /// answers what it asks of the solids, when the host has one. Runs
+    /// after `derive` and `derive_on_solid`, so it sees where those put
+    /// the feature. Answers whether it changed anything. Derived, never
     /// recorded.
     fn derive_on_geometry(
         &self,
         _node: &FeatureNode,
         _values: &mut serde_json::Value,
         _document: &Document,
+        _kernel: Option<&dyn kernel_api::KernelQueries>,
     ) -> bool {
         false
     }
