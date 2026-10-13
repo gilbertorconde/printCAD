@@ -1584,6 +1584,15 @@ impl PrintCadApp {
                 .extend(drag.outline(core_document::SketchPalette::default().preview));
         }
 
+        // The array task's spacing handle on its row's first copy.
+        if let Some(handle) = self.array_handle() {
+            let hot = self.array_handle_hot(&handle);
+            let (lines, marks, label) = handle.drawn(hot, self.session.document.display_unit());
+            data.overlays.extend(lines);
+            data.marks.extend(marks);
+            screen_space_labels.push(label);
+        }
+
         // The measurement in progress: its points, the line between them
         // and the distance, drawn over the scene.
         if let Some(picks) = &self.session.measure {

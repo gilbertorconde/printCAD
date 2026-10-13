@@ -280,7 +280,9 @@ pipe's path.
   selected edge of a solid: the copies spread over its whole length or a
   spacing apart, measured along it, and turned with it when asked) or at
   points (a sketch's points that are no curve's end or centre; the body
-  stands at the first), each repeat a linked copy the array owns. A path
+  stands at the first), each repeat a linked copy the array owns. While
+  the task lays out a row, an arrow stands on its first copy: dragging it
+  changes the spacing (in 0.1 mm steps, Escape puts it back). A path
   or point array reads its places when it is made or edited. The
   copies follow every change to the body and stand where the array puts
   them from where the body sits, so moving the body carries them. They

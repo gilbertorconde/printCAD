@@ -396,6 +396,8 @@ struct PrintCadApp {
     held_buttons: [bool; 3],
     /// The box a left drag from empty space in the view is drawing.
     box_select: Option<crate::app::box_select::BoxDrag>,
+    /// The array task's spacing handle while it is dragged.
+    array_drag: Option<crate::app::array_handle::SpacingDrag>,
     /// Index-stable UUIDs for workbench overlay meshes (slot i -> pool[i]),
     /// so the renderer's per-body cache works for overlays too.
     overlay_id_pool: Vec<Uuid>,
@@ -644,6 +646,7 @@ impl PrintCadApp {
             mouse_buttons_down: 0,
             held_buttons: [false; 3],
             box_select: None,
+            array_drag: None,
             overlay_id_pool: Vec::new(),
             region_meshes: Default::default(),
             modifiers: winit::keyboard::ModifiersState::default(),

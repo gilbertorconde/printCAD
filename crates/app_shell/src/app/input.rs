@@ -257,6 +257,13 @@ impl PrintCadApp {
             self.redraw_needed = true;
             return;
         }
+        // The array task's spacing handle, before a bench or the camera.
+        if self.array_handle_input(&event) {
+            if let Some(gfx) = self.gfx.as_ref() {
+                gfx.window.request_redraw();
+            }
+            return;
+        }
         let text = self.typed_text_of(&event);
         let mut wb = self.dispatch_workbench_input_without_select(&event);
         if let Some(text) = text {

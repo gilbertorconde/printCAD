@@ -178,6 +178,25 @@ impl ArrayTask {
         self.source
     }
 
+    /// The row the view's handle drags: the array, its direction and its
+    /// spacing. `None` while the copies stand some other way.
+    pub fn row_handle(&self) -> Option<(ArrayId, [f32; 3], f32)> {
+        let array = self.array.filter(|_| self.kind == Kind::Row)?;
+        Some((array, self.direction, self.spacing))
+    }
+
+    /// The row's spacing as the view's handle drags it, applied at once.
+    pub fn drag_spacing(&mut self, document: &mut Document, spacing: f32) {
+        let Some(id) = self.array.filter(|_| self.kind == Kind::Row) else {
+            return;
+        };
+        self.spacing = spacing;
+        self.refused = document
+            .set_copy_array(id, self.row(), self.count(), self.skipped.clone())
+            .err()
+            .map(|e| format!("The count {e}."));
+    }
+
     fn row(&self) -> ArrayPattern {
         ArrayPattern::Linear {
             direction: self.direction,
@@ -391,6 +410,7 @@ impl ArrayTask {
                     label(ui, "Spacing");
                     changed |= QtyField::offset(&mut self.spacing).show(ui);
                 });
+                note(ui, "Or drag the arrow on the first copy in the view.");
                 if secondary_button(ui, "10 mm apart").clicked() {
                     self.spacing = document.spacing_clear_of(self.source, self.direction);
                     changed = true;
@@ -806,6 +826,33 @@ mod tests {
         let end = frame(&mut task, &mut doc, &registry, false, true);
         assert!(matches!(end, Some(HostTaskEnd::Cancelled)));
         assert_eq!(doc.copy_array(id).cloned(), before, "the same copies again");
+    }
+
+    #[test]
+    fn the_views_handle_changes_a_rows_spacing_and_cancel_puts_it_back() {
+        let registry = DocumentService::default();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let row = ArrayPattern::Linear {
+            direction: [0.0, 1.0, 0.0],
+            spacing: 7.0,
+        };
+        let id = doc.create_copy_array(body, row, 3).unwrap();
+        let before = doc.copy_array(id).cloned();
+        let mut task = ArrayTask::open(&doc, body);
+        assert_eq!(task.row_handle(), Some((id, [0.0, 1.0, 0.0], 7.0)));
+        task.drag_spacing(&mut doc, 12.5);
+        assert_eq!(
+            doc.copy_array(id).map(|a| a.pattern.clone()),
+            Some(ArrayPattern::Linear {
+                direction: [0.0, 1.0, 0.0],
+                spacing: 12.5
+            })
+        );
+        frame(&mut task, &mut doc, &registry, false, true);
+        assert_eq!(doc.copy_array(id).cloned(), before);
+        task.choose_kind(Kind::Ring, &doc, &registry);
+        assert_eq!(task.row_handle(), None, "a ring has no spacing handle");
     }
 
     #[test]
