@@ -529,12 +529,16 @@ fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
                         volume_mm3: 1000.0,
                         centre: [0.0; 3],
                         density: None,
+                        inertia: Some(kernel_api::Inertia::default()),
+                        bought: false,
                     },
                     crate::BodyMass {
                         body: part,
                         volume_mm3: 1000.0,
                         centre: [10.0, 0.0, 0.0],
                         density: None,
+                        inertia: Some(kernel_api::Inertia::default()),
+                        bought: true,
                     },
                 ],
                 skipped: 0,
@@ -546,6 +550,8 @@ fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
     };
     let said = words(&widgets(&wb, &mut doc));
     assert!(said.contains("Mass: 2.00 g"), "{said}");
+    // Two point masses 10 mm apart: 1 g · 5² each about Y and Z.
+    assert!(said.contains("I3: 50.00 g·mm² about"), "{said}");
     draws(&mut wb, &mut doc);
     send(&mut wb, &mut doc, number("density", 2.5));
     let panel = widgets(&wb, &mut doc);
@@ -553,7 +559,10 @@ fn the_mass_panel_weighs_at_the_density_typed_and_selects_a_body_clicked() {
     let Some(Widget::Table { rows, .. }) = field(&panel, "bodies") else {
         panic!("{panel:?}");
     };
-    assert_eq!(rows[1], vec!["Part".to_string(), "2.50 g".to_string()]);
+    assert_eq!(
+        rows[1],
+        vec!["Part (bought)".to_string(), "2.50 g".to_string()]
+    );
     assert_eq!(selects(&mut wb, &mut doc, select("bodies", 1)), Some(part));
 }
 

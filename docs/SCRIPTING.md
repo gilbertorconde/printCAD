@@ -7018,15 +7018,18 @@ assert(math.abs(clash.volume - 10 * 10 * 1) < 1e-3, "1 mm of the lid sunk in")
 assert(math.abs(clash.centre[3] - 4.5) < 1e-3)
 ```
 
-`pc.asm.mass`: The mass and centre of mass of the solid bodies at one density.
+`pc.asm.mass`: The mass, centre of mass and inertia of the solid bodies at one density.
 
 - `bodies` (list, optional): Only these bodies; every visible one when left out
 - `density` (number, optional): g/cm³ for bodies without a material (1 when left out)
-- Returns {mass (g), volume (mm³), centre = {x, y, z} or nil, bodies = {{body, mass, volume, centre}, ...}, skipped}
+- `bought` (boolean, optional): Count the bought parts' bodies (true when left out); false weighs the made parts alone
+- Returns {mass (g), volume (mm³), centre = {x, y, z} or nil, inertia = {tensor, principal} or nil, bodies = {{body, mass, volume, centre, bought}, ...}, skipped}
 
 Notes:
 
 - `centre` is the centre of mass in world space, mm. An id in `bodies` that is not a body is passed over, so a list of feature ids answers a mass of 0.
+- `inertia` is about the centre of mass, g·mm² on the world's axes, each body's moved there by the parallel axis theorem where it sits: `tensor`, three rows, and `principal`, the principal moments smallest first, each {moment, axis}.
+- Bought parts weigh in, as the parts list counts them among the assembly's parts; each body says whether it is `bought`, and `bought = false` leaves them out.
 
 See also `pc.asm.parts`, `pc.asm.interference`.
 
@@ -7041,6 +7044,8 @@ local m = pc.asm.mass{density = 1.24}
 assert(math.abs(m.volume - 2000) < 1e-3)
 assert(math.abs(m.mass - 2.48) < 1e-6, "2 cm³ at 1.24 g/cm³")
 assert(m.centre[1] == 10 and m.centre[3] == 2.5)
+-- About its centre, g·mm²: m (20² + 20²) / 12 about Z.
+assert(math.abs(m.inertia.tensor[3][3] - 2.48 * 800 / 12) < 1e-6)
 ```
 
 `pc.asm.parts`: Every part: bodies of the same shape counted together.

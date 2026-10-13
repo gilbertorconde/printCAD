@@ -1599,7 +1599,7 @@ pub fn register(context: &mut WorkbenchContext) {
     context.register_command(
         CommandSpec::new(
             "asm.mass",
-            "The mass and centre of mass of the solid bodies at one density",
+            "The mass, centre of mass and inertia of the solid bodies at one density",
         )
         .optional(
             "bodies",
@@ -1611,14 +1611,29 @@ pub fn register(context: &mut WorkbenchContext) {
             ParamKind::Number,
             "g/cm³ for bodies without a material (1 when left out)",
         )
+        .optional(
+            "bought",
+            ParamKind::Bool,
+            "Count the bought parts' bodies (true when left out); false weighs the made parts \
+             alone",
+        )
         .returns(
-            "{mass (g), volume (mm³), centre = {x, y, z} or nil, bodies = {{body, mass, \
-             volume, centre}, ...}, skipped}",
+            "{mass (g), volume (mm³), centre = {x, y, z} or nil, inertia = {tensor, \
+             principal} or nil, bodies = {{body, mass, volume, centre, bought}, ...}, skipped}",
         )
         .read_only()
         .note(
             "`centre` is the centre of mass in world space, mm. An id in `bodies` that is not \
              a body is passed over, so a list of feature ids answers a mass of 0.",
+        )
+        .note(
+            "`inertia` is about the centre of mass, g·mm² on the world's axes, each body's \
+             moved there by the parallel axis theorem where it sits: `tensor`, three rows, and \
+             `principal`, the principal moments smallest first, each {moment, axis}.",
+        )
+        .note(
+            "Bought parts weigh in, as the parts list counts them among the assembly's parts; \
+             each body says whether it is `bought`, and `bought = false` leaves them out.",
         )
         .see_also("asm.parts")
         .see_also("asm.interference")
@@ -1633,6 +1648,8 @@ pub fn register(context: &mut WorkbenchContext) {
             assert(math.abs(m.volume - 2000) < 1e-3)
             assert(math.abs(m.mass - 2.48) < 1e-6, "2 cm³ at 1.24 g/cm³")
             assert(m.centre[1] == 10 and m.centre[3] == 2.5)
+            -- About its centre, g·mm²: m (20² + 20²) / 12 about Z.
+            assert(math.abs(m.inertia.tensor[3][3] - 2.48 * 800 / 12) < 1e-6)
             "#,
         ),
     );
@@ -2782,13 +2799,19 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
             let density = a
                 .opt_number("density")?
                 .unwrap_or(f64::from(DEFAULT_DENSITY));
-            let report = crate::mass::plan(ctx.document, among.as_deref())
+            let bought = crate::parts::bought_bodies(ctx.document, &ctx.bought_kinds);
+            let report = crate::mass::plan(ctx.document, among.as_deref(), &bought)
                 .run(
                     kernel,
                     &std::sync::atomic::AtomicUsize::new(0),
                     &std::sync::atomic::AtomicBool::new(false),
                 )
                 .map_err(CommandError::failed)?;
+            let report = if a.opt_bool("bought")?.unwrap_or(true) {
+                report
+            } else {
+                report.made_only()
+            };
             let bodies: Vec<Value> = report
                 .bodies
                 .iter()
@@ -2798,13 +2821,23 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                         "mass": b.mass_g(density),
                         "volume": b.volume_mm3,
                         "centre": b.centre,
+                        "bought": b.bought,
                     })
                 })
                 .collect();
+            let inertia = report.inertia(density).map(|inertia| {
+                json!({
+                    "tensor": inertia.about_centre,
+                    "principal": inertia
+                        .principal
+                        .map(|(moment, axis)| json!({"moment": moment, "axis": axis})),
+                })
+            });
             Ok(json!({
                 "mass": report.mass_g(density),
                 "volume": report.volume_mm3(),
                 "centre": report.centre(density),
+                "inertia": inertia,
                 "bodies": bodies,
                 "skipped": report.skipped,
             }))

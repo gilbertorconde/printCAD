@@ -288,8 +288,12 @@ level, 0 at the top. `asm.parts` with `by_component` answers the same.
 Mass and centre of mass (W) measures every visible solid body at its
 material's density, or at the density you set (g/cm³) for a body with no
 material, with each body's share, and marks the centre of
-mass in the view: what a tip-over check needs. `asm.mass` answers the
-same to a script.
+mass in the view: what a tip-over check needs. It gives the assembly's
+principal moments of inertia about its centre of mass too, each body's
+added where it sits. Bought parts weigh in, as the parts list counts
+them, and are marked so in the list of bodies. `asm.mass` answers the
+same to a script, with the whole inertia tensor; `bought = false` weighs
+the made parts alone.
 
 ## Components
 

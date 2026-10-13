@@ -1776,13 +1776,40 @@ impl AssemblyWorkbench {
                 format!("{}, {}, {}", f(c[0]), f(c[1]), f(c[2])),
             ));
         }
+        // The principal moments about the centre of mass, in g times the
+        // display unit squared.
+        if let Some(inertia) = report.inertia(density) {
+            let per = f64::from(unit.mm_per_unit());
+            for (i, (moment, axis)) in inertia.principal.iter().enumerate() {
+                widgets.push(line(
+                    &format!("I{}", i + 1),
+                    format!(
+                        "{} g·{}² about {}",
+                        figure(moment / (per * per)),
+                        unit.short_label(),
+                        axis.map(|c| format!("{:.2}", if c.abs() < 0.005 { 0.0 } else { c }))
+                            .join(" ")
+                    ),
+                ));
+            }
+        }
         widgets.push(Widget::Table {
             id: "bodies".into(),
             columns: vec!["Body".into(), "Mass".into()],
             rows: report
                 .bodies
                 .iter()
-                .map(|b| vec![body_name(ctx, b.body), mass_text(b.mass_g(density))])
+                .map(|b| {
+                    let name = body_name(ctx, b.body);
+                    vec![
+                        if b.bought {
+                            format!("{name} (bought)")
+                        } else {
+                            name
+                        },
+                        mass_text(b.mass_g(density)),
+                    ]
+                })
                 .collect(),
             selected: None,
             editable: Vec::new(),
@@ -3457,6 +3484,16 @@ fn mass_text(grams: f64) -> String {
         format!("{:.3} kg", grams / 1000.0)
     } else {
         format!("{grams:.2} g")
+    }
+}
+
+/// A figure to about four significant digits: plainly while it reads so,
+/// in powers of ten when it is very large or small.
+fn figure(v: f64) -> String {
+    if v == 0.0 || (0.01..1e6).contains(&v.abs()) {
+        format!("{v:.2}")
+    } else {
+        format!("{v:.3e}")
     }
 }
 

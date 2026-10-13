@@ -864,7 +864,8 @@ impl AssemblyWorkbench {
             ctx.log_warn("No kernel to measure with");
             return;
         };
-        let weighing = mass::plan(ctx.document, None);
+        let bought = parts::bought_bodies(ctx.document, &ctx.bought_kinds);
+        let weighing = mass::plan(ctx.document, None, &bought);
         let done = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (send, answer) = std::sync::mpsc::channel();
@@ -4159,15 +4160,21 @@ mod tests {
 
     static LITRE: Litre = Litre;
 
+    /// Mark `part` bought in the parts list, as `asm.part` does.
+    fn doc_with_bought_part(ctx: &mut WorkbenchRuntimeContext, part: BodyId) {
+        let args = serde_json::json!({"body": part.0.to_string(), "bought": true});
+        commands::run("asm.part", args.as_object().unwrap(), ctx).unwrap();
+    }
+
     /// Two bodies weighed: the centre between their placed centres, the
     /// mass at the density asked; the tool shows the same away from the
     /// window.
     #[test]
     fn the_mass_tool_weighs_the_bodies_where_they_sit() {
         let (mut doc, base, part) = scene();
-        for body in [base, part] {
-            doc.set_imported_brep_data(body, b"shape".to_vec(), Vec::new());
-        }
+        // Two shapes, so the parts list counts two parts.
+        doc.set_imported_brep_data(base, b"base".to_vec(), Vec::new());
+        doc.set_imported_brep_data(part, b"part".to_vec(), Vec::new());
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 600));
         ctx.kernel = Some(&LITRE);
         let args = serde_json::json!({"density": 2.0});
@@ -4177,6 +4184,24 @@ mod tests {
         // (31, 2, 43).
         let centre: Vec<f64> = serde_json::from_value(got["centre"].clone()).unwrap();
         assert!((centre[0] - 16.0).abs() < 1e-4 && (centre[2] - 23.0).abs() < 1e-4);
+
+        // A bought part weighs in unless left out.
+        doc_with_bought_part(&mut ctx, part);
+        let args = serde_json::json!({"density": 2.0});
+        let got = commands::run("asm.mass", args.as_object().unwrap(), &mut ctx).unwrap();
+        assert!((got["mass"].as_f64().unwrap() - 4.0).abs() < 1e-9, "{got}");
+        let bought: Vec<bool> = got["bodies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|b| b["bought"].as_bool().unwrap())
+            .collect();
+        assert_eq!(bought.iter().filter(|b| **b).count(), 1, "{got}");
+        let args = serde_json::json!({"density": 2.0, "bought": false});
+        let got = commands::run("asm.mass", args.as_object().unwrap(), &mut ctx).unwrap();
+        assert!((got["mass"].as_f64().unwrap() - 2.0).abs() < 1e-9, "{got}");
+        let centre: Vec<f64> = serde_json::from_value(got["centre"].clone()).unwrap();
+        assert!((centre[0] - 1.0).abs() < 1e-4, "the base alone: {got}");
 
         let mut wb = AssemblyWorkbench::default();
         wb.on_input(
