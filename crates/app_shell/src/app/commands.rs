@@ -463,7 +463,13 @@ impl PrintCadApp {
                         }
                     });
                 }
-                UiCommand::SetMeasureUnit(unit) => self.session.measure_unit = unit,
+                UiCommand::SetMeasureUnit(unit) => {
+                    if unit != self.session.document.measure_unit() {
+                        self.session.document.set_measure_unit(unit);
+                        self.session.journal.label_next("Measure unit");
+                        self.close_gesture();
+                    }
+                }
                 UiCommand::ClearMeasure => {
                     if let Some(picks) = &mut self.session.measure {
                         picks.clear();

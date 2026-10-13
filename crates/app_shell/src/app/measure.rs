@@ -432,6 +432,14 @@ pub(crate) fn describe_pair(a: &MeasurePick, b: &MeasurePick, unit: Unit) -> Vec
     lines
 }
 
+/// The unit a document's measurements read in: the one it keeps for the
+/// measure tool, else its display unit.
+pub(crate) fn readout_unit(document: &core_document::Document) -> Unit {
+    document
+        .measure_unit()
+        .unwrap_or_else(|| document.display_unit())
+}
+
 /// What the chain of picks reads, one line each: a lone pick's own
 /// measures; then the last pick against the one before it; and with
 /// several, the chain's totals: the path through every pick, every edge's
@@ -586,6 +594,34 @@ mod tests {
             Some(MeasurePick::Point([9.0, 9.0, 9.0]))
         );
         assert_eq!(pick_at(None, Some(&mesh), None), None);
+    }
+
+    /// The unit chosen in the readout bar is saved with the document, and
+    /// a reopened one measures in it.
+    #[test]
+    fn a_reopened_document_measures_in_the_unit_it_was_saved_with() {
+        let mut doc = core_document::Document::new("measured");
+        doc.set_display_unit(Unit::Cm);
+        assert_eq!(
+            readout_unit(&doc),
+            Unit::Cm,
+            "the display unit until one is chosen"
+        );
+        doc.set_measure_unit(Some(Unit::In));
+        let bytes = doc
+            .save_to_bytes(core_document::Compression::None)
+            .expect("saves");
+        let back = core_document::Document::load_from_bytes(bytes).expect("loads");
+        assert_eq!(readout_unit(&back), Unit::In);
+        let edge = MeasurePick::Edge {
+            point: [0.0; 3],
+            direction: [1.0, 0.0, 0.0],
+            length: 25.4,
+            circle: None,
+            body: None,
+        };
+        let lines = readout(&[edge], readout_unit(&back));
+        assert_eq!(lines, ["Length 1.000 in"]);
     }
 
     #[test]

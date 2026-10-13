@@ -856,7 +856,7 @@ impl PrintCadApp {
                 let tree_also = self.session.tree_also().to_vec();
                 let measure_bar = self.session.measure.as_ref().map(|picks| {
                     crate::ui::view_toolbar::MeasureBar {
-                        unit: self.session.measure_unit,
+                        unit: self.session.document.measure_unit(),
                         document_unit: self.session.document.display_unit(),
                         picks: picks.len(),
                     }

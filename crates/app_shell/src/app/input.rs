@@ -551,12 +551,9 @@ impl PrintCadApp {
         }
     }
 
-    /// The unit the measure tool reads in: the user's choice, else the
-    /// document's.
+    /// The unit the measure tool reads in.
     pub(crate) fn measure_unit(&self) -> core_document::Unit {
-        self.session
-            .measure_unit
-            .unwrap_or_else(|| self.session.document.display_unit())
+        crate::app::measure::readout_unit(&self.session.document)
     }
 
     /// A click with the measure tool armed: the edge under the cursor, else

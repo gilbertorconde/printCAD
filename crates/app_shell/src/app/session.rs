@@ -152,9 +152,6 @@ pub(crate) struct DocumentSession {
     /// The last token a least distance was asked under, by the measure
     /// tool or the quick measure.
     pub gap_token: u64,
-    /// The unit the measure tool reads in, when the user chose one over
-    /// the document's.
-    pub measure_unit: Option<core_document::Unit>,
     /// The edge under the cursor, found on the CPU against the hovered
     /// body's outline segments.
     pub hovered_edge: Option<crate::app::edges::EdgeHit>,
@@ -335,7 +332,6 @@ impl DocumentSession {
             measure_gap: None,
             quick_measure: None,
             gap_token: 0,
-            measure_unit: None,
             hovered_edge: None,
             hovered_face: None,
             face_colored: Default::default(),
