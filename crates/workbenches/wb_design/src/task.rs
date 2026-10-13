@@ -800,7 +800,11 @@ mod tests {
         );
         ctx.view_proj = Some((proj * view).to_cols_array_2d());
 
-        let handle = wb.handle(&ctx).expect("the pad offers a handle");
+        let handle = wb
+            .handles(&ctx)
+            .into_iter()
+            .next()
+            .expect("the pad offers a handle");
         assert!((handle.position() - glam::Vec3::new(5.0, 2.5, 10.0)).length() < 1e-4);
         let at = ctx.world_to_viewport([5.0, 2.5, 10.0]).unwrap();
         let to = ctx.world_to_viewport([5.0, 2.5, 17.0]).unwrap();

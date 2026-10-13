@@ -90,6 +90,10 @@ pub struct DesignOptions {
     pub handle_step: f32,
     /// The step while Shift is held, mm.
     pub handle_fine_step: f32,
+    /// The step an angle handle's drag turns in, degrees.
+    pub handle_angle_step: f32,
+    /// The angle step while Shift is held, degrees.
+    pub handle_fine_angle_step: f32,
 }
 
 impl Default for DesignOptions {
@@ -100,6 +104,8 @@ impl Default for DesignOptions {
             refine_result: true,
             handle_step: 1.0,
             handle_fine_step: 0.1,
+            handle_angle_step: 5.0,
+            handle_fine_angle_step: 1.0,
         }
     }
 }
@@ -1235,12 +1241,27 @@ impl DesignWorkbench {
         }
     }
 
-    /// The handle held, else the one the open task's feature offers.
-    fn handle(&self, ctx: &WorkbenchRuntimeContext) -> Option<handles::Handle> {
-        self.held.or_else(|| {
-            let eye = glam::Vec3::from_array(ctx.camera_position);
-            handles::handle_of(ctx.document, self.task_feature()?, eye)
-        })
+    /// The handle held, else the ones the open task's feature offers.
+    fn handles(&self, ctx: &WorkbenchRuntimeContext) -> Vec<handles::Handle> {
+        if let Some(held) = &self.held {
+            return vec![held.clone()];
+        }
+        let eye = glam::Vec3::from_array(ctx.camera_position);
+        self.task_feature()
+            .map(|feature| handles::handles_of(ctx.document, feature, eye))
+            .unwrap_or_default()
+    }
+
+    /// A held handle's steps: coarse, and fine with Shift.
+    fn handle_steps(&self, handle: &handles::Handle) -> (f32, f32) {
+        if handle.angle {
+            (
+                self.options.handle_angle_step,
+                self.options.handle_fine_angle_step,
+            )
+        } else {
+            (self.options.handle_step, self.options.handle_fine_step)
+        }
     }
 
     /// The occurrences of the open task's pattern, where their dots stand.
@@ -1302,10 +1323,9 @@ impl DesignWorkbench {
                 button: MouseButton::Left,
                 viewport_pos,
             } => {
-                if let Some(handle) = self.handle(ctx)
-                    && handles::within_reach(ctx, &handle, *viewport_pos)
-                {
-                    self.held = Some(handle);
+                let mut offered = self.handles(ctx);
+                if let Some(i) = handles::under(ctx, &offered, *viewport_pos) {
+                    self.held = Some(offered.swap_remove(i));
                     self.held_moved = false;
                     return Some(InputResult::consumed());
                 }
@@ -1314,42 +1334,46 @@ impl DesignWorkbench {
                 region_pick::click(ctx, task, *viewport_pos).then(InputResult::consumed)
             }
             WorkbenchInputEvent::MouseMove { viewport_pos } => {
-                let step = if ctx.shift_down {
-                    self.options.handle_fine_step
-                } else {
-                    self.options.handle_step
-                };
+                let (coarse, fine) = self.handle_steps(self.held.as_ref()?);
+                let step = if ctx.shift_down { fine } else { coarse };
                 let held = self.held.as_mut()?;
                 let (origin, dir) = ctx.viewport_to_ray(*viewport_pos)?;
-                let mut value = held.value_at(
+                let value = held.value_at(
                     glam::Vec3::from_array(origin),
                     glam::Vec3::from_array(dir),
                     step,
                 )?;
-                // Through its start, a pad or pocket turns round.
-                let flip = value < 0.0;
-                if flip {
-                    value = -value;
-                    held.dir = -held.dir;
+                // Through its start, a reversible one turns its feature
+                // round.
+                let flip = held.range == handles::Range::Reversible && value < 0.0;
+                if value == held.value && !flip {
+                    return Some(InputResult::consumed());
                 }
-                if value != held.value || flip {
+                if flip {
+                    held.turn_round();
+                    held.value = -value;
+                } else {
                     held.value = value;
-                    self.held_moved = true;
-                    let feature = held.feature;
-                    if let Some(mut part) = ctx
-                        .document
-                        .get_feature_data(feature)
-                        .and_then(|d| DesignFeature::from_json(d).ok())
-                        && (!flip || handles::reverse(&mut part))
-                        && handles::set_value(&mut part, value)
-                        && ctx
-                            .document
-                            .update_feature_data(feature, part.to_json())
-                            .is_ok()
-                        && self.options.update_while_editing
-                    {
-                        ctx.document.mark_feature_dirty(feature);
+                }
+                self.held_moved = true;
+                let (feature, pointer, value) = (held.feature, held.pointer.clone(), held.value);
+                let Some(mut data) = ctx.document.get_feature_data(feature).cloned() else {
+                    return Some(InputResult::consumed());
+                };
+                if flip {
+                    let Ok(mut part) = DesignFeature::from_json(&data) else {
+                        return Some(InputResult::consumed());
+                    };
+                    if !handles::reverse(&mut part) {
+                        return Some(InputResult::consumed());
                     }
+                    data = part.to_json();
+                }
+                if handles::write(&mut data, &pointer, value)
+                    && ctx.document.update_feature_data(feature, data).is_ok()
+                    && self.options.update_while_editing
+                {
+                    ctx.document.mark_feature_dirty(feature);
                 }
                 Some(InputResult::consumed())
             }
@@ -1358,9 +1382,9 @@ impl DesignWorkbench {
                 ..
             } => {
                 let held = self.held.take()?;
-                // A click on a pad's or pocket's handle turns it round.
+                // A click on a reversible handle turns its feature round.
                 if !self.held_moved
-                    && held.reversible
+                    && held.range == handles::Range::Reversible
                     && let Some(mut part) = ctx
                         .document
                         .get_feature_data(held.feature)
@@ -2180,7 +2204,7 @@ impl Workbench for DesignWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceOverlay> {
         let mut lines = self.centre_overlays(ctx);
-        if let Some(handle) = self.handle(ctx) {
+        for handle in self.handles(ctx) {
             lines.extend(handles::overlays(ctx, &handle));
         }
         lines
@@ -2192,7 +2216,7 @@ impl Workbench for DesignWorkbench {
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceMark> {
         let mut marks = self.centre_marks(ctx);
-        if let Some(handle) = self.handle(ctx) {
+        for handle in self.handles(ctx) {
             marks.extend(handles::marks(ctx, &handle, self.held.is_some()));
         }
         marks.extend(instances::marks(
@@ -2203,14 +2227,25 @@ impl Workbench for DesignWorkbench {
         marks
     }
 
+    /// While a view handle is held: what it sets, its steps and the key
+    /// for the fine ones.
+    fn status_items(&self, _ctx: &WorkbenchRuntimeContext) -> Option<core_document::StatusItems> {
+        let held = self.held.as_ref()?;
+        let (step, fine) = self.handle_steps(held);
+        Some(core_document::StatusItems {
+            mode: Some(handles::hint(held, step, fine)),
+            ..Default::default()
+        })
+    }
+
     fn get_screen_space_labels(
         &self,
         ctx: &WorkbenchRuntimeContext,
         _active_feature: Option<FeatureId>,
     ) -> Vec<core_document::ScreenSpaceLabel> {
         let mut labels = self.centre_labels(ctx);
-        if let Some(handle) = self.held {
-            labels.extend(handles::labels(ctx, &handle));
+        if let Some(handle) = &self.held {
+            labels.extend(handles::labels(ctx, handle));
         }
         labels.extend(instances::labels(
             ctx,
@@ -2315,6 +2350,22 @@ impl Workbench for DesignWorkbench {
                         .range(0.01..=100.0),
                 )
                 .hint("The step while Shift is held"),
+                PrefRow::qty(
+                    "Angle handle step",
+                    ui_kit::widgets::QtyField::new(&mut self.options.handle_angle_step)
+                        .unit("°")
+                        .decimals(2)
+                        .range(0.01..=90.0),
+                )
+                .hint("An angle handle's drag turns the number in these steps"),
+                PrefRow::qty(
+                    "Fine angle handle step",
+                    ui_kit::widgets::QtyField::new(&mut self.options.handle_fine_angle_step)
+                        .unit("°")
+                        .decimals(2)
+                        .range(0.01..=90.0),
+                )
+                .hint("The angle step while Shift is held"),
             ],
             filter,
         );

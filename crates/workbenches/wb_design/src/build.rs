@@ -447,7 +447,7 @@ pub fn invalidate_body(document: &mut Document, body: BodyId) {
     }
 }
 
-fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
+pub(crate) fn face_pick_plane(pick: &FacePick) -> ([f64; 3], [f64; 3]) {
     (
         [
             pick.point[0] as f64,
@@ -1746,7 +1746,10 @@ fn start_face_is_flat(document: &Document, feature: FeatureId) -> Result<(), Str
 
 /// The plane an extrusion starts on, as a point and its normal in the
 /// body's frame: a datum plane's (or coordinate system's), or a sketch's.
-fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64; 3]), String> {
+pub(crate) fn start_plane(
+    document: &Document,
+    start: FeatureId,
+) -> Result<([f64; 3], [f64; 3]), String> {
     let data = document
         .feature_values(start)
         .ok_or("the plane the extrusion starts on is gone")?;
@@ -1768,7 +1771,7 @@ fn start_plane(document: &Document, start: FeatureId) -> Result<([f64; 3], [f64;
 
 /// How far from `from` along `way` the plane through `point` square to
 /// `normal` lies; refused for a plane the way runs along.
-fn distance_to_plane(
+pub(crate) fn distance_to_plane(
     from: [f64; 3],
     way: [f64; 3],
     (point, normal): ([f64; 3], [f64; 3]),
@@ -2079,7 +2082,7 @@ pub fn hole_taper_deg(feature: &DesignFeature) -> f64 {
 }
 
 /// Circle centers + standalone points of a sketch (hole positions).
-fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
+pub(crate) fn hole_centers(sketch: &Sketch) -> Vec<[f64; 2]> {
     let mut centers = Vec::new();
     let referenced: std::collections::HashSet<_> = sketch
         .geometry
