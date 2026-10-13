@@ -194,6 +194,11 @@ fn fields(variant: &str) -> &'static [Field] {
             ("angle_deg", "angle", "Angle", Some(ANGLE)),
             ("occurrences", "occurrences", "Occurrences", None),
         ],
+        "CircularPattern" => &[("spacing", "ring_spacing", "Ring spacing", Some(LENGTH))],
+        "PathPattern" => &[
+            ("occurrences", "occurrences", "Occurrences", None),
+            ("spacing", "spacing", "Spacing", Some(LENGTH)),
+        ],
         _ => &[],
     }
 }
@@ -212,6 +217,11 @@ fn step_fields(kind: &str) -> &'static [Field] {
         "Scale" => &[
             ("factor", "factor", "Factor", Some(NUMBER)),
             ("occurrences", "occurrences", "Occurrences", None),
+        ],
+        "Circular" => &[("spacing", "ring_spacing", "Ring spacing", Some(LENGTH))],
+        "Path" => &[
+            ("occurrences", "occurrences", "Occurrences", None),
+            ("spacing", "spacing", "Spacing", Some(LENGTH)),
         ],
         _ => &[],
     }
@@ -293,6 +303,18 @@ pub fn feature_parameters(node: &FeatureNode) -> Vec<Parameter> {
                 ));
             }
         }
+        // Each ring's count: `ring1`, `ring2`, … from the innermost.
+        "CircularPattern" => {
+            let rings = body.get("counts").and_then(Value::as_array);
+            for i in 0..rings.map_or(0, Vec::len) {
+                out.push(parameter(
+                    format!("/CircularPattern/counts/{i}"),
+                    &format!("ring{}", i + 1),
+                    &format!("Ring {}", i + 1),
+                    None,
+                ));
+            }
+        }
         "LinearPattern" | "PolarPattern" => {
             // An uneven pattern's gaps: `spacing1`, `spacing2`, … or
             // `step_angle1`, … from the first occurrence on.
@@ -349,12 +371,14 @@ pub(crate) fn every_name() -> Vec<&'static str> {
         "Project",
         "LinearPattern",
         "PolarPattern",
+        "CircularPattern",
+        "PathPattern",
     ]
     .iter()
     .flat_map(|v| fields(v).iter().map(|(_, name, _, _)| *name))
     // A step's numbers, as its `step{n}_` prefix leaves them.
     .chain(
-        ["Linear", "Polar", "Scale"]
+        ["Linear", "Polar", "Scale", "Circular", "Path"]
             .iter()
             .flat_map(|k| step_fields(k).iter().map(|(_, name, _, _)| *name)),
     )

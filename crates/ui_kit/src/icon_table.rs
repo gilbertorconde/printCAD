@@ -86,6 +86,10 @@ pub const ICONS: &[(&str, &str)] = &[
     ("circle", include_str!("../icons/circle.svg")),
     ("circle-3pt", include_str!("../icons/circle-3pt.svg")),
     (
+        "circular-pattern",
+        include_str!("../icons/circular-pattern.svg"),
+    ),
+    (
         "clipping-plane",
         include_str!("../icons/clipping-plane.svg"),
     ),
@@ -292,6 +296,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("open", include_str!("../icons/open.svg")),
     ("pad", include_str!("../icons/pad.svg")),
     ("paste", include_str!("../icons/paste.svg")),
+    ("path-pattern", include_str!("../icons/path-pattern.svg")),
     ("pentagon", include_str!("../icons/pentagon.svg")),
     (
         "periodic-bspline",
@@ -301,6 +306,7 @@ pub const ICONS: &[(&str, &str)] = &[
     ("plus", include_str!("../icons/plus.svg")),
     ("pocket", include_str!("../icons/pocket.svg")),
     ("point", include_str!("../icons/point.svg")),
+    ("point-pattern", include_str!("../icons/point-pattern.svg")),
     ("polar-pattern", include_str!("../icons/polar-pattern.svg")),
     ("polyline", include_str!("../icons/polyline.svg")),
     ("print-bed", include_str!("../icons/print-bed.svg")),

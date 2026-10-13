@@ -226,6 +226,24 @@ numbers to change like any hole's. Bores it cannot describe (a
 counterbore, a countersink, a slot) are left as they are and counted in
 the log. On an imported solid it gives the body its base shape first.
 
+**Patterns** repeat features (the selected one, else the body's last
+that adds or cuts): **Mirrored** across a plane, **Linear pattern** along
+a line, **Polar pattern** about an axis, **Circular pattern** in
+concentric rings (each ring stepped out from the axis by the ring spacing,
+with a count of its own), **Point pattern** at a sketch's points (a copy at
+each point after the first, moved by how far it is from the first, so the
+original belongs on the first point drawn), and **Path pattern** along a
+sketch's chain of curves or an edge of the solid. A path pattern spreads
+its occurrences over the whole path (evenly round a closed one) or spaces
+them a distance apart along it; the original stands for the path's start,
+or its end with From the path's end, and each copy moves from there to its
+place, turned as the path turns with Turn with the path. An edge is found
+again on the solid as it stands where the pattern does in the history, so
+the copies follow the edge when the features before it change. **Multi
+transform** chains steps of every kind, a path among them, each applied to
+every occurrence before it. With a pattern's task open, a dot stands at
+each occurrence; click one to leave it out or bring it back.
+
 **Generators** (the toolbar's Generators list) make a sketch from a few
 numbers, set in its panel or with formulas: an involute gear to pad, a
 chain sprocket to pad, a stepped shaft to revolve, and a shaft's keyway

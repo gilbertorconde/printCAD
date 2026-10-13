@@ -73,6 +73,18 @@ const FEATURES: &[(&str, &str)] = &[
         "design.polar_pattern",
         "Repeat the last feature about an axis",
     ),
+    (
+        "design.circular_pattern",
+        "Repeat the last feature in concentric rings about an axis",
+    ),
+    (
+        "design.point_pattern",
+        "Repeat the last feature at a sketch's points",
+    ),
+    (
+        "design.path_pattern",
+        "Repeat the last feature along a sketch's curves or an edge",
+    ),
     ("design.scaled", "Scale the last feature"),
     ("design.boolean", "Combine with another body"),
 ];
@@ -805,6 +817,9 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
         "design.mirror"
         | "design.linear_pattern"
         | "design.polar_pattern"
+        | "design.circular_pattern"
+        | "design.point_pattern"
+        | "design.path_pattern"
         | "design.scaled" => {
             let spec = spec
                 .note(
@@ -907,6 +922,111 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                         assert(math.abs(volume - (math.pi * 400 - 6 * math.pi * 4) * 3) < 1e-3, volume)
                         "#,
                     ),
+                "design.circular_pattern" => spec
+                    .note(
+                        "Rings about `axis` (Z through the body's origin when left out): ring \
+                         i is moved i × `spacing` (10 mm) along `outward` (X), then spread \
+                         evenly round the axis, `counts[i]` occurrences in it ({6, 12}). The \
+                         original is the first of the first ring, which turns it in place, so \
+                         `outward` should run from the axis through it.",
+                    )
+                    .see_also("design.polar_pattern")
+                    .example(
+                        "Two rings of holes round a disc, four and eight",
+                        r#"
+                        local s = pc.sketch.new{plane = "XY"}
+                        pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 30}
+                        local disc = pc.design.pad{sketch = s, length = 3}
+                        local body = pc.doc.feature{id = disc}.body
+                        local at = pc.sketch.new{body = body, plane = "XY", offset = 3}
+                        pc.sketch.circle{sketch = at, x = 10, y = 0, radius = 2}
+                        local hole = pc.design.pocket{sketch = at, through_all = true}
+                        -- The inner ring at radius 10, the outer 10 mm further out.
+                        pc.design.circular_pattern{body = body, originals = {hole}, axis = "Z",
+                          outward = "X", spacing = 10, counts = {4, 8}}
+                        assert(#pc.doc.rebuild() == 0, "the rings build")
+                        local holes = 0
+                        for _, face in ipairs(pc.doc.faces{body = body}) do
+                          if face.kind == "cylinder" and face.radius < 3 then holes = holes + 1 end
+                        end
+                        assert(holes == 12, holes)
+                        local volume = pc.doc.measure{body = body}.volume
+                        assert(math.abs(volume - (math.pi * 900 - 12 * math.pi * 4) * 3) < 1e-3, volume)
+                        "#,
+                    ),
+                "design.point_pattern" => spec
+                    .note(
+                        "`sketch` gives the points: a copy stands at each of its points after \
+                         the first, moved by how far that point is from the first, so the \
+                         original should stand at the first point drawn. Construction points \
+                         are left out; a curve's ends and centres count as points.",
+                    )
+                    .see_also("design.hole")
+                    .example(
+                        "A hole at each corner of a plate",
+                        r#"
+                        local s = pc.sketch.new{plane = "XY"}
+                        pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+                        local plate = pc.design.pad{sketch = s, length = 4}
+                        local body = pc.doc.feature{id = plate}.body
+                        local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+                        pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 1.5}
+                        local hole = pc.design.pocket{sketch = at, through_all = true}
+                        -- The first point is where the hole stands.
+                        local corners = pc.sketch.new{body = body, plane = "XY", offset = 4}
+                        for _, p in ipairs({{5, 5}, {35, 5}, {35, 25}, {5, 25}}) do
+                          pc.sketch.point{sketch = corners, x = p[1], y = p[2]}
+                        end
+                        pc.design.point_pattern{sketch = corners, originals = {hole}}
+                        assert(#pc.doc.rebuild() == 0, "the pattern builds")
+                        local volume = pc.doc.measure{body = body}.volume
+                        assert(math.abs(volume - (1200 - 4 * math.pi * 2.25) * 4) < 1e-3, volume)
+                        "#,
+                    ),
+                "design.path_pattern" => spec
+                    .note(
+                        "`sketch` gives the path, its first chain of curves (`path = {Sketch = \
+                         {sketch = id, chain = n}}` another, counted from 0); `path = {Edge = \
+                         {point = {x, y, z}, direction = {x, y, z}}}` an edge of the solid near \
+                         the point, in the body's own frame, found on the solid as it stands \
+                         where the pattern does.",
+                    )
+                    .note(
+                        "`occurrences` (4) counts the original, spread over the whole path, \
+                         evenly round a closed one; `spacing_mode = true` places them \
+                         `spacing` mm apart along it instead. The original stands for the \
+                         path's start (its end with `reversed = true`): each copy is moved \
+                         from there to its place, and turned as the path turns with `align = \
+                         true`, so round a circle an aligned copy goes round its centre \
+                         wherever the original is.",
+                    )
+                    .see_also("design.polar_pattern")
+                    .see_also("doc.edges")
+                    .example(
+                        "Five holes along an arc",
+                        r#"
+                        local s = pc.sketch.new{plane = "XY"}
+                        pc.sketch.rect{sketch = s, x = -40, y = -40, width = 80, height = 80}
+                        local plate = pc.design.pad{sketch = s, length = 4}
+                        local body = pc.doc.feature{id = plate}.body
+                        local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+                        pc.sketch.circle{sketch = at, x = 30, y = 0, radius = 2}
+                        local hole = pc.design.pocket{sketch = at, through_all = true}
+                        -- A quarter arc of radius 30 from where the hole stands.
+                        local arc = pc.sketch.new{body = body, plane = "XY", offset = 4}
+                        pc.sketch.arc{sketch = arc, x = 0, y = 0, radius = 30, start = 0, ["end"] = 90}
+                        pc.design.path_pattern{sketch = arc, originals = {hole}, occurrences = 5}
+                        assert(#pc.doc.rebuild() == 0, "the pattern builds")
+                        local ys = {}
+                        for _, face in ipairs(pc.doc.faces{body = body}) do
+                          if face.kind == "cylinder" then ys[#ys + 1] = face.axis.point[2] end
+                        end
+                        table.sort(ys)
+                        assert(#ys == 5 and math.abs(ys[5] - 30) < 1e-6, #ys)
+                        local volume = pc.doc.measure{body = body}.volume
+                        assert(math.abs(volume - (6400 - 5 * math.pi * 4) * 4) < 1e-3, volume)
+                        "#,
+                    ),
                 _ => spec
                     .note(
                         "It makes a Multi Transform whose fields are `originals` and `steps`, \
@@ -922,8 +1042,9 @@ fn explained(id: &str, spec: CommandSpec) -> CommandSpec {
                          (concentric rings about `axis`, ring i moved i × `spacing` along \
                          `outward`, `counts[i]` round it) and `{Points = {sketch}}` (a copy \
                          at each of the sketch's points after its first, moved by how far it \
-                         is from the first), each applied to every result of the steps \
-                         before.",
+                         is from the first) and `{Path = {path, occurrences, spacing_mode, \
+                         spacing, reversed, align}}` (as `design.path_pattern` takes them), \
+                         each applied to every result of the steps before.",
                     )
                     .see_also("design.linear_pattern")
                     .example(

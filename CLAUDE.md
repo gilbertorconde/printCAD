@@ -268,7 +268,14 @@ the `Fetch` trait so tests stand in their own). `sdk/` is a workspace of its
   failing op index (`ChainError`). Profile wires group by containment:
   nested = holes, disjoint = separate solids (compounded when regions stay
   disjoint). Patterns re-run the tool op under the transform rather than
-  instancing. Tests marked `#[ignore]` document kernel-side gaps; grep for
+  instancing. A pattern with a path step (Design's Path Pattern, or a
+  Multi Transform's Path step) plans `SolidOp::Pattern`, whose steps the
+  chain turns into transforms where the op stands
+  (`ops/pattern_steps.rs`: a sketch's chain, or an edge of the running
+  solid found by its `EdgeProbe`, walked by arc length, an aligned copy's
+  turn carried along it), so the plan stays a pure function of the
+  document; `KernelQueries::pattern_transforms` answers the same for the
+  task's occurrence dots. Tests marked `#[ignore]` document kernel-side gaps; grep for
   `kernel:` in `tests/` before assuming a feature is wired wrong.
 - `core_document`: Document (feature tree DAG, bodies w/ `tip`, tar `.prtcad`
   persistence), `Workbench` trait + runtime context,

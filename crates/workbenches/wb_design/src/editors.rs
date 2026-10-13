@@ -23,6 +23,7 @@ use crate::feature::{
 
 mod borrow;
 mod hole;
+mod patterns;
 
 /// The label column of a parameter row.
 /// The occurrences a pattern leaves out, each brought back by its button,
@@ -134,6 +135,8 @@ const LABEL_PARAMETERS: &[(&str, &str)] = &[
     ("Size 2", "size2"),
     ("Thickness", "thickness"),
     ("Occurrences", "occurrences"),
+    ("Ring spacing", "ring_spacing"),
+    ("Spacing", "spacing"),
     ("Offset X", "offset_x"),
     ("Offset Y", "offset_y"),
     ("Normal offset", "offset_z"),
@@ -3307,6 +3310,71 @@ pub fn feature_editor(
             changed |= check_row(ui, reversed, "Reversed").changed();
             changed |= skipped_editor(ui, skipped);
         }
+        DesignFeature::CircularPattern {
+            originals,
+            axis,
+            outward,
+            spacing,
+            counts,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            changed |= patterns::rings_editor(
+                ui,
+                ctx,
+                fx,
+                (body, feature_id),
+                (axis, outward),
+                (spacing, counts),
+                (0, true),
+            );
+            changed |= skipped_editor(ui, skipped);
+        }
+        DesignFeature::PointPattern {
+            originals,
+            sketch,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            if let Some(picked) = sketch_combo(
+                ui,
+                ctx,
+                body,
+                ("point_pattern_sketch", feature_id),
+                Some(*sketch),
+                "Points",
+            ) {
+                *sketch = picked;
+                changed = true;
+            }
+            taper_note(
+                ui,
+                "A copy at each of the sketch's points after its first, moved by how far \
+                 that point is from the first; construction points left out.",
+            );
+            changed |= skipped_editor(ui, skipped);
+        }
+        DesignFeature::PathPattern {
+            originals,
+            path,
+            layout,
+            refine: _,
+            boolean_tolerance: _,
+            skipped,
+        } => {
+            changed |= originals_editor(ui, ctx, body, feature_id, originals);
+            changed |= patterns::path_editor(ui, ctx, fx, (body, feature_id), path, layout, 0);
+            taper_note(
+                ui,
+                "The original stands for the path's start: each copy is moved from there to \
+                 its place along the path.",
+            );
+            changed |= skipped_editor(ui, skipped);
+        }
         DesignFeature::MultiTransform {
             originals,
             steps,
@@ -3329,6 +3397,7 @@ pub fn feature_editor(
                     TransformStep::Scale { .. } => "Scale",
                     TransformStep::Circular { .. } => "Circular",
                     TransformStep::Points { .. } => "Points",
+                    TransformStep::Path { .. } => "Path",
                 };
                 ui.horizontal(|ui| {
                     mono_label(ui, format!("{}. {label}", i + 1), FONT_XS, TEXT1);
@@ -3445,45 +3514,19 @@ pub fn feature_editor(
                         spacing,
                         counts,
                     } => {
-                        changed |= pattern_axis_editor(
+                        changed |= patterns::rings_editor(
                             ui,
                             ctx,
+                            fx,
                             (body, feature_id),
-                            axis,
-                            ("mt_circ", feature_id, i),
+                            (axis, outward),
+                            (spacing, counts),
+                            (i, false),
                         );
-                        ui.label(
-                            RichText::new("Rings step out along")
-                                .font(sans(FONT_XS))
-                                .color(TEXT2),
-                        );
-                        changed |= pattern_axis_editor(
-                            ui,
-                            ctx,
-                            (body, feature_id),
-                            outward,
-                            ("mt_circ_out", feature_id, i),
-                        );
-                        changed |= mm_drag(ui, fx, spacing, "Ring spacing:");
-                        let mut drop = None;
-                        for (ring, count) in counts.iter_mut().enumerate() {
-                            ui.horizontal(|ui| {
-                                changed |=
-                                    count_drag(ui, fx, count, &format!("Ring {}:", ring + 1));
-                                if ring > 0 && small_secondary_button(ui, "×").clicked() {
-                                    drop = Some(ring);
-                                }
-                            });
-                        }
-                        if let Some(ring) = drop {
-                            counts.remove(ring);
-                            changed = true;
-                        }
-                        if small_secondary_button(ui, "+ Ring").clicked() {
-                            let last = counts.last().copied().unwrap_or(6);
-                            counts.push(last + 6);
-                            changed = true;
-                        }
+                    }
+                    TransformStep::Path { path, layout } => {
+                        changed |=
+                            patterns::path_editor(ui, ctx, fx, (body, feature_id), path, layout, i);
                     }
                     TransformStep::Points { sketch } => {
                         if let Some(picked) = sketch_combo(
@@ -3544,6 +3587,13 @@ pub fn feature_editor(
                     && secondary_button(ui, "+ Points").clicked()
                 {
                     steps.push(TransformStep::Points { sketch: *sketch });
+                    changed = true;
+                }
+                if let Some(path) = patterns::add_path_step(ui, ctx, body) {
+                    steps.push(TransformStep::Path {
+                        path,
+                        layout: Default::default(),
+                    });
                     changed = true;
                 }
                 if secondary_button(ui, "+ Scale").clicked() {

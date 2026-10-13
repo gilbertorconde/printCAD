@@ -5457,3 +5457,270 @@ fn store_solid(doc: &mut Document, body: BodyId, result: kernel_api::SolidBuildR
         },
     );
 }
+
+/// An 80 × 80 × 4 plate with a hole of radius 2 through it at (70, 40),
+/// a quarter arc of radius 30 about the plate's middle starting at the
+/// hole, and the circle the arc is part of.
+fn plate_with_hole_and_paths() -> (Document, BodyId, FeatureId, FeatureId, FeatureId) {
+    let (mut doc, body, plate) = setup(80.0, 80.0);
+    doc.add_feature_in_body(
+        pad_feature(plate, 4.0, false, false),
+        "Plate".into(),
+        Some(body),
+    )
+    .unwrap();
+    let at = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 70.0, 40.0, 2.0),
+            "hole".into(),
+            Some(body),
+        )
+        .unwrap();
+    let hole = doc
+        .add_feature_in_body(pocket_feature(at, 4.0), "Hole".into(), Some(body))
+        .unwrap();
+    let mut arc = Sketch::new("arc");
+    arc.plane = plane_at_z(4.0);
+    let centre = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 40.0))));
+    let start = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(70.0, 40.0))));
+    let end = arc.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(40.0, 70.0))));
+    arc.add_geometry(GeometryElement::Arc(wb_sketch::sketch::Arc::new(
+        centre, start, end, 30.0,
+    )));
+    let arc = doc
+        .add_feature_in_body(
+            SketchFeature::new(arc, plane_at_z(4.0)),
+            "arc".into(),
+            Some(body),
+        )
+        .unwrap();
+    let ring = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 40.0, 40.0, 30.0),
+            "ring".into(),
+            Some(body),
+        )
+        .unwrap();
+    (doc, body, hole, arc, ring)
+}
+
+fn path_pattern(
+    hole: FeatureId,
+    path: wb_design::PatternPath,
+    layout: wb_design::PathSpacing,
+) -> DesignFeature {
+    DesignFeature::PathPattern {
+        originals: vec![hole],
+        path,
+        layout,
+        refine: false,
+        boolean_tolerance: None,
+        skipped: Vec::new(),
+    }
+}
+
+/// The volume of what the body builds and where its round faces of
+/// radius 2 stand: one per hole.
+fn holes_built(doc: &Document, body: BodyId) -> (f64, Vec<[f32; 3]>) {
+    let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
+    let mut kernel = OgeomKernel::new();
+    let built = kernel
+        .execute_solid_chain(&ops, &TessellationSettings::default())
+        .unwrap();
+    let volume = kernel
+        .physical_properties(&built.brep_blob)
+        .unwrap()
+        .volume_mm3
+        .unwrap();
+    let holes: Vec<[f32; 3]> = built
+        .mesh
+        .face_surfaces
+        .iter()
+        .filter_map(|s| match s {
+            kernel_api::FaceSurface::Cylinder { origin, radius, .. }
+                if (radius - 2.0).abs() < 1e-3 =>
+            {
+                Some(*origin)
+            }
+            _ => None,
+        })
+        .collect();
+    (volume, holes)
+}
+
+fn plate_less_holes(holes: f64) -> f64 {
+    80.0 * 80.0 * 4.0 - holes * std::f64::consts::PI * 4.0 * 4.0
+}
+
+/// Holes along a quarter arc: five spread over it from the hole's place
+/// to the arc's far end, each 22.5° on; spaced 15 mm along it, as many as
+/// fit. Moved only, each stands on the arc.
+#[test]
+fn holes_patterned_along_an_arc_stand_on_it() {
+    let (mut doc, body, hole, arc, _) = plate_with_hole_and_paths();
+    let pattern = doc
+        .add_feature_in_body(
+            path_pattern(
+                hole,
+                wb_design::PatternPath::Sketch {
+                    sketch: arc,
+                    chain: 0,
+                },
+                wb_design::PathSpacing {
+                    occurrences: 5,
+                    ..Default::default()
+                },
+            ),
+            "Along".into(),
+            Some(body),
+        )
+        .unwrap();
+    let (volume, holes) = holes_built(&doc, body);
+    assert!((volume - plate_less_holes(5.0)).abs() < 0.5, "{volume}");
+    assert_eq!(holes.len(), 5, "{holes:?}");
+    for at in &holes {
+        let r = (at[0] - 40.0).hypot(at[1] - 40.0);
+        assert!((r - 30.0).abs() < 1e-3, "off the arc: {at:?}");
+    }
+    assert!(
+        holes.iter().any(|h| close(h[0], 40.0) && close(h[1], 70.0)),
+        "one at the arc's far end: {holes:?}"
+    );
+
+    // 15 mm apart along an arc 47.1 mm long: four fit, a fifth is refused.
+    let spaced = |occurrences| {
+        path_pattern(
+            hole,
+            wb_design::PatternPath::Sketch {
+                sketch: arc,
+                chain: 0,
+            },
+            wb_design::PathSpacing {
+                occurrences,
+                spacing_mode: true,
+                spacing: 15.0,
+                ..Default::default()
+            },
+        )
+    };
+    doc.update_feature_data(
+        pattern,
+        core_document::WorkbenchFeature::to_json(&spaced(4)),
+    )
+    .unwrap();
+    let (volume, holes) = holes_built(&doc, body);
+    assert!((volume - plate_less_holes(4.0)).abs() < 0.5, "{volume}");
+    assert_eq!(holes.len(), 4);
+    doc.update_feature_data(
+        pattern,
+        core_document::WorkbenchFeature::to_json(&spaced(5)),
+    )
+    .unwrap();
+    let refused = built_volume(&doc, body).unwrap_err();
+    assert!(refused.contains("holds 4 occurrences"), "{refused}");
+}
+
+/// Round a closed circle six holes go evenly; turned with the path they
+/// stay on it whichever way it is walked. A skipped one is left out.
+#[test]
+fn holes_patterned_round_a_closed_circle_go_evenly_round_it() {
+    let (mut doc, body, hole, _, ring) = plate_with_hole_and_paths();
+    let round = |reversed, skipped: Vec<u32>| DesignFeature::PathPattern {
+        originals: vec![hole],
+        path: wb_design::PatternPath::Sketch {
+            sketch: ring,
+            chain: 0,
+        },
+        layout: wb_design::PathSpacing {
+            occurrences: 6,
+            reversed,
+            align: true,
+            ..Default::default()
+        },
+        refine: false,
+        boolean_tolerance: None,
+        skipped,
+    };
+    let pattern = doc
+        .add_feature_in_body(round(false, Vec::new()), "Round".into(), Some(body))
+        .unwrap();
+    for (reversed, skipped, count) in [
+        (false, vec![], 6u32),
+        (true, vec![], 6),
+        (false, vec![3], 5),
+    ] {
+        doc.update_feature_data(
+            pattern,
+            core_document::WorkbenchFeature::to_json(&round(reversed, skipped)),
+        )
+        .unwrap();
+        let (volume, holes) = holes_built(&doc, body);
+        assert!(
+            (volume - plate_less_holes(f64::from(count))).abs() < 0.5,
+            "{reversed}: {volume}"
+        );
+        assert_eq!(holes.len(), count as usize, "{reversed}: {holes:?}");
+        for at in &holes {
+            let r = (at[0] - 40.0).hypot(at[1] - 40.0);
+            assert!((r - 30.0).abs() < 1e-3, "off the circle: {at:?}");
+        }
+    }
+}
+
+/// Along an edge of the solid: the rim of a disc of radius 30, found on
+/// the solid where the pattern stands, a hole 5 mm in from it carried
+/// round with the rim's turn, eight times.
+#[test]
+fn holes_patterned_along_a_solid_edge_follow_it() {
+    let mut doc = Document::new("t");
+    let body = doc.create_body(Some("Body".into()));
+    let disc = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(0.0), 0.0, 0.0, 30.0),
+            "disc".into(),
+            Some(body),
+        )
+        .unwrap();
+    doc.add_feature_in_body(
+        pad_feature(disc, 4.0, false, false),
+        "Disc".into(),
+        Some(body),
+    )
+    .unwrap();
+    let at = doc
+        .add_feature_in_body(
+            circle_sketch_on(plane_at_z(4.0), 25.0, 0.0, 2.0),
+            "hole".into(),
+            Some(body),
+        )
+        .unwrap();
+    let hole = doc
+        .add_feature_in_body(pocket_feature(at, 4.0), "Hole".into(), Some(body))
+        .unwrap();
+    let rim = wb_design::EdgePick {
+        faces: [0, 0],
+        point: [0.0, 30.0, 4.0],
+        direction: [1.0, 0.0, 0.0],
+    };
+    doc.add_feature_in_body(
+        path_pattern(
+            hole,
+            wb_design::PatternPath::Edge(rim),
+            wb_design::PathSpacing {
+                occurrences: 8,
+                align: true,
+                ..Default::default()
+            },
+        ),
+        "Round the rim".into(),
+        Some(body),
+    )
+    .unwrap();
+    let (volume, holes) = holes_built(&doc, body);
+    let want = (std::f64::consts::PI * 900.0 - 8.0 * std::f64::consts::PI * 4.0) * 4.0;
+    assert!((volume - want).abs() < 0.5, "{volume}");
+    assert_eq!(holes.len(), 8, "{holes:?}");
+    for at in &holes {
+        assert!((at[0].hypot(at[1]) - 25.0).abs() < 1e-3, "{at:?}");
+    }
+}

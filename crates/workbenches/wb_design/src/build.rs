@@ -1116,18 +1116,20 @@ fn plan_feature(
         | DesignFeature::PolarPattern {
             originals, skipped, ..
         }
+        | DesignFeature::CircularPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PointPattern {
+            originals, skipped, ..
+        }
+        | DesignFeature::PathPattern {
+            originals, skipped, ..
+        }
         | DesignFeature::MultiTransform {
             originals, skipped, ..
         } => {
             let originals = original_ops(document, feature_ops, originals).map_err(&fail)?;
-            let transforms: Vec<Mat4> = occurrence_transforms(document, feature)
-                .map_err(&fail)?
-                .into_iter()
-                .zip(0u32..)
-                .skip(1)
-                .filter(|(_, index)| !skipped.contains(index))
-                .map(|(transform, _)| transform)
-                .collect();
+            let steps = occurrence_steps(document, feature).map_err(&fail)?;
             if skipped.contains(&0) {
                 let starts_body = originals.iter().any(|&op| {
                     plan.ops.get(op).and_then(SolidOp::boolean_op) == Some(BooleanOp::NewSolid)
@@ -1139,15 +1141,35 @@ fn plan_feature(
                             .into(),
                     ));
                 }
-                plan.ops.push(SolidOp::TransformCopies {
-                    transforms,
+            }
+            match compose_steps(&steps) {
+                // A step follows a path: the chain finds its places on the
+                // solid as it stands where the pattern does.
+                None => plan.ops.push(SolidOp::Pattern {
+                    steps,
                     originals,
-                });
-            } else if !transforms.is_empty() {
-                plan.ops.push(SolidOp::Transform {
-                    transforms,
-                    originals,
-                });
+                    skipped: skipped.clone(),
+                }),
+                Some(composed) => {
+                    let transforms: Vec<Mat4> = composed
+                        .into_iter()
+                        .zip(0u32..)
+                        .skip(1)
+                        .filter(|(_, index)| !skipped.contains(index))
+                        .map(|(transform, _)| transform)
+                        .collect();
+                    if skipped.contains(&0) {
+                        plan.ops.push(SolidOp::TransformCopies {
+                            transforms,
+                            originals,
+                        });
+                    } else if !transforms.is_empty() {
+                        plan.ops.push(SolidOp::Transform {
+                            transforms,
+                            originals,
+                        });
+                    }
+                }
             }
         }
         // Lent geometry builds nothing; the features that take it do.
@@ -3432,11 +3454,29 @@ fn polar_transforms(
 
 /// Where every occurrence of a pattern or mirror stands, in its body's
 /// own frame: the original's (the identity) first, then each copy's, in
-/// the order `skipped` counts them. Empty for any other feature.
+/// the order `skipped` counts them. Empty for any other feature; an error
+/// for one with a path step, whose places the kernel finds
+/// (`occurrence_steps`).
 pub(crate) fn occurrence_transforms(
     document: &Document,
     feature: &DesignFeature,
 ) -> Result<Vec<Mat4>, String> {
+    let steps = occurrence_steps(document, feature)?;
+    if steps.is_empty() {
+        return Ok(Vec::new());
+    }
+    compose_steps(&steps)
+        .ok_or_else(|| "the pattern's path is followed on the solid as it builds".to_string())
+}
+
+/// A pattern's or mirror's occurrences as steps the kernel composes, each
+/// applying to every occurrence of the steps before it (the original
+/// among them). Empty for any other feature.
+pub(crate) fn occurrence_steps(
+    document: &Document,
+    feature: &DesignFeature,
+) -> Result<Vec<kernel_api::PatternStep>, String> {
+    use kernel_api::PatternStep;
     let copies = match feature {
         DesignFeature::Mirrored { plane, .. } => {
             let (point, normal) = mirror_plane(document, plane)?;
@@ -3474,10 +3514,101 @@ pub(crate) fn occurrence_transforms(
             *step_mode,
             angles,
         )?,
-        DesignFeature::MultiTransform { steps, .. } => multi_transforms(document, steps)?,
+        DesignFeature::CircularPattern {
+            axis,
+            outward,
+            spacing,
+            counts,
+            ..
+        } => circular_transforms(
+            pattern_axis(document, axis)?,
+            pattern_axis(document, outward)?.1,
+            *spacing,
+            counts,
+        )?,
+        DesignFeature::PointPattern { sketch, .. } => point_transforms(document, *sketch)?,
+        DesignFeature::PathPattern { path, layout, .. } => {
+            return Ok(vec![PatternStep::Path(path_layout(
+                document, path, layout,
+            )?)]);
+        }
+        DesignFeature::MultiTransform { steps, .. } => {
+            if steps.is_empty() {
+                return Err("a multi-transform needs at least one step".into());
+            }
+            return steps.iter().map(|step| step_of(document, step)).collect();
+        }
         _ => return Ok(Vec::new()),
     };
-    Ok(std::iter::once(mat_identity()).chain(copies).collect())
+    Ok(vec![PatternStep::Transforms(copies)])
+}
+
+/// Every occurrence of `steps`, the identity first, when none follows a
+/// path: each step's copies of every occurrence before it.
+fn compose_steps(steps: &[kernel_api::PatternStep]) -> Option<Vec<Mat4>> {
+    let mut accumulated = vec![mat_identity()];
+    for step in steps {
+        let kernel_api::PatternStep::Transforms(own) = step else {
+            return None;
+        };
+        let mut next = Vec::with_capacity(accumulated.len() * (own.len() + 1));
+        for base in &accumulated {
+            next.push(*base);
+            for t in own {
+                next.push(mat_mul(t, base));
+            }
+        }
+        accumulated = next;
+    }
+    Some(accumulated)
+}
+
+/// What the kernel walks for a path pattern's `path`, spaced as `layout`
+/// says, in the body's own frame.
+fn path_layout(
+    document: &Document,
+    path: &crate::feature::PatternPath,
+    layout: &crate::feature::PathSpacing,
+) -> Result<kernel_api::PathLayout, String> {
+    use crate::feature::PatternPath;
+    let path = match path {
+        PatternPath::Sketch { sketch, chain } => {
+            let feature = load_sketch(document, *sketch)?;
+            let chains = profile::extract_chains(&feature.sketch)
+                .map_err(|e| format!("the pattern's path sketch: {e}"))?;
+            let count = chains.len();
+            let wire = chains.into_iter().nth(*chain).ok_or_else(|| {
+                if count == 0 {
+                    "the pattern's path sketch has no curves to follow".to_string()
+                } else {
+                    format!(
+                        "the pattern's path sketch has {count} chain{} of curves; chain {} \
+                         is not one",
+                        if count == 1 { "" } else { "s" },
+                        chain
+                    )
+                }
+            })?;
+            kernel_api::PatternPath::Wire {
+                plane: profile::plane_of(&feature.plane),
+                wire,
+            }
+        }
+        PatternPath::Edge(pick) => kernel_api::PatternPath::Edge(edge_probe_of(pick)),
+    };
+    if layout.occurrences == 0 {
+        return Err("a path pattern needs at least 1 occurrence".into());
+    }
+    if layout.spacing_mode && !(layout.spacing.is_finite() && layout.spacing > 0.0) {
+        return Err("the spacing along the path must be more than zero".into());
+    }
+    Ok(kernel_api::PathLayout {
+        path,
+        count: layout.occurrences,
+        spacing: layout.spacing_mode.then_some(f64::from(layout.spacing)),
+        reversed: layout.reversed,
+        align: layout.align,
+    })
 }
 
 /// `point` moved by `transform`.
@@ -3492,85 +3623,90 @@ pub(crate) fn transform_point(transform: &Mat4, point: [f64; 3]) -> [f64; 3] {
 
 /// Cartesian composition: each step's occurrences (including the identity)
 /// apply to every result of the previous steps; the pure identity is dropped
-/// because the base solid already contains the original.
+/// because the base solid already contains the original. A path step,
+/// whose places the kernel finds, is refused.
+#[cfg(test)]
 fn multi_transforms(document: &Document, steps: &[TransformStep]) -> Result<Vec<Mat4>, String> {
     if steps.is_empty() {
         return Err("a multi-transform needs at least one step".into());
     }
-    let mut accumulated = vec![mat_identity()];
-    for step in steps {
-        let step_transforms: Vec<Mat4> = match step {
-            TransformStep::Linear {
-                axis,
-                length,
-                occurrences,
-            } => linear_transforms(
-                pattern_axis(document, axis)?,
-                *length,
-                *occurrences,
-                false,
-                false,
-                &[],
-            )?,
-            TransformStep::Polar {
-                axis,
-                angle_deg,
-                occurrences,
-            } => polar_transforms(
-                pattern_axis(document, axis)?,
-                *angle_deg,
-                *occurrences,
-                false,
-                false,
-                &[],
-            )?,
-            TransformStep::Mirror { plane } => {
-                let (point, normal) = mirror_plane(document, plane)?;
-                vec![mat_mirror(point, normal)]
-            }
-            TransformStep::Scale {
-                factor,
-                center,
-                occurrences,
-            } => {
-                if *factor <= 0.0 {
-                    return Err("scale factor must be positive".into());
-                }
-                let occ = (*occurrences).max(2);
-                // The factor applies to the LAST occurrence; the rest
-                // interpolate evenly.
-                (1..occ)
-                    .map(|k| {
-                        let f =
-                            1.0 + (f64::from(*factor) - 1.0) * f64::from(k) / f64::from(occ - 1);
-                        mat_scale([center[0] as f64, center[1] as f64, center[2] as f64], f)
-                    })
-                    .collect()
-            }
-            TransformStep::Circular {
-                axis,
-                outward,
-                spacing,
-                counts,
-            } => circular_transforms(
-                pattern_axis(document, axis)?,
-                pattern_axis(document, outward)?.1,
-                *spacing,
-                counts,
-            )?,
-            TransformStep::Points { sketch } => point_transforms(document, *sketch)?,
-        };
-        let mut next = Vec::with_capacity(accumulated.len() * (step_transforms.len() + 1));
-        for base in &accumulated {
-            next.push(*base);
-            for t in &step_transforms {
-                next.push(mat_mul(t, base));
-            }
-        }
-        accumulated = next;
-    }
+    let steps: Vec<kernel_api::PatternStep> = steps
+        .iter()
+        .map(|step| step_of(document, step))
+        .collect::<Result<_, _>>()?;
+    let accumulated = compose_steps(&steps).ok_or("a path step is followed as the body builds")?;
     // Drop the identity (index 0 by construction).
     Ok(accumulated.into_iter().skip(1).collect())
+}
+
+/// One multi-transform step's copies, the original left out.
+fn step_of(document: &Document, step: &TransformStep) -> Result<kernel_api::PatternStep, String> {
+    let copies: Vec<Mat4> = match step {
+        TransformStep::Linear {
+            axis,
+            length,
+            occurrences,
+        } => linear_transforms(
+            pattern_axis(document, axis)?,
+            *length,
+            *occurrences,
+            false,
+            false,
+            &[],
+        )?,
+        TransformStep::Polar {
+            axis,
+            angle_deg,
+            occurrences,
+        } => polar_transforms(
+            pattern_axis(document, axis)?,
+            *angle_deg,
+            *occurrences,
+            false,
+            false,
+            &[],
+        )?,
+        TransformStep::Mirror { plane } => {
+            let (point, normal) = mirror_plane(document, plane)?;
+            vec![mat_mirror(point, normal)]
+        }
+        TransformStep::Scale {
+            factor,
+            center,
+            occurrences,
+        } => {
+            if *factor <= 0.0 {
+                return Err("scale factor must be positive".into());
+            }
+            let occ = (*occurrences).max(2);
+            // The factor applies to the LAST occurrence; the rest
+            // interpolate evenly.
+            (1..occ)
+                .map(|k| {
+                    let f = 1.0 + (f64::from(*factor) - 1.0) * f64::from(k) / f64::from(occ - 1);
+                    mat_scale([center[0] as f64, center[1] as f64, center[2] as f64], f)
+                })
+                .collect()
+        }
+        TransformStep::Circular {
+            axis,
+            outward,
+            spacing,
+            counts,
+        } => circular_transforms(
+            pattern_axis(document, axis)?,
+            pattern_axis(document, outward)?.1,
+            *spacing,
+            counts,
+        )?,
+        TransformStep::Points { sketch } => point_transforms(document, *sketch)?,
+        TransformStep::Path { path, layout } => {
+            return Ok(kernel_api::PatternStep::Path(path_layout(
+                document, path, layout,
+            )?));
+        }
+    };
+    Ok(kernel_api::PatternStep::Transforms(copies))
 }
 
 /// Sketches available in a body (id + display name), for re-attachment:
@@ -3594,6 +3730,30 @@ pub fn sketches_of_body(document: &Document, body: BodyId) -> Vec<(FeatureId, St
 /// since one made after it builds after it, and `current`, whatever it is,
 /// so the choice already made stays on the list.
 #[cfg_attr(not(feature = "egui"), allow(dead_code))]
+/// How many points a point pattern on `sketch` stands at: its points that
+/// are not construction.
+pub(crate) fn sketch_point_count(document: &Document, sketch: FeatureId) -> usize {
+    load_sketch(document, sketch).map_or(0, |feature| {
+        feature
+            .sketch
+            .geometry
+            .iter()
+            .filter(
+                |g| matches!(g, GeometryElement::Point(p) if !feature.sketch.is_construction(p.id)),
+            )
+            .count()
+    })
+}
+
+/// How many chains of curves `sketch` lays out for a path to follow: none
+/// when it has no curves or they branch.
+pub(crate) fn sketch_chain_count(document: &Document, sketch: FeatureId) -> usize {
+    load_sketch(document, sketch)
+        .ok()
+        .and_then(|feature| profile::extract_chains(&feature.sketch).ok())
+        .map_or(0, |chains| chains.len())
+}
+
 pub(crate) fn sketch_choices(
     document: &Document,
     body: BodyId,
@@ -5355,6 +5515,226 @@ mod tests {
         // Overall length 30 over 4 occurrences → 10 mm spacing.
         assert!((transforms[0][0][3] - 10.0).abs() < 1e-9);
         assert!((transforms[2][0][3] - 30.0).abs() < 1e-9);
+    }
+
+    /// The standalone circular and point patterns place their copies as
+    /// their multi-transform steps do, the original left out.
+    #[test]
+    fn circular_and_point_patterns_build_as_their_steps() {
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let mut points = Sketch::new("points");
+        for (x, y) in [(1.0, 1.0), (6.0, 1.0), (1.0, 9.0)] {
+            points.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y))));
+        }
+        let plane = points.plane;
+        let points = doc
+            .add_feature_in_body(
+                SketchFeature::new(points, plane),
+                "points".into(),
+                Some(body),
+            )
+            .unwrap();
+        let circular = DesignFeature::CircularPattern {
+            originals: vec![pad_id],
+            axis: PatternAxis::Z,
+            outward: PatternAxis::X,
+            spacing: 10.0,
+            counts: vec![4, 8],
+            refine: false,
+            boolean_tolerance: None,
+            skipped: vec![2],
+        };
+        let at_points = DesignFeature::PointPattern {
+            originals: vec![pad_id],
+            sketch: points,
+            refine: false,
+            boolean_tolerance: None,
+            skipped: Vec::new(),
+        };
+        for (feature, step, copies) in [
+            (
+                circular,
+                TransformStep::Circular {
+                    axis: PatternAxis::Z,
+                    outward: PatternAxis::X,
+                    spacing: 10.0,
+                    counts: vec![4, 8],
+                },
+                3 + 8 - 1,
+            ),
+            (at_points, TransformStep::Points { sketch: points }, 2),
+        ] {
+            let mut doc = doc.clone();
+            let skipped: Vec<u32> = feature.skipped().unwrap().to_vec();
+            doc.add_feature_in_body(feature, "Pattern".into(), Some(body))
+                .unwrap();
+            let plan = body_build_ops(&doc, body).unwrap();
+            let SolidOp::Transform {
+                transforms,
+                originals,
+            } = &plan.ops[1]
+            else {
+                panic!("expected a transform op, got {:?}", plan.ops[1]);
+            };
+            assert_eq!(originals, &vec![0]);
+            assert_eq!(transforms.len(), copies);
+            let stepped: Vec<Mat4> = multi_transforms(&doc, &[step])
+                .unwrap()
+                .into_iter()
+                .zip(1u32..)
+                .filter(|(_, i)| !skipped.contains(i))
+                .map(|(t, _)| t)
+                .collect();
+            assert_eq!(transforms, &stepped);
+        }
+    }
+
+    /// A path pattern leaves its places to the chain: its op carries the
+    /// sketch's chain on the sketch's plane, or the picked edge as a
+    /// probe, with the spacing as the feature gives it.
+    #[test]
+    fn a_path_pattern_hands_its_path_to_the_chain() {
+        use crate::feature::{PathSpacing, PatternPath};
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let layout = PathSpacing {
+            occurrences: 5,
+            spacing_mode: true,
+            spacing: 4.0,
+            reversed: true,
+            align: true,
+        };
+        let along = |path| DesignFeature::PathPattern {
+            originals: vec![pad_id],
+            path,
+            layout,
+            refine: false,
+            boolean_tolerance: None,
+            skipped: vec![2],
+        };
+        let mut on_sketch = doc.clone();
+        on_sketch
+            .add_feature_in_body(
+                along(PatternPath::Sketch {
+                    sketch: sketch_id,
+                    chain: 0,
+                }),
+                "Path".into(),
+                Some(body),
+            )
+            .unwrap();
+        let plan = body_build_ops(&on_sketch, body).unwrap();
+        let SolidOp::Pattern {
+            steps,
+            originals,
+            skipped,
+        } = &plan.ops[1]
+        else {
+            panic!("expected a pattern op, got {:?}", plan.ops[1]);
+        };
+        assert_eq!((originals, skipped), (&vec![0], &vec![2]));
+        let [kernel_api::PatternStep::Path(path)] = steps.as_slice() else {
+            panic!("one path step, not {steps:?}");
+        };
+        assert_eq!(
+            (path.count, path.spacing, path.reversed, path.align),
+            (5, Some(4.0), true, true)
+        );
+        let kernel_api::PatternPath::Wire { wire, .. } = &path.path else {
+            panic!("a sketch's chain goes as a wire");
+        };
+        assert_eq!(wire.segments.len(), 4, "the rectangle's four sides");
+
+        let pick = crate::feature::EdgePick {
+            point: [1.0, 2.0, 3.0],
+            direction: [0.0, 0.0, 1.0],
+            faces: [0, 0],
+        };
+        doc.add_feature_in_body(along(PatternPath::Edge(pick)), "Path".into(), Some(body))
+            .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::Pattern { steps, .. } = &plan.ops[1] else {
+            panic!("expected a pattern op");
+        };
+        let [kernel_api::PatternStep::Path(path)] = steps.as_slice() else {
+            panic!("one path step");
+        };
+        assert_eq!(
+            path.path,
+            kernel_api::PatternPath::Edge(kernel_api::EdgeProbe {
+                point: [1.0, 2.0, 3.0],
+                direction: [0.0, 0.0, 1.0],
+                faces: [0, 0],
+            })
+        );
+    }
+
+    /// A multi-transform with a path step goes to the chain as steps, the
+    /// others' copies worked out here; without one it composes here.
+    #[test]
+    fn a_multi_transform_with_a_path_step_goes_to_the_chain_as_steps() {
+        use crate::feature::PatternPath;
+        let (mut doc, body, sketch_id) = doc_with_body_sketch();
+        let pad_id = doc
+            .add_feature_in_body(pad(sketch_id, 5.0), "Pad".into(), Some(body))
+            .unwrap();
+        let linear = TransformStep::Linear {
+            axis: PatternAxis::Z,
+            length: 20.0,
+            occurrences: 3,
+        };
+        doc.add_feature_in_body(
+            DesignFeature::MultiTransform {
+                originals: vec![pad_id],
+                steps: vec![
+                    linear.clone(),
+                    TransformStep::Path {
+                        path: PatternPath::Sketch {
+                            sketch: sketch_id,
+                            chain: 0,
+                        },
+                        layout: Default::default(),
+                    },
+                ],
+                refine: false,
+                boolean_tolerance: None,
+                skipped: Vec::new(),
+            },
+            "Multi".into(),
+            Some(body),
+        )
+        .unwrap();
+        let plan = body_build_ops(&doc, body).unwrap();
+        let SolidOp::Pattern { steps, .. } = &plan.ops[1] else {
+            panic!("expected a pattern op, got {:?}", plan.ops[1]);
+        };
+        let [
+            kernel_api::PatternStep::Transforms(rows),
+            kernel_api::PatternStep::Path(_),
+        ] = steps.as_slice()
+        else {
+            panic!("a row's copies, then the path: {steps:?}");
+        };
+        assert_eq!(rows, &multi_transforms(&doc, &[linear]).unwrap());
+        assert!(
+            multi_transforms(
+                &doc,
+                &[TransformStep::Path {
+                    path: PatternPath::Sketch {
+                        sketch: sketch_id,
+                        chain: 0,
+                    },
+                    layout: Default::default(),
+                }]
+            )
+            .is_err(),
+            "a path's places are not worked out here"
+        );
     }
 
     /// A pocket kept inside keeps what it shares with the body: its op is

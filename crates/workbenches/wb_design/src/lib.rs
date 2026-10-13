@@ -36,9 +36,9 @@ pub use feature::{
     Attached, BaseAxis, BorrowOptions, BorrowSource, BorrowedRef, ChamferMode, DesignFeature,
     DrillPoint, EdgePick, EdgeSel, ExtrudeDirection, ExtrudeExtras, ExtrudeMode, FacePick,
     FrozenBorrow, FrozenEdge, FrozenFace, HelixMode, HoleCut, HoleFit, HoleStart, LoftSection,
-    MirrorPlane, NutSide, NutTrap, PatternAxis, PipeCorner, PipeOrientation, PlaneTarget,
-    RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep, primitive_icon,
-    primitive_preset,
+    MirrorPlane, NutSide, NutTrap, PathSpacing, PatternAxis, PatternPath, PipeCorner,
+    PipeOrientation, PlaneTarget, RevolveAxis, RevolveMode, SketchAxis, ThreadSpec, TransformStep,
+    primitive_icon, primitive_preset,
 };
 pub use hole_tables::{
     CUT_PROFILES_FILE, CutProfile, NutSize, NutStandard, ScrewSeat, ThreadSize, ThreadStandard,
@@ -277,6 +277,20 @@ impl DesignWorkbench {
                 .map(|(_, n)| n.name.as_str()),
             base,
         )
+    }
+
+    /// The body's last sketch (its own, or one lent it) of which `count`
+    /// finds any: points to stand at, curves to follow.
+    fn last_sketch_where(
+        ctx: &WorkbenchRuntimeContext,
+        body: BodyId,
+        count: fn(&core_document::Document, FeatureId) -> usize,
+    ) -> Option<FeatureId> {
+        build::sketches_of_body(ctx.document, body)
+            .into_iter()
+            .rev()
+            .map(|(id, _)| id)
+            .find(|id| count(ctx.document, *id) > 0)
     }
 
     /// The last non-modifier feature of a body (default pattern original).
@@ -826,6 +840,85 @@ impl DesignWorkbench {
                     "PolarPattern",
                 )
             }
+            "design.circular_pattern" => {
+                need_material(has_solid)?;
+                let original = Self::selected_design_feature(ctx)
+                    .or_else(|| Self::last_shape_feature(ctx, body));
+                (
+                    DesignFeature::CircularPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: original.into_iter().collect(),
+                        axis: PatternAxis::Z,
+                        outward: PatternAxis::X,
+                        spacing: 10.0,
+                        counts: vec![6, 12],
+                    },
+                    "CircularPattern",
+                )
+            }
+            "design.point_pattern" => {
+                need_material(has_solid)?;
+                let sketch = sketch
+                    .or_else(|| Self::last_sketch_where(ctx, body, build::sketch_point_count))
+                    .ok_or_else(|| {
+                        given.say(
+                            "Select a sketch of points in the tree first",
+                            "It needs a sketch of points: give `sketch`",
+                        )
+                    })?;
+                let original = Self::last_shape_feature(ctx, body);
+                (
+                    DesignFeature::PointPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: original.into_iter().collect(),
+                        sketch,
+                    },
+                    "PointPattern",
+                )
+            }
+            "design.path_pattern" => {
+                need_material(has_solid)?;
+                let edge = ctx
+                    .selected_edges_in(body)
+                    .iter()
+                    .find(|e| BodyId(e.body) == body)
+                    .map(EdgePick::of);
+                let path = match (sketch, edge) {
+                    (Some(sketch), _) => PatternPath::Sketch { sketch, chain: 0 },
+                    (None, Some(edge)) => PatternPath::Edge(edge),
+                    (None, None) => Self::last_sketch_where(ctx, body, build::sketch_chain_count)
+                        .map(|sketch| PatternPath::Sketch { sketch, chain: 0 })
+                        .ok_or_else(|| {
+                            given.say(
+                                "Select a sketch of curves in the tree, or an edge of the \
+                                     solid, first",
+                                "It needs a path: give `sketch`, or `path = {Edge = \
+                                     {point = {x, y, z}, direction = {x, y, z}}}`",
+                            )
+                        })?,
+                };
+                let original = if sketch.is_some() || edge.is_some() {
+                    Self::last_shape_feature(ctx, body)
+                } else {
+                    Self::selected_design_feature(ctx)
+                        .or_else(|| Self::last_shape_feature(ctx, body))
+                };
+                (
+                    DesignFeature::PathPattern {
+                        skipped: Vec::new(),
+                        refine: false,
+                        boolean_tolerance: None,
+                        originals: original.into_iter().collect(),
+                        path,
+                        layout: Default::default(),
+                    },
+                    "PathPattern",
+                )
+            }
             "design.multi_transform" => {
                 need_material(has_solid)?;
                 let original = Self::selected_design_feature(ctx)
@@ -1268,7 +1361,7 @@ impl DesignWorkbench {
     /// The occurrences of the open task's pattern, where their dots stand.
     fn occurrences(&self, ctx: &WorkbenchRuntimeContext) -> Vec<instances::Occurrence> {
         self.task_feature()
-            .map(|feature| instances::occurrences_of(ctx.document, feature))
+            .map(|feature| instances::occurrences_of(ctx.document, ctx.kernel, feature))
             .unwrap_or_default()
     }
 
@@ -1291,7 +1384,7 @@ impl DesignWorkbench {
                 viewport_pos,
             } => {
                 let feature = self.task_feature()?;
-                let occurrences = instances::occurrences_of(ctx.document, feature);
+                let occurrences = instances::occurrences_of(ctx.document, ctx.kernel, feature);
                 let index = instances::hit(ctx, &occurrences, *viewport_pos)?;
                 let mut part = ctx
                     .document
@@ -1782,6 +1875,33 @@ impl Workbench for DesignWorkbench {
                 "design.polar_pattern",
                 "Polar pattern",
                 "polar-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.circular_pattern",
+                "Circular pattern",
+                "circular-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.point_pattern",
+                "Point pattern",
+                "point-pattern",
+                "transform",
+            ),
+        );
+        register(
+            context,
+            action(
+                "design.path_pattern",
+                "Path pattern",
+                "path-pattern",
                 "transform",
             ),
         );
@@ -2340,6 +2460,9 @@ impl Workbench for DesignWorkbench {
             | "design.mirror"
             | "design.linear_pattern"
             | "design.polar_pattern"
+            | "design.circular_pattern"
+            | "design.point_pattern"
+            | "design.path_pattern"
             | "design.multi_transform"
             | "design.boolean"
             | "design.centre_line" => has_solid,

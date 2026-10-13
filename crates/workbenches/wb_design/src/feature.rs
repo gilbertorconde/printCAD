@@ -853,6 +853,75 @@ pub enum TransformStep {
     Points {
         sketch: FeatureId,
     },
+    /// Occurrences along a path, as a path pattern places them.
+    Path {
+        path: PatternPath,
+        #[serde(flatten)]
+        layout: PathSpacing,
+    },
+}
+
+/// What a path pattern runs along, in its body's own frame.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum PatternPath {
+    /// One of a sketch's chains of curves (its construction left out), by
+    /// its place among them, walked from its first curve's start.
+    Sketch {
+        sketch: FeatureId,
+        #[serde(default)]
+        chain: usize,
+    },
+    /// An edge of the solid, found again on the solid as it stands where
+    /// the pattern does, walked from its curve's start.
+    Edge(EdgePick),
+}
+
+impl PatternPath {
+    pub fn label(&self) -> &'static str {
+        match self {
+            PatternPath::Sketch { .. } => "Sketch",
+            PatternPath::Edge(_) => "Picked edge",
+        }
+    }
+
+    /// The feature the path follows, when it is a sketch's.
+    pub fn reference(&self) -> Option<FeatureId> {
+        match self {
+            PatternPath::Sketch { sketch, .. } => Some(*sketch),
+            PatternPath::Edge(_) => None,
+        }
+    }
+}
+
+/// How a path pattern's occurrences are spaced along its path, its fields
+/// written beside the pattern's own.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PathSpacing {
+    /// Occurrences, the original counted.
+    pub occurrences: u32,
+    /// `spacing` is the distance between neighbours along the path; off,
+    /// the occurrences spread over its whole length (round it evenly when
+    /// it closes).
+    pub spacing_mode: bool,
+    /// Millimetres between neighbours along the path, with `spacing_mode`.
+    pub spacing: f32,
+    /// Walk the path from its end.
+    pub reversed: bool,
+    /// Each copy turns as the path does from its start to the copy's place.
+    pub align: bool,
+}
+
+impl Default for PathSpacing {
+    fn default() -> Self {
+        Self {
+            occurrences: 4,
+            spacing_mode: false,
+            spacing: 10.0,
+            reversed: false,
+            align: false,
+        }
+    }
 }
 
 /// A hexagonal pocket for a captive nut, at one end of a hole: sized
@@ -1807,6 +1876,63 @@ pub enum DesignFeature {
         #[serde(default)]
         skipped: Vec<u32>,
     },
+    /// Concentric rings about `axis`: ring `i` moved `i × spacing` along
+    /// `outward`, then spread evenly round the axis, `counts[i]`
+    /// occurrences in it, the original first in the first ring.
+    CircularPattern {
+        originals: Vec<FeatureId>,
+        axis: PatternAxis,
+        outward: PatternAxis,
+        spacing: f32,
+        counts: Vec<u32>,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
+    },
+    /// An occurrence at every point of `sketch` after its first, moved by
+    /// how far that point is from the first.
+    PointPattern {
+        originals: Vec<FeatureId>,
+        sketch: FeatureId,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
+    },
+    /// Occurrences along a sketch's chain of curves or an edge of the
+    /// solid, by arc length, the original standing at the path's start.
+    PathPattern {
+        originals: Vec<FeatureId>,
+        path: PatternPath,
+        #[serde(flatten)]
+        layout: PathSpacing,
+        /// Merge the coplanar faces the fuse or cut leaves behind.
+        #[serde(default)]
+        refine: bool,
+        /// The tolerance its fuse or cut runs at, in mm: faces within it
+        /// of touching are joined. `None` or zero leaves it to the kernel.
+        #[serde(default)]
+        boolean_tolerance: Option<f32>,
+        /// Occurrences left out, by index: 0 is the original, then each
+        /// copy in turn.
+        #[serde(default)]
+        skipped: Vec<u32>,
+    },
     MultiTransform {
         originals: Vec<FeatureId>,
         steps: Vec<TransformStep>,
@@ -2007,6 +2133,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { originals, .. }
             | DesignFeature::LinearPattern { originals, .. }
             | DesignFeature::PolarPattern { originals, .. }
+            | DesignFeature::CircularPattern { originals, .. }
+            | DesignFeature::PointPattern { originals, .. }
+            | DesignFeature::PathPattern { originals, .. }
             | DesignFeature::MultiTransform { originals, .. } => Some(originals),
             _ => None,
         }
@@ -2018,6 +2147,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { skipped, .. }
             | DesignFeature::LinearPattern { skipped, .. }
             | DesignFeature::PolarPattern { skipped, .. }
+            | DesignFeature::CircularPattern { skipped, .. }
+            | DesignFeature::PointPattern { skipped, .. }
+            | DesignFeature::PathPattern { skipped, .. }
             | DesignFeature::MultiTransform { skipped, .. } => Some(skipped),
             _ => None,
         }
@@ -2030,6 +2162,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { skipped, .. }
             | DesignFeature::LinearPattern { skipped, .. }
             | DesignFeature::PolarPattern { skipped, .. }
+            | DesignFeature::CircularPattern { skipped, .. }
+            | DesignFeature::PointPattern { skipped, .. }
+            | DesignFeature::PathPattern { skipped, .. }
             | DesignFeature::MultiTransform { skipped, .. } => skipped,
             _ => return false,
         };
@@ -2091,6 +2226,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { .. } => "Mirrored",
             DesignFeature::LinearPattern { .. } => "Linear Pattern",
             DesignFeature::PolarPattern { .. } => "Polar Pattern",
+            DesignFeature::CircularPattern { .. } => "Circular Pattern",
+            DesignFeature::PointPattern { .. } => "Point Pattern",
+            DesignFeature::PathPattern { .. } => "Path Pattern",
             DesignFeature::MultiTransform { .. } => "Multi Transform",
             DesignFeature::BodyBoolean { .. } => "Boolean",
             DesignFeature::Borrow { .. } => "Borrowed geometry",
@@ -2155,6 +2293,9 @@ impl DesignFeature {
             DesignFeature::Mirrored { .. } => "mirrored",
             DesignFeature::LinearPattern { .. } => "linear-pattern",
             DesignFeature::PolarPattern { .. } => "polar-pattern",
+            DesignFeature::CircularPattern { .. } => "circular-pattern",
+            DesignFeature::PointPattern { .. } => "point-pattern",
+            DesignFeature::PathPattern { .. } => "path-pattern",
             DesignFeature::MultiTransform { .. } => "multi-transform",
             DesignFeature::BodyBoolean { .. } => "boolean",
             DesignFeature::Borrow { .. } => "clone-geometry",
@@ -2179,6 +2320,9 @@ impl DesignFeature {
             | DesignFeature::Mirrored { refine, .. }
             | DesignFeature::LinearPattern { refine, .. }
             | DesignFeature::PolarPattern { refine, .. }
+            | DesignFeature::CircularPattern { refine, .. }
+            | DesignFeature::PointPattern { refine, .. }
+            | DesignFeature::PathPattern { refine, .. }
             | DesignFeature::MultiTransform { refine, .. }
             | DesignFeature::BodyBoolean { refine, .. } => *refine,
             _ => false,
@@ -2201,6 +2345,9 @@ impl DesignFeature {
             | DesignFeature::Mirrored { refine, .. }
             | DesignFeature::LinearPattern { refine, .. }
             | DesignFeature::PolarPattern { refine, .. }
+            | DesignFeature::CircularPattern { refine, .. }
+            | DesignFeature::PointPattern { refine, .. }
+            | DesignFeature::PathPattern { refine, .. }
             | DesignFeature::MultiTransform { refine, .. }
             | DesignFeature::BodyBoolean { refine, .. } => *refine = on,
             _ => {}
@@ -2245,6 +2392,15 @@ impl DesignFeature {
                 boolean_tolerance, ..
             }
             | DesignFeature::PolarPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::CircularPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PointPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PathPattern {
                 boolean_tolerance, ..
             }
             | DesignFeature::MultiTransform {
@@ -2296,6 +2452,15 @@ impl DesignFeature {
                 boolean_tolerance, ..
             }
             | DesignFeature::PolarPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::CircularPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PointPattern {
+                boolean_tolerance, ..
+            }
+            | DesignFeature::PathPattern {
                 boolean_tolerance, ..
             }
             | DesignFeature::MultiTransform {
@@ -2422,6 +2587,9 @@ impl DesignFeature {
                 | DesignFeature::Mirrored { .. }
                 | DesignFeature::LinearPattern { .. }
                 | DesignFeature::PolarPattern { .. }
+                | DesignFeature::CircularPattern { .. }
+                | DesignFeature::PointPattern { .. }
+                | DesignFeature::PathPattern { .. }
                 | DesignFeature::MultiTransform { .. }
                 | DesignFeature::BodyBoolean { .. }
         )
@@ -2482,6 +2650,7 @@ impl WorkbenchFeature for DesignFeature {
             | DesignFeature::PolarPattern { axis, .. } => {
                 vec![axis]
             }
+            DesignFeature::CircularPattern { axis, outward, .. } => vec![axis, outward],
             DesignFeature::MultiTransform { steps, .. } => steps
                 .iter()
                 .flat_map(|step| match step {
@@ -2494,13 +2663,23 @@ impl WorkbenchFeature for DesignFeature {
                 .collect(),
             _ => Vec::new(),
         };
-        if let DesignFeature::MultiTransform { steps, .. } = self {
-            for step in steps {
-                if let TransformStep::Points { sketch } = step
-                    && !deps.contains(sketch)
-                {
-                    deps.push(*sketch);
-                }
+        // The sketches whose points or curves a pattern stands at.
+        let placing: Vec<FeatureId> = match self {
+            DesignFeature::PointPattern { sketch, .. } => vec![*sketch],
+            DesignFeature::PathPattern { path, .. } => path.reference().into_iter().collect(),
+            DesignFeature::MultiTransform { steps, .. } => steps
+                .iter()
+                .filter_map(|step| match step {
+                    TransformStep::Points { sketch } => Some(*sketch),
+                    TransformStep::Path { path, .. } => path.reference(),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        for sketch in placing {
+            if !deps.contains(&sketch) {
+                deps.push(sketch);
             }
         }
         for reference in axes.into_iter().filter_map(PatternAxis::reference) {

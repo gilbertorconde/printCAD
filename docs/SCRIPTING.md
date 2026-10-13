@@ -4091,6 +4091,136 @@ local volume = pc.doc.measure{body = body}.volume
 assert(math.abs(volume - (math.pi * 400 - 6 * math.pi * 4) * 3) < 1e-3, volume)
 ```
 
+`pc.design.circular_pattern`: Repeat the last feature in concentric rings about an axis.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
+- Rings about `axis` (Z through the body's origin when left out): ring i is moved i × `spacing` (10 mm) along `outward` (X), then spread evenly round the axis, `counts[i]` occurrences in it ({6, 12}). The original is the first of the first ring, which turns it in place, so `outward` should run from the axis through it.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.polar_pattern`.
+
+Example: Two rings of holes round a disc, four and eight.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.circle{sketch = s, x = 0, y = 0, radius = 30}
+local disc = pc.design.pad{sketch = s, length = 3}
+local body = pc.doc.feature{id = disc}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 3}
+pc.sketch.circle{sketch = at, x = 10, y = 0, radius = 2}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- The inner ring at radius 10, the outer 10 mm further out.
+pc.design.circular_pattern{body = body, originals = {hole}, axis = "Z",
+  outward = "X", spacing = 10, counts = {4, 8}}
+assert(#pc.doc.rebuild() == 0, "the rings build")
+local holes = 0
+for _, face in ipairs(pc.doc.faces{body = body}) do
+  if face.kind == "cylinder" and face.radius < 3 then holes = holes + 1 end
+end
+assert(holes == 12, holes)
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (math.pi * 900 - 12 * math.pi * 4) * 3) < 1e-3, volume)
+```
+
+`pc.design.point_pattern`: Repeat the last feature at a sketch's points.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
+- `sketch` gives the points: a copy stands at each of its points after the first, moved by how far that point is from the first, so the original should stand at the first point drawn. Construction points are left out; a curve's ends and centres count as points.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.hole`.
+
+Example: A hole at each corner of a plate.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = 0, y = 0, width = 40, height = 30}
+local plate = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = plate}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.circle{sketch = at, x = 5, y = 5, radius = 1.5}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- The first point is where the hole stands.
+local corners = pc.sketch.new{body = body, plane = "XY", offset = 4}
+for _, p in ipairs({{5, 5}, {35, 5}, {35, 25}, {5, 25}}) do
+  pc.sketch.point{sketch = corners, x = p[1], y = p[2]}
+end
+pc.design.point_pattern{sketch = corners, originals = {hole}}
+assert(#pc.doc.rebuild() == 0, "the pattern builds")
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (1200 - 4 * math.pi * 2.25) * 4) < 1e-3, volume)
+```
+
+`pc.design.path_pattern`: Repeat the last feature along a sketch's curves or an edge.
+
+- `sketch` (id, optional): The sketch it uses
+- `body` (id, optional): The body it goes in; the sketch's body when left out
+- `name` (string, optional): Its name in the tree
+- `face_point` (list, optional): A face it takes as the viewport's picked face (a thickness's opening, a draft's neutral plane, a mirror's plane, the profile of a pad or a pocket given no sketch): a point of it, {x, y, z}, in the body's own frame
+- `face_normal` (list, optional): With face_point: the face's outward normal, {x, y, z}
+- Other arguments: Any field of the feature, such as length = 20 or reversed = true
+- Returns the feature's id
+
+Notes:
+
+- It makes the feature and builds nothing: a feature that cannot build is told by `pc.doc.rebuild()`, in the list it returns, and its body stays the solid before it. A misspelt field is refused here, naming the fields the feature has.
+- `originals = {id, ...}` are the features it repeats; left out, it takes the body's last feature that is not a dress-up, a pattern, a mirror or a boolean. It is refused in a body with no solid feature yet.
+- A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
+- `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
+- `sketch` gives the path, its first chain of curves (`path = {Sketch = {sketch = id, chain = n}}` another, counted from 0); `path = {Edge = {point = {x, y, z}, direction = {x, y, z}}}` an edge of the solid near the point, in the body's own frame, found on the solid as it stands where the pattern does.
+- `occurrences` (4) counts the original, spread over the whole path, evenly round a closed one; `spacing_mode = true` places them `spacing` mm apart along it instead. The original stands for the path's start (its end with `reversed = true`): each copy is moved from there to its place, and turned as the path turns with `align = true`, so round a circle an aligned copy goes round its centre wherever the original is.
+
+See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.polar_pattern`, `pc.doc.edges`.
+
+Example: Five holes along an arc.
+
+```lua
+local s = pc.sketch.new{plane = "XY"}
+pc.sketch.rect{sketch = s, x = -40, y = -40, width = 80, height = 80}
+local plate = pc.design.pad{sketch = s, length = 4}
+local body = pc.doc.feature{id = plate}.body
+local at = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.circle{sketch = at, x = 30, y = 0, radius = 2}
+local hole = pc.design.pocket{sketch = at, through_all = true}
+-- A quarter arc of radius 30 from where the hole stands.
+local arc = pc.sketch.new{body = body, plane = "XY", offset = 4}
+pc.sketch.arc{sketch = arc, x = 0, y = 0, radius = 30, start = 0, ["end"] = 90}
+pc.design.path_pattern{sketch = arc, originals = {hole}, occurrences = 5}
+assert(#pc.doc.rebuild() == 0, "the pattern builds")
+local ys = {}
+for _, face in ipairs(pc.doc.faces{body = body}) do
+  if face.kind == "cylinder" then ys[#ys + 1] = face.axis.point[2] end
+end
+table.sort(ys)
+assert(#ys == 5 and math.abs(ys[5] - 30) < 1e-6, #ys)
+local volume = pc.doc.measure{body = body}.volume
+assert(math.abs(volume - (6400 - 5 * math.pi * 4) * 4) < 1e-3, volume)
+```
+
 `pc.design.scaled`: Scale the last feature.
 
 - `sketch` (id, optional): The sketch it uses
@@ -4108,7 +4238,7 @@ Notes:
 - A copy that lands outside the solid (a pocket repeated past the material) changes nothing, without an error.
 - `skipped = {1, 3}` leaves occurrences out by index: 0 is the original, then each copy in turn (a mirror's copy is 1). Skipping 0 leaves the originals' own material out, and is refused when an original is the body's first solid.
 - It makes a Multi Transform whose fields are `originals` and `steps`, one `{Scale = {factor, center, occurrences}}`: 1.5 about the body's origin, 2 occurrences, when left out. The occurrences count the original and grow evenly up to `factor`. A `factor` given on its own is refused.
-- `steps` may hold any of `{Linear = {axis, length, occurrences}}`, `{Polar = {axis, angle_deg, occurrences}}`, `{Mirror = {plane}}`, `{Scale = ...}`, `{Circular = {axis, outward, spacing, counts}}` (concentric rings about `axis`, ring i moved i × `spacing` along `outward`, `counts[i]` round it) and `{Points = {sketch}}` (a copy at each of the sketch's points after its first, moved by how far it is from the first), each applied to every result of the steps before.
+- `steps` may hold any of `{Linear = {axis, length, occurrences}}`, `{Polar = {axis, angle_deg, occurrences}}`, `{Mirror = {plane}}`, `{Scale = ...}`, `{Circular = {axis, outward, spacing, counts}}` (concentric rings about `axis`, ring i moved i × `spacing` along `outward`, `counts[i]` round it) and `{Points = {sketch}}` (a copy at each of the sketch's points after its first, moved by how far it is from the first) and `{Path = {path, occurrences, spacing_mode, spacing, reversed, align}}` (as `design.path_pattern` takes them), each applied to every result of the steps before.
 
 See also `pc.doc.rebuild`, `pc.design.set`, `pc.design.linear_pattern`.
 

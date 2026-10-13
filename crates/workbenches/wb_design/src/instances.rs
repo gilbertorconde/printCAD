@@ -9,7 +9,7 @@ use core_document::{
 };
 use glam::Vec3;
 
-use crate::build::{occurrence_transforms, transform_point};
+use crate::build::{occurrence_steps, occurrence_transforms, transform_point};
 use crate::feature::{DesignFeature, EdgeSel};
 
 /// How close to a dot, in pixels, a click takes it.
@@ -37,8 +37,14 @@ pub(crate) fn occurrence_name(index: u32) -> String {
 
 /// Every occurrence of `feature`, a pattern or mirror, at where its
 /// originals stand moved as the occurrence moves them: none for another
-/// feature, or one whose originals stand nowhere a dot can show.
-pub(crate) fn occurrences_of(document: &Document, feature: FeatureId) -> Vec<Occurrence> {
+/// feature, or one whose originals stand nowhere a dot can show. A path
+/// step's places are asked of `kernel`, along an edge of the body's solid
+/// as it stands; none without one.
+pub(crate) fn occurrences_of(
+    document: &Document,
+    kernel: Option<&dyn kernel_api::KernelQueries>,
+    feature: FeatureId,
+) -> Vec<Occurrence> {
     let Some(node) = document.get_feature_meta(feature) else {
         return Vec::new();
     };
@@ -55,7 +61,22 @@ pub(crate) fn occurrences_of(document: &Document, feature: FeatureId) -> Vec<Occ
     let Some(anchor) = anchor_of(document, originals) else {
         return Vec::new();
     };
-    let Ok(transforms) = occurrence_transforms(document, &part) else {
+    let Ok(steps) = occurrence_steps(document, &part) else {
+        return Vec::new();
+    };
+    let transforms = match kernel {
+        _ if steps
+            .iter()
+            .all(|s| matches!(s, kernel_api::PatternStep::Transforms(_))) =>
+        {
+            occurrence_transforms(document, &part).ok()
+        }
+        Some(kernel) => kernel
+            .pattern_transforms(document.imported_brep_blob(body), &steps)
+            .ok(),
+        None => None,
+    };
+    let Some(transforms) = transforms else {
         return Vec::new();
     };
     let placement = document.body_placement(body);
@@ -249,7 +270,7 @@ mod tests {
     #[test]
     fn each_occurrence_stands_where_the_pattern_puts_its_original() {
         let (doc, pattern) = patterned();
-        let found = occurrences_of(&doc, pattern);
+        let found = occurrences_of(&doc, None, pattern);
         let at: Vec<[f32; 3]> = found.iter().map(|o| o.at.to_array()).collect();
         assert_eq!(
             at,
@@ -262,7 +283,7 @@ mod tests {
     #[test]
     fn a_click_takes_the_dot_it_falls_on() {
         let (mut doc, pattern) = patterned();
-        let found = occurrences_of(&doc, pattern);
+        let found = occurrences_of(&doc, None, pattern);
         let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 800, 800));
         ctx.view_proj = Some(
             (glam::Mat4::from_scale(Vec3::new(0.005, 0.005, 0.001))
