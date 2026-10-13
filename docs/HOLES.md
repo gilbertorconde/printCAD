@@ -47,8 +47,11 @@ first, to know how far it runs.
 bore at its tap drill and shows the thread instead: a helix of the
 thread's pitch down the bore, as far as the hole goes (a through hole's
 to where it leaves the solid), and the designation in its row's
-tooltip in the tree ("Hole · M6 thread"). Nothing of it reaches an
-export: drill the tap size, print, and tap the hole afterwards.
+tooltip in the tree ("Hole · M6 thread"). The designation is also a
+callout at each bore's mouth under View › Annotations, a column of the
+Assembly's parts list ("2 × M6 thread") and of its CSV, and a callout
+(its text and its leader) in a STEP export. No groove reaches an export:
+drill the tap size, print, and tap the hole afterwards.
 
 ## Depth and bottom
 

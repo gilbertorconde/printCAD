@@ -64,23 +64,28 @@ struct OwnedBody {
     notes: Vec<(String, [f32; 3], [f32; 3])>,
 }
 
-/// The notes a body's export carries: those shown, each as its label
-/// reads, on its face as the body is built now, in the body's frame.
+/// The notes a body's export carries, in the body's frame: those shown,
+/// each as its label reads, on its face as the body is built now, then a
+/// callout of each cosmetic thread, its designation at its bore's mouth.
 fn body_notes(
     document: &core_document::Document,
     body: core_document::BodyId,
 ) -> Vec<(String, [f32; 3], [f32; 3])> {
     let local = document.local_geometry(body);
     let mesh = local.as_ref().map(|(mesh, _)| mesh.as_ref());
-    document
+    let notes = document
         .body_notes(body)
         .iter()
         .filter(|note| !note.hidden)
         .map(|note| {
             let (at, label) = note.resolved(mesh);
             (document.note_text(note), at, label)
-        })
-        .collect()
+        });
+    let threads = document.body_threads(body).map(|thread| {
+        let (at, label) = thread.leader();
+        (thread.label(), at, label)
+    });
+    notes.chain(threads).collect()
 }
 
 /// Every owned body's notes, as the kernel's export takes them.
@@ -836,6 +841,43 @@ mod tests {
             doc.body_placement(body).offset().x > 499.0,
             "the body stays put"
         );
+    }
+
+    /// A cosmetic thread goes out to STEP as a callout of its
+    /// designation, its leader starting on the bore's rim where the body
+    /// sits.
+    #[test]
+    fn a_step_export_writes_a_callout_of_each_thread() {
+        let mut doc = textured_box(false);
+        let body = doc.bodies()[0].id;
+        doc.set_body_placement(
+            body,
+            core_document::BodyPlacement::new(
+                glam::Quat::IDENTITY,
+                glam::Vec3::new(100.0, 0.0, 0.0),
+            ),
+        );
+        doc.set_cosmetic_threads(vec![core_document::ThreadCallout {
+            feature: core_document::FeatureId::new(),
+            body,
+            designation: "M6".into(),
+            mouth: [5.0, 5.0, 10.0],
+            axis: [0.0, 0.0, -1.0],
+            radius: 2.5,
+        }]);
+        let path = std::env::temp_dir().join(format!("thread-{}.step", uuid::Uuid::new_v4()));
+        let (path, exported) =
+            export_document(&doc, path, ExportFormat::Step, None, None, None).unwrap();
+        let _ = std::fs::remove_file(path);
+        let text = String::from_utf8(exported.bytes).unwrap();
+        assert!(text.contains("DRAUGHTING_CALLOUT('M6 thread'"), "{text}");
+        let (at, _) = doc.cosmetic_threads()[0].leader();
+        let rim = format!("({:?},", f64::from(at[0]) + 100.0);
+        let list = text
+            .lines()
+            .find(|l| l.contains("COORDINATES_LIST('M6 thread'"))
+            .expect("the leader is written");
+        assert!(list.contains(&rim), "{list} starts at {rim}");
     }
 
     /// A binary STL's triangle count and highest point.
