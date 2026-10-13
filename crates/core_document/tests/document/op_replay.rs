@@ -65,6 +65,7 @@ fn scripted_session(doc: &mut Document) {
     )
     .expect("origin");
     doc.set_display_unit(Unit::In);
+    doc.set_measure_unit(Some(Unit::Cm));
     doc.set_agent_rules("Keep every wall at least 1.2 mm thick.");
     doc.set_name("Replayed");
 }
@@ -272,4 +273,40 @@ fn a_document_keeps_its_agent_rules() {
         .expect("saves");
     let back = Document::load_from_bytes(bytes).expect("loads");
     assert_eq!(back.agent_rules(), "The lid stays 2 mm thick.");
+}
+
+/// The unit the measure tool reads in is saved with the document, replays
+/// on a peer and is one undo step; a document saved without one reads in
+/// its display unit.
+#[test]
+fn a_document_keeps_its_measure_unit() {
+    let mut doc = Document::new("measured");
+    let mut journal = core_document::history::OpJournal::new(16);
+    journal.note(&mut doc);
+    assert_eq!(doc.measure_unit(), None);
+    doc.set_measure_unit(Some(Unit::In));
+    journal.note(&mut doc);
+    let ops = doc.take_pending_ops();
+    assert_eq!(ops.len(), 1, "one op");
+
+    let mut replica = Document::new("peer");
+    replica.apply_remote_op(&ops[0]);
+    assert_eq!(replica.measure_unit(), Some(Unit::In));
+
+    let bytes = doc
+        .save_to_bytes(core_document::Compression::None)
+        .expect("saves");
+    let back = Document::load_from_bytes(bytes).expect("loads");
+    assert_eq!(back.measure_unit(), Some(Unit::In));
+
+    assert!(journal.undo(&mut doc).is_some());
+    assert_eq!(doc.measure_unit(), None);
+    assert!(journal.redo(&mut doc).is_some());
+    assert_eq!(doc.measure_unit(), Some(Unit::In));
+
+    let plain = Document::new("plain")
+        .save_to_bytes(core_document::Compression::None)
+        .expect("saves");
+    let back = Document::load_from_bytes(plain).expect("loads");
+    assert_eq!(back.measure_unit(), None);
 }

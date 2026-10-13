@@ -86,6 +86,10 @@ pub enum DocumentOp {
     SetDisplayUnit {
         unit: Unit,
     },
+    /// The unit the measure tool reads in; `None` is the display unit.
+    SetMeasureUnit {
+        unit: Option<Unit>,
+    },
     /// What an AI agent working on this document is told to follow.
     SetAgentRules {
         rules: String,

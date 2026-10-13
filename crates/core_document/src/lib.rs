@@ -147,6 +147,10 @@ pub struct Document {
     /// this only controls how lengths are surfaced to the user.
     #[serde(default)]
     display_unit: Unit,
+    /// The unit the measure tool reads in, when the user chose one over
+    /// the display unit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    measure_unit: Option<Unit>,
     /// What an AI agent working on this document is told to follow, beside
     /// the rules the user keeps for every document. Travels with the file.
     #[serde(default)]
@@ -716,6 +720,7 @@ impl Document {
             imported_objects: HashMap::new(),
             imported_object_roots: Vec::new(),
             display_unit: Unit::default(),
+            measure_unit: None,
             agent_rules: String::new(),
             history: Vec::new(),
             asset_blobs: HashMap::new(),
@@ -771,6 +776,20 @@ impl Document {
     pub fn set_display_unit(&mut self, unit: Unit) {
         if self.display_unit != unit {
             self.record_and_apply(op::DocumentOp::SetDisplayUnit { unit });
+        }
+    }
+
+    /// The unit the measure tool reads in, when one was chosen over the
+    /// display unit.
+    pub fn measure_unit(&self) -> Option<Unit> {
+        self.measure_unit
+    }
+
+    /// Choose the unit the measure tool reads in; `None` reads in the
+    /// display unit.
+    pub fn set_measure_unit(&mut self, unit: Option<Unit>) {
+        if self.measure_unit != unit {
+            self.record_and_apply(op::DocumentOp::SetMeasureUnit { unit });
         }
     }
 
@@ -845,6 +864,9 @@ impl Document {
             },
             Op::SetDisplayUnit { .. } => Op::SetDisplayUnit {
                 unit: self.display_unit,
+            },
+            Op::SetMeasureUnit { .. } => Op::SetMeasureUnit {
+                unit: self.measure_unit,
             },
             Op::SetAgentRules { .. } => Op::SetAgentRules {
                 rules: self.agent_rules.clone(),
@@ -1078,6 +1100,9 @@ impl Document {
             }
             Op::SetDisplayUnit { unit } => {
                 self.display_unit = *unit;
+            }
+            Op::SetMeasureUnit { unit } => {
+                self.measure_unit = *unit;
             }
             Op::SetAgentRules { rules } => {
                 self.agent_rules.clone_from(rules);
