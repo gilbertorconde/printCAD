@@ -803,7 +803,7 @@ mod tests {
         let handle = wb
             .handles(&ctx)
             .into_iter()
-            .next()
+            .find(|h| h.label == "Length")
             .expect("the pad offers a handle");
         assert!((handle.position() - glam::Vec3::new(5.0, 2.5, 10.0)).length() < 1e-4);
         let at = ctx.world_to_viewport([5.0, 2.5, 10.0]).unwrap();

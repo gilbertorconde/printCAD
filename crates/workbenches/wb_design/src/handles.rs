@@ -2,7 +2,9 @@
 //! number the view can show (a pad's or pocket's lengths, a hole's depth,
 //! a revolution's or groove's angles round its axis, a draft's angle, a
 //! primitive's sizes, a fillet's or chamfer's size), dragged along its
-//! line or round its arc in steps. Only numbers the feature lists as
+//! line or round its arc in steps, and where a pad, pocket or hole starts
+//! along its way or a revolution or groove starts round its axis. Only
+//! numbers the feature lists as
 //! parameters have one, and none a formula sets. A pad's, pocket's,
 //! hole's, revolution's or groove's turns the feature the other way when
 //! clicked, or dragged through its start.
@@ -54,6 +56,8 @@ pub(crate) enum Range {
     /// Through zero the feature turns the other way and the number stays
     /// above the least; a click turns it too.
     Reversible,
+    /// Either side of zero.
+    Signed,
 }
 
 /// A handle on one number of a feature.
@@ -160,6 +164,7 @@ impl Handle {
         let value = (raw / step).round() * step;
         Some(match self.range {
             Range::Positive => value.clamp(LEAST, self.most),
+            Range::Signed => value.clamp(-self.most, self.most),
             Range::Reversible if value.abs() < LEAST => LEAST.copysign(raw),
             Range::Reversible => value.clamp(-self.most, self.most),
         })
@@ -262,7 +267,9 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
     let Some(node) = document.get_feature_meta(feature) else {
         return Vec::new();
     };
-    let (Some(body), Ok(part)) = (node.body, DesignFeature::from_json(&node.data)) else {
+    // Where things stand as the build has them: a start face followed.
+    let values = document.feature_values(feature).unwrap_or(&node.data);
+    let (Some(body), Ok(part)) = (node.body, DesignFeature::from_json(values)) else {
         return Vec::new();
     };
     let maker = Maker {
@@ -293,34 +300,40 @@ pub(crate) fn handles_of(document: &Document, feature: FeatureId, eye: Vec3) -> 
     out.into_iter().flatten().collect()
 }
 
-/// A pad's or pocket's: its length from the profile along the way it
-/// runs (half of it, centred), and the second side's the other way.
+/// A pad's or pocket's: where it starts along the way it runs, from the
+/// profile's plane or the plane or face it starts on; its length from
+/// there (half of it, centred), and the second side's the other way.
 fn extrude_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
-    let (sketch, reversed, symmetric, mode, mode2, direction, against, first, second) = match part {
-        DesignFeature::Pad {
-            sketch,
-            reversed,
-            symmetric,
-            mode,
-            mode2,
-            direction,
-            ..
-        } => (
-            sketch, reversed, symmetric, mode, mode2, direction, false, "/length", "/length2",
-        ),
-        DesignFeature::Pocket {
-            sketch,
-            reversed,
-            symmetric,
-            mode,
-            mode2,
-            direction,
-            ..
-        } => (
-            sketch, reversed, symmetric, mode, mode2, direction, true, "/depth", "/depth2",
-        ),
-        _ => return Vec::new(),
-    };
+    let (sketch, reversed, symmetric, mode, mode2, direction, extras, against, first, second) =
+        match part {
+            DesignFeature::Pad {
+                sketch,
+                reversed,
+                symmetric,
+                mode,
+                mode2,
+                direction,
+                extras,
+                ..
+            } => (
+                sketch, reversed, symmetric, mode, mode2, direction, extras, false, "/length",
+                "/length2",
+            ),
+            DesignFeature::Pocket {
+                sketch,
+                reversed,
+                symmetric,
+                mode,
+                mode2,
+                direction,
+                extras,
+                ..
+            } => (
+                sketch, reversed, symmetric, mode, mode2, direction, extras, true, "/depth",
+                "/depth2",
+            ),
+            _ => return Vec::new(),
+        };
     if *direction != ExtrudeDirection::Normal {
         return Vec::new();
     }
@@ -329,9 +342,36 @@ fn extrude_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     };
     let sign = if *reversed != against { -1.0 } else { 1.0 };
     let dir = maker.world_dir(normal) * sign;
-    let start = maker.world(centre);
+    // The plane it starts on, along the profile's normal, as the build
+    // carries the profile there.
+    let to_start = match (&extras.start_face, extras.start_at) {
+        (None, None) => Some(0.0),
+        (face, at) => (|| {
+            let sketch = crate::build::load_sketch(maker.document, (*sketch)?).ok()?;
+            let plane = wb_sketch::profile::plane_of(&sketch.plane);
+            let target = match (face, at) {
+                (Some(face), _) => crate::build::face_pick_plane(face),
+                (None, Some(at)) => crate::build::start_plane(maker.document, at).ok()?,
+                (None, None) => return None,
+            };
+            crate::build::distance_to_plane(plane.origin, plane.normal, target).ok()
+        })(),
+    };
+    let Some(to_start) = to_start else {
+        return Vec::new();
+    };
+    let base = maker.world(centre) + maker.world_dir(normal) * to_start as f32;
+    let mut out = vec![maker.handle(
+        "/extras/start_offset",
+        Shape::Line {
+            origin: base,
+            dir,
+            scale: 1.0,
+        },
+        Range::Signed,
+    )];
+    let start = base + dir * extras.start_offset;
     let (first_mode, second_mode) = mode.sides(*mode2);
-    let mut out = Vec::new();
     if first_mode == ExtrudeMode::Dimension {
         // Centred only in the one mode that offers it.
         let centred = *symmetric && *mode == ExtrudeMode::Dimension && mode2.is_none();
@@ -359,11 +399,14 @@ fn extrude_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     out
 }
 
-/// A hole's: its depth down the drill from its first centre.
+/// A hole's: where it starts down the drill, from its sketch's plane or
+/// the plane or face it starts on, and its depth from there, at its first
+/// centre.
 fn hole_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     let DesignFeature::Hole {
         sketch,
-        through_all: false,
+        through_all,
+        start,
         ..
     } = part
     else {
@@ -372,7 +415,11 @@ fn hole_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     let Ok(sketch) = crate::build::load_sketch(maker.document, *sketch) else {
         return Vec::new();
     };
-    let Ok((plane, into)) = crate::build::hole_plane(maker.document, part, &sketch) else {
+    let mut unshifted = part.clone();
+    if let DesignFeature::Hole { start, .. } = &mut unshifted {
+        start.offset = 0.0;
+    }
+    let Ok((plane, into)) = crate::build::hole_plane(maker.document, &unshifted, &sketch) else {
         return Vec::new();
     };
     let Some(centre) = crate::build::hole_centers(&sketch.sketch).first().copied() else {
@@ -381,20 +428,33 @@ fn hole_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     let at: [f64; 3] = std::array::from_fn(|k| {
         plane.origin[k] + plane.x_axis[k] * centre[0] + plane.y_axis[k] * centre[1]
     });
-    vec![maker.handle(
-        "/depth",
+    let (base, dir) = (maker.world64(at), maker.world_dir64(into));
+    let mut out = vec![maker.handle(
+        "/start/offset",
         Shape::Line {
-            origin: maker.world64(at),
-            dir: maker.world_dir64(into),
+            origin: base,
+            dir,
             scale: 1.0,
         },
-        Range::Reversible,
-    )]
+        Range::Signed,
+    )];
+    if !*through_all {
+        out.push(maker.handle(
+            "/depth",
+            Shape::Line {
+                origin: base + dir * start.offset,
+                dir,
+                scale: 1.0,
+            },
+            Range::Reversible,
+        ));
+    }
+    out
 }
 
-/// A revolution's or groove's: its angle round the axis from the
-/// profile's middle, the way it turns (half of it, about the midplane),
-/// and the second angle the other way.
+/// A revolution's or groove's: where it starts round the axis from the
+/// profile's middle, its angle from there the way it turns (half of it,
+/// about the midplane), and the second angle the other way.
 fn revolve_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     let (DesignFeature::Revolution {
         sketch,
@@ -403,6 +463,7 @@ fn revolve_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         reversed,
         midplane,
         second_angle_deg,
+        start_angle_deg,
         mode,
         ..
     }
@@ -413,6 +474,7 @@ fn revolve_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         reversed,
         midplane,
         second_angle_deg,
+        start_angle_deg,
         mode,
         ..
     }) = part
@@ -422,11 +484,15 @@ fn revolve_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
     let Some(ring) = revolve_ring(maker, *sketch, axis, *project_axis, *reversed) else {
         return Vec::new();
     };
-    let mut out = Vec::new();
+    let mut start = maker.handle("/start_angle_deg", ring.arc(0.0, 1.0), Range::Signed);
+    if let Some(h) = &mut start {
+        h.most = 360.0;
+    }
+    let mut out = vec![start];
     if *mode == RevolveMode::Angle {
         let mut angle = maker.handle(
             "/angle_deg",
-            ring.arc(0.0, if *midplane { 0.5 } else { 1.0 }),
+            ring.arc(*start_angle_deg, if *midplane { 0.5 } else { 1.0 }),
             if *midplane {
                 Range::Positive
             } else {
@@ -440,7 +506,7 @@ fn revolve_handles(maker: &Maker, part: &DesignFeature) -> Vec<Option<Handle>> {
         if second_angle_deg.is_some() {
             let mut second = maker.handle(
                 "/second_angle_deg",
-                ring.turned_round().arc(0.0, 1.0),
+                ring.turned_round().arc(-*start_angle_deg, 1.0),
                 Range::Positive,
             );
             if let Some(h) = &mut second {
@@ -864,6 +930,12 @@ mod tests {
         turned.value = 8.0;
         turned.turn_round();
         assert_eq!(turned.position(), Vec3::new(0.0, 0.0, 8.0), "where it was");
+        let signed = line(1.0, Range::Signed);
+        assert_eq!(
+            signed.value_at(Vec3::new(100.0, 0.0, -0.2), Vec3::NEG_X, 1.0),
+            Some(0.0),
+            "a signed number may be zero"
+        );
         let mut part = DesignFeature::from_json(&serde_json::json!({"Pad": {
             "sketch": uuid::Uuid::nil(), "length": 5.0, "reversed": false,
         }}));
@@ -958,8 +1030,9 @@ mod tests {
 
     const EYE: Vec3 = Vec3::new(50.0, -50.0, 40.0);
 
-    /// A pad's length stands above its profile's middle, the second side's
-    /// below it; a formula on the length takes its handle away.
+    /// A pad's start stands on its profile's middle, its length above
+    /// the start and the second side's below it; a formula on the length
+    /// takes its handle away.
     #[test]
     fn a_pad_offers_each_side_s_length_unless_a_formula_sets_it() {
         let (mut doc, pad) = made(serde_json::json!({"Pad": {
@@ -971,24 +1044,43 @@ mod tests {
             .iter()
             .map(|h| (h.label.as_str(), h.position()))
             .collect();
-        assert_eq!(at.len(), 2, "{at:?}");
+        assert_eq!(at.len(), 3, "{at:?}");
+        assert_eq!(at[0], ("Start offset", Vec3::new(5.0, 3.0, 0.0)));
+        assert_eq!(offered[0].range, Range::Signed);
         assert!(
-            at[0].1.abs_diff_eq(Vec3::new(5.0, 3.0, 4.0), 1e-4),
+            at[1].1.abs_diff_eq(Vec3::new(5.0, 3.0, 4.0), 1e-4),
             "{at:?}"
         );
-        assert_eq!(at[1].0, "Second length");
+        assert_eq!(at[2].0, "Second length");
         assert!(
-            at[1].1.abs_diff_eq(Vec3::new(5.0, 3.0, -3.0), 1e-4),
+            at[2].1.abs_diff_eq(Vec3::new(5.0, 3.0, -3.0), 1e-4),
             "{at:?}"
         );
-        assert_eq!(offered[0].range, Range::Reversible);
+        assert_eq!(offered[1].range, Range::Reversible);
         doc.set_feature_formula(pad, "/Pad/length", Some("2 * 3".into()))
             .unwrap();
         let left: Vec<String> = handles_of(&doc, pad, EYE)
             .into_iter()
             .map(|h| h.label)
             .collect();
-        assert_eq!(left, ["Second length"]);
+        assert_eq!(left, ["Start offset", "Second length"]);
+    }
+
+    /// A pad started on a face 7 mm up and 2 mm on from it: the start
+    /// handle stands at 9, its length from there.
+    #[test]
+    fn a_pad_s_start_handle_stands_where_it_starts() {
+        let (doc, pad) = made(serde_json::json!({"Pad": {
+            "sketch": "SKETCH", "length": 4.0, "reversed": false,
+            "extras": {"start_offset": 2.0, "start_face": {
+                "point": [1.0, 1.0, 7.0], "normal": [0.0, 0.0, 1.0],
+            }},
+        }}));
+        let at: Vec<Vec3> = handles_of(&doc, pad, EYE)
+            .iter()
+            .map(Handle::position)
+            .collect();
+        assert_eq!(at, [Vec3::new(5.0, 3.0, 9.0), Vec3::new(5.0, 3.0, 13.0)]);
     }
 
     /// A revolution's angle runs round its axis from the profile's
@@ -999,8 +1091,14 @@ mod tests {
             "sketch": "SKETCH", "angle_deg": 90.0, "axis": "SketchY",
         }}));
         let offered = handles_of(&doc, revolution, EYE);
-        assert_eq!(offered.len(), 1);
-        let angle = &offered[0];
+        assert_eq!(offered.len(), 2);
+        assert_eq!(offered[0].label, "Start angle");
+        assert!(
+            offered[0]
+                .position()
+                .abs_diff_eq(Vec3::new(5.0, 3.0, 0.0), 1e-4)
+        );
+        let angle = &offered[1];
         assert!(angle.angle && angle.range == Range::Reversible && angle.most == 360.0);
         // The middle (5, 3, 0) a quarter turn about +Y: (0, 3, -5).
         assert!(
@@ -1009,6 +1107,23 @@ mod tests {
                 .abs_diff_eq(Vec3::new(0.0, 3.0, -5.0), 1e-4),
             "{:?}",
             angle.position()
+        );
+        // Started a quarter on, it ends a half turn round.
+        let (doc, revolution) = made(serde_json::json!({"Revolution": {
+            "sketch": "SKETCH", "angle_deg": 90.0, "axis": "SketchY", "start_angle_deg": 90.0,
+        }}));
+        let offered = handles_of(&doc, revolution, EYE);
+        assert!(
+            offered[0]
+                .position()
+                .abs_diff_eq(Vec3::new(0.0, 3.0, -5.0), 1e-4)
+        );
+        assert!(
+            offered[1]
+                .position()
+                .abs_diff_eq(Vec3::new(-5.0, 3.0, 0.0), 1e-4),
+            "{:?}",
+            offered[1].position()
         );
     }
 
@@ -1050,10 +1165,15 @@ mod tests {
         let mut data = doc.get_feature_data(hole).unwrap().clone();
         data["Hole"]["sketch"] = serde_json::json!(points);
         doc.update_feature_data(hole, data).unwrap();
-        let depth = handles_of(&doc, hole, EYE);
-        assert_eq!(depth.len(), 1);
+        let offered = handles_of(&doc, hole, EYE);
+        assert_eq!(offered.len(), 2);
         assert_eq!(
-            depth[0].position(),
+            offered[0].position(),
+            Vec3::new(2.0, 1.0, 0.0),
+            "where it starts"
+        );
+        assert_eq!(
+            offered[1].position(),
             Vec3::new(2.0, 1.0, -3.0),
             "down the drill"
         );
