@@ -660,7 +660,7 @@ fn halved_volume() -> f64 {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve that enters a face across the low end of its periodic chart's angle window (a half cylinder's side, where the other half meets it): \"a curve to split along does not cross the face\""]
+#[ignore = "kernel: split_face refuses a closed curve that enters a face across the low end of its periodic chart's angle window (a half cylinder's side, where the other half meets it): \"a curve to split along does not cross the face\" (ogeom-rs#229)"]
 fn a_wrapped_sketch_spans_two_faces() {
     let plain = halved_volume();
     let width: f64 = 6.0;
@@ -683,7 +683,7 @@ fn a_wrapped_sketch_spans_two_faces() {
 }
 
 #[test]
-#[ignore = "kernel: split_face refuses a closed curve that enters a face across the low end of its periodic chart's angle window (a half cylinder's side, where the other half meets it): \"a curve to split along does not cross the face\""]
+#[ignore = "kernel: split_face refuses a closed curve that enters a face across the low end of its periodic chart's angle window (a half cylinder's side, where the other half meets it): \"a curve to split along does not cross the face\" (ogeom-rs#229)"]
 fn a_projected_sketch_spans_two_faces() {
     let plain = halved_volume();
     let width: f64 = 6.0;
