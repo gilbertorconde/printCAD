@@ -21,7 +21,7 @@ cargo run -p app_shell            # launch the app (needs a Vulkan, Metal or DX1
 cargo run --release -p app_shell  # for real STEP files; see the profile note
 cargo test --workspace            # full suite (~1500 tests)
 node scripts/test-budget.mjs      # the same, timed against its budget (what CI runs)
-node scripts/test-budget.mjs $(node scripts/affected-crates.mjs)   # only what a change reaches
+node scripts/test-budget.mjs --changed   # only what a change reaches, its own crates first
 cargo clippy --workspace --all-targets   # CI enforces -D warnings
 cargo fmt --all                   # CI enforces --check
 ```
@@ -94,7 +94,8 @@ cargo fmt --all                   # CI enforces --check
   (`window_icon`), the Windows program's resource (`build.rs`,
   `winresource`), the macOS bundle's, and the desktop entry's, which the
   window finds through its app id `printcad`.
-  The CI's `platforms` job runs clippy and the tests on Windows and macOS.
+  The CI's `platforms` job runs clippy, and the tests when a change can
+  differ by platform, on Windows and macOS (Testing conventions).
 - The app also builds for a browser page: `scripts/build-web.sh` (the
   release build for `wasm32-unknown-unknown`, wasm-bindgen at the version
   `Cargo.lock` pins, `wasm-opt`; `web/index.html` starts it, showing the
@@ -1385,11 +1386,24 @@ on the start page (`Screen::Start`); the recent list lives in
   file as a module there, never as a new file beside `main.rs`'s
   directory. Dependencies build with line tables only
   (`[profile.dev.package."*"]`) for the same reason.
+  Our own crates build with line tables too (`[profile.dev] debug =
+  "line-tables-only"`, about a fifth off a test build); a debugger session
+  sets `CARGO_PROFILE_DEV_DEBUG=full`.
 - The suite has a time budget (`scripts/test-budget.mjs`: 60 s a program,
-  150 s in all, on CI); a test that needs a big model is `#[ignore]` with
-  the reason, run on request. While working, test what a change reaches:
-  `scripts/affected-crates.mjs` (changed crates and everything depending
-  on them, dev-dependencies included); CI runs everything.
+  150 s in all, on CI, two programs running at a time); a test that needs
+  a big model is `#[ignore]` with the reason, run on request. While
+  working, test what a change reaches: `node scripts/test-budget.mjs
+  --changed` (`scripts/affected-crates.mjs` against the merge base with
+  origin/master: changed crates and everything depending on them,
+  dev-dependencies included; the changed crates' programs run first).
+- CI (`.github/workflows/ci.yml`): a push to master builds, lints and
+  tests everything on Linux, Windows and macOS. A pull request lints
+  everything on all three, but tests on Linux only what it reaches
+  (`scripts/ci-scope.mjs`), and on Windows and macOS only when it touches
+  code that differs by platform (the system-facing crates and files, any
+  file with a `cfg(windows)`/`cfg(unix)`/`target_os` gate, the manifests)
+  or carries the `platforms` label. Changes to CI, the test scripts or the
+  manifests test everything.
 
 - Sketcher end-to-end tests drive `on_input` with real viewport-pixel clicks:
   `wb_sketch/tests/sketcher/interaction.rs` (reuse its `Harness`).

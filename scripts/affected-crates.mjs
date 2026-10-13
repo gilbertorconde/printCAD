@@ -6,17 +6,24 @@
 // Cargo.toml or Cargo.lock), or nothing when no crate is touched.
 //
 //   node scripts/affected-crates.mjs            changes against HEAD, untracked files too
-//   node scripts/affected-crates.mjs <ref>      changes since <ref> (origin/master)
+//   node scripts/affected-crates.mjs <ref>      changes since the branch left <ref> (origin/master)
+//   node scripts/affected-crates.mjs --json …   {everything, touched, touchedManifests, affected}
 //
-// CI runs every test; this is for the edit-test loop, where testing only
-// what a change reaches saves building and running the rest.
+// A change is the working tree against the merge base with <ref>, so what
+// <ref> gained since is not counted. The edit-test loop runs it through
+// `scripts/test-budget.mjs --changed`; a pull request's CI through
+// `scripts/ci-scope.mjs`.
 
 import { execFileSync } from "node:child_process";
 import { relative, dirname } from "node:path";
 
-const base = process.argv[2] ?? "HEAD";
-const git = (...args) => execFileSync("git", args, { encoding: "utf8" });
+const args = process.argv.slice(2);
+const json = args[0] === "--json";
+if (json) args.shift();
+const ref = args[0] ?? "HEAD";
+const git = (...a) => execFileSync("git", a, { encoding: "utf8" });
 const root = git("rev-parse", "--show-toplevel").trim();
+const base = ref === "HEAD" ? ref : git("merge-base", ref, "HEAD").trim();
 const changed = new Set(
   [
     ...git("diff", "--name-only", base).split("\n"),
@@ -26,7 +33,11 @@ const changed = new Set(
 
 const everything = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", ".cargo/config.toml"];
 if ([...changed].some((f) => everything.includes(f))) {
-  console.log("--workspace");
+  console.log(
+    json
+      ? JSON.stringify({ everything: true, touched: [], touchedManifests: [], affected: [] })
+      : "--workspace",
+  );
   process.exit(0);
 }
 
@@ -38,16 +49,20 @@ const metadata = JSON.parse(
 );
 const members = metadata.packages.map((p) => ({
   name: p.name,
+  manifest: p.manifest_path,
   dir: relative(root, dirname(p.manifest_path)),
   deps: p.dependencies.filter((d) => d.path).map((d) => d.name),
 }));
 
 // Files whose test lives in another crate than their own directory says.
 const elsewhere = [
-  // The scripting guide is generated, and app_shell's test checks it.
-  ["docs/SCRIPTING.md", "app_shell"],
+  // app_shell's tests check the generated scripting guide, search the
+  // guides and run every recipe.
+  ["docs/", "app_shell"],
   // The guest SDK and its examples are built by wb_wasm's package tests.
   ["sdk/", "wb_wasm"],
+  // The window's event layer, patched in place.
+  ["third_party/egui-winit/", "app_shell"],
 ];
 
 const touched = new Set();
@@ -74,4 +89,16 @@ while (grew) {
     }
   }
 }
-console.log([...affected].sort().map((name) => `-p ${name}`).join(" "));
+const names = [...affected].sort();
+if (json) {
+  console.log(
+    JSON.stringify({
+      everything: false,
+      touched: [...touched].sort(),
+      touchedManifests: members.filter((m) => touched.has(m.name)).map((m) => m.manifest),
+      affected: names,
+    }),
+  );
+} else {
+  console.log(names.map((name) => `-p ${name}`).join(" "));
+}

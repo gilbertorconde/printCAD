@@ -4,12 +4,45 @@ on:
   push:
     branches: [master]
   pull_request:
+    # `labeled`: adding the `platforms` label tests Windows and macOS too.
+    types: [opened, synchronize, reopened, labeled]
+  # A branch's full run on request; like a push to master it saves the
+  # caches, which pull requests only read.
+  workflow_dispatch:
+
+concurrency:
+  # A newer push to the same pull request replaces the run in progress.
+  group: ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
+  # What a pull request reaches; a push to master takes everything.
+  scope:
+    runs-on: ubuntu-latest
+    outputs:
+      tests: ${{ steps.scope.outputs.tests }}
+      platforms: ${{ steps.scope.outputs.platforms }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          CI_PLATFORMS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'platforms') }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            node scripts/ci-scope.mjs "origin/$BASE"
+          else
+            printf 'tests=--workspace\nplatforms=true\n' | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -18,6 +51,8 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Format check
         run: cargo fmt --all --check
@@ -32,9 +67,6 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-
-      - name: Tests, within their time budget
-        run: node scripts/test-budget.mjs
 
       - name: Standalone solver dependencies and features
         run: |
@@ -53,8 +85,44 @@ jobs:
       - name: The host names no workbench
         run: "! git grep -nE 'wb_design|wb_sketch|\"wb\\.(design|part|sketch)\"|core\\.datum' -- crates/app_shell/src ':!crates/app_shell/src/app/seam_lint.rs'"
 
+  test:
+    needs: scope
+    if: needs.scope.outputs.tests != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Rust toolchain (from rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # The SDK's packages, which wb_wasm's tests build, keep their
+          # dependencies too.
+          workspaces: |
+            . -> target
+            sdk -> target
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
+      # The build wb_wasm's package tests start (crates/workbenches/wb_wasm/
+      # tests/packages.rs), done first so the budget times only the tests.
+      - name: The SDK's packages
+        if: contains(needs.scope.outputs.tests, 'wb_wasm') || needs.scope.outputs.tests == '--workspace'
+        working-directory: sdk
+        run: cargo build --release --target wasm32-wasip2 -p gear -p rogue -p probe
+
+      - name: Tests, within their time budget
+        run: node scripts/test-budget.mjs ${{ needs.scope.outputs.tests }}
+
   platforms:
-    # Windows and macOS: the same build, lints and tests as Linux.
+    # Windows and macOS: the same lints everywhere; the tests on every push
+    # to master, and on a pull request that reaches code differing by
+    # platform or carries the `platforms` label.
+    needs: scope
     strategy:
       fail-fast: false
       matrix:
@@ -67,9 +135,24 @@ jobs:
         run: rustup show active-toolchain || rustup toolchain install
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            sdk -> target
+          save-if: ${{ github.event_name != 'pull_request' }}
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - uses: actions/setup-node@v7
+        if: needs.scope.outputs.platforms == 'true' && needs.scope.outputs.tests != ''
+        with:
+          node-version: 24
+
       - name: Tests
-        run: cargo test --workspace
+        if: needs.scope.outputs.platforms == 'true' && needs.scope.outputs.tests != ''
+        # The budget is held on Linux; these runners are only slower.
+        env:
+          TEST_BUDGET_PROGRAM_S: 600
+          TEST_BUDGET_TOTAL_S: 1800
+        run: node scripts/test-budget.mjs ${{ needs.scope.outputs.tests }}

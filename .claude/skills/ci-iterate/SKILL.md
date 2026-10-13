@@ -17,8 +17,9 @@ remain (the owner pushes, tags and approves).
 - Classify before you fix: product defect, test defect, flake,
   infrastructure (runner, GitHub outage, a crate registry or Homebrew
   hiccup, a shader compiler build on the Windows runner), or a
-  platform-only failure (the `platforms` job runs clippy and the tests on
-  Windows and macOS; nobody runs the app there by hand). Check
+  platform-only failure (the `platforms` job runs clippy and, on master
+  or for platform code, the tests on Windows and macOS; nobody runs the
+  app there by hand). Check
   <https://www.githubstatus.com/> when several unrelated jobs fail
   together.
 - Fix the root cause. No `--no-verify`, no skipped or commented-out
@@ -34,7 +35,8 @@ remain (the owner pushes, tags and approves).
   ```bash
   cargo fmt --all --check
   cargo clippy --workspace --all-targets -- -D warnings
-  cargo test --workspace
+  cargo clippy -p app_shell --target wasm32-unknown-unknown -- -D warnings
+  node scripts/test-budget.mjs
   node scripts/lint-comment-rot.mjs --all
   ! git grep -nE 'wb_design|wb_sketch|"wb\.(design|part|sketch)"|core\.datum' -- crates/app_shell/src ':!crates/app_shell/src/app/seam_lint.rs'
   ```
@@ -79,9 +81,13 @@ remain (the owner pushes, tags and approves).
    | no run for the head | report `NO_RUN` (a fork PR or a draft may not run them) |
    | every job passed | read feedback once more, then stop |
 
-   Both `ci.yml` jobs gate: `check` (Linux: format, clippy, tests, the
-   comment-rot lint, the seam grep) and `platforms` (Windows and macOS:
-   clippy and tests). `release.yml` runs on a `v*` tag; a run that
+   Every `ci.yml` job gates: `scope` (what a pull request reaches,
+   `scripts/ci-scope.mjs`), `lint` (Linux: format, clippy, the browser
+   clippy, the standalone solver, the comment-rot lint, the seam grep), `test` (Linux: the tests within their budget,
+   on a pull request only the crates it reaches) and `platforms` (Windows
+   and macOS: clippy, and the tests on master or when the change can
+   differ by platform). A pull request that skipped the platform tests
+   can still go red on master; the `platforms` label runs them early. `release.yml` runs on a `v*` tag; a run that
    stopped part-way is finished by dispatching it with the tag, which the
    owner does.
 

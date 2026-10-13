@@ -73,6 +73,13 @@ bench_api = { package = "printcad-bench-api", path = "crates/bench_api", version
 # `cargo run`, where it is ~26x slower — enough to make a large STEP import
 # look like a hang. Optimize dependencies even in dev builds; our own crates
 # stay unoptimized so rebuilds are fast and backtraces stay readable.
+[profile.dev]
+# Line tables keep backtraces' file:line. Full debug info (the variables a
+# debugger shows) makes every test program larger and a test build of the
+# workspace about a fifth slower, paid by each edit-test loop and CI run;
+# a debugging session sets CARGO_PROFILE_DEV_DEBUG=full.
+debug = "line-tables-only"
+
 [profile.dev.package."*"]
 opt-level = 3
 # Line tables keep a backtrace through a dependency readable; full debug
