@@ -954,6 +954,97 @@ mod tests {
         assert!(!diag.analyzed, "too many constraints to analyze");
         assert!(diag.conflicting.is_empty() && diag.redundant.is_empty());
     }
+
+    /// Every number of the geometry, as bits.
+    fn geometry_bits(sketch: &Sketch) -> Vec<u64> {
+        let mut out = Vec::new();
+        for g in &sketch.geometry {
+            match g {
+                GeometryElement::Point(p) => out.extend([p.position.x, p.position.y]),
+                GeometryElement::Circle(c) => out.push(c.radius),
+                GeometryElement::Arc(a) => out.push(a.radius),
+                GeometryElement::Ellipse(e) => out.extend([e.major.x, e.major.y, e.ratio]),
+                GeometryElement::Conic(c) => out.extend([c.axis.x, c.axis.y, c.minor]),
+                GeometryElement::Line(_) | GeometryElement::BSpline(_) => {}
+            }
+        }
+        out.into_iter().map(f64::to_bits).collect()
+    }
+
+    /// The solver's answer is stored as it is, so a sketch it has solved
+    /// is solved: solving it again moves nothing, to the last bit.
+    #[test]
+    fn solving_a_solved_sketch_again_moves_nothing() {
+        let mut sketch = Sketch::new("solved");
+        // A slanted quadrilateral off the origin, with awkward dimensions.
+        let a = add_point(&mut sketch, 12.3, -4.1);
+        let b = add_point(&mut sketch, 112.0, -3.0);
+        let c = add_point(&mut sketch, 110.0, 37.0);
+        let d = add_point(&mut sketch, 15.0, 41.0);
+        let bottom = add_line(&mut sketch, a, b);
+        let right = add_line(&mut sketch, b, c);
+        let top = add_line(&mut sketch, c, d);
+        add_line(&mut sketch, d, a);
+        fix(&mut sketch, a, 12.345678, -4.000001);
+        sketch.add_constraint(ConstraintKind::Length {
+            line: bottom,
+            length: 100.000003,
+        });
+        sketch.add_constraint(ConstraintKind::AngleToAxis {
+            line: bottom,
+            axis: AxisDirection::Horizontal,
+            angle_rad: 0.1,
+        });
+        sketch.add_constraint(ConstraintKind::Perpendicular {
+            line1: bottom,
+            line2: right,
+        });
+        sketch.add_constraint(ConstraintKind::Parallel {
+            line1: bottom,
+            line2: top,
+        });
+        sketch.add_constraint(ConstraintKind::Distance {
+            point1: b,
+            point2: c,
+            distance: 40.000007,
+        });
+        // A circle touching the top, an arc on a corner, an ellipse.
+        let centre = add_point(&mut sketch, 60.0, 20.0);
+        let circle = sketch.add_geometry(GeometryElement::Circle(Circle::new(centre, 9.0)));
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle,
+            radius: 7.777777,
+        });
+        sketch.add_constraint(ConstraintKind::Tangent {
+            line_or_circle1: top,
+            item2: circle,
+        });
+        let arc_centre = add_point(&mut sketch, 30.0, 10.0);
+        let start = add_point(&mut sketch, 35.0, 10.0);
+        let end = add_point(&mut sketch, 30.0, 15.0);
+        let arc = sketch.add_geometry(GeometryElement::Arc(Arc::new(arc_centre, start, end, 5.0)));
+        sketch.add_constraint(ConstraintKind::Radius {
+            circle: arc,
+            radius: 3.333333,
+        });
+        let middle = add_point(&mut sketch, 80.0, 10.0);
+        sketch.add_geometry(GeometryElement::Ellipse(Ellipse::new(
+            middle,
+            Vec2D::new(6.0, 1.0),
+            0.6,
+        )));
+
+        assert_converged(solve(&mut sketch));
+        let once = geometry_bits(&sketch);
+        assert_converged(solve(&mut sketch));
+        assert_eq!(
+            geometry_bits(&sketch),
+            once,
+            "a second solve moved the sketch"
+        );
+        let length = (pos(&sketch, b) - pos(&sketch, a)).length();
+        assert_near(length, 100.000003, 1e-9);
+    }
 }
 
 #[cfg(test)]

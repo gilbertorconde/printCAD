@@ -4,4 +4,5 @@
 //! and its dependencies again, which costs far more than running the tests.
 
 mod interaction;
+mod precision;
 mod recording;

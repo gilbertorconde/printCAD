@@ -232,7 +232,7 @@ fn a_session_recorded_through_the_ui_replays_to_the_same_sketch() {
         s.recorded
     );
 
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// Lines snapped parallel and square to another, a point on its extension,
@@ -254,7 +254,6 @@ fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
     s.move_to(1.0, 10.0, "sketch.select");
     s.release(1.0, 10.0, "sketch.select");
 
-    let done = summary(&s.sketch(id));
     for kind in ["Parallel", "Perpendicular", "PointOnLine", "Coincident"] {
         let held = s
             .sketch(id)
@@ -270,7 +269,7 @@ fn snapped_directions_extensions_and_a_joining_drag_replay_too() {
         "{:#?}",
         s.recorded
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// A line tool's arc, dragged from the end it draws from, records with the
@@ -295,17 +294,13 @@ fn a_dragged_arc_replays_as_it_was_drawn() {
         .filter(|r| r.id == "sketch.draw")
         .collect();
     assert_eq!(draws.len(), 1, "one line tool run: {:#?}", s.recorded);
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// Write `recorded` as a script, run it on `before`, and check sketch `id`
 /// comes out as `done`.
-fn assert_replays(
-    recorded: &[Recorded],
-    before: Document,
-    id: FeatureId,
-    done: &(Vec<(i64, i64)>, Vec<&'static str>, Vec<String>),
-) {
+fn assert_replays(recorded: &[Recorded], before: Document, id: FeatureId, live: &Sketch) {
+    let done = summary(live);
     let mut recorder = scripting::Recorder::default();
     for call in recorded {
         recorder.push(call);
@@ -320,12 +315,26 @@ fn assert_replays(
     };
     let out = scripting::ScriptEngine::new().run_script(&script, "recorded.lua", &mut replay);
     assert_eq!(out.error, None, "{script}");
-    let replayed = summary(
-        &SketchFeature::from_json(replay.doc.get_feature_data(id).unwrap())
-            .unwrap()
-            .sketch,
-    );
-    assert_eq!(&replayed, done, "{script}");
+    let replayed = SketchFeature::from_json(replay.doc.get_feature_data(id).unwrap())
+        .unwrap()
+        .sketch;
+    assert_eq!(summary(&replayed), done, "{script}");
+    assert_eq!(point_bits(&replayed), point_bits(live), "{script}");
+}
+
+/// Every point's coordinates as bits, in order: a replay that meets the
+/// session to the last bit has the same.
+fn point_bits(sketch: &Sketch) -> Vec<(u64, u64)> {
+    let mut points: Vec<(u64, u64)> = sketch
+        .geometry
+        .iter()
+        .filter_map(|g| match g {
+            GeometryElement::Point(p) => Some((p.position.x.to_bits(), p.position.y.to_bits())),
+            _ => None,
+        })
+        .collect();
+    points.sort();
+    points
 }
 
 fn session_on_a_sketch() -> (Session, FeatureId, Document) {
@@ -392,7 +401,7 @@ fn typed_lengths_polyline_arcs_and_a_spline_replay_too() {
         done.1.contains(&"arc") && done.1.contains(&"bspline"),
         "{done:?}"
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -427,7 +436,7 @@ fn typed_sweeps_widths_and_a_first_point_replay_too() {
     let sketch = s.sketch(id);
     let done = summary(&sketch);
     assert!(done.1.contains(&"arc"), "{done:?}");
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 impl Session {
@@ -552,7 +561,7 @@ fn turned_rectangles_and_a_frame_replay_too() {
         s.recorded.iter().filter(|r| r.id == "sketch.draw").count(),
         3
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -570,10 +579,9 @@ fn a_trim_stroke_replays_as_one_call() {
     s.move_to(18.0, 3.0, "sketch.trim");
     s.release(18.0, 3.0, "sketch.trim");
     s.key(KeyCode::A, None);
-    let done = summary(&s.sketch(id));
     let draws = s.recorded.iter().filter(|r| r.id == "sketch.draw").count();
     assert_eq!(draws, 5, "four lines and one stroke: {:#?}", s.recorded);
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -595,8 +603,7 @@ fn a_spline_through_points_replays_too() {
         .filter(|g| matches!(g, GeometryElement::BSpline(b) if !b.fit_points.is_empty()))
         .count();
     assert_eq!(fitted, 2);
-    let done = summary(&sketch);
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -637,7 +644,7 @@ fn joining_a_polyline_leaves_one_spline_and_replays() {
     let done = summary(&sketch);
     assert_eq!(done.1, ["bspline"], "{done:?}");
     assert!(s.recorded.iter().any(|r| r.id == "sketch.join"));
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -653,7 +660,7 @@ fn conic_arcs_replay_too() {
     s.key(KeyCode::A, None);
     let done = summary(&s.sketch(id));
     assert_eq!(done.1, ["conic", "conic", "conic"], "{done:?}");
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 #[test]
@@ -674,7 +681,6 @@ fn editing_aids_replay_too() {
     s.key(KeyCode::A, Some("sketch.remove_axis_alignment"));
     s.key(KeyCode::Escape, Some("sketch.select"));
     s.key(KeyCode::A, Some("sketch.section_view"));
-    let done = summary(&s.sketch(id));
     let kinds: Vec<&str> = s.recorded.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(
         kinds,
@@ -688,7 +694,7 @@ fn editing_aids_replay_too() {
         "{:#?}",
         s.recorded
     );
-    assert_replays(&s.recorded, before, id, &done);
+    assert_replays(&s.recorded, before, id, &s.sketch(id));
 }
 
 /// The character a number key types, as the app sends it after the key.
