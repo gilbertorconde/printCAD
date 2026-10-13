@@ -873,20 +873,32 @@ mod tests {
         20.0 - p.z
     }
 
+    /// The segment a cursor at `cursor` picks, at the usual reach, every
+    /// spot taken as showing.
+    fn pick(
+        mesh: &TriMesh,
+        project: impl Fn([f32; 3]) -> Option<(f32, f32)>,
+        depth_of: impl Fn(Vec3) -> f32,
+        cursor: Vec2,
+        hidden_beyond: Option<f32>,
+    ) -> Option<SegmentHit> {
+        nearest_segment(
+            mesh,
+            project,
+            depth_of,
+            cursor,
+            EDGE_PICK_PX,
+            hidden_beyond,
+            |_, _| None,
+        )
+    }
+
     #[test]
     fn a_silhouette_edge_is_found_from_outside_the_body() {
         let mesh = cube();
         // 4 px left of the x = 0 edge, over background: no surface.
-        let hit = nearest_segment(
-            &mesh,
-            project,
-            depth_of,
-            Vec2::new(-4.0, 50.0),
-            EDGE_PICK_PX,
-            None,
-            |_, _| None,
-        )
-        .expect("edge within reach");
+        let hit =
+            pick(&mesh, project, depth_of, Vec2::new(-4.0, 50.0), None).expect("edge within reach");
         // The top (z = 10) and bottom (z = 0) x = 0 edges coincide on
         // screen; the nearer one wins.
         assert_eq!(mesh.edge_ids[hit.segment], 6);
@@ -900,29 +912,13 @@ mod tests {
         // the bottom face's edge lies 10 mm deeper and is hidden.
         // Ten pixels a millimetre: the allowance is 1.25 mm.
         let limit = |surface: f32| Some(surface + occlusion_slack(0.1, EDGE_PICK_PX));
-        let hit = nearest_segment(
-            &mesh,
-            project,
-            depth_of,
-            Vec2::new(3.0, 50.0),
-            EDGE_PICK_PX,
-            limit(10.0),
-            |_, _| None,
-        )
-        .expect("edge within reach");
+        let hit = pick(&mesh, project, depth_of, Vec2::new(3.0, 50.0), limit(10.0))
+            .expect("edge within reach");
         assert_eq!(mesh.edge_ids[hit.segment], 6);
         // Seen from below, the top face's edges are the hidden ones.
         let from_below = |p: Vec3| p.z;
-        let hit = nearest_segment(
-            &mesh,
-            project,
-            from_below,
-            Vec2::new(3.0, 50.0),
-            EDGE_PICK_PX,
-            limit(0.0),
-            |_, _| None,
-        )
-        .expect("edge within reach");
+        let hit = pick(&mesh, project, from_below, Vec2::new(3.0, 50.0), limit(0.0))
+            .expect("edge within reach");
         assert_eq!(mesh.edge_ids[hit.segment], 4);
     }
 
@@ -944,50 +940,19 @@ mod tests {
         let cursor = Vec2::new(30.0, 3.0);
         let limit = Some(200.0 + occlusion_slack(0.15, EDGE_PICK_PX));
         assert!(
-            nearest_segment(
-                &mesh,
-                project,
-                depth_of,
-                cursor,
-                EDGE_PICK_PX,
-                limit,
-                |_, _| None
-            )
-            .is_none(),
+            pick(&mesh, project, depth_of, cursor, limit).is_none(),
             "the back edge takes the hover from the plate's face"
         );
         // Over the plate's own rim, where the edge is at the surface's
         // depth, it is found.
         mesh.positions = vec![[0.0, 0.0, 200.4], [10.0, 0.0, 200.4]];
-        assert!(
-            nearest_segment(
-                &mesh,
-                project,
-                depth_of,
-                cursor,
-                EDGE_PICK_PX,
-                limit,
-                |_, _| None
-            )
-            .is_some()
-        );
+        assert!(pick(&mesh, project, depth_of, cursor, limit).is_some());
     }
 
     #[test]
     fn nothing_out_of_reach_is_picked() {
         let mesh = cube();
-        assert!(
-            nearest_segment(
-                &mesh,
-                project,
-                depth_of,
-                Vec2::new(50.0, 50.0),
-                EDGE_PICK_PX,
-                None,
-                |_, _| None
-            )
-            .is_none()
-        );
+        assert!(pick(&mesh, project, depth_of, Vec2::new(50.0, 50.0), None).is_none());
         assert!(!bounds_reach(
             project,
             [0.0; 3],

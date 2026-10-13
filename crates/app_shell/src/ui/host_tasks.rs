@@ -1267,13 +1267,24 @@ mod tests {
         accept: bool,
         cancel: bool,
     ) -> Option<HostTaskEnd> {
+        show_picking(task, doc, &[], accept, cancel)
+    }
+
+    /// One frame of the task with these faces picked.
+    fn show_picking(
+        task: &mut HostTask,
+        doc: &mut Document,
+        picked_faces: &[(BodyId, u32)],
+        accept: bool,
+        cancel: bool,
+    ) -> Option<HostTaskEnd> {
         let mut end = None;
         in_frame(|ui| {
             end = task.show(
                 ui,
                 HostTaskInputs {
                     document: doc,
-                    picked_faces: &[],
+                    picked_faces,
                     picked_edges: &[],
                     registry: &core_document::DocumentService::default(),
                     custom_colors: &[],
@@ -1346,23 +1357,7 @@ mod tests {
         let other = doc.create_body(None);
         let mut task = HostTask::appearance(&doc, body, Some(1));
         let picks = [(body, 2), (other, 4), (body, 5)];
-        in_frame(|ui| {
-            task.show(
-                ui,
-                HostTaskInputs {
-                    document: &mut doc,
-                    picked_faces: &picks,
-                    picked_edges: &[],
-                    registry: &core_document::DocumentService::default(),
-                    custom_colors: &[],
-                    printing: &settings::PrintingSettings::default(),
-                    print_layout: None,
-                },
-                false,
-                false,
-                &mut Vec::new(),
-            );
-        });
+        show_picking(&mut task, &mut doc, &picks, false, false);
         let HostTask::Appearance(t) = &task else {
             panic!("appearance");
         };
@@ -1428,30 +1423,7 @@ mod tests {
             glam::Vec3::new(2.0, 4.0, 6.0),
             glam::Vec3::new(12.0, 8.0, 7.0),
         );
-        let corner = |i: usize| {
-            [
-                if i & 1 == 0 { lo.x } else { hi.x },
-                if i & 2 == 0 { lo.y } else { hi.y },
-                if i & 4 == 0 { lo.z } else { hi.z },
-            ]
-        };
-        // Outward-facing triangles of the box's six sides.
-        let quads = [
-            [0, 2, 3, 1],
-            [4, 5, 7, 6],
-            [0, 1, 5, 4],
-            [2, 6, 7, 3],
-            [0, 4, 6, 2],
-            [1, 3, 7, 5],
-        ];
-        let mesh = kernel_api::TriMesh {
-            positions: (0..8).map(corner).collect(),
-            indices: quads
-                .iter()
-                .flat_map(|[a, b, c, d]| [*a, *b, *c, *a, *c, *d])
-                .collect(),
-            ..Default::default()
-        };
+        let mesh = crate::test_support::block((hi - lo).to_array(), lo.to_array());
         let centre = volume_centre(&mesh).unwrap();
         assert!((centre - (lo + hi) * 0.5).length() < 1e-4, "{centre:?}");
     }
@@ -1525,23 +1497,7 @@ mod tests {
     fn a_history_move_cancels_back_to_where_it_was() {
         let mut doc = Document::new("t");
         let body = doc.create_body(None);
-        let ids: Vec<FeatureId> = ["a", "b", "c"]
-            .iter()
-            .map(|n| {
-                doc.add_feature_in_body(
-                    core_document::DatumFeature {
-                        shape: core_document::DatumShape::Point,
-                        attachment: core_document::DatumAttachment::BasePlane(
-                            core_document::BasePlane::XY,
-                        ),
-                        offset: Default::default(),
-                    },
-                    n.to_string(),
-                    Some(body),
-                )
-                .unwrap()
-            })
-            .collect();
+        let ids = crate::test_support::datum_points(&mut doc, body, &["a", "b", "c"]);
         let mut task = HostTask::history(&doc, ids[1]);
         doc.move_feature_after(ids[1], Some(ids[2])).unwrap();
         assert_eq!(doc.body_history_of(ids[0]), [ids[0], ids[2], ids[1]]);

@@ -2334,6 +2334,60 @@ mod tests {
         }
     }
 
+    /// The tree of a document with no workbench registered.
+    fn tree(doc: &Document) -> DocumentTree {
+        DocumentTree::build(doc, &DocumentService::default())
+    }
+
+    /// The top-level row of `body`.
+    fn body_row(tree: &DocumentTree, body: BodyId) -> &TreeNode {
+        tree.nodes()
+            .iter()
+            .find(|n| n.id == TreeItemId::Body(body))
+            .expect("the body's row")
+    }
+
+    /// An empty mesh read from `asset`, with the checker's `health`.
+    fn imported(
+        asset: Uuid,
+        health: Option<kernel_api::ShapeHealth>,
+    ) -> core_document::ImportedGeometry {
+        core_document::ImportedGeometry {
+            source_asset: Some(asset),
+            health,
+            ..crate::test_support::geometry(kernel_api::TriMesh::default())
+        }
+    }
+
+    /// An imported object graph from its nodes, the parentless ones its
+    /// roots.
+    fn set_graph(doc: &mut Document, nodes: Vec<core_document::ImportedObjectNode>) {
+        let roots = nodes
+            .iter()
+            .filter(|n| n.parent_id.is_none())
+            .map(|n| n.id)
+            .collect();
+        doc.set_imported_object_graph(roots, nodes.into_iter().map(|n| (n.id, n)).collect());
+    }
+
+    /// A part leaf of `parent` holding `body`.
+    fn part_of(
+        id: Uuid,
+        parent: Uuid,
+        name: &str,
+        body: BodyId,
+    ) -> core_document::ImportedObjectNode {
+        let mut part = node(
+            id,
+            Some(parent),
+            Vec::new(),
+            kernel_api::ImportedNodeKind::Part,
+            name,
+        );
+        part.body_id = Some(body);
+        part
+    }
+
     #[test]
     fn a_feature_menu_acts_on_the_whole_selection_only_from_inside_it() {
         let [a, b, c] = [(); 3].map(|_| FeatureId(Uuid::new_v4()));
@@ -2346,51 +2400,64 @@ mod tests {
         assert_eq!(alone.acting_on(a), [a]);
     }
 
+    /// An assembly over a part draws the import's rows, not a body row of
+    /// its own, labelled by name alone; the body is found under the
+    /// assembly that holds it.
     #[test]
-    fn imported_nodes_render_in_tree_without_duplicate_body_row() {
+    fn an_imported_part_sits_under_its_assembly_without_a_body_row() {
         let mut doc = Document::new("tree");
-        let body_id = doc.create_body(Some("Imported Body".into()));
-        let root = Uuid::new_v4();
-        let leaf = Uuid::new_v4();
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(
-            root,
-            core_document::ImportedObjectNode {
-                id: root,
-                parent_id: None,
-                children: vec![leaf],
-                kind: kernel_api::ImportedNodeKind::Assembly,
-                name: "Asm".into(),
-                visible: true,
-                body_id: None,
-                local_transform: None,
-                annotation: None,
-                layers: Vec::new(),
-            },
+        let body = doc.create_body(Some("Imported Body".into()));
+        let (root, leaf, loose) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
+        set_graph(
+            &mut doc,
+            vec![
+                node(
+                    root,
+                    None,
+                    vec![leaf, loose],
+                    kernel_api::ImportedNodeKind::Assembly,
+                    "Asm",
+                ),
+                part_of(leaf, root, "Part", body),
+                node(
+                    loose,
+                    Some(root),
+                    Vec::new(),
+                    kernel_api::ImportedNodeKind::Part,
+                    "Loose",
+                ),
+            ],
         );
-        graph.insert(
-            leaf,
-            core_document::ImportedObjectNode {
-                id: leaf,
-                parent_id: Some(root),
-                children: Vec::new(),
-                kind: kernel_api::ImportedNodeKind::Part,
-                name: "Part".into(),
-                visible: true,
-                body_id: Some(body_id),
-                local_transform: None,
-                annotation: None,
-                layers: Vec::new(),
-            },
-        );
-        doc.set_imported_object_graph(vec![root], graph);
-
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = tree(&doc);
+        // The details line says which part holds a body.
+        let detail = |id| {
+            tree.nodes()[0]
+                .children
+                .iter()
+                .find(|n| n.id == TreeItemId::ImportedObject(id))
+                .and_then(|n| n.detail.clone())
+        };
+        assert_eq!(detail(leaf).as_deref(), Some("Part, linked to a body"));
+        assert_eq!(detail(loose).as_deref(), Some("Part"));
         let mut ids = Vec::new();
         collect_ids(tree.nodes(), &mut ids);
         assert!(ids.contains(&TreeItemId::ImportedObject(root)));
         assert!(ids.contains(&TreeItemId::ImportedObject(leaf)));
-        assert!(!ids.contains(&TreeItemId::Body(body_id)));
+        assert!(!ids.contains(&TreeItemId::Body(body)));
+        assert_eq!(
+            tree.nodes()[0].label,
+            "Asm",
+            "no bracket tag, just the name"
+        );
+        assert_eq!(tree.nodes()[0].icon, "tree-group");
+        assert_eq!(
+            tree.path_to_body(body),
+            Some(vec![
+                TreeItemId::ImportedObject(root),
+                TreeItemId::ImportedObject(leaf),
+            ]),
+            "the assembly above the part is on the way to it"
+        );
     }
 
     /// A feature a bench links to another body shows under that body too,
@@ -2509,56 +2576,28 @@ mod tests {
             b"ISO-10303-21;".to_vec(),
         );
         for (body, broken_count) in [(broken, 2), (sound, 0)] {
-            doc.set_imported_geometry(
-                body,
-                core_document::ImportedGeometry {
-                    mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                    source_asset: Some(asset),
-                    revision: 0,
-                    bounds_mm: None,
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: Some(kernel_api::ShapeHealth {
-                        broken: broken_count,
-                        ..Default::default()
-                    }),
-                },
-            );
+            let health = kernel_api::ShapeHealth {
+                broken: broken_count,
+                ..Default::default()
+            };
+            doc.set_imported_geometry(body, imported(asset, Some(health)));
         }
         let root = Uuid::new_v4();
         let (broken_leaf, sound_leaf) = (Uuid::new_v4(), Uuid::new_v4());
-        let part = |id: Uuid, body: BodyId| core_document::ImportedObjectNode {
-            id,
-            parent_id: Some(root),
-            children: Vec::new(),
-            kind: kernel_api::ImportedNodeKind::Part,
-            name: "Part".into(),
-            visible: true,
-            body_id: Some(body),
-            local_transform: None,
-            annotation: None,
-            layers: Vec::new(),
-        };
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(
-            root,
-            core_document::ImportedObjectNode {
-                id: root,
-                parent_id: None,
-                children: vec![broken_leaf, sound_leaf],
-                kind: kernel_api::ImportedNodeKind::Assembly,
-                name: "Asm".into(),
-                visible: true,
-                body_id: None,
-                local_transform: None,
-                annotation: None,
-                layers: Vec::new(),
-            },
+        set_graph(
+            &mut doc,
+            vec![
+                node(
+                    root,
+                    None,
+                    vec![broken_leaf, sound_leaf],
+                    kernel_api::ImportedNodeKind::Assembly,
+                    "Asm",
+                ),
+                part_of(broken_leaf, root, "Part", broken),
+                part_of(sound_leaf, root, "Part", sound),
+            ],
         );
-        graph.insert(broken_leaf, part(broken_leaf, broken));
-        graph.insert(sound_leaf, part(sound_leaf, sound));
-        doc.set_imported_object_graph(vec![root], graph);
 
         let find = |tree: &DocumentTree, id: Uuid| -> (bool, Vec<BodyId>) {
             fn walk(nodes: &[TreeNode], id: Uuid) -> Option<(bool, Vec<BodyId>)> {
@@ -2572,7 +2611,7 @@ mod tests {
             }
             walk(tree.nodes(), id).expect("row exists")
         };
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = self::tree(&doc);
         assert_eq!(find(&tree, broken_leaf), (true, vec![broken]));
         assert_eq!(find(&tree, sound_leaf), (false, vec![]));
         assert_eq!(
@@ -2582,7 +2621,7 @@ mod tests {
         );
 
         assert!(doc.request_body_repair(broken));
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = self::tree(&doc);
         assert_eq!(
             find(&tree, broken_leaf),
             (true, vec![]),
@@ -2605,26 +2644,10 @@ mod tests {
             ),
             b"solid".to_vec(),
         );
-        doc.set_imported_geometry(
-            mesh,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                source_asset: Some(asset),
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        doc.set_imported_geometry(mesh, imported(asset, None));
         let row = |doc: &Document| {
-            let tree = DocumentTree::build(doc, &DocumentService::default());
-            let node = tree
-                .nodes()
-                .iter()
-                .find(|n| n.id == TreeItemId::Body(mesh))
-                .expect("the body's row");
+            let tree = self::tree(doc);
+            let node = body_row(&tree, mesh);
             (
                 node.detail.clone().unwrap_or_default(),
                 node.convertible.clone(),
@@ -2632,19 +2655,10 @@ mod tests {
         };
         let (detail, convertible) = row(&doc);
         assert!(detail.starts_with("Mesh"), "{detail}");
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
-        let icon = tree
-            .nodes()
-            .iter()
-            .find(|n| n.id == TreeItemId::Body(mesh))
-            .map(|n| n.icon);
-        assert_eq!(icon, Some("workbench-mesh"), "a mesh row has its own icon");
-        assert!(
-            tree.nodes()
-                .iter()
-                .any(|n| n.id == TreeItemId::Body(mesh) && n.mesh),
-            "and its own colour"
-        );
+        let tree = tree(&doc);
+        let node = body_row(&tree, mesh);
+        assert_eq!(node.icon, "workbench-mesh", "a mesh row has its own icon");
+        assert!(node.mesh, "and its own colour");
         assert_eq!(convertible, vec![mesh]);
 
         assert!(doc.request_mesh_solid(mesh));
@@ -2655,29 +2669,14 @@ mod tests {
         // The solid lands with its curved areas as facets: the row says so
         // and offers the refine, once.
         doc.set_imported_brep_data(mesh, b"ogeom".to_vec(), Vec::new());
-        doc.set_imported_geometry(
-            mesh,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(kernel_api::TriMesh::default()),
-                source_asset: Some(asset),
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: Some(kernel_api::ShapeHealth {
-                    faceted: true,
-                    ..Default::default()
-                }),
-            },
-        );
+        let health = kernel_api::ShapeHealth {
+            faceted: true,
+            ..Default::default()
+        };
+        doc.set_imported_geometry(mesh, imported(asset, Some(health)));
         let faceted = |doc: &Document| {
-            let tree = DocumentTree::build(doc, &DocumentService::default());
-            let node = tree
-                .nodes()
-                .iter()
-                .find(|n| n.id == TreeItemId::Body(mesh))
-                .expect("the body's row");
+            let tree = self::tree(doc);
+            let node = body_row(&tree, mesh);
             (node.faceted, node.refinable.clone())
         };
         assert_eq!(faceted(&doc), (true, vec![mesh]));
@@ -2693,34 +2692,24 @@ mod tests {
     fn a_hidden_body_row_reads_as_hidden() {
         let mut doc = Document::new("tree");
         let body = doc.create_body(Some("Body".into()));
-        let visible = |doc: &Document| {
-            DocumentTree::build(doc, &DocumentService::default())
-                .nodes()
-                .iter()
-                .find(|n| n.id == TreeItemId::Body(body))
-                .map(|n| n.visible)
-        };
-        assert_eq!(visible(&doc), Some(true));
-        doc.set_body_visible(body, false);
+        let visible = |doc: &Document| body_row(&tree(doc), body).visible;
+        assert!(visible(&doc));
         assert_eq!(
-            visible(&doc),
-            Some(false),
-            "its eye is shut and its row muted"
+            tree(&doc).path_to_body(body),
+            Some(vec![TreeItemId::Body(body)]),
+            "a body with no import above it is its own row"
         );
+        doc.set_body_visible(body, false);
+        assert!(!visible(&doc), "its eye is shut and its row muted");
     }
 
     #[test]
     fn a_bodys_notes_sit_in_its_annotations_group() {
         let mut doc = Document::new("tree");
         let body = doc.create_body(Some("Body".into()));
-        let tree = |doc: &Document| DocumentTree::build(doc, &DocumentService::default());
         let groups = |tree: &DocumentTree| {
-            let row = tree
-                .nodes()
-                .iter()
-                .find(|n| n.id == TreeItemId::Body(body))
-                .expect("the body's row");
-            row.children
+            body_row(tree, body)
+                .children
                 .iter()
                 .filter(|c| c.id == TreeItemId::Notes(body))
                 .map(|c| {
@@ -2763,7 +2752,7 @@ mod tests {
             .iter()
             .map(|i| TreeItemId::Body(i.body))
             .collect();
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = tree(&doc);
         let ids: Vec<TreeItemId> = tree.nodes().iter().map(|n| n.id).collect();
         assert_eq!(
             ids,
@@ -2786,25 +2775,13 @@ mod tests {
         doc.set_body_component(other, Some(unit)).unwrap();
         let pairs = doc.create_component_array(unit, row, 2).unwrap();
         let group = doc.copy_array(pairs).unwrap().instances[0].group.unwrap();
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = self::tree(&doc);
         let held = tree
             .nodes()
             .iter()
             .find(|n| n.id == TreeItemId::Array(pairs))
             .map(|n| n.children.iter().map(|c| c.id).collect::<Vec<_>>());
         assert_eq!(held, Some(vec![TreeItemId::Component(group)]));
-    }
-
-    #[test]
-    fn a_plain_body_is_found_by_its_own_row() {
-        let mut doc = Document::new("tree");
-        let body = doc.create_body(Some("Body".into()));
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
-        assert_eq!(
-            tree.path_to_body(body),
-            Some(vec![TreeItemId::Body(body)]),
-            "a body with no import above it is its own row"
-        );
     }
 
     #[test]
@@ -2816,7 +2793,7 @@ mod tests {
         let empty = doc.create_component("Empty".into(), None).unwrap();
         doc.set_body_component(b, Some(inner)).unwrap();
         doc.set_body_component(d, Some(outer)).unwrap();
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = tree(&doc);
         let ids: Vec<TreeItemId> = tree.nodes().iter().map(|n| n.id).collect();
         assert_eq!(
             ids,
@@ -2840,94 +2817,49 @@ mod tests {
         assert_eq!(inside, [TreeItemId::Component(inner), TreeItemId::Body(d)]);
     }
 
+    /// An instance wrapping a single part is one row with the instance's
+    /// id, which is where a pick of the part lands; a generically named
+    /// one takes its part's name.
     #[test]
-    fn an_imported_part_is_found_under_the_assembly_that_holds_it() {
+    fn an_instance_and_its_one_part_are_one_row() {
+        use kernel_api::ImportedNodeKind as K;
         let mut doc = Document::new("tree");
-        let body = doc.create_body(Some("Imported Body".into()));
-        let root = Uuid::new_v4();
-        let leaf = Uuid::new_v4();
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(
-            root,
-            node(
-                root,
-                None,
-                vec![leaf],
-                kernel_api::ImportedNodeKind::Assembly,
-                "Asm",
-            ),
+        let (screw_body, frame_body) = (
+            doc.create_body(Some("Screw".into())),
+            doc.create_body(Some("Frame".into())),
         );
-        let mut part = node(
-            leaf,
-            Some(root),
-            Vec::new(),
-            kernel_api::ImportedNodeKind::Part,
-            "Part",
+        let [asm, screw, screw_part, generic, generic_part] = [(); 5].map(|_| Uuid::new_v4());
+        set_graph(
+            &mut doc,
+            vec![
+                node(asm, None, vec![screw, generic], K::Assembly, "Asm"),
+                node(screw, Some(asm), vec![screw_part], K::Instance, "Screw:1"),
+                part_of(screw_part, screw, "Screw", screw_body),
+                node(
+                    generic,
+                    Some(asm),
+                    vec![generic_part],
+                    K::Instance,
+                    "Instance",
+                ),
+                part_of(generic_part, generic, "Anet v1-body", frame_body),
+            ],
         );
-        part.body_id = Some(body);
-        graph.insert(leaf, part);
-        doc.set_imported_object_graph(vec![root], graph);
-
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = tree(&doc);
         assert_eq!(
-            tree.path_to_body(body),
-            Some(vec![
-                TreeItemId::ImportedObject(root),
-                TreeItemId::ImportedObject(leaf),
-            ]),
-            "the assembly above the part is on the way to it"
-        );
-    }
-
-    #[test]
-    fn a_part_merged_into_its_instance_answers_to_the_instance() {
-        let mut doc = Document::new("tree");
-        let body = doc.create_body(Some("Imported Body".into()));
-        let asm = Uuid::new_v4();
-        let instance = Uuid::new_v4();
-        let part = Uuid::new_v4();
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(
-            asm,
-            node(
-                asm,
-                None,
-                vec![instance],
-                kernel_api::ImportedNodeKind::Assembly,
-                "Asm",
-            ),
-        );
-        graph.insert(
-            instance,
-            node(
-                instance,
-                Some(asm),
-                vec![part],
-                kernel_api::ImportedNodeKind::Instance,
-                "Screw:1",
-            ),
-        );
-        let mut leaf = node(
-            part,
-            Some(instance),
-            Vec::new(),
-            kernel_api::ImportedNodeKind::Part,
-            "Screw",
-        );
-        leaf.body_id = Some(body);
-        graph.insert(part, leaf);
-        doc.set_imported_object_graph(vec![asm], graph);
-
-        // The instance and its only part draw as one row, which carries the
-        // instance's id, so that is the row a pick has to land on.
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
-        assert_eq!(
-            tree.path_to_body(body),
+            tree.path_to_body(screw_body),
             Some(vec![
                 TreeItemId::ImportedObject(asm),
-                TreeItemId::ImportedObject(instance),
+                TreeItemId::ImportedObject(screw),
             ])
         );
+        let row = tree.nodes()[0]
+            .children
+            .iter()
+            .find(|n| n.id == TreeItemId::ImportedObject(generic))
+            .expect("the generic instance's row");
+        assert_eq!(row.label, "Anet v1-body");
+        assert_eq!(row.detail.as_deref(), Some("Instance of part Anet v1-body"));
     }
 
     fn node(
@@ -2965,27 +2897,17 @@ mod tests {
             Uuid::new_v4(),
             Uuid::new_v4(),
         );
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(root, node(root, None, vec![inst], K::Assembly, "Top"));
-        graph.insert(
-            inst,
-            node(inst, Some(root), vec![asm], K::Instance, "Frame:1"),
+        set_graph(
+            &mut doc,
+            vec![
+                node(root, None, vec![inst], K::Assembly, "Top"),
+                node(inst, Some(root), vec![asm], K::Instance, "Frame:1"),
+                node(asm, Some(inst), vec![leaf_a, leaf_b], K::Assembly, "Frame"),
+                node(leaf_a, Some(asm), vec![], K::Instance, "Vertical1:1"),
+                node(leaf_b, Some(asm), vec![], K::Instance, "Vertical2:1"),
+            ],
         );
-        graph.insert(
-            asm,
-            node(asm, Some(inst), vec![leaf_a, leaf_b], K::Assembly, "Frame"),
-        );
-        graph.insert(
-            leaf_a,
-            node(leaf_a, Some(asm), vec![], K::Instance, "Vertical1:1"),
-        );
-        graph.insert(
-            leaf_b,
-            node(leaf_b, Some(asm), vec![], K::Instance, "Vertical2:1"),
-        );
-        doc.set_imported_object_graph(vec![root], graph);
-
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
+        let tree = tree(&doc);
         let top = &tree.nodes()[0];
         assert_eq!(top.children.len(), 1, "Top holds one merged row");
         let row = &top.children[0];
@@ -3011,51 +2933,5 @@ mod tests {
             tree.detail_for(TreeItemId::ImportedObject(inst)).as_deref(),
             Some("Instance of assembly Frame")
         );
-    }
-
-    /// A generically named instance takes its product's name.
-    #[test]
-    fn a_generic_instance_borrows_its_products_name() {
-        use kernel_api::ImportedNodeKind as K;
-        let mut doc = Document::new("tree");
-        let (root, inst, part) = (Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4());
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(root, node(root, None, vec![inst], K::Assembly, "Top"));
-        graph.insert(
-            inst,
-            node(inst, Some(root), vec![part], K::Instance, "Instance"),
-        );
-        graph.insert(
-            part,
-            node(part, Some(inst), vec![], K::Part, "Anet v1-body"),
-        );
-        doc.set_imported_object_graph(vec![root], graph);
-
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
-        let row = &tree.nodes()[0].children[0];
-        assert_eq!(row.label, "Anet v1-body");
-        assert_eq!(row.detail.as_deref(), Some("Instance of part Anet v1-body"));
-    }
-
-    /// A label carries no bracket tag: it is just the name.
-    #[test]
-    fn labels_carry_no_kind_tags() {
-        let mut doc = Document::new("tree");
-        let root = Uuid::new_v4();
-        let mut graph = std::collections::HashMap::new();
-        graph.insert(
-            root,
-            node(
-                root,
-                None,
-                vec![],
-                kernel_api::ImportedNodeKind::Assembly,
-                "Asm",
-            ),
-        );
-        doc.set_imported_object_graph(vec![root], graph);
-        let tree = DocumentTree::build(&doc, &DocumentService::default());
-        assert_eq!(tree.nodes()[0].label, "Asm");
-        assert_eq!(tree.nodes()[0].icon, "tree-group");
     }
 }

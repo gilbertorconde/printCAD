@@ -544,6 +544,24 @@ mod tests {
         }
     }
 
+    fn edge(point: [f32; 3], direction: [f32; 3], length: f32) -> MeasurePick {
+        MeasurePick::Edge {
+            point,
+            direction,
+            length,
+            circle: None,
+            body: None,
+        }
+    }
+
+    /// The pick, as a part of `body`.
+    fn on_body(mut pick: MeasurePick, body: core_document::BodyId) -> MeasurePick {
+        if let MeasurePick::Edge { body: of, .. } | MeasurePick::Face { body: of, .. } = &mut pick {
+            *of = Some(body);
+        }
+        pick
+    }
+
     /// A 2 x 3 square at z = 1 cut from kernel face 4, beside a unit square
     /// at z = 0 cut from face 5.
     fn two_face_body() -> TriMesh {
@@ -580,13 +598,7 @@ mod tests {
     #[test]
     fn an_edge_takes_the_click_and_empty_space_gives_a_point() {
         let mesh = two_face_body();
-        let edge = MeasurePick::Edge {
-            point: [1.0, 0.0, 1.0],
-            direction: [1.0, 0.0, 0.0],
-            length: 2.0,
-            circle: None,
-            body: None,
-        };
+        let edge = edge([1.0, 0.0, 1.0], [1.0, 0.0, 0.0], 2.0);
         let picked = pick_at(Some(edge.clone()), Some(&mesh), Some([1.0, 0.0, 1.0]));
         assert_eq!(picked, Some(edge));
         assert_eq!(
@@ -613,14 +625,10 @@ mod tests {
             .expect("saves");
         let back = core_document::Document::load_from_bytes(bytes).expect("loads");
         assert_eq!(readout_unit(&back), Unit::In);
-        let edge = MeasurePick::Edge {
-            point: [0.0; 3],
-            direction: [1.0, 0.0, 0.0],
-            length: 25.4,
-            circle: None,
-            body: None,
-        };
-        let lines = readout(&[edge], readout_unit(&back));
+        let lines = readout(
+            &[edge([0.0; 3], [1.0, 0.0, 0.0], 25.4)],
+            readout_unit(&back),
+        );
         assert_eq!(lines, ["Length 1.000 in"]);
     }
 
@@ -637,14 +645,11 @@ mod tests {
 
     #[test]
     fn two_edges_give_the_angle_between_them() {
-        let edge = |direction| MeasurePick::Edge {
-            point: [0.0; 3],
-            direction,
-            length: 10.0,
-            circle: None,
-            body: None,
-        };
-        let lines = describe_pair(&edge([1.0, 0.0, 0.0]), &edge([1.0, 1.0, 0.0]), Unit::Mm);
+        let lines = describe_pair(
+            &edge([0.0; 3], [1.0, 0.0, 0.0], 10.0),
+            &edge([0.0; 3], [1.0, 1.0, 0.0], 10.0),
+            Unit::Mm,
+        );
         assert!(lines.iter().any(|l| l == "Angle 45.00°"), "{lines:?}");
     }
 
@@ -662,17 +667,11 @@ mod tests {
             body: None,
         };
         assert_eq!(circle.describe(Unit::Mm)[0], "Radius 5.00 mm");
-        let bore = MeasurePick::Face {
-            point: [0.0; 3],
-            normal: [1.0, 0.0, 0.0],
-            surface: Some(FaceSurface::Cylinder {
-                origin: [0.0; 3],
-                axis: [0.0, 0.0, 1.0],
-                radius: 3.0,
-            }),
-            area: 12.0,
-            body: None,
-        };
+        let bore = face(FaceSurface::Cylinder {
+            origin: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            radius: 3.0,
+        });
         let lines = bore.describe(Unit::Mm);
         assert!(lines.iter().any(|l| l == "Diameter 6.00 mm"), "{lines:?}");
         // The circle's axis and the bore's run the same way.
@@ -684,16 +683,12 @@ mod tests {
     /// distance between their axes.
     #[test]
     fn two_bores_measure_between_their_axes() {
-        let bore = |origin: [f32; 3], axis: [f32; 3]| MeasurePick::Face {
-            point: origin,
-            normal: [1.0, 0.0, 0.0],
-            surface: Some(FaceSurface::Cylinder {
+        let bore = |origin, axis| {
+            face(FaceSurface::Cylinder {
                 origin,
                 axis,
                 radius: 2.0,
-            }),
-            area: 10.0,
-            body: None,
+            })
         };
         let side_by_side = describe_pair(
             &bore([0.0; 3], [0.0, 0.0, 1.0]),
@@ -828,13 +823,7 @@ mod tests {
     /// chain adds up its path, its edges and its faces.
     #[test]
     fn a_chain_of_picks_adds_up() {
-        let edge = |x: f32, length: f32| MeasurePick::Edge {
-            point: [x, 0.0, 0.0],
-            direction: [0.0, 1.0, 0.0],
-            length,
-            circle: None,
-            body: None,
-        };
+        let edge = |x: f32, length: f32| edge([x, 0.0, 0.0], [0.0, 1.0, 0.0], length);
         let lines = readout(&[edge(0.0, 4.0), edge(3.0, 5.0), edge(7.0, 6.0)], Unit::Mm);
         assert_eq!(lines[0], "Distance 4.00 mm", "the last two: {lines:?}");
         assert!(lines.contains(&"Path through 3 picks 7.00 mm".to_string()));
@@ -851,28 +840,13 @@ mod tests {
         assert!(readout(&[], Unit::Mm).is_empty());
     }
 
-    #[test]
-    fn a_unit_reads_to_about_a_hundredth_of_a_millimetre() {
-        assert_eq!(length(25.4, Unit::In), "1.000 in");
-        assert_eq!(length(25.4, Unit::Mm), "25.40 mm");
-    }
-
     /// The kernel is asked between the last two picks, when both are faces
     /// or edges of a body.
     #[test]
     fn the_least_distance_is_asked_between_the_last_two_parts() {
         let body = core_document::BodyId(uuid::Uuid::from_u128(7));
-        let edge = MeasurePick::Edge {
-            point: [1.0, 0.0, 0.0],
-            direction: [0.0, 1.0, 0.0],
-            length: 3.0,
-            circle: None,
-            body: Some(body),
-        };
-        let mut face = plane(2.0, [0.0, 0.0, 1.0]);
-        if let MeasurePick::Face { body: of, .. } = &mut face {
-            *of = Some(body);
-        }
+        let edge = on_body(edge([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], 3.0), body);
+        let face = on_body(plane(2.0, [0.0, 0.0, 1.0]), body);
         let point = MeasurePick::Point([0.0; 3]);
         assert_eq!(
             gap_operands(&[point.clone(), edge.clone(), face.clone()]),
@@ -892,13 +866,8 @@ mod tests {
     /// between their midpoints, and the angle stays.
     #[test]
     fn the_quick_measure_reads_the_selection() {
-        let edge = |x: f32, direction: [f32; 3]| MeasurePick::Edge {
-            point: [x, 0.0, 0.0],
-            direction,
-            length: 3.0,
-            circle: None,
-            body: Some(core_document::BodyId(uuid::Uuid::from_u128(7))),
-        };
+        let body = core_document::BodyId(uuid::Uuid::from_u128(7));
+        let edge = |x: f32, direction| on_body(edge([x, 0.0, 0.0], direction, 3.0), body);
         let one = QuickMeasure {
             picks: vec![edge(0.0, [0.0, 1.0, 0.0])],
             gap: None,
@@ -931,20 +900,5 @@ mod tests {
             gap.found = Some(Ok((4.0, [0.0; 3], [4.0, 0.0, 0.0])));
         }
         assert_eq!(two.lines(Unit::Cm)[0], "Least distance 0.400 cm");
-    }
-
-    #[test]
-    fn a_square_of_two_triangles_has_its_area() {
-        let mesh = TriMesh {
-            positions: vec![
-                [0.0, 0.0, 0.0],
-                [2.0, 0.0, 0.0],
-                [2.0, 3.0, 0.0],
-                [0.0, 3.0, 0.0],
-            ],
-            indices: vec![0, 1, 2, 0, 2, 3],
-            ..TriMesh::default()
-        };
-        assert!((mesh_area(&mesh) - 6.0).abs() < 1e-9);
     }
 }

@@ -1610,6 +1610,8 @@ mod tests {
             sub.positions.iter().all(|p| (p[2] - 1.0).abs() < 1e-6),
             "the copy sits on the face, not above it"
         );
+        // No triangle lies in a side plane.
+        assert!(coplanar_face_submesh(&mesh, [1.0, 0.5, 0.5], [1.0, 0.0, 0.0]).is_none());
     }
 
     #[test]
@@ -1626,6 +1628,10 @@ mod tests {
         );
         let sub = coplanar_face_submesh(&mesh, face.point, face.normal).unwrap();
         assert_eq!(sub.indices.len(), 6);
+        assert!(
+            face_ref_from_mesh(&mesh, glam::Vec3::new(50.0, 50.0, 50.0)).is_none(),
+            "a point far off every face is no pick"
+        );
     }
 
     /// A point between the two faces of [`two_face_mesh`], nearer the
@@ -1720,13 +1726,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn wildly_stale_point_is_rejected() {
-        use super::face_ref_from_mesh;
-        let mesh = two_face_mesh();
-        assert!(face_ref_from_mesh(&mesh, glam::Vec3::new(50.0, 50.0, 50.0)).is_none());
-    }
-
     /// A quarter-cylinder wall as three strips that turn 30° each, all cut
     /// from one kernel face, next to one flat strip from another.
     fn curved_face_mesh() -> TriMesh {
@@ -1748,11 +1747,12 @@ mod tests {
         mesh
     }
 
+    /// A hit on the middle strip selects all of its kernel face; with no
+    /// face ids, only the plane through the hit.
     #[test]
     fn a_curved_face_selects_whole_when_the_mesh_knows_its_faces() {
         use super::face_submesh;
-        let mesh = curved_face_mesh();
-        // A hit on the middle strip, with that strip's normal.
+        let mut mesh = curved_face_mesh();
         let hit = [45f32.to_radians().cos(), 45f32.to_radians().sin(), 0.5];
         let normal = [hit[0], hit[1], 0.0];
         let (face, sub) = face_submesh(&mesh, 0, None, hit, normal).unwrap();
@@ -1762,15 +1762,7 @@ mod tests {
             3 * 6,
             "all three strips of face 7, not the fourth"
         );
-    }
-
-    #[test]
-    fn without_face_ids_the_plane_selects_one_strip() {
-        use super::face_submesh;
-        let mut mesh = curved_face_mesh();
         mesh.faces.clear();
-        let hit = [45f32.to_radians().cos(), 45f32.to_radians().sin(), 0.5];
-        let normal = [hit[0], hit[1], 0.0];
         let (face, sub) = face_submesh(&mesh, 0, None, hit, normal).unwrap();
         assert_eq!(face, None);
         assert_eq!(
@@ -1778,13 +1770,6 @@ mod tests {
             6,
             "the plane through the hit is one strip"
         );
-    }
-
-    #[test]
-    fn no_matching_plane_returns_none() {
-        let mesh = two_face_mesh();
-        // Side plane: no triangles align with +X.
-        assert!(coplanar_face_submesh(&mesh, [1.0, 0.5, 0.5], [1.0, 0.0, 0.0]).is_none());
     }
 }
 

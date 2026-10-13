@@ -843,19 +843,7 @@ mod tests {
         for p in &mut mesh.positions {
             *p = p.map(|c| c * 10.0);
         }
-        document.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                mesh: Arc::new(mesh),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        document.set_imported_geometry(body, crate::test_support::geometry(mesh));
         (document, body)
     }
 

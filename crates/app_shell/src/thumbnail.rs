@@ -636,16 +636,12 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_empty_scene_has_no_preview() {
-        assert!(render(&[], Vec3::Y, Vec3::Z).is_none());
-    }
-
-    #[test]
-    fn the_preview_is_a_png() {
+    fn the_preview_is_a_png_and_an_empty_scene_has_none() {
         let png = render(&[cube(0.0)], Vec3::Y, Vec3::Z).unwrap();
         assert!(png.starts_with(b"\x89PNG"));
         let decoded = tiny_skia::Pixmap::decode_png(&png).unwrap();
         assert_eq!((decoded.width(), decoded.height()), (WIDTH, HEIGHT));
+        assert!(render(&[], Vec3::Y, Vec3::Z).is_none());
     }
 
     #[test]

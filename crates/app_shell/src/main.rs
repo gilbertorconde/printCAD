@@ -13,6 +13,8 @@ mod orientation_cube;
 mod platform;
 mod proof;
 mod script_library;
+#[cfg(test)]
+mod test_support;
 mod thumbnail;
 mod ui;
 

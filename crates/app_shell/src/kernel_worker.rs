@@ -1318,27 +1318,26 @@ mod tests {
         assert_eq!(seen.progress(), None, "a new context starts unknown");
     }
 
+    /// Our label and the kernel's stage share the line; either alone still
+    /// reads, and an idle worker shows nothing.
     #[test]
     fn a_status_line_pairs_our_label_with_the_kernels_stage() {
-        assert_eq!(
-            activity(Some("Fillet 4/7"), Some("boolean: intersect")).status(),
-            Some("Fillet 4/7 · boolean: intersect".to_string())
-        );
-    }
-
-    #[test]
-    fn either_half_alone_still_reads() {
-        assert_eq!(
-            activity(Some("Reading STEP"), None).status(),
-            Some("Reading STEP".to_string()),
-            "before the kernel says anything, our own label carries the line"
-        );
-        assert_eq!(
-            activity(None, Some("boolean: split")).status(),
-            Some("boolean: split".to_string()),
-            "a kernel stage with no context of ours is still worth showing"
-        );
-        assert_eq!(activity(None, None).status(), None, "idle shows nothing");
+        for (context, detail, want) in [
+            (
+                Some("Fillet 4/7"),
+                Some("boolean: intersect"),
+                Some("Fillet 4/7 · boolean: intersect"),
+            ),
+            (Some("Reading STEP"), None, Some("Reading STEP")),
+            (None, Some("boolean: split"), Some("boolean: split")),
+            (None, None, None),
+        ] {
+            assert_eq!(
+                activity(context, detail).status().as_deref(),
+                want,
+                "{context:?} and {detail:?}"
+            );
+        }
     }
 
     #[test]
@@ -1417,6 +1416,19 @@ mod tests {
         out
     }
 
+    /// Asks for `ops` built as `body`, at the default detail.
+    fn build(worker: &mut KernelWorker, body: Uuid, ops: Vec<SolidOp>, features: Vec<Uuid>) -> u64 {
+        worker.request_build_solid(
+            body,
+            ops,
+            features,
+            TessellationSettings::default(),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
     fn cancelled(response: &KernelResponse) -> bool {
         matches!(response, KernelResponse::SolidFailed { error, .. } if error.contains("cancelled"))
     }
@@ -1426,30 +1438,13 @@ mod tests {
     #[test]
     fn a_dropped_build_waiting_in_the_queue_never_runs() {
         let mut worker = KernelWorker::spawn();
-        let detail = TessellationSettings::default();
         let busy = worker.build_activities.len();
         let bodies: Vec<Uuid> = (0..busy).map(|_| Uuid::new_v4()).collect();
         for body in &bodies {
-            worker.request_build_solid(
-                *body,
-                slow_chain(),
-                Vec::new(),
-                detail.clone(),
-                None,
-                Vec::new(),
-                Vec::new(),
-            );
+            build(&mut worker, *body, slow_chain(), Vec::new());
         }
         let last = Uuid::new_v4();
-        let waiting = worker.request_build_solid(
-            last,
-            slow_chain(),
-            Vec::new(),
-            detail,
-            None,
-            Vec::new(),
-            Vec::new(),
-        );
+        let waiting = build(&mut worker, last, slow_chain(), Vec::new());
         assert!(worker.drop_build(waiting, None));
         let out = answers(&mut worker, busy + 1);
         let built = out
@@ -1491,15 +1486,11 @@ mod tests {
         let broken = SolidOp::Surface(SurfaceOp::PlanarFill { curves: Vec::new() });
         let [a, b, c] = [Uuid::new_v4(), Uuid::new_v4(), Uuid::new_v4()];
         let mut worker = KernelWorker::spawn();
-        let detail = TessellationSettings::default();
-        worker.request_build_solid(
+        build(
+            &mut worker,
             Uuid::new_v4(),
             vec![cube(0.0), broken.clone(), cube(20.0)],
             vec![a, b, c],
-            detail.clone(),
-            None,
-            Vec::new(),
-            Vec::new(),
         );
         let out = answers(&mut worker, 1);
         let KernelResponse::SolidBuilt {
@@ -1515,14 +1506,11 @@ mod tests {
         let span = result.mesh.bounds().map(|(lo, hi)| hi[0] - lo[0]);
         assert!(span.is_some_and(|x| (x - 10.0).abs() < 1e-3), "{span:?}");
 
-        worker.request_build_solid(
+        build(
+            &mut worker,
             Uuid::new_v4(),
             vec![broken, cube(20.0)],
             vec![b, c],
-            detail,
-            None,
-            Vec::new(),
-            Vec::new(),
         );
         let out = answers(&mut worker, 1);
         assert!(
@@ -1536,17 +1524,8 @@ mod tests {
     #[test]
     fn two_bodies_build_at_once() {
         let mut worker = KernelWorker::spawn();
-        let detail = TessellationSettings::default();
         for _ in 0..2 {
-            worker.request_build_solid(
-                Uuid::new_v4(),
-                slow_chain(),
-                Vec::new(),
-                detail.clone(),
-                None,
-                Vec::new(),
-                Vec::new(),
-            );
+            build(&mut worker, Uuid::new_v4(), slow_chain(), Vec::new());
         }
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut together = false;
@@ -1563,18 +1542,9 @@ mod tests {
     #[test]
     fn a_dropped_build_running_stops_unless_nearly_done() {
         let mut worker = KernelWorker::spawn();
-        let detail = TessellationSettings::default();
         let body = Uuid::new_v4();
         let running = |worker: &KernelWorker| !lock(&worker.builds.book).running.is_empty();
-        let serial = worker.request_build_solid(
-            body,
-            slow_chain(),
-            Vec::new(),
-            detail.clone(),
-            None,
-            Vec::new(),
-            Vec::new(),
-        );
+        let serial = build(&mut worker, body, slow_chain(), Vec::new());
         while !running(&worker) {
             std::thread::sleep(Duration::from_millis(1));
         }
@@ -1585,15 +1555,7 @@ mod tests {
         // dropped once it has run past half its usual time by its own clock,
         // and long before a cold build of the chain could end.
         let usual = Duration::from_millis(10);
-        let serial = worker.request_build_solid(
-            Uuid::new_v4(),
-            slow_chain(),
-            Vec::new(),
-            detail,
-            None,
-            Vec::new(),
-            Vec::new(),
-        );
+        let serial = build(&mut worker, Uuid::new_v4(), slow_chain(), Vec::new());
         let since = loop {
             if let Some((since, _)) = lock(&worker.builds.book).running.get(&serial) {
                 break *since;

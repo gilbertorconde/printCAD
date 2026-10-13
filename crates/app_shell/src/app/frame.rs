@@ -2345,7 +2345,7 @@ impl PrintCadApp {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core_document::{BodyPlacement, Compression, ImportedGeometry};
+    use core_document::{BodyPlacement, Compression};
 
     fn part(doc: &mut Document) -> core_document::BodyId {
         let body = doc.create_body(Some("Peg".into()));
@@ -2355,19 +2355,7 @@ mod tests {
             indices: vec![0, 1, 2],
             ..Default::default()
         });
-        doc.set_imported_geometry(
-            body,
-            ImportedGeometry {
-                bounds_mm: mesh.bounds(),
-                mesh,
-                source_asset: None,
-                revision: 0,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        doc.set_imported_geometry(body, crate::test_support::geometry(mesh));
         doc.set_imported_brep_data(body, b"ogeom peg".to_vec(), Vec::new());
         body
     }

@@ -573,25 +573,13 @@ impl crate::PrintCadApp {
 mod tests {
     use super::*;
 
-    /// A box `size` mm with a corner at `at`, its triangles outward.
-    fn block(size: [f32; 3], at: [f32; 3]) -> TriMesh {
-        let corner =
-            |i: usize| [0, 1, 2].map(|k| at[k] + if (i >> k) & 1 == 1 { size[k] } else { 0.0 });
-        let quads = [
-            [0, 2, 3, 1],
-            [4, 5, 7, 6],
-            [0, 1, 5, 4],
-            [2, 6, 7, 3],
-            [0, 4, 6, 2],
-            [1, 3, 7, 5],
-        ];
-        TriMesh {
-            positions: (0..8).map(corner).collect(),
-            indices: quads
-                .iter()
-                .flat_map(|q| [q[0], q[1], q[2], q[0], q[2], q[3]])
-                .collect(),
-            ..Default::default()
+    use crate::test_support::block;
+
+    fn part(name: &str, bodies: Vec<BodyId>, count: u32) -> PrintPart {
+        PrintPart {
+            name: name.into(),
+            bodies,
+            count,
         }
     }
 
@@ -609,19 +597,7 @@ mod tests {
         let mut bodies = Vec::new();
         for (name, mesh) in meshes {
             let body = document.create_body(Some((*name).into()));
-            document.set_imported_geometry(
-                body,
-                core_document::ImportedGeometry {
-                    bounds_mm: mesh.bounds(),
-                    mesh: Arc::new(mesh.clone()),
-                    source_asset: None,
-                    revision: 1,
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: None,
-                },
-            );
+            document.set_imported_geometry(body, crate::test_support::geometry(mesh.clone()));
             bodies.push(body);
         }
         (document, bodies)
@@ -643,11 +619,7 @@ mod tests {
     fn a_part_lies_on_its_largest_face() {
         let (document, bodies) =
             document_with(&[("Post", block([10.0, 20.0, 60.0], [5.0, -3.0, 7.0]))]);
-        let parts = [PrintPart {
-            name: "Post".into(),
-            bodies: bodies.clone(),
-            count: 1,
-        }];
+        let parts = [part("Post", bodies.clone(), 1)];
         let layout = lay_out(&document, &parts, &BED);
         assert_eq!(layout.pieces.len(), 1);
         let mesh = piece_mesh(&document, &layout.pieces[0]).unwrap();
@@ -673,11 +645,7 @@ mod tests {
         let flange = block([40.0, 40.0, 4.0], [0.0, 0.0, 0.0]);
         let boss = block([10.0, 10.0, 20.0], [15.0, 15.0, 4.0]);
         let (document, bodies) = document_with(&[("Flange", joined(flange, boss))]);
-        let parts = [PrintPart {
-            name: "Flange".into(),
-            bodies,
-            count: 1,
-        }];
+        let parts = [part("Flange", bodies, 1)];
         let layout = lay_out(&document, &parts, &BED);
         let mesh = piece_mesh(&document, &layout.pieces[0]).unwrap();
         let (lo, hi) = bounds(&mesh);
@@ -705,11 +673,7 @@ mod tests {
     #[test]
     fn copies_pack_on_the_bed_without_touching() {
         let (document, bodies) = document_with(&[("Tile", block([50.0, 40.0, 3.0], [0.0; 3]))]);
-        let parts = [PrintPart {
-            name: "Tile".into(),
-            bodies,
-            count: 20,
-        }];
+        let parts = [part("Tile", bodies, 20)];
         let layout = lay_out(&document, &parts, &BED);
         assert_eq!(layout.pieces.len(), 20);
         assert_eq!(layout.pieces[3].name, "Tile 4");
@@ -755,16 +719,8 @@ mod tests {
             ..BED
         };
         let parts = [
-            PrintPart {
-                name: "Rail".into(),
-                bodies: vec![bodies[0]],
-                count: 1,
-            },
-            PrintPart {
-                name: "Slab".into(),
-                bodies: vec![bodies[1]],
-                count: 1,
-            },
+            part("Rail", vec![bodies[0]], 1),
+            part("Slab", vec![bodies[1]], 1),
         ];
         let layout = lay_out(&document, &parts, &small);
         assert_eq!(layout.too_big, ["Slab"]);
@@ -787,11 +743,7 @@ mod tests {
             origin_center: true,
             ..BED
         };
-        let parts = [PrintPart {
-            name: "Cube".into(),
-            bodies,
-            count: 1,
-        }];
+        let parts = [part("Cube", bodies, 1)];
         let layout = lay_out(&document, &parts, &centred);
         let (lo, _) = bounds(&piece_mesh(&document, &layout.pieces[0]).unwrap());
         assert!(

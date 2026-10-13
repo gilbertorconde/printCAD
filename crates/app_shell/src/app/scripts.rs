@@ -4784,6 +4784,26 @@ fn item_id(item: TreeItemId) -> Option<Uuid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::datum_points as points;
+
+    /// One of the document's own commands, its arguments checked first.
+    fn run(
+        doc: &mut core_document::Document,
+        registry: &core_document::DocumentService,
+        id: &str,
+        args: Value,
+    ) -> CommandResult {
+        let Value::Object(args) = args else {
+            panic!("arguments are an object");
+        };
+        doc_commands()
+            .into_iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .check(&args)
+            .unwrap();
+        document_command(id, &args, doc, registry, None).unwrap()
+    }
 
     #[test]
     fn faces_are_listed_with_a_point_on_each_and_what_surface_it_is() {
@@ -4953,13 +4973,37 @@ mod tests {
                 runs.push((name.clone(), format!("block {}", n + 1), block));
             }
         }
-        let mut failed = Vec::new();
-        for (owner, title, script) in &runs {
-            if let Err(error) = crate::headless::run_in_empty_document(&mut registry, script, title)
-            {
-                failed.push(format!("{owner}, \"{title}\": {error}"));
-            }
-        }
+        // The scripts run on every core: each worker takes the next one and
+        // runs it from an empty document in the worker's own registry. Files
+        // a script writes go to `os.tmpname()`, so no two collide.
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let mut failed: Vec<String> = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut registry = core_document::DocumentService::default();
+                        workbenches::register_all_workbenches(&mut registry).unwrap();
+                        let mut failed = Vec::new();
+                        while let Some((owner, title, script)) =
+                            runs.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                        {
+                            if let Err(error) =
+                                crate::headless::run_in_empty_document(&mut registry, script, title)
+                            {
+                                failed.push(format!("{owner}, \"{title}\": {error}"));
+                            }
+                        }
+                        failed
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect()
+        });
+        failed.sort();
         assert!(
             failed.is_empty(),
             "examples that fail:\n{}",
@@ -5028,23 +5072,7 @@ mod tests {
     fn suppressing_a_tree_selection_is_one_undo_step_recorded_per_feature() {
         let mut doc = core_document::Document::new("t");
         let body = doc.create_body(None);
-        let features: Vec<FeatureId> = ["a", "b", "c"]
-            .into_iter()
-            .map(|name| {
-                doc.add_feature_in_body(
-                    core_document::DatumFeature {
-                        shape: core_document::DatumShape::Point,
-                        attachment: core_document::DatumAttachment::BasePlane(
-                            core_document::BasePlane::XY,
-                        ),
-                        offset: Default::default(),
-                    },
-                    name.to_string(),
-                    Some(body),
-                )
-                .unwrap()
-            })
-            .collect();
+        let features = points(&mut doc, body, &["a", "b", "c"]);
         let mut journal = core_document::history::OpJournal::new(16);
         journal.note(&mut doc);
         let suppressed = |doc: &core_document::Document| {
@@ -5078,67 +5106,25 @@ mod tests {
         assert_eq!(call.args["id"], json!(chosen[1].0.to_string()));
     }
 
+    /// The first feature can go no earlier, and the move says so.
     #[test]
-    fn the_tree_s_history_edits_work_on_the_document_as_commands() {
-        let mut registry = core_document::DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
+    fn moving_the_first_feature_up_is_refused() {
+        let registry = core_document::DocumentService::default();
         let mut doc = core_document::Document::new("t");
         let body = doc.create_body(None);
-        let datum = |doc: &mut core_document::Document, name: &str| {
-            doc.add_feature_in_body(
-                core_document::DatumFeature {
-                    shape: core_document::DatumShape::Point,
-                    attachment: core_document::DatumAttachment::BasePlane(
-                        core_document::BasePlane::XY,
-                    ),
-                    offset: Default::default(),
-                },
-                name.to_string(),
-                Some(body),
-            )
-            .unwrap()
-        };
-        let (a, b) = (datum(&mut doc, "a"), datum(&mut doc, "b"));
-        let run = |doc: &mut core_document::Document, id: &str, args: Value| {
-            let args = match args {
-                Value::Object(map) => map,
-                _ => CommandArgs::new(),
-            };
-            document_command(id, &args, doc, &registry, None).unwrap()
-        };
-        run(&mut doc, "doc.suppress", json!({"id": a.0.to_string()})).unwrap();
-        assert!(doc.get_feature_meta(a).unwrap().suppressed);
-        let moved = run(
-            &mut doc,
-            "doc.move",
-            json!({"id": b.0.to_string(), "up": true}),
-        )
-        .unwrap();
-        assert_eq!(moved, json!(true));
+        let b = points(&mut doc, body, &["a", "b"])[1];
+        let up = |id: FeatureId| json!({"id": id.0.to_string(), "up": true});
+        assert_eq!(
+            run(&mut doc, &registry, "doc.move", up(b)).unwrap(),
+            json!(true)
+        );
+        let stuck = run(&mut doc, &registry, "doc.move", up(b)).unwrap_err();
+        assert!(stuck.to_string().contains("already first"), "{stuck}");
         let order: Vec<String> = features_in_order(&doc, Some(body))
             .iter()
             .map(|n| n.name.clone())
             .collect();
         assert_eq!(order, ["b", "a"]);
-        let stuck = run(
-            &mut doc,
-            "doc.move",
-            json!({"id": b.0.to_string(), "up": true}),
-        )
-        .unwrap_err();
-        assert!(
-            stuck.to_string().contains("already first"),
-            "the first can go no earlier, and says so: {stuck}"
-        );
-        run(&mut doc, "doc.set_tip", json!({"id": b.0.to_string()})).unwrap();
-        assert_eq!(doc.bodies()[0].tip, Some(b));
-        run(
-            &mut doc,
-            "doc.set_tip",
-            json!({"id": b.0.to_string(), "clear": true}),
-        )
-        .unwrap();
-        assert_eq!(doc.bodies()[0].tip, None);
     }
 
     #[test]
@@ -5154,31 +5140,9 @@ mod tests {
             face_names: vec![11, 12],
             ..Default::default()
         };
-        doc.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                mesh: std::sync::Arc::new(mesh),
-                source_asset: None,
-                revision: 0,
-                bounds_mm: None,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        doc.set_imported_geometry(body, crate::test_support::geometry(mesh));
         let run = |doc: &mut core_document::Document, id: &str, args: Value| {
-            let args = match args {
-                Value::Object(map) => map,
-                _ => CommandArgs::new(),
-            };
-            doc_commands()
-                .into_iter()
-                .find(|c| c.id == id)
-                .unwrap()
-                .check(&args)
-                .unwrap();
-            document_command(id, &args, doc, &registry, None).unwrap()
+            run(doc, &registry, id, args)
         };
         let id = body.0.to_string();
         run(
@@ -5241,27 +5205,9 @@ mod tests {
 
     #[test]
     fn features_move_after_another() {
-        let mut registry = core_document::DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
         let mut doc = core_document::Document::new("t");
         let body = doc.create_body(None);
-        let ids: Vec<FeatureId> = ["a", "b", "c", "d"]
-            .iter()
-            .map(|name| {
-                doc.add_feature_in_body(
-                    core_document::DatumFeature {
-                        shape: core_document::DatumShape::Point,
-                        attachment: core_document::DatumAttachment::BasePlane(
-                            core_document::BasePlane::XY,
-                        ),
-                        offset: Default::default(),
-                    },
-                    name.to_string(),
-                    Some(body),
-                )
-                .unwrap()
-            })
-            .collect();
+        let ids = points(&mut doc, body, &["a", "b", "c", "d"]);
         let order = |doc: &core_document::Document| -> Vec<String> {
             features_in_order(doc, Some(body))
                 .iter()

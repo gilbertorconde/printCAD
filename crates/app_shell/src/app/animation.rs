@@ -393,15 +393,22 @@ mod tests {
         }
     }
 
-    #[test]
-    fn frames_become_an_animated_png_that_plays_them_in_turn() {
-        let animation = Animation {
+    /// A triangle sliding along X, one frame for each of `frames`.
+    fn slide(frames: usize, frame_ms: u32) -> Animation {
+        Animation {
             name: "slide".into(),
-            frames: (0..4).map(|i| vec![triangle(i as f32 * 5.0)]).collect(),
+            frames: (0..frames)
+                .map(|i| vec![triangle(i as f32 * 5.0)])
+                .collect(),
             forward: Vec3::new(0.0, 0.0, -1.0),
             up: Vec3::Y,
-            frame_ms: 40,
-        };
+            frame_ms,
+        }
+    }
+
+    #[test]
+    fn frames_become_an_animated_png_that_plays_them_in_turn() {
+        let animation = slide(4, 40);
         let bytes = encode(&animation).expect("encodes");
         let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
         let reader = decoder.read_info().expect("reads");
@@ -457,13 +464,7 @@ mod tests {
 
     #[test]
     fn frames_become_a_gif_or_a_folder_of_pngs() {
-        let animation = Animation {
-            name: "slide".into(),
-            frames: (0..3).map(|i| vec![triangle(i as f32 * 5.0)]).collect(),
-            forward: Vec3::new(0.0, 0.0, -1.0),
-            up: Vec3::Y,
-            frame_ms: 50,
-        };
+        let animation = slide(3, 50);
         let dir = std::env::temp_dir().join(format!("printcad-anim-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let gif_path = write(&animation, &dir.join("slide.gif")).unwrap();
@@ -490,13 +491,7 @@ mod tests {
     /// `.mp4` an MP4 (an `ftyp` box first).
     #[test]
     fn frames_become_a_video_where_ffmpeg_can_make_one() {
-        let animation = Animation {
-            name: "slide".into(),
-            frames: (0..4).map(|i| vec![triangle(i as f32 * 5.0)]).collect(),
-            forward: Vec3::new(0.0, 0.0, -1.0),
-            up: Vec3::Y,
-            frame_ms: 40,
-        };
+        let animation = slide(2, 40);
         let dir = std::env::temp_dir().join(format!("printcad-video-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let plain = write(&animation, &dir.join("plain")).unwrap();

@@ -1,12 +1,36 @@
 //! Unit tests for the focal-distance camera core.
 
 use axes::AxisSystem;
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 use settings::{CameraSettings, ProjectionMode, SixDofSettings};
 
+use super::CameraController;
 use super::ops;
 use super::state::CadCameraState;
-use super::{auto_clip, zoom_cursor};
+use super::zoom_cursor;
+
+/// A camera on a `width` x `height` viewport at the window's corner.
+fn camera(width: u32, height: u32) -> CameraController {
+    let mut cam = CameraController::new(&CameraSettings::default(), (width, height));
+    cam.update_viewport((0, 0), (width, height));
+    cam
+}
+
+/// How far ahead of the camera's eye each corner of `scene` lies.
+fn corner_depths(cam: &CameraController, scene: (Vec3, Vec3)) -> Vec<f32> {
+    let eye = Vec3::from_array(cam.position());
+    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
+    (0..8)
+        .map(|k| {
+            Vec3::new(
+                if k & 1 == 0 { scene.0.x } else { scene.1.x },
+                if k & 2 == 0 { scene.0.y } else { scene.1.y },
+                if k & 4 == 0 { scene.0.z } else { scene.1.z },
+            )
+        })
+        .map(|p| (p - eye).dot(forward))
+        .collect()
+}
 
 #[test]
 fn orientation_normalizes_after_orbit_steps() {
@@ -45,12 +69,16 @@ fn perspective_dolly_preserves_focal_point() {
     assert!((focal_before - focal_after).length() < 1e-3);
 }
 
+/// With nothing in the scene the clip planes stay where they were.
 #[test]
-fn auto_clip_empty_scene_no_panic() {
+fn an_empty_scene_leaves_the_clip_planes_alone() {
     let settings = CameraSettings::default();
+    assert!(settings.auto_near_far);
     let axes = AxisSystem::from(settings.axis_preset);
     let mut cam = CadCameraState::new(&settings, (100, 100));
-    auto_clip::update_auto_clip(&mut cam, &axes, None, &settings);
+    let planes = (cam.near_plane, cam.far_plane);
+    super::auto_clip::update_auto_clip(&mut cam, &axes, None, &settings);
+    assert_eq!((cam.near_plane, cam.far_plane), planes);
 }
 
 #[test]
@@ -85,15 +113,11 @@ fn zoom_to_cursor_preserves_world_point_on_focal_plane() {
 
 #[test]
 fn orient_to_plane_puts_sketch_axes_screen_aligned() {
-    use super::CameraController;
-    use glam::Vec3;
-
     // Default settings use the Z-up axis preset: the case where an
     // orientation built against a hardcoded XYZ camera basis, instead of
     // the preset's, would roll the view on sketch entry.
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
 
     // Default sketch plane: XY at origin, +Z normal, +Y plane-up.
     cam.orient_to_plane(Vec3::ZERO, Vec3::Z, Vec3::Y, Some(Vec3::ZERO), &settings);
@@ -139,26 +163,37 @@ fn controller() -> (super::CameraController, CameraSettings, SixDofSettings) {
     (camera, settings, SixDofSettings::default())
 }
 
+/// A device at rest, inside its dead zone, turned off, or pushed along a
+/// movement assigned to nothing leaves the view as it is; only the
+/// unassigned push still asks for a frame.
 #[test]
-fn a_resting_device_leaves_the_view_alone() {
-    let (mut camera, settings, device) = controller();
-    let before = camera.position();
-    assert!(!camera.apply_device_motion([0.0; 6], 0.016, &settings, &device));
-    assert_eq!(camera.position(), before);
-}
-
-#[test]
-fn a_deflection_inside_the_dead_zone_is_rest() {
-    let (mut camera, settings, device) = controller();
-    let barely = device.full_scale * device.dead_zone * 0.5;
-    assert!(!camera.apply_device_motion(deflect(0, barely), 0.016, &settings, &device));
-}
-
-#[test]
-fn a_disabled_device_never_moves_the_view() {
-    let (mut camera, settings, mut device) = controller();
-    device.enabled = false;
-    assert!(!camera.apply_device_motion(deflect(0, 350.0), 0.016, &settings, &device));
+fn a_device_that_drives_nothing_leaves_the_view_alone() {
+    let usual = SixDofSettings::default();
+    let full = usual.full_scale;
+    let barely = full * usual.dead_zone * 0.5;
+    let off = SixDofSettings {
+        enabled: false,
+        ..usual.clone()
+    };
+    let mut unassigned = usual.clone();
+    unassigned.assign[0] = settings::SixDofMotion::None;
+    let rows = [
+        ("at rest", [0.0; 6], usual.clone(), false),
+        ("inside the dead zone", deflect(0, barely), usual, false),
+        ("turned off", deflect(0, full), off, false),
+        ("unassigned", deflect(0, full), unassigned, true),
+    ];
+    for (name, readings, device, asks_frame) in rows {
+        let (mut camera, settings, _) = controller();
+        let before = (camera.position_vec(), camera.state.orientation);
+        let moved = camera.apply_device_motion(readings, 0.016, &settings, &device);
+        assert_eq!(moved, asks_frame, "{name}");
+        assert_eq!(
+            (camera.position_vec(), camera.state.orientation),
+            before,
+            "{name}"
+        );
+    }
 }
 
 #[test]
@@ -309,15 +344,6 @@ fn a_movement_drives_whatever_it_is_assigned_to() {
 }
 
 #[test]
-fn an_unassigned_movement_does_nothing() {
-    let (mut camera, settings, mut device) = controller();
-    device.assign[0] = settings::SixDofMotion::None;
-    let before = camera.position_vec();
-    camera.apply_device_motion(deflect(0, device.full_scale), 0.1, &settings, &device);
-    assert_eq!(camera.position_vec(), before);
-}
-
-#[test]
 fn a_long_frame_does_not_throw_the_view_across_the_scene() {
     let (mut camera, settings, device) = controller();
     let start = camera.position_vec();
@@ -336,9 +362,6 @@ fn a_long_frame_does_not_throw_the_view_across_the_scene() {
 /// viewport origin: what the cursor and the overlay painters use.
 #[test]
 fn world_to_viewport_is_the_screen_position_less_the_viewport_origin() {
-    use super::CameraController;
-    use glam::Vec3;
-
     let settings = CameraSettings::default();
     let mut cam = CameraController::new(&settings, (800, 600));
     cam.update_viewport((320, 48), (800, 600));
@@ -355,12 +378,8 @@ fn world_to_viewport_is_the_screen_position_less_the_viewport_origin() {
 /// past the part: geometry can sit anywhere in the box, however close.
 #[test]
 fn a_camera_inside_the_scene_box_keeps_the_near_plane_close() {
-    use super::CameraController;
-    use glam::Vec3;
-
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     // Framed on a 40 mm part at the origin.
     cam.reset_to_fit(Vec3::ZERO, 20.0, None, &settings);
     let eye = Vec3::from_array(cam.position());
@@ -385,12 +404,8 @@ fn a_camera_inside_the_scene_box_keeps_the_near_plane_close() {
 /// enclose everything the scene draws, however the camera turns after.
 #[test]
 fn clipping_encloses_the_whole_scene_after_framing_one_part() {
-    use super::CameraController;
-    use glam::Vec3;
-
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     // Fit selection frames one part and passes no box of its own.
     cam.reset_to_fit(Vec3::new(5.0, 5.0, 5.0), 5.0, None, &settings);
     let scene = (
@@ -401,37 +416,17 @@ fn clipping_encloses_the_whole_scene_after_framing_one_part() {
     for step in 0..24 {
         cam.set_scene_bounds(Some(scene));
         cam.apply_auto_clip_planes(&settings);
-        let eye = Vec3::from_array(cam.position());
-        let forward = (Vec3::from_array(cam.target()) - eye).normalize();
         let (near, far) = (cam.state.near_plane as f32, cam.state.far_plane as f32);
-        for corner in 0..8 {
-            let p = Vec3::new(
-                if corner & 1 == 0 {
-                    scene.0.x
-                } else {
-                    scene.1.x
-                },
-                if corner & 2 == 0 {
-                    scene.0.y
-                } else {
-                    scene.1.y
-                },
-                if corner & 4 == 0 {
-                    scene.0.z
-                } else {
-                    scene.1.z
-                },
-            );
-            let depth = (p - eye).dot(forward);
+        for (corner, depth) in corner_depths(&cam, scene).into_iter().enumerate() {
             if depth > 0.0 {
                 assert!(
                     depth >= near,
-                    "step {step}: corner {p} at {depth} is before near {near}"
+                    "step {step}: corner {corner} at {depth} is before near {near}"
                 );
             }
             assert!(
                 depth <= far,
-                "step {step}: corner {p} at {depth} is past far {far}"
+                "step {step}: corner {corner} at {depth} is past far {far}"
             );
         }
         // Turn a little, as a drag would.
@@ -450,12 +445,8 @@ fn clipping_encloses_the_whole_scene_after_framing_one_part() {
 /// reach the parts across the scene, however far they sit from it.
 #[test]
 fn a_short_focal_distance_keeps_the_whole_scene_inside_the_far_plane() {
-    use super::CameraController;
-    use glam::Vec3;
-
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     // Framed on a small part, then drawn in to 2 mm from a picked point.
     cam.reset_to_fit(Vec3::ZERO, 10.0, None, &settings);
     let focal = cam.state.focal_point_vec3(&cam.axes);
@@ -469,17 +460,8 @@ fn a_short_focal_distance_keeps_the_whole_scene_inside_the_far_plane() {
     cam.set_scene_bounds(Some(scene));
     cam.apply_auto_clip_planes(&settings);
 
-    let eye = Vec3::from_array(cam.position());
-    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
-    let deepest = (0..8)
-        .map(|c| {
-            Vec3::new(
-                if c & 1 == 0 { scene.0.x } else { scene.1.x },
-                if c & 2 == 0 { scene.0.y } else { scene.1.y },
-                if c & 4 == 0 { scene.0.z } else { scene.1.z },
-            )
-        })
-        .map(|p| (p - eye).dot(forward))
+    let deepest = corner_depths(&cam, scene)
+        .into_iter()
         .fold(f32::MIN, f32::max);
     let far = cam.state.far_plane as f32;
     assert!(
@@ -499,12 +481,8 @@ fn a_short_focal_distance_keeps_the_whole_scene_inside_the_far_plane() {
 /// never past a part the eye is not inside.
 #[test]
 fn picking_pivots_and_orbiting_never_clip_the_scene() {
-    use super::CameraController;
-    use glam::{Vec2, Vec3};
-
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (1300, 800));
-    cam.update_viewport((0, 0), (1300, 800));
+    let mut cam = camera(1300, 800);
     // The box three imports made together: a pin, a 3MF shell, an assembly.
     let scene = (
         Vec3::new(-40.5, -128.9, -10.0),
@@ -538,18 +516,7 @@ fn picking_pivots_and_orbiting_never_clip_the_scene() {
         }
         cam.apply_auto_clip_planes(&settings);
 
-        let eye = Vec3::from_array(cam.position());
-        let forward = (Vec3::from_array(cam.target()) - eye).normalize();
-        let depths: Vec<f32> = (0..8)
-            .map(|k| {
-                Vec3::new(
-                    if k & 1 == 0 { scene.0.x } else { scene.1.x },
-                    if k & 2 == 0 { scene.0.y } else { scene.1.y },
-                    if k & 4 == 0 { scene.0.z } else { scene.1.z },
-                )
-            })
-            .map(|p| (p - eye).dot(forward))
-            .collect();
+        let depths = corner_depths(&cam, scene);
         let (near, far) = (cam.state.near_plane as f32, cam.state.far_plane as f32);
         let deepest = depths.iter().copied().fold(f32::MIN, f32::max);
         let nearest = depths.iter().copied().fold(f32::MAX, f32::min);
@@ -577,12 +544,8 @@ fn picking_pivots_and_orbiting_never_clip_the_scene() {
 /// take in every part, in front of the eye and behind it.
 #[test]
 fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
-    use super::CameraController;
-    use glam::Vec3;
-
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (1300, 800));
-    cam.update_viewport((0, 0), (1300, 800));
+    let mut cam = camera(1300, 800);
     let scene = (
         Vec3::new(-40.5, -128.9, -10.0),
         Vec3::new(154.3, 63.95, 131.9),
@@ -599,18 +562,7 @@ fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
     cam.set_scene_bounds(Some(scene));
     cam.apply_auto_clip_planes(&settings);
 
-    let eye = Vec3::from_array(cam.position());
-    let forward = (Vec3::from_array(cam.target()) - eye).normalize();
-    let depths: Vec<f32> = (0..8)
-        .map(|k| {
-            Vec3::new(
-                if k & 1 == 0 { scene.0.x } else { scene.1.x },
-                if k & 2 == 0 { scene.0.y } else { scene.1.y },
-                if k & 4 == 0 { scene.0.z } else { scene.1.z },
-            )
-        })
-        .map(|p| (p - eye).dot(forward))
-        .collect();
+    let depths = corner_depths(&cam, scene);
     let nearest = depths.iter().copied().fold(f32::MAX, f32::min);
     let deepest = depths.iter().copied().fold(f32::MIN, f32::max);
     let (near, far) = (cam.state.near_plane as f32, cam.state.far_plane as f32);
@@ -626,12 +578,8 @@ fn an_orthographic_view_keeps_what_lies_behind_the_eye() {
 /// picked on it is taken, and the eye comes round in front of it.
 #[test]
 fn an_orthographic_pivot_pick_behind_the_eye_is_taken() {
-    use super::CameraController;
-    use glam::Vec3;
-
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     cam.reset_to_fit(Vec3::ZERO, 50.0, None, &settings);
     cam.state.projection = ProjectionMode::Orthographic;
     let eye = Vec3::from_array(cam.position());
@@ -655,12 +603,10 @@ fn an_orthographic_pivot_pick_behind_the_eye_is_taken() {
 /// and only the perspective's strength changes.
 #[test]
 fn a_field_of_view_change_keeps_the_object_its_size() {
-    use super::{CameraController, FOV_RANGE_DEG};
-    use glam::Vec3;
+    use super::FOV_RANGE_DEG;
 
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
     let focal = Vec3::from_array(cam.target());
     let visible_height = |c: &CameraController| {
@@ -705,8 +651,6 @@ fn a_field_of_view_change_keeps_the_object_its_size() {
 /// the plane: never at where the origin falls on the plane.
 #[test]
 fn orient_to_plane_looks_at_the_face_not_the_origin() {
-    use super::CameraController;
-    use glam::Vec3;
     let settings = CameraSettings::default();
     let settle = |cam: &mut CameraController| {
         for _ in 0..600 {
@@ -718,8 +662,7 @@ fn orient_to_plane_looks_at_the_face_not_the_origin() {
     let (origin, normal, up) = (Vec3::new(20.0, 0.0, 0.0), Vec3::X, Vec3::Z);
     let face = Vec3::new(20.0, 5.0, 34.0);
 
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     cam.orient_to_plane(origin, normal, up, Some(face), &settings);
     settle(&mut cam);
     let (x, y) = cam.world_to_screen(face).expect("the face is in view");
@@ -729,8 +672,7 @@ fn orient_to_plane_looks_at_the_face_not_the_origin() {
     );
 
     // No point asked for: the view's own centre, carried onto the plane.
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     let before = cam.focal_point_world();
     cam.orient_to_plane(origin, normal, up, None, &settings);
     settle(&mut cam);
@@ -747,13 +689,11 @@ fn orient_to_plane_looks_at_the_face_not_the_origin() {
 /// view keeps its turn.
 #[test]
 fn a_swallowed_release_does_not_turn_a_pan_into_a_roll() {
-    use super::{CameraController, CameraPointerResult};
-    use glam::Vec2;
+    use super::CameraPointerResult;
     use winit::event::{DeviceId, ElementState, MouseButton, WindowEvent};
 
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     let press = |button, state| WindowEvent::MouseInput {
         device_id: DeviceId::dummy(),
         state,
@@ -787,28 +727,26 @@ fn a_swallowed_release_does_not_turn_a_pan_into_a_roll() {
     assert_eq!(cam.orientation(), turn, "a pan, not a roll");
 }
 
-/// A new view looks down on the scene from above, at a corner, as a model
-/// is first seen: never up at it from below.
+/// A new view, and the scene framed, look down on it from above, at a
+/// corner, as a model is first seen: never up at it from below.
 #[test]
-fn a_new_view_looks_down_from_above() {
-    use super::CameraController;
-    let settings = CameraSettings::default();
-    let cam = CameraController::new(&settings, (800, 600));
-    let (forward, up) = cam.view_basis();
-    assert!(forward.z < -0.3, "looks down: forward {forward}");
-    assert!(up.z > 0.5, "Z stands up on screen: up {up}");
-}
-
-/// Framing the scene looks at it from the same corner, from above.
-#[test]
-fn a_framed_view_looks_down_from_above() {
-    use super::CameraController;
+fn a_new_or_framed_view_looks_down_from_above() {
     let settings = CameraSettings::default();
     let mut cam = CameraController::new(&settings, (800, 600));
-    cam.reset_to_fit(glam::Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
-    let (forward, up) = cam.view_basis();
-    assert!(forward.z < -0.3, "looks down: forward {forward}");
-    assert!(up.z > 0.5, "Z stands up on screen: up {up}");
+    for framed in [false, true] {
+        if framed {
+            cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
+        }
+        let (forward, up) = cam.view_basis();
+        assert!(
+            forward.z < -0.3,
+            "framed {framed}: looks down: forward {forward}"
+        );
+        assert!(
+            up.z > 0.5,
+            "framed {framed}: Z stands up on screen: up {up}"
+        );
+    }
 }
 
 /// Fit while a sketch session holds the view square to its plane: the
@@ -817,15 +755,12 @@ fn a_framed_view_looks_down_from_above() {
 /// and whole, on the plane.
 #[test]
 fn fit_keeping_orientation_stays_square_on_the_plane() {
-    use super::CameraController;
-    use glam::Vec3;
     let settings = CameraSettings::default();
     // A sketch on a face at x = 20, its geometry spanning y 40..80, z 10..30.
     let (origin, normal, up) = (Vec3::new(20.0, 0.0, 0.0), Vec3::X, Vec3::Z);
     let (mn, mx) = (Vec3::new(20.0, 40.0, 10.0), Vec3::new(20.0, 80.0, 30.0));
 
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     cam.orient_to_plane(origin, normal, up, None, &settings);
     cam.update(0.016, &settings);
     assert!(cam.is_animating(), "pressed mid-turn");
@@ -856,12 +791,10 @@ fn fit_keeping_orientation_stays_square_on_the_plane() {
 /// same picture: the same eye, target, turn, projection and zoom.
 #[test]
 fn a_kept_view_comes_back_as_it_was() {
-    use super::{CameraController, KeptView};
-    use glam::Vec3;
+    use super::KeptView;
 
     let settings = CameraSettings::default();
-    let mut cam = CameraController::new(&settings, (800, 600));
-    cam.update_viewport((0, 0), (800, 600));
+    let mut cam = camera(800, 600);
     cam.reset_to_fit(Vec3::new(10.0, 20.0, 5.0), 40.0, None, &settings);
     for _ in 0..7 {
         ops::orbit_pixels(&mut cam.state, &cam.axes, Vec2::new(13.0, -4.0), &settings);
@@ -877,8 +810,7 @@ fn a_kept_view_comes_back_as_it_was() {
         let read: KeptView = serde_json::from_str(&text).unwrap();
         assert_eq!(read, kept);
 
-        let mut again = CameraController::new(&settings, (800, 600));
-        again.update_viewport((0, 0), (800, 600));
+        let mut again = camera(800, 600);
         assert!(again.restore_view(&read, &settings));
         assert_eq!(again.projection(), projection);
         let near = |a: [f32; 3], b: [f32; 3]| (Vec3::from_array(a) - Vec3::from_array(b)).length();
@@ -897,8 +829,6 @@ fn a_kept_view_comes_back_as_it_was() {
 /// view, leaves the camera where it stands.
 #[test]
 fn a_kept_view_that_does_not_fit_is_refused() {
-    use super::CameraController;
-
     let settings = CameraSettings::default();
     let mut cam = CameraController::new(&settings, (800, 600));
     let before = cam.kept_view();

@@ -864,36 +864,21 @@ fn apply(chat: &mut Chat, event: ChatEvent) {
 mod tests {
     use super::*;
 
+    /// A chat on its agent's turn, no choices put to it yet.
     fn chat() -> Chat {
-        let (ours, _theirs) = local_ipc::Stream::pair().unwrap();
         Chat {
-            id: "c".into(),
-            title: "Chat 1".into(),
-            agent: "Test".into(),
-            status: ChatStatus::Busy,
-            ask: true,
-            entries: Vec::new(),
-            options: Vec::new(),
-            attachments: Vec::new(),
-            queued: Vec::new(),
-            held: false,
             chose: false,
-            choices_left: Vec::new(),
-            stderr: Vec::new(),
-            prompts: 1,
-            rules_sent: String::new(),
-            tab: uuid::Uuid::nil(),
-            session_id: None,
-            folder: PathBuf::new(),
-            session: Some(AgentChat::over(
-                ours.try_clone().unwrap(),
-                ours,
-                PathBuf::from("/"),
-                Vec::new(),
-                None,
-                std::sync::Arc::new(|| {}),
-            )),
+            ..Chat::for_test("c", ChatStatus::Busy, Vec::new())
         }
+    }
+
+    fn end_turn(c: &mut Chat, stop_reason: &str) {
+        apply(
+            c,
+            ChatEvent::TurnEnded {
+                stop_reason: stop_reason.into(),
+            },
+        );
     }
 
     fn select(id: &str, category: &str, current: &str, values: &[&str]) -> SessionOption {
@@ -938,24 +923,14 @@ mod tests {
         assert!(sent(&c).is_empty(), "the agent is still on its turn");
         assert_eq!(c.queued.len(), 2);
 
-        apply(
-            &mut c,
-            ChatEvent::TurnEnded {
-                stop_reason: "end_turn".into(),
-            },
-        );
+        end_turn(&mut c, "end_turn");
         c.send_next(String::new());
         assert_eq!(sent(&c), ["taller"]);
         assert_eq!(c.status, ChatStatus::Busy);
         c.send_next(String::new());
         assert_eq!(sent(&c), ["taller"], "one per turn");
 
-        apply(
-            &mut c,
-            ChatEvent::TurnEnded {
-                stop_reason: "end_turn".into(),
-            },
-        );
+        end_turn(&mut c, "end_turn");
         c.send_next(String::new());
         assert_eq!(sent(&c), ["taller", "and red"]);
         assert!(c.queued.is_empty());
@@ -993,12 +968,7 @@ mod tests {
         c.enqueue("taller".into());
         c.stop();
         assert!(c.held);
-        apply(
-            &mut c,
-            ChatEvent::TurnEnded {
-                stop_reason: "cancelled".into(),
-            },
-        );
+        end_turn(&mut c, "cancelled");
         c.send_next(String::new());
         assert!(sent(&c).is_empty(), "held");
 
@@ -1061,16 +1031,8 @@ mod tests {
         ] {
             apply(&mut c, event);
         }
-        let users: Vec<&str> = c
-            .entries
-            .iter()
-            .filter_map(|e| match e {
-                ChatEntry::User { text, .. } => Some(text.as_str()),
-                _ => None,
-            })
-            .collect();
         assert_eq!(
-            users,
+            sent(&c),
             ["make a box", "taller"],
             "without the preamble, in order"
         );
@@ -1109,12 +1071,7 @@ mod tests {
                 output: Some("pad1".into()),
             },
         );
-        apply(
-            &mut c,
-            ChatEvent::TurnEnded {
-                stop_reason: "cancelled".into(),
-            },
-        );
+        end_turn(&mut c, "cancelled");
         assert_eq!(
             c.entries,
             [

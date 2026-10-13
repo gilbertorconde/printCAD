@@ -790,19 +790,7 @@ mod tests {
                 p[0] += dx;
             }
             let body = document.create_body(Some(name.into()));
-            document.set_imported_geometry(
-                body,
-                core_document::ImportedGeometry {
-                    bounds_mm: mesh.bounds(),
-                    mesh: std::sync::Arc::new(mesh),
-                    source_asset: None,
-                    revision: 1,
-                    brep_blob_path: None,
-                    mesh_path: None,
-                    face_colors_path: None,
-                    health: None,
-                },
-            );
+            document.set_imported_geometry(body, crate::test_support::geometry(mesh));
             bodies.push(body.0);
         }
         document.set_body_visible(core_document::BodyId(bodies[2]), false);

@@ -714,19 +714,7 @@ mod tests {
             })
             .map(|(_, f)| *f)
             .unwrap();
-        doc.set_imported_geometry(
-            body,
-            core_document::ImportedGeometry {
-                bounds_mm: mesh.bounds(),
-                mesh: Arc::clone(&mesh),
-                source_asset: None,
-                revision: 1,
-                brep_blob_path: None,
-                mesh_path: None,
-                face_colors_path: None,
-                health: None,
-            },
-        );
+        doc.set_imported_geometry(body, crate::test_support::geometry(Arc::clone(&mesh)));
         doc.set_imported_brep_data(body, built.brep_blob, Vec::new());
         if textured {
             doc.set_body_textures(
@@ -744,35 +732,43 @@ mod tests {
         doc
     }
 
+    /// What exporting `doc` as `format` writes, the file taken away again.
+    fn export(
+        doc: &core_document::Document,
+        format: ExportFormat,
+        layout: Option<&crate::app::print_layout::Layout>,
+    ) -> kernel_ogeom::export::Exported {
+        let path = std::env::temp_dir().join(format!("export-{}", uuid::Uuid::new_v4()));
+        let (path, exported) = export_document(doc, path, format, None, None, layout).unwrap();
+        let _ = std::fs::remove_file(path);
+        exported
+    }
+
+    /// A binary STL's triangle count and the corners of its bounds.
+    fn stl_bounds(bytes: &[u8]) -> (usize, [f32; 3], [f32; 3]) {
+        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
+        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
+        for t in 0..count {
+            for v in 0..3 {
+                let at = 84 + t * 50 + 12 + v * 12;
+                for k in 0..3 {
+                    let c =
+                        f32::from_le_bytes(bytes[at + k * 4..at + k * 4 + 4].try_into().unwrap());
+                    lo[k] = lo[k].min(c);
+                    hi[k] = hi[k].max(c);
+                }
+            }
+        }
+        (count, lo, hi)
+    }
+
     /// An STL of a textured box carries the texture: many more triangles,
     /// and the top raised by up to the texture's depth.
     #[test]
     fn a_mesh_export_presses_the_texture_in() {
-        let top_of = |bytes: &[u8]| {
-            let mesh = ogeom_stl(bytes);
-            mesh.1
-        };
-        let dir = std::env::temp_dir();
-        let (plain_path, plain) = export_document(
-            &textured_box(false),
-            dir.join(format!("plain-{}.stl", uuid::Uuid::new_v4())),
-            ExportFormat::Stl,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let (textured_path, textured) = export_document(
-            &textured_box(true),
-            dir.join(format!("textured-{}.stl", uuid::Uuid::new_v4())),
-            ExportFormat::Stl,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
-        let _ = std::fs::remove_file(plain_path);
-        let _ = std::fs::remove_file(textured_path);
+        let top_of = |bytes: &[u8]| stl_bounds(bytes).2[2];
+        let plain = export(&textured_box(false), ExportFormat::Stl, None);
+        let textured = export(&textured_box(true), ExportFormat::Stl, None);
         assert!(
             textured.triangles > plain.triangles * 20,
             "{} vs {}",
@@ -812,25 +808,9 @@ mod tests {
             gap_mm: 4.0,
         };
         let layout = lay_out(&doc, &parts, &settings);
-        let path = std::env::temp_dir().join(format!("layout-{}.stl", uuid::Uuid::new_v4()));
-        let (path, exported) =
-            export_document(&doc, path, ExportFormat::Stl, None, None, Some(&layout)).unwrap();
-        let _ = std::fs::remove_file(path);
+        let exported = export(&doc, ExportFormat::Stl, Some(&layout));
         assert_eq!(exported.written, 3);
-        let bytes = &exported.bytes;
-        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
-        let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-        for t in 0..count {
-            for v in 0..3 {
-                let at = 84 + t * 50 + 12 + v * 12;
-                for k in 0..3 {
-                    let c =
-                        f32::from_le_bytes(bytes[at + k * 4..at + k * 4 + 4].try_into().unwrap());
-                    lo[k] = lo[k].min(c);
-                    hi[k] = hi[k].max(c);
-                }
-            }
-        }
+        let (_, lo, hi) = stl_bounds(&exported.bytes);
         // Three 10 mm boxes 4 mm apart, 2 mm in from the bed's corner.
         assert!(
             (lo[0] - 2.0).abs() < 1e-3 && (hi[0] - 40.0).abs() < 1e-3,
@@ -865,10 +845,7 @@ mod tests {
             axis: [0.0, 0.0, -1.0],
             radius: 2.5,
         }]);
-        let path = std::env::temp_dir().join(format!("thread-{}.step", uuid::Uuid::new_v4()));
-        let (path, exported) =
-            export_document(&doc, path, ExportFormat::Step, None, None, None).unwrap();
-        let _ = std::fs::remove_file(path);
+        let exported = export(&doc, ExportFormat::Step, None);
         let text = String::from_utf8(exported.bytes).unwrap();
         assert!(text.contains("DRAUGHTING_CALLOUT('M6 thread'"), "{text}");
         let (at, _) = doc.cosmetic_threads()[0].leader();
@@ -878,20 +855,6 @@ mod tests {
             .find(|l| l.contains("COORDINATES_LIST('M6 thread'"))
             .expect("the leader is written");
         assert!(list.contains(&rim), "{list} starts at {rim}");
-    }
-
-    /// A binary STL's triangle count and highest point.
-    fn ogeom_stl(bytes: &[u8]) -> (usize, f32) {
-        let count = u32::from_le_bytes(bytes[80..84].try_into().unwrap()) as usize;
-        let mut top = f32::MIN;
-        for t in 0..count {
-            let at = 84 + t * 50 + 12;
-            for v in 0..3 {
-                let z = at + v * 12 + 8;
-                top = top.max(f32::from_le_bytes(bytes[z..z + 4].try_into().unwrap()));
-            }
-        }
-        (count, top)
     }
 
     #[test]

@@ -1023,17 +1023,11 @@ mod tests {
             keymap.get("wb.one.planned").is_none(),
             "a planned tool takes no key"
         );
-    }
-
-    /// Shift+Space starts the last tool again, whichever bench is in use.
-    #[test]
-    fn shift_space_repeats_the_last_tool() {
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
-        for bench in ["wb.one", "wb.two"] {
-            let bench = WorkbenchId::from(bench);
+        for bench in [&one, &two] {
             assert_eq!(
-                keymap.lookup(key("Shift+Space"), &bench).unwrap().id,
-                "edit.repeat"
+                keymap.lookup(key("Shift+Space"), bench).unwrap().id,
+                "edit.repeat",
+                "Shift+Space starts the last tool again, whichever bench is in use"
             );
         }
     }
@@ -1053,24 +1047,9 @@ mod tests {
         assert_eq!(keymap.text("file.save").as_deref(), Some("F5"));
     }
 
-    /// The bindings a frame with these key presses runs, and the keys left
-    /// in the input for widgets.
+    /// The bindings a frame with these key presses runs in `wb.two`, and
+    /// the keys left in the input for widgets.
     fn press(
-        keymap: &Keymap,
-        keys: &[(egui::Key, egui::Modifiers, bool)],
-        typing: bool,
-        have_document: bool,
-    ) -> (Vec<String>, usize) {
-        let focus = KeyFocus {
-            typing,
-            numeric: false,
-            text: false,
-            have_document,
-        };
-        press_in(keymap, keys, focus)
-    }
-
-    fn press_in(
         keymap: &Keymap,
         keys: &[(egui::Key, egui::Modifiers, bool)],
         focus: KeyFocus,
@@ -1099,89 +1078,115 @@ mod tests {
         (hits, left)
     }
 
+    /// What each focus takes of a frame's keys: the bindings run, and how
+    /// many keys stay for the widgets (unchecked where `None`).
     #[test]
-    fn pressed_keys_run_their_bindings_and_leave_the_input() {
+    fn each_focus_runs_the_keys_it_does_not_keep() {
         use egui::{Key, Modifiers};
         let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
-        let (hits, left) = press(
-            &keymap,
-            &[
-                (Key::L, Modifiers::NONE, false),
-                (Key::S, Modifiers::CTRL, false),
-            ],
-            false,
-            true,
-        );
-        assert_eq!(hits, ["wb.two.tool", "file.save"]);
-        assert_eq!(left, 0);
-        // A held key repeats without running again, and is still taken.
-        let held = [
-            (Key::L, Modifiers::NONE, false),
-            (Key::L, Modifiers::NONE, true),
-        ];
-        let (hits, left) = press(&keymap, &held, false, true);
-        assert_eq!(hits, ["wb.two.tool"]);
-        assert_eq!(left, 0);
-        // A key nothing is bound to stays for the widgets.
-        let (hits, left) = press(&keymap, &[(Key::B, Modifiers::NONE, false)], false, true);
-        assert!(hits.is_empty());
-        assert_eq!(left, 1);
-    }
-
-    #[test]
-    fn a_focused_text_field_keeps_its_typing_and_editing_keys() {
-        use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
-        let keys = [
-            (Key::L, Modifiers::NONE, false),
-            (Key::Z, Modifiers::CTRL, false),
-            (Key::S, Modifiers::CTRL, false),
-        ];
-        let (hits, left) = press(&keymap, &keys, true, true);
-        assert_eq!(hits, ["file.save"], "only the chord a field has no use for");
-        assert_eq!(left, 2);
-    }
-
-    #[test]
-    fn a_workbench_taking_a_number_keeps_the_number_keys() {
-        use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
-        let keys = [
-            (Key::Num1, Modifiers::NONE, false),
-            (Key::Minus, Modifiers::NONE, false),
-            (Key::L, Modifiers::NONE, false),
-        ];
-        let numeric = KeyFocus {
-            typing: false,
-            numeric: true,
-            text: false,
+        let plain = KeyFocus {
             have_document: true,
+            ..KeyFocus::default()
         };
-        let (hits, left) = press_in(&keymap, &keys, numeric);
-        assert_eq!(hits, ["wb.two.tool"], "letters still switch tools");
-        assert_eq!(left, 2);
-        let (hits, _) = press(&keymap, &keys[..1], false, true);
-        assert_eq!(hits, ["view.front"]);
-    }
-
-    #[test]
-    fn a_workbench_in_the_middle_of_a_value_keeps_the_letters_too() {
-        use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
-        let keys = [
-            (Key::L, Modifiers::NONE, false),
-            (Key::L, Modifiers::SHIFT, false),
-            (Key::S, Modifiers::CTRL, false),
-        ];
-        let text = KeyFocus {
-            typing: false,
+        let typing = KeyFocus {
+            typing: true,
+            ..plain
+        };
+        let numeric = KeyFocus {
+            numeric: true,
+            ..plain
+        };
+        let value = KeyFocus {
             numeric: true,
             text: true,
-            have_document: true,
+            ..plain
         };
-        let (hits, left) = press_in(&keymap, &keys, text);
-        assert_eq!(hits, ["file.save"], "a chord with Ctrl still runs");
-        assert_eq!(left, 2);
+        let none = Modifiers::NONE;
+        let ctrl = Modifiers::CTRL;
+        type Row<'a> = (
+            &'a str,
+            KeyFocus,
+            &'a [(Key, Modifiers, bool)],
+            &'a [&'a str],
+            Option<usize>,
+        );
+        let rows: [Row; 8] = [
+            (
+                "pressed keys run their bindings and leave the input",
+                plain,
+                &[(Key::L, none, false), (Key::S, ctrl, false)],
+                &["wb.two.tool", "file.save"],
+                Some(0),
+            ),
+            (
+                "a held key repeats without running again, and is still taken",
+                plain,
+                &[(Key::L, none, false), (Key::L, none, true)],
+                &["wb.two.tool"],
+                Some(0),
+            ),
+            (
+                "a key nothing is bound to stays for the widgets",
+                plain,
+                &[(Key::B, none, false)],
+                &[],
+                Some(1),
+            ),
+            (
+                "a focused text field runs only the chord it has no use for",
+                typing,
+                &[
+                    (Key::L, none, false),
+                    (Key::Z, ctrl, false),
+                    (Key::S, ctrl, false),
+                ],
+                &["file.save"],
+                Some(2),
+            ),
+            (
+                "a bench taking a number keeps the number keys, letters still switch tools",
+                numeric,
+                &[
+                    (Key::Num1, none, false),
+                    (Key::Minus, none, false),
+                    (Key::L, none, false),
+                ],
+                &["wb.two.tool"],
+                Some(2),
+            ),
+            (
+                "a number key is a view otherwise",
+                plain,
+                &[(Key::Num1, none, false)],
+                &["view.front"],
+                None,
+            ),
+            (
+                "a bench in the middle of a value keeps the letters too, a Ctrl chord still runs",
+                value,
+                &[
+                    (Key::L, none, false),
+                    (Key::L, Modifiers::SHIFT, false),
+                    (Key::S, ctrl, false),
+                ],
+                &["file.save"],
+                Some(2),
+            ),
+            (
+                "document commands wait for a document",
+                KeyFocus::default(),
+                &[(Key::S, ctrl, false), (Key::N, ctrl, false)],
+                &["file.new"],
+                None,
+            ),
+        ];
+        for (name, focus, keys, want, kept) in rows {
+            let (hits, left) = press(&keymap, keys, focus);
+            assert_eq!(hits, want, "{name}");
+            if let Some(kept) = kept {
+                assert_eq!(left, kept, "{name}");
+            }
+        }
     }
 
     #[test]
@@ -1216,18 +1221,6 @@ mod tests {
             host_outcome(HostAction::ToggleVisibility, &state),
             HostOutcome::Nothing
         ));
-    }
-
-    #[test]
-    fn document_commands_wait_for_a_document() {
-        use egui::{Key, Modifiers};
-        let keymap = Keymap::build(&registry(), &KeyboardSettings::default(), &[]);
-        let keys = [
-            (Key::S, Modifiers::CTRL, false),
-            (Key::N, Modifiers::CTRL, false),
-        ];
-        let (hits, _) = press(&keymap, &keys, false, false);
-        assert_eq!(hits, ["file.new"]);
     }
 
     #[test]

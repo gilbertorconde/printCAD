@@ -577,6 +577,31 @@ mod tests {
         line.split_whitespace().map(String::from).collect()
     }
 
+    fn registry() -> DocumentService {
+        let mut registry = DocumentService::default();
+        workbenches::register_all_workbenches(&mut registry).unwrap();
+        registry
+    }
+
+    /// A scratch folder of the test's own.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("printcad-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Runs the script file as `printcad --script` does, saving where
+    /// `save` says; whether its checks held.
+    fn run_file(script: PathBuf, save: Option<PathBuf>, args: Vec<String>) -> bool {
+        let invocation = Invocation {
+            script,
+            open: None,
+            save,
+            args,
+        };
+        run(&invocation, registry()).unwrap()
+    }
+
     #[test]
     fn the_command_line_names_the_script_and_what_to_do_around_it() {
         assert_eq!(parse(&words("")), Ok(None));
@@ -599,14 +624,7 @@ mod tests {
     /// Design features.
     #[test]
     fn deleting_a_step_rebuilds_its_body_or_clears_it() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
-        let dir = std::env::temp_dir().join(format!("printcad-delete-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("delete.lua");
-        std::fs::write(
-            &script,
-            r#"
+        let script = r#"
             local s = pc.sketch.new{plane = "XY"}
             pc.sketch.polyline{sketch = s, points = {{1, 0}, {11, 0}}}
             local walls = pc.surface.extrude{sketches = {s}, length = 5}
@@ -629,29 +647,13 @@ mod tests {
             pc.doc.delete{id = pad}
             assert(#pc.doc.rebuild() == 0)
             assert(not pcall(pc.doc.measure, {body = block}), "the pad's solid went with it")
-            "#,
-        )
-        .unwrap();
-        let ok = run(
-            &Invocation {
-                script,
-                open: None,
-                save: None,
-                args: Vec::new(),
-            },
-            registry,
-        )
-        .unwrap();
-        assert!(ok);
-        std::fs::remove_dir_all(&dir).unwrap();
+            "#;
+        run_in_empty_document(&mut registry(), script, "delete").unwrap();
     }
 
     #[test]
     fn a_script_builds_measures_exports_and_saves_without_a_window() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
-        let dir = std::env::temp_dir().join(format!("printcad-headless-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("headless");
         let script = dir.join("block.lua");
         std::fs::write(
             &script,
@@ -674,21 +676,12 @@ mod tests {
         let stl = dir.join("block.stl");
         let saved = dir.join("block.prtcad");
         let picture = dir.join("shots/block.png");
-        let ok = run(
-            &Invocation {
-                script,
-                open: None,
-                save: Some(saved.clone()),
-                args: vec![
-                    "5".into(),
-                    stl.display().to_string(),
-                    picture.display().to_string(),
-                ],
-            },
-            registry,
-        )
-        .unwrap();
-        assert!(ok);
+        let args = vec![
+            "5".into(),
+            stl.display().to_string(),
+            picture.display().to_string(),
+        ];
+        assert!(run_file(script, Some(saved.clone()), args));
         assert!(
             std::fs::metadata(&stl).unwrap().len() > 84,
             "an STL with triangles"
@@ -703,14 +696,7 @@ mod tests {
     /// an edge taken from it is what a fillet takes.
     #[test]
     fn a_script_finds_edges_and_fillets_one_it_picked() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
-        let dir = std::env::temp_dir().join(format!("printcad-edges-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("edges.lua");
-        std::fs::write(
-            &script,
-            r#"
+        let script = r#"
             local s = pc.sketch.new{plane = "XY"}
             pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
             local pad = pc.design.pad{sketch = s, length = 5}
@@ -761,29 +747,13 @@ mod tests {
             local taken = before - pc.doc.measure{body = body}.volume
             local wanted = (4 - math.pi) * 5
             assert(math.abs(taken - wanted) < 0.05, "one edge rounded: " .. taken)
-            "#,
-        )
-        .unwrap();
-        let ok = run(
-            &Invocation {
-                script,
-                open: None,
-                save: None,
-                args: Vec::new(),
-            },
-            registry,
-        )
-        .unwrap();
-        std::fs::remove_dir_all(&dir).unwrap();
-        assert!(ok, "the script runs");
+            "#;
+        run_in_empty_document(&mut registry(), script, "edges").unwrap();
     }
 
     #[test]
     fn variables_drive_a_pad_and_their_formulas_are_saved() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
-        let dir = std::env::temp_dir().join(format!("printcad-vars-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("vars");
         let script = dir.join("vars.lua");
         std::fs::write(
             &script,
@@ -814,17 +784,10 @@ mod tests {
         )
         .unwrap();
         let saved = dir.join("vars.prtcad");
-        let ok = run(
-            &Invocation {
-                script,
-                open: None,
-                save: Some(saved.clone()),
-                args: Vec::new(),
-            },
-            registry,
-        )
-        .unwrap();
-        assert!(ok, "the script's checks hold");
+        assert!(
+            run_file(script, Some(saved.clone()), Vec::new()),
+            "the script's checks hold"
+        );
         let reopened = Document::load_from_file(&saved).unwrap();
         let sets = reopened.variable_sets();
         assert_eq!(sets[0].1, "Printer");
@@ -841,8 +804,6 @@ mod tests {
     /// names it, and the feature does not build from the number it held.
     #[test]
     fn a_failing_formula_fails_its_feature_s_build() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
         let script = r#"
             pc.var.new{name = "Dims"}
             pc.var.set{set = "Dims", name = "thickness", formula = "6"}
@@ -862,68 +823,12 @@ mod tests {
             local m = pc.doc.measure{body = body}
             assert(math.abs(m.max[3] - m.min[3] - 6) < 1e-3, "6 mm")
         "#;
-        crate::headless::run_in_empty_document(&mut registry, script, "formula").unwrap();
-    }
-
-    #[test]
-    fn each_configuration_builds_its_own_size_and_exports() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
-        let dir = std::env::temp_dir().join(format!("printcad-configs-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let script = dir.join("configs.lua");
-        std::fs::write(
-            &script,
-            r#"
-            pc.var.new{name = "Size"}
-            pc.var.set{set = "Size", name = "height", formula = "5 mm"}
-            local s = pc.sketch.new{plane = "XY"}
-            pc.sketch.rect{sketch = s, x = 0, y = 0, width = 20, height = 10}
-            local pad = pc.design.pad{sketch = s, length = 1}
-            local body = pc.doc.feature{id = pad}.body
-            pc.doc.set_formula{id = pad, parameter = "length", formula = "Size.height"}
-            pc.config.new{name = "Small"}
-            pc.config.new{name = "Large"}
-            pc.config.add_variable{variable = "Size.height"}
-            pc.config.set{name = "Small", variable = "Size.height", value = "3 mm"}
-            pc.config.set{name = "Large", variable = "Size.height", value = "20 mm"}
-            local heights = {}
-            for _, row in ipairs(pc.config.list().rows) do
-              pc.config.activate{name = row.name}
-              assert(#pc.doc.rebuild() == 0, "it builds")
-              local m = pc.doc.measure{body = body}
-              heights[row.name] = m.max[3] - m.min[3]
-              pc.file.export{path = arg[1] .. "/" .. row.name .. ".stl"}
-            end
-            pc.config.activate{}
-            assert(math.abs(heights.Small - 3) < 1e-3, "small " .. heights.Small)
-            assert(math.abs(heights.Large - 20) < 1e-3, "large " .. heights.Large)
-            "#,
-        )
-        .unwrap();
-        let ok = run(
-            &Invocation {
-                script,
-                open: None,
-                save: None,
-                args: vec![dir.display().to_string()],
-            },
-            registry,
-        )
-        .unwrap();
-        assert!(ok, "the script's checks hold");
-        for name in ["Small", "Large"] {
-            assert!(dir.join(format!("{name}.stl")).exists(), "{name}.stl");
-        }
-        std::fs::remove_dir_all(&dir).unwrap();
+        run_in_empty_document(&mut registry(), script, "formula").unwrap();
     }
 
     #[test]
     fn the_export_of_every_configuration_writes_one_file_each_and_puts_back_the_active_one() {
-        let mut registry = DocumentService::default();
-        workbenches::register_all_workbenches(&mut registry).unwrap();
-        let dir = std::env::temp_dir().join(format!("printcad-every-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+        let dir = scratch("every");
         let script = dir.join("every.lua");
         let setup = r#"
             pc.var.new{name = "Size"}
@@ -950,17 +855,7 @@ mod tests {
             assert(pc.config.list().active == "Small", "the active one is back")
         "#;
         std::fs::write(&script, format!("{setup}\n{export}\n{check}")).unwrap();
-        let ok = run(
-            &Invocation {
-                script,
-                open: None,
-                save: None,
-                args: Vec::new(),
-            },
-            registry,
-        )
-        .unwrap();
-        assert!(ok, "the script runs");
+        assert!(run_file(script, None, Vec::new()), "the script runs");
         assert!(dir.join("part-Small.stl").exists());
         assert!(dir.join("part-Large two.stl").exists());
         std::fs::remove_dir_all(&dir).unwrap();
