@@ -704,14 +704,14 @@ impl PrintCadApp {
     pub(crate) fn toggle_body_under_cursor_selection(&mut self) -> bool {
         // A click picks one body at most; the others a box took go.
         self.session.earlier_bodies.clear();
-        // Sketch curves first: their tessellated lines are far too thin for
+        // Sketch curves and datums first: their lines are far too thin for
         // the 1-pixel GPU pick to hit reliably, so clicks are matched
-        // against sketch geometry on the CPU with a proper pixel tolerance.
+        // against them on the CPU with a proper pixel tolerance.
         if let Some(feature_id) = self.feature_under_cursor() {
             self.apply_tree_selection(crate::ui::TreeItemId::Feature(feature_id));
             self.session.last_face_hit = None;
             self.session.face_highlight = None;
-            app_log::info(format!("Selected sketch {feature_id:?}"));
+            app_log::info(format!("Selected feature {feature_id:?}"));
             return true;
         }
 

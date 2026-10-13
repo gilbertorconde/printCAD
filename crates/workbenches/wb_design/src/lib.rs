@@ -135,6 +135,9 @@ pub struct DesignWorkbench {
     /// The held handle has been dragged: a release then keeps the number
     /// rather than turning the feature round.
     held_moved: bool,
+    /// The body whose datums the view draws while the bench is active,
+    /// which are the datums a click can take.
+    datums_drawn: Option<BodyId>,
 }
 
 /// What a tool just made, for the task that opens on it.
@@ -1698,6 +1701,46 @@ impl Workbench for DesignWorkbench {
         })
     }
 
+    /// A datum the view draws, measured to the nearest of its lines on
+    /// screen.
+    fn pick_feature(
+        &self,
+        document: &Document,
+        id: FeatureId,
+        node: &core_document::FeatureNode,
+        pick: &core_document::ViewportPick,
+    ) -> Option<f32> {
+        if node.workbench_id.as_str() != core_document::DATUM_KIND
+            || node.body.is_none()
+            || node.body != self.datums_drawn
+        {
+            return None;
+        }
+        let datum = core_document::DatumFeature::from_json(document.feature_values(id)?).ok()?;
+        let mesh = datum_mesh(&datum);
+        let on_screen = |i: u32| {
+            core_document::runtime::world_to_viewport(
+                pick.view_proj,
+                pick.viewport,
+                mesh.positions[i as usize],
+            )
+            .map(|(x, y)| glam::Vec2::new(x, y))
+        };
+        let cursor = glam::Vec2::new(pick.cursor.0, pick.cursor.1);
+        mesh.edges
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .filter_map(|[a, b]| {
+                let (a, b) = (on_screen(*a)?, on_screen(*b)?);
+                let along = b - a;
+                let t =
+                    ((cursor - a).dot(along) / along.length_squared().max(1e-9)).clamp(0.0, 1.0);
+                Some(cursor.distance(a + along * t))
+            })
+            .min_by(f32::total_cmp)
+    }
+
     fn configure(&self, context: &mut WorkbenchContext) {
         commands::register(context);
         // The hole cuts the user keeps, read once as the bench starts.
@@ -2343,9 +2386,11 @@ impl Workbench for DesignWorkbench {
 
     fn on_deactivate(&mut self, _ctx: &mut WorkbenchRuntimeContext) {
         self.centre = None;
+        self.datums_drawn = None;
     }
 
     fn on_frame(&mut self, _dt: f32, ctx: &mut WorkbenchRuntimeContext) {
+        self.datums_drawn = Self::target_body(ctx);
         if self.centre.is_some() {
             self.take_centre_pick(ctx);
         }
@@ -3138,6 +3183,47 @@ mod body_tool {
             core_document::DatumShape::CoordinateSystem { .. }
         ));
         assert!(!datum_mesh(&datums[0].2).edges.is_empty());
+    }
+
+    /// A click near a drawn datum's lines finds it; one far from them, or
+    /// on a datum of a body the view does not draw the datums of, does not.
+    #[test]
+    fn a_click_finds_a_drawn_datum_by_its_lines() {
+        let mut wb = DesignWorkbench::default();
+        let mut doc = Document::new("t");
+        let body = doc.create_body(None);
+        let mut ctx = WorkbenchRuntimeContext::new(&mut doc, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
+        ctx.selected_body_id = Some(body.0);
+        wb.on_input(
+            &WorkbenchInputEvent::ToolActivated,
+            Some("design.coordinate_system"),
+            &mut ctx,
+        );
+        let (id, _, datum) = core_document::datums_of_body(ctx.document, body).remove(0);
+        let core_document::DatumShape::CoordinateSystem { size } = datum.shape else {
+            panic!("{datum:?}");
+        };
+        // World X and Y from -2 size to 2 size across a 400 px square.
+        let scale = 1.0 / (2.0 * size);
+        let pick = |x: f32, y: f32| core_document::ViewportPick {
+            view_proj: glam::Mat4::from_scale(glam::Vec3::splat(scale)).to_cols_array_2d(),
+            viewport: (0, 0, 400, 400),
+            cursor: (x, y),
+        };
+        let node = ctx.document.get_feature_meta(id).unwrap().clone();
+        let distance =
+            |wb: &DesignWorkbench, x, y| wb.pick_feature(ctx.document, id, &node, &pick(x, y));
+        assert_eq!(distance(&wb, 250.0, 200.0), None, "not drawn yet");
+        wb.on_frame(0.0, &mut ctx);
+        let node = ctx.document.get_feature_meta(id).unwrap().clone();
+        let distance = |x, y| {
+            wb.pick_feature(ctx.document, id, &node, &pick(x, y))
+                .unwrap()
+        };
+        // Halfway along its X axis, and 3 px off it.
+        assert!(distance(250.0, 200.0) < 1e-3);
+        assert!((distance(250.0, 203.0) - 3.0).abs() < 1e-3);
+        assert!(distance(30.0, 370.0) > 100.0, "far from every line");
     }
 }
 
