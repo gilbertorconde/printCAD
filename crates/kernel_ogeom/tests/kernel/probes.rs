@@ -7,6 +7,8 @@ use kernel_api::{
 };
 use kernel_ogeom::OgeomKernel;
 
+use super::common::chain;
+
 fn close(a: [f64; 3], b: [f64; 3], tol: f64) -> bool {
     (0..3).all(|i| (a[i] - b[i]).abs() < tol)
 }
@@ -199,13 +201,7 @@ fn the_axes_of_inertia_are_a_right_handed_frame_smallest_moment_first() {
 
 #[test]
 fn a_snapshot_answers_the_same_probe() {
-    let mut kernel = OgeomKernel::default();
-    let result = kernel
-        .execute_solid_chain(
-            &[cylinder(5.0, 12.0, BooleanOp::NewSolid)],
-            &TessellationSettings::default(),
-        )
-        .expect("a cylinder builds");
+    let result = chain(&[cylinder(5.0, 12.0, BooleanOp::NewSolid)]);
     let answer = kernel_ogeom::QUERIES
         .probe(
             &result.brep_blob,

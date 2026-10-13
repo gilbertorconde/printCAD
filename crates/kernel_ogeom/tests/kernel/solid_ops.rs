@@ -6,63 +6,28 @@ use kernel_api::{
     PrimitiveKind, Profile, ProfilePlane, ProfileSegment, ProfileWire, RevolveTermination, SolidOp,
     SweepKind, TessellationSettings,
 };
-use kernel_ogeom::OgeomKernel;
 
-fn new_kernel() -> OgeomKernel {
-    use kernel_api::Kernel;
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize kernel");
-    kernel
+use super::common::{
+    assert_close, chain, circle_wire, new_kernel, plane_at_z, primitive, rect_wire, translate,
+    try_chain, volume, xy_plane,
+};
+
+/// A `length` × `width` × `height` box primitive at the origin.
+fn box_of(length: f64, width: f64, height: f64) -> SolidOp {
+    primitive(PrimitiveKind::Box {
+        length,
+        width,
+        height,
+    })
 }
 
-fn xy_plane() -> ProfilePlane {
-    ProfilePlane {
-        origin: [0.0, 0.0, 0.0],
-        x_axis: [1.0, 0.0, 0.0],
-        y_axis: [0.0, 1.0, 0.0],
-        normal: [0.0, 0.0, 1.0],
-    }
-}
-
-fn plane_at_z(z: f64) -> ProfilePlane {
-    ProfilePlane {
-        origin: [0.0, 0.0, z],
-        ..xy_plane()
-    }
-}
-
-fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
-    ProfileWire {
-        names: Vec::new(),
-        segments: vec![
-            ProfileSegment::Line {
-                start: [x0, y0],
-                end: [x1, y0],
-            },
-            ProfileSegment::Line {
-                start: [x1, y0],
-                end: [x1, y1],
-            },
-            ProfileSegment::Line {
-                start: [x1, y1],
-                end: [x0, y1],
-            },
-            ProfileSegment::Line {
-                start: [x0, y1],
-                end: [x0, y0],
-            },
-        ],
-    }
-}
-
-fn circle_wire(cx: f64, cy: f64, radius: f64) -> ProfileWire {
-    ProfileWire {
-        names: Vec::new(),
-        segments: vec![ProfileSegment::Circle {
-            center: [cx, cy],
-            radius,
-        }],
-    }
+/// The 20 × 20 × 10 block most chains start from.
+fn block() -> SolidOp {
+    blind_pad(
+        vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
+        10.0,
+        BooleanOp::NewSolid,
+    )
 }
 
 fn blind_pad(wires: Vec<ProfileWire>, distance: f64, op: BooleanOp) -> SolidOp {
@@ -75,195 +40,11 @@ fn extrude(
     reversed: bool,
     op: BooleanOp,
 ) -> SolidOp {
-    SolidOp::Sweep {
-        profile: Profile {
-            plane: xy_plane(),
-            wires,
-        },
-        kind: SweepKind::Extrude {
-            termination,
-            second_side: None,
-            symmetric: false,
-            reversed,
-            taper_deg: 0.0,
-            direction: None,
-        },
-        op,
-    }
-}
-
-fn assert_close(actual: f32, expected: f32, tol: f32, what: &str) {
-    assert!(
-        (actual - expected).abs() <= tol,
-        "{what}: expected {expected} +/- {tol}, got {actual}"
-    );
-}
-
-#[test]
-fn through_all_pocket_pierces_the_pad() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // A 20x20x10 pad with a through-all circular cut from the sketch plane
-    // at z=0, run forwards through everything.
-    let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        ),
-        extrude(
-            vec![circle_wire(10.0, 10.0, 2.0)],
-            ExtrudeTermination::ThroughAll,
-            false,
-            BooleanOp::Cut,
-        ),
-    ];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("pad + through-all cut");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[2], 0.0, 1e-3, "min z");
-    assert_close(max[2], 10.0, 1e-3, "max z");
-    // The hole pierces both faces: more triangles than a plain box.
-    assert!(result.mesh.indices.len() / 3 > 12);
-}
-
-#[test]
-fn two_lengths_extrude_spans_both_sides() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let ops = [SolidOp::Sweep {
-        profile: Profile {
-            plane: xy_plane(),
-            wires: vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
-        },
-        kind: SweepKind::Extrude {
-            termination: ExtrudeTermination::Blind { distance: 7.0 },
-            second_side: Some(ExtrudeTermination::Blind { distance: 3.0 }),
-            symmetric: false,
-            reversed: false,
-            taper_deg: 0.0,
-            direction: None,
-        },
-        op: BooleanOp::NewSolid,
-    }];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("two-sided pad");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[2], -3.0, 1e-3, "min z (second side)");
-    assert_close(max[2], 7.0, 1e-3, "max z (first side)");
-}
-
-#[test]
-fn up_to_plane_extrude_stops_on_the_plane() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let ops = [extrude(
-        vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
-        ExtrudeTermination::UpToPlane {
-            point: [0.0, 0.0, 12.5],
-            normal: [0.0, 0.0, 1.0],
-            offset: 0.0,
-        },
-        false,
-        BooleanOp::NewSolid,
-    )];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("up-to-plane pad");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[2], 0.0, 1e-3, "min z");
-    assert_close(max[2], 12.5, 1e-3, "max z (trimmed at target plane)");
-}
-
-#[test]
-fn to_last_pad_reaches_the_far_face() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Base box z in [0, 8]; a small pad from the sketch plane with ToLast
-    // must stop exactly at z=8.
-    let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            8.0,
-            BooleanOp::NewSolid,
-        ),
-        extrude(
-            vec![rect_wire(5.0, 5.0, 8.0, 8.0)],
-            ExtrudeTermination::ToLast,
-            false,
-            BooleanOp::Fuse,
-        ),
-    ];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("to-last pad");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[2], 0.0, 1e-3, "min z");
-    assert_close(max[2], 8.0, 1e-3, "max z (stopped at the far face)");
-}
-
-#[test]
-fn tapered_pad_widens_the_far_end() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let ops = [SolidOp::Sweep {
-        profile: Profile {
-            plane: xy_plane(),
-            wires: vec![rect_wire(-5.0, -5.0, 5.0, 5.0)],
-        },
-        kind: SweepKind::Extrude {
-            termination: ExtrudeTermination::Blind { distance: 10.0 },
-            second_side: None,
-            symmetric: false,
-            reversed: false,
-            taper_deg: 10.0,
-            direction: None,
-        },
-        op: BooleanOp::NewSolid,
-    }];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("tapered pad");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    let grow = (10.0_f32.to_radians().tan()) * 10.0;
-    assert_close(max[0], 5.0 + grow, 0.05, "max x widened by the taper");
-    assert_close(min[0], -5.0 - grow, 0.05, "min x widened by the taper");
-    assert_close(max[2], 10.0, 1e-3, "height unchanged");
-}
-
-#[test]
-fn disjoint_profile_regions_become_separate_solids() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Two disjoint circles: they must pad into two separate cylinders, not
-    // one annulus (the second circle is NOT a hole of the first).
-    let ops = [blind_pad(
-        vec![circle_wire(0.0, 0.0, 2.0), circle_wire(10.0, 0.0, 2.0)],
-        5.0,
-        BooleanOp::NewSolid,
-    )];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("two disjoint pads");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[0], -2.0, 0.05, "min x (first cylinder)");
-    assert_close(max[0], 12.0, 0.05, "max x (second cylinder)");
-    assert_close(max[2], 5.0, 1e-3, "height");
+    extrude_on(xy_plane(), wires, termination, reversed, op)
 }
 
 #[test]
 fn ellipse_and_bspline_profiles_pad() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
     let ellipse = ProfileWire {
         names: Vec::new(),
         segments: vec![ProfileSegment::Ellipse {
@@ -272,12 +53,7 @@ fn ellipse_and_bspline_profiles_pad() {
             ratio: 0.5,
         }],
     };
-    let result = kernel
-        .execute_solid_chain(
-            &[blind_pad(vec![ellipse], 4.0, BooleanOp::NewSolid)],
-            &detail,
-        )
-        .expect("ellipse pad");
+    let result = chain(&[blind_pad(vec![ellipse], 4.0, BooleanOp::NewSolid)]);
     let (min, max) = result.bounds_mm.expect("bounds");
     assert_close(max[0] - min[0], 16.0, 0.1, "major extent");
     assert_close(max[1] - min[1], 8.0, 0.1, "minor extent");
@@ -289,12 +65,7 @@ fn ellipse_and_bspline_profiles_pad() {
             periodic: true,
         }],
     };
-    let result = kernel
-        .execute_solid_chain(
-            &[blind_pad(vec![spline], 4.0, BooleanOp::NewSolid)],
-            &detail,
-        )
-        .expect("periodic B-spline pad");
+    let result = chain(&[blind_pad(vec![spline], 4.0, BooleanOp::NewSolid)]);
     assert!(!result.mesh.positions.is_empty());
     assert_close(
         result.bounds_mm.unwrap().1[2],
@@ -310,7 +81,6 @@ fn ellipse_and_bspline_profiles_pad() {
 #[test]
 fn nurbs_profiles_pad_exactly() {
     let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
     let w = std::f64::consts::FRAC_1_SQRT_2;
     let quarter = ProfileWire {
         names: Vec::new(),
@@ -332,12 +102,7 @@ fn nurbs_profiles_pad_exactly() {
             },
         ],
     };
-    let result = kernel
-        .execute_solid_chain(
-            &[blind_pad(vec![quarter], 2.0, BooleanOp::NewSolid)],
-            &detail,
-        )
-        .expect("quarter disc pad");
+    let result = chain(&[blind_pad(vec![quarter], 2.0, BooleanOp::NewSolid)]);
     let props = kernel
         .physical_properties(&result.brep_blob)
         .expect("the pad measures");
@@ -386,12 +151,7 @@ fn nurbs_profiles_pad_exactly() {
             periodic: true,
         }],
     };
-    let result = kernel
-        .execute_solid_chain(
-            &[blind_pad(vec![open, ring], 3.0, BooleanOp::NewSolid)],
-            &detail,
-        )
-        .expect("spline pads");
+    let result = chain(&[blind_pad(vec![open, ring], 3.0, BooleanOp::NewSolid)]);
     let (min, max) = result.bounds_mm.expect("bounds");
     assert_close(min[0], 0.0, 1e-3, "the open spline's start");
     assert!(max[0] > 35.0 && max[0] <= 40.001, "the ring: {max:?}");
@@ -399,121 +159,7 @@ fn nurbs_profiles_pad_exactly() {
 }
 
 #[test]
-fn loft_skins_between_two_rectangles() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let ops = [SolidOp::Loft {
-        sections: vec![
-            Profile {
-                plane: xy_plane(),
-                wires: vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
-            },
-            Profile {
-                plane: plane_at_z(15.0),
-                wires: vec![rect_wire(-4.0, -4.0, 4.0, 4.0)],
-            },
-        ],
-        ruled: true,
-        closed: false,
-        op: BooleanOp::NewSolid,
-    }];
-    let result = kernel.execute_solid_chain(&ops, &detail).expect("loft");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[0], -10.0, 1e-3, "min x (base section)");
-    assert_close(max[2], 15.0, 1e-3, "max z (top section)");
-}
-
-#[test]
-fn pipe_sweeps_profile_along_l_path() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Circle profile on the YZ plane at the path start, swept along an
-    // L-shaped path drawn in the XY plane starting at the origin.
-    let profile_plane = ProfilePlane {
-        origin: [0.0, 0.0, 0.0],
-        x_axis: [0.0, 0.0, 1.0],
-        y_axis: [0.0, 1.0, 0.0],
-        normal: [1.0, 0.0, 0.0],
-    };
-    let spine = Profile {
-        plane: xy_plane(),
-        wires: vec![ProfileWire {
-            names: Vec::new(),
-            segments: vec![
-                ProfileSegment::Line {
-                    start: [0.0, 0.0],
-                    end: [30.0, 0.0],
-                },
-                ProfileSegment::Line {
-                    start: [30.0, 0.0],
-                    end: [30.0, 20.0],
-                },
-            ],
-        }],
-    };
-    let ops = [SolidOp::Pipe {
-        profile: Profile {
-            plane: profile_plane,
-            wires: vec![circle_wire(0.0, 0.0, 2.0)],
-        },
-        spine,
-        frame: kernel_api::PipeFrame::RotationMinimizing,
-        corner: kernel_api::PipeCorner::Transformed,
-        sections: Vec::new(),
-        op: BooleanOp::NewSolid,
-    }];
-    let result = kernel.execute_solid_chain(&ops, &detail).expect("pipe");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(max[0], 32.0, 0.3, "max x (leg 1 + radius)");
-    assert_close(max[1], 20.0, 0.3, "max y (leg 2 end)");
-    assert!(min[2] <= -1.8 && max[2] >= 1.8, "tube cross-section in z");
-}
-
-#[test]
-fn helix_sweep_builds_a_spring() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Circle at x=10 swept around the sketch Y axis: a spring of coil radius
-    // 10, wire radius 1.5, pitch 6, height 24 (4 turns). The helix axis is
-    // the sketch v-axis => world Y on the XY plane.
-    let ops = [SolidOp::Sweep {
-        profile: Profile {
-            plane: xy_plane(),
-            wires: vec![circle_wire(10.0, 0.0, 1.5)],
-        },
-        kind: SweepKind::Helix {
-            axis_origin: [0.0, 0.0],
-            axis_dir: [0.0, 1.0],
-            pitch: 6.0,
-            height: 24.0,
-            left_handed: false,
-            cone_angle_deg: 0.0,
-            reversed: false,
-            turns: None,
-            growth: None,
-        },
-        op: BooleanOp::NewSolid,
-    }];
-    let result = kernel.execute_solid_chain(&ops, &detail).expect("helix");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(max[0], 11.5, 0.3, "coil + wire radius in x");
-    assert_close(min[0], -11.5, 0.3, "coil + wire radius in -x");
-    // The spring spans the full height along the axis (plus wire radius).
-    assert!(
-        max[1] - min[1] >= 24.0 && max[1] - min[1] <= 27.5,
-        "spring height along the axis, got {}",
-        max[1] - min[1]
-    );
-}
-
-#[test]
 fn primitives_build_with_expected_bounds() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
     let cases: Vec<(PrimitiveKind, [f32; 3])> = vec![
         (
             PrimitiveKind::Box {
@@ -599,14 +245,8 @@ fn primitives_build_with_expected_bounds() {
 
     for (kind, expected_extent) in cases {
         let label = format!("{kind:?}");
-        let ops = [SolidOp::Primitive {
-            kind,
-            placement: Placement::default(),
-            op: BooleanOp::NewSolid,
-        }];
-        let result = kernel
-            .execute_solid_chain(&ops, &detail)
-            .unwrap_or_else(|e| panic!("primitive {label}: {e}"));
+        let ops = [primitive(kind)];
+        let result = try_chain(&ops).unwrap_or_else(|e| panic!("primitive {label}: {e}"));
         let (min, max) = result.bounds_mm.expect("bounds");
         for axis in 0..3 {
             assert_close(
@@ -619,86 +259,23 @@ fn primitives_build_with_expected_bounds() {
     }
 }
 
-#[test]
-fn fillet_and_chamfer_modify_all_edges() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let base = || {
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        )
-    };
-    let plain = kernel
-        .execute_solid_chain(&[base()], &detail)
-        .expect("plain box");
-
-    let filleted = kernel
-        .execute_solid_chain(
-            &[
-                base(),
-                SolidOp::Fillet {
-                    radius: 2.0,
-                    edges: EdgeSelection::All,
-                    follow_tangent: false,
-                },
-            ],
-            &detail,
-        )
-        .expect("fillet all edges");
-    assert!(
-        filleted.mesh.indices.len() / 3 > plain.mesh.indices.len() / 3,
-        "fillets add curved faces"
-    );
-    let (fmin, fmax) = filleted.bounds_mm.expect("bounds");
-    assert_close(fmax[0] - fmin[0], 20.0, 0.05, "fillet keeps extents");
-
-    let chamfered = kernel
-        .execute_solid_chain(
-            &[
-                base(),
-                SolidOp::Chamfer {
-                    spec: ChamferSpec::EqualDistance { distance: 1.5 },
-                    flip: false,
-                    edges: EdgeSelection::All,
-                    follow_tangent: false,
-                },
-            ],
-            &detail,
-        )
-        .expect("chamfer all edges");
-    assert!(chamfered.mesh.indices.len() / 3 > plain.mesh.indices.len() / 3);
-}
-
 /// A picked point names the edge beside it; one in the middle of a face
 /// names none, and the fillet says so rather than rounding whichever edge
 /// happens to be nearest.
 #[test]
 fn an_edge_pick_far_from_every_edge_fails() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    let fillet_at = |kernel: &mut OgeomKernel, point: [f64; 3]| {
-        kernel.execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Fillet {
-                    radius: 2.0,
-                    edges: EdgeSelection::Near(vec![point]),
-                    follow_tangent: false,
-                },
-            ],
-            &detail,
-        )
+    let fillet_at = |point: [f64; 3]| {
+        try_chain(&[
+            block(),
+            SolidOp::Fillet {
+                radius: 2.0,
+                edges: EdgeSelection::Near(vec![point]),
+                follow_tangent: false,
+            },
+        ])
     };
-    fillet_at(&mut kernel, [10.0, 0.5, 10.0]).expect("a pick beside the edge rounds it");
-    let err =
-        fillet_at(&mut kernel, [10.0, 10.0, 10.0]).expect_err("the face's middle names no edge");
+    fillet_at([10.0, 0.5, 10.0]).expect("a pick beside the edge rounds it");
+    let err = fillet_at([10.0, 10.0, 10.0]).expect_err("the face's middle names no edge");
     assert!(
         err.message.contains("no edge near the pick"),
         "{}",
@@ -712,33 +289,20 @@ fn an_edge_pick_far_from_every_edge_fails() {
 #[test]
 fn an_edge_pick_takes_the_edge_running_its_way() {
     use kernel_api::EdgeProbe;
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    let mut fillet_at = |point: [f64; 3], direction: [f64; 3]| {
-        let result = kernel.execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Fillet {
-                    radius: 2.0,
-                    edges: EdgeSelection::Picked(vec![EdgeProbe {
-                        faces: [0, 0],
-                        point,
-                        direction,
-                    }]),
-                    follow_tangent: false,
-                },
-            ],
-            &detail,
-        )?;
-        let volume = kernel
-            .physical_properties(&result.brep_blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap();
+    let fillet_at = |point: [f64; 3], direction: [f64; 3]| {
+        let result = try_chain(&[
+            block(),
+            SolidOp::Fillet {
+                radius: 2.0,
+                edges: EdgeSelection::Picked(vec![EdgeProbe {
+                    faces: [0, 0],
+                    point,
+                    direction,
+                }]),
+                follow_tangent: false,
+            },
+        ])?;
+        let volume = volume(&result.brep_blob);
         Ok::<f64, kernel_api::ChainError>(volume)
     };
     // A rounded edge of length l takes (1 - pi/4) r^2 l away.
@@ -753,226 +317,74 @@ fn an_edge_pick_takes_the_edge_running_its_way() {
 }
 
 #[test]
-fn fillet_of_faces_selection_uses_nearest_face() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Fillet only the edges of the top face (sample point on top center).
-    let result = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Fillet {
-                    radius: 2.0,
-                    edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
-                    follow_tangent: false,
-                },
-            ],
-            &detail,
-        )
-        .expect("fillet top face edges");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(max[2], 10.0, 1e-3, "height preserved");
-    assert_close(min[2], 0.0, 1e-3, "bottom untouched");
-}
-
-#[test]
-fn thickness_hollows_the_box() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let plain = kernel
-        .execute_solid_chain(
-            &[blind_pad(
-                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                10.0,
-                BooleanOp::NewSolid,
-            )],
-            &detail,
-        )
-        .expect("plain box");
-    let hollowed = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Thickness {
-                    both_sides: false,
-                    open_face_names: Vec::new(),
-                    value: 1.5,
-                    open_faces: vec![[10.0, 10.0, 10.0]],
-                    inward: true,
-                    join: Default::default(),
-                },
-            ],
-            &detail,
-        )
-        .expect("hollowed box");
-    let (min, max) = hollowed.bounds_mm.expect("bounds");
-    assert_close(
-        max[0] - min[0],
-        20.0,
-        1e-3,
-        "outer x preserved (inward walls)",
-    );
-    assert!(
-        hollowed.mesh.indices.len() / 3 > plain.mesh.indices.len() / 3,
-        "inner walls add triangles"
-    );
-}
-
-#[test]
 fn draft_tilts_side_faces() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
     // Draft one side face about the bottom neutral plane. A positive angle
     // leans the face inward (mold-release style), which leaves the bounds
     // unchanged (the base edge stays put), so lean it OUTWARD: the top edge
     // then extends past x=20 by tan(angle) * height.
-    let result = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Draft {
-                    face_names: Vec::new(),
-                    angle_deg: -10.0,
-                    neutral_point: [0.0, 0.0, 0.0],
-                    neutral_normal: [0.0, 0.0, 1.0],
-                    pull_dir: None,
-                    faces: vec![[20.0, 10.0, 5.0]],
-                },
-            ],
-            &detail,
-        )
-        .expect("draft side face");
+    let result = chain(&[
+        block(),
+        SolidOp::Draft {
+            face_names: Vec::new(),
+            angle_deg: -10.0,
+            neutral_point: [0.0, 0.0, 0.0],
+            neutral_normal: [0.0, 0.0, 1.0],
+            pull_dir: None,
+            faces: vec![[20.0, 10.0, 5.0]],
+        },
+    ]);
     let (min, max) = result.bounds_mm.expect("bounds");
     let lean = (10.0_f32.to_radians().tan()) * 10.0;
     assert_close(max[0], 20.0 + lean, 0.1, "drafted top edge leans outward");
     assert_close(min[0], 0.0, 1e-3, "opposite face untouched");
 }
 
-#[test]
-fn linear_pattern_repeats_the_tool_solid() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // A base plate with one boss, boss patterned 3x along +x at 15 mm.
-    let translate = |d: f64| -> [[f64; 4]; 4] {
-        [
-            [1.0, 0.0, 0.0, d],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
-    let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 50.0, 20.0)],
-            3.0,
-            BooleanOp::NewSolid,
-        ),
-        blind_pad(vec![circle_wire(10.0, 10.0, 3.0)], 10.0, BooleanOp::Fuse),
-        SolidOp::Transform {
-            transforms: vec![translate(15.0), translate(30.0)],
-            originals: vec![1],
-        },
-    ];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("linear pattern");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(max[2], 10.0, 1e-3, "boss height everywhere");
-    assert_close(min[0], 0.0, 1e-3, "plate min x");
-    assert_close(max[0], 50.0, 1e-3, "plate max x");
-    // Patterned bosses at x=10, 25, 40 all exist: the mesh grows.
-    assert!(result.mesh.indices.len() / 3 > 24);
-}
-
 /// Copies without their original: the whole solid gives way to its
 /// copies, and a feature named an original leaves the solid as it was.
 #[test]
 fn transform_copies_leaves_the_original_out() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    let translate = |d: f64| -> [[f64; 4]; 4] {
-        [
-            [1.0, 0.0, 0.0, d],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
     let block = blind_pad(
         vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
         5.0,
         BooleanOp::NewSolid,
     );
-    let moved = kernel
-        .execute_solid_chain(
-            &[
-                block.clone(),
-                SolidOp::TransformCopies {
-                    transforms: vec![translate(20.0), translate(40.0)],
-                    originals: vec![],
-                },
-            ],
-            &detail,
-        )
-        .expect("the block's copies");
+    let moved = chain(&[
+        block.clone(),
+        SolidOp::TransformCopies {
+            transforms: vec![translate(20.0, 0.0, 0.0), translate(40.0, 0.0, 0.0)],
+            originals: vec![],
+        },
+    ]);
     let (min, max) = moved.bounds_mm.expect("bounds");
     assert_close(min[0], 20.0, 1e-3, "the block itself gone");
     assert_close(max[0], 50.0, 1e-3, "the last copy");
 
-    let refused = kernel.execute_solid_chain(
-        &[
-            block.clone(),
-            SolidOp::TransformCopies {
-                transforms: vec![],
-                originals: vec![],
-            },
-        ],
-        &detail,
-    );
+    let refused = try_chain(&[
+        block.clone(),
+        SolidOp::TransformCopies {
+            transforms: vec![],
+            originals: vec![],
+        },
+    ]);
     assert!(refused.is_err(), "nothing left");
 
     let boss = blind_pad(vec![circle_wire(5.0, 5.0, 2.0)], 10.0, BooleanOp::Fuse);
-    let copied = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 10.0, 30.0)],
-                    5.0,
-                    BooleanOp::NewSolid,
-                ),
-                boss,
-                SolidOp::TransformCopies {
-                    transforms: vec![translate(20.0)],
-                    originals: vec![1],
-                },
-            ],
-            &detail,
-        )
-        .expect("the boss's copy");
+    let copied = chain(&[
+        blind_pad(
+            vec![rect_wire(0.0, 0.0, 10.0, 30.0)],
+            5.0,
+            BooleanOp::NewSolid,
+        ),
+        boss,
+        SolidOp::TransformCopies {
+            transforms: vec![translate(20.0, 0.0, 0.0)],
+            originals: vec![1],
+        },
+    ]);
     let (min, max) = copied.bounds_mm.expect("bounds");
     assert_close(min[0], 0.0, 1e-3, "the plate");
     assert_close(max[0], 27.0, 1e-3, "the copy past the plate");
-    let volume = kernel
-        .physical_properties(&copied.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .unwrap();
+    let volume = volume(&copied.brep_blob);
     let want = 10.0 * 30.0 * 5.0 + std::f64::consts::PI * 4.0 * 10.0;
     assert!(
         (volume - want).abs() < 0.5,
@@ -980,277 +392,100 @@ fn transform_copies_leaves_the_original_out() {
     );
 }
 
+/// A body boolean's common keeps only what the tool body shares with the
+/// block: the cylinder's footprint, the block's height.
 #[test]
-fn pattern_of_subtractive_tool_repeats_the_cut() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let translate = |d: f64| -> [[f64; 4]; 4] {
-        [
-            [1.0, 0.0, 0.0, d],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
-    let single_hole = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 50.0, 20.0)],
-                    5.0,
-                    BooleanOp::NewSolid,
-                ),
-                extrude(
-                    vec![circle_wire(10.0, 10.0, 2.0)],
-                    ExtrudeTermination::ThroughAll,
-                    false,
-                    BooleanOp::Cut,
-                ),
-            ],
-            &detail,
-        )
-        .expect("single hole");
-    let patterned = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 50.0, 20.0)],
-                    5.0,
-                    BooleanOp::NewSolid,
-                ),
-                extrude(
-                    vec![circle_wire(10.0, 10.0, 2.0)],
-                    ExtrudeTermination::ThroughAll,
-                    false,
-                    BooleanOp::Cut,
-                ),
-                SolidOp::Transform {
-                    transforms: vec![translate(15.0), translate(30.0)],
-                    originals: vec![1],
-                },
-            ],
-            &detail,
-        )
-        .expect("patterned holes");
-    assert!(
-        patterned.mesh.indices.len() / 3 > single_hole.mesh.indices.len() / 3,
-        "two more holes add wall triangles"
-    );
-    let (min, max) = patterned.bounds_mm.expect("bounds");
-    assert_close(min[0], 0.0, 1e-3, "plate min x");
-    assert_close(max[0], 50.0, 1e-3, "plate max x");
-}
-
-#[test]
-fn mirror_transform_of_whole_body_doubles_the_extent() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Mirror the whole body (no originals) across the YZ plane at x=0.
-    let mirror_yz: [[f64; 4]; 4] = [
-        [-1.0, 0.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ];
-    let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
-            5.0,
-            BooleanOp::NewSolid,
-        ),
-        SolidOp::Transform {
-            transforms: vec![mirror_yz],
-            originals: vec![],
+fn a_body_boolean_keeps_what_the_tool_shares() {
+    let tool = chain(&[blind_pad(
+        vec![circle_wire(10.0, 10.0, 4.0)],
+        20.0,
+        BooleanOp::NewSolid,
+    )]);
+    let common = chain(&[
+        block(),
+        SolidOp::Boolean {
+            tool_brep: tool.brep_blob,
+            kind: BoolKind::Common,
+            tool_transform: None,
         },
-    ];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("mirror whole body");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(min[0], -10.0, 1e-3, "mirrored min x");
-    assert_close(max[0], 10.0, 1e-3, "original max x");
+    ]);
+    let want = std::f64::consts::PI * 16.0 * 10.0;
+    let got = volume(&common.brep_blob);
+    assert!((got - want).abs() < 1e-3, "{got} against {want}");
 }
 
+/// A dress-up the box cannot take fails, and the failure names the op: a
+/// fillet far larger than the box, and a fillet or a chamfer wider than a
+/// face it runs along, which would take the whole face and more.
 #[test]
-fn scaling_transform_uses_general_transform_path() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Fuse a 2x scaled copy of the body about the origin.
-    let scale2: [[f64; 4]; 4] = [
-        [2.0, 0.0, 0.0, 0.0],
-        [0.0, 2.0, 0.0, 0.0],
-        [0.0, 0.0, 2.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ];
-    let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
-            5.0,
-            BooleanOp::NewSolid,
+fn a_dress_up_too_big_for_the_box_is_refused_at_its_op() {
+    let near_top_edge = || EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]);
+    for (what, dress_up) in [
+        (
+            "a 500 mm fillet",
+            SolidOp::Fillet {
+                radius: 500.0,
+                edges: EdgeSelection::All,
+                follow_tangent: false,
+            },
         ),
-        SolidOp::Transform {
-            transforms: vec![scale2],
-            originals: vec![],
-        },
-    ];
-    let result = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("scaled copy");
-    let (min, max) = result.bounds_mm.expect("bounds");
-    assert_close(max[0], 20.0, 1e-3, "scaled max x");
-    assert_close(max[2], 10.0, 1e-3, "scaled max z");
-    assert_close(min[0], 0.0, 1e-3, "origin fixed point");
-}
-
-#[test]
-fn body_boolean_combines_external_solid() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    // Build a tool body separately, then cut it from a base body.
-    let tool = kernel
-        .execute_solid_chain(
-            &[blind_pad(
-                vec![circle_wire(10.0, 10.0, 4.0)],
-                20.0,
-                BooleanOp::NewSolid,
-            )],
-            &detail,
-        )
-        .expect("tool body");
-    let plain = kernel
-        .execute_solid_chain(
-            &[blind_pad(
-                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                10.0,
-                BooleanOp::NewSolid,
-            )],
-            &detail,
-        )
-        .expect("base body");
-    let cut = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Boolean {
-                    tool_brep: tool.brep_blob.clone(),
-                    kind: BoolKind::Cut,
-                    tool_transform: None,
-                },
-            ],
-            &detail,
-        )
-        .expect("base minus tool");
-    assert!(
-        cut.mesh.indices.len() / 3 > plain.mesh.indices.len() / 3,
-        "the cylindrical cut adds wall triangles"
-    );
-    let common = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Boolean {
-                    tool_brep: tool.brep_blob,
-                    kind: BoolKind::Common,
-                    tool_transform: None,
-                },
-            ],
-            &detail,
-        )
-        .expect("base intersect tool");
-    let (min, max) = common.bounds_mm.expect("bounds");
-    assert_close(
-        max[0] - min[0],
-        8.0,
-        0.1,
-        "common is the cylinder footprint",
-    );
-    assert_close(max[2] - min[2], 10.0, 1e-3, "common keeps base height");
-}
-
-#[test]
-fn chain_error_reports_failing_op_index() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-
-    let err = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
-                    5.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Fillet {
-                    radius: 500.0, // impossibly large for a 10 mm box
-                    edges: EdgeSelection::All,
-                    follow_tangent: false,
-                },
-            ],
-            &detail,
-        )
-        .expect_err("oversized fillet must fail");
-    assert_eq!(err.op_index, 1, "failure attributed to the fillet op");
+        (
+            "a 12 mm fillet on a 10 mm face",
+            SolidOp::Fillet {
+                radius: 12.0,
+                edges: near_top_edge(),
+                follow_tangent: false,
+            },
+        ),
+        (
+            "a 12 mm chamfer on a 10 mm face",
+            SolidOp::Chamfer {
+                spec: ChamferSpec::EqualDistance { distance: 12.0 },
+                flip: false,
+                edges: near_top_edge(),
+                follow_tangent: false,
+            },
+        ),
+    ] {
+        let err = try_chain(&[block(), dress_up]).expect_err(what);
+        assert_eq!(
+            err.op_index, 1,
+            "{what}: failure attributed to the dress-up"
+        );
+    }
 }
 
 #[test]
 fn a_chain_can_start_from_another_chains_snapshot_and_only_start_there() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
     let pad = blind_pad(
         vec![rect_wire(0.0, 0.0, 10.0, 5.0)],
         4.0,
         BooleanOp::NewSolid,
     );
-    let built = kernel
-        .execute_solid_chain(std::slice::from_ref(&pad), &detail)
-        .expect("the pad builds");
+    let built = chain(std::slice::from_ref(&pad));
 
-    let cloned = kernel
-        .execute_solid_chain(
-            &[SolidOp::Shape {
-                brep: built.brep_blob.clone(),
-            }],
-            &detail,
-        )
-        .expect("the snapshot builds on its own");
+    let cloned = chain(&[SolidOp::Shape {
+        brep: built.brep_blob.clone(),
+    }]);
     assert_eq!(cloned.bounds_mm, built.bounds_mm);
 
-    let later = kernel.execute_solid_chain(
-        &[
-            pad,
-            SolidOp::Shape {
-                brep: built.brep_blob,
-            },
-        ],
-        &detail,
-    );
+    let later = try_chain(&[
+        pad,
+        SolidOp::Shape {
+            brep: built.brep_blob,
+        },
+    ]);
     assert!(later.is_err(), "a snapshot can only begin a chain");
 }
 
 #[test]
 fn a_box_outline_names_its_twelve_edges() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
     let pad = blind_pad(
         vec![rect_wire(0.0, 0.0, 10.0, 5.0)],
         4.0,
         BooleanOp::NewSolid,
     );
-    let built = kernel
-        .execute_solid_chain(std::slice::from_ref(&pad), &detail)
-        .expect("the pad builds");
+    let built = chain(std::slice::from_ref(&pad));
     let mesh = &built.mesh;
     assert_eq!(
         mesh.edges.len() / 2,
@@ -1299,33 +534,27 @@ fn fine_detail() -> TessellationSettings {
     }
 }
 
-/// Four rounds meeting pairwise at the corners of a face mitre: the solid
-/// keeps its six faces, trimmed, plus one band per edge and nothing else.
+/// The edges of the face nearest a point rounded: four rounds meeting
+/// pairwise at the face's corners mitre, the solid keeping its six faces,
+/// trimmed, plus one band per edge and nothing else, and its height.
 #[test]
 fn fillets_of_one_face_meet_mitred_at_its_corners() {
-    let mut kernel = new_kernel();
-    let result = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Fillet {
-                    radius: 2.0,
-                    edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
-                    follow_tangent: false,
-                },
-            ],
-            &TessellationSettings::default(),
-        )
-        .expect("fillet top face edges");
+    let result = chain(&[
+        block(),
+        SolidOp::Fillet {
+            radius: 2.0,
+            edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+            follow_tangent: false,
+        },
+    ]);
     assert_eq!(
         face_count(&result.mesh),
         10,
         "six trimmed faces and four bands, no caps at the corners"
     );
+    let (min, max) = result.bounds_mm.expect("bounds");
+    assert_close(max[2], 10.0, 1e-3, "height preserved");
+    assert_close(min[2], 0.0, 1e-3, "bottom untouched");
 }
 
 /// Four bevels meeting pairwise at the corners of a face mitre the same
@@ -1333,25 +562,15 @@ fn fillets_of_one_face_meet_mitred_at_its_corners() {
 /// overlap counted once.
 #[test]
 fn chamfers_of_one_face_meet_mitred_at_its_corners() {
-    let mut kernel = new_kernel();
-    let result = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Chamfer {
-                    spec: ChamferSpec::EqualDistance { distance: 1.0 },
-                    flip: false,
-                    edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
-                    follow_tangent: false,
-                },
-            ],
-            &TessellationSettings::default(),
-        )
-        .expect("chamfer top face edges");
+    let result = chain(&[
+        block(),
+        SolidOp::Chamfer {
+            spec: ChamferSpec::EqualDistance { distance: 1.0 },
+            flip: false,
+            edges: EdgeSelection::OfFaces(vec![[10.0, 10.0, 10.0]]),
+            follow_tangent: false,
+        },
+    ]);
     assert_eq!(
         face_count(&result.mesh),
         10,
@@ -1375,11 +594,7 @@ fn fillets_of_three_edges_round_their_corner() {
     let result = kernel
         .execute_solid_chain(
             &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
+                block(),
                 SolidOp::Fillet {
                     radius,
                     edges: EdgeSelection::Near(vec![
@@ -1438,14 +653,7 @@ fn refining_merges_the_faces_a_flush_fuse_splits() {
         if let SolidOp::Sweep { profile, .. } = &mut upper {
             profile.plane.origin = [0.0, 0.0, 10.0];
         }
-        vec![
-            blind_pad(
-                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                10.0,
-                BooleanOp::NewSolid,
-            ),
-            upper,
-        ]
+        vec![block(), upper]
     };
     let split = kernel
         .execute_solid_chain(&stacked(), &detail)
@@ -1457,9 +665,7 @@ fn refining_merges_the_faces_a_flush_fuse_splits() {
 
     let mut refined_ops = stacked();
     refined_ops.push(SolidOp::Refine);
-    let refined = kernel
-        .execute_solid_chain(&refined_ops, &detail)
-        .expect("refine runs");
+    let refined = chain(&refined_ops);
     assert_eq!(face_count(&refined.mesh), 6, "one face per side");
     let (min, max) = refined.bounds_mm.expect("bounds");
     assert_close(max[2] - min[2], 20.0, 1e-3, "the block keeps its height");
@@ -1471,8 +677,6 @@ fn refining_merges_the_faces_a_flush_fuse_splits() {
 /// elsewhere, while the later feature's own split sides merge.
 #[test]
 fn a_refine_after_a_feature_looks_only_around_what_it_made() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
     let pad_at = |x: f64, z: f64, op| {
         let mut pad = blind_pad(vec![rect_wire(x, 0.0, x + 20.0, 20.0)], 10.0, op);
         if let SolidOp::Sweep { profile, .. } = &mut pad {
@@ -1485,9 +689,7 @@ fn a_refine_after_a_feature_looks_only_around_what_it_made() {
         pad_at(0.0, 0.0, BooleanOp::NewSolid),
         pad_at(0.0, 10.0, BooleanOp::Fuse),
     ];
-    let split = kernel
-        .execute_solid_chain(&left, &detail)
-        .expect("stacked pads fuse");
+    let split = chain(&left);
     let split_faces = face_count(&split.mesh);
     assert!(split_faces > 6);
     // Far to the side, a block on a block, refined.
@@ -1497,9 +699,7 @@ fn a_refine_after_a_feature_looks_only_around_what_it_made() {
         pad_at(100.0, 10.0, BooleanOp::Fuse),
         SolidOp::Refine,
     ]);
-    let built = kernel
-        .execute_solid_chain(&ops, &detail)
-        .expect("the far blocks fuse and refine");
+    let built = chain(&ops);
     assert_eq!(
         face_count(&built.mesh),
         split_faces + 6,
@@ -1513,19 +713,12 @@ fn a_refine_after_a_feature_looks_only_around_what_it_made() {
 #[test]
 fn a_mesh_names_the_exact_surface_of_each_face() {
     use kernel_api::FaceSurface;
-    let mut kernel = new_kernel();
-    let ops = [SolidOp::Primitive {
-        kind: PrimitiveKind::Cylinder {
-            radius: 5.0,
-            height: 12.0,
-            angle_deg: 360.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    }];
-    let result = kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .expect("a cylinder builds");
+    let ops = [primitive(PrimitiveKind::Cylinder {
+        radius: 5.0,
+        height: 12.0,
+        angle_deg: 360.0,
+    })];
+    let result = chain(&ops);
     let mesh = &result.mesh;
     let faces = mesh.faces.iter().copied().max().unwrap() as usize + 1;
     assert_eq!(mesh.face_surfaces.len(), faces, "one surface per face");
@@ -1564,19 +757,12 @@ fn a_mesh_names_the_exact_surface_of_each_face() {
 #[test]
 fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
     use kernel_api::{KernelQueries, ProjectedEdge};
-    let mut kernel = new_kernel();
-    let ops = [SolidOp::Primitive {
-        kind: PrimitiveKind::Cylinder {
-            radius: 5.0,
-            height: 12.0,
-            angle_deg: 360.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    }];
-    let solid = kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .expect("a cylinder builds");
+    let ops = [primitive(PrimitiveKind::Cylinder {
+        radius: 5.0,
+        height: 12.0,
+        angle_deg: 360.0,
+    })];
+    let solid = chain(&ops);
     let raised = ProfilePlane {
         origin: [0.0, 0.0, 30.0],
         ..xy_plane()
@@ -1607,7 +793,6 @@ fn an_edge_projects_onto_a_plane_as_an_exact_curve() {
 #[test]
 fn a_spline_edge_projects_as_its_spline() {
     use kernel_api::{KernelQueries, ProjectedEdge};
-    let mut kernel = new_kernel();
     let knots = vec![
         0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.3, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0,
     ];
@@ -1636,12 +821,7 @@ fn a_spline_edge_projects_as_its_spline() {
             },
         ],
     };
-    let solid = kernel
-        .execute_solid_chain(
-            &[blind_pad(vec![wire], 3.0, BooleanOp::NewSolid)],
-            &TessellationSettings::default(),
-        )
-        .expect("the spline pads");
+    let solid = chain(&[blind_pad(vec![wire], 3.0, BooleanOp::NewSolid)]);
     let raised = ProfilePlane {
         origin: [0.0, 0.0, 30.0],
         ..xy_plane()
@@ -1680,21 +860,16 @@ fn a_spline_edge_projects_as_its_spline() {
 #[ignore = "kernel: a boolean of a plane and a cone stores the section edge as a fitted B-spline, not the exact hyperbola or parabola intersect_surfaces returns for the pair (ogeom-rs#211)"]
 fn a_cone_cut_by_a_plane_projects_as_its_conic() {
     use kernel_api::{KernelQueries, ProjectedEdge};
-    let cone = SolidOp::Primitive {
-        kind: PrimitiveKind::Cone {
-            radius1: 10.0,
-            radius2: 0.0,
-            height: 10.0,
-            angle_deg: 360.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    };
+    let cone = primitive(PrimitiveKind::Cone {
+        radius1: 10.0,
+        radius2: 0.0,
+        height: 10.0,
+        angle_deg: 360.0,
+    });
     let near = |p: [f64; 2], q: [f64; 2]| (p[0] - q[0]).hypot(p[1] - q[1]) < 1e-6;
 
     // Everything past x = 3 cut away: on that plane (y, z) the rim is
     // (10 - z)² - y² = 9, the branch about (0, 10) opening down.
-    let mut kernel = new_kernel();
     let past_x = SolidOp::Primitive {
         kind: PrimitiveKind::Box {
             length: 20.0,
@@ -1707,9 +882,7 @@ fn a_cone_cut_by_a_plane_projects_as_its_conic() {
         },
         op: BooleanOp::Cut,
     };
-    let solid = kernel
-        .execute_solid_chain(&[cone.clone(), past_x], &TessellationSettings::default())
-        .expect("the cone is cut square to x");
+    let solid = chain(&[cone.clone(), past_x]);
     let side = ProfilePlane {
         origin: [30.0, 0.0, 0.0],
         x_axis: [0.0, 1.0, 0.0],
@@ -1754,7 +927,6 @@ fn a_cone_cut_by_a_plane_projects_as_its_conic() {
     // Everything past x + z = 5 cut away: the plane runs parallel to the
     // ruling on the -x side, and the rim on it is a parabola whose vertex
     // stands at (-2.5, 0, 7.5) and whose ends sit on the base circle.
-    let mut kernel = new_kernel();
     let s = std::f64::consts::FRAC_1_SQRT_2;
     let x_axis = [s, 0.0, -s];
     let z_axis = [s, 0.0, s];
@@ -1771,9 +943,7 @@ fn a_cone_cut_by_a_plane_projects_as_its_conic() {
         },
         op: BooleanOp::Cut,
     };
-    let solid = kernel
-        .execute_solid_chain(&[cone, past_slant], &TessellationSettings::default())
-        .expect("the cone is cut along a ruling");
+    let solid = chain(&[cone, past_slant]);
     let slant = ProfilePlane {
         origin: [2.5, 0.0, 2.5],
         x_axis,
@@ -2023,25 +1193,7 @@ fn a_face_on_its_own_is_sectioned_by_a_half_space() {
 #[test]
 fn a_face_cut_by_a_plane_gives_the_curves_where_they_cross() {
     use kernel_api::{KernelQueries, ProjectedEdge};
-    let mut kernel = new_kernel();
-    let build = |kernel: &mut OgeomKernel, kind: PrimitiveKind| {
-        let ops = [SolidOp::Primitive {
-            kind,
-            placement: Placement::default(),
-            op: BooleanOp::NewSolid,
-        }];
-        kernel
-            .execute_solid_chain(&ops, &TessellationSettings::default())
-            .expect("the primitive builds")
-    };
-    let cube = build(
-        &mut kernel,
-        PrimitiveKind::Box {
-            length: 10.0,
-            width: 10.0,
-            height: 10.0,
-        },
-    );
+    let cube = chain(&[box_of(10.0, 10.0, 10.0)]);
     let side = kernel_ogeom::QUERIES
         .section_face(&cube.brep_blob, [0.0, 5.0, 5.0], &plane_at_z(4.0))
         .expect("the side is cut");
@@ -2060,14 +1212,11 @@ fn a_face_cut_by_a_plane_gives_the_curves_where_they_cross() {
         .expect("a plane that misses cuts nothing");
     assert!(missed.is_empty(), "{missed:?}");
 
-    let rod = build(
-        &mut kernel,
-        PrimitiveKind::Cylinder {
-            radius: 5.0,
-            height: 12.0,
-            angle_deg: 360.0,
-        },
-    );
+    let rod = chain(&[primitive(PrimitiveKind::Cylinder {
+        radius: 5.0,
+        height: 12.0,
+        angle_deg: 360.0,
+    })]);
     let across = kernel_ogeom::QUERIES
         .section_face(&rod.brep_blob, [5.0, 0.0, 6.0], &plane_at_z(6.0))
         .expect("the side is cut across");
@@ -2109,17 +1258,9 @@ fn a_face_cut_by_a_plane_gives_the_curves_where_they_cross() {
 }
 
 /// A 10 mm cube with a 4 mm bore down its middle, along Z.
-fn bored_cube(kernel: &mut OgeomKernel) -> kernel_api::SolidBuildResult {
+fn bored_cube() -> kernel_api::SolidBuildResult {
     let ops = [
-        SolidOp::Primitive {
-            kind: PrimitiveKind::Box {
-                length: 10.0,
-                width: 10.0,
-                height: 10.0,
-            },
-            placement: Placement::default(),
-            op: BooleanOp::NewSolid,
-        },
+        box_of(10.0, 10.0, 10.0),
         SolidOp::Primitive {
             kind: PrimitiveKind::Cylinder {
                 radius: 2.0,
@@ -2133,9 +1274,7 @@ fn bored_cube(kernel: &mut OgeomKernel) -> kernel_api::SolidBuildResult {
             op: BooleanOp::Cut,
         },
     ];
-    kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .expect("the bored cube builds")
+    chain(&ops)
 }
 
 /// The length of a polyline.
@@ -2162,8 +1301,7 @@ fn same_point(a: [f64; 3], b: [f64; 3]) -> bool {
 #[test]
 fn a_shape_cut_by_a_plane_gives_its_section_as_loops() {
     use kernel_api::{KernelQueries, ProjectedEdge};
-    let mut kernel = new_kernel();
-    let cube = bored_cube(&mut kernel);
+    let cube = bored_cube();
     let runs = kernel_ogeom::QUERIES
         .section(&cube.brep_blob, &plane_at_z(4.0), None)
         .expect("the cube is cut");
@@ -2225,8 +1363,7 @@ fn a_shape_cut_by_a_plane_gives_its_section_as_loops() {
 #[test]
 fn a_face_s_loops_come_outer_first_each_edge_in_turn() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
-    let cube = bored_cube(&mut kernel);
+    let cube = bored_cube();
     let top = kernel_ogeom::QUERIES
         .face_loops(&cube.brep_blob, [1.0, 1.0, 10.0])
         .expect("the top's loops");
@@ -2260,7 +1397,6 @@ fn a_face_s_loops_come_outer_first_each_edge_in_turn() {
 #[test]
 fn two_solids_overlap_by_the_volume_they_share() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
     let cube = [SolidOp::Primitive {
         kind: PrimitiveKind::Box {
             length: 10.0,
@@ -2270,20 +1406,10 @@ fn two_solids_overlap_by_the_volume_they_share() {
         placement: Placement::default(),
         op: BooleanOp::NewSolid,
     }];
-    let solid = kernel
-        .execute_solid_chain(&cube, &TessellationSettings::default())
-        .expect("a box builds");
-    let shifted = |x: f64, y: f64, z: f64| {
-        [
-            [1.0, 0.0, 0.0, x],
-            [0.0, 1.0, 0.0, y],
-            [0.0, 0.0, 1.0, z],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
+    let solid = chain(&cube);
     let blob = &solid.brep_blob;
     let shared = kernel_ogeom::QUERIES
-        .overlap(blob, blob, &shifted(6.0, 5.0, 0.0))
+        .overlap(blob, blob, &translate(6.0, 5.0, 0.0))
         .unwrap()
         .expect("they overlap");
     assert!(
@@ -2301,7 +1427,7 @@ fn two_solids_overlap_by_the_volume_they_share() {
         (centre[0] - 8.0).abs() < 1e-6 && (centre[1] - 7.5).abs() < 1e-6,
         "{centre:?}"
     );
-    for apart in [shifted(10.0, 0.0, 0.0), shifted(30.0, 0.0, 0.0)] {
+    for apart in [translate(10.0, 0.0, 0.0), translate(30.0, 0.0, 0.0)] {
         let none = kernel_ogeom::QUERIES.overlap(blob, blob, &apart).unwrap();
         assert!(none.is_none(), "{apart:?}");
     }
@@ -2312,17 +1438,11 @@ fn two_solids_overlap_by_the_volume_they_share() {
 /// to the first face, up to the picked face, and up to it with an offset.
 #[test]
 fn a_pad_stops_exactly_on_a_curved_face() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    let rod = SolidOp::Primitive {
-        kind: PrimitiveKind::Cylinder {
-            radius: 10.0,
-            height: 20.0,
-            angle_deg: 360.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    };
+    let rod = primitive(PrimitiveKind::Cylinder {
+        radius: 10.0,
+        height: 20.0,
+        angle_deg: 360.0,
+    });
     // A 4 × 10 rectangle on the plane x = 30, facing +X, padded back
     // toward the rod (reversed).
     let beside = ProfilePlane {
@@ -2331,20 +1451,14 @@ fn a_pad_stops_exactly_on_a_curved_face() {
         y_axis: [0.0, 0.0, 1.0],
         normal: [1.0, 0.0, 0.0],
     };
-    let pad = |termination: ExtrudeTermination| SolidOp::Sweep {
-        profile: Profile {
-            plane: beside,
-            wires: vec![rect_wire(-2.0, 5.0, 2.0, 15.0)],
-        },
-        kind: SweepKind::Extrude {
+    let pad = |termination: ExtrudeTermination| {
+        extrude_on(
+            beside,
+            vec![rect_wire(-2.0, 5.0, 2.0, 15.0)],
             termination,
-            second_side: None,
-            symmetric: false,
-            reversed: true,
-            taper_deg: 0.0,
-            direction: None,
-        },
-        op: BooleanOp::Fuse,
+            true,
+            BooleanOp::Fuse,
+        )
     };
     // The pad from x = 30 in to a cylinder of radius `r`, across y in
     // [-2, 2] and 10 high: 10 × ∫ (30 − √(r² − y²)) dy.
@@ -2377,14 +1491,9 @@ fn a_pad_stops_exactly_on_a_curved_face() {
         ),
     ];
     for (name, termination, want_pad) in cases {
-        let solid = kernel
-            .execute_solid_chain(&[rod.clone(), pad(termination)], &detail)
+        let solid = try_chain(&[rod.clone(), pad(termination)])
             .unwrap_or_else(|e| panic!("{name}: builds: {e}"));
-        let volume = kernel
-            .physical_properties(&solid.brep_blob)
-            .expect("measures")
-            .volume_mm3
-            .expect("a volume");
+        let volume = volume(&solid.brep_blob);
         let want = rod_volume + want_pad;
         assert!(
             (volume - want).abs() < 1e-3 * want,
@@ -2397,59 +1506,31 @@ fn a_pad_stops_exactly_on_a_curved_face() {
 /// by the offset.
 #[test]
 fn a_pad_stops_on_the_picked_flat_face_and_its_offset() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
     // A 20 × 20 × 10 block with a 10 × 10 step, 5 high, on top.
-    let block = blind_pad(
-        vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-        10.0,
-        BooleanOp::NewSolid,
+    let block = block();
+    let step = extrude_on(
+        plane_at_z(10.0),
+        vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
+        ExtrudeTermination::Blind { distance: 5.0 },
+        false,
+        BooleanOp::Fuse,
     );
-    let step = SolidOp::Sweep {
-        profile: Profile {
-            plane: plane_at_z(10.0),
-            wires: vec![rect_wire(0.0, 0.0, 10.0, 10.0)],
-        },
-        kind: SweepKind::Extrude {
-            termination: ExtrudeTermination::Blind { distance: 5.0 },
-            second_side: None,
-            symmetric: false,
-            reversed: false,
-            taper_deg: 0.0,
-            direction: None,
-        },
-        op: BooleanOp::Fuse,
-    };
     // A pad from z = 20 down beside the step, up to the block's top face
     // (picked at z = 10), 2 mm off it.
-    let pad = SolidOp::Sweep {
-        profile: Profile {
-            plane: plane_at_z(20.0),
-            wires: vec![rect_wire(12.0, 12.0, 18.0, 18.0)],
+    let pad = extrude_on(
+        plane_at_z(20.0),
+        vec![rect_wire(12.0, 12.0, 18.0, 18.0)],
+        ExtrudeTermination::UpToFace {
+            name: 0,
+            point: [15.0, 15.0, 10.0],
+            normal: [0.0, 0.0, 1.0],
+            offset: 2.0,
         },
-        kind: SweepKind::Extrude {
-            termination: ExtrudeTermination::UpToFace {
-                name: 0,
-                point: [15.0, 15.0, 10.0],
-                normal: [0.0, 0.0, 1.0],
-                offset: 2.0,
-            },
-            second_side: None,
-            symmetric: false,
-            reversed: true,
-            taper_deg: 0.0,
-            direction: None,
-        },
-        op: BooleanOp::Fuse,
-    };
-    let solid = kernel
-        .execute_solid_chain(&[block, step, pad], &detail)
-        .expect("builds");
-    let volume = kernel
-        .physical_properties(&solid.brep_blob)
-        .expect("measures")
-        .volume_mm3
-        .expect("a volume");
+        true,
+        BooleanOp::Fuse,
+    );
+    let solid = chain(&[block, step, pad]);
+    let volume = volume(&solid.brep_blob);
     // Block, step, and a 6 × 6 pad from z = 12 to z = 20.
     let want = 4000.0 + 500.0 + 36.0 * 8.0;
     assert!((volume - want).abs() < 1e-3, "volume {volume}, want {want}");
@@ -2457,15 +1538,9 @@ fn a_pad_stops_on_the_picked_flat_face_and_its_offset() {
 
 /// The kernel's volume of the solid `ops` build.
 fn volume_of(ops: &[SolidOp]) -> Result<f64, String> {
-    let mut kernel = new_kernel();
-    let built = kernel
-        .execute_solid_chain(ops, &TessellationSettings::default())
-        .map_err(|e| e.to_string())?;
-    kernel
-        .physical_properties(&built.brep_blob)
-        .map_err(|e| e.to_string())?
-        .volume_mm3
-        .ok_or_else(|| "no closed volume".to_string())
+    try_chain(ops)
+        .map(|built| volume(&built.brep_blob))
+        .map_err(|e| e.to_string())
 }
 
 fn assert_volume(ops: &[SolidOp], want: f64, what: &str) {
@@ -2561,147 +1636,217 @@ fn helix_of(profile: ProfileWire, cone_angle_deg: f64, pitch: f64, height: f64) 
     }
 }
 
+/// Smooth lofts between equal sections and pipes measure what Pappus
+/// says: a square or a circle lofted, a square piped up a line either way
+/// round, a circle piped into a cylinder, and a square along a quarter arc
+/// square to its start (its area times the length its centroid runs). A
+/// conical helix builds.
 #[test]
-fn a_smooth_loft_holds_its_sections_exactly() {
-    let square = rect_wire(-5.0, -5.0, 5.0, 5.0);
-    assert_volume(&[smooth_loft(square.clone(), square)], 1500.0, "squares");
-    let circle = circle_wire(0.0, 0.0, 5.0);
-    assert_volume(
-        &[smooth_loft(circle.clone(), circle)],
-        std::f64::consts::PI * 25.0 * 15.0,
-        "circles",
-    );
-}
-
-#[test]
-fn a_clockwise_profile_pipes_and_coils_as_a_counter_clockwise_one_does() {
+fn lofts_and_pipes_measure_what_their_sections_sweep() {
+    use std::f64::consts::{FRAC_PI_2, PI};
     let square = rect_wire(-2.0, -2.0, 2.0, 2.0);
-    let rise = vec![ProfileSegment::Line {
-        start: [0.0, 0.0],
-        end: [0.0, 20.0],
-    }];
-    assert_volume(
-        &[pipe_along(square.clone(), rise.clone())],
-        320.0,
-        "ccw pipe",
-    );
-    assert_volume(&[pipe_along(walked_back(&square), rise)], 320.0, "cw pipe");
-    let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
-    let a = volume_of(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)]).unwrap();
-    let b = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 20.0)]).unwrap();
-    assert!((a - b).abs() < 1e-6, "{a} vs {b}");
-}
-
-#[test]
-fn a_profile_square_to_an_arc_spine_pipes_along_it() {
-    // A quarter circle rising from the origin, square to the XY plane
-    // where it starts: its centre 10 mm along X.
+    let rise = || {
+        vec![ProfileSegment::Line {
+            start: [0.0, 0.0],
+            end: [0.0, 20.0],
+        }]
+    };
+    // A quarter circle rising from the origin, its centre 10 mm along X.
     let arc = vec![ProfileSegment::Arc {
         start: [0.0, 0.0],
         mid: [10.0 - 50f64.sqrt(), 50f64.sqrt()],
         end: [10.0, 10.0],
     }];
-    // Pappus: the square's area times the length its centroid runs.
-    let want = 16.0 * 10.0 * std::f64::consts::FRAC_PI_2;
-    assert_volume(
-        &[pipe_along(rect_wire(-2.0, -2.0, 2.0, 2.0), arc)],
-        want,
-        "arc pipe",
-    );
+    let (wide, disc) = (rect_wire(-5.0, -5.0, 5.0, 5.0), circle_wire(0.0, 0.0, 5.0));
+    let cases = [
+        ("lofted squares", smooth_loft(wide.clone(), wide), 1500.0),
+        (
+            "lofted circles",
+            smooth_loft(disc.clone(), disc),
+            PI * 25.0 * 15.0,
+        ),
+        ("ccw pipe", pipe_along(square.clone(), rise()), 320.0),
+        ("cw pipe", pipe_along(walked_back(&square), rise()), 320.0),
+        (
+            "cylinder",
+            pipe_along(circle_wire(0.0, 0.0, 2.0), rise()),
+            PI * 4.0 * 20.0,
+        ),
+        ("arc pipe", pipe_along(square, arc), 16.0 * 10.0 * FRAC_PI_2),
+    ];
+    for (what, op, want) in cases {
+        assert_volume(&[op], want, what);
+    }
     volume_of(&[helix_of(rect_wire(10.0, 0.0, 12.0, 2.0), 10.0, 5.0, 20.0)])
         .expect("a conical helix");
 }
 
+/// A helical sweep reaches exactly as far as its profile does and is as
+/// big as Pappus says, measured at the default deflection as the app
+/// measures, close-pitched or not; a clockwise profile coils as a
+/// counter-clockwise one does.
 #[test]
-fn a_circle_piped_along_a_line_is_a_cylinder() {
-    let rise = vec![ProfileSegment::Line {
-        start: [0.0, 0.0],
-        end: [0.0, 20.0],
-    }];
-    assert_volume(
-        &[pipe_along(circle_wire(0.0, 0.0, 2.0), rise)],
-        std::f64::consts::PI * 4.0 * 20.0,
-        "cylinder",
-    );
-}
-
-/// A helical sweep reaches exactly as far as its profile does, and a
-/// close-pitched one measures.
-#[test]
-fn a_helical_sweep_reaches_as_far_as_its_profile() {
+fn a_helical_sweep_reaches_its_profile_and_is_as_big_as_pappus_says() {
     let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
-    let mut kernel = new_kernel();
-    let built = kernel
-        .execute_solid_chain(
-            &[helix_of(coil, 0.0, 5.0, 20.0)],
-            &TessellationSettings::default(),
-        )
-        .unwrap();
+    let turn = 4.0 * 2.0 * std::f64::consts::PI * 11.0;
+    let built = chain(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)]);
     let (min, max) = built.bounds_mm.unwrap();
     assert_close(max[0], 12.0, 1e-3, "outer radius");
     assert_close(min[1], 0.0, 1e-3, "starts on the profile");
     assert_close(max[1], 22.0, 1e-3, "height plus the profile");
+    let ccw = volume(&built.brep_blob);
+    assert!(
+        (ccw - 4.0 * turn).abs() <= 4.0 * turn * 1e-4,
+        "4 turns: {ccw}"
+    );
+    let cw = volume_of(&[helix_of(walked_back(&coil), 0.0, 5.0, 20.0)]).unwrap();
+    assert!((ccw - cw).abs() < 1e-6, "{ccw} vs {cw}");
+    assert_volume(&[helix_of(coil, 0.0, 3.0, 30.0)], 10.0 * turn, "10 turns");
 }
 
-/// A helical sweep is as big as Pappus says, measured at the default
-/// deflection as the app measures.
+/// Part turns and cut primitives measure what their angles keep: a
+/// profile on its axis and a cylinder turned 270°, a sphere band turned
+/// 270°; a sphere cut flat at its latitudes, a hemisphere from the equator
+/// to either pole and a band between two parallels; an ellipsoid cut as a
+/// sphere is, its upper half and a quarter turn of that, or whole; and a
+/// hexagonal prism, upright or leaning without losing volume.
 #[test]
-fn a_helical_sweep_is_as_big_as_pappus_says() {
-    let coil = rect_wire(10.0, 0.0, 12.0, 2.0);
-    let want = 4.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0;
-    assert_volume(&[helix_of(coil.clone(), 0.0, 5.0, 20.0)], want, "4 turns");
-    assert_volume(
-        &[helix_of(coil, 0.0, 3.0, 30.0)],
-        10.0 * 4.0 * 2.0 * std::f64::consts::PI * 11.0,
-        "10 turns",
-    );
-}
-
-#[test]
-fn a_partial_revolve_of_a_profile_on_its_axis_builds() {
-    use kernel_api::PrimitiveKind;
-    let turn = |angle: f64| SolidOp::Sweep {
-        profile: Profile {
-            plane: xy_plane(),
-            wires: vec![rect_wire(0.0, 0.0, 5.0, 10.0)],
-        },
-        kind: SweepKind::Revolve {
-            axis_origin: [0.0, 0.0],
-            axis_dir: [0.0, 1.0],
-            angle_deg: angle,
-            second_angle_deg: None,
-            midplane: false,
-            reversed: false,
-            termination: Default::default(),
-        },
-        op: BooleanOp::NewSolid,
+fn part_turns_and_cut_primitives_measure_what_they_keep() {
+    use kernel_api::PrimitiveKind::{Cylinder, Ellipsoid, Prism, Sphere};
+    use std::f64::consts::PI;
+    let prim = |kind| vec![primitive(kind)];
+    let turn = |angle_deg: f64| {
+        vec![SolidOp::Sweep {
+            profile: Profile {
+                plane: xy_plane(),
+                wires: vec![rect_wire(0.0, 0.0, 5.0, 10.0)],
+            },
+            kind: SweepKind::Revolve {
+                axis_origin: [0.0, 0.0],
+                axis_dir: [0.0, 1.0],
+                angle_deg,
+                second_angle_deg: None,
+                midplane: false,
+                reversed: false,
+                termination: Default::default(),
+            },
+            op: BooleanOp::NewSolid,
+        }]
     };
-    let full = std::f64::consts::PI * 25.0 * 10.0;
-    assert_volume(&[turn(270.0)], full * 0.75, "270 degree revolve");
-    let prim = |kind| SolidOp::Primitive {
-        kind,
-        placement: Default::default(),
-        op: BooleanOp::NewSolid,
+    let sphere = |angle1_deg, angle2_deg, angle3_deg| {
+        prim(Sphere {
+            radius: 5.0,
+            angle1_deg,
+            angle2_deg,
+            angle3_deg,
+        })
     };
-    assert_volume(
-        &[prim(PrimitiveKind::Cylinder {
-            radius: 5.0,
-            height: 10.0,
-            angle_deg: 270.0,
-        })],
-        full * 0.75,
-        "270 degree cylinder",
+    let ellipsoid = |angle1_deg, angle3_deg| {
+        prim(Ellipsoid {
+            radius1: 8.0,
+            radius2: 5.0,
+            radius3: 3.0,
+            angle1_deg,
+            angle2_deg: 90.0,
+            angle3_deg,
+        })
+    };
+    let prism = |skew_x_deg| {
+        prim(Prism {
+            sides: 6,
+            circumradius: 5.0,
+            height: 7.0,
+            skew_x_deg,
+            skew_y_deg: 0.0,
+        })
+    };
+    let cylinder = PI * 25.0 * 10.0;
+    let hemisphere = 2.0 / 3.0 * PI * 125.0;
+    // A zone of height 2h about the equator: pi (2h r^2 - (2/3) h^3).
+    let h = 5.0 * 45f64.to_radians().sin();
+    let band = PI * (2.0 * h * 25.0 - 2.0 / 3.0 * h.powi(3));
+    let ellipsoid_whole = 4.0 / 3.0 * PI * 8.0 * 5.0 * 3.0;
+    let hexagonal = 1.5 * 3f64.sqrt() * 25.0 * 7.0;
+    let cases = [
+        (
+            "a profile on its axis turned 270°",
+            turn(270.0),
+            cylinder * 0.75,
+            1e-4,
+        ),
+        (
+            "a cylinder turned 270°",
+            prim(Cylinder {
+                radius: 5.0,
+                height: 10.0,
+                angle_deg: 270.0,
+            }),
+            cylinder * 0.75,
+            1e-4,
+        ),
+        (
+            "a sphere band turned 270°",
+            sphere(-45.0, 45.0, 270.0),
+            band * 0.75,
+            1e-4,
+        ),
+        (
+            "the upper hemisphere",
+            sphere(0.0, 90.0, 360.0),
+            hemisphere,
+            1e-4,
+        ),
+        (
+            "the lower hemisphere",
+            sphere(-90.0, 0.0, 360.0),
+            hemisphere,
+            1e-4,
+        ),
+        ("the band", sphere(-45.0, 45.0, 360.0), band, 1e-4),
+        (
+            "an ellipsoid's upper half",
+            ellipsoid(0.0, 360.0),
+            ellipsoid_whole / 2.0,
+            2e-3,
+        ),
+        (
+            "a quarter turn of it",
+            ellipsoid(0.0, 90.0),
+            ellipsoid_whole / 8.0,
+            8e-3,
+        ),
+        (
+            "a whole ellipsoid",
+            ellipsoid(-90.0, 360.0),
+            ellipsoid_whole,
+            1e-3,
+        ),
+        ("an upright prism", prism(0.0), hexagonal, 1e-4),
+        ("a prism leaning 30°", prism(30.0), hexagonal, 1e-4),
+    ];
+    let mut measured = Vec::new();
+    for (what, ops, want, tolerance) in cases {
+        let built = try_chain(&ops).unwrap_or_else(|e| panic!("{what}: {e}"));
+        let got = volume(&built.brep_blob);
+        assert!(
+            (got - want).abs() <= tolerance * want,
+            "{what}: volume {got}, want {want}"
+        );
+        measured.push((got, built.bounds_mm.expect("bounds")));
+    }
+    // The ellipsoid's upper half stands on z = 0, as tall as its radius.
+    let (lo, hi) = measured[6].1;
+    assert!(
+        lo[2].abs() < 1e-3 && (hi[2] - 3.0).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
     );
-    let band = 462.800_306_058_165_35;
-    assert_volume(
-        &[prim(PrimitiveKind::Sphere {
-            radius: 5.0,
-            angle1_deg: -45.0,
-            angle2_deg: 45.0,
-            angle3_deg: 270.0,
-        })],
-        band * 0.75,
-        "270 degree sphere band",
+    // Leaning, the prism keeps its volume and widens by its shift.
+    let (upright, (leaning, (lo, hi))) = (measured[9].0, measured[10]);
+    assert!((leaning - upright).abs() < 1e-6 * upright);
+    let shift = 7.0 * 30f32.to_radians().tan();
+    assert!(
+        (hi[0] - lo[0] - (10.0 + shift)).abs() < 1e-3,
+        "{lo:?}..{hi:?}"
     );
 }
 
@@ -2730,44 +1875,10 @@ fn a_scaled_copy_standing_apart_is_whole() {
     );
 }
 
-/// A sphere's latitude limits cut it flat: a band between two parallels,
-/// and a hemisphere from the equator to either pole.
-#[test]
-fn a_sphere_between_two_latitudes_is_a_flat_capped_band() {
-    use kernel_api::PrimitiveKind;
-    let sphere = |a1: f64, a2: f64| {
-        [SolidOp::Primitive {
-            kind: PrimitiveKind::Sphere {
-                radius: 5.0,
-                angle1_deg: a1,
-                angle2_deg: a2,
-                angle3_deg: 360.0,
-            },
-            placement: Default::default(),
-            op: BooleanOp::NewSolid,
-        }]
-    };
-    let pi = std::f64::consts::PI;
-    let hemisphere = 2.0 / 3.0 * pi * 125.0;
-    assert_volume(&sphere(0.0, 90.0), hemisphere, "upper hemisphere");
-    assert_volume(&sphere(-90.0, 0.0), hemisphere, "lower hemisphere");
-    // A zone of height 2h about the equator: pi (2h r^2 - (2/3) h^3).
-    let h = 5.0 * 45f64.to_radians().sin();
-    assert_volume(
-        &sphere(-45.0, 45.0),
-        pi * (2.0 * h * 25.0 - 2.0 / 3.0 * h.powi(3)),
-        "band",
-    );
-}
-
 #[test]
 fn a_refined_solid_measures_exactly() {
     let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        ),
+        block(),
         SolidOp::Sweep {
             profile: Profile {
                 plane: plane_at_z(10.0),
@@ -2786,9 +1897,7 @@ fn a_refined_solid_measures_exactly() {
         SolidOp::Refine,
     ];
     let mut kernel = new_kernel();
-    let built = kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let built = chain(&ops);
     let props = kernel.physical_properties(&built.brep_blob).unwrap();
     assert!(
         !props.approximate,
@@ -2802,11 +1911,7 @@ fn a_refined_solid_measures_exactly() {
 #[test]
 fn a_two_sided_pocket_from_the_top_face_cuts() {
     let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        ),
+        block(),
         SolidOp::Sweep {
             profile: Profile {
                 plane: plane_at_z(10.0),
@@ -2830,28 +1935,22 @@ fn a_two_sided_pocket_from_the_top_face_cuts() {
 /// corners of the mesh that draws it.
 #[test]
 fn a_revolved_body_measures_its_full_radius() {
-    let mut kernel = new_kernel();
-    let result = kernel
-        .execute_solid_chain(
-            &[SolidOp::Sweep {
-                profile: Profile {
-                    plane: xy_plane(),
-                    wires: vec![rect_wire(4.0, 0.0, 6.0, 10.0)],
-                },
-                kind: SweepKind::Revolve {
-                    axis_origin: [0.0, 0.0],
-                    axis_dir: [0.0, 1.0],
-                    angle_deg: 360.0,
-                    second_angle_deg: None,
-                    midplane: false,
-                    reversed: false,
-                    termination: Default::default(),
-                },
-                op: BooleanOp::NewSolid,
-            }],
-            &TessellationSettings::default(),
-        )
-        .expect("a tube");
+    let result = chain(&[SolidOp::Sweep {
+        profile: Profile {
+            plane: xy_plane(),
+            wires: vec![rect_wire(4.0, 0.0, 6.0, 10.0)],
+        },
+        kind: SweepKind::Revolve {
+            axis_origin: [0.0, 0.0],
+            axis_dir: [0.0, 1.0],
+            angle_deg: 360.0,
+            second_angle_deg: None,
+            midplane: false,
+            reversed: false,
+            termination: Default::default(),
+        },
+        op: BooleanOp::NewSolid,
+    }]);
     let (lo, hi) = result.bounds_mm.expect("bounds");
     for axis in [0, 2] {
         assert!((hi[axis] - 6.0).abs() < 1e-5, "{hi:?}");
@@ -2867,26 +1966,17 @@ fn a_revolved_body_measures_its_full_radius() {
 #[test]
 fn a_drafted_solid_measures() {
     let mut kernel = new_kernel();
-    let result = kernel
-        .execute_solid_chain(
-            &[
-                blind_pad(
-                    vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                    10.0,
-                    BooleanOp::NewSolid,
-                ),
-                SolidOp::Draft {
-                    face_names: Vec::new(),
-                    angle_deg: 1.5,
-                    neutral_point: [10.0, 10.0, 0.0],
-                    neutral_normal: [0.0, 0.0, -1.0],
-                    pull_dir: None,
-                    faces: vec![[0.0, 10.0, 5.0]],
-                },
-            ],
-            &TessellationSettings::default(),
-        )
-        .expect("a drafted box");
+    let result = chain(&[
+        block(),
+        SolidOp::Draft {
+            face_names: Vec::new(),
+            angle_deg: 1.5,
+            neutral_point: [10.0, 10.0, 0.0],
+            neutral_normal: [0.0, 0.0, -1.0],
+            pull_dir: None,
+            faces: vec![[0.0, 10.0, 5.0]],
+        },
+    ]);
     let props = kernel
         .physical_properties(&result.brep_blob)
         .expect("the drafted box measures");
@@ -2900,56 +1990,24 @@ fn a_drafted_solid_measures() {
     );
 }
 
-/// A chamfer wider than a face it runs along would take the whole face
-/// and more: it is refused, not cut.
-#[test]
-fn a_chamfer_wider_than_its_face_is_refused() {
-    let mut kernel = new_kernel();
-    let result = kernel.execute_solid_chain(
-        &[
-            blind_pad(
-                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                10.0,
-                BooleanOp::NewSolid,
-            ),
-            SolidOp::Chamfer {
-                spec: ChamferSpec::EqualDistance { distance: 12.0 },
-                flip: false,
-                edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
-                follow_tangent: false,
-            },
-        ],
-        &TessellationSettings::default(),
-    );
-    assert!(
-        result.is_err(),
-        "a 12 mm chamfer on a 10 mm face is refused"
-    );
-}
-
 /// A square swept along straight legs has flat sides, which measure
 /// exactly.
 #[test]
 fn a_square_piped_along_straight_legs_has_flat_sides() {
     let mut kernel = new_kernel();
-    let result = kernel
-        .execute_solid_chain(
-            &[pipe_along(
-                rect_wire(-2.0, -2.0, 2.0, 2.0),
-                vec![
-                    ProfileSegment::Line {
-                        start: [0.0, 0.0],
-                        end: [0.0, 20.0],
-                    },
-                    ProfileSegment::Line {
-                        start: [0.0, 20.0],
-                        end: [20.0, 20.0],
-                    },
-                ],
-            )],
-            &TessellationSettings::default(),
-        )
-        .expect("an L of square section");
+    let result = chain(&[pipe_along(
+        rect_wire(-2.0, -2.0, 2.0, 2.0),
+        vec![
+            ProfileSegment::Line {
+                start: [0.0, 0.0],
+                end: [0.0, 20.0],
+            },
+            ProfileSegment::Line {
+                start: [0.0, 20.0],
+                end: [20.0, 20.0],
+            },
+        ],
+    )]);
     assert!(
         result
             .mesh
@@ -2971,11 +2029,7 @@ fn a_square_piped_along_straight_legs_has_flat_sides() {
 fn a_build_previews_the_feature_it_is_asked_for() {
     let mut kernel = new_kernel();
     let detail = TessellationSettings::default();
-    let base = blind_pad(
-        vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-        10.0,
-        BooleanOp::NewSolid,
-    );
+    let base = block();
     let on_top = |op| SolidOp::Sweep {
         profile: Profile {
             plane: plane_at_z(10.0),
@@ -3021,11 +2075,7 @@ fn a_build_previews_the_feature_it_is_asked_for() {
     assert!(preview.cuts);
     assert_eq!(z_range(&preview.tool), (6.0, 10.0), "the cut alone");
     let shown = preview.shown.expect("the body after it");
-    let volume = kernel
-        .physical_properties(&shown.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .unwrap();
+    let volume = volume(&shown.brep_blob);
     assert!((volume - (4000.0 - 400.0)).abs() < 1e-6, "{volume}");
 
     let first = kernel
@@ -3035,29 +2085,6 @@ fn a_build_previews_the_feature_it_is_asked_for() {
         first.preview.expect("a preview").shown.is_none(),
         "nothing before it"
     );
-}
-
-/// A fillet wider than a face it runs along would take the whole face and
-/// more: it is refused, not cut.
-#[test]
-fn a_fillet_wider_than_its_face_is_refused() {
-    let mut kernel = new_kernel();
-    let result = kernel.execute_solid_chain(
-        &[
-            blind_pad(
-                vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-                10.0,
-                BooleanOp::NewSolid,
-            ),
-            SolidOp::Fillet {
-                radius: 12.0,
-                edges: EdgeSelection::Near(vec![[10.0, 0.0, 10.0]]),
-                follow_tangent: false,
-            },
-        ],
-        &TessellationSettings::default(),
-    );
-    assert!(result.is_err(), "a 12 mm fillet on a 10 mm face is refused");
 }
 
 /// A sweep of `wires` on `plane`, extruded as `termination` says.
@@ -3093,11 +2120,7 @@ fn probe(point: [f64; 3], normal: [f64; 3]) -> FaceProbe {
 /// A 20 × 20 × 10 block with a 10 × 20 step, 5 high, over its x < 10 half.
 fn stepped_block() -> Vec<SolidOp> {
     vec![
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        ),
+        block(),
         extrude_on(
             plane_at_z(10.0),
             vec![rect_wire(0.0, 0.0, 10.0, 20.0)],
@@ -3137,11 +2160,7 @@ fn an_up_to_shape_pad_stops_on_the_first_picked_face_each_line_meets() {
 #[test]
 fn an_up_to_shape_offset_moves_the_stop_along_the_sweep() {
     let ops = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        ),
+        block(),
         extrude_on(
             plane_at_z(10.0),
             vec![rect_wire(5.0, 5.0, 15.0, 15.0)],
@@ -3161,11 +2180,7 @@ fn an_up_to_shape_offset_moves_the_stop_along_the_sweep() {
 #[test]
 fn a_flat_face_of_the_solid_is_extruded_as_a_profile() {
     let base = [
-        blind_pad(
-            vec![rect_wire(0.0, 0.0, 20.0, 20.0)],
-            10.0,
-            BooleanOp::NewSolid,
-        ),
+        block(),
         extrude(
             vec![circle_wire(10.0, 10.0, 3.0)],
             ExtrudeTermination::ThroughAll,
@@ -3292,14 +2307,6 @@ fn a_revolution_stops_on_a_wall_beside_its_axis() {
 /// a boss, lengthened by padding its top face, repeated twice along x.
 #[test]
 fn a_pattern_repeats_a_face_swept_off_the_solid() {
-    let translate = |d: f64| -> [[f64; 4]; 4] {
-        [
-            [1.0, 0.0, 0.0, d],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
     let ops = [
         blind_pad(
             vec![rect_wire(0.0, 0.0, 50.0, 20.0)],
@@ -3326,7 +2333,7 @@ fn a_pattern_repeats_a_face_swept_off_the_solid() {
             op: BooleanOp::Fuse,
         },
         SolidOp::Transform {
-            transforms: vec![translate(15.0), translate(30.0)],
+            transforms: vec![translate(15.0, 0.0, 0.0), translate(30.0, 0.0, 0.0)],
             originals: vec![1, 2],
         },
     ];
@@ -3378,15 +2385,7 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
         },
         op: BooleanOp::Cut,
     };
-    let block = SolidOp::Primitive {
-        kind: PrimitiveKind::Box {
-            length: 20.0,
-            width: 20.0,
-            height: 10.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    };
+    let block = box_of(20.0, 20.0, 10.0);
     let primitive_bore = SolidOp::Primitive {
         kind: PrimitiveKind::Cylinder {
             radius: 2.5,
@@ -3420,105 +2419,11 @@ fn a_thread_cuts_into_a_primitive_bore_as_into_an_extruded_one() {
     assert!((got - want).abs() < want * 1e-4, "{got} against {want}");
 }
 
-/// A solid's volume and bounds.
-type Measured = (f64, ([f32; 3], [f32; 3]));
-
-/// Build `kind` at the origin: its volume and bounds.
-fn primitive_volume(kind: PrimitiveKind) -> Result<Measured, String> {
-    let ops = [SolidOp::Primitive {
-        kind,
-        placement: Placement {
-            origin: [0.0; 3],
-            x_axis: [1.0, 0.0, 0.0],
-            z_axis: [0.0, 0.0, 1.0],
-        },
-        op: BooleanOp::NewSolid,
-    }];
-    let mut kernel = OgeomKernel::new();
-    let built = kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .map_err(|e| e.to_string())?;
-    let volume = kernel
-        .physical_properties(&built.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .unwrap();
-    Ok((volume, built.bounds_mm.unwrap()))
-}
-
-/// An ellipsoid cut as a sphere is keeps the upper half of itself, and a
-/// quarter turn of that a quarter of it.
-#[test]
-fn an_ellipsoid_takes_a_spheres_cut() {
-    let whole = 4.0 / 3.0 * std::f64::consts::PI * 8.0 * 5.0 * 3.0;
-    let cut = |sweep: f64| {
-        primitive_volume(PrimitiveKind::Ellipsoid {
-            radius1: 8.0,
-            radius2: 5.0,
-            radius3: 3.0,
-            angle1_deg: 0.0,
-            angle2_deg: 90.0,
-            angle3_deg: sweep,
-        })
-        .unwrap()
-    };
-    let (half, (lo, hi)) = cut(360.0);
-    assert!(
-        (half - whole / 2.0).abs() < 1e-3 * whole,
-        "{half} vs {whole}"
-    );
-    assert!(
-        lo[2].abs() < 1e-3 && (hi[2] - 3.0).abs() < 1e-3,
-        "{lo:?}..{hi:?}"
-    );
-    let (quarter, _) = cut(90.0);
-    assert!((quarter - whole / 8.0).abs() < 1e-3 * whole, "{quarter}");
-}
-
-/// A whole ellipsoid is the sphere scaled to its three radii.
-#[test]
-fn a_whole_ellipsoid_builds() {
-    let (whole, _) = primitive_volume(PrimitiveKind::Ellipsoid {
-        radius1: 2.0,
-        radius2: 1.0,
-        radius3: 1.0,
-        angle1_deg: -90.0,
-        angle2_deg: 90.0,
-        angle3_deg: 360.0,
-    })
-    .unwrap();
-    assert!((whole - 4.0 / 3.0 * std::f64::consts::PI * 2.0).abs() < 1e-2);
-}
-
-/// A skewed prism leans without losing volume.
-#[test]
-fn a_skewed_prism_leans() {
-    let prism = |skew: f64| {
-        primitive_volume(PrimitiveKind::Prism {
-            sides: 6,
-            circumradius: 5.0,
-            height: 7.0,
-            skew_x_deg: skew,
-            skew_y_deg: 0.0,
-        })
-        .unwrap()
-    };
-    let (upright, _) = prism(0.0);
-    let (leaning, (lo, hi)) = prism(30.0);
-    assert!((leaning - upright).abs() < 1e-6 * upright);
-    let shift = 7.0 * 30f32.to_radians().tan();
-    assert!(
-        (hi[0] - lo[0] - (10.0 + shift)).abs() < 1e-3,
-        "{lo:?}..{hi:?}"
-    );
-}
-
 /// A workbench measuring a solid gets its volume, centre and inertia, in
 /// its own frame: a 10 x 20 x 30 box turns most easily about its long side.
 #[test]
 fn a_bench_measures_a_box() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
     let cube = [SolidOp::Primitive {
         kind: PrimitiveKind::Box {
             length: 10.0,
@@ -3528,9 +2433,7 @@ fn a_bench_measures_a_box() {
         placement: Placement::default(),
         op: BooleanOp::NewSolid,
     }];
-    let solid = kernel
-        .execute_solid_chain(&cube, &TessellationSettings::default())
-        .expect("a box builds");
+    let solid = chain(&cube);
     let measured = kernel_ogeom::QUERIES.measure(&solid.brep_blob).unwrap();
     let volume = measured.volume_mm3.expect("a closed solid");
     assert!((volume - 6000.0).abs() < 1e-6, "{volume}");
@@ -3555,7 +2458,6 @@ fn a_bench_measures_a_box() {
 #[test]
 fn two_solids_weigh_as_one() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
     let block = |x: f64| SolidOp::Primitive {
         kind: PrimitiveKind::Box {
             length: 10.0,
@@ -3572,9 +2474,7 @@ fn two_solids_weigh_as_one() {
     if let SolidOp::Primitive { op, .. } = &mut first {
         *op = BooleanOp::NewSolid;
     }
-    let solid = kernel
-        .execute_solid_chain(&[first, block(30.0)], &TessellationSettings::default())
-        .expect("two apart blocks build");
+    let solid = chain(&[first, block(30.0)]);
     let measured = kernel_ogeom::QUERIES.measure(&solid.brep_blob).unwrap();
     assert!((measured.centre_mm[0] - 20.0).abs() < 1e-6, "{measured:?}");
     let inertia = measured.inertia.unwrap();
@@ -3594,7 +2494,6 @@ fn two_solids_weigh_as_one() {
 #[test]
 fn two_solids_are_as_near_as_their_facing_walls() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
     let cube = [SolidOp::Primitive {
         kind: PrimitiveKind::Box {
             length: 10.0,
@@ -3604,25 +2503,15 @@ fn two_solids_are_as_near_as_their_facing_walls() {
         placement: Placement::default(),
         op: BooleanOp::NewSolid,
     }];
-    let solid = kernel
-        .execute_solid_chain(&cube, &TessellationSettings::default())
-        .expect("a box builds");
-    let shifted = |x: f64| {
-        [
-            [1.0, 0.0, 0.0, x],
-            [0.0, 1.0, 0.0, 0.0],
-            [0.0, 0.0, 1.0, 0.0],
-            [0.0, 0.0, 0.0, 1.0],
-        ]
-    };
+    let solid = chain(&cube);
     let blob = &solid.brep_blob;
     let gap = kernel_ogeom::QUERIES
-        .gap(blob, blob, &shifted(17.0))
+        .gap(blob, blob, &translate(17.0, 0.0, 0.0))
         .unwrap();
     assert!((gap.distance_mm - 7.0).abs() < 1e-6, "{gap:?}");
     assert!((gap.on_a[0] - 10.0).abs() < 1e-6 && (gap.on_b[0] - 17.0).abs() < 1e-6);
     let crossing = kernel_ogeom::QUERIES
-        .gap(blob, blob, &shifted(5.0))
+        .gap(blob, blob, &translate(5.0, 0.0, 0.0))
         .unwrap();
     assert!(crossing.distance_mm.abs() < 1e-6, "{crossing:?}");
 }
@@ -3632,26 +2521,10 @@ fn two_solids_are_as_near_as_their_facing_walls() {
 #[test]
 fn edges_are_as_near_as_their_closest_points() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
-    let cube = [SolidOp::Primitive {
-        kind: PrimitiveKind::Box {
-            length: 10.0,
-            width: 10.0,
-            height: 10.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    }];
-    let solid = kernel
-        .execute_solid_chain(&cube, &TessellationSettings::default())
-        .expect("a box builds");
+    let cube = [box_of(10.0, 10.0, 10.0)];
+    let solid = chain(&cube);
     let blob = &solid.brep_blob;
-    let shifted = [
-        [1.0, 0.0, 0.0, 17.0],
-        [0.0, 1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0, 0.0],
-        [0.0, 0.0, 0.0, 1.0],
-    ];
+    let shifted = translate(17.0, 0.0, 0.0);
     let queries = &kernel_ogeom::QUERIES;
     // The upright edge at x = 10, y = 0 and the top edge along y at x = 0
     // of the box moved 17 along x: nearest at their shared corner height.
@@ -3677,15 +2550,8 @@ fn edges_are_as_near_as_their_closest_points() {
 fn a_cone_and_a_torus_carry_their_sizes() {
     use kernel_api::FaceSurface;
     let built = |kind| {
-        let ops = [SolidOp::Primitive {
-            kind,
-            placement: Placement::default(),
-            op: BooleanOp::NewSolid,
-        }];
-        new_kernel()
-            .execute_solid_chain(&ops, &TessellationSettings::default())
-            .expect("the primitive builds")
-            .mesh
+        let ops = [primitive(kind)];
+        chain(&ops).mesh
     };
     let cone = built(PrimitiveKind::Cone {
         radius1: 10.0,
@@ -3732,19 +2598,8 @@ fn a_cone_and_a_torus_carry_their_sizes() {
 #[test]
 fn a_solid_mirrors_across_a_plane() {
     use kernel_api::KernelQueries;
-    let mut kernel = new_kernel();
-    let cube = [SolidOp::Primitive {
-        kind: PrimitiveKind::Box {
-            length: 10.0,
-            width: 20.0,
-            height: 30.0,
-        },
-        placement: Placement::default(),
-        op: BooleanOp::NewSolid,
-    }];
-    let solid = kernel
-        .execute_solid_chain(&cube, &TessellationSettings::default())
-        .expect("a box builds");
+    let cube = [box_of(10.0, 20.0, 30.0)];
+    let solid = chain(&cube);
     let mirrored = kernel_ogeom::QUERIES
         .mirror(&solid.brep_blob, [20.0, 0.0, 0.0], [1.0, 0.0, 0.0])
         .unwrap();
@@ -3786,25 +2641,29 @@ fn revolve_on(plane: ProfilePlane, wire: ProfileWire, angle_deg: f64, op: Boolea
 
 /// A collar turned a whole turn, or just short of one, over the rim of a
 /// whole turned cylinder, both sketched on the plane holding their axis,
-/// fuses and cuts.
+/// fuses and cuts: on the base planes, and on one turned a radian about
+/// the axis, where the seams lie together off every base plane.
 #[test]
 fn a_whole_collar_fuses_with_and_cuts_a_turned_cylinder() {
-    for plane in [yz_plane(), xz_plane()] {
+    let (sin, cos) = 1f64.sin_cos();
+    let turned = ProfilePlane {
+        origin: [0.0; 3],
+        x_axis: [-sin, cos, 0.0],
+        y_axis: [0.0, 0.0, 1.0],
+        normal: [cos, sin, 0.0],
+    };
+    for plane in [yz_plane(), xz_plane(), turned] {
         for op in [BooleanOp::Fuse, BooleanOp::Cut] {
             for angle in [360.0, 359.0] {
-                let mut kernel = new_kernel();
-                let result = kernel.execute_solid_chain(
-                    &[
-                        revolve_on(
-                            plane,
-                            rect_wire(0.0, 0.0, 10.0, 20.0),
-                            360.0,
-                            BooleanOp::NewSolid,
-                        ),
-                        revolve_on(plane, rect_wire(8.0, 18.0, 14.0, 24.0), angle, op),
-                    ],
-                    &TessellationSettings::default(),
-                );
+                let result = try_chain(&[
+                    revolve_on(
+                        plane,
+                        rect_wire(0.0, 0.0, 10.0, 20.0),
+                        360.0,
+                        BooleanOp::NewSolid,
+                    ),
+                    revolve_on(plane, rect_wire(8.0, 18.0, 14.0, 24.0), angle, op),
+                ]);
                 assert!(
                     result.is_ok(),
                     "{:?} {op:?} {angle}: {:?}",
@@ -3822,25 +2681,21 @@ fn a_whole_collar_fuses_with_and_cuts_a_turned_cylinder() {
 #[test]
 fn a_loft_from_a_square_to_a_circle_builds() {
     for ruled in [false, true] {
-        let mut kernel = new_kernel();
-        let result = kernel.execute_solid_chain(
-            &[SolidOp::Loft {
-                sections: vec![
-                    Profile {
-                        plane: xy_plane(),
-                        wires: vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
-                    },
-                    Profile {
-                        plane: plane_at_z(20.0),
-                        wires: vec![circle_wire(0.0, 0.0, 8.0)],
-                    },
-                ],
-                ruled,
-                closed: false,
-                op: BooleanOp::NewSolid,
-            }],
-            &TessellationSettings::default(),
-        );
+        let result = try_chain(&[SolidOp::Loft {
+            sections: vec![
+                Profile {
+                    plane: xy_plane(),
+                    wires: vec![rect_wire(-10.0, -10.0, 10.0, 10.0)],
+                },
+                Profile {
+                    plane: plane_at_z(20.0),
+                    wires: vec![circle_wire(0.0, 0.0, 8.0)],
+                },
+            ],
+            ruled,
+            closed: false,
+            op: BooleanOp::NewSolid,
+        }]);
         assert!(result.is_ok(), "ruled {ruled}: {:?}", result.err());
     }
 }
@@ -3888,8 +2743,7 @@ fn worm_and_bearing() -> (Vec<u8>, Vec<u8>) {
     let parts: std::collections::HashMap<String, Vec<SolidOp>> =
         serde_json::from_str(text).expect("the fixture reads");
     let build = |name: &str| {
-        new_kernel()
-            .execute_solid_chain(&parts[name], &TessellationSettings::default())
+        try_chain(&parts[name])
             .unwrap_or_else(|e| panic!("{name} builds: {e}"))
             .brep_blob
     };

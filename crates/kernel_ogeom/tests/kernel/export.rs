@@ -8,6 +8,8 @@ use kernel_api::{ImportedModel, Kernel, TessellationSettings, TriMesh};
 use kernel_ogeom::OgeomKernel;
 use kernel_ogeom::export::{ExportBody, ExportFormat, export};
 
+use super::common::{chain, volume};
+
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("tests/data")
@@ -205,21 +207,15 @@ fn a_placed_body_is_written_where_it_sits() {
 #[test]
 fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
     use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
-    let mut kernel = OgeomKernel::new();
-    let built = kernel
-        .execute_solid_chain(
-            &[SolidOp::Primitive {
-                kind: PrimitiveKind::Cylinder {
-                    radius: 5.0,
-                    height: 10.0,
-                    angle_deg: 360.0,
-                },
-                placement: Placement::default(),
-                op: BooleanOp::NewSolid,
-            }],
-            &TessellationSettings::default(),
-        )
-        .expect("a cylinder");
+    let built = chain(&[SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 10.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }]);
     let body = ExportBody {
         name: "drum".into(),
         brep: Some(&built.brep_blob),
@@ -245,11 +241,7 @@ fn a_cylinder_written_as_nurbs_only_step_is_all_splines_and_the_same_solid() {
     std::fs::write(&path, &out.bytes).unwrap();
     let back = import(&path);
     let _ = std::fs::remove_file(&path);
-    let volume = kernel
-        .physical_properties(&back.bodies[0].brep_blob)
-        .unwrap()
-        .volume_mm3
-        .unwrap();
+    let volume = volume(&back.bodies[0].brep_blob);
     let want = std::f64::consts::PI * 25.0 * 10.0;
     assert!(
         (volume - want).abs() < want * 1e-4,

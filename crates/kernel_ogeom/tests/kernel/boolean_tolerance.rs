@@ -1,51 +1,32 @@
 //! A feature's stated boolean tolerance: faces that nearly meet are
 //! joined by its fuse or cut rather than left with a gap or a sliver.
 
-use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
-use kernel_api::{
-    BooleanOp, Placement, PrimitiveKind, SolidBuildResult, SolidOp, TessellationSettings,
-};
-use kernel_ogeom::OgeomKernel;
+use core_document::{BodyId, Document, WorkbenchFeature};
+use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidBuildResult, SolidOp};
 use wb_design::DesignFeature;
-use wb_sketch::SketchFeature;
-use wb_sketch::sketch::{GeometryElement, Line, Point, Sketch, SketchPlane, Vec2D};
+use wb_sketch::sketch::SketchPlane;
 
-/// A square of `side` on the plane parallel to XY through `origin`, its
-/// corner there.
-fn square_at(origin: [f64; 3], side: f64) -> SketchFeature {
-    let plane = SketchPlane {
-        origin,
-        ..SketchPlane::xy()
-    };
-    let mut sketch = Sketch::new("s");
-    sketch.plane = plane;
-    let corners = [(0.0, 0.0), (side, 0.0), (side, side), (0.0, side)]
-        .map(|(x, y)| sketch.add_geometry(GeometryElement::Point(Point::new(Vec2D::new(x, y)))));
-    for i in 0..4 {
-        sketch.add_geometry(GeometryElement::Line(Line::new(
-            corners[i],
-            corners[(i + 1) % 4],
-        )));
-    }
-    SketchFeature::new(sketch, plane)
-}
-
-fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
-    DesignFeature::from_json(&serde_json::json!({
-        "Pad": { "sketch": sketch, "length": length, "reversed": false }
-    }))
-    .unwrap()
-}
+use super::common::{Features, chain, count_shapes, pad, rect_at, volume};
 
 /// A body holding a 10 mm cube padded from the XY plane.
 fn cube_body() -> (Document, BodyId) {
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
-    let base = doc
-        .add_feature_in_body(square_at([0.0; 3], 10.0), "base".into(), Some(body))
-        .unwrap();
-    doc.add_feature_in_body(pad(base, 10.0), "Pad".into(), Some(body))
-        .unwrap();
+    let base = doc.add_in(
+        body,
+        "base",
+        rect_at(
+            SketchPlane {
+                origin: [0.0; 3],
+                ..SketchPlane::xy()
+            },
+            0.0,
+            0.0,
+            10.0,
+            10.0,
+        ),
+    );
+    doc.add_in(body, "Pad", pad(base, 10.0));
     (doc, body)
 }
 
@@ -53,42 +34,36 @@ fn cube_body() -> (Document, BodyId) {
 /// fuse at `tolerance`.
 fn stacked(z: f64, tolerance: Option<f32>) -> (Document, BodyId) {
     let (mut doc, body) = cube_body();
-    let upper = doc
-        .add_feature_in_body(square_at([0.0, 0.0, z], 10.0), "upper".into(), Some(body))
-        .unwrap();
+    let upper = doc.add_in(
+        body,
+        "upper",
+        rect_at(
+            SketchPlane {
+                origin: [0.0, 0.0, z],
+                ..SketchPlane::xy()
+            },
+            0.0,
+            0.0,
+            10.0,
+            10.0,
+        ),
+    );
     let mut second = pad(upper, 10.0);
     second.set_boolean_tolerance(tolerance);
-    doc.add_feature_in_body(second, "Pad001".into(), Some(body))
-        .unwrap();
+    doc.add_in(body, "Pad001", second);
     (doc, body)
 }
 
 fn build(doc: &Document, body: BodyId) -> SolidBuildResult {
     let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
-    OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap()
+    chain(&ops)
 }
 
 /// The solids and faces of a build's shape.
 fn solids_and_faces(built: &SolidBuildResult) -> (usize, usize) {
-    use ogeom::topo::{Model, ShapeType, explore_unique};
-    let mut model = Model::new();
-    let text = std::str::from_utf8(&built.brep_blob).unwrap();
-    let shape = ogeom::io::native::read_into(&mut model, text)
-        .unwrap()
-        .shapes
-        .remove(0);
-    let count = |kind| explore_unique(&model, &shape, kind).unwrap().len();
+    use ogeom::topo::ShapeType;
+    let count = |kind| count_shapes(&built.brep_blob, kind);
     (count(ShapeType::Solid), count(ShapeType::Face))
-}
-
-fn volume(built: &SolidBuildResult) -> f64 {
-    OgeomKernel::new()
-        .physical_properties(&built.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .expect("a closed solid")
 }
 
 /// A pad 5 µm above the cube under it stays a second solid with the gap
@@ -106,9 +81,9 @@ fn a_stated_tolerance_closes_a_gap_a_pad_leaves() {
     let joined = build(&doc, body);
     assert_eq!(solids_and_faces(&joined).0, 1, "one solid across the gap");
     assert!(
-        (volume(&joined) - 2000.0).abs() < 1.0,
+        (volume(&joined.brep_blob) - 2000.0).abs() < 1.0,
         "both cubes' material: {}",
-        volume(&joined)
+        volume(&joined.brep_blob)
     );
 }
 
@@ -136,17 +111,27 @@ fn a_stated_tolerance_leaves_no_sliver_at_a_near_flush_seam() {
 fn a_stated_tolerance_cuts_through_a_skin_a_pocket_leaves() {
     let pocketed = |tolerance: Option<f32>| {
         let (mut doc, body) = cube_body();
-        let top = doc
-            .add_feature_in_body(square_at([3.0, 3.0, 10.0], 4.0), "top".into(), Some(body))
-            .unwrap();
+        let top = doc.add_in(
+            body,
+            "top",
+            rect_at(
+                SketchPlane {
+                    origin: [3.0, 3.0, 10.0],
+                    ..SketchPlane::xy()
+                },
+                0.0,
+                0.0,
+                4.0,
+                4.0,
+            ),
+        );
         let mut pocket = DesignFeature::from_json(&serde_json::json!({
             "Pocket": { "sketch": top, "depth": 9.995, "reversed": false }
         }))
         .unwrap();
         pocket.set_boolean_tolerance(tolerance);
-        doc.add_feature_in_body(pocket, "Pocket".into(), Some(body))
-            .unwrap();
-        volume(&build(&doc, body))
+        doc.add_in(body, "Pocket", pocket);
+        volume(&build(&doc, body).brep_blob)
     };
     let hole = 4.0 * 4.0 * 10.0;
     let kept = pocketed(None);
@@ -179,9 +164,11 @@ fn a_tolerance_of_a_tenth_keeps_both_cubes() {
         cube(0.0, BooleanOp::NewSolid),
         cube(9.95, BooleanOp::Fuse).with_boolean_tolerance(Some(0.1)),
     ];
-    let built = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let built = chain(&ops);
     // Two 1000 mm³ cubes sharing a 0.05 mm slab of 100 mm².
-    assert!((volume(&built) - 1995.0).abs() < 0.01, "{}", volume(&built));
+    assert!(
+        (volume(&built.brep_blob) - 1995.0).abs() < 0.01,
+        "{}",
+        volume(&built.brep_blob)
+    );
 }

@@ -154,9 +154,4 @@ mod tests {
             "{shown:?}"
         );
     }
-
-    #[test]
-    fn text_that_is_not_pairs_is_refused() {
-        assert!(read_dxf("0\nSECTION\n2").is_err());
-    }
 }

@@ -3,24 +3,13 @@
 //! on a plane off the origin, dimensioned and padded) loads with the
 //! numbers it was saved with and builds through the real benches.
 
-use core_document::{Document, DocumentService, WorkbenchFeature};
-use kernel_api::TessellationSettings;
-use kernel_ogeom::OgeomKernel;
+use core_document::{Document, WorkbenchFeature};
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{ConstraintKind, GeometryElement};
 
-const FIXTURE: &[u8] = include_bytes!("../data/single_precision_sketch.prtcad");
+use super::common::{chain, registry, volume};
 
-fn registry() -> DocumentService {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    registry
-}
+const FIXTURE: &[u8] = include_bytes!("../data/single_precision_sketch.prtcad");
 
 fn outline(doc: &Document) -> SketchFeature {
     let (_, node) = doc
@@ -117,15 +106,8 @@ fn a_single_precision_document_rebuilds() {
     let jobs = registry.rebuild_jobs(&mut doc);
     assert_eq!(jobs.len(), 1, "the plate builds");
     let plan = jobs[0].plan.as_ref().expect("the history translates");
-    let mut kernel = OgeomKernel::new();
-    let result = kernel
-        .execute_solid_chain(&plan.ops, &TessellationSettings::default())
-        .expect("the plate builds");
-    let volume = kernel
-        .physical_properties(&result.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .expect("a closed solid");
+    let result = chain(&plan.ops);
+    let volume = volume(&result.brep_blob);
     let r = f64::from(1.99997f32);
     let expected =
         (f64::from(33.3333f32) * f64::from(7.77777f32) - std::f64::consts::PI * r * r) * 5.5;

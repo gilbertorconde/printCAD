@@ -3,9 +3,11 @@
 
 use kernel_api::{
     BooleanOp, ExtrudeTermination, KernelQueries, Profile, ProfilePlane, ProfileSegment,
-    ProfileWire, SolidOp, SweepKind, TessellationSettings,
+    ProfileWire, SolidOp, SweepKind,
 };
-use kernel_ogeom::{OgeomKernel, QUERIES};
+use kernel_ogeom::QUERIES;
+
+use super::common::chain;
 
 fn close(a: [f64; 3], b: [f64; 3]) -> bool {
     (0..3).all(|i| (a[i] - b[i]).abs() < 1e-6)
@@ -94,27 +96,22 @@ fn stations_along_a_solid_edge_follow_it_where_the_shape_stands() {
             })
             .collect(),
     );
-    let blob = OgeomKernel::new()
-        .execute_solid_chain(
-            &[SolidOp::Sweep {
-                profile: Profile {
-                    plane: ProfilePlane::default(),
-                    wires: vec![square],
-                },
-                kind: SweepKind::Extrude {
-                    termination: ExtrudeTermination::Blind { distance: 10.0 },
-                    second_side: None,
-                    symmetric: false,
-                    reversed: false,
-                    taper_deg: 0.0,
-                    direction: None,
-                },
-                op: BooleanOp::NewSolid,
-            }],
-            &TessellationSettings::default(),
-        )
-        .expect("a block")
-        .brep_blob;
+    let blob = chain(&[SolidOp::Sweep {
+        profile: Profile {
+            plane: ProfilePlane::default(),
+            wires: vec![square],
+        },
+        kind: SweepKind::Extrude {
+            termination: ExtrudeTermination::Blind { distance: 10.0 },
+            second_side: None,
+            symmetric: false,
+            reversed: false,
+            taper_deg: 0.0,
+            direction: None,
+        },
+        op: BooleanOp::NewSolid,
+    }])
+    .brep_blob;
     // The top edge along X at the back.
     let path = QUERIES
         .edge_frames(&blob, [12.0, 30.0, 10.0], &[0.0, 0.5, 1.0])

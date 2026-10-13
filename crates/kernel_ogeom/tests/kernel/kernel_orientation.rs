@@ -72,21 +72,18 @@ fn prism_from_square(clockwise: bool) -> OgeomResult<(f64, usize, usize)> {
     Ok((volume, outward, faces.len()))
 }
 
+/// The square walked either way is the same region of the plane, so the
+/// same box comes out of the sweep, every face presenting away from the
+/// centre.
 #[test]
-fn a_prism_from_a_counter_clockwise_square_faces_out_everywhere() {
-    let (volume, outward, faces) = prism_from_square(false).expect("a box");
-    assert_eq!(faces, 6);
-    assert_eq!(outward, 6, "every face presents away from the centre");
-    assert!((volume - 4000.0).abs() < 1e-3, "volume {volume}");
-}
-
-/// The same square walked the other way is the same region of the plane,
-/// so the same box must come out of the sweep.
-#[test]
-fn a_prism_from_a_clockwise_square_faces_out_everywhere() {
-    let (volume, outward, faces) =
-        prism_from_square(true).expect("the same box, whichever way its profile was walked");
-    assert_eq!(faces, 6);
-    assert_eq!(outward, 6, "every face presents away from the centre");
-    assert!((volume - 4000.0).abs() < 1e-3, "volume {volume}");
+fn a_prism_from_a_square_faces_out_whichever_way_it_was_walked() {
+    for clockwise in [false, true] {
+        let (volume, outward, faces) = prism_from_square(clockwise).expect("a box");
+        assert_eq!(faces, 6, "clockwise {clockwise}");
+        assert_eq!(outward, 6, "clockwise {clockwise}: a face presents inward");
+        assert!(
+            (volume - 4000.0).abs() < 1e-3,
+            "clockwise {clockwise}: volume {volume}"
+        );
+    }
 }

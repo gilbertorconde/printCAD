@@ -8,6 +8,8 @@ use ogeom::topo::Triangulation;
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use super::common::{chain, try_chain, volume};
+
 /// A 10 mm cube, twelve triangles wound outward, each triangle's vertices
 /// its own as an STL has them.
 fn cube(skip_one: bool) -> Triangulation {
@@ -136,11 +138,7 @@ fn a_mesh_body_converts_to_a_six_faced_solid_of_the_right_volume() {
         "the solid's outline names its kernel edges"
     );
     assert_eq!(solid.health.broken, 0, "{}", solid.health.describe());
-    let volume = kernel
-        .physical_properties(&solid.brep_blob)
-        .expect("measures")
-        .volume_mm3
-        .expect("a closed solid has a volume");
+    let volume = volume(&solid.brep_blob);
     assert!((volume - 1000.0).abs() < 1e-3, "volume {volume}");
 }
 
@@ -234,9 +232,7 @@ fn a_converted_mesh_is_drilled_and_measured() {
                 op: BooleanOp::Cut,
             },
         ];
-        let drilled = kernel
-            .execute_solid_chain(&ops, &detail)
-            .unwrap_or_else(|e| panic!("{name}: the drill cuts: {e}"));
+        let drilled = try_chain(&ops).unwrap_or_else(|e| panic!("{name}: the drill cuts: {e}"));
         let volume = kernel
             .physical_properties(&drilled.brep_blob)
             .expect("measures")
@@ -343,20 +339,15 @@ fn a_converted_cylinder_refines_onto_its_round_wall() {
     use kernel_api::{BooleanOp, Placement, PrimitiveKind, SolidOp};
     let mut kernel = OgeomKernel::new();
     let detail = TessellationSettings::default();
-    let drum = kernel
-        .execute_solid_chain(
-            &[SolidOp::Primitive {
-                kind: PrimitiveKind::Cylinder {
-                    radius: 5.0,
-                    height: 10.0,
-                    angle_deg: 360.0,
-                },
-                placement: Placement::default(),
-                op: BooleanOp::NewSolid,
-            }],
-            &detail,
-        )
-        .expect("a cylinder");
+    let drum = chain(&[SolidOp::Primitive {
+        kind: PrimitiveKind::Cylinder {
+            radius: 5.0,
+            height: 10.0,
+            angle_deg: 360.0,
+        },
+        placement: Placement::default(),
+        op: BooleanOp::NewSolid,
+    }]);
     let coarse = kernel.mesh_to_solid(&drum.mesh, &detail).unwrap();
     assert!(
         coarse.closed && coarse.health.faceted,
@@ -364,13 +355,7 @@ fn a_converted_cylinder_refines_onto_its_round_wall() {
         coarse.summary
     );
     let faces = |mesh: &kernel_api::TriMesh| mesh.faces.iter().collect::<BTreeSet<_>>().len();
-    let volume = |blob: &[u8]| {
-        OgeomKernel::new()
-            .physical_properties(blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap()
-    };
+    let volume = |blob: &[u8]| volume(blob);
     let refined = kernel
         .refine_brep(&coarse.brep_blob, &coarse.face_colors, &detail)
         .unwrap();

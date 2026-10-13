@@ -1,59 +1,27 @@
 //! A DXF drawing becomes a sketch through the sketcher's command, read by
 //! the real kernel: the path File › Import and a script both take.
 
-use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,
-    Recorded, WorkbenchFeature, WorkbenchId, WorkbenchRuntimeContext,
-};
+use core_document::{CommandArgs, Document, FeatureId, Recorded, WorkbenchFeature};
 use scripting::ScriptEngine;
+
+use super::common::{Benches, with_benches};
 use serde_json::json;
 use wb_sketch::SketchFeature;
 use wb_sketch::sketch::{GeometryElement, Sketch};
 
-struct Benches {
-    registry: DocumentService,
-    document: Document,
-}
-
 impl Benches {
     fn new() -> Self {
-        let mut registry = DocumentService::default();
-        registry
-            .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-            .unwrap();
-        Self {
-            registry,
-            document: Document::new("drawing"),
-        }
+        with_benches(
+            Document::new("drawing"),
+            [Box::new(wb_sketch::SketchWorkbench::default())
+                as Box<dyn core_document::Workbench>],
+        )
     }
 
     fn sketch(&self, id: &str) -> Sketch {
         SketchFeature::from_json(self.document.get_feature_data(feature(id)).unwrap())
             .unwrap()
             .sketch
-    }
-}
-
-impl scripting::Host for Benches {
-    fn commands(&self) -> Vec<CommandSpec> {
-        self.registry
-            .commands()
-            .into_iter()
-            .map(|(_, c)| c.clone())
-            .collect()
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let (bench, spec): (WorkbenchId, _) = self
-            .registry
-            .command(id)
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        spec.check(&args)?;
-        let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        ctx.kernel = Some(&kernel_ogeom::QUERIES);
-        wb.run_command(id, &args, &mut ctx)
     }
 }
 

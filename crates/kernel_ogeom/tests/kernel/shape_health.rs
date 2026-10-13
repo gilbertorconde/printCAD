@@ -189,26 +189,20 @@ fn fixture_as_iges(name: &str) -> PathBuf {
     path
 }
 
+/// The real part written as IGES keeps every record 80 columns wide, and
+/// imports back as as many bodies.
 #[test]
-fn a_real_part_written_as_iges_keeps_the_record_width() {
+fn a_real_part_round_trips_through_iges() {
     let path = fixture_as_iges("drive_frame_upper.step");
     let text = std::fs::read_to_string(&path).expect("staged file");
+    let back = OgeomKernel::new().import_step(&path, &TessellationSettings::default());
     let _ = std::fs::remove_file(&path);
     let long = text.lines().filter(|l| l.len() != 80).count();
     assert_eq!(long, 0, "{long} records are not 80 columns");
-}
-
-#[test]
-fn a_real_part_imports_back_from_iges() {
-    let path = fixture_as_iges("drive_frame_upper.step");
-    let mut kernel = OgeomKernel::new();
-    let back = kernel.import_step(&path, &TessellationSettings::default());
-    let _ = std::fs::remove_file(&path);
     let (_, from_step) = import("drive_frame_upper.step");
     let back = back.expect("the IGES file imports");
     assert_eq!(back.bodies.len(), from_step.bodies.len());
 }
-
 /// Every face of a body meshes on itself: the carriage is a few
 /// centimetres across, and so is its mesh.
 #[test]

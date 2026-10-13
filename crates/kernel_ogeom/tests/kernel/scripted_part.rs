@@ -2,59 +2,17 @@
 //! kernel builds the solid it describes: the path a console line takes,
 //! with the registry standing in for the application.
 
-use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, WorkbenchId,
-    WorkbenchRuntimeContext,
-};
-use kernel_api::TessellationSettings;
-use kernel_ogeom::OgeomKernel;
+use core_document::Document;
 use scripting::ScriptEngine;
 
-struct Benches {
-    registry: DocumentService,
-    document: Document,
-}
-
-impl scripting::Host for Benches {
-    fn commands(&self) -> Vec<CommandSpec> {
-        self.registry
-            .commands()
-            .into_iter()
-            .map(|(_, c)| c.clone())
-            .collect()
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let (bench, spec): (WorkbenchId, _) = self
-            .registry
-            .command(id)
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        spec.check(&args)?;
-        // The command by the name it has now, whatever the script called it.
-        let id = spec.id.clone();
-        let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        wb.run_command(&id, &args, &mut ctx)
-    }
-}
+use super::common::{benches, chain, try_chain, volume};
 
 /// A script written before the Design workbench was renamed, and the
 /// document it made, still work: the old command names run the new
 /// commands, and the old feature kind reads as the new one.
 #[test]
 fn old_command_names_and_feature_kinds_still_work() {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    let mut host = Benches {
-        registry,
-        document: Document::new("old"),
-    };
+    let mut host = benches(Document::new("old"));
     let out = ScriptEngine::new().run_script(
         r#"
         local s = pc.sketch.new{plane = "XY"}
@@ -82,26 +40,14 @@ fn old_command_names_and_feature_kinds_still_work() {
     assert!(!kinds.contains(&"wb.part"));
     let body = old.bodies()[0].id;
     let ops = wb_design::body_build_ops(&old, body).unwrap().ops;
-    let result = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let result = chain(&ops);
     let top = result.mesh.bounds().expect("a solid").1[2];
     assert!((top - 6.0).abs() < 1e-3, "{top}");
 }
 
 #[test]
 fn a_script_draws_and_pads_a_block() {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    let mut host = Benches {
-        registry,
-        document: Document::new("scripted"),
-    };
+    let mut host = benches(Document::new("scripted"));
     let mut engine = ScriptEngine::new();
     let out = engine.run_script(
         r#"
@@ -116,9 +62,7 @@ fn a_script_draws_and_pads_a_block() {
 
     let body = host.document.bodies()[0].id;
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let result = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let result = chain(&ops);
     let (min, max) = result.mesh.bounds().expect("a solid");
     let size: Vec<f32> = (0..3).map(|i| max[i] - min[i]).collect();
     assert!((size[0] - 30.0).abs() < 1e-3, "{size:?}");
@@ -133,26 +77,14 @@ fn a_script_draws_and_pads_a_block() {
     );
     assert_eq!(out.error, None);
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let result = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let result = chain(&ops);
     let top = result.mesh.bounds().expect("a solid").1[2];
     assert!((top - 5.0).abs() < 1e-3, "{top}");
 }
 
 #[test]
 fn a_script_sketches_on_a_datum_and_moves_it() {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    let mut host = Benches {
-        registry,
-        document: Document::new("datum"),
-    };
+    let mut host = benches(Document::new("datum"));
     let body = host.document.create_body(None);
     let mut engine = ScriptEngine::new();
     let out = engine.run_script(
@@ -173,12 +105,7 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
     assert_eq!(out.error, None);
     let build = |doc: &Document| {
         let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
-        OgeomKernel::new()
-            .execute_solid_chain(&ops, &TessellationSettings::default())
-            .unwrap()
-            .mesh
-            .bounds()
-            .expect("a solid")
+        chain(&ops).mesh.bounds().expect("a solid")
     };
     let (min, max) = build(&host.document);
     assert!(
@@ -216,17 +143,7 @@ fn a_script_sketches_on_a_datum_and_moves_it() {
 /// counterdrill, naming the thread, the point and the cut as fields.
 #[test]
 fn a_script_drills_a_standard_hole() {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    let mut host = Benches {
-        registry,
-        document: Document::new("scripted"),
-    };
+    let mut host = benches(Document::new("scripted"));
     let mut engine = ScriptEngine::new();
     let out = engine.run_script(
         r#"
@@ -278,15 +195,8 @@ fn a_script_drills_a_standard_hole() {
     assert!((wb_design::hole_diameter(&feature) - 5.1054).abs() < 1e-4);
 
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let mut kernel = OgeomKernel::new();
-    let result = kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap_or_else(|e| panic!("builds: {e}"));
-    let volume = kernel
-        .physical_properties(&result.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .unwrap();
+    let result = try_chain(&ops).unwrap_or_else(|e| panic!("builds: {e}"));
+    let volume = volume(&result.brep_blob);
     assert!(
         volume < 30.0 * 30.0 * 12.0 - std::f64::consts::PI * 4.5 * 4.5 * 2.0,
         "{volume}"
@@ -297,17 +207,7 @@ fn a_script_drills_a_standard_hole() {
 /// rectangle: what does not close is left out.
 #[test]
 fn a_pad_takes_the_closed_loop_and_leaves_loose_lines_out() {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    let mut host = Benches {
-        registry,
-        document: Document::new("loose"),
-    };
+    let mut host = benches(Document::new("loose"));
     let out = ScriptEngine::new().run_script(
         r#"
         local s = pc.sketch.new{plane = "XY"}
@@ -322,9 +222,7 @@ fn a_pad_takes_the_closed_loop_and_leaves_loose_lines_out() {
     assert_eq!(out.error, None);
     let body = host.document.bodies()[0].id;
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let built = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let built = chain(&ops);
     let (lo, hi) = built.mesh.bounds().unwrap();
     assert!((hi[0] - lo[0] - 10.0).abs() < 1e-3 && (hi[1] - lo[1] - 5.0).abs() < 1e-3);
 }

@@ -2,56 +2,21 @@
 //! bench's commands make steps from the sketches, and the kernel builds
 //! what the body's plan says.
 
-use core_document::{
-    BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService,
-    WorkbenchId, WorkbenchRuntimeContext,
-};
-use kernel_api::TessellationSettings;
-use kernel_ogeom::OgeomKernel;
-use ogeom::topo::{Model, ShapeType, explore_unique};
+use core_document::{BodyId, Document};
+use ogeom::topo::ShapeType;
 use scripting::ScriptEngine;
 
-struct Benches {
-    registry: DocumentService,
-    document: Document,
-}
-
-impl scripting::Host for Benches {
-    fn commands(&self) -> Vec<CommandSpec> {
-        self.registry
-            .commands()
-            .into_iter()
-            .map(|(_, c)| c.clone())
-            .collect()
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let (bench, spec): (WorkbenchId, _) = self
-            .registry
-            .command(id)
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        spec.check(&args)?;
-        let id = spec.id.clone();
-        let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        wb.run_command(&id, &args, &mut ctx)
-    }
-}
+use super::common::{Benches, chain, count_shapes, with_benches};
 
 fn benches() -> Benches {
-    let mut registry = DocumentService::default();
-    for bench in [
-        Box::new(wb_sketch::SketchWorkbench::default()) as Box<dyn core_document::Workbench>,
-        Box::new(wb_design::DesignWorkbench::default()),
-        Box::new(wb_surface::SurfaceWorkbench::default()),
-    ] {
-        registry.register_workbench(bench).unwrap();
-    }
-    Benches {
-        registry,
-        document: Document::new("surfaces"),
-    }
+    with_benches(
+        Document::new("surfaces"),
+        [
+            Box::new(wb_sketch::SketchWorkbench::default()) as Box<dyn core_document::Workbench>,
+            Box::new(wb_design::DesignWorkbench::default()),
+            Box::new(wb_surface::SurfaceWorkbench::default()),
+        ],
+    )
 }
 
 fn run(host: &mut Benches, script: &str) {
@@ -71,16 +36,8 @@ fn built(host: &Benches) -> (BodyId, usize, usize, usize) {
         .and_then(|(_, n)| n.body)
         .expect("a surface body");
     let plan = wb_surface::build::body_plan(&host.document, body).unwrap();
-    let result = OgeomKernel::new()
-        .execute_solid_chain(&plan.ops, &TessellationSettings::default())
-        .unwrap();
-    let mut model = Model::new();
-    let text = std::str::from_utf8(&result.brep_blob).unwrap();
-    let shape = ogeom::io::native::read_into(&mut model, text)
-        .unwrap()
-        .shapes[0]
-        .clone();
-    let count = |kind| explore_unique(&model, &shape, kind).unwrap().len();
+    let result = chain(&plan.ops);
+    let count = |kind| count_shapes(&result.brep_blob, kind);
     (
         body,
         count(ShapeType::Face),
@@ -255,9 +212,7 @@ fn surface_set_changes_a_step() {
     let (body, faces, _, _) = built(&host);
     assert_eq!(faces, 2, "built from the second sketch");
     let plan = wb_surface::build::body_plan(&host.document, body).unwrap();
-    let result = OgeomKernel::new()
-        .execute_solid_chain(&plan.ops, &TessellationSettings::default())
-        .unwrap();
+    let result = chain(&plan.ops);
     let top = result.bounds_mm.unwrap().1[2];
     assert!((top - 8.0).abs() < 1e-3, "{top}");
 }

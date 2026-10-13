@@ -3,8 +3,6 @@
 //! what its numbers say it is; and a gear whose teeth a variable sets.
 
 use core_document::{BodyId, Document, FeatureId, WorkbenchFeature};
-use kernel_api::TessellationSettings;
-use kernel_ogeom::OgeomKernel;
 use wb_design::DesignFeature;
 use wb_sketch::SketchFeature;
 use wb_sketch::generator::{
@@ -12,31 +10,7 @@ use wb_sketch::generator::{
 };
 use wb_sketch::sketch::SketchPlane;
 
-fn pad(sketch: FeatureId, length: f32) -> DesignFeature {
-    DesignFeature::Pad {
-        regions: Vec::new(),
-        profile_borrowed: None,
-        extras: Default::default(),
-        refine: false,
-        boolean_tolerance: None,
-        sketch: Some(sketch),
-        length,
-        reversed: false,
-        symmetric: false,
-        mode: wb_design::ExtrudeMode::Dimension,
-        length2: 0.0,
-        taper_deg: 0.0,
-        up_to_face: None,
-        up_to_offset: 0.0,
-        profile_face: None,
-        direction: Default::default(),
-        up_to_shape: Vec::new(),
-        mode2: None,
-        up_to_face2: None,
-        up_to_offset2: 0.0,
-        up_to_shape2: Vec::new(),
-    }
-}
+use super::common::{Features, add_variables, chain, pad, rebuilt, registry, set_variable, volume};
 
 fn revolve(sketch: FeatureId) -> DesignFeature {
     DesignFeature::Revolution {
@@ -66,26 +40,16 @@ fn scene(
     let mut doc = Document::new("t");
     let body = doc.create_body(Some("Body".into()));
     let sketch = new_sketch(generator, plane, "Profile").expect("a profile");
-    let sketch_id = doc
-        .add_feature_in_body(sketch, "Profile".into(), Some(body))
-        .unwrap();
-    doc.add_feature_in_body(make(sketch_id), "Feature".into(), Some(body))
-        .unwrap();
+    let sketch_id = doc.add_in(body, "Profile", sketch);
+    doc.add_in(body, "Feature", make(sketch_id));
     (doc, body, sketch_id)
 }
 
 /// The solid the body builds, its volume and its mesh.
 fn build(doc: &Document, body: BodyId) -> (f64, kernel_api::TriMesh) {
     let ops = wb_design::body_build_ops(doc, body).unwrap().ops;
-    let mut kernel = OgeomKernel::new();
-    let result = kernel
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .expect("the profile builds");
-    let volume = kernel
-        .physical_properties(&result.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .expect("a closed solid");
+    let result = chain(&ops);
+    let volume = volume(&result.brep_blob);
     (volume, result.mesh)
 }
 
@@ -250,44 +214,19 @@ fn a_shaft_with_chamfers_and_fillets_revolves_to_its_pappus_volume() {
 
 #[test]
 fn a_variable_sets_the_teeth_and_the_padded_gear_follows() {
-    use core_document::{DocumentService, Variable, VariableSet};
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
+    let registry = registry();
     let generator = Generator::Gear(GearSpec {
         module: 1.0,
         teeth: 20,
         ..GearSpec::default()
     });
     let (mut doc, body, sketch) = scene(generator, SketchPlane::xy(), |s| pad(s, 4.0));
-    let sizes = doc
-        .add_feature(
-            VariableSet {
-                variables: vec![Variable {
-                    name: "z".into(),
-                    formula: "30".into(),
-                    comment: String::new(),
-                }],
-            },
-            "Sizes".into(),
-        )
-        .unwrap();
+    let sizes = add_variables(&mut doc, "Sizes", &[("z", "30")]);
     doc.set_feature_formula(sketch, "/generator/Gear/teeth", Some("Sizes.z".into()))
         .unwrap();
 
     let tip = |doc: &mut Document| {
-        let job = registry
-            .rebuild_jobs(doc)
-            .into_iter()
-            .find(|j| j.body == body)
-            .expect("a rebuild");
-        let result = OgeomKernel::new()
-            .execute_solid_chain(&job.plan.unwrap().ops, &TessellationSettings::default())
-            .unwrap();
+        let result = rebuilt(&registry, doc, body);
         let tip = max_radius(&result.mesh);
         (tip, runs_on_circle(&result.mesh, tip))
     };
@@ -295,9 +234,7 @@ fn a_variable_sets_the_teeth_and_the_padded_gear_follows() {
     assert_eq!(teeth, 30);
     assert!((radius - 16.0).abs() < 1e-3, "m (z + 2) / 2: {radius}");
 
-    let mut set = VariableSet::from_json(doc.get_feature_data(sizes).unwrap()).unwrap();
-    set.variables[0].formula = "24".into();
-    doc.update_feature_data(sizes, set.to_json()).unwrap();
+    set_variable(&mut doc, sizes, 0, "24");
     let (radius, teeth) = tip(&mut doc);
     assert_eq!(teeth, 24);
     assert!((radius - 13.0).abs() < 1e-3, "{radius}");

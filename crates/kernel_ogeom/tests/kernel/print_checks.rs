@@ -1,53 +1,10 @@
 //! The checks a part gets before it prints, called as a script calls
 //! them, through the real benches with the kernel answering.
 
-use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, WorkbenchId,
-    WorkbenchRuntimeContext,
-};
+use core_document::{Document, WorkbenchRuntimeContext};
 use scripting::ScriptEngine;
 
-struct Benches {
-    registry: DocumentService,
-    document: Document,
-}
-
-impl scripting::Host for Benches {
-    fn commands(&self) -> Vec<CommandSpec> {
-        self.registry
-            .commands()
-            .into_iter()
-            .map(|(_, c)| c.clone())
-            .collect()
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let (bench, spec): (WorkbenchId, _) = self
-            .registry
-            .command(id)
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        spec.check(&args)?;
-        let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        ctx.kernel = Some(&kernel_ogeom::QUERIES);
-        wb.run_command(id, &args, &mut ctx)
-    }
-}
-
-fn benches() -> Benches {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    Benches {
-        registry,
-        document: Document::new("checks"),
-    }
-}
+use super::common::{Benches, benches, chain};
 
 /// Run `script` and read back the globals it leaves, as numbers.
 fn run(host: &mut Benches, script: &str, globals: &[&str]) -> Vec<f64> {
@@ -69,7 +26,7 @@ fn run(host: &mut Benches, script: &str, globals: &[&str]) -> Vec<f64> {
 
 #[test]
 fn a_script_measures_a_strip_and_an_l_by_their_thinnest_walls() {
-    let mut host = benches();
+    let mut host = benches(Document::new("checks"));
     let got = run(
         &mut host,
         r#"
@@ -111,9 +68,7 @@ fn padded_tube(host: &mut Benches) -> core_document::BodyId {
     );
     let body = host.document.bodies()[0].id;
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let built = kernel_ogeom::OgeomKernel::new()
-        .execute_solid_chain(&ops, &kernel_api::TessellationSettings::default())
-        .unwrap();
+    let built = chain(&ops);
     host.document
         .set_imported_brep_data(body, built.brep_blob, Vec::new());
     body
@@ -121,7 +76,7 @@ fn padded_tube(host: &mut Benches) -> core_document::BodyId {
 
 #[test]
 fn a_script_measures_a_padded_tubes_centre_line() {
-    let mut host = benches();
+    let mut host = benches(Document::new("checks"));
     let body = padded_tube(&mut host);
     let got = run(
         &mut host,
@@ -145,7 +100,7 @@ fn a_script_measures_a_padded_tubes_centre_line() {
 fn the_centre_line_tool_takes_two_faces_and_records_what_it_measured() {
     use core_document::{FaceRef, HookOutcome, Workbench, WorkbenchInputEvent};
 
-    let mut host = benches();
+    let mut host = benches(Document::new("checks"));
     let body = padded_tube(&mut host);
     let mut bench = wb_design::DesignWorkbench::default();
     // Looking down Z from above, a millimetre a fiftieth of the viewport.

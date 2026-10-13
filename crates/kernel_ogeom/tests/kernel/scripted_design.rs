@@ -3,11 +3,11 @@
 //! answer.
 
 use core_document::{BodyId, Document};
-use kernel_api::{FaceProbe, KernelQueries, PhysicalProperties, TessellationSettings};
+use kernel_api::{FaceProbe, KernelQueries, PhysicalProperties};
 use kernel_ogeom::OgeomKernel;
 use scripting::ScriptEngine;
 
-use super::imported_base::benches;
+use super::common::{benches, try_chain};
 
 /// Run `script` on a document with one body, `BODY` in it standing for
 /// the body's id, and build the body: its snapshot.
@@ -22,8 +22,7 @@ fn built(script: &str) -> Result<Vec<u8>, String> {
     );
     assert_eq!(out.error, None);
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
+    try_chain(&ops)
         .map(|b| b.brep_blob)
         .map_err(|e| e.to_string())
 }

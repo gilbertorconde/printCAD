@@ -7,49 +7,11 @@
 use std::sync::{Arc, Mutex};
 
 use kernel_api::{
-    BooleanOp, ExtrudeTermination, Kernel, Profile, ProfilePlane, ProfileSegment, ProfileWire,
-    SolidOp, SweepKind, TessellationSettings,
+    BooleanOp, ExtrudeTermination, Profile, ProfileWire, SolidOp, SweepKind, TessellationSettings,
 };
-use kernel_ogeom::{CONTEXT_PREFIX, OgeomKernel, Watch};
+use kernel_ogeom::{CONTEXT_PREFIX, Watch};
 
-fn new_kernel() -> OgeomKernel {
-    let mut kernel = OgeomKernel::new();
-    kernel.initialize().expect("initialize kernel");
-    kernel
-}
-
-fn xy_plane() -> ProfilePlane {
-    ProfilePlane {
-        origin: [0.0, 0.0, 0.0],
-        x_axis: [1.0, 0.0, 0.0],
-        y_axis: [0.0, 1.0, 0.0],
-        normal: [0.0, 0.0, 1.0],
-    }
-}
-
-fn rect_wire(x0: f64, y0: f64, x1: f64, y1: f64) -> ProfileWire {
-    ProfileWire {
-        names: Vec::new(),
-        segments: vec![
-            ProfileSegment::Line {
-                start: [x0, y0],
-                end: [x1, y0],
-            },
-            ProfileSegment::Line {
-                start: [x1, y0],
-                end: [x1, y1],
-            },
-            ProfileSegment::Line {
-                start: [x1, y1],
-                end: [x0, y1],
-            },
-            ProfileSegment::Line {
-                start: [x0, y1],
-                end: [x0, y0],
-            },
-        ],
-    }
-}
+use super::common::{new_kernel, rect_wire, xy_plane};
 
 fn pad(wire: ProfileWire, distance: f64, op: BooleanOp) -> SolidOp {
     SolidOp::Sweep {
@@ -114,57 +76,12 @@ fn a_rebuild_announces_each_feature_in_order() {
         heard.iter().any(|s| s.starts_with("Meshing ")),
         "the final mesh is announced as a detail: {heard:?}"
     );
-}
-
-#[test]
-fn the_kernels_own_stages_arrive_alongside_ours() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    let ops = two_op_chain();
-
-    let (result, heard) = heard_while(|| kernel.execute_solid_chain(&ops, &detail));
-    result.expect("two-op chain builds");
-
-    let kernel_stages: Vec<&String> = heard
-        .iter()
-        .filter(|s| !s.starts_with(CONTEXT_PREFIX))
-        .collect();
+    // The kernel's own stages arrive alongside ours, unprefixed.
     assert!(
-        kernel_stages.iter().any(|s| s.starts_with("boolean:")),
+        heard
+            .iter()
+            .any(|s| !s.starts_with(CONTEXT_PREFIX) && s.starts_with("boolean:")),
         "the fuse should report its own stages: {heard:?}"
-    );
-}
-
-#[test]
-fn nothing_is_announced_when_no_watch_is_installed() {
-    // Every other test in this crate runs with no watch installed; a chain
-    // must build without one.
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    kernel
-        .execute_solid_chain(&two_op_chain(), &detail)
-        .expect("chain builds unwatched");
-}
-
-#[test]
-fn a_cancelled_job_stops_and_says_so() {
-    let mut kernel = new_kernel();
-    let detail = TessellationSettings::default();
-    let ops = two_op_chain();
-
-    let watch = Watch::new();
-    let canceller = watch.canceller();
-    // Cancel up front: the chain stops at its first checkpoint rather than
-    // running to completion.
-    canceller.cancel();
-
-    let result = kernel_ogeom::watched(&watch, || kernel.execute_solid_chain(&ops, &detail));
-
-    let err = result.expect_err("a cancelled chain must not report success");
-    assert!(
-        err.message.contains("cancelled"),
-        "the host distinguishes a cancellation from a geometry failure by this \
-         message: {err:?}"
     );
 }
 
@@ -179,6 +96,9 @@ fn cancelling_from_another_thread_stops_the_job() {
     let stopper = std::thread::spawn(move || canceller.cancel());
     stopper.join().expect("stopper thread");
 
+    // Cancelled before it runs, the chain stops at its first checkpoint
+    // rather than running to completion, and says so: the host tells a
+    // cancellation from a geometry failure by this message.
     let result = kernel_ogeom::watched(&watch, || kernel.execute_solid_chain(&ops, &detail));
     assert!(
         result.is_err_and(|e| e.message.contains("cancelled")),

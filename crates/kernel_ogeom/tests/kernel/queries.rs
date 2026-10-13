@@ -3,9 +3,11 @@
 
 use kernel_api::{
     BooleanOp, ExtrudeTermination, FaceProbe, KernelQueries, Profile, ProfilePlane, ProfileSegment,
-    ProfileWire, SolidOp, SweepKind, TessellationSettings,
+    ProfileWire, SolidOp, SweepKind,
 };
-use kernel_ogeom::{OgeomKernel, QUERIES};
+use kernel_ogeom::QUERIES;
+
+use super::common::chain;
 
 fn xy_plane() -> ProfilePlane {
     ProfilePlane {
@@ -159,10 +161,7 @@ fn ring_plane_at_origin_facing_x() -> ProfilePlane {
 }
 
 fn solid(ops: &[SolidOp]) -> Vec<u8> {
-    OgeomKernel::new()
-        .execute_solid_chain(ops, &TessellationSettings::default())
-        .expect("a solid")
-        .brep_blob
+    chain(ops).brep_blob
 }
 
 #[test]

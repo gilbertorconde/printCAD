@@ -3,43 +3,13 @@
 //! builds on the primitive.
 
 use core_document::WorkbenchFeature as _;
-use core_document::{
-    BodyId, CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService,
-    ImportedGeometry, WorkbenchId, WorkbenchRuntimeContext,
-};
+use core_document::{BodyId, Document, ImportedGeometry};
 use kernel_api::{Kernel, TessellationSettings};
 use kernel_ogeom::OgeomKernel;
 use scripting::ScriptEngine;
 use wb_design::DesignFeature;
 
-pub(crate) struct Benches {
-    registry: DocumentService,
-    pub(crate) document: Document,
-}
-
-impl scripting::Host for Benches {
-    fn commands(&self) -> Vec<CommandSpec> {
-        self.registry
-            .commands()
-            .into_iter()
-            .map(|(_, c)| c.clone())
-            .collect()
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let (bench, spec): (WorkbenchId, _) = self
-            .registry
-            .command(id)
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        spec.check(&args)?;
-        let id = spec.id.clone();
-        let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        ctx.kernel = Some(&kernel_ogeom::QUERIES);
-        wb.run_command(&id, &args, &mut ctx)
-    }
-}
+use super::common::{Features, benches, chain, try_chain, volume};
 
 /// The bundled STEP box, in a document as an import leaves it.
 fn imported_box() -> (Document, BodyId, [f32; 3], [f32; 3]) {
@@ -68,17 +38,6 @@ fn imported_box() -> (Document, BodyId, [f32; 3], [f32; 3]) {
     );
     document.set_imported_brep_data(body, imported.brep_blob.clone(), Vec::new());
     (document, body, lo, hi)
-}
-
-pub(crate) fn benches(document: Document) -> Benches {
-    let mut registry = DocumentService::default();
-    registry
-        .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-        .unwrap();
-    registry
-        .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-        .unwrap();
-    Benches { registry, document }
 }
 
 #[test]
@@ -114,23 +73,13 @@ fn a_pocket_on_an_imported_box_builds_on_the_box() {
     assert!(matches!(features[1].1, DesignFeature::Pocket { .. }));
 
     let ops = wb_design::body_build_ops(document, body).unwrap().ops;
-    let built = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let built = chain(&ops);
     let (blo, bhi) = built.mesh.bounds().unwrap();
     for axis in 0..3 {
         assert!((blo[axis] - lo[axis]).abs() < 1e-3 && (bhi[axis] - hi[axis]).abs() < 1e-3);
     }
-    let whole = OgeomKernel::new()
-        .execute_solid_chain(&ops[..1], &TessellationSettings::default())
-        .unwrap();
-    let volume = |r: &kernel_api::SolidBuildResult| {
-        OgeomKernel::new()
-            .physical_properties(&r.brep_blob)
-            .unwrap()
-            .volume_mm3
-            .expect("a closed solid")
-    };
+    let whole = chain(&ops[..1]);
+    let volume = |r: &kernel_api::SolidBuildResult| volume(&r.brep_blob);
     let cut = volume(&whole) - volume(&built);
     assert!((cut - 4.0).abs() < 1e-3, "a 2 × 2 × 1 pocket: {cut}");
 }
@@ -225,14 +174,8 @@ fn deleting_a_bore_closes_it_again() {
         Some(kernel_api::SolidOp::RemoveFaces { .. })
     ));
     let volume = |ops: &[kernel_api::SolidOp]| {
-        let built = OgeomKernel::new()
-            .execute_solid_chain(ops, &TessellationSettings::default())
-            .unwrap();
-        OgeomKernel::new()
-            .physical_properties(&built.brep_blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap()
+        let built = chain(ops);
+        volume(&built.brep_blob)
     };
     let whole = volume(&ops[..1]);
     let bored = volume(&ops[..ops.len() - 1]);
@@ -281,9 +224,7 @@ fn drilled_holes_are_recognized_as_they_were_drilled() {
     );
     assert_eq!(out.error, None);
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let built = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let built = chain(&ops);
     let (mut holes, unknown) = kernel_ogeom::QUERIES
         .recognize_holes(&built.brep_blob)
         .unwrap();
@@ -316,13 +257,7 @@ fn drilled_holes_are_recognized_as_they_were_drilled() {
 /// it.
 #[test]
 fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
-    let volume = |blob: &[u8]| {
-        OgeomKernel::new()
-            .physical_properties(blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap()
-    };
+    let volume = |blob: &[u8]| volume(blob);
     // The holed box, built once and then kept as an imported shape.
     let (document, body, lo, hi) = imported_box();
     let mut maker = benches(document);
@@ -352,9 +287,7 @@ fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
     let ops = wb_design::body_build_ops(&maker.document, body)
         .unwrap()
         .ops;
-    let holed = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let holed = chain(&ops);
 
     let mut document = Document::new("holed");
     let part = document.create_body(Some("Holed".into()));
@@ -396,9 +329,7 @@ fn recognized_holes_rebuild_the_solid_and_take_new_sizes() {
     assert_eq!(holes.len(), 2, "the two through holes are one feature");
     let build = |doc: &Document| {
         let ops = wb_design::body_build_ops(doc, part).unwrap().ops;
-        OgeomKernel::new()
-            .execute_solid_chain(&ops, &TessellationSettings::default())
-            .unwrap()
+        chain(&ops)
     };
     let rebuilt = build(&host.document);
     assert!(
@@ -477,18 +408,8 @@ fn faces_offset_and_move_with_their_neighbours_following() {
     );
     assert_eq!(out.error, None);
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let built = |n: usize| {
-        OgeomKernel::new()
-            .execute_solid_chain(&ops[..n], &TessellationSettings::default())
-            .unwrap()
-    };
-    let volume = |r: &kernel_api::SolidBuildResult| {
-        OgeomKernel::new()
-            .physical_properties(&r.brep_blob)
-            .unwrap()
-            .volume_mm3
-            .unwrap()
-    };
+    let built = |n: usize| chain(&ops[..n]);
+    let volume = |r: &kernel_api::SolidBuildResult| volume(&r.brep_blob);
     let near = |a: f64, b: f64| (a - b).abs() < 1e-2;
     let n = ops.len();
     let (bored, raised, widened, moved) = (built(n - 3), built(n - 2), built(n - 1), built(n));
@@ -533,10 +454,7 @@ fn a_sketch_on_an_imported_side_face_stays_on_that_face() {
     let mut sketch = wb_sketch::SketchFeature::new(sketch, plane);
     sketch.face =
         wb_sketch::FaceSupport::from_origin(&face, core_document::FaceOrigin::OwnSolid, plane);
-    let id = host
-        .document
-        .add_feature_in_body(sketch, "side".into(), Some(body))
-        .unwrap();
+    let id = host.document.add_in(body, "side", sketch);
     for _ in 0..3 {
         host.registry.evaluate(&mut host.document);
         let _ = host.registry.rebuild_jobs(&mut host.document);
@@ -632,23 +550,13 @@ fn pad_into_converted_part(
     assert_eq!(out.error, None);
     host.registry.evaluate(&mut host.document);
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let volume = |r: &kernel_api::SolidBuildResult| {
-        OgeomKernel::new()
-            .physical_properties(&r.brep_blob)
-            .unwrap()
-            .volume_mm3
-            .expect("a closed solid")
-    };
-    let base = kernel.execute_solid_chain(&ops[..1], &detail).unwrap();
-    Some((kernel.execute_solid_chain(&ops, &detail), volume(&base)))
+    let volume = |r: &kernel_api::SolidBuildResult| volume(&r.brep_blob);
+    let base = chain(&ops[..1]);
+    Some((try_chain(&ops), volume(&base)))
 }
 
 fn volume_of(built: &kernel_api::SolidBuildResult) -> f64 {
-    OgeomKernel::new()
-        .physical_properties(&built.brep_blob)
-        .unwrap()
-        .volume_mm3
-        .expect("a closed solid")
+    volume(&built.brep_blob)
 }
 
 /// A pad 3 mm into a converted part, along its face's own outline: it is
@@ -751,9 +659,7 @@ fn a_face_s_edges_come_in_around_it() {
     );
     assert_eq!(out.error, None);
     let ops = wb_design::body_build_ops(&host.document, body).unwrap().ops;
-    let bored = OgeomKernel::new()
-        .execute_solid_chain(&ops, &TessellationSettings::default())
-        .unwrap();
+    let bored = chain(&ops);
     let on_bore = [centre[0] + 2.0, centre[1], f64::from(lo[2] + hi[2]) / 2.0];
     let rims = kernel_ogeom::QUERIES
         .face_edges(&bored.brep_blob, on_bore)

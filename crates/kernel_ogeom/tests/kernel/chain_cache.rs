@@ -3,41 +3,12 @@
 //! end of the history, in its middle, and before a pattern that repeats an
 //! earlier feature.
 
-use core_document::{
-    CommandArgs, CommandError, CommandResult, CommandSpec, Document, DocumentService, FeatureId,
-    WorkbenchId, WorkbenchRuntimeContext,
-};
+use core_document::{Document, FeatureId};
 use kernel_api::{SolidBuildResult, TessellationSettings};
 use kernel_ogeom::{ChainCache, OgeomKernel};
 use scripting::ScriptEngine;
 
-struct Benches {
-    registry: DocumentService,
-    document: Document,
-}
-
-impl scripting::Host for Benches {
-    fn commands(&self) -> Vec<CommandSpec> {
-        self.registry
-            .commands()
-            .into_iter()
-            .map(|(_, c)| c.clone())
-            .collect()
-    }
-
-    fn call(&mut self, id: &str, args: CommandArgs) -> CommandResult {
-        let (bench, spec): (WorkbenchId, _) = self
-            .registry
-            .command(id)
-            .ok_or_else(|| CommandError::Unknown(id.to_string()))?;
-        spec.check(&args)?;
-        let id = spec.id.clone();
-        let wb = self.registry.workbench_mut(&bench).unwrap();
-        let mut ctx =
-            WorkbenchRuntimeContext::new(&mut self.document, [0.0; 3], [0.0; 3], (0, 0, 1, 1));
-        wb.run_command(&id, &args, &mut ctx)
-    }
-}
+use super::common::{Benches, benches};
 
 struct Part {
     host: Benches,
@@ -48,17 +19,7 @@ struct Part {
 impl Part {
     /// A plate, three pockets, a boss, a pocket patterned and a last boss.
     fn new() -> Self {
-        let mut registry = DocumentService::default();
-        registry
-            .register_workbench(Box::new(wb_sketch::SketchWorkbench::default()))
-            .unwrap();
-        registry
-            .register_workbench(Box::new(wb_design::DesignWorkbench::default()))
-            .unwrap();
-        let mut host = Benches {
-            registry,
-            document: Document::new("cache"),
-        };
+        let mut host = benches(Document::new("cache"));
         let mut engine = ScriptEngine::new();
         let out = engine.run_script(
             r#"
