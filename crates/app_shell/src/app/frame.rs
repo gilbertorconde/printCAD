@@ -852,6 +852,13 @@ impl PrintCadApp {
                     .rotation_pivot_indicator_screen_px(self.user_settings.camera.orbit_pivot_pick);
 
                 let tree_also = self.session.tree_also().to_vec();
+                let measure_bar = self.session.measure.as_ref().map(|picks| {
+                    crate::ui::view_toolbar::MeasureBar {
+                        unit: self.session.measure_unit,
+                        document_unit: self.session.document.display_unit(),
+                        picks: picks.len(),
+                    }
+                });
                 let ui_started = Instant::now();
                 let ui_result = ui_layer.run(
                     window,
@@ -924,6 +931,7 @@ impl PrintCadApp {
                         },
                         tabs,
                         measuring: self.session.measure.is_some(),
+                        measure_bar,
                         reveal_body: self.session.reveal_body.take(),
                         viewport_menu: self.session.viewport_menu.clone(),
                         picked_faces,
@@ -1646,33 +1654,29 @@ impl PrintCadApp {
             screen_space_labels.push(label);
         }
 
-        // The measurement in progress: its points, the line between them
-        // and the distance, drawn over the scene.
+        // The measurement in progress: its picks, the path joining them and
+        // the readout of the last two, drawn over the scene.
         if let Some(picks) = &self.session.measure {
-            let unit = self.session.document.display_unit();
+            let unit = self.measure_unit();
             let color = HOVER_PAINT;
-            let px: Vec<(f32, f32)> = picks
+            let px: Vec<Option<(f32, f32)>> = picks
                 .iter()
-                .filter_map(|p| {
+                .map(|p| {
                     self.session
                         .camera
                         .world_to_viewport(Vec3::from_array(p.point()))
                 })
                 .collect();
-            for (x, y) in &px {
+            for (x, y) in px.iter().flatten() {
                 data.marks.push(core_document::ScreenSpaceMark::crosshair(
                     [*x, *y],
                     8.0,
                     color,
                 ));
             }
-            let mut lines = match picks.as_slice() {
-                [a, b] => crate::app::measure::describe_pair(a, b, unit),
-                [one] => one.describe(unit),
-                _ => Vec::new(),
-            };
-            // The kernel's least distance between two faces, with the
-            // closest points joined.
+            let mut lines = crate::app::measure::readout(picks, unit);
+            // The kernel's least distance between the last two picks, with
+            // the closest points joined.
             if let Some(gap) = &self.session.measure_gap {
                 match (&gap.found, gap.in_world()) {
                     (_, Some((distance, a, b))) => {
@@ -1680,7 +1684,7 @@ impl PrintCadApp {
                             0,
                             format!(
                                 "Least distance {}",
-                                core_document::format_length_mm(distance, unit, 3)
+                                crate::app::measure::length(distance, unit)
                             ),
                         );
                         let camera = &self.session.camera;
@@ -1704,20 +1708,23 @@ impl PrintCadApp {
                     _ => {}
                 }
             }
-            if let [pa, pb] = px.as_slice() {
-                data.overlays.push(core_document::ScreenSpaceOverlay::new(
-                    [pa.0, pa.1],
-                    [pb.0, pb.1],
-                    color,
-                    1.5,
-                ));
+            for pair in px.windows(2) {
+                if let [Some(pa), Some(pb)] = pair {
+                    data.overlays.push(core_document::ScreenSpaceOverlay::new(
+                        [pa.0, pa.1],
+                        [pb.0, pb.1],
+                        color,
+                        1.5,
+                    ));
+                }
             }
-            // The readout beside the last pick, one line a row.
-            if let Some((x, y)) = px.last().copied() {
-                let anchor = match px.as_slice() {
-                    [pa, pb] => ((pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0),
-                    _ => (x, y),
-                };
+            // The readout between the last two picks, one line a row.
+            let anchor = match px.as_slice() {
+                [.., Some(pa), Some(pb)] => Some(((pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0)),
+                [.., last] => *last,
+                [] => None,
+            };
+            if let Some(anchor) = anchor {
                 for (i, line) in lines.into_iter().enumerate() {
                     screen_space_labels.push(
                         core_document::ScreenSpaceLabel::new(
@@ -1730,13 +1737,11 @@ impl PrintCadApp {
                     );
                 }
             }
-            if picks.len() < 2
-                && let Some((x, y)) = self.cursor_in_viewport
-            {
-                let prompt = if picks.is_empty() {
-                    "Measure: pick a point, an edge or a face"
-                } else {
-                    "Measure: pick a second one to measure between"
+            if let Some((x, y)) = self.cursor_in_viewport {
+                let prompt = match picks.len() {
+                    0 => "Measure: pick a point, an edge, a face or a datum",
+                    1 => "Measure: pick a second one to measure between",
+                    _ => "Measure: pick another to go on, or empty space to start over",
                 };
                 screen_space_labels.push(
                     core_document::ScreenSpaceLabel::new(

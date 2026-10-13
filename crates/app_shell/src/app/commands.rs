@@ -463,6 +463,13 @@ impl PrintCadApp {
                         }
                     });
                 }
+                UiCommand::SetMeasureUnit(unit) => self.session.measure_unit = unit,
+                UiCommand::ClearMeasure => {
+                    if let Some(picks) = &mut self.session.measure {
+                        picks.clear();
+                    }
+                    self.session.measure_gap = None;
+                }
                 UiCommand::RecomputeAll => intents.recompute_all = true,
                 UiCommand::TaskClosed(outcome) => intents.task_closed = Some(outcome),
                 UiCommand::DeleteTreeItem(item) => intents.delete_item = Some(item),

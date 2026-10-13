@@ -1,7 +1,8 @@
 //! The floating view toolbar at the top of the viewport: fit, standard
 //! views, draw style, the clipping plane, projection, and in perspective its
 //! field of view. With the clipping plane on, a second pill under it sets
-//! the plane's axis, position and side.
+//! the plane's axis, position and side; with the measure tool armed, another
+//! sets the unit it reads in and starts its chain over.
 
 use egui::{Align2, Area, Context, Vec2};
 use settings::{DrawStyle, ProjectionMode};
@@ -112,6 +113,18 @@ pub struct ViewToolbarState {
     pub section: Option<SectionPlane>,
     /// The box around what the scene draws: the clipping plane's range.
     pub scene_bounds: Option<(glam::Vec3, glam::Vec3)>,
+    /// The measure tool, while it is armed.
+    pub measure: Option<MeasureBar>,
+}
+
+/// What the measure tool's pill shows.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeasureBar {
+    /// The unit chosen for the readout; `None` follows the document's.
+    pub unit: Option<core_document::Unit>,
+    pub document_unit: core_document::Unit,
+    /// How many picks the chain holds.
+    pub picks: usize,
 }
 
 /// Draws the pill and pushes the commands of any clicked button.
@@ -133,6 +146,7 @@ pub fn draw_view_toolbar(
         draw_style,
         section,
         scene_bounds,
+        measure,
     } = *state;
     let ortho = projection == ProjectionMode::Orthographic;
     let items = [
@@ -313,9 +327,72 @@ pub fn draw_view_toolbar(
                     });
                 });
         });
+    let mut below = 10.0 + BUTTON + 14.0;
     if let Some(plane) = section {
-        draw_section_bar(ctx, viewport, plane, scene_bounds, commands);
+        draw_section_bar(ctx, viewport, below, plane, scene_bounds, commands);
+        below += BUTTON + 8.0;
     }
+    if let Some(bar) = measure {
+        draw_measure_bar(ctx, viewport, below, bar, commands);
+    }
+}
+
+/// The measure tool's pill: the unit its readout is in (the document's
+/// unless another is picked) and a button starting the chain over.
+fn draw_measure_bar(
+    ctx: &Context,
+    viewport: egui::Rect,
+    top: f32,
+    bar: MeasureBar,
+    commands: &mut Vec<UiCommand>,
+) {
+    use core_document::Unit;
+    Area::new(egui::Id::new("view_toolbar_measure"))
+        .order(super::hud::VIEW_LAYER)
+        .pivot(Align2::CENTER_TOP)
+        .fixed_pos(viewport.center_top() + Vec2::new(0.0, top))
+        .show(ctx, |ui| {
+            egui::Frame::new()
+                .fill(OVERLAY_CARD)
+                .stroke(egui::Stroke::new(1.0, BORDER))
+                .corner_radius(7)
+                .inner_margin(egui::Margin::symmetric(8, 3))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        ui.label(ui_kit::widgets::text("Measure in", FONT_SM, TEXT2));
+                        let shown = bar.unit.unwrap_or(bar.document_unit);
+                        let document = format!("Document ({})", bar.document_unit.short_label());
+                        if ui
+                            .selectable_label(bar.unit.is_none(), document)
+                            .on_hover_text("Read in the document's unit")
+                            .clicked()
+                        {
+                            commands.push(UiCommand::SetMeasureUnit(None));
+                        }
+                        for unit in Unit::ALL {
+                            if ui
+                                .selectable_label(
+                                    bar.unit.is_some() && shown == unit,
+                                    unit.short_label(),
+                                )
+                                .on_hover_text(unit.long_label())
+                                .clicked()
+                            {
+                                commands.push(UiCommand::SetMeasureUnit(Some(unit)));
+                            }
+                        }
+                        vseparator(ui, 18.0);
+                        if ui
+                            .add_enabled(bar.picks > 0, egui::Button::new("Start over"))
+                            .on_hover_text("Drop the picks; a click on empty space does too")
+                            .clicked()
+                        {
+                            commands.push(UiCommand::ClearMeasure);
+                        }
+                    });
+                });
+        });
 }
 
 /// What clicks in the view pick: a button showing the filter, its list
@@ -352,6 +429,7 @@ fn pick_filter_button(ui: &mut egui::Ui, filter: PickFilter, commands: &mut Vec<
 fn draw_section_bar(
     ctx: &Context,
     viewport: egui::Rect,
+    top: f32,
     plane: SectionPlane,
     bounds: Option<(glam::Vec3, glam::Vec3)>,
     commands: &mut Vec<UiCommand>,
@@ -360,7 +438,7 @@ fn draw_section_bar(
     Area::new(egui::Id::new("view_toolbar_section"))
         .order(super::hud::VIEW_LAYER)
         .pivot(Align2::CENTER_TOP)
-        .fixed_pos(viewport.center_top() + Vec2::new(0.0, 10.0 + BUTTON + 14.0))
+        .fixed_pos(viewport.center_top() + Vec2::new(0.0, top))
         .show(ctx, |ui| {
             egui::Frame::new()
                 .fill(OVERLAY_CARD)

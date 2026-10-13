@@ -29,7 +29,7 @@ mod tab_bar;
 mod task_panel;
 pub(crate) mod toolbar;
 mod unsaved_modal;
-mod view_toolbar;
+pub(crate) mod view_toolbar;
 pub use view_toolbar::PickFilter;
 
 mod array_task;
@@ -519,6 +519,7 @@ impl UiLayer {
             server,
             tabs,
             measuring,
+            measure_bar,
             reveal_body,
             viewport_menu,
             picked_faces,
@@ -1194,6 +1195,7 @@ impl UiLayer {
                     draw_style: settings.rendering.draw_style,
                     section,
                     scene_bounds,
+                    measure: measure_bar,
                 },
                 &keymap,
                 &mut commands,

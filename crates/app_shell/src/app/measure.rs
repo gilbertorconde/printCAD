@@ -1,11 +1,16 @@
 //! The measure tool's picks and what they measure: a point, an edge (its
-//! length, a circle's radius) or a face (its area, a round face's radius);
-//! two picks give the distance between them and, where both have a
-//! direction, the angle.
+//! length, a circle's radius), a face (its area, a round face's radius, a
+//! cone's angle, a torus's radii) or a datum (a plane, a line, a point).
+//! Picks run on in a chain: each new one is measured against the one
+//! before it (the distance and, where both have a direction, the angle),
+//! and the chain's totals follow (its path, its edges' length, its faces'
+//! area).
 
-use core_document::{EdgeCircle, Unit, format_area_mm2, format_length_mm};
+use core_document::{DatumFeature, DatumShape, EdgeCircle, Unit, format_area_mm2};
 use glam::Vec3;
 use kernel_api::{FaceSurface, TriMesh};
+
+use crate::kernel_worker::MeasuredPart;
 
 /// One thing the measure tool picked, in world space.
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +21,8 @@ pub(crate) enum MeasurePick {
         direction: [f32; 3],
         length: f32,
         circle: Option<EdgeCircle>,
+        /// The body it is an edge of.
+        body: Option<core_document::BodyId>,
     },
     Face {
         point: [f32; 3],
@@ -25,12 +32,96 @@ pub(crate) enum MeasurePick {
         /// The body it is a face of.
         body: Option<core_document::BodyId>,
     },
+    /// A datum, by name, and where on it the click landed.
+    Datum {
+        name: String,
+        datum: DatumPick,
+        point: [f32; 3],
+    },
 }
 
-/// The kernel's least distance between the measure tool's two faces: the
-/// request it answers, where the first face's body sat when asked, and
-/// once it is in, the distance and the closest points in that body's own
-/// frame.
+/// What a picked datum stands for, placed in the world.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum DatumPick {
+    Plane {
+        origin: [f32; 3],
+        normal: [f32; 3],
+    },
+    Line {
+        origin: [f32; 3],
+        direction: [f32; 3],
+    },
+    /// A datum point, or a coordinate system's origin.
+    Point,
+}
+
+impl DatumPick {
+    /// The datum `feature` (in its body's frame) placed by `placement`, and
+    /// where a ray from `eye` along `ray` meets it: a plane where the ray
+    /// crosses it, a line where it passes nearest, else its origin.
+    pub fn of(
+        feature: &DatumFeature,
+        placement: core_document::BodyPlacement,
+        eye: Vec3,
+        ray: Vec3,
+    ) -> (Self, [f32; 3]) {
+        let frame = feature.frame();
+        let origin = Vec3::from_array(placement.point(frame.origin));
+        match feature.shape {
+            DatumShape::Plane { .. } => {
+                let normal =
+                    Vec3::from_array(placement.direction(frame.normal)).normalize_or_zero();
+                let across = ray.dot(normal);
+                let point = if across.abs() > 1e-6 {
+                    eye + ray * ((origin - eye).dot(normal) / across)
+                } else {
+                    origin
+                };
+                (
+                    DatumPick::Plane {
+                        origin: origin.to_array(),
+                        normal: normal.to_array(),
+                    },
+                    point.to_array(),
+                )
+            }
+            DatumShape::Line { .. } => {
+                let direction =
+                    Vec3::from_array(placement.direction(frame.x_axis)).normalize_or_zero();
+                let point = nearest_on_line(origin, direction, eye, ray);
+                (
+                    DatumPick::Line {
+                        origin: origin.to_array(),
+                        direction: direction.to_array(),
+                    },
+                    point.to_array(),
+                )
+            }
+            DatumShape::Point | DatumShape::CoordinateSystem { .. } => {
+                (DatumPick::Point, origin.to_array())
+            }
+        }
+    }
+}
+
+/// The point of the line through `origin` along unit `direction` nearest
+/// the line through `eye` along `ray`; its origin where they run parallel.
+fn nearest_on_line(origin: Vec3, direction: Vec3, eye: Vec3, ray: Vec3) -> Vec3 {
+    let ray = ray.normalize_or_zero();
+    let b = direction.dot(ray);
+    let denom = 1.0 - b * b;
+    if denom.abs() < 1e-6 {
+        return origin;
+    }
+    let w = origin - eye;
+    let t = (b * w.dot(ray) - w.dot(direction)) / denom;
+    origin + direction * t
+}
+
+/// The kernel's least distance between the measure tool's last two picks
+/// of solids (faces or edges): the request it answers, where the first
+/// pick's body sat when asked, and once it is in, the distance and the
+/// closest points in that body's own frame.
 #[derive(Debug, Clone)]
 pub(crate) struct MeasureGap {
     pub token: u64,
@@ -48,6 +139,51 @@ impl MeasureGap {
             |p: &[f64; 3]| Vec3::from_array(self.first_placement.point(p.map(|v| v as f32)));
         Some((*distance as f32, world(a), world(b)))
     }
+}
+
+/// What the kernel measures the least distance between: the last two
+/// picks, when each is a face or an edge of a body, as the body, which of
+/// its parts and the picked point in the world.
+pub(crate) fn gap_operands(
+    picks: &[MeasurePick],
+) -> Option<[(core_document::BodyId, MeasuredPart, [f32; 3]); 2]> {
+    let operand = |pick: &MeasurePick| match pick {
+        MeasurePick::Face {
+            point,
+            body: Some(body),
+            ..
+        } => Some((*body, MeasuredPart::Face, *point)),
+        MeasurePick::Edge {
+            point,
+            body: Some(body),
+            ..
+        } => Some((*body, MeasuredPart::Edge, *point)),
+        _ => None,
+    };
+    let [.., a, b] = picks else {
+        return None;
+    };
+    Some([operand(a)?, operand(b)?])
+}
+
+/// How many decimals a length reads with in `unit`: about a hundredth of
+/// a millimetre in each.
+pub(crate) fn decimals(unit: Unit) -> usize {
+    match unit {
+        Unit::Mm => 2,
+        Unit::Cm | Unit::In => 3,
+        Unit::M | Unit::Ft => 5,
+    }
+}
+
+/// A length in `unit`, read to [`decimals`].
+pub(crate) fn length(value_mm: f32, unit: Unit) -> String {
+    core_document::format_length_mm(value_mm, unit, decimals(unit))
+}
+
+/// An area in `unit`'s square.
+fn area(value_mm2: f64, unit: Unit) -> String {
+    format_area_mm2(value_mm2, unit, decimals(unit))
 }
 
 /// The least distance between two lines, each a point and a direction:
@@ -68,12 +204,27 @@ impl MeasurePick {
         match self {
             MeasurePick::Point(p)
             | MeasurePick::Edge { point: p, .. }
-            | MeasurePick::Face { point: p, .. } => *p,
+            | MeasurePick::Face { point: p, .. }
+            | MeasurePick::Datum { point: p, .. } => *p,
         }
     }
 
+    /// Whether it stands for a point alone: a picked point or a datum point,
+    /// which distances are measured from exactly.
+    fn is_point(&self) -> bool {
+        matches!(
+            self,
+            MeasurePick::Point(_)
+                | MeasurePick::Datum {
+                    datum: DatumPick::Point,
+                    ..
+                }
+        )
+    }
+
     /// The way it runs or faces: a straight edge's direction, a circle's
-    /// or a round face's axis, a flat face's normal.
+    /// or a round face's axis, a flat face's normal, a datum plane's normal
+    /// or a datum line's direction.
     fn direction(&self) -> Option<Vec3> {
         let d = match self {
             MeasurePick::Point(_) => return None,
@@ -88,12 +239,18 @@ impl MeasurePick {
                 Some(FaceSurface::Other) | None => *normal,
                 Some(turned) => turned.axis()?.1,
             },
+            MeasurePick::Datum { datum, .. } => match datum {
+                DatumPick::Plane { normal, .. } => *normal,
+                DatumPick::Line { direction, .. } => *direction,
+                DatumPick::Point => return None,
+            },
         };
         let d = Vec3::from_array(d).normalize_or_zero();
         (d != Vec3::ZERO).then_some(d)
     }
 
-    /// The line it turns about: a round face's axis, a circular edge's.
+    /// The line it turns about or runs along: a round face's axis, a
+    /// circular edge's, a datum line.
     fn axis(&self) -> Option<(Vec3, Vec3)> {
         let (point, direction) = match self {
             MeasurePick::Edge {
@@ -103,28 +260,38 @@ impl MeasurePick {
                 surface: Some(surface),
                 ..
             } => surface.axis()?,
+            MeasurePick::Datum {
+                datum: DatumPick::Line { origin, direction },
+                ..
+            } => (*origin, *direction),
             _ => return None,
         };
         Some((Vec3::from_array(point), Vec3::from_array(direction)))
     }
 
-    /// A flat face's plane, as a point on it and its unit normal.
+    /// A flat face's plane or a datum plane, as a point on it and its unit
+    /// normal.
     fn plane(&self) -> Option<(Vec3, Vec3)> {
-        match self {
+        let (origin, normal) = match self {
             MeasurePick::Face {
                 surface: Some(FaceSurface::Plane { origin, normal }),
                 ..
-            } => Some((
-                Vec3::from_array(*origin),
-                Vec3::from_array(*normal).normalize_or_zero(),
-            )),
-            _ => None,
-        }
+            }
+            | MeasurePick::Datum {
+                datum: DatumPick::Plane { origin, normal },
+                ..
+            } => (origin, normal),
+            _ => return None,
+        };
+        Some((
+            Vec3::from_array(*origin),
+            Vec3::from_array(*normal).normalize_or_zero(),
+        ))
     }
 
     /// What it measures on its own, one line each.
     pub fn describe(&self, unit: Unit) -> Vec<String> {
-        let len = |v: f32| format_length_mm(v, unit, 2);
+        let len = |v: f32| length(v, unit);
         match self {
             MeasurePick::Point(p) => {
                 vec![format!("Point {}, {}, {}", len(p[0]), len(p[1]), len(p[2]))]
@@ -139,43 +306,88 @@ impl MeasurePick {
                 format!("Length {}", len(*length)),
             ],
             MeasurePick::Edge { length, .. } => vec![format!("Length {}", len(*length))],
-            MeasurePick::Face { surface, area, .. } => {
-                let mut lines = vec![format!("Area {}", format_area_mm2(*area, unit, 2))];
+            MeasurePick::Face {
+                surface, area: a, ..
+            } => {
+                let mut lines = vec![format!("Area {}", area(*a, unit))];
                 match surface {
                     Some(FaceSurface::Cylinder { radius, .. })
                     | Some(FaceSurface::Sphere { radius, .. }) => {
                         lines.push(format!("Radius {}", len(*radius)));
                         lines.push(format!("Diameter {}", len(2.0 * radius)));
                     }
+                    Some(FaceSurface::Cone { half_angle, .. }) if *half_angle > 0.0 => {
+                        let half = half_angle.to_degrees();
+                        lines.push(format!("Half angle {half:.2}°"));
+                        lines.push(format!("Cone angle {:.2}°", 2.0 * half));
+                    }
+                    Some(FaceSurface::Torus {
+                        major_radius,
+                        minor_radius,
+                        ..
+                    }) if *major_radius > 0.0 => {
+                        lines.push(format!("Major radius {}", len(*major_radius)));
+                        lines.push(format!("Minor radius {}", len(*minor_radius)));
+                        lines.push(format!("Tube diameter {}", len(2.0 * minor_radius)));
+                    }
                     _ => {}
                 }
                 lines
             }
+            MeasurePick::Datum {
+                name,
+                datum: DatumPick::Point,
+                point: p,
+            } => vec![format!(
+                "{name} {}, {}, {}",
+                len(p[0]),
+                len(p[1]),
+                len(p[2])
+            )],
+            MeasurePick::Datum { name, .. } => vec![name.clone()],
         }
     }
 }
 
 /// What two picks measure between them, one line each: the distance
-/// (between two parallel flat faces, square across), and the angle when
-/// both have a direction.
+/// (between two parallel planes, square across; from a point to a plane or
+/// a line, square to it), and the angle when both have a direction.
 pub(crate) fn describe_pair(a: &MeasurePick, b: &MeasurePick, unit: Unit) -> Vec<String> {
-    let len = |v: f32| format_length_mm(v, unit, 2);
+    let len = |v: f32| length(v, unit);
     let (pa, pb) = (Vec3::from_array(a.point()), Vec3::from_array(b.point()));
     let mut lines = Vec::new();
-    match (a.plane(), b.plane()) {
+    let point_and = |of: &dyn Fn(&MeasurePick) -> Option<(Vec3, Vec3)>| {
+        if a.is_point() {
+            of(b).map(|line| (pa, line))
+        } else if b.is_point() {
+            of(a).map(|line| (pb, line))
+        } else {
+            None
+        }
+    };
+    let parallel = match (a.plane(), b.plane()) {
         (Some((oa, na)), Some((ob, nb))) if na.cross(nb).length() < 1e-4 => {
-            lines.push(format!("Distance {}", len((ob - oa).dot(na).abs())));
+            Some((ob - oa).dot(na).abs())
         }
-        _ => {
-            let d = pb - pa;
-            lines.push(format!("Distance {}", len(d.length())));
-            lines.push(format!(
-                "Δx {}  Δy {}  Δz {}",
-                len(d.x.abs()),
-                len(d.y.abs()),
-                len(d.z.abs())
-            ));
-        }
+        _ => None,
+    };
+    if let Some(across) = parallel {
+        lines.push(format!("Distance {}", len(across)));
+    } else if let Some((p, (o, n))) = point_and(&|p: &MeasurePick| p.plane()) {
+        lines.push(format!("Distance to plane {}", len((p - o).dot(n).abs())));
+    } else if let Some((p, (o, d))) = point_and(&|p: &MeasurePick| p.axis()) {
+        let d = d.normalize_or_zero();
+        let off = (p - o) - d * (p - o).dot(d);
+        lines.push(format!("Distance to axis {}", len(off.length())));
+    } else {
+        let d = pb - pa;
+        lines.push(format!("Distance {}", len(d.length())));
+        lines.push(format!(
+            "Δx {}  Δy {}  Δz {}",
+            len(d.x.abs()),
+            len(d.y.abs()),
+            len(d.z.abs())
+        ));
     }
     if let (Some((pa, da)), Some((pb, db))) = (a.axis(), b.axis()) {
         lines.push(format!(
@@ -186,6 +398,50 @@ pub(crate) fn describe_pair(a: &MeasurePick, b: &MeasurePick, unit: Unit) -> Vec
     if let (Some(da), Some(db)) = (a.direction(), b.direction()) {
         let angle = da.dot(db).clamp(-1.0, 1.0).acos().to_degrees();
         lines.push(format!("Angle {angle:.2}°"));
+    }
+    lines
+}
+
+/// What the chain of picks reads, one line each: a lone pick's own
+/// measures; then the last pick against the one before it; and with
+/// several, the chain's totals: the path through every pick, every edge's
+/// length when all are edges, every face's area when all are faces.
+pub(crate) fn readout(picks: &[MeasurePick], unit: Unit) -> Vec<String> {
+    let mut lines = match picks {
+        [] => return Vec::new(),
+        [one] => return one.describe(unit),
+        [.., a, b] => describe_pair(a, b, unit),
+    };
+    if picks.len() > 2 {
+        let path: f32 = picks
+            .windows(2)
+            .map(|w| Vec3::from_array(w[0].point()).distance(Vec3::from_array(w[1].point())))
+            .sum();
+        lines.push(format!(
+            "Path through {} picks {}",
+            picks.len(),
+            length(path, unit)
+        ));
+    }
+    let edges: Option<f32> = picks
+        .iter()
+        .map(|p| match p {
+            MeasurePick::Edge { length, .. } => Some(*length),
+            _ => None,
+        })
+        .sum();
+    if let Some(total) = edges {
+        lines.push(format!("Total length {}", length(total, unit)));
+    }
+    let faces: Option<f64> = picks
+        .iter()
+        .map(|p| match p {
+            MeasurePick::Face { area, .. } => Some(*area),
+            _ => None,
+        })
+        .sum();
+    if let Some(total) = faces {
+        lines.push(format!("Total area {}", area(total, unit)));
     }
     lines
 }
@@ -291,6 +547,7 @@ mod tests {
             direction: [1.0, 0.0, 0.0],
             length: 2.0,
             circle: None,
+            body: None,
         };
         let picked = pick_at(Some(edge.clone()), Some(&mesh), Some([1.0, 0.0, 1.0]));
         assert_eq!(picked, Some(edge));
@@ -319,6 +576,7 @@ mod tests {
             direction,
             length: 10.0,
             circle: None,
+            body: None,
         };
         let lines = describe_pair(&edge([1.0, 0.0, 0.0]), &edge([1.0, 1.0, 0.0]), Unit::Mm);
         assert!(lines.iter().any(|l| l == "Angle 45.00°"), "{lines:?}");
@@ -335,6 +593,7 @@ mod tests {
                 normal: [0.0, 0.0, 1.0],
                 radius: 5.0,
             }),
+            body: None,
         };
         assert_eq!(circle.describe(Unit::Mm)[0], "Radius 5.00 mm");
         let bore = MeasurePick::Face {
@@ -410,6 +669,156 @@ mod tests {
         );
         let waiting = MeasureGap { found: None, ..gap };
         assert!(waiting.in_world().is_none());
+    }
+
+    fn face(surface: FaceSurface) -> MeasurePick {
+        MeasurePick::Face {
+            point: [0.0; 3],
+            normal: [1.0, 0.0, 0.0],
+            surface: Some(surface),
+            area: 10.0,
+            body: None,
+        }
+    }
+
+    #[test]
+    fn a_cone_reads_its_angle_and_a_torus_its_radii() {
+        let cone = face(FaceSurface::Cone {
+            apex: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            half_angle: 30f32.to_radians(),
+        });
+        let lines = cone.describe(Unit::Mm);
+        assert!(
+            lines.contains(&"Half angle 30.00°".to_string()),
+            "{lines:?}"
+        );
+        assert!(
+            lines.contains(&"Cone angle 60.00°".to_string()),
+            "{lines:?}"
+        );
+        let torus = face(FaceSurface::Torus {
+            center: [0.0; 3],
+            axis: [0.0, 0.0, 1.0],
+            major_radius: 20.0,
+            minor_radius: 2.5,
+        });
+        let lines = torus.describe(Unit::Mm);
+        for want in [
+            "Major radius 20.00 mm",
+            "Minor radius 2.50 mm",
+            "Tube diameter 5.00 mm",
+        ] {
+            assert!(lines.contains(&want.to_string()), "{lines:?}");
+        }
+    }
+
+    /// A datum plane is picked where the cursor's ray crosses it, and a
+    /// point measures square to it; a datum line measures square to its
+    /// line.
+    #[test]
+    fn datums_measure_square_to_their_plane_and_line() {
+        let feature = |shape| DatumFeature {
+            shape,
+            attachment: core_document::DatumAttachment::BasePlane(core_document::BasePlane::XY),
+            offset: core_document::AttachmentOffset {
+                translation: [0.0, 0.0, 4.0],
+                ..Default::default()
+            },
+        };
+        let lifted = core_document::BodyPlacement::new(glam::Quat::IDENTITY, Vec3::Z);
+        let (plane, at) = DatumPick::of(
+            &feature(DatumShape::Plane { size: 20.0 }),
+            lifted,
+            Vec3::new(3.0, 2.0, 50.0),
+            Vec3::NEG_Z,
+        );
+        assert_eq!(at, [3.0, 2.0, 5.0]);
+        let plane = MeasurePick::Datum {
+            name: "Datum Plane".into(),
+            datum: plane,
+            point: at,
+        };
+        let lines = describe_pair(&MeasurePick::Point([7.0, 7.0, -2.0]), &plane, Unit::Mm);
+        assert_eq!(lines[0], "Distance to plane 7.00 mm", "{lines:?}");
+
+        let (line, _) = DatumPick::of(
+            &feature(DatumShape::Line { length: 20.0 }),
+            lifted,
+            Vec3::new(3.0, 2.0, 50.0),
+            Vec3::NEG_Z,
+        );
+        let line = MeasurePick::Datum {
+            name: "Datum Line".into(),
+            datum: line,
+            point: [0.0, 0.0, 5.0],
+        };
+        // The line runs along X through (0, 0, 5).
+        let lines = describe_pair(&line, &MeasurePick::Point([9.0, 3.0, 9.0]), Unit::Mm);
+        assert_eq!(lines[0], "Distance to axis 5.00 mm", "{lines:?}");
+    }
+
+    /// Picks run on: the last two are measured against each other and the
+    /// chain adds up its path, its edges and its faces.
+    #[test]
+    fn a_chain_of_picks_adds_up() {
+        let edge = |x: f32, length: f32| MeasurePick::Edge {
+            point: [x, 0.0, 0.0],
+            direction: [0.0, 1.0, 0.0],
+            length,
+            circle: None,
+            body: None,
+        };
+        let lines = readout(&[edge(0.0, 4.0), edge(3.0, 5.0), edge(7.0, 6.0)], Unit::Mm);
+        assert_eq!(lines[0], "Distance 4.00 mm", "the last two: {lines:?}");
+        assert!(lines.contains(&"Path through 3 picks 7.00 mm".to_string()));
+        assert!(lines.contains(&"Total length 15.00 mm".to_string()));
+        assert!(lines.iter().all(|l| !l.starts_with("Total area")));
+
+        let faces = [plane(0.0, [0.0, 0.0, 1.0]), plane(2.0, [0.0, 0.0, 1.0])];
+        let lines = readout(&faces, Unit::Cm);
+        assert!(
+            lines.contains(&"Total area 2.000 cm²".to_string()),
+            "{lines:?}"
+        );
+        assert_eq!(readout(&faces[..1], Unit::Mm), faces[0].describe(Unit::Mm));
+        assert!(readout(&[], Unit::Mm).is_empty());
+    }
+
+    #[test]
+    fn a_unit_reads_to_about_a_hundredth_of_a_millimetre() {
+        assert_eq!(length(25.4, Unit::In), "1.000 in");
+        assert_eq!(length(25.4, Unit::Mm), "25.40 mm");
+    }
+
+    /// The kernel is asked between the last two picks, when both are faces
+    /// or edges of a body.
+    #[test]
+    fn the_least_distance_is_asked_between_the_last_two_parts() {
+        let body = core_document::BodyId(uuid::Uuid::from_u128(7));
+        let edge = MeasurePick::Edge {
+            point: [1.0, 0.0, 0.0],
+            direction: [0.0, 1.0, 0.0],
+            length: 3.0,
+            circle: None,
+            body: Some(body),
+        };
+        let mut face = plane(2.0, [0.0, 0.0, 1.0]);
+        if let MeasurePick::Face { body: of, .. } = &mut face {
+            *of = Some(body);
+        }
+        let point = MeasurePick::Point([0.0; 3]);
+        assert_eq!(
+            gap_operands(&[point.clone(), edge.clone(), face.clone()]),
+            Some([
+                (body, MeasuredPart::Edge, [1.0, 0.0, 0.0]),
+                (body, MeasuredPart::Face, [1.0, 2.0, 2.0]),
+            ])
+        );
+        assert_eq!(gap_operands(&[edge.clone(), face, point]), None);
+        assert_eq!(gap_operands(&[edge]), None);
+        let loose = plane(0.0, [0.0, 0.0, 1.0]);
+        assert_eq!(gap_operands(&[loose.clone(), loose]), None, "no body");
     }
 
     #[test]

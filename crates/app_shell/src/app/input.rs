@@ -551,74 +551,104 @@ impl PrintCadApp {
         }
     }
 
-    /// A click with the measure tool armed: the edge or face under the
-    /// cursor, else the point, joins the measurement; a third click starts
-    /// over.
+    /// The unit the measure tool reads in: the user's choice, else the
+    /// document's.
+    pub(crate) fn measure_unit(&self) -> core_document::Unit {
+        self.session
+            .measure_unit
+            .unwrap_or_else(|| self.session.document.display_unit())
+    }
+
+    /// A click with the measure tool armed: the edge under the cursor, else
+    /// a datum, else the face, else the point, joins the chain of picks; a
+    /// click on nothing starts over.
     fn measure_click(&mut self) -> bool {
-        use crate::app::measure::{MeasurePick, describe_pair, pick_at};
+        use crate::app::measure::{MeasurePick, pick_at, readout};
         let edge = self.session.hovered_edge.map(|edge| MeasurePick::Edge {
             point: edge.point,
             direction: edge.direction,
             length: edge.length_mm,
             circle: edge.circle,
+            body: Some(core_document::BodyId(edge.body)),
         });
+        let datum = edge.is_none().then(|| self.datum_under_cursor()).flatten();
         let mesh = self.session.hovered_body.and_then(|body| {
             self.session
                 .document
                 .imported_geometry(core_document::BodyId(body))
         });
-        let Some(mut pick) = pick_at(
-            edge,
-            mesh.map(|geometry| &*geometry.mesh),
-            self.session.hovered_world_pos,
-        ) else {
+        let pick = datum.or_else(|| {
+            pick_at(
+                edge,
+                mesh.map(|geometry| &*geometry.mesh),
+                self.session.hovered_world_pos,
+            )
+        });
+        let unit = self.measure_unit();
+        let Some(picks) = self.session.measure.as_mut() else {
             return false;
+        };
+        let Some(mut pick) = pick else {
+            // Empty space: the chain starts over.
+            let had = !picks.is_empty();
+            picks.clear();
+            self.session.measure_gap = None;
+            return had;
         };
         if let MeasurePick::Face { body, .. } = &mut pick {
             *body = self.session.hovered_body.map(core_document::BodyId);
         }
-        let unit = self.session.document.display_unit();
-        let Some(picks) = self.session.measure.as_mut() else {
-            return false;
-        };
-        if picks.len() >= 2 {
-            picks.clear();
-        }
         picks.push(pick);
-        let lines = match picks.as_slice() {
-            [a, b] => describe_pair(a, b, unit),
-            [one] => one.describe(unit),
-            _ => Vec::new(),
-        };
-        app_log::info(format!("Measured {}", lines.join(", ")));
+        app_log::info(format!("Measured {}", readout(picks, unit).join(", ")));
         self.ask_measure_gap();
         true
     }
 
-    /// With two faces of solids picked, ask the kernel for the least
-    /// distance between them; otherwise drop the last answer.
+    /// The datum under the cursor, placed in the world, as a measure pick.
+    fn datum_under_cursor(&self) -> Option<crate::app::measure::MeasurePick> {
+        let id = self.session.hovered_feature?;
+        let document = &self.session.document;
+        let node = document.feature_tree().get_node(id)?;
+        if node.workbench_id.as_str() != core_document::DATUM_KIND {
+            return None;
+        }
+        let feature: core_document::DatumFeature =
+            serde_json::from_value(document.feature_values(id)?.clone()).ok()?;
+        let placement = node
+            .body
+            .map(|body| document.body_placement(body))
+            .unwrap_or_default();
+        let cursor = self.cursor_in_viewport?;
+        let vp = self.session.camera.viewport_info();
+        let (eye, ray) = core_document::runtime::viewport_to_ray(
+            self.session.camera.view_projection(),
+            (vp.0 as u32, vp.1 as u32, vp.2, vp.3),
+            cursor,
+        )?;
+        let (datum, point) = crate::app::measure::DatumPick::of(
+            &feature,
+            placement,
+            Vec3::from_array(eye),
+            Vec3::from_array(ray),
+        );
+        Some(crate::app::measure::MeasurePick::Datum {
+            name: node.name.clone(),
+            datum,
+            point,
+        })
+    }
+
+    /// With the last two picks faces or edges of solids, ask the kernel for
+    /// the least distance between them; otherwise drop the last answer.
     fn ask_measure_gap(&mut self) {
-        use crate::app::measure::{MeasureGap, MeasurePick};
+        use crate::app::measure::{MeasureGap, gap_operands};
         let token = self.session.measure_gap.as_ref().map_or(1, |g| g.token + 1);
         self.session.measure_gap = None;
-        let Some(
-            [
-                MeasurePick::Face {
-                    point: pa,
-                    body: Some(a),
-                    ..
-                },
-                MeasurePick::Face {
-                    point: pb,
-                    body: Some(b),
-                    ..
-                },
-            ],
-        ) = self.session.measure.as_deref()
+        let Some([(a, part_a, pa), (b, part_b, pb)]) =
+            self.session.measure.as_deref().and_then(gap_operands)
         else {
             return;
         };
-        let (a, b, pa, pb) = (*a, *b, *pa, *pb);
         let document = &self.session.document;
         let (Some(first), Some(second)) = (
             document.imported_brep_blob_arc(a),
@@ -641,8 +671,10 @@ impl PrintCadApp {
                 body_id: a.0,
                 token,
                 first,
+                first_part: part_a,
                 first_near: local(place_a, pa),
                 second,
+                second_part: part_b,
                 second_near: local(place_b, pb),
                 second_in_first: rows,
             });

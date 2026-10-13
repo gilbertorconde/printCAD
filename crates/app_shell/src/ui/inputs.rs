@@ -114,6 +114,8 @@ pub struct UiFrameInputs<'a> {
     pub tabs: Vec<super::TabInfo>,
     /// The measure tool is armed.
     pub measuring: bool,
+    /// The measure tool's own pill under the view toolbar, while it is armed.
+    pub measure_bar: Option<super::view_toolbar::MeasureBar>,
     /// A body double-clicked in the viewport: the tree jumps to its row.
     pub reveal_body: Option<core_document::BodyId>,
     /// The context menu a right click asked for, if one is open.

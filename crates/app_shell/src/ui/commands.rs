@@ -258,6 +258,10 @@ pub enum UiCommand {
     SetProjection(ProjectionMode),
     /// Turn the clipping plane on, move it, or (`None`) put it away.
     SetSection(Option<crate::camera::section::SectionToggle>),
+    /// Read the measure tool in this unit; `None` follows the document's.
+    SetMeasureUnit(Option<core_document::Unit>),
+    /// Drop the measure tool's picks and start a new chain.
+    ClearMeasure,
     /// Mark every part feature dirty so the next frame rebuilds them all.
     RecomputeAll,
     /// Run a line typed in the script console.
