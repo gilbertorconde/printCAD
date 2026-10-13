@@ -1958,6 +1958,7 @@ impl AssemblyWorkbench {
                                     .into(),
                             ),
                         },
+                        text(part.threads_text(), false, false),
                     ];
                         cells.extend(table.columns.iter().map(|column| Cell::Edit {
                             text: part.values.get(column).cloned().unwrap_or_default(),
@@ -3409,7 +3410,7 @@ mod tests;
 
 /// A mass in grams, or kilograms from a thousand.
 /// The parts list's own columns, before the ones added to it.
-const PARTS_COLUMNS: [&str; 8] = [
+const PARTS_COLUMNS: [&str; 9] = [
     "No.",
     "Part",
     "Qty",
@@ -3418,6 +3419,7 @@ const PARTS_COLUMNS: [&str; 8] = [
     "Volume",
     "Mass",
     "Bought",
+    "Threads",
 ];
 
 /// The parts list's column of how many of a part to print.

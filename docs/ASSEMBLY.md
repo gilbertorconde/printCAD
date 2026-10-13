@@ -267,7 +267,9 @@ of the tree, and a double-click shows it again. `asm.exploded_view` makes
 one from a script and `asm.explode_at` says where it puts every body.
 
 Parts list (B) lists every part with how many there are, bodies of the
-same shape counted together, and the size of each along its own axes.
+same shape counted together, the size of each along its own axes, and
+its holes' cosmetic threads by designation ("2 × M6 thread",
+[HOLES.md](HOLES.md)).
 Copy as CSV puts it on the clipboard for a spreadsheet; Save as CSV
 writes it to a file. Number the parts gives each part an item number, kept
 from then on; Bought marks a part bought rather than made, which leaves

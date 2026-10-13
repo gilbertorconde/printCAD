@@ -6895,12 +6895,13 @@ assert(m.centre[1] == 10 and m.centre[3] == 2.5)
 `pc.asm.parts`: Every part: bodies of the same shape counted together.
 
 - `by_component` (boolean, optional): Each component's parts under it: every entry gains a depth, and components come as {component, name, depth}
-- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}, print, volume (mm³) or nil, mass (g) or nil, density}, numbered parts first by number, then by name
+- Returns a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number or nil, bought, values = {column = text}, print, volume (mm³) or nil, mass (g) or nil, density, threads = {{designation, count}}}, numbered parts first by number, then by name
 
 Notes:
 
 - Bodies count as one part when they share one shape: linked copies from `asm.copy` do; bodies modelled apart do not, however alike.
 - `size` is the part's bounding box, mm.
+- `threads` are one piece's cosmetic threads (a hole's that shows its thread rather than cutting it), counted by designation such as M6.
 - `volume` and `mass` are of one piece: the volume the kernel measures of its solid (a mesh body's from its triangles), the mass at its body's material's density, else at the list's printing material (`asm.print_material`). `print` is how many to print: the count set with `asm.part`, else one per body, none of a bought part.
 
 See also `pc.asm.part`, `pc.asm.parts_table`, `pc.asm.copy`.

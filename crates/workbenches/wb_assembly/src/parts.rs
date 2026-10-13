@@ -221,9 +221,23 @@ pub struct Part {
     pub density: f32,
     /// The volume of one piece, mm³, once measured.
     pub volume_mm3: Option<f64>,
+    /// The cosmetic threads of one piece, counted by designation.
+    pub threads: Vec<(String, u32)>,
 }
 
 impl Part {
+    /// Its threads as the list reads them: "2 × M6 thread, M4 thread".
+    pub fn threads_text(&self) -> String {
+        self.threads
+            .iter()
+            .map(|(designation, count)| match count {
+                1 => format!("{designation} thread"),
+                n => format!("{n} × {designation} thread"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// The mass of one piece, grams, once its volume is measured.
     pub fn mass_g(&self) -> Option<f64> {
         self.volume_mm3
@@ -295,6 +309,9 @@ pub fn parts_list(document: &Document, bought_kinds: &[WorkbenchId]) -> Vec<Part
                     print: 0,
                     density: body.material.as_ref().map_or(0.0, |m| m.density),
                     volume_mm3: None,
+                    threads: core_document::threads::count_by_designation(
+                        document.body_threads(body.id),
+                    ),
                 },
             )),
         }
@@ -554,12 +571,12 @@ fn field(text: &str) -> String {
 }
 
 /// The list as comma-separated values, a header line first: the item
-/// number, part, quantity, size, kind, whether bought, then the added
-/// `columns`.
+/// number, part, quantity, size, kind, whether bought, how many to print,
+/// volume, mass and threads, then the added `columns`.
 pub fn parts_csv(parts: &[Part], columns: &[String]) -> String {
     let mut out = String::from(
         "Item,Part,Quantity,Size X (mm),Size Y (mm),Size Z (mm),Kind,Bought,Print,\
-         Volume (cm³),Mass (g)",
+         Volume (cm³),Mass (g),Threads",
     );
     for column in columns {
         out.push(',');
@@ -579,10 +596,11 @@ pub fn parts_csv(parts: &[Part], columns: &[String]) -> String {
             .map_or(String::new(), |v| format!("{:.2}", v / 1000.0));
         let mass = part.mass_g().map_or(String::new(), |m| format!("{m:.2}"));
         out.push_str(&format!(
-            "{number},{},{},{size},{kind},{bought},{},{volume},{mass}",
+            "{number},{},{},{size},{kind},{bought},{},{volume},{mass},{}",
             field(&part.name),
             part.bodies.len(),
             part.print,
+            field(&part.threads_text()),
         ));
         for column in columns {
             out.push(',');
@@ -601,7 +619,7 @@ pub fn levels_csv(parts: &[Part], rows: &[LevelRow], columns: &[String]) -> Stri
     for row in rows {
         match row {
             LevelRow::Component { depth, name, .. } => {
-                out.push_str(&format!("{depth},,{},1,,,,component,,,,", field(name)));
+                out.push_str(&format!("{depth},,{},1,,,,component,,,,,", field(name)));
                 out.push_str(&",".repeat(columns.len()));
                 out.push('\n');
             }
@@ -669,9 +687,9 @@ mod tests {
         let csv = levels_csv(&parts, &rows, &[]);
         let lines: Vec<&str> = csv.lines().collect();
         assert!(lines[0].starts_with("Level,Item,Part"));
-        assert_eq!(lines[1], "0,,Top,1,,,,component,,,,");
+        assert_eq!(lines[1], "0,,Top,1,,,,component,,,,,");
         assert_eq!(
-            lines[2], "1,,Bolt,1,,,,solid,,2,,",
+            lines[2], "1,,Bolt,1,,,,solid,,2,,,",
             "the whole part's count to print"
         );
     }
@@ -691,8 +709,8 @@ mod tests {
         assert_eq!(parts[0].bodies, [a, b]);
         let csv = parts_csv(&parts, &[]);
         let lines: Vec<&str> = csv.lines().collect();
-        assert_eq!(lines[1], ",Bolt,2,,,,solid,,2,,");
-        assert_eq!(lines[2], ",\"Bracket, left\",1,,,,solid,,1,,");
+        assert_eq!(lines[1], ",Bolt,2,,,,solid,,2,,,");
+        assert_eq!(lines[2], ",\"Bracket, left\",1,,,,solid,,1,,,");
     }
 
     /// The table numbers the parts, keeps each part's bought mark and
@@ -729,7 +747,7 @@ mod tests {
             csv.lines()
                 .nth(2)
                 .unwrap()
-                .ends_with(",yes,0,,,\"ACME, Inc\""),
+                .ends_with(",yes,0,,,,\"ACME, Inc\""),
             "{csv}"
         );
         // Stored once: a second store updates the same feature.
@@ -901,6 +919,35 @@ mod tests {
         assert!(
             csv.lines()
                 .any(|l| l.starts_with(",Cube,1,") && l.contains(",4,")),
+            "{csv}"
+        );
+    }
+
+    /// A part lists its threads by designation, counted, in the list and
+    /// its CSV.
+    #[test]
+    fn a_part_lists_its_threads_by_designation() {
+        let mut document = Document::new("t");
+        let plate = document.create_body(Some("Plate".into()));
+        document.set_imported_brep_data(plate, b"plate".to_vec(), Vec::new());
+        let thread = |designation: &str| core_document::ThreadCallout {
+            feature: FeatureId::new(),
+            body: plate,
+            designation: designation.into(),
+            mouth: [0.0; 3],
+            axis: [0.0, 0.0, -1.0],
+            radius: 2.5,
+        };
+        document.set_cosmetic_threads(vec![thread("M6"), thread("M4"), thread("M6")]);
+        let parts = parts_list(&document, &[]);
+        assert_eq!(parts[0].threads_text(), "2 × M6 thread, M4 thread");
+        let csv = parts_csv(&parts, &[]);
+        assert!(csv.lines().next().unwrap().ends_with(",Threads"), "{csv}");
+        assert!(
+            csv.lines()
+                .nth(1)
+                .unwrap()
+                .ends_with(",\"2 × M6 thread, M4 thread\""),
             "{csv}"
         );
     }

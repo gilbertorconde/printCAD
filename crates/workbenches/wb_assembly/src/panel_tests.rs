@@ -713,7 +713,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         panic!("the list is a sheet");
     };
     assert_eq!(rows.len(), parts.len());
-    assert_eq!(columns.len(), 8);
+    assert_eq!(columns.len(), 9);
 
     send(
         &mut wb,
@@ -739,7 +739,7 @@ fn the_parts_list_keeps_its_cells_through_asm_parts_table() {
         PanelEvent::CellText {
             id: "parts".into(),
             row: 0,
-            column: 8,
+            column: 9,
             value: "ACME".into(),
         },
     );

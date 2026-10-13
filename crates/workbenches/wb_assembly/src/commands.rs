@@ -1650,7 +1650,8 @@ pub fn register(context: &mut WorkbenchContext) {
         .returns(
             "a list of {name, quantity, bodies, size = {x, y, z} in mm or nil, mesh, number \
              or nil, bought, values = {column = text}, print, volume (mm³) or nil, mass (g) \
-             or nil, density}, numbered parts first by number, then by name",
+             or nil, density, threads = {{designation, count}}}, numbered parts first by \
+             number, then by name",
         )
         .read_only()
         .note(
@@ -1658,6 +1659,10 @@ pub fn register(context: &mut WorkbenchContext) {
              `asm.copy` do; bodies modelled apart do not, however alike.",
         )
         .note("`size` is the part's bounding box, mm.")
+        .note(
+            "`threads` are one piece's cosmetic threads (a hole's that shows its thread \
+             rather than cutting it), counted by designation such as M6.",
+        )
         .note(
             "`volume` and `mass` are of one piece: the volume the kernel measures of its \
              solid (a mesh body's from its triangles), the mass at its body's material's \
@@ -2878,6 +2883,11 @@ pub fn run(id: &str, args: &CommandArgs, ctx: &mut WorkbenchRuntimeContext) -> C
                     "number": part.number,
                     "bought": part.bought,
                     "values": part.values,
+                    "threads": part
+                        .threads
+                        .iter()
+                        .map(|(designation, count)| json!({"designation": designation, "count": count}))
+                        .collect::<Vec<_>>(),
                 })
             };
             if a.opt_bool("by_component")? != Some(true) {
